@@ -358,10 +358,17 @@ func TestCopRuntimeStats(t *testing.T) {
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
+	stats.RecordExpectedCopTasks([]int{tableScanID, aggID})
+	stats.RecordExpectedCopTasks([]int{tableScanID, aggID})
 	stats.RecordOneCopTask(tableScanID, kv.TiKV, mockExecutorExecutionSummary(1, 1, 1))
 	stats.RecordOneCopTask(tableScanID, kv.TiKV, mockExecutorExecutionSummary(2, 2, 2))
 	stats.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(4, 4, 4))
+	detail, detailRecords, observedTasks, expectedTasks := stats.GetCopScanDetailAndCoverage(tableScanID)
+	require.Zero(t, detail)
+	require.Zero(t, detailRecords)
+	require.Equal(t, int32(2), observedTasks)
+	require.Equal(t, int32(2), expectedTasks)
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 15,
 		ProcessedKeys:             10,
@@ -373,6 +380,17 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadByte:      100,
 	}
 	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil)
+	stats.RecordCopStats(tableScanID, kv.TiKV, &util.ScanDetail{}, util.TimeDetail{}, nil)
+	stats.RecordCopStats(aggID, kv.TiKV, nil, util.TimeDetail{}, nil)
+	detail, detailRecords, observedTasks, expectedTasks = stats.GetCopScanDetailAndCoverage(tableScanID)
+	require.Equal(t, *scanDetail, detail)
+	require.Equal(t, int32(2), detailRecords)
+	require.Equal(t, int32(2), observedTasks)
+	require.Equal(t, int32(2), expectedTasks)
+	_, detailRecords, observedTasks, expectedTasks = stats.GetCopScanDetailAndCoverage(aggID)
+	require.Zero(t, detailRecords)
+	require.Equal(t, int32(2), observedTasks)
+	require.Equal(t, int32(2), expectedTasks)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetCopStats(tableScanID)
@@ -400,6 +418,22 @@ func TestCopRuntimeStats(t *testing.T) {
 	require.Equal(t, "", zeroScanDetail.String())
 	require.Equal(t, "", zeroTimeDetail.String())
 	require.Equal(t, "", zeroCopStats.String())
+
+	originalPlanID := 4
+	remappedPlanID := 5
+	executorID := "selection_" + strconv.Itoa(remappedPlanID)
+	remappedSummary := mockExecutorExecutionSummary(1, 1, 1)
+	remappedSummary.ExecutorId = &executorID
+	stats.RecordExpectedCopTasks([]int{originalPlanID})
+	stats.RecordCopStats(originalPlanID, kv.TiFlash, &zeroScanDetail, util.TimeDetail{}, remappedSummary)
+	_, detailRecords, observedTasks, expectedTasks = stats.GetCopScanDetailAndCoverage(originalPlanID)
+	require.Equal(t, int32(1), detailRecords)
+	require.Zero(t, observedTasks)
+	require.Equal(t, int32(1), expectedTasks)
+	_, detailRecords, observedTasks, expectedTasks = stats.GetCopScanDetailAndCoverage(remappedPlanID)
+	require.Zero(t, detailRecords)
+	require.Equal(t, int32(1), observedTasks)
+	require.Zero(t, expectedTasks)
 }
 
 func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {

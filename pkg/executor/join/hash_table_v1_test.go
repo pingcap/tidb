@@ -84,6 +84,12 @@ func (h hashCollision) Size() int                         { panic("not implement
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
 func TestHashRowContainer(t *testing.T) {
+	stateContainer := &hashRowContainer{
+		hashTable:        &unsafeHashTable{length: 2},
+		hashNANullBucket: &hashNANullBucket{entries: []*naEntry{{}, {}, {}}},
+	}
+	require.Equal(t, uint64(5), stateContainer.hashStateRows())
+
 	hashFunc := fnv.New64
 	rowContainer, copiedRC := testHashRowContainer(t, hashFunc, false)
 	require.Equal(t, int64(0), rowContainer.stat.probeCollision)

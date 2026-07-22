@@ -1,5 +1,15 @@
 # Preview RU TiDB KV mutation operator
 
+> **Current-model notice (2026-07-22):** the mutation lifecycle evidence in
+> this document remains valid, but its v3 two-weight and commit-detail formulas
+> are historical. The implemented v4 formula and statement-local DML/COMMIT
+> request ownership are normative in
+> `docs/design/2026-07-22-preview-ru-resource-formula-plan.md`.
+> In that v4 contract, normalized mutation work is emitted as the shared
+> `cpu_work` unit and identified by `site=tidb`, `op_class=kv_mutation`,
+> `operator_kind=memdb_mutation`, `input_source=stmt_memdb_mutation_calls`, and
+> `input_side=all`; it is not a separate weight-bearing unit.
+
 ## Status and scope
 
 This document defines the write-side model implemented by the preview RU demo.

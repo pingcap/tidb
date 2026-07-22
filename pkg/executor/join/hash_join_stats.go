@@ -17,6 +17,7 @@ package join
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,37 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
+
+func addHashTableRows(addr *int64, rows uint64) {
+	if rows > math.MaxInt64 {
+		atomic.StoreInt64(addr, -1)
+		return
+	}
+	delta := int64(rows)
+	for {
+		current := atomic.LoadInt64(addr)
+		if current < 0 {
+			return
+		}
+		if delta > math.MaxInt64-current {
+			if atomic.CompareAndSwapInt64(addr, current, -1) {
+				return
+			}
+			continue
+		}
+		if atomic.CompareAndSwapInt64(addr, current, current+delta) {
+			return
+		}
+	}
+}
+
+func mergeHashTableRows(addr *int64, rows int64) {
+	if rows < 0 {
+		atomic.StoreInt64(addr, -1)
+		return
+	}
+	addHashTableRows(addr, uint64(rows))
+}
 
 func writeSpilledPartitionNumStatsToString(buf *bytes.Buffer, partitionNum int, spilledPartitionNumPerRound []int) {
 	buf.WriteString("[")
@@ -53,7 +85,10 @@ type hashJoinRuntimeStats struct {
 	probe                  int64
 	concurrent             int
 	maxFetchAndProbe       int64
+	hashTableRows          int64
 }
+
+func (e *hashJoinRuntimeStats) HashTableRows() int64 { return atomic.LoadInt64(&e.hashTableRows) }
 
 // Tp implements the RuntimeStats interface.
 func (*hashJoinRuntimeStats) Tp() int {
@@ -101,6 +136,7 @@ func (e *hashJoinRuntimeStats) Clone() execdetails.RuntimeStats {
 		probe:                  e.probe,
 		concurrent:             e.concurrent,
 		maxFetchAndProbe:       e.maxFetchAndProbe,
+		hashTableRows:          e.HashTableRows(),
 	}
 }
 
@@ -114,6 +150,7 @@ func (e *hashJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	e.hashStat.probeCollision += tmp.hashStat.probeCollision
 	e.fetchAndProbe += tmp.fetchAndProbe
 	e.probe += tmp.probe
+	mergeHashTableRows(&e.hashTableRows, tmp.HashTableRows())
 	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
 		e.maxFetchAndProbe = tmp.maxFetchAndProbe
 	}
@@ -163,8 +200,11 @@ type hashJoinRuntimeStatsV2 struct {
 
 	spill spillStats
 
-	isHashJoinGA bool
+	isHashJoinGA  bool
+	hashTableRows int64
 }
+
+func (e *hashJoinRuntimeStatsV2) HashTableRows() int64 { return atomic.LoadInt64(&e.hashTableRows) }
 
 func setMaxValue(addr *int64, currentValue int64) {
 	for {
@@ -179,6 +219,7 @@ func setMaxValue(addr *int64, currentValue int64) {
 }
 
 func (e *hashJoinRuntimeStatsV2) reset() {
+	atomic.StoreInt64(&e.hashTableRows, 0)
 	e.probeCollision = 0
 	e.fetchAndBuildHashTable = 0
 	e.partitionData = 0
@@ -308,6 +349,7 @@ func (e *hashJoinRuntimeStatsV2) Clone() execdetails.RuntimeStats {
 		maxBuildHashTableForCurrentRound:      e.maxBuildHashTableForCurrentRound,
 		maxProbeForCurrentRound:               e.maxProbeForCurrentRound,
 		maxWorkerFetchAndProbeForCurrentRound: e.maxWorkerFetchAndProbeForCurrentRound,
+		hashTableRows:                         e.HashTableRows(),
 	}
 }
 
@@ -326,6 +368,7 @@ func (e *hashJoinRuntimeStatsV2) Merge(rs execdetails.RuntimeStats) {
 		e.maxPartitionData = tmp.maxPartitionData
 	}
 	e.probeCollision += tmp.probeCollision
+	mergeHashTableRows(&e.hashTableRows, tmp.HashTableRows())
 	e.fetchAndProbe += tmp.fetchAndProbe
 	e.probe += tmp.probe
 	if e.maxWorkerFetchAndProbe < tmp.maxWorkerFetchAndProbe {

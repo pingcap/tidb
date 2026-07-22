@@ -1,5 +1,9 @@
 # Read Billing Demo RU 模型与校准统计面设计
 
+> **当前模型说明（2026-07-22）：** 本文描述的是历史 v1-v3 模型，仅保留为迁移与校准背景。当前已实现的规范是
+> `docs/design/2026-07-22-preview-ru-resource-formula-plan.md` 中的 v4：使用语义化资源单位，三个旧 convenience totals
+> 对 v4 恒为零，并且权重未校准时不发布 `total_preview_ru`。下文与此冲突的“当前”表述仅适用于 v3。
+
 - Author(s): TBD
 - Discussion PR: TBD
 - Tracking Issue: TBD

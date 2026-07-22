@@ -80,6 +80,14 @@ type RuntimeStats interface {
 	Tp() int
 }
 
+// HashTableRuntimeStats exposes the number of rows admitted into a hash join's
+// lookup state. It is deliberately narrow so preview resource accounting does
+// not depend on executor-private runtime-stat implementations.
+type HashTableRuntimeStats interface {
+	RuntimeStats
+	HashTableRows() int64
+}
+
 type basicCopRuntimeStats struct {
 	loop      int32
 	rows      int64
@@ -215,10 +223,11 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      basicCopRuntimeStats
-	scanDetail util.ScanDetail
-	timeDetail util.TimeDetail
-	storeType  kv.StoreType
+	stats             basicCopRuntimeStats
+	scanDetail        util.ScanDetail
+	scanDetailRecords int32
+	timeDetail        util.TimeDetail
+	storeType         kv.StoreType
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -656,6 +665,21 @@ func (e *RuntimeStatsColl) GetExpectedCopTasks(planID int) int32 {
 	return e.expectedCopTasks[planID]
 }
 
+// GetCopScanDetailAndCoverage returns one consistent snapshot of the scan
+// detail attachment and task coverage recorded for planID. detailRecords
+// counts RecordCopStats calls with a non-nil scan detail; summary-only
+// RecordOneCopTask calls do not contribute to it.
+func (e *RuntimeStatsColl) GetCopScanDetailAndCoverage(planID int) (detail util.ScanDetail, detailRecords, observedTasks, expectedTasks int32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	expectedTasks = e.expectedCopTasks[planID]
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		return detail, 0, 0, expectedTasks
+	}
+	return copStats.scanDetail, copStats.scanDetailRecords, copStats.GetTasks(), expectedTasks
+}
+
 func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int, bool) {
 	if summary.GetExecutorId() != "" {
 		strs := strings.Split(summary.GetExecutorId(), "_")
@@ -676,15 +700,13 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 			timeDetail: time,
 			storeType:  storeType,
 		}
-		if scan != nil {
-			copStats.scanDetail = *scan
-		}
 		e.copStats[planID] = copStats
 	} else {
-		if scan != nil {
-			copStats.scanDetail.Merge(scan)
-		}
 		copStats.timeDetail.Merge(&time)
+	}
+	if scan != nil {
+		copStats.scanDetailRecords++
+		copStats.scanDetail.Merge(scan)
 	}
 	if summary != nil {
 		// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in

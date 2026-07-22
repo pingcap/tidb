@@ -15,6 +15,8 @@
 package join
 
 import (
+	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +24,16 @@ import (
 )
 
 func TestHashJoinRuntimeStats(t *testing.T) {
+	overflowRows := int64(1)
+	addHashTableRows(&overflowRows, math.MaxInt64)
+	require.Equal(t, int64(-1), overflowRows)
+	addHashTableRows(&overflowRows, 1)
+	require.Equal(t, int64(-1), overflowRows)
+
+	rowData := &rowTable{segments: []*rowTableSegment{{validJoinKeyPos: []int{0, 2}}, {validJoinKeyPos: []int{1}}}}
+	hashCtx := &hashTableContext{hashTable: &hashTableV2{tables: []*subTable{{rowData: rowData}}}}
+	require.Equal(t, uint64(3), hashCtx.hashStateRows())
+
 	stats := &hashJoinRuntimeStats{
 		fetchAndBuildHashTable: 2 * time.Second,
 		hashStat: hashStatistic{
@@ -37,6 +49,18 @@ func TestHashJoinRuntimeStats(t *testing.T) {
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
 	require.Equal(t, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch and wait:2s, probe_collision:2}", stats.String())
+	atomic.StoreInt64(&stats.hashTableRows, 7)
+	cloned := stats.Clone().(*hashJoinRuntimeStats)
+	require.Equal(t, int64(7), cloned.HashTableRows())
+	stats.Merge(cloned)
+	require.Equal(t, int64(14), stats.HashTableRows())
+
+	statsV2 := &hashJoinRuntimeStatsV2{}
+	atomic.StoreInt64(&statsV2.hashTableRows, 11)
+	clonedV2 := statsV2.Clone().(*hashJoinRuntimeStatsV2)
+	require.Equal(t, int64(11), clonedV2.HashTableRows())
+	statsV2.Merge(clonedV2)
+	require.Equal(t, int64(22), statsV2.HashTableRows())
 }
 
 func TestIndexJoinRuntimeStats(t *testing.T) {

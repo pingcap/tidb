@@ -110,7 +110,7 @@ func InitExplainRUMetrics() {
 			Subsystem: "read_billing_demo",
 			Name:      "statements_total",
 			Help:      "Counter of read billing demo statement status.",
-		}, []string{"status", readBillingDemoLabelModelVersion},
+		}, []string{"status", readBillingDemoLabelModelVersion, explainRULabelWeightVersion},
 	)
 	ReadBillingDemoOperatorStatusCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
@@ -118,7 +118,7 @@ func InitExplainRUMetrics() {
 			Subsystem: "read_billing_demo",
 			Name:      "operator_status_total",
 			Help:      "Counter of read billing demo operator status.",
-		}, []string{"site", "op_class", "operator_kind", "status", "reason", readBillingDemoLabelModelVersion},
+		}, []string{"site", "op_class", "operator_kind", "status", "reason", readBillingDemoLabelModelVersion, explainRULabelWeightVersion},
 	)
 	ReadBillingDemoBaseUnitsCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
@@ -126,7 +126,7 @@ func InitExplainRUMetrics() {
 			Subsystem: "read_billing_demo",
 			Name:      "base_units_total",
 			Help:      "Counter of coefficient-free read billing demo base units.",
-		}, []string{"site", "op_class", "operator_kind", "unit", "input_source", "input_side", readBillingDemoLabelModelVersion},
+		}, []string{"site", "op_class", "operator_kind", "unit", "input_source", "input_side", readBillingDemoLabelModelVersion, explainRULabelWeightVersion},
 	)
 	ReadBillingDemoRowWidthHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -135,7 +135,7 @@ func InitExplainRUMetrics() {
 			Name:      "row_width_bytes",
 			Help:      "Histogram of row-width factors used by read billing demo.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12),
-		}, []string{"site", "op_class", "operator_kind", "row_width_source", readBillingDemoLabelModelVersion},
+		}, []string{"site", "op_class", "operator_kind", "row_width_source", readBillingDemoLabelModelVersion, explainRULabelWeightVersion},
 	)
 }
 
@@ -182,37 +182,37 @@ func ObserveExplainRURow(section, component, operator, source, rowWidthSource, w
 }
 
 // RecordReadBillingDemoStatement records a bounded read billing demo statement status.
-func RecordReadBillingDemoStatement(status, modelVersion string) {
-	if ReadBillingDemoStatementsCounter == nil || status == "" || modelVersion == "" {
+func RecordReadBillingDemoStatement(status, modelVersion, weightVersion string) {
+	if ReadBillingDemoStatementsCounter == nil || status == "" || modelVersion == "" || weightVersion == "" {
 		return
 	}
-	ReadBillingDemoStatementsCounter.WithLabelValues(status, modelVersion).Inc()
+	ReadBillingDemoStatementsCounter.WithLabelValues(status, modelVersion, weightVersion).Inc()
 }
 
 // RecordReadBillingDemoOperatorStatus records a bounded read billing demo operator status.
-func RecordReadBillingDemoOperatorStatus(site, opClass, operatorKind, status, reason, modelVersion string) {
+func RecordReadBillingDemoOperatorStatus(site, opClass, operatorKind, status, reason, modelVersion, weightVersion string) {
 	if ReadBillingDemoOperatorStatusCounter == nil ||
-		site == "" || opClass == "" || operatorKind == "" || status == "" || reason == "" || modelVersion == "" {
+		site == "" || opClass == "" || operatorKind == "" || status == "" || reason == "" || modelVersion == "" || weightVersion == "" {
 		return
 	}
-	ReadBillingDemoOperatorStatusCounter.WithLabelValues(site, opClass, operatorKind, status, reason, modelVersion).Inc()
+	ReadBillingDemoOperatorStatusCounter.WithLabelValues(site, opClass, operatorKind, status, reason, modelVersion, weightVersion).Inc()
 }
 
 // AddReadBillingDemoBaseUnits records coefficient-free read billing demo base units.
-func AddReadBillingDemoBaseUnits(site, opClass, operatorKind, unit, inputSource, inputSide, modelVersion string, value float64) {
+func AddReadBillingDemoBaseUnits(site, opClass, operatorKind, unit, inputSource, inputSide, modelVersion, weightVersion string, value float64) {
 	if ReadBillingDemoBaseUnitsCounter == nil ||
-		site == "" || opClass == "" || operatorKind == "" || unit == "" || inputSource == "" || inputSide == "" || modelVersion == "" ||
+		site == "" || opClass == "" || operatorKind == "" || unit == "" || inputSource == "" || inputSide == "" || modelVersion == "" || weightVersion == "" ||
 		value < 0 {
 		return
 	}
-	ReadBillingDemoBaseUnitsCounter.WithLabelValues(site, opClass, operatorKind, unit, inputSource, inputSide, modelVersion).Add(value)
+	ReadBillingDemoBaseUnitsCounter.WithLabelValues(site, opClass, operatorKind, unit, inputSource, inputSide, modelVersion, weightVersion).Add(value)
 }
 
 // ObserveReadBillingDemoRowWidth records row-width factors used by read billing demo.
-func ObserveReadBillingDemoRowWidth(site, opClass, operatorKind, rowWidthSource, modelVersion string, rowWidth float64) {
+func ObserveReadBillingDemoRowWidth(site, opClass, operatorKind, rowWidthSource, modelVersion, weightVersion string, rowWidth float64) {
 	if ReadBillingDemoRowWidthHistogram == nil ||
-		site == "" || opClass == "" || operatorKind == "" || rowWidthSource == "" || modelVersion == "" || rowWidth <= 0 {
+		site == "" || opClass == "" || operatorKind == "" || rowWidthSource == "" || modelVersion == "" || weightVersion == "" || rowWidth <= 0 {
 		return
 	}
-	ReadBillingDemoRowWidthHistogram.WithLabelValues(site, opClass, operatorKind, rowWidthSource, modelVersion).Observe(rowWidth)
+	ReadBillingDemoRowWidthHistogram.WithLabelValues(site, opClass, operatorKind, rowWidthSource, modelVersion, weightVersion).Observe(rowWidth)
 }

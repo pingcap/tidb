@@ -93,6 +93,23 @@ func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 	return totalMemoryUsage
 }
 
+func (htc *hashTableContext) hashStateRows() uint64 {
+	var rows uint64
+	if htc == nil || htc.hashTable == nil {
+		return 0
+	}
+	for _, table := range htc.hashTable.tables {
+		if table != nil && table.rowData != nil {
+			validRows := table.rowData.validKeyCount()
+			if math.MaxUint64-rows < validRows {
+				return math.MaxUint64
+			}
+			rows += validRows
+		}
+	}
+	return rows
+}
+
 func (htc *hashTableContext) clearHashTable() {
 	partNum := len(htc.hashTable.tables)
 	for i := range partNum {
@@ -1324,7 +1341,12 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
-	waitJobDone(wg, errCh)
+	if !waitJobDone(wg, errCh) {
+		return
+	}
+	if e.stats != nil {
+		addHashTableRows(&e.stats.hashTableRows, e.hashTableContext.hashStateRows())
+	}
 }
 
 func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {

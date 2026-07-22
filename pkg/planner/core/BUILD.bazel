@@ -333,6 +333,7 @@ go_test(
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
         "//pkg/util/sem/v2:sem",
+        "//pkg/util/stmtsummary",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

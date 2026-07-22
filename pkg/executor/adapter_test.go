@@ -707,6 +707,72 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 		require.NotContains(t, completionFields["normalized_sql"], "secret_literal")
 	})
 
+	t.Run("preview RU general log publishes point lookup rpc only", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table point_get_rpc_ru_units (id int primary key, v int)")
+		tk.MustExec("insert into point_get_rpc_ru_units values (1, 10), (2, 20)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+
+		testCases := []struct {
+			name         string
+			querySQL     string
+			operatorKind string
+			requests     int64
+			rows         []string
+		}{
+			{"point get", "select v from point_get_rpc_ru_units where id = 1", "point_get", 3, []string{"10"}},
+			{"batch point get", "select v from point_get_rpc_ru_units where id in (1, 2) order by v", "batch_point_get", 4, []string{"10", "20"}},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				recorded.TakeAll()
+				ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+				execdetails.RUV2MetricsFromContext(ctx).AddResourceManagerReadCnt(tc.requests)
+				tk.MustQueryWithContext(ctx, tc.querySQL).Check(testkit.Rows(tc.rows...))
+
+				entries := recorded.TakeAll()
+				var completionEntries []observer.LoggedEntry
+				for _, entry := range entries {
+					if entry.Message == "GENERAL_LOG_RU_UNITS" {
+						completionEntries = append(completionEntries, entry)
+					}
+				}
+				require.Len(t, completionEntries, 1)
+				requireReadBillingDemoGeneralLogIdentity(t, completionEntries[0], tc.querySQL)
+				rawUnits, ok := completionEntries[0].ContextMap()["units"].([]any)
+				require.True(t, ok)
+				pointUnits := 0
+				for _, rawUnit := range rawUnits {
+					unit, ok := rawUnit.(map[string]any)
+					require.True(t, ok)
+					if unit["op_class"] != "kv_point_lookup" {
+						continue
+					}
+					pointUnits++
+					require.Equal(t, "tikv", unit["site"])
+					require.Equal(t, tc.operatorKind, unit["operator_kind"])
+					require.Equal(t, "read_request_count", unit["unit"])
+					require.Equal(t, "ruv2_metrics", unit["input_source"])
+					require.Equal(t, "all", unit["input_side"])
+					require.Equal(t, float64(tc.requests), unit["value"])
+				}
+				require.Equal(t, 1, pointUnits)
+			})
+		}
+	})
+
 	t.Run("preview RU general log DML completion is self describing", func(t *testing.T) {
 		core, recorded := observer.New(zap.InfoLevel)
 		oldLogger := logutil.GeneralLogger

@@ -9,7 +9,7 @@
 ## pkg/executor
 
 ### Tests
-- `pkg/executor/adapter_internal_test.go` - executor: Tests private adapter runtime accounting, including preview RU General Log gates, reduced unit schema, aggregation, and deterministic ordering.
+- `pkg/executor/adapter_internal_test.go` - executor: Tests private adapter runtime accounting, including preview RU General Log gates, mutation `cpu_work` plus raw-unit provenance, DML/source/side aggregation, serialization, and deterministic ordering.
 - `pkg/executor/adapter_test.go` - executor: Tests statement adapter behavior, including RU v2 finalization and self-describing preview RU General Log completion after lazy SELECT close, DML/early errors, compile-error suppression, cursor-detach gating, repeated finish calls, and EXPLAIN ANALYZE DML commit errors.
 - `pkg/executor/analyze_test.go` - executor: Tests analyze index extract top n.
 - `pkg/executor/analyze_utils_test.go` - executor: Tests get analyze panic err.
@@ -30,7 +30,7 @@
 - `pkg/executor/executor_failpoint_test.go` - executor: Tests TiDB last txn info commit mode.
 - `pkg/executor/executor_pkg_test.go` - executor: Tests build KV ranges for index join without CWC.
 - `pkg/executor/executor_required_rows_test.go` - executor: Tests limit required rows.
-- `pkg/executor/explain_test.go` - executor: Tests EXPLAIN ANALYZE formats, including preview RU v3 TiKV cop diagnostics, DML mutation/write operators, exact index and optimistic-retry mutation counts, join/sort/read-tree preservation, operator-level unavailable-TiKV status rows, restricted/feature-off isolation, RUv2 A/B equivalence, explicit-COMMIT ownership, and diagnostic compatibility.
+- `pkg/executor/explain_test.go` - executor: Tests EXPLAIN ANALYZE formats, including production-default uncalibrated v4 units and absent totals, distinct read/write request output units, six pushed TiKV operator classes (including an explicitly ordered StreamAgg) with native Unistore's incomplete scan-width fail-closed behavior, bounded scan/transport/point-lookup failures, all raw DML mutation diagnostics with gated mutation `cpu_work`, statement-summary/metrics output versions, restricted/feature-off isolation, and legacy v3 behavior retained as explicitly superseded coverage.
 - `pkg/executor/explain_unit_test.go` - executor: Tests explain analyze invoke next and close.
 - `pkg/executor/explainfor_test.go` - executor: Tests explain for.
 - `pkg/executor/grant_test.go` - executor: Tests grant global.
@@ -189,12 +189,12 @@
 - `pkg/executor/join/anti_semi_join_probe_test.go` - executor/join: Tests anti-semi join basic.
 - `pkg/executor/join/bench_test.go` - executor/join: Tests hash table build.
 - `pkg/executor/join/concurrent_map_test.go` - executor/join: Tests concurrent map.
-- `pkg/executor/join/hash_table_v1_test.go` - executor/join: Tests hash row container.
+- `pkg/executor/join/hash_table_v1_test.go` - executor/join: Tests hash row container, including V1 NAAJ null-bucket rows in HashJoin state accounting.
 - `pkg/executor/join/hash_table_v2_test.go` - executor/join: Tests hash table size.
 - `pkg/executor/join/inner_join_probe_test.go` - executor/join: Tests inner join probe basic.
 - `pkg/executor/join/inner_join_spill_test.go` - executor/join: Tests inner join spill basic.
 - `pkg/executor/join/join_row_table_test.go` - executor/join: Tests heap object can move.
-- `pkg/executor/join/join_stats_test.go` - executor/join: Tests hash join runtime stats.
+- `pkg/executor/join/join_stats_test.go` - executor/join: Tests HashJoin V1/V2 runtime stats, valid-key state-row accounting, overflow rejection, and clone/merge preservation.
 - `pkg/executor/join/join_table_meta_test.go` - executor/join: Tests join table meta key mode.
 - `pkg/executor/join/joiner_test.go` - executor/join: Tests required rows.
 - `pkg/executor/join/left_outer_anti_semi_join_probe_test.go` - executor/join: Tests left-outer anti-semi join probe basic.

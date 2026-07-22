@@ -18,10 +18,10 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -60,8 +60,8 @@ const (
 	explainRUWidthSourceScanDetailProcessedAvg        = "scan_detail_processed_key_avg"
 	explainRUWidthSourceScanDetailProcessedEstimate   = "scan_detail_processed_key_avg_estimate"
 	explainRUWidthSourceNotApplicable                 = "not_applicable"
-	readBillingDemoModelVersion                       = "v3"
-	readBillingDemoWeightVersion                      = "v2"
+	readBillingDemoModelVersion                       = "v4"
+	readBillingDemoWeightVersion                      = "v3-resource-formula-uncalibrated"
 	readBillingDemoStatusSuccess                      = "success"
 	readBillingDemoStatusUnsupported                  = "unsupported"
 	readBillingDemoStatusUnknownInput                 = "unknown_input"
@@ -103,6 +103,15 @@ const (
 	readBillingDemoReasonIncompleteCopRuntimeRows     = "incomplete_cop_runtime_rows"
 	readBillingDemoReasonDependentCopInputUnavailable = "dependent_cop_input_unavailable"
 	readBillingDemoReasonInvalidOrderingWork          = "invalid_ordering_work"
+	readBillingDemoReasonMissingOrderingProjection    = "missing_ordering_projection"
+	readBillingDemoReasonMissingExpressionCount       = "missing_expression_count"
+	readBillingDemoReasonInvalidTopNBound             = "invalid_topn_bound"
+	readBillingDemoReasonMissingHashStateRows         = "missing_hash_state_rows"
+	readBillingDemoReasonInvalidHashStateRows         = "invalid_hash_state_rows"
+	readBillingDemoReasonMissingReaderTransport       = "missing_reader_transport_details"
+	readBillingDemoReasonAmbiguousReaderTransport     = "ambiguous_reader_transport_producers"
+	readBillingDemoReasonUncalibratedWeights          = "uncalibrated_weights"
+	readBillingDemoReasonUnsupportedStatement         = "unsupported_statement"
 	readBillingDemoSiteStatement                      = "statement"
 	readBillingDemoSiteTiDB                           = "tidb"
 	readBillingDemoSiteTiKV                           = "tikv"
@@ -126,11 +135,13 @@ const (
 	readBillingDemoOpClassRangeScan                   = "kv_range_scan"
 	readBillingDemoOpClassKVMutation                  = "kv_mutation"
 	readBillingDemoOpClassKVWrite                     = "kv_write"
+	readBillingDemoOpClassReaderTransport             = "reader_transport"
 	readBillingDemoOpClassWrapper                     = "wrapper"
 	readBillingDemoOpClassSynthetic                   = "synthetic_source"
 	readBillingDemoOperatorStatement                  = "statement"
 	readBillingDemoOperatorMemDBMutation              = "memdb_mutation"
 	readBillingDemoOperatorTxnPrewrite                = "txn_prewrite"
+	readBillingDemoOperatorTxnWrite                   = "txn_write"
 	readBillingDemoUnitFixedEvents                    = "fixed_events"
 	readBillingDemoUnitInputRows                      = "input_rows"
 	readBillingDemoUnitInputBytes                     = "input_bytes"
@@ -147,6 +158,14 @@ const (
 	readBillingDemoUnitWriteByte                      = "write_byte"
 	readBillingDemoUnitPrewriteRegionNum              = "prewrite_region_num"
 	readBillingDemoUnitTiKVWriteRPCCount              = "tikv_write_rpc_count"
+	readBillingDemoUnitCPUWork                        = "cpu_work"
+	readBillingDemoUnitExpressionCount                = "expression_count"
+	readBillingDemoUnitScanBytes                      = "scan_bytes"
+	readBillingDemoUnitNetBytes                       = "net_bytes"
+	readBillingDemoUnitReadRequestCount               = "read_request_count"
+	readBillingDemoUnitWriteRequestCount              = "write_request_count"
+	readBillingDemoUnitHashStateRows                  = "hash_state_rows"
+	readBillingDemoUnitJoinOutputRows                 = "join_output_rows"
 	readBillingDemoInputSourceRuntimeChunkBytes       = "runtime_chunk_bytes"
 	readBillingDemoInputSourceScanDetail              = "scan_detail"
 	readBillingDemoInputSourceRuntimeChildActRows     = "runtime_child_act_rows"
@@ -156,6 +175,8 @@ const (
 	readBillingDemoInputSourceStmtMemDBMutation       = "stmt_memdb_mutation_calls"
 	readBillingDemoInputSourceCommitDetail            = "commit_detail"
 	readBillingDemoInputSourceRUV2Metrics             = "ruv2_metrics"
+	readBillingDemoInputSourcePhysicalPlan            = "physical_plan"
+	readBillingDemoInputSourceHashJoinRuntime         = "hash_join_runtime_stats"
 	readBillingDemoInputSideAll                       = "all"
 	readBillingDemoInputSideBuild                     = "build"
 	readBillingDemoInputSideProbe                     = "probe"
@@ -163,21 +184,6 @@ const (
 	readBillingDemoInputSideRight                     = "right"
 	readBillingDemoScopeStatementAttempted            = "statement_attempted"
 	readBillingDemoScopeTxnPrewritePayload            = "txn_prewrite_payload"
-
-	// The first write-side preview formula intentionally has no fixed/RPC/region
-	// terms: write keys use the current scaled RUv2 write-key coefficient, and
-	// write bytes use the existing TiKV range-scan byte coefficient as a
-	// calibration seed because RUv2 only shadows commit WriteSize today.
-	readBillingDemoWriteRUScale        = 2.01
-	readBillingDemoRUV2WriteKeysWeight = 0.330760861554226
-	readBillingDemoWriteKeyWeight      = readBillingDemoWriteRUScale * readBillingDemoRUV2WriteKeysWeight
-	readBillingDemoWriteByteWeight     = 0.000020
-	// Mutation weights are independent preview calibration slots. They stay at
-	// zero until mutation-only TiDB CPU calibration supplies a defensible seed;
-	// they must never alias RUv2 or TiKV write coefficients.
-	readBillingDemoMutationCountWeight  = 0.0
-	readBillingDemoMutationByteWeight   = 0.0
-	readBillingDemoDiagnosticZeroWeight = 0.0
 )
 
 type explainRUComponentSnapshotStatus string
@@ -269,11 +275,15 @@ type readBillingDemoCopInputEstimate struct {
 }
 
 type readBillingDemoCopComponentEvidence struct {
-	scanCount         int
-	scanIdx           int
-	detailHolderCount int
-	scanDetail        tikvutil.ScanDetail
-	maxSummaryTasks   int32
+	scanCount               int
+	scanIdx                 int
+	scanObservedTasks       int32
+	scanExpectedTasks       int32
+	detailHolderCount       int
+	scanDetail              tikvutil.ScanDetail
+	scanDetailRecords       int32
+	scanDetailExpectedTasks int32
+	maxSummaryTasks         int32
 }
 
 type readBillingDemoCopEstimator struct {
@@ -308,67 +318,27 @@ type readBillingDemoAppendOutcome struct {
 	cause   readBillingDemoCopFailure
 }
 
-type readBillingDemoOperatorWeights struct {
-	fixedEvent    float64
-	row           float64
-	byte          float64
-	orderWork     float64
-	mutationCount float64
-	mutationByte  float64
-	setCount      float64
-	deleteCount   float64
-	keyByte       float64
-	valueByte     float64
-	writeKey      float64
-	writeByte     float64
-	writeRPC      float64
-	region        float64
+type readBillingDemoWeights struct {
+	Version                 string
+	CPUWeight               float64
+	ScanWeight              float64
+	NetWeight               float64
+	ReadRequestWeight       float64
+	WriteRequestWeight      float64
+	HashTableWeight         float64
+	JoinWeight              float64
+	MutationBytesPerCPUUnit float64
+	Calibrated              bool
 }
 
-type readBillingDemoWeightKey struct {
-	site    string
-	opClass string
-	version string
+type readBillingDemoWeightProvider interface {
+	valid() bool
+	unitWeight(string) (float64, bool)
 }
 
-var readBillingDemoWeights = map[readBillingDemoWeightKey]readBillingDemoOperatorWeights{
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassRangeScan, readBillingDemoWeightVersion}:   {fixedEvent: 0.070, row: 0.000045, byte: 0.000020},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassKVWrite, readBillingDemoWeightVersion}:     {writeKey: readBillingDemoWriteKeyWeight, writeByte: readBillingDemoWriteByteWeight, writeRPC: readBillingDemoDiagnosticZeroWeight, region: readBillingDemoDiagnosticZeroWeight},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassFilter, readBillingDemoWeightVersion}:      {fixedEvent: 0.020, row: 0.000040, byte: 0.000006},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassProjection, readBillingDemoWeightVersion}:  {fixedEvent: 0.020, row: 0.000030, byte: 0.000006},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassLimit, readBillingDemoWeightVersion}:       {fixedEvent: 0.010, row: 0.000008, byte: 0.000002},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassTopN, readBillingDemoWeightVersion}:        {fixedEvent: 0.060, byte: 0.000012, orderWork: 0.000075},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassHashAgg, readBillingDemoWeightVersion}:     {fixedEvent: 0.080, row: 0.000100, byte: 0.000014},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassStreamAgg, readBillingDemoWeightVersion}:   {fixedEvent: 0.060, row: 0.000065, byte: 0.000010},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassPointLookup, readBillingDemoWeightVersion}: {fixedEvent: 0.045, row: 0.000030, byte: 0.000012},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassKVMutation, readBillingDemoWeightVersion}: {
-		mutationCount: readBillingDemoMutationCountWeight,
-		mutationByte:  readBillingDemoMutationByteWeight,
-		setCount:      readBillingDemoDiagnosticZeroWeight,
-		deleteCount:   readBillingDemoDiagnosticZeroWeight,
-		keyByte:       readBillingDemoDiagnosticZeroWeight,
-		valueByte:     readBillingDemoDiagnosticZeroWeight,
-	},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassFilter, readBillingDemoWeightVersion}:        {fixedEvent: 0.020, row: 0.000030, byte: 0.000005},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassProjection, readBillingDemoWeightVersion}:    {fixedEvent: 0.020, row: 0.000020, byte: 0.000004},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassLimit, readBillingDemoWeightVersion}:         {fixedEvent: 0.010, row: 0.000006, byte: 0.000001},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassTopN, readBillingDemoWeightVersion}:          {fixedEvent: 0.060, byte: 0.000010, orderWork: 0.000060},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassSort, readBillingDemoWeightVersion}:          {fixedEvent: 0.080, byte: 0.000012, orderWork: 0.000070},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassWindow, readBillingDemoWeightVersion}:        {fixedEvent: 0.070, row: 0.000070, byte: 0.000010},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassHashAgg, readBillingDemoWeightVersion}:       {fixedEvent: 0.070, row: 0.000085, byte: 0.000012},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassStreamAgg, readBillingDemoWeightVersion}:     {fixedEvent: 0.050, row: 0.000055, byte: 0.000008},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassHashJoin, readBillingDemoWeightVersion}:      {fixedEvent: 0.110, row: 0.000115, byte: 0.000020},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassMergeJoin, readBillingDemoWeightVersion}:     {fixedEvent: 0.090, row: 0.000075, byte: 0.000012},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassLookupJoin, readBillingDemoWeightVersion}:    {fixedEvent: 0.120, row: 0.000120, byte: 0.000020},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassReaderReceive, readBillingDemoWeightVersion}: {fixedEvent: 0.040, row: 0.000025, byte: 0.000014},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassLookupReader, readBillingDemoWeightVersion}:  {fixedEvent: 0.070, row: 0.000045, byte: 0.000016},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassOverlayReader, readBillingDemoWeightVersion}: {fixedEvent: 0.050, row: 0.000035, byte: 0.000012},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassMetadataReader, readBillingDemoWeightVersion}: {
-		fixedEvent: 0.020,
-		row:        0.000008,
-		byte:       0.000002,
-	},
-}
+// Production intentionally starts without guessed coefficients. Formula tests
+// inject a calibrated private value directly.
+var readBillingDemoV4Weights = readBillingDemoWeights{Version: readBillingDemoWeightVersion}
 
 type explainRURow struct {
 	section        string
@@ -424,6 +394,9 @@ func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.
 	if _, ok := stmt.(*ast.CommitStmt); ok {
 		return buildTxnCommitBillingDemoResult(sctx, ruv2Metrics, execErr)
 	}
+	if _, ok := stmt.(*ast.RollbackStmt); ok {
+		return readBillingDemoFailure(readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedStatement)
+	}
 	if dmlKind, ok := explainRUWriteDMLKind(stmt); ok {
 		return buildWriteBillingDemoResult(sctx, plan, dmlKind, ruv2Metrics, execErr)
 	}
@@ -463,6 +436,21 @@ func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.
 			return readBillingDemoFailedOperator(status, op)
 		}
 	}
+	if ruv2Metrics == nil && sctx.GetSessionVars() != nil {
+		ruv2Metrics = sctx.GetSessionVars().RUV2Metrics
+	}
+	if op, present := readBillingDemoReaderTransport(flat, runtimeStats, ruv2Metrics, false); present {
+		if op.status != readBillingDemoStatusOperatorOK {
+			return readBillingDemoFailedOperator(readBillingDemoStatusUnknownInput, op)
+		}
+		result.operators = append(result.operators, op)
+	}
+	if op, present := readBillingDemoPointLookupTransport(flat, ruv2Metrics, false); present {
+		if op.status != readBillingDemoStatusOperatorOK {
+			return readBillingDemoFailedOperator(readBillingDemoStatusUnknownInput, op)
+		}
+		result.operators = append(result.operators, op)
+	}
 	return result
 }
 
@@ -476,25 +464,20 @@ func buildTxnCommitBillingDemoResult(sctx base.PlanContext, ruv2Metrics *execdet
 		result.reason = readBillingDemoReasonStatementError
 	}
 
-	var commitDetail *tikvutil.CommitDetails
 	var pipelined bool
 	if sctx != nil && sctx.GetSessionVars() != nil {
 		vars := sctx.GetSessionVars()
 		if ruv2Metrics == nil {
 			ruv2Metrics = vars.RUV2Metrics
 		}
-		if vars.StmtCtx != nil {
-			commitDetail = vars.StmtCtx.GetExecDetails().CommitDetail
-			if recorder := vars.StmtCtx.PreviewKVMutationRecorder; recorder != nil {
-				pipelined = recorder.Snapshot().Pipelined
-			}
+		if vars.StmtCtx != nil && vars.StmtCtx.PreviewKVMutationRecorder != nil {
+			pipelined = vars.StmtCtx.PreviewKVMutationRecorder.Snapshot().Pipelined
 		}
 	}
 
-	// A final COMMIT owns the transaction-scoped TiKV payload. Keep dml_kind
-	// empty rather than guessing how the payload should be split among prior
-	// statements in the explicit transaction.
-	result.operators = append(result.operators, buildTiKVWriteBillingDemoOperators("", commitDetail, ruv2Metrics, pipelined)...)
+	// COMMIT owns only the write requests in its fresh statement snapshot. Keep
+	// dml_kind empty because earlier DML statements own their own snapshots.
+	result.operators = append(result.operators, buildTiKVWriteBillingDemoOperators("", ruv2Metrics, pipelined)...)
 	return result
 }
 
@@ -508,27 +491,23 @@ func buildWriteBillingDemoResult(sctx base.PlanContext, plan base.Plan, dmlKind 
 		result.reason = readBillingDemoReasonStatementError
 	}
 
-	var commitDetail *tikvutil.CommitDetails
-	var mutationPipelined bool
+	var pipelined bool
 	if sctx != nil && sctx.GetSessionVars() != nil {
 		if ruv2Metrics == nil {
 			ruv2Metrics = sctx.GetSessionVars().RUV2Metrics
 		}
-		if sctx.GetSessionVars().StmtCtx != nil {
-			commitDetail = sctx.GetSessionVars().StmtCtx.GetExecDetails().CommitDetail
-			if recorder := sctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder; recorder != nil {
-				mutationPipelined = recorder.Snapshot().Pipelined
-			}
+		if stmtCtx := sctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.PreviewKVMutationRecorder != nil {
+			pipelined = stmtCtx.PreviewKVMutationRecorder.Snapshot().Pipelined
 		}
 	}
 
-	appendReadBillingDemoDMLPlan(&result, sctx, plan)
+	appendReadBillingDemoDMLPlan(&result, sctx, plan, ruv2Metrics)
 	appendReadBillingDemoMutation(&result, sctx, dmlKind)
-	result.operators = append(result.operators, buildTiKVWriteBillingDemoOperators(dmlKind, commitDetail, ruv2Metrics, mutationPipelined)...)
+	result.operators = append(result.operators, buildTiKVWriteBillingDemoOperators(dmlKind, ruv2Metrics, pipelined)...)
 	return result
 }
 
-func appendReadBillingDemoDMLPlan(result *readBillingDemoResult, sctx base.PlanContext, plan base.Plan) {
+func appendReadBillingDemoDMLPlan(result *readBillingDemoResult, sctx base.PlanContext, plan base.Plan, ruv2Metrics *execdetails.RUV2Metrics) {
 	if plan == nil || sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().StmtCtx == nil {
 		result.operators = append(result.operators, readBillingDemoPlanDiagnostic(readBillingDemoReasonMissingPlan))
 		return
@@ -553,6 +532,12 @@ func appendReadBillingDemoDMLPlan(result *readBillingDemoResult, sctx base.PlanC
 	for _, tree := range flat.ScalarSubQueries {
 		appendTree(tree)
 	}
+	if op, present := readBillingDemoReaderTransport(flat, runtimeStats, ruv2Metrics, true); present {
+		result.operators = append(result.operators, op)
+	}
+	if op, present := readBillingDemoPointLookupTransport(flat, ruv2Metrics, true); present {
+		result.operators = append(result.operators, op)
+	}
 }
 
 func readBillingDemoPlanDiagnostic(reason string) readBillingDemoOperatorResult {
@@ -569,13 +554,13 @@ func readBillingDemoPlanDiagnostic(reason string) readBillingDemoOperatorResult 
 
 func appendReadBillingDemoMutation(result *readBillingDemoResult, sctx base.PlanContext, dmlKind string) {
 	operator := readBillingDemoOperatorResult{
-		id:           "stmt_memdb_mutation",
+		id:           "mutation@statement",
 		site:         readBillingDemoSiteTiDB,
 		opClass:      readBillingDemoOpClassKVMutation,
 		operatorKind: readBillingDemoOperatorMemDBMutation,
 		dmlKind:      dmlKind,
 		scope:        readBillingDemoScopeStatementAttempted,
-		uncalibrated: true,
+		uncalibrated: !readBillingDemoWeightsValid(readBillingDemoV4Weights),
 	}
 	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().StmtCtx == nil ||
 		sctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder == nil {
@@ -599,13 +584,17 @@ func appendReadBillingDemoMutation(result *readBillingDemoResult, sctx base.Plan
 		readBillingDemoUnit{unit: readBillingDemoUnitKeyBytes, source: readBillingDemoInputSourceStmtMemDBMutation, side: readBillingDemoInputSideAll, value: float64(snapshot.KeyBytes), widthSource: explainRUWidthSourceNotApplicable},
 		readBillingDemoUnit{unit: readBillingDemoUnitValueBytes, source: readBillingDemoInputSourceStmtMemDBMutation, side: readBillingDemoInputSideAll, value: float64(snapshot.ValueBytes), widthSource: explainRUWidthSourceNotApplicable},
 	)
+	if readBillingDemoWeightsValid(readBillingDemoV4Weights) {
+		normalization := readBillingDemoV4Weights.MutationBytesPerCPUUnit
+		work := float64(snapshot.EncodedMutationCount) + float64(snapshot.EncodedMutationBytes)/normalization
+		if work >= 0 && !math.IsNaN(work) && !math.IsInf(work, 0) {
+			operator.units = append(operator.units, readBillingDemoUnit{unit: readBillingDemoUnitCPUWork, source: readBillingDemoInputSourceStmtMemDBMutation, side: readBillingDemoInputSideAll, value: work, widthSource: explainRUWidthSourceNotApplicable})
+		}
+	}
 	result.operators = append(result.operators, operator)
-	result.operators = append(result.operators, readBillingDemoMutationDiagnostic(dmlKind, readBillingDemoReasonUncalibratedMutation))
-	// The foreground gate does not currently distinguish simple DML from
-	// schemas that require unmodeled row preparation, constraint checks, or FK
-	// orchestration. Keep the encoded mutation units available, but report that
-	// wider DML CPU as partial for every supported DML kind, including DELETE.
-	result.operators = append(result.operators, readBillingDemoMutationDiagnostic(dmlKind, readBillingDemoReasonDMLAncillaryPartial))
+	if !readBillingDemoWeightsValid(readBillingDemoV4Weights) {
+		result.operators = append(result.operators, readBillingDemoMutationDiagnostic(dmlKind, readBillingDemoReasonUncalibratedMutation))
+	}
 	vars := sctx.GetSessionVars()
 	if vars.InTxn() && vars.TxnCtx != nil && vars.TxnCtx.CouldRetry {
 		result.operators = append(result.operators, readBillingDemoMutationDiagnostic(dmlKind, readBillingDemoReasonOptimisticReplayPartial))
@@ -614,7 +603,7 @@ func appendReadBillingDemoMutation(result *readBillingDemoResult, sctx base.Plan
 
 func readBillingDemoMutationDiagnostic(dmlKind, reason string) readBillingDemoOperatorResult {
 	return readBillingDemoOperatorResult{
-		id:           "stmt_memdb_mutation",
+		id:           "mutation@statement",
 		site:         readBillingDemoSiteTiDB,
 		opClass:      readBillingDemoOpClassKVMutation,
 		operatorKind: readBillingDemoOperatorMemDBMutation,
@@ -625,112 +614,36 @@ func readBillingDemoMutationDiagnostic(dmlKind, reason string) readBillingDemoOp
 	}
 }
 
-func buildWriteBillingDemoResultFromDetails(dmlKind string, commitDetail *tikvutil.CommitDetails, ruv2Metrics *execdetails.RUV2Metrics) readBillingDemoResult {
-	return readBillingDemoResult{
-		status:    readBillingDemoStatusSuccess,
-		reason:    readBillingDemoReasonNone,
-		operators: buildTiKVWriteBillingDemoOperators(dmlKind, commitDetail, ruv2Metrics, false),
-	}
-}
-
-func buildTiKVWriteBillingDemoOperators(dmlKind string, commitDetail *tikvutil.CommitDetails, ruv2Metrics *execdetails.RUV2Metrics, pipelined bool) []readBillingDemoOperatorResult {
+func buildTiKVWriteBillingDemoOperators(dmlKind string, ruv2Metrics *execdetails.RUV2Metrics, pipelined bool) []readBillingDemoOperatorResult {
 	operator := readBillingDemoOperatorResult{
-		id:            "commit_txn",
+		id:            "txn_write@statement",
 		site:          readBillingDemoSiteTiKV,
 		opClass:       readBillingDemoOpClassKVWrite,
-		operatorKind:  readBillingDemoOperatorTxnPrewrite,
+		operatorKind:  readBillingDemoOperatorTxnWrite,
 		dmlKind:       dmlKind,
 		scope:         readBillingDemoScopeTxnPrewritePayload,
 		emitStatusRow: true,
 	}
-	// Pipelined transactions allocate CommitDetails, but the logical flush
-	// payload is not accumulated into WriteKeys/WriteSize. Do not publish those
-	// empty fields as a complete zero payload merely because the detail exists.
 	if pipelined {
 		operator.status = readBillingDemoStatusPartial
 		operator.reason = readBillingDemoReasonPipelinedWritePartial
 		return []readBillingDemoOperatorResult{operator}
 	}
-	if commitDetail == nil {
+	if ruv2Metrics == nil || ruv2Metrics.Bypass() {
 		operator.status = readBillingDemoStatusPartial
-		operator.reason = readBillingDemoReasonMissingCommitDetail
+		operator.reason = readBillingDemoReasonMissingWriteRPCCount
 		return []readBillingDemoOperatorResult{operator}
 	}
-
+	writeRPCCount := ruv2Metrics.ResourceManagerWriteCnt()
+	if writeRPCCount < 0 {
+		operator.status = readBillingDemoStatusPartial
+		operator.reason = readBillingDemoReasonMissingWriteRPCCount
+		return []readBillingDemoOperatorResult{operator}
+	}
 	operator.status = readBillingDemoStatusOperatorOK
 	operator.reason = readBillingDemoReasonNone
-	writeKeys := int64(commitDetail.WriteKeys)
-	writeBytes := int64(commitDetail.WriteSize)
-	if writeKeys == 0 && writeBytes == 0 {
-		operator.reason = readBillingDemoReasonZeroMutation
-	}
-	operator.units = append(operator.units,
-		readBillingDemoUnit{
-			unit:        readBillingDemoUnitWriteKeys,
-			source:      readBillingDemoInputSourceCommitDetail,
-			side:        readBillingDemoInputSideAll,
-			value:       float64(writeKeys),
-			widthSource: explainRUWidthSourceNotApplicable,
-		},
-		readBillingDemoUnit{
-			unit:        readBillingDemoUnitWriteByte,
-			source:      readBillingDemoInputSourceCommitDetail,
-			side:        readBillingDemoInputSideAll,
-			value:       float64(writeBytes),
-			widthSource: explainRUWidthSourceNotApplicable,
-		},
-	)
-	operators := []readBillingDemoOperatorResult{operator}
-	if writeKeys == 0 && writeBytes > 0 {
-		operators = append(operators, readBillingDemoWriteDiagnosticStatus(dmlKind, readBillingDemoReasonMissingWriteKeys))
-	}
-	if writeBytes == 0 && writeKeys > 0 {
-		operators = append(operators, readBillingDemoWriteDiagnosticStatus(dmlKind, readBillingDemoReasonMissingWriteByte))
-	}
-	prewriteRegionNum := int64(atomic.LoadInt32(&commitDetail.PrewriteRegionNum))
-	if prewriteRegionNum > 0 {
-		operator.units = append(operator.units, readBillingDemoUnit{
-			unit:        readBillingDemoUnitPrewriteRegionNum,
-			source:      readBillingDemoInputSourceCommitDetail,
-			side:        readBillingDemoInputSideAll,
-			value:       float64(prewriteRegionNum),
-			widthSource: explainRUWidthSourceNotApplicable,
-		})
-	}
-	writeRPCCount := int64(0)
-	if ruv2Metrics != nil && !ruv2Metrics.Bypass() {
-		writeRPCCount = ruv2Metrics.ResourceManagerWriteCnt()
-	}
-	if writeRPCCount > 0 {
-		operator.units = append(operator.units, readBillingDemoUnit{
-			unit:        readBillingDemoUnitTiKVWriteRPCCount,
-			source:      readBillingDemoInputSourceRUV2Metrics,
-			side:        readBillingDemoInputSideAll,
-			value:       float64(writeRPCCount),
-			widthSource: explainRUWidthSourceNotApplicable,
-		})
-	}
-	if prewriteRegionNum == 0 {
-		operators = append(operators, readBillingDemoWriteDiagnosticStatus(dmlKind, readBillingDemoReasonMissingPrewriteRegion))
-	}
-	if writeRPCCount == 0 {
-		operators = append(operators, readBillingDemoWriteDiagnosticStatus(dmlKind, readBillingDemoReasonMissingWriteRPCCount))
-	}
-	operators[0] = operator
-	return operators
-}
-
-func readBillingDemoWriteDiagnosticStatus(dmlKind, reason string) readBillingDemoOperatorResult {
-	return readBillingDemoOperatorResult{
-		id:           "commit_txn",
-		site:         readBillingDemoSiteTiKV,
-		opClass:      readBillingDemoOpClassKVWrite,
-		operatorKind: readBillingDemoOperatorTxnPrewrite,
-		dmlKind:      dmlKind,
-		scope:        readBillingDemoScopeTxnPrewritePayload,
-		status:       readBillingDemoStatusPartial,
-		reason:       reason,
-	}
+	operator.units = []readBillingDemoUnit{{unit: readBillingDemoUnitWriteRequestCount, source: readBillingDemoInputSourceRUV2Metrics, side: readBillingDemoInputSideAll, value: float64(writeRPCCount), widthSource: explainRUWidthSourceNotApplicable}}
+	return []readBillingDemoOperatorResult{operator}
 }
 
 func readBillingDemoPlanContext(plan base.Plan) base.PlanContext {
@@ -740,52 +653,226 @@ func readBillingDemoPlanContext(plan base.Plan) base.PlanContext {
 	return plan.SCtx()
 }
 
-func readBillingDemoResolveWeights(site, opClass, version string) (readBillingDemoOperatorWeights, bool) {
-	weights, ok := readBillingDemoWeights[readBillingDemoWeightKey{site: site, opClass: opClass, version: version}]
-	return weights, ok
+func readBillingDemoAllTrees(flat *FlatPhysicalPlan) []FlatPlanTree {
+	if flat == nil {
+		return nil
+	}
+	trees := make([]FlatPlanTree, 0, 1+len(flat.CTEs)+len(flat.ScalarSubQueries))
+	trees = append(trees, flat.Main)
+	trees = append(trees, flat.CTEs...)
+	trees = append(trees, flat.ScalarSubQueries...)
+	return trees
 }
 
-func readBillingDemoUnitWeight(weights readBillingDemoOperatorWeights, unit string) (float64, bool) {
+func readBillingDemoReaderTransport(flat *FlatPhysicalPlan, runtimeStats *execdetails.RuntimeStatsColl, ruv2Metrics *execdetails.RUV2Metrics, dml bool) (readBillingDemoOperatorResult, bool) {
+	op := readBillingDemoOperatorResult{
+		id:            "reader_transport@statement",
+		site:          readBillingDemoSiteTiDB,
+		opClass:       readBillingDemoOpClassReaderTransport,
+		operatorKind:  "mixed_reader",
+		emitStatusRow: true,
+	}
+	kinds := make(map[string]struct{})
+	openProducerSet := dml
+	hasTasks := false
+	allReaderRowsZero := true
+	for _, tree := range readBillingDemoAllTrees(flat) {
+		for _, node := range tree {
+			if node == nil || node.Origin == nil {
+				continue
+			}
+			kind := ""
+			switch plan := node.Origin.(type) {
+			case *physicalop.PhysicalTableReader:
+				if plan.StoreType == kv.TiKV {
+					kind = "table_reader"
+				} else {
+					openProducerSet = true
+				}
+			case *physicalop.PhysicalIndexReader:
+				kind = "index_reader"
+			case *physicalop.PhysicalIndexLookUpReader:
+				kind = "index_lookup"
+			case *physicalop.PhysicalIndexMergeReader:
+				kind = "index_merge"
+			case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan, *physicalop.PhysicalExchangeReceiver, *physicalop.PhysicalExchangeSender:
+				openProducerSet = true
+			}
+			if kind != "" {
+				kinds[kind] = struct{}{}
+				rows, ok := readBillingDemoPlanActRows(runtimeStats, node.Origin.ID())
+				if !ok || rows != 0 {
+					allReaderRowsZero = false
+				}
+			}
+			if !node.IsRoot && node.StoreType == kv.TiKV && runtimeStats != nil {
+				stats := runtimeStats.GetCopStats(node.Origin.ID())
+				if (stats != nil && stats.GetTasks() > 0) || runtimeStats.GetExpectedCopTasks(node.Origin.ID()) > 0 {
+					hasTasks = true
+				}
+			}
+		}
+	}
+	if len(kinds) == 0 {
+		return readBillingDemoOperatorResult{}, false
+	}
+	if len(kinds) == 1 {
+		for kind := range kinds {
+			op.operatorKind = kind
+		}
+	}
+	if openProducerSet {
+		op.status = readBillingDemoStatusUnknownInput
+		op.reason = readBillingDemoReasonAmbiguousReaderTransport
+		return op, true
+	}
+	if ruv2Metrics == nil || ruv2Metrics.Bypass() {
+		op.status = readBillingDemoStatusUnknownInput
+		op.reason = readBillingDemoReasonMissingReaderTransport
+		return op, true
+	}
+	netBytes := ruv2Metrics.TiKVCoprocessorResponseBytes()
+	requests := ruv2Metrics.ResourceManagerReadCnt()
+	if netBytes < 0 || requests < 0 || (netBytes > 0 && requests == 0) || (netBytes == 0 && requests == 0 && (hasTasks || !allReaderRowsZero)) {
+		op.status = readBillingDemoStatusUnknownInput
+		op.reason = readBillingDemoReasonMissingReaderTransport
+		return op, true
+	}
+	op.status = readBillingDemoStatusOperatorOK
+	op.reason = readBillingDemoReasonNone
+	op.units = []readBillingDemoUnit{
+		{unit: readBillingDemoUnitNetBytes, source: readBillingDemoInputSourceRUV2Metrics, side: readBillingDemoInputSideAll, value: float64(netBytes), widthSource: explainRUWidthSourceNotApplicable},
+		{unit: readBillingDemoUnitReadRequestCount, source: readBillingDemoInputSourceRUV2Metrics, side: readBillingDemoInputSideAll, value: float64(requests), widthSource: explainRUWidthSourceNotApplicable},
+	}
+	return op, true
+}
+
+func readBillingDemoPointLookupTransport(flat *FlatPhysicalPlan, ruv2Metrics *execdetails.RUV2Metrics, dml bool) (readBillingDemoOperatorResult, bool) {
+	op := readBillingDemoOperatorResult{
+		id:            "point_lookup@statement",
+		site:          readBillingDemoSiteTiKV,
+		opClass:       readBillingDemoOpClassPointLookup,
+		operatorKind:  "mixed_point_lookup",
+		emitStatusRow: true,
+	}
+	kinds := make(map[string]struct{})
+	openProducerSet := dml
+	for _, tree := range readBillingDemoAllTrees(flat) {
+		for _, node := range tree {
+			if node == nil || node.Origin == nil {
+				continue
+			}
+			switch plan := node.Origin.(type) {
+			case *physicalop.PointGetPlan:
+				kinds["point_get"] = struct{}{}
+				openProducerSet = openProducerSet || plan.Lock
+			case *physicalop.BatchPointGetPlan:
+				kinds["batch_point_get"] = struct{}{}
+				openProducerSet = openProducerSet || plan.Lock
+			case *physicalop.PhysicalTableReader:
+				openProducerSet = true
+			case *physicalop.PhysicalIndexReader, *physicalop.PhysicalIndexLookUpReader,
+				*physicalop.PhysicalIndexMergeReader, *physicalop.PhysicalExchangeReceiver,
+				*physicalop.PhysicalExchangeSender:
+				openProducerSet = true
+			}
+		}
+	}
+	if len(kinds) == 0 {
+		return readBillingDemoOperatorResult{}, false
+	}
+	if len(kinds) == 1 {
+		for kind := range kinds {
+			op.operatorKind = kind
+		}
+	}
+	if openProducerSet {
+		op.status = readBillingDemoStatusUnknownInput
+		op.reason = readBillingDemoReasonAmbiguousReaderTransport
+		return op, true
+	}
+	if ruv2Metrics == nil || ruv2Metrics.Bypass() {
+		op.status = readBillingDemoStatusUnknownInput
+		op.reason = readBillingDemoReasonMissingReaderTransport
+		return op, true
+	}
+	requests := ruv2Metrics.ResourceManagerReadCnt()
+	if requests < 0 {
+		op.status = readBillingDemoStatusUnknownInput
+		op.reason = readBillingDemoReasonMissingReaderTransport
+		return op, true
+	}
+	op.status = readBillingDemoStatusOperatorOK
+	op.reason = readBillingDemoReasonNone
+	op.units = []readBillingDemoUnit{{
+		unit: readBillingDemoUnitReadRequestCount, source: readBillingDemoInputSourceRUV2Metrics,
+		side: readBillingDemoInputSideAll, value: float64(requests), widthSource: explainRUWidthSourceNotApplicable,
+	}}
+	return op, true
+}
+
+func readBillingDemoWeightsValid(weights readBillingDemoWeights) bool {
+	if weights.Version == "" || weights.Version == readBillingDemoWeightVersion || !weights.Calibrated ||
+		weights.MutationBytesPerCPUUnit <= 0 || math.IsNaN(weights.MutationBytesPerCPUUnit) || math.IsInf(weights.MutationBytesPerCPUUnit, 0) {
+		return false
+	}
+	for _, weight := range []float64{weights.CPUWeight, weights.ScanWeight, weights.NetWeight, weights.ReadRequestWeight, weights.WriteRequestWeight, weights.HashTableWeight, weights.JoinWeight} {
+		if weight < 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func readBillingDemoActiveWeightVersion() string {
+	if readBillingDemoV4Weights.Version != "" {
+		return readBillingDemoV4Weights.Version
+	}
+	return readBillingDemoWeightVersion
+}
+
+func (weights readBillingDemoWeights) valid() bool {
+	return readBillingDemoWeightsValid(weights)
+}
+
+func (weights readBillingDemoWeights) unitWeight(unit string) (float64, bool) {
+	return readBillingDemoUnitWeight(weights, unit)
+}
+
+func readBillingDemoUnitWeight(weights readBillingDemoWeights, unit string) (float64, bool) {
 	switch unit {
-	case readBillingDemoUnitFixedEvents:
-		return weights.fixedEvent, true
-	case readBillingDemoUnitInputRows:
-		return weights.row, true
-	case readBillingDemoUnitInputBytes:
-		return weights.byte, true
-	case readBillingDemoUnitOrderWork:
-		return weights.orderWork, true
-	case readBillingDemoUnitEncodedMutationCount:
-		return weights.mutationCount, true
-	case readBillingDemoUnitEncodedMutationBytes:
-		return weights.mutationByte, true
-	case readBillingDemoUnitSetCount:
-		return weights.setCount, true
-	case readBillingDemoUnitDeleteCount:
-		return weights.deleteCount, true
-	case readBillingDemoUnitKeyBytes:
-		return weights.keyByte, true
-	case readBillingDemoUnitValueBytes:
-		return weights.valueByte, true
-	case readBillingDemoUnitWriteKeys:
-		return weights.writeKey, true
-	case readBillingDemoUnitWriteByte:
-		return weights.writeByte, true
-	case readBillingDemoUnitPrewriteRegionNum:
-		return weights.region, true
-	case readBillingDemoUnitTiKVWriteRPCCount:
-		return weights.writeRPC, true
+	case readBillingDemoUnitCPUWork:
+		return weights.CPUWeight, true
+	case readBillingDemoUnitScanBytes:
+		return weights.ScanWeight, true
+	case readBillingDemoUnitNetBytes:
+		return weights.NetWeight, true
+	case readBillingDemoUnitReadRequestCount:
+		return weights.ReadRequestWeight, true
+	case readBillingDemoUnitWriteRequestCount:
+		return weights.WriteRequestWeight, true
+	case readBillingDemoUnitHashStateRows:
+		return weights.HashTableWeight, true
+	case readBillingDemoUnitJoinOutputRows:
+		return weights.JoinWeight, true
 	default:
 		return 0, false
 	}
 }
 
-func readBillingDemoUnitPreviewRU(unit readBillingDemoUnit, weights readBillingDemoOperatorWeights) (float64, float64, bool) {
-	weight, ok := readBillingDemoUnitWeight(weights, unit.unit)
+func readBillingDemoUnitPreviewRU(unit readBillingDemoUnit, weights readBillingDemoWeightProvider) (float64, float64, bool) {
+	if !weights.valid() || unit.value < 0 || math.IsNaN(unit.value) || math.IsInf(unit.value, 0) {
+		return 0, 0, false
+	}
+	weight, ok := weights.unitWeight(unit.unit)
 	if !ok {
 		return 0, 0, false
 	}
-	return weight, unit.value * weight, true
+	ru := unit.value * weight
+	if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
+		return 0, 0, false
+	}
+	return weight, ru, true
 }
 
 func readBillingDemoFailure(status, reason string) readBillingDemoResult {
@@ -815,29 +902,15 @@ func readBillingDemoFailedOperator(status string, op readBillingDemoOperatorResu
 }
 
 func summarizeReadBillingDemoBaseUnits(result readBillingDemoResult) stmtsummary.ReadBillingDemoBaseUnitSummary {
-	var summary stmtsummary.ReadBillingDemoBaseUnitSummary
-	for _, op := range result.operators {
-		if op.status != readBillingDemoStatusOperatorOK || !readBillingDemoOperatorBillable(op) {
-			continue
-		}
-		for _, unit := range op.units {
-			switch unit.unit {
-			case readBillingDemoUnitFixedEvents:
-				summary.SumReadBillingDemoFixedEvents += unit.value
-			case readBillingDemoUnitInputRows:
-				summary.SumReadBillingDemoInputRows += unit.value
-			case readBillingDemoUnitInputBytes:
-				summary.SumReadBillingDemoInputBytes += unit.value
-			}
-		}
-	}
-	return summary
+	// The three convenience totals are a v3 schema. V4 detail is preserved in
+	// the versioned base-unit table and must not be projected into those fields.
+	return stmtsummary.ReadBillingDemoBaseUnitSummary{}
 }
 
 func buildReadBillingDemoStatementStats(result readBillingDemoResult) stmtsummary.ReadBillingDemoStatementStats {
 	stats := stmtsummary.ReadBillingDemoStatementStats{
 		ModelVersion:  readBillingDemoModelVersion,
-		WeightVersion: readBillingDemoWeightVersion,
+		WeightVersion: readBillingDemoActiveWeightVersion(),
 	}
 	status := result.status
 	if status == "" {
@@ -849,7 +922,7 @@ func buildReadBillingDemoStatementStats(result readBillingDemoResult) stmtsummar
 	}
 	stats.Statuses = append(stats.Statuses, stmtsummary.ReadBillingDemoStatusSample{
 		ModelVersion:  readBillingDemoModelVersion,
-		WeightVersion: readBillingDemoWeightVersion,
+		WeightVersion: readBillingDemoActiveWeightVersion(),
 		Site:          readBillingDemoSiteStatement,
 		OpClass:       readBillingDemoOpClassStatement,
 		OperatorKind:  readBillingDemoOperatorStatement,
@@ -875,7 +948,7 @@ func buildReadBillingDemoStatementStats(result readBillingDemoResult) stmtsummar
 			opReason == reason) {
 			stats.Statuses = append(stats.Statuses, stmtsummary.ReadBillingDemoStatusSample{
 				ModelVersion:  readBillingDemoModelVersion,
-				WeightVersion: readBillingDemoWeightVersion,
+				WeightVersion: readBillingDemoActiveWeightVersion(),
 				Site:          op.site,
 				OpClass:       op.opClass,
 				OperatorKind:  op.operatorKind,
@@ -889,7 +962,7 @@ func buildReadBillingDemoStatementStats(result readBillingDemoResult) stmtsummar
 		for _, unit := range op.units {
 			sample := stmtsummary.ReadBillingDemoBaseUnitSample{
 				ModelVersion:   readBillingDemoModelVersion,
-				WeightVersion:  readBillingDemoWeightVersion,
+				WeightVersion:  readBillingDemoActiveWeightVersion(),
 				Site:           op.site,
 				OpClass:        op.opClass,
 				OperatorKind:   op.operatorKind,
@@ -902,14 +975,6 @@ func buildReadBillingDemoStatementStats(result readBillingDemoResult) stmtsummar
 				RowWidth:       unit.rowWidth,
 			}
 			stats.BaseUnits = append(stats.BaseUnits, sample)
-			switch unit.unit {
-			case readBillingDemoUnitFixedEvents:
-				stats.Totals.SumReadBillingDemoFixedEvents += unit.value
-			case readBillingDemoUnitInputRows:
-				stats.Totals.SumReadBillingDemoInputRows += unit.value
-			case readBillingDemoUnitInputBytes:
-				stats.Totals.SumReadBillingDemoInputBytes += unit.value
-			}
 		}
 	}
 	return stats
@@ -1081,17 +1146,19 @@ func newReadBillingDemoCopEstimator(tree FlatPlanTree, runtimeStats *execdetails
 		if runtimeStats == nil {
 			continue
 		}
-		stats := runtimeStats.GetCopStats(node.Origin.ID())
-		if stats == nil {
-			continue
+		detail, detailRecords, observedTasks, expectedTasks := runtimeStats.GetCopScanDetailAndCoverage(node.Origin.ID())
+		if observedTasks > component.maxSummaryTasks {
+			component.maxSummaryTasks = observedTasks
 		}
-		if tasks := stats.GetTasks(); tasks > component.maxSummaryTasks {
-			component.maxSummaryTasks = tasks
+		if supported && operator.opClass == readBillingDemoOpClassRangeScan {
+			component.scanObservedTasks = observedTasks
+			component.scanExpectedTasks = expectedTasks
 		}
-		detail := stats.GetScanDetail()
-		if detail.ProcessedKeys > 0 && detail.ProcessedKeysSize > 0 {
+		if detailRecords > 0 {
 			component.detailHolderCount++
 			component.scanDetail = detail
+			component.scanDetailRecords = detailRecords
+			component.scanDetailExpectedTasks = expectedTasks
 		}
 	}
 	estimator.auxiliaryEntries = len(estimator.parentIdx) + len(estimator.componentID) + len(estimator.components) + len(estimator.nodeFailures) + len(estimator.treeFailures)
@@ -1542,7 +1609,19 @@ func (op readBillingDemoOperatorResult) withReason(reason string) readBillingDem
 }
 
 func readBillingDemoOperatorBillable(op readBillingDemoOperatorResult) bool {
-	return op.opClass != readBillingDemoOpClassWrapper && op.opClass != readBillingDemoOpClassSynthetic
+	switch op.opClass {
+	case readBillingDemoOpClassFilter, readBillingDemoOpClassProjection, readBillingDemoOpClassLimit,
+		readBillingDemoOpClassTopN, readBillingDemoOpClassSort, readBillingDemoOpClassWindow,
+		readBillingDemoOpClassHashAgg, readBillingDemoOpClassStreamAgg, readBillingDemoOpClassHashJoin,
+		readBillingDemoOpClassMergeJoin, readBillingDemoOpClassLookupJoin, readBillingDemoOpClassRangeScan,
+		readBillingDemoOpClassReaderTransport, readBillingDemoOpClassOverlayReader,
+		readBillingDemoOpClassKVMutation, readBillingDemoOpClassKVWrite:
+		return true
+	case readBillingDemoOpClassPointLookup:
+		return op.id == "point_lookup@statement"
+	default:
+		return false
+	}
 }
 
 func readBillingDemoOperatorActRows(runtimeStats *execdetails.RuntimeStatsColl, op *FlatOperator) (int64, bool) {
@@ -1595,7 +1674,7 @@ func readBillingDemoClassifyOperator(op *FlatOperator) (readBillingDemoOperatorR
 	case plancodec.TypeExchangeReceiver, plancodec.TypeExchangeSender:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassReaderReceive, operatorKind: operatorKind}, false, readBillingDemoReasonUnsupportedMPP
 	case plancodec.TypeIndexMerge:
-		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassLookupReader, operatorKind: operatorKind}, false, readBillingDemoReasonUnsupportedIndexMerge
+		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassLookupReader, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeLock:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassReaderReceive, operatorKind: operatorKind}, false, readBillingDemoReasonUnsupportedLock
 	case plancodec.TypePointGet, plancodec.TypeBatchPointGet:
@@ -1639,45 +1718,227 @@ func readBillingDemoClassifyOperator(op *FlatOperator) (readBillingDemoOperatorR
 	}
 }
 
-func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, op *FlatOperator, operator readBillingDemoOperatorResult) ([]readBillingDemoUnit, string, bool) {
-	outputRows, outputBytes, hasOutput := readBillingDemoRootOutputRowsAndBytes(runtimeStats, op.Origin.ID())
-	if !hasOutput {
-		if _, rowsOK := readBillingDemoPlanActRows(runtimeStats, op.Origin.ID()); !rowsOK {
-			return nil, readBillingDemoReasonMissingRuntimeRows, false
+func readBillingDemoJoinConditionCount(join *physicalop.BasePhysicalJoin) int64 {
+	return int64(len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions))
+}
+
+func readBillingDemoCompareFilterCount(filters *physicalop.ColWithCmpFuncManager) int64 {
+	if filters == nil {
+		return 0
+	}
+	return int64(len(filters.OpType))
+}
+
+func readBillingDemoExpressionCount(plan base.Plan) (int64, bool) {
+	switch p := plan.(type) {
+	case *physicalop.PhysicalSelection:
+		return int64(len(p.Conditions)), true
+	case *physicalop.PhysicalProjection:
+		return int64(len(p.Exprs)), true
+	case *physicalop.PhysicalHashAgg:
+		return int64(len(p.GroupByItems) + len(p.AggFuncs)), true
+	case *physicalop.PhysicalStreamAgg:
+		return int64(len(p.GroupByItems) + len(p.AggFuncs)), true
+	case *physicalop.PhysicalHashJoin:
+		if len(p.LeftJoinKeys) != len(p.RightJoinKeys) || len(p.LeftNAJoinKeys) != len(p.RightNAJoinKeys) {
+			return 0, false
 		}
-		return nil, readBillingDemoReasonMissingRuntimeBytes, false
+		return int64(len(p.EqualConditions)+len(p.NAEqualConditions)) + readBillingDemoJoinConditionCount(&p.BasePhysicalJoin), true
+	case *physicalop.PhysicalMergeJoin:
+		if len(p.LeftJoinKeys) != len(p.RightJoinKeys) {
+			return 0, false
+		}
+		return int64(len(p.CompareFuncs)) + readBillingDemoJoinConditionCount(&p.BasePhysicalJoin), true
+	case *physicalop.PhysicalIndexHashJoin:
+		if len(p.OuterHashKeys) != len(p.InnerHashKeys) {
+			return 0, false
+		}
+		return int64(len(p.OuterHashKeys)) + readBillingDemoJoinConditionCount(&p.BasePhysicalJoin) + readBillingDemoCompareFilterCount(p.CompareFilters), true
+	case *physicalop.PhysicalIndexMergeJoin:
+		if p.NeedOuterSort != (len(p.OuterCompareFuncs) > 0) {
+			return 0, false
+		}
+		return int64(len(p.CompareFuncs)+len(p.OuterCompareFuncs)) + readBillingDemoJoinConditionCount(&p.BasePhysicalJoin) + readBillingDemoCompareFilterCount(p.CompareFilters), true
+	case *physicalop.PhysicalIndexJoin:
+		if len(p.OuterJoinKeys) != len(p.InnerJoinKeys) {
+			return 0, false
+		}
+		return int64(len(p.OuterJoinKeys)) + readBillingDemoJoinConditionCount(&p.BasePhysicalJoin) + readBillingDemoCompareFilterCount(p.CompareFilters), true
+	case *physicalop.PhysicalWindow:
+		count := len(p.WindowFuncDescs) + len(p.PartitionBy) + len(p.OrderBy)
+		if p.Frame != nil {
+			if p.Frame.Start != nil {
+				count += len(p.Frame.Start.CalcFuncs)
+			}
+			if p.Frame.End != nil {
+				count += len(p.Frame.End.CalcFuncs)
+			}
+		}
+		return int64(count), true
+	default:
+		return 0, false
+	}
+}
+
+func readBillingDemoOrderingMaterialized(op, child *FlatOperator) bool {
+	if op == nil || op.Origin == nil || child == nil || child.Origin == nil {
+		return false
+	}
+	childSchema := child.Origin.Schema()
+	if projection, ok := child.Origin.(*physicalop.PhysicalProjection); ok &&
+		(childSchema == nil || childSchema.Len() != len(projection.Exprs)) {
+		return false
+	}
+	checkExpr := func(expr expression.Expression) bool {
+		if expr == nil {
+			return false
+		}
+		_, scalar := expr.(*expression.ScalarFunction)
+		if scalar {
+			return false
+		}
+		if col, ok := expr.(*expression.Column); ok {
+			return childSchema != nil && childSchema.ColumnIndex(col) >= 0
+		}
+		return true
+	}
+	switch p := op.Origin.(type) {
+	case *physicalop.PhysicalSort:
+		for _, item := range p.ByItems {
+			if item == nil || !checkExpr(item.Expr) {
+				return false
+			}
+		}
+		return true
+	case *physicalop.PhysicalTopN:
+		for _, item := range p.ByItems {
+			if item == nil || !checkExpr(item.Expr) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func readBillingDemoCheckedWork(rows int64, multiplier float64) (float64, bool) {
+	if rows < 0 || multiplier < 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
+		return 0, false
+	}
+	work := float64(rows) * multiplier
+	return work, work >= 0 && !math.IsNaN(work) && !math.IsInf(work, 0)
+}
+
+func readBillingDemoHashStateRows(runtimeStats *execdetails.RuntimeStatsColl, planID int) (int64, bool) {
+	if runtimeStats == nil || !runtimeStats.ExistsRootStats(planID) {
+		return 0, false
+	}
+	_, groups := runtimeStats.GetRootStats(planID).MergeStats()
+	for _, group := range groups {
+		if stats, ok := group.(execdetails.HashTableRuntimeStats); ok {
+			return stats.HashTableRows(), true
+		}
+	}
+	return 0, false
+}
+
+func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, op *FlatOperator, operator readBillingDemoOperatorResult) ([]readBillingDemoUnit, string, bool) {
+	outputRows, hasOutputRows := readBillingDemoPlanActRows(runtimeStats, op.Origin.ID())
+	if !hasOutputRows || outputRows < 0 {
+		return nil, readBillingDemoReasonMissingRuntimeRows, false
 	}
 	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceRuntimeChunkBytes)}
-	switch operator.opClass {
-	case readBillingDemoOpClassHashJoin:
-		var reason string
-		var ok bool
-		units, reason, ok = appendReadBillingDemoJoinUnits(units, runtimeStats, tree, idx, true)
+	appendExpressionCPU := func(rows int64) (string, bool) {
+		exprCount, ok := readBillingDemoExpressionCount(op.Origin)
+		if !ok || exprCount < 0 {
+			return readBillingDemoReasonMissingExpressionCount, false
+		}
+		work, ok := readBillingDemoCheckedWork(rows, float64(exprCount))
 		if !ok {
+			return readBillingDemoReasonMissingExpressionCount, false
+		}
+		units = append(units,
+			readBillingDemoUnit{unit: readBillingDemoUnitExpressionCount, source: readBillingDemoInputSourcePhysicalPlan, side: readBillingDemoInputSideAll, value: float64(exprCount), widthSource: explainRUWidthSourceNotApplicable},
+			readBillingDemoUnit{unit: readBillingDemoUnitCPUWork, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: work, widthSource: explainRUWidthSourceNotApplicable},
+		)
+		return "", true
+	}
+	switch operator.opClass {
+	case readBillingDemoOpClassHashJoin, readBillingDemoOpClassMergeJoin, readBillingDemoOpClassLookupJoin:
+		if idx < 0 || idx >= len(tree) || len(tree[idx].ChildrenIdx) != 2 {
+			return nil, readBillingDemoReasonMissingExpressionCount, false
+		}
+		var inputRows int64
+		for childOrder, childIdx := range tree[idx].ChildrenIdx {
+			if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil || !tree[childIdx].IsRoot {
+				return nil, readBillingDemoReasonMissingRuntimeRows, false
+			}
+			rows, ok := readBillingDemoPlanActRows(runtimeStats, tree[childIdx].Origin.ID())
+			if !ok || rows < 0 || (rows > 0 && inputRows > math.MaxInt64-rows) {
+				return nil, readBillingDemoReasonMissingRuntimeRows, false
+			}
+			inputRows += rows
+			side := readBillingDemoInputSideLeft
+			if childOrder == 1 {
+				side = readBillingDemoInputSideRight
+			}
+			if operator.opClass == readBillingDemoOpClassHashJoin {
+				if tree[childIdx].Label == BuildSide {
+					side = readBillingDemoInputSideBuild
+				} else if tree[childIdx].Label == ProbeSide {
+					side = readBillingDemoInputSideProbe
+				}
+			}
+			units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChildActRows, side: side, value: float64(rows), widthSource: explainRUWidthSourceNotApplicable})
+		}
+		if reason, ok := appendExpressionCPU(inputRows); !ok {
 			return nil, reason, false
 		}
-	case readBillingDemoOpClassMergeJoin, readBillingDemoOpClassLookupJoin:
-		var reason string
-		var ok bool
-		units, reason, ok = appendReadBillingDemoJoinUnits(units, runtimeStats, tree, idx, false)
-		if !ok {
-			return nil, reason, false
+		units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitJoinOutputRows, source: readBillingDemoInputSourceRuntimeOperatorActRows, side: readBillingDemoInputSideAll, value: float64(outputRows), widthSource: explainRUWidthSourceNotApplicable})
+		if operator.opClass == readBillingDemoOpClassHashJoin {
+			stateRows, ok := readBillingDemoHashStateRows(runtimeStats, op.Origin.ID())
+			if !ok {
+				return nil, readBillingDemoReasonMissingHashStateRows, false
+			}
+			if stateRows < 0 {
+				return nil, readBillingDemoReasonInvalidHashStateRows, false
+			}
+			units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitHashStateRows, source: readBillingDemoInputSourceHashJoinRuntime, side: readBillingDemoInputSideBuild, value: float64(stateRows), widthSource: explainRUWidthSourceNotApplicable})
 		}
 	default:
-		inputRows, inputBytes, reason, ok := readBillingDemoDirectLocalInputRowsAndBytes(runtimeStats, tree, idx, operator.opClass)
-		if !ok {
-			return nil, reason, false
+		if idx < 0 || idx >= len(tree) || len(tree[idx].ChildrenIdx) != 1 {
+			return nil, readBillingDemoReasonMissingRuntimeRows, false
 		}
-		units = append(units, readBillingDemoRuntimeChunkInputUnits(inputRows, inputBytes, readBillingDemoInputSideAll)...)
+		childIdx := tree[idx].ChildrenIdx[0]
+		if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil {
+			return nil, readBillingDemoReasonMissingRuntimeRows, false
+		}
+		inputRows, ok := readBillingDemoPlanActRows(runtimeStats, tree[childIdx].Origin.ID())
+		if !ok || inputRows < 0 {
+			return nil, readBillingDemoReasonMissingRuntimeRows, false
+		}
+		units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: float64(inputRows), widthSource: explainRUWidthSourceNotApplicable})
 		orderWork, ok := readBillingDemoOrderingWorkUnit(op, operator.opClass, inputRows)
 		if !ok {
-			return nil, readBillingDemoReasonInvalidOrderingWork, false
+			return nil, readBillingDemoOrderingFailureReason(op, operator.opClass), false
 		}
 		if orderWork.unit != "" {
+			if !readBillingDemoOrderingMaterialized(op, tree[childIdx]) {
+				return nil, readBillingDemoReasonMissingOrderingProjection, false
+			}
+			orderWork.unit = readBillingDemoUnitCPUWork
 			units = append(units, orderWork)
+		} else if operator.opClass == readBillingDemoOpClassLimit || operator.opClass == readBillingDemoOpClassOverlayReader {
+			units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitCPUWork, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: float64(inputRows), widthSource: explainRUWidthSourceNotApplicable})
+		} else if reason, ok := appendExpressionCPU(inputRows); !ok {
+			return nil, reason, false
+		}
+		if operator.opClass == readBillingDemoOpClassHashAgg {
+			units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitHashStateRows, source: readBillingDemoInputSourceRuntimeOperatorActRows, side: readBillingDemoInputSideAll, value: float64(outputRows), widthSource: explainRUWidthSourceNotApplicable})
 		}
 	}
-	if readBillingDemoOperatorHasOutputShadows(operator.opClass) {
+	if _, outputBytes, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, op.Origin.ID()); ok && readBillingDemoOperatorHasOutputShadows(operator.opClass) {
 		units = append(units, readBillingDemoRuntimeChunkOutputUnits(outputRows, outputBytes)...)
 	}
 	return units, "", true
@@ -1690,14 +1951,6 @@ func readBillingDemoFixedEventUnit(inputSource string) readBillingDemoUnit {
 		side:        readBillingDemoInputSideAll,
 		value:       1,
 		widthSource: explainRUWidthSourceNotApplicable,
-	}
-}
-
-func readBillingDemoRuntimeChunkInputUnits(rows, bytes int64, side string) []readBillingDemoUnit {
-	rowWidth := readBillingDemoAverageRowWidth(rows, float64(bytes))
-	return []readBillingDemoUnit{
-		{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChunkBytes, side: side, value: float64(rows), rowWidth: rowWidth, widthSource: explainRUWidthSourceRuntimeChunkAvg},
-		{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceRuntimeChunkBytes, side: side, value: float64(bytes), rowWidth: rowWidth, widthSource: explainRUWidthSourceRuntimeChunkAvg},
 	}
 }
 
@@ -1748,18 +2001,20 @@ func readBillingDemoOrderingWorkUnit(op *FlatOperator, opClass string, inputRows
 		if !ok {
 			return readBillingDemoUnit{}, false
 		}
-		if op.IsRoot {
-			// Add after conversion so an extreme OFFSET + COUNT cannot wrap uint64.
-			logWidth = max(float64(topN.Offset)+float64(topN.Count), 2)
-		} else {
-			// Pushdown folds the original OFFSET + COUNT into Count. TiKV's TopN
-			// protobuf has only Limit, so a non-zero cop Offset is not executable
-			// evidence for the heap bound used here.
-			if topN.Offset != 0 {
-				return readBillingDemoUnit{}, false
-			}
-			logWidth = max(float64(topN.Count), 2)
+		if topN.Count == 0 {
+			return readBillingDemoUnit{
+				unit:        readBillingDemoUnitOrderWork,
+				source:      readBillingDemoInputSourceRuntimeOrderingWork,
+				side:        readBillingDemoInputSideAll,
+				value:       0,
+				widthSource: explainRUWidthSourceNotApplicable,
+			}, true
 		}
+		if topN.Count > math.MaxUint64-topN.Offset {
+			return readBillingDemoUnit{}, false
+		}
+		effectiveK := min(uint64(inputRows), topN.Offset+topN.Count)
+		logWidth = max(float64(effectiveK), 2)
 	}
 	work := float64(inputRows) * math.Log2(logWidth)
 	if work < 0 || math.IsNaN(work) || math.IsInf(work, 0) {
@@ -1774,72 +2029,13 @@ func readBillingDemoOrderingWorkUnit(op *FlatOperator, opClass string, inputRows
 	}, true
 }
 
-func readBillingDemoUseOutputRowsAsInput(opClass string) bool {
-	switch opClass {
-	case readBillingDemoOpClassReaderReceive, readBillingDemoOpClassLookupReader, readBillingDemoOpClassMetadataReader, readBillingDemoOpClassPointLookup:
-		return true
-	default:
-		return false
+func readBillingDemoOrderingFailureReason(op *FlatOperator, opClass string) string {
+	if opClass == readBillingDemoOpClassTopN && op != nil {
+		if topN, ok := op.Origin.(*physicalop.PhysicalTopN); ok && topN.Count > math.MaxUint64-topN.Offset {
+			return readBillingDemoReasonInvalidTopNBound
+		}
 	}
-}
-
-func appendReadBillingDemoJoinUnits(units []readBillingDemoUnit, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, useBuildProbe bool) ([]readBillingDemoUnit, string, bool) {
-	for childOrder, childIdx := range tree[idx].ChildrenIdx {
-		if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil || !tree[childIdx].IsRoot {
-			continue
-		}
-		rows, bytes, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, tree[childIdx].Origin.ID())
-		if !ok {
-			return nil, readBillingDemoReasonMissingInputBytes, false
-		}
-		side := readBillingDemoInputSideAll
-		if useBuildProbe {
-			switch tree[childIdx].Label {
-			case BuildSide:
-				side = readBillingDemoInputSideBuild
-			case ProbeSide:
-				side = readBillingDemoInputSideProbe
-			default:
-				if childOrder == 0 {
-					side = readBillingDemoInputSideBuild
-				} else {
-					side = readBillingDemoInputSideProbe
-				}
-			}
-		} else if childOrder == 0 {
-			side = readBillingDemoInputSideLeft
-		} else {
-			side = readBillingDemoInputSideRight
-		}
-		units = append(units, readBillingDemoRuntimeChunkInputUnits(rows, bytes, side)...)
-	}
-	return units, "", true
-}
-
-func readBillingDemoDirectLocalInputRowsAndBytes(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, opClass string) (int64, int64, string, bool) {
-	if idx < 0 || idx >= len(tree) || tree[idx] == nil {
-		return 0, 0, "", true
-	}
-	if len(tree[idx].ChildrenIdx) == 0 || readBillingDemoUseOutputRowsAsInput(opClass) {
-		rows, bytes, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, tree[idx].Origin.ID())
-		if !ok {
-			return 0, 0, readBillingDemoReasonMissingRuntimeBytes, false
-		}
-		return rows, bytes, "", true
-	}
-	var rows, inputBytes int64
-	for _, childIdx := range tree[idx].ChildrenIdx {
-		if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil || !tree[childIdx].IsRoot {
-			continue
-		}
-		childRows, childBytes, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, tree[childIdx].Origin.ID())
-		if !ok {
-			return 0, 0, readBillingDemoReasonMissingInputBytes, false
-		}
-		rows += childRows
-		inputBytes += childBytes
-	}
-	return rows, inputBytes, "", true
+	return readBillingDemoReasonInvalidOrderingWork
 }
 
 func readBillingDemoPlanActRows(runtimeStats *execdetails.RuntimeStatsColl, planID int) (int64, bool) {
@@ -1926,54 +2122,92 @@ func readBillingDemoCopUnits(estimator *readBillingDemoCopEstimator, idx int, op
 		if idx < 0 || idx >= len(estimator.tree) || len(estimator.tree[idx].ChildrenIdx) != 0 {
 			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)}
 		}
-		width := estimator.componentOutputWidth(idx)
-		if width.failure.present {
-			return readBillingDemoCopUnitOutcome{failure: width.failure}
-		}
-		switch width.widthState {
-		case readBillingDemoCopWidthAmbiguous:
-			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonAmbiguousCopScanWidth)}
-		case readBillingDemoCopWidthMissing:
-			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
-		case readBillingDemoCopWidthKnown:
-		default:
-			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
-		}
 		component := estimator.components[estimator.componentID[idx]]
+		if component.scanCount != 1 || component.detailHolderCount > 1 {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonAmbiguousCopScanWidth)}
+		}
+		if component.detailHolderCount != 1 || component.scanObservedTasks <= 0 || component.scanExpectedTasks <= 0 {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
+		}
+		if component.scanObservedTasks != component.scanExpectedTasks ||
+			component.scanDetailExpectedTasks != component.scanExpectedTasks ||
+			component.scanDetailRecords != component.scanDetailExpectedTasks {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonIncompleteCopRuntimeRows)}
+		}
 		scanDetail := component.scanDetail
 		scanInputRows, scanInputBytes, ok := readBillingDemoRangeScanInput(scanDetail.TotalKeys, scanDetail.ProcessedKeys, scanDetail.ProcessedKeysSize)
 		if !ok {
 			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
 		}
+		rowWidth := readBillingDemoAverageRowWidth(scanInputRows, scanInputBytes)
 		units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceScanDetail)}
 		units = append(units,
-			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: float64(scanInputRows), rowWidth: width.avgRowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
-			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: width.avgRowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: float64(scanInputRows), rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+			readBillingDemoUnit{unit: readBillingDemoUnitScanBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedEstimate},
 		)
 		return readBillingDemoCopUnitOutcome{success: true, units: units}
 	}
-
-	input := estimator.inputEstimate(idx)
-	if input.failure.present {
-		return readBillingDemoCopUnitOutcome{failure: input.failure}
+	childIdx, failure, ok := estimator.directCopChild(idx)
+	if !ok {
+		return readBillingDemoCopUnitOutcome{failure: failure}
+	}
+	rowsEvidence := readBillingDemoExactCopRowsEvidence(estimator.runtimeStats, estimator.tree[childIdx].Origin.ID())
+	if rowsEvidence.state == readBillingDemoCopRowsMissing {
+		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingCopChildRuntimeRows)}
+	}
+	if rowsEvidence.state == readBillingDemoCopRowsInvalid {
+		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(childIdx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnknownInput, readBillingDemoReasonInvalidCopRuntimeRows)}
+	}
+	component := estimator.components[estimator.componentID[idx]]
+	if component.maxSummaryTasks > 0 && rowsEvidence.tasks < component.maxSummaryTasks {
+		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonIncompleteCopRuntimeRows)}
 	}
 	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceRuntimeChildActRows)}
 	units = append(units,
-		readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: input.inputSource, side: readBillingDemoInputSideAll, value: float64(input.rows), rowWidth: input.avgRowWidth, widthSource: input.widthSource},
-		readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: input.inputSource, side: readBillingDemoInputSideAll, value: input.inputBytes, rowWidth: input.avgRowWidth, widthSource: input.widthSource},
+		readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: float64(rowsEvidence.rows), widthSource: explainRUWidthSourceNotApplicable},
 	)
-	orderWork, ok := readBillingDemoOrderingWorkUnit(estimator.tree[idx], operator.opClass, input.rows)
+	orderWork, ok := readBillingDemoOrderingWorkUnit(estimator.tree[idx], operator.opClass, rowsEvidence.rows)
 	if !ok {
-		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonInvalidOrderingWork)}
+		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoOrderingFailureReason(estimator.tree[idx], operator.opClass))}
 	}
 	if orderWork.unit != "" {
+		if !readBillingDemoOrderingMaterialized(estimator.tree[idx], estimator.tree[childIdx]) {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingOrderingProjection)}
+		}
+		orderWork.unit = readBillingDemoUnitCPUWork
 		units = append(units, orderWork)
+	} else if operator.opClass == readBillingDemoOpClassLimit {
+		units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitCPUWork, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: float64(rowsEvidence.rows), widthSource: explainRUWidthSourceNotApplicable})
+	} else {
+		exprCount, ok := readBillingDemoExpressionCount(estimator.tree[idx].Origin)
+		if !ok || exprCount < 0 {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingExpressionCount)}
+		}
+		work, ok := readBillingDemoCheckedWork(rowsEvidence.rows, float64(exprCount))
+		if !ok {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingExpressionCount)}
+		}
+		units = append(units,
+			readBillingDemoUnit{unit: readBillingDemoUnitExpressionCount, source: readBillingDemoInputSourcePhysicalPlan, side: readBillingDemoInputSideAll, value: float64(exprCount), widthSource: explainRUWidthSourceNotApplicable},
+			readBillingDemoUnit{unit: readBillingDemoUnitCPUWork, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: work, widthSource: explainRUWidthSourceNotApplicable},
+		)
 	}
-	units = append(units, estimator.aggOutputShadowUnits(idx, operator.opClass)...)
+	aggUnits := estimator.aggOutputShadowUnits(idx, operator.opClass)
+	if operator.opClass == readBillingDemoOpClassHashAgg {
+		if len(aggUnits) == 0 {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonIncompleteCopRuntimeRows)}
+		}
+		units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitHashStateRows, source: readBillingDemoInputSourceRuntimeOperatorActRows, side: readBillingDemoInputSideAll, value: aggUnits[0].value, widthSource: explainRUWidthSourceNotApplicable})
+	}
+	units = append(units, aggUnits...)
 	return readBillingDemoCopUnitOutcome{success: true, units: units}
 }
 
 func readBillingDemoRangeScanInput(totalKeys, processedKeys, processedKeysSize int64) (int64, float64, bool) {
+	if totalKeys == 0 && processedKeys == 0 && processedKeysSize == 0 {
+		return 0, 0, true
+	}
 	if totalKeys <= 0 || processedKeys <= 0 || processedKeysSize <= 0 {
 		return 0, 0, false
 	}
@@ -1989,7 +2223,8 @@ func recordReadBillingDemoResult(result readBillingDemoResult) {
 	if status == "" {
 		status = readBillingDemoStatusUnknownInput
 	}
-	metrics.RecordReadBillingDemoStatement(status, readBillingDemoModelVersion)
+	weightVersion := readBillingDemoActiveWeightVersion()
+	metrics.RecordReadBillingDemoStatement(status, readBillingDemoModelVersion, weightVersion)
 	for _, op := range result.operators {
 		opStatus := op.status
 		if opStatus == "" {
@@ -2002,13 +2237,13 @@ func recordReadBillingDemoResult(result readBillingDemoResult) {
 		if reason == "" {
 			reason = readBillingDemoReasonNone
 		}
-		metrics.RecordReadBillingDemoOperatorStatus(op.site, op.opClass, op.operatorKind, opStatus, reason, readBillingDemoModelVersion)
+		metrics.RecordReadBillingDemoOperatorStatus(op.site, op.opClass, op.operatorKind, opStatus, reason, readBillingDemoModelVersion, weightVersion)
 		if opStatus != readBillingDemoStatusOperatorOK || !readBillingDemoOperatorBillable(op) {
 			continue
 		}
 		for _, unit := range op.units {
-			metrics.AddReadBillingDemoBaseUnits(op.site, op.opClass, op.operatorKind, unit.unit, unit.source, unit.side, readBillingDemoModelVersion, unit.value)
-			metrics.ObserveReadBillingDemoRowWidth(op.site, op.opClass, op.operatorKind, unit.widthSource, readBillingDemoModelVersion, unit.rowWidth)
+			metrics.AddReadBillingDemoBaseUnits(op.site, op.opClass, op.operatorKind, unit.unit, unit.source, unit.side, readBillingDemoModelVersion, weightVersion, unit.value)
+			metrics.ObserveReadBillingDemoRowWidth(op.site, op.opClass, op.operatorKind, unit.widthSource, readBillingDemoModelVersion, weightVersion, unit.rowWidth)
 		}
 	}
 }
@@ -2242,15 +2477,19 @@ func (e *Explain) renderRUExplain() (err error) {
 
 func explainRUBuildReadBillingRows(result readBillingDemoResult, snapshotStatus explainRUComponentSnapshotStatus) []explainRURow {
 	rows := []explainRURow{{
-		section:      explainRUSectionSummary,
-		component:    "total_preview_ru",
-		hasPreviewRU: true,
-		source:       explainRUSourceSummaryTotal,
-		note:         explainRUReadBillingSummaryNote(snapshotStatus, result),
+		section:   explainRUSectionSummary,
+		component: "total_preview_ru",
+		source:    explainRUSourceSummaryTotal,
+		note:      explainRUReadBillingSummaryNote(snapshotStatus, result),
 	}}
 	totalPreviewRU := 0.0
+	weightsReady := readBillingDemoWeightsValid(readBillingDemoV4Weights)
+	completeTotal := weightsReady && result.status == readBillingDemoStatusSuccess
 	for _, op := range result.operators {
 		if op.status != readBillingDemoStatusOperatorOK {
+			if readBillingDemoOperatorBillable(op) {
+				completeTotal = false
+			}
 			if op.emitStatusRow {
 				rows = append(rows, explainRUReadBillingStatusRow(op))
 			}
@@ -2259,24 +2498,31 @@ func explainRUBuildReadBillingRows(result readBillingDemoResult, snapshotStatus 
 		if !readBillingDemoOperatorBillable(op) {
 			continue
 		}
-		weights, hasWeights := readBillingDemoResolveWeights(op.site, op.opClass, readBillingDemoWeightVersion)
 		for _, unit := range op.units {
 			row := explainRUReadBillingUnitRow(op, unit)
-			if hasWeights {
-				if weight, previewRU, ok := readBillingDemoUnitPreviewRU(unit, weights); ok {
+			if _, semantic := readBillingDemoUnitWeight(readBillingDemoV4Weights, unit.unit); semantic {
+				if weight, previewRU, ok := readBillingDemoUnitPreviewRU(unit, readBillingDemoV4Weights); ok {
 					row.weight = weight
 					row.hasWeight = true
 					row.previewRU = previewRU
 					row.hasPreviewRU = true
-					totalPreviewRU += previewRU
+					nextTotal := totalPreviewRU + previewRU
+					if nextTotal < 0 || math.IsNaN(nextTotal) || math.IsInf(nextTotal, 0) {
+						completeTotal = false
+					} else {
+						totalPreviewRU = nextTotal
+					}
+				} else {
+					completeTotal = false
 				}
-			} else {
-				row.note = appendExplainRUNote(row.note, "missing_weight")
 			}
 			rows = append(rows, row)
 		}
 	}
-	rows[0].previewRU = totalPreviewRU
+	if completeTotal {
+		rows[0].previewRU = totalPreviewRU
+		rows[0].hasPreviewRU = true
+	}
 	return rows
 }
 
@@ -2286,7 +2532,7 @@ func explainRUReadBillingStatusRow(op readBillingDemoOperatorResult) explainRURo
 		id:            op.id,
 		component:     op.operatorKind,
 		operatorClass: op.site + "/" + op.opClass,
-		note:          "weight_version=" + readBillingDemoWeightVersion,
+		note:          "weight_version=" + readBillingDemoActiveWeightVersion(),
 	}
 	row.note = appendExplainRUNote(row.note, "status="+op.status)
 	if op.reason != "" {
@@ -2308,7 +2554,10 @@ func explainRUReadBillingStatusRow(op readBillingDemoOperatorResult) explainRURo
 }
 
 func explainRUReadBillingSummaryNote(snapshotStatus explainRUComponentSnapshotStatus, result readBillingDemoResult) string {
-	note := "weight_version=" + readBillingDemoWeightVersion
+	note := "weight_version=" + readBillingDemoActiveWeightVersion()
+	if !readBillingDemoWeightsValid(readBillingDemoV4Weights) {
+		note = appendExplainRUNote(note, readBillingDemoReasonUncalibratedWeights)
+	}
 	if snapshotStatus != explainRUComponentSnapshotOK {
 		note = appendExplainRUNote(note, "component_snapshot_"+string(snapshotStatus))
 	}
@@ -2334,7 +2583,7 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 		rowWidthSource: unit.widthSource,
 		unit:           unit.unit,
 		source:         unit.source,
-		note:           "input_side=" + unit.side + ",weight_version=" + readBillingDemoWeightVersion,
+		note:           "input_side=" + unit.side + ",weight_version=" + readBillingDemoActiveWeightVersion(),
 	}
 	if op.scope != "" {
 		row.note = appendExplainRUNote(row.note, "scope="+op.scope)
@@ -2384,6 +2633,16 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 	case readBillingDemoUnitOrderWork:
 		row.workRows = unit.value
 		row.hasWorkRows = true
+	case readBillingDemoUnitCPUWork:
+		row.workRows = unit.value
+		row.hasWorkRows = true
+	case readBillingDemoUnitScanBytes, readBillingDemoUnitNetBytes:
+		row.workBytes = unit.value
+		row.hasWorkBytes = true
+	case readBillingDemoUnitExpressionCount, readBillingDemoUnitReadRequestCount, readBillingDemoUnitWriteRequestCount,
+		readBillingDemoUnitHashStateRows, readBillingDemoUnitJoinOutputRows:
+		row.count = int64(unit.value)
+		row.hasCount = true
 	case readBillingDemoUnitEncodedMutationCount, readBillingDemoUnitSetCount, readBillingDemoUnitDeleteCount,
 		readBillingDemoUnitWriteKeys, readBillingDemoUnitPrewriteRegionNum, readBillingDemoUnitTiKVWriteRPCCount:
 		row.count = int64(unit.value)
@@ -2398,9 +2657,11 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 
 func readBillingDemoUnitDiagnosticOnly(unit string) bool {
 	switch unit {
-	case readBillingDemoUnitSetCount, readBillingDemoUnitDeleteCount, readBillingDemoUnitKeyBytes,
+	case readBillingDemoUnitFixedEvents, readBillingDemoUnitInputRows, readBillingDemoUnitInputBytes,
+		readBillingDemoUnitOrderWork, readBillingDemoUnitExpressionCount, readBillingDemoUnitEncodedMutationCount,
+		readBillingDemoUnitEncodedMutationBytes, readBillingDemoUnitSetCount, readBillingDemoUnitDeleteCount, readBillingDemoUnitKeyBytes,
 		readBillingDemoUnitValueBytes, readBillingDemoUnitPrewriteRegionNum, readBillingDemoUnitTiKVWriteRPCCount,
-		readBillingDemoUnitOutputRows, readBillingDemoUnitOutputBytes:
+		readBillingDemoUnitWriteKeys, readBillingDemoUnitWriteByte, readBillingDemoUnitOutputRows, readBillingDemoUnitOutputBytes:
 		return true
 	default:
 		return false
@@ -2506,7 +2767,7 @@ func explainRUObserveRow(row explainRURow) {
 		rowWidth = row.rowWidth
 	}
 	component, operator := explainRUMetricComponentOperator(row)
-	metrics.ObserveExplainRURow(row.section, component, operator, row.source, row.rowWidthSource, readBillingDemoWeightVersion, previewRU, workRows, workBytes, rowWidth)
+	metrics.ObserveExplainRURow(row.section, component, operator, row.source, row.rowWidthSource, readBillingDemoActiveWeightVersion(), previewRU, workRows, workBytes, rowWidth)
 }
 
 func explainRUMetricComponentOperator(row explainRURow) (component, operator string) {

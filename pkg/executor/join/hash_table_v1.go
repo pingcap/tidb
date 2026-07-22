@@ -532,6 +532,18 @@ func (c *hashRowContainer) Len() uint64 {
 	return c.hashTable.Len()
 }
 
+func (c *hashRowContainer) hashStateRows() uint64 {
+	rows := c.Len()
+	if c.hashNANullBucket != nil {
+		nullRows := uint64(len(c.hashNANullBucket.entries))
+		if ^uint64(0)-rows < nullRows {
+			return ^uint64(0)
+		}
+		rows += nullRows
+	}
+	return rows
+}
+
 func (c *hashRowContainer) Close() error {
 	failpoint.Inject("issue60926", nil)
 

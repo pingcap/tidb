@@ -15,14 +15,19 @@
 package core
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -30,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -238,8 +244,767 @@ func TestExplainRURowFormatting(t *testing.T) {
 	}, row.toStrings())
 }
 
+const (
+	readBillingDemoWriteKeyWeight  = 0.6
+	readBillingDemoWriteByteWeight = 0.00002
+)
+
+func buildWriteBillingDemoResultFromDetails(dmlKind string, _ *tikvutil.CommitDetails, ruv2Metrics *execdetails.RUV2Metrics) readBillingDemoResult {
+	return readBillingDemoResult{
+		status:    readBillingDemoStatusSuccess,
+		reason:    readBillingDemoReasonNone,
+		operators: buildTiKVWriteBillingDemoOperators(dmlKind, ruv2Metrics, false),
+	}
+}
+
+func readBillingDemoWriteDiagnosticStatus(dmlKind, reason string) readBillingDemoOperatorResult {
+	return readBillingDemoOperatorResult{
+		id:           "txn_write@statement",
+		site:         readBillingDemoSiteTiKV,
+		opClass:      readBillingDemoOpClassKVWrite,
+		operatorKind: readBillingDemoOperatorTxnWrite,
+		dmlKind:      dmlKind,
+		scope:        readBillingDemoScopeTxnPrewritePayload,
+		status:       readBillingDemoStatusPartial,
+		reason:       reason,
+	}
+}
+
+type legacyReadBillingDemoWeights struct {
+	fixedEvent, row, byte, orderWork float64
+	mutationCount, mutationByte      float64
+	writeKey, writeByte              float64
+	writeRPC, region                 float64
+}
+
+func (legacyReadBillingDemoWeights) valid() bool { return true }
+
+func (weights legacyReadBillingDemoWeights) unitWeight(unit string) (float64, bool) {
+	switch unit {
+	case readBillingDemoUnitFixedEvents:
+		return weights.fixedEvent, true
+	case readBillingDemoUnitInputRows:
+		return weights.row, true
+	case readBillingDemoUnitInputBytes:
+		return weights.byte, true
+	case readBillingDemoUnitOrderWork:
+		return weights.orderWork, true
+	case readBillingDemoUnitEncodedMutationCount:
+		return weights.mutationCount, true
+	case readBillingDemoUnitEncodedMutationBytes:
+		return weights.mutationByte, true
+	case readBillingDemoUnitWriteKeys:
+		return weights.writeKey, true
+	case readBillingDemoUnitWriteByte:
+		return weights.writeByte, true
+	case readBillingDemoUnitPrewriteRegionNum:
+		return weights.region, true
+	case readBillingDemoUnitTiKVWriteRPCCount:
+		return weights.writeRPC, true
+	default:
+		return 0, false
+	}
+}
+
+func readBillingDemoResolveWeights(site, opClass, version string) (legacyReadBillingDemoWeights, bool) {
+	if version != readBillingDemoWeightVersion || opClass == readBillingDemoOpClassPointLookup && site != readBillingDemoSiteTiKV {
+		return legacyReadBillingDemoWeights{}, false
+	}
+	w := legacyReadBillingDemoWeights{
+		fixedEvent: 0.1, row: 0.2, byte: 0.3, orderWork: 0.4,
+	}
+	if opClass == readBillingDemoOpClassTopN {
+		w.row = 0
+	}
+	if opClass == readBillingDemoOpClassKVWrite {
+		w.writeKey = readBillingDemoWriteKeyWeight
+		w.writeByte = readBillingDemoWriteByteWeight
+	}
+	return w, true
+}
+
+func TestReadBillingDemoV4FormulaContract(t *testing.T) {
+	weights := readBillingDemoWeights{
+		Version:   "test-v4-calibrated",
+		CPUWeight: 2, ScanWeight: 3, NetWeight: 5, ReadRequestWeight: 7, WriteRequestWeight: 17,
+		HashTableWeight: 11, JoinWeight: 13, MutationBytesPerCPUUnit: 10, Calibrated: true,
+	}
+	for _, tc := range []struct {
+		unit   string
+		value  float64
+		weight float64
+	}{
+		{readBillingDemoUnitCPUWork, 4, 2}, {readBillingDemoUnitScanBytes, 6, 3},
+		{readBillingDemoUnitNetBytes, 8, 5}, {readBillingDemoUnitReadRequestCount, 10, 7},
+		{readBillingDemoUnitWriteRequestCount, 2, 17},
+		{readBillingDemoUnitHashStateRows, 12, 11}, {readBillingDemoUnitJoinOutputRows, 14, 13},
+	} {
+		weight, ru, ok := readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: tc.unit, value: tc.value}, weights)
+		require.True(t, ok)
+		require.Equal(t, tc.weight, weight)
+		require.Equal(t, tc.value*tc.weight, ru)
+	}
+	for _, invalid := range []float64{-1, math.NaN(), math.Inf(1)} {
+		_, _, ok := readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: readBillingDemoUnitCPUWork, value: invalid}, weights)
+		require.False(t, ok)
+	}
+	for _, invalidWeights := range []readBillingDemoWeights{
+		{},
+		{MutationBytesPerCPUUnit: 1, Calibrated: true},
+		{Version: readBillingDemoWeightVersion, MutationBytesPerCPUUnit: 1, Calibrated: true},
+		{Version: "test", CPUWeight: -1, MutationBytesPerCPUUnit: 1, Calibrated: true},
+		{Version: "test", CPUWeight: math.NaN(), MutationBytesPerCPUUnit: 1, Calibrated: true},
+		{Version: "test", CPUWeight: math.Inf(1), MutationBytesPerCPUUnit: 1, Calibrated: true},
+		{Version: "test", ReadRequestWeight: -1, MutationBytesPerCPUUnit: 1, Calibrated: true},
+		{Version: "test", WriteRequestWeight: math.NaN(), MutationBytesPerCPUUnit: 1, Calibrated: true},
+		{Version: "test", MutationBytesPerCPUUnit: math.NaN(), Calibrated: true},
+		{Version: "test", MutationBytesPerCPUUnit: math.Inf(1), Calibrated: true},
+	} {
+		require.False(t, readBillingDemoWeightsValid(invalidWeights))
+	}
+
+	oldWeights := readBillingDemoV4Weights
+	readBillingDemoV4Weights = weights
+	t.Cleanup(func() { readBillingDemoV4Weights = oldWeights })
+	result := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone, operators: []readBillingDemoOperatorResult{{
+		id: "formula", site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassProjection,
+		operatorKind: "projection", status: readBillingDemoStatusOperatorOK,
+		units: []readBillingDemoUnit{
+			{unit: readBillingDemoUnitCPUWork, value: 4}, {unit: readBillingDemoUnitScanBytes, value: 6},
+			{unit: readBillingDemoUnitNetBytes, value: 8}, {unit: readBillingDemoUnitReadRequestCount, value: 10},
+			{unit: readBillingDemoUnitWriteRequestCount, value: 2},
+			{unit: readBillingDemoUnitHashStateRows, value: 12}, {unit: readBillingDemoUnitJoinOutputRows, value: 14},
+		},
+	}}}
+	rows := explainRUBuildReadBillingRows(result, explainRUComponentSnapshotOK)
+	require.True(t, rows[0].hasPreviewRU)
+	require.Equal(t, 484.0, rows[0].previewRU)
+	require.Contains(t, rows[0].note, "weight_version=test-v4-calibrated")
+	require.Equal(t, "test-v4-calibrated", buildReadBillingDemoStatementStats(result).WeightVersion)
+	overflowWeights := weights
+	overflowWeights.CPUWeight = 1
+	readBillingDemoV4Weights = overflowWeights
+	overflowResult := readBillingDemoResult{status: readBillingDemoStatusSuccess, operators: []readBillingDemoOperatorResult{{
+		status: readBillingDemoStatusOperatorOK, opClass: readBillingDemoOpClassProjection,
+		units: []readBillingDemoUnit{{unit: readBillingDemoUnitCPUWork, value: math.MaxFloat64}, {unit: readBillingDemoUnitCPUWork, value: math.MaxFloat64}},
+	}}}
+	overflowRows := explainRUBuildReadBillingRows(overflowResult, explainRUComponentSnapshotOK)
+	require.False(t, overflowRows[0].hasPreviewRU)
+	readBillingDemoV4Weights = weights
+
+	readBillingDemoV4Weights = readBillingDemoWeights{}
+	rows = explainRUBuildReadBillingRows(result, explainRUComponentSnapshotOK)
+	require.False(t, rows[0].hasPreviewRU)
+	require.Contains(t, rows[0].note, readBillingDemoReasonUncalibratedWeights)
+	stats := buildReadBillingDemoStatementStats(result)
+	require.Equal(t, "v4", stats.ModelVersion)
+	require.Equal(t, "v3-resource-formula-uncalibrated", stats.WeightVersion)
+	require.Equal(t, stmtsummary.ReadBillingDemoBaseUnitSummary{}, stats.Totals)
+
+	t.Run("reader transport is emitted once and fails closed", func(t *testing.T) {
+		ctx := mock.NewContext()
+		reader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+		scan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+		flat := &FlatPhysicalPlan{Main: FlatPlanTree{
+			{Origin: reader, ChildrenIdx: []int{1}, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB},
+			{Origin: scan, ChildrenEndIdx: 1, StoreType: kv.TiKV},
+		}}
+		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+		basic := runtimeStats.GetBasicRuntimeStats(reader.ID(), true)
+		basic.Record(time.Millisecond, 0)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddResourceManagerReadCnt(3)
+		metrics.AddTiKVCoprocessorResponseBytes(128)
+		op, present := readBillingDemoReaderTransport(flat, runtimeStats, metrics, false)
+		require.True(t, present)
+		require.Equal(t, readBillingDemoStatusOperatorOK, op.status)
+		require.Equal(t, 128.0, readBillingDemoUnitValue(op.units, readBillingDemoUnitNetBytes, readBillingDemoInputSideAll))
+		require.Equal(t, 3.0, readBillingDemoUnitValue(op.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
+
+		runtimeStats.RecordExpectedCopTasks([]int{scan.ID()})
+		op, _ = readBillingDemoReaderTransport(flat, runtimeStats, execdetails.NewRUV2Metrics(), false)
+		require.Equal(t, readBillingDemoReasonMissingReaderTransport, op.reason)
+		op, _ = readBillingDemoReaderTransport(flat, runtimeStats, metrics, true)
+		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, op.reason)
+	})
+
+	t.Run("point lookup transport is rpc only and emitted once", func(t *testing.T) {
+		ctx := mock.NewContext()
+		stats := &property.StatsInfo{RowCount: 1}
+		tblInfo := &model.TableInfo{}
+		pointPlan := physicalop.PointGetPlan{TblInfo: tblInfo}
+		pointPlan.SetSchema(expression.NewSchema())
+		point := pointPlan.Init(ctx, stats, 0)
+		batch := (&physicalop.BatchPointGetPlan{TblInfo: tblInfo}).Init(ctx, stats, expression.NewSchema(), nil, 0)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddResourceManagerReadCnt(3)
+
+		testCases := []struct {
+			name string
+			flat *FlatPhysicalPlan
+			kind string
+		}{
+			{
+				name: "point get",
+				flat: &FlatPhysicalPlan{Main: FlatPlanTree{{Origin: point, IsRoot: true, StoreType: kv.TiDB}}},
+				kind: "point_get",
+			},
+			{
+				name: "batch point get",
+				flat: &FlatPhysicalPlan{Main: FlatPlanTree{{Origin: batch, IsRoot: true, StoreType: kv.TiDB}}},
+				kind: "batch_point_get",
+			},
+			{
+				name: "mixed point lookup",
+				flat: &FlatPhysicalPlan{
+					Main:             FlatPlanTree{{Origin: point, IsRoot: true, StoreType: kv.TiDB}},
+					ScalarSubQueries: []FlatPlanTree{{{Origin: batch, IsRoot: true, StoreType: kv.TiDB}}},
+				},
+				kind: "mixed_point_lookup",
+			},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				op, present := readBillingDemoPointLookupTransport(tc.flat, metrics, false)
+				require.True(t, present)
+				require.Equal(t, "point_lookup@statement", op.id)
+				require.Equal(t, readBillingDemoStatusOperatorOK, op.status)
+				require.Equal(t, readBillingDemoSiteTiKV, op.site)
+				require.Equal(t, readBillingDemoOpClassPointLookup, op.opClass)
+				require.Equal(t, tc.kind, op.operatorKind)
+				require.Len(t, op.units, 1)
+				require.Equal(t, 3.0, readBillingDemoUnitValue(op.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
+				require.True(t, readBillingDemoOperatorBillable(op))
+			})
+		}
+
+		zeroOp, present := readBillingDemoPointLookupTransport(testCases[0].flat, execdetails.NewRUV2Metrics(), false)
+		require.True(t, present)
+		require.Equal(t, readBillingDemoStatusOperatorOK, zeroOp.status)
+		require.Zero(t, readBillingDemoUnitValue(zeroOp.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
+
+		missingOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, nil, false)
+		require.Equal(t, readBillingDemoReasonMissingReaderTransport, missingOp.reason)
+		bypassedMetrics := execdetails.NewRUV2Metrics()
+		bypassedMetrics.SetBypass(true)
+		bypassedOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, bypassedMetrics, false)
+		require.Equal(t, readBillingDemoReasonMissingReaderTransport, bypassedOp.reason)
+		dmlOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, metrics, true)
+		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, dmlOp.reason)
+
+		point.Lock = true
+		lockOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, metrics, false)
+		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, lockOp.reason)
+		point.Lock = false
+		reader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+		mixedReaderFlat := &FlatPhysicalPlan{
+			Main:             testCases[0].flat.Main,
+			ScalarSubQueries: []FlatPlanTree{{{Origin: reader, IsRoot: true, StoreType: kv.TiDB}}},
+		}
+		mixedReaderOp, _ := readBillingDemoPointLookupTransport(mixedReaderFlat, metrics, false)
+		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, mixedReaderOp.reason)
+
+		physicalOp, supported, reason := readBillingDemoClassifyOperator(testCases[0].flat.Main[0])
+		physicalOp.id = point.ExplainID().String()
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.False(t, readBillingDemoOperatorBillable(physicalOp))
+	})
+}
+
+func TestReadBillingDemoV4ExpressionCountsAndOrdering(t *testing.T) {
+	ctx := mock.NewContext()
+	stats := &property.StatsInfo{RowCount: 1}
+	col := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	selection := physicalop.PhysicalSelection{Conditions: []expression.Expression{col, col}}.Init(ctx, stats, 0)
+	projection := physicalop.PhysicalProjection{Exprs: []expression.Expression{col, col, col}}.Init(ctx, stats, 0)
+	hashAgg := (&physicalop.BasePhysicalAgg{GroupByItems: []expression.Expression{col}, AggFuncs: []*aggregation.AggFuncDesc{nil, nil}}).InitForHash(ctx, stats, 0, expression.NewSchema(col))
+	window := physicalop.PhysicalWindow{WindowFuncDescs: []*aggregation.WindowFuncDesc{nil}, PartitionBy: []property.SortItem{{Col: col}}, OrderBy: []property.SortItem{{Col: col}}, Frame: &logicalop.WindowFrame{Start: &logicalop.FrameBound{CalcFuncs: []expression.Expression{col}}, End: &logicalop.FrameBound{CalcFuncs: []expression.Expression{col, col}}}}.Init(ctx, stats, 0)
+	for _, tc := range []struct {
+		plan base.Plan
+		want int64
+	}{{selection, 2}, {projection, 3}, {hashAgg, 3}, {window, 6}} {
+		got, ok := readBillingDemoExpressionCount(tc.plan)
+		require.True(t, ok)
+		require.Equal(t, tc.want, got)
+	}
+
+	baseJoin := physicalop.BasePhysicalJoin{
+		LeftConditions:  expression.CNFExprs{col},
+		RightConditions: expression.CNFExprs{col},
+		OtherConditions: expression.CNFExprs{col},
+		LeftJoinKeys:    []*expression.Column{col, col},
+		RightJoinKeys:   []*expression.Column{col, col},
+		OuterJoinKeys:   []*expression.Column{col, col},
+		InnerJoinKeys:   []*expression.Column{col, col},
+	}
+	compareFilters := &physicalop.ColWithCmpFuncManager{OpType: []string{"gt", "lt"}}
+	joins := []struct {
+		name string
+		plan base.Plan
+		want int64
+	}{
+		{name: "hash join", plan: &physicalop.PhysicalHashJoin{BasePhysicalJoin: baseJoin, EqualConditions: []*expression.ScalarFunction{{}, {}}, NAEqualConditions: []*expression.ScalarFunction{{}}}, want: 6},
+		{name: "merge join", plan: &physicalop.PhysicalMergeJoin{BasePhysicalJoin: baseJoin, CompareFuncs: []expression.CompareFunc{nil, nil}}, want: 5},
+		{name: "index join", plan: &physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin, CompareFilters: compareFilters}, want: 7},
+		{name: "index hash join", plan: &physicalop.PhysicalIndexHashJoin{PhysicalIndexJoin: physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin, OuterHashKeys: []*expression.Column{col, col, col}, InnerHashKeys: []*expression.Column{col, col, col}, CompareFilters: compareFilters}}, want: 8},
+		{name: "index merge join", plan: &physicalop.PhysicalIndexMergeJoin{PhysicalIndexJoin: physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin, CompareFilters: compareFilters}, CompareFuncs: []expression.CompareFunc{nil, nil}, OuterCompareFuncs: []expression.CompareFunc{nil}, NeedOuterSort: true}, want: 8},
+	}
+	for _, tc := range joins {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := readBillingDemoExpressionCount(tc.plan)
+			require.True(t, ok)
+			require.Equal(t, tc.want, got)
+		})
+	}
+	invalidHashJoin := &physicalop.PhysicalHashJoin{BasePhysicalJoin: baseJoin}
+	invalidHashJoin.RightJoinKeys = invalidHashJoin.RightJoinKeys[:1]
+	_, ok := readBillingDemoExpressionCount(invalidHashJoin)
+	require.False(t, ok)
+	invalidIndexJoin := &physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin}
+	invalidIndexJoin.InnerJoinKeys = invalidIndexJoin.InnerJoinKeys[:1]
+	_, ok = readBillingDemoExpressionCount(invalidIndexJoin)
+	require.False(t, ok)
+	invalidIndexHashJoin := &physicalop.PhysicalIndexHashJoin{PhysicalIndexJoin: physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin, OuterHashKeys: []*expression.Column{col}}}
+	_, ok = readBillingDemoExpressionCount(invalidIndexHashJoin)
+	require.False(t, ok)
+	invalidIndexMergeJoin := &physicalop.PhysicalIndexMergeJoin{PhysicalIndexJoin: physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin}, OuterCompareFuncs: []expression.CompareFunc{nil}}
+	_, ok = readBillingDemoExpressionCount(invalidIndexMergeJoin)
+	require.False(t, ok)
+
+	topN := physicalop.PhysicalTopN{Offset: 3, Count: 5, ByItems: []*plannerutil.ByItems{{Expr: col}, {Expr: col}}}.Init(ctx, stats, 0)
+	unit, ok := readBillingDemoOrderingWorkUnit(&FlatOperator{Origin: topN, IsRoot: true}, readBillingDemoOpClassTopN, 4)
+	require.True(t, ok)
+	require.Equal(t, 8.0, unit.value)
+	for _, tc := range []struct {
+		name          string
+		rows          int64
+		offset, count uint64
+		want          float64
+	}{
+		{name: "zero rows", rows: 0, count: 1, want: 0},
+		{name: "one row", rows: 1, count: 1, want: 1},
+		{name: "bound saturates at input rows", rows: 4, offset: 3, count: 5, want: 8},
+		{name: "huge bound saturates at one input row", rows: 1, offset: math.MaxUint64 - 1, count: 1, want: 1},
+		{name: "zero count ignores offset", rows: 4, offset: math.MaxUint64, count: 0, want: 0},
+	} {
+		topN.Offset, topN.Count = tc.offset, tc.count
+		unit, ok = readBillingDemoOrderingWorkUnit(&FlatOperator{Origin: topN, IsRoot: true}, readBillingDemoOpClassTopN, tc.rows)
+		require.True(t, ok, tc.name)
+		require.Equal(t, tc.want, unit.value, tc.name)
+	}
+	topN.Offset, topN.Count = math.MaxUint64, 1
+	_, ok = readBillingDemoOrderingWorkUnit(&FlatOperator{Origin: topN, IsRoot: true}, readBillingDemoOpClassTopN, 1)
+	require.False(t, ok)
+	require.Equal(t, readBillingDemoReasonInvalidTopNBound, readBillingDemoOrderingFailureReason(&FlatOperator{Origin: topN, IsRoot: true}, readBillingDemoOpClassTopN))
+	topN.Offset, topN.Count = 0, 1
+	topN.ByItems = []*plannerutil.ByItems{{Expr: &expression.ScalarFunction{}}}
+	require.False(t, readBillingDemoOrderingMaterialized(&FlatOperator{Origin: topN, IsRoot: false}, nil))
+	sort := physicalop.PhysicalSort{ByItems: []*plannerutil.ByItems{{Expr: col}}}.Init(ctx, stats, 0)
+	unit, ok = readBillingDemoOrderingWorkUnit(&FlatOperator{Origin: sort, IsRoot: true}, readBillingDemoOpClassSort, 3)
+	require.True(t, ok)
+	require.InDelta(t, 3*math.Log2(3), unit.value, 1e-12)
+
+	formulaWeights := readBillingDemoWeights{
+		Version:   "test-v4-calibrated",
+		CPUWeight: 2, ScanWeight: 3, NetWeight: 5, ReadRequestWeight: 7, WriteRequestWeight: 17,
+		HashTableWeight: 11, JoinWeight: 13, MutationBytesPerCPUUnit: 10, Calibrated: true,
+	}
+	weightedTotal := func(t *testing.T, units []readBillingDemoUnit) float64 {
+		t.Helper()
+		var total float64
+		for _, unit := range units {
+			_, ru, ok := readBillingDemoUnitPreviewRU(unit, formulaWeights)
+			if _, semantic := readBillingDemoUnitWeight(formulaWeights, unit.unit); !semantic {
+				continue
+			}
+			require.True(t, ok, "unit=%+v", unit)
+			total += ru
+		}
+		return total
+	}
+	recordRoot := func(runtimeStats *execdetails.RuntimeStatsColl, planID int, rows int) {
+		rootStats := runtimeStats.GetBasicRuntimeStats(planID, true)
+		rootStats.Record(time.Millisecond, rows)
+		rootStats.RecordBytes(0, int64(rows*8))
+	}
+	schema := expression.NewSchema(col)
+
+	t.Run("root unary formulas use exact semantic terms", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			opClass   string
+			buildPlan func() base.Plan
+			wantRU    float64
+		}{
+			{name: "selection", opClass: readBillingDemoOpClassFilter, buildPlan: func() base.Plan {
+				return physicalop.PhysicalSelection{Conditions: []expression.Expression{col, col}}.Init(ctx, stats, 0)
+			}, wantRU: 16},
+			{name: "projection", opClass: readBillingDemoOpClassProjection, buildPlan: func() base.Plan {
+				return physicalop.PhysicalProjection{Exprs: []expression.Expression{col, col, col}}.Init(ctx, stats, 0)
+			}, wantRU: 24},
+			{name: "stream agg", opClass: readBillingDemoOpClassStreamAgg, buildPlan: func() base.Plan {
+				return (&physicalop.BasePhysicalAgg{GroupByItems: []expression.Expression{col}, AggFuncs: []*aggregation.AggFuncDesc{nil, nil}}).InitForStream(ctx, stats, 0, schema)
+			}, wantRU: 24},
+			{name: "hash agg", opClass: readBillingDemoOpClassHashAgg, buildPlan: func() base.Plan {
+				return (&physicalop.BasePhysicalAgg{GroupByItems: []expression.Expression{col}, AggFuncs: []*aggregation.AggFuncDesc{nil, nil}}).InitForHash(ctx, stats, 0, schema)
+			}, wantRU: 46},
+			{name: "limit", opClass: readBillingDemoOpClassLimit, buildPlan: func() base.Plan {
+				return physicalop.PhysicalLimit{}.Init(ctx, stats, 0)
+			}, wantRU: 8},
+			{name: "union scan", opClass: readBillingDemoOpClassOverlayReader, buildPlan: func() base.Plan {
+				return physicalop.PhysicalUnionScan{}.Init(ctx, stats, 0)
+			}, wantRU: 8},
+			{name: "window", opClass: readBillingDemoOpClassWindow, buildPlan: func() base.Plan {
+				return physicalop.PhysicalWindow{WindowFuncDescs: []*aggregation.WindowFuncDesc{nil}, PartitionBy: []property.SortItem{{Col: col}}, OrderBy: []property.SortItem{{Col: col}}, Frame: &logicalop.WindowFrame{Start: &logicalop.FrameBound{CalcFuncs: []expression.Expression{col}}, End: &logicalop.FrameBound{CalcFuncs: []expression.Expression{col, col}}}}.Init(ctx, stats, 0)
+			}, wantRU: 48},
+			{name: "sort", opClass: readBillingDemoOpClassSort, buildPlan: func() base.Plan {
+				return physicalop.PhysicalSort{ByItems: []*plannerutil.ByItems{{Expr: col}, {Expr: col}}}.Init(ctx, stats, 0)
+			}, wantRU: 16},
+			{name: "topn with offset", opClass: readBillingDemoOpClassTopN, buildPlan: func() base.Plan {
+				return physicalop.PhysicalTopN{Offset: 3, Count: 5, ByItems: []*plannerutil.ByItems{{Expr: col}, {Expr: col}}}.Init(ctx, stats, 0)
+			}, wantRU: 16},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				plan := tc.buildPlan()
+				child := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+				child.SetSchema(schema)
+				tree := FlatPlanTree{
+					{Origin: plan, ChildrenIdx: []int{1}, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB},
+					{Origin: child, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB},
+				}
+				runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+				recordRoot(runtimeStats, plan.ID(), 2)
+				recordRoot(runtimeStats, child.ID(), 4)
+				operator := readBillingDemoOperatorResult{id: plan.ExplainID().String(), opClass: tc.opClass}
+				require.True(t, readBillingDemoOperatorBillable(operator))
+				units, reason, ok := readBillingDemoRootUnits(runtimeStats, tree, 0, tree[0], operator)
+				require.True(t, ok, reason)
+				require.Empty(t, reason)
+				require.Equal(t, tc.wantRU, weightedTotal(t, units))
+				if tc.opClass == readBillingDemoOpClassOverlayReader {
+					require.Equal(t, 4.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
+					require.Equal(t, 4.0, readBillingDemoUnitValue(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+					require.Equal(t, readBillingDemoInputSourceRuntimeChildActRows, readBillingDemoUnitSource(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+					require.Equal(t, -1.0, readBillingDemoUnitValue(units, readBillingDemoUnitExpressionCount, readBillingDemoInputSideAll))
+				}
+			})
+		}
+	})
+
+	t.Run("ordering rejects columns outside the child schema", func(t *testing.T) {
+		plan := physicalop.PhysicalSort{ByItems: []*plannerutil.ByItems{{Expr: col}}}.Init(ctx, stats, 0)
+		child := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+		child.SetSchema(expression.NewSchema())
+		tree := FlatPlanTree{
+			{Origin: plan, ChildrenIdx: []int{1}, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB},
+			{Origin: child, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB},
+		}
+		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+		recordRoot(runtimeStats, plan.ID(), 2)
+		recordRoot(runtimeStats, child.ID(), 4)
+		_, reason, ok := readBillingDemoRootUnits(runtimeStats, tree, 0, tree[0], readBillingDemoOperatorResult{opClass: readBillingDemoOpClassSort})
+		require.False(t, ok)
+		require.Equal(t, readBillingDemoReasonMissingOrderingProjection, reason)
+	})
+
+	t.Run("root join formulas use both inputs and subtype expressions", func(t *testing.T) {
+		joinBase := physicalop.BasePhysicalJoin{
+			OtherConditions: expression.CNFExprs{col},
+			LeftJoinKeys:    []*expression.Column{col}, RightJoinKeys: []*expression.Column{col},
+			OuterJoinKeys: []*expression.Column{col}, InnerJoinKeys: []*expression.Column{col},
+		}
+		for _, tc := range []struct {
+			name      string
+			opClass   string
+			buildPlan func() base.Plan
+			hashRows  int64
+			wantRU    float64
+		}{
+			{name: "merge join", opClass: readBillingDemoOpClassMergeJoin, buildPlan: func() base.Plan {
+				return physicalop.PhysicalMergeJoin{BasePhysicalJoin: joinBase, CompareFuncs: []expression.CompareFunc{nil}}.Init(ctx, stats, 0)
+			}, wantRU: 66},
+			{name: "hash join", opClass: readBillingDemoOpClassHashJoin, buildPlan: func() base.Plan {
+				return physicalop.PhysicalHashJoin{BasePhysicalJoin: joinBase, EqualConditions: []*expression.ScalarFunction{{}}}.Init(ctx, stats, 0)
+			}, hashRows: 3, wantRU: 99},
+			{name: "index join", opClass: readBillingDemoOpClassLookupJoin, buildPlan: func() base.Plan {
+				return physicalop.PhysicalIndexJoin{BasePhysicalJoin: joinBase}.Init(ctx, stats, 0)
+			}, wantRU: 66},
+			{name: "index hash join", opClass: readBillingDemoOpClassLookupJoin, buildPlan: func() base.Plan {
+				indexJoin := physicalop.PhysicalIndexJoin{BasePhysicalJoin: joinBase, OuterHashKeys: []*expression.Column{col}, InnerHashKeys: []*expression.Column{col}}.Init(ctx, stats, 0)
+				return physicalop.PhysicalIndexHashJoin{PhysicalIndexJoin: *indexJoin}.Init(ctx)
+			}, wantRU: 66},
+			{name: "index merge join", opClass: readBillingDemoOpClassLookupJoin, buildPlan: func() base.Plan {
+				indexJoin := physicalop.PhysicalIndexJoin{BasePhysicalJoin: joinBase}.Init(ctx, stats, 0)
+				return physicalop.PhysicalIndexMergeJoin{PhysicalIndexJoin: *indexJoin, CompareFuncs: []expression.CompareFunc{nil}}.Init(ctx)
+			}, wantRU: 66},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				plan := tc.buildPlan()
+				left := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+				right := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+				left.SetSchema(schema)
+				right.SetSchema(schema)
+				tree := FlatPlanTree{
+					{Origin: plan, ChildrenIdx: []int{1, 2}, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB},
+					{Origin: left, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB, Label: BuildSide},
+					{Origin: right, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB, Label: ProbeSide},
+				}
+				runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+				recordRoot(runtimeStats, plan.ID(), 2)
+				recordRoot(runtimeStats, left.ID(), 4)
+				recordRoot(runtimeStats, right.ID(), 6)
+				if tc.opClass == readBillingDemoOpClassHashJoin {
+					runtimeStats.RegisterStats(plan.ID(), &readBillingDemoHashStatsForTest{rows: tc.hashRows})
+				}
+				units, reason, ok := readBillingDemoRootUnits(runtimeStats, tree, 0, tree[0], readBillingDemoOperatorResult{opClass: tc.opClass})
+				require.True(t, ok, reason)
+				require.Empty(t, reason)
+				require.Equal(t, tc.wantRU, weightedTotal(t, units))
+			})
+		}
+	})
+
+	t.Run("cop selection uses exact child rows without logical byte width", func(t *testing.T) {
+		reader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+		scan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+		tree := FlatPlanTree{
+			{Origin: reader, ChildrenIdx: []int{1}, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB},
+			{Origin: selection, ChildrenIdx: []int{2}, ChildrenEndIdx: 2, StoreType: kv.TiKV},
+			{Origin: scan, ChildrenEndIdx: 2, StoreType: kv.TiKV},
+		}
+		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+		one := uint64(1)
+		summary := func(rows uint64) *tipb.ExecutorExecutionSummary {
+			return &tipb.ExecutorExecutionSummary{
+				TimeProcessedNs: &one,
+				NumProducedRows: &rows,
+				NumIterations:   &one,
+			}
+		}
+		runtimeStats.RecordExpectedCopTasks([]int{scan.ID(), selection.ID()})
+		runtimeStats.RecordOneCopTask(scan.ID(), kv.TiKV, summary(4))
+		runtimeStats.RecordCopStats(selection.ID(), kv.TiKV, &tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeys: 4, ProcessedKeysSize: 40}, tikvutil.TimeDetail{}, summary(2))
+		estimator := newReadBillingDemoCopEstimator(tree, runtimeStats)
+		outcome := readBillingDemoCopUnits(estimator, 1, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassFilter, operatorKind: "selection"})
+		require.True(t, outcome.success, "%+v", outcome.failure)
+		require.Equal(t, 2.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitExpressionCount, readBillingDemoInputSideAll))
+		require.Equal(t, 8.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, -1.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
+
+		scanOutcome := readBillingDemoCopUnits(estimator, 2, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.True(t, scanOutcome.success, "%+v", scanOutcome.failure)
+		require.Equal(t, 40.0, readBillingDemoUnitValue(scanOutcome.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
+
+		selection.SetChildren(scan)
+		reader.TablePlan = selection
+		recordRoot(runtimeStats, reader.ID(), 2)
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddResourceManagerReadCnt(1)
+		metrics.AddTiKVCoprocessorResponseBytes(40)
+		result := buildReadBillingDemoResult(ctx, reader, &ast.SelectStmt{}, nil, metrics)
+		require.Equal(t, readBillingDemoStatusSuccess, result.status)
+		seenScanBytes := false
+		seenSelectionCPU := false
+		for _, sample := range buildReadBillingDemoStatementStats(result).BaseUnits {
+			switch {
+			case sample.Site == readBillingDemoSiteTiKV && sample.OpClass == readBillingDemoOpClassRangeScan && sample.Unit == readBillingDemoUnitScanBytes:
+				seenScanBytes = true
+				require.Equal(t, 40.0, sample.Value)
+			case sample.Site == readBillingDemoSiteTiKV && sample.OpClass == readBillingDemoOpClassFilter && sample.Unit == readBillingDemoUnitCPUWork:
+				seenSelectionCPU = true
+				require.Equal(t, 8.0, sample.Value)
+			}
+		}
+		require.True(t, seenScanBytes)
+		require.True(t, seenSelectionCPU)
+
+		runtimeStats.RecordExpectedCopTasks([]int{scan.ID(), selection.ID()})
+		failedResult := buildReadBillingDemoResult(ctx, reader, &ast.SelectStmt{}, nil, metrics)
+		require.Equal(t, readBillingDemoStatusUnknownInput, failedResult.status)
+		require.Equal(t, readBillingDemoReasonIncompleteCopRuntimeRows, failedResult.reason)
+		require.Empty(t, buildReadBillingDemoStatementStats(failedResult).BaseUnits)
+	})
+
+	t.Run("cop scan detail provenance stays fail closed", func(t *testing.T) {
+		buildEstimator := func(detail *tikvutil.ScanDetail, responses, scanSummaries, detailRecords int, holderSummaries bool) (*readBillingDemoCopEstimator, int) {
+			localReader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+			localSelection := physicalop.PhysicalSelection{Conditions: []expression.Expression{col}}.Init(ctx, stats, 0)
+			localScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			tree := FlatPlanTree{
+				{Origin: localReader, ChildrenIdx: []int{1}, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB},
+				{Origin: localSelection, ChildrenIdx: []int{2}, ChildrenEndIdx: 2, StoreType: kv.TiKV},
+				{Origin: localScan, ChildrenEndIdx: 2, StoreType: kv.TiKV},
+			}
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			one := uint64(1)
+			zero := uint64(0)
+			summary := &tipb.ExecutorExecutionSummary{
+				TimeProcessedNs: &one,
+				NumProducedRows: &zero,
+				NumIterations:   &one,
+			}
+			for range responses {
+				runtimeStats.RecordExpectedCopTasks([]int{localScan.ID(), localSelection.ID()})
+			}
+			for range scanSummaries {
+				runtimeStats.RecordOneCopTask(localScan.ID(), kv.TiKV, summary)
+			}
+			for range detailRecords {
+				var holderSummary *tipb.ExecutorExecutionSummary
+				if holderSummaries {
+					holderSummary = summary
+				}
+				runtimeStats.RecordCopStats(localSelection.ID(), kv.TiKV, detail, tikvutil.TimeDetail{}, holderSummary)
+			}
+			return newReadBillingDemoCopEstimator(tree, runtimeStats), 2
+		}
+
+		estimator, scanIdx := buildEstimator(&tikvutil.ScanDetail{}, 1, 1, 1, true)
+		outcome := readBillingDemoCopUnits(estimator, scanIdx, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.True(t, outcome.success, "%+v", outcome.failure)
+		require.Zero(t, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
+
+		estimator, scanIdx = buildEstimator(&tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeys: 4, ProcessedKeysSize: 40}, 2, 2, 2, true)
+		outcome = readBillingDemoCopUnits(estimator, scanIdx, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.True(t, outcome.success, "%+v", outcome.failure)
+		require.Equal(t, 80.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
+
+		estimator, scanIdx = buildEstimator(&tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeys: 4, ProcessedKeysSize: 40}, 1, 1, 1, false)
+		outcome = readBillingDemoCopUnits(estimator, scanIdx, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.True(t, outcome.success, "%+v", outcome.failure)
+
+		estimator, scanIdx = buildEstimator(&tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeys: 4}, 1, 1, 1, true)
+		outcome = readBillingDemoCopUnits(estimator, scanIdx, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.False(t, outcome.success)
+		require.Equal(t, readBillingDemoReasonMissingScanWidthEvidence, outcome.failure.reason)
+
+		estimator, scanIdx = buildEstimator(&tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeys: 4, ProcessedKeysSize: 40}, 2, 1, 2, true)
+		outcome = readBillingDemoCopUnits(estimator, scanIdx, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.False(t, outcome.success)
+		require.Equal(t, readBillingDemoReasonIncompleteCopRuntimeRows, outcome.failure.reason)
+
+		estimator, scanIdx = buildEstimator(&tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeys: 4, ProcessedKeysSize: 40}, 2, 2, 1, true)
+		outcome = readBillingDemoCopUnits(estimator, scanIdx, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.False(t, outcome.success)
+		require.Equal(t, readBillingDemoReasonIncompleteCopRuntimeRows, outcome.failure.reason)
+
+		estimator, scanIdx = buildEstimator(nil, 1, 1, 0, false)
+		outcome = readBillingDemoCopUnits(estimator, scanIdx, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.False(t, outcome.success)
+		require.Equal(t, readBillingDemoReasonMissingScanWidthEvidence, outcome.failure.reason)
+
+		localReader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+		localSelection := physicalop.PhysicalSelection{Conditions: []expression.Expression{col}}.Init(ctx, stats, 0)
+		localScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+		tree := FlatPlanTree{
+			{Origin: localReader, ChildrenIdx: []int{1}, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB},
+			{Origin: localSelection, ChildrenIdx: []int{2}, ChildrenEndIdx: 2, StoreType: kv.TiKV},
+			{Origin: localScan, ChildrenEndIdx: 2, StoreType: kv.TiKV},
+		}
+		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+		one := uint64(1)
+		zero := uint64(0)
+		summary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &one, NumProducedRows: &zero, NumIterations: &one}
+		detail := &tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeys: 4, ProcessedKeysSize: 40}
+		runtimeStats.RecordExpectedCopTasks([]int{localScan.ID(), localSelection.ID()})
+		runtimeStats.RecordCopStats(localScan.ID(), kv.TiKV, detail, tikvutil.TimeDetail{}, summary)
+		runtimeStats.RecordCopStats(localSelection.ID(), kv.TiKV, detail, tikvutil.TimeDetail{}, summary)
+		outcome = readBillingDemoCopUnits(newReadBillingDemoCopEstimator(tree, runtimeStats), 2, readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "indexscan"})
+		require.False(t, outcome.success)
+		require.Equal(t, readBillingDemoReasonAmbiguousCopScanWidth, outcome.failure.reason)
+	})
+}
+
+func TestReadBillingDemoV4WriteRequests(t *testing.T) {
+	oldWeights := readBillingDemoV4Weights
+	readBillingDemoV4Weights = readBillingDemoWeights{
+		Version: "test-v4-calibrated", CPUWeight: 2, MutationBytesPerCPUUnit: 10, Calibrated: true,
+	}
+	t.Cleanup(func() { readBillingDemoV4Weights = oldWeights })
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder = &stmtctx.PreviewKVMutationRecorder{}
+	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder.RecordSet(5, 7)
+	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder.RecordDelete(3)
+	result := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone}
+	appendReadBillingDemoMutation(&result, ctx, "update")
+	mutation := result.operators[0]
+	require.Equal(t, readBillingDemoOpClassKVMutation, mutation.opClass)
+	require.Equal(t, readBillingDemoOperatorMemDBMutation, mutation.operatorKind)
+	require.Equal(t, 3.5, readBillingDemoUnitValue(mutation.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+	require.Equal(t, 2.0, readBillingDemoUnitValue(mutation.units, readBillingDemoUnitEncodedMutationCount, readBillingDemoInputSideAll))
+	require.Equal(t, 15.0, readBillingDemoUnitValue(mutation.units, readBillingDemoUnitEncodedMutationBytes, readBillingDemoInputSideAll))
+	require.Equal(t, 1.0, readBillingDemoUnitValue(mutation.units, readBillingDemoUnitSetCount, readBillingDemoInputSideAll))
+	require.Equal(t, 1.0, readBillingDemoUnitValue(mutation.units, readBillingDemoUnitDeleteCount, readBillingDemoInputSideAll))
+	require.Equal(t, 8.0, readBillingDemoUnitValue(mutation.units, readBillingDemoUnitKeyBytes, readBillingDemoInputSideAll))
+	require.Equal(t, 7.0, readBillingDemoUnitValue(mutation.units, readBillingDemoUnitValueBytes, readBillingDemoInputSideAll))
+
+	rows := explainRUBuildReadBillingRows(result, explainRUComponentSnapshotOK)
+	require.True(t, rows[0].hasPreviewRU)
+	require.Equal(t, 7.0, rows[0].previewRU)
+	var mutationCPUWorkRows int
+	for _, row := range rows {
+		if row.operatorClass == "tidb/kv_mutation" && row.component == readBillingDemoOperatorMemDBMutation && row.unit == readBillingDemoUnitCPUWork {
+			mutationCPUWorkRows++
+			require.Equal(t, 3.5, row.workRows)
+			require.Equal(t, readBillingDemoInputSourceStmtMemDBMutation, row.source)
+		}
+	}
+	require.Equal(t, 1, mutationCPUWorkRows)
+
+	stats := buildReadBillingDemoStatementStats(result)
+	var mutationCPUWorkSamples int
+	for _, sample := range stats.BaseUnits {
+		if sample.Unit == readBillingDemoUnitCPUWork {
+			mutationCPUWorkSamples++
+			require.Equal(t, readBillingDemoSiteTiDB, sample.Site)
+			require.Equal(t, readBillingDemoOpClassKVMutation, sample.OpClass)
+			require.Equal(t, readBillingDemoOperatorMemDBMutation, sample.OperatorKind)
+			require.Equal(t, readBillingDemoInputSourceStmtMemDBMutation, sample.InputSource)
+			require.Equal(t, readBillingDemoInputSideAll, sample.InputSide)
+			require.Equal(t, 3.5, sample.Value)
+		}
+	}
+	require.Equal(t, 1, mutationCPUWorkSamples)
+
+	readBillingDemoV4Weights = readBillingDemoWeights{MutationBytesPerCPUUnit: 10}
+	uncalibratedResult := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone}
+	appendReadBillingDemoMutation(&uncalibratedResult, ctx, "update")
+	require.Len(t, uncalibratedResult.operators[0].units, 6)
+	require.Equal(t, -1.0, readBillingDemoUnitValue(uncalibratedResult.operators[0].units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+	require.Equal(t, 2.0, readBillingDemoUnitValue(uncalibratedResult.operators[0].units, readBillingDemoUnitEncodedMutationCount, readBillingDemoInputSideAll))
+	require.Equal(t, 15.0, readBillingDemoUnitValue(uncalibratedResult.operators[0].units, readBillingDemoUnitEncodedMutationBytes, readBillingDemoInputSideAll))
+	require.Len(t, uncalibratedResult.operators, 2)
+	require.Equal(t, readBillingDemoReasonUncalibratedMutation, uncalibratedResult.operators[1].reason)
+
+	dmlMetrics := execdetails.NewRUV2Metrics()
+	dmlMetrics.AddResourceManagerWriteCnt(7)
+	dml := buildTiKVWriteBillingDemoOperators("update", dmlMetrics, false)
+	require.Equal(t, 7.0, readBillingDemoUnitValue(dml[0].units, readBillingDemoUnitWriteRequestCount, readBillingDemoInputSideAll))
+	commitMetrics := execdetails.NewRUV2Metrics()
+	commitMetrics.AddResourceManagerWriteCnt(2)
+	commit := buildTiKVWriteBillingDemoOperators("", commitMetrics, false)
+	require.Equal(t, 2.0, readBillingDemoUnitValue(commit[0].units, readBillingDemoUnitWriteRequestCount, readBillingDemoInputSideAll))
+	require.Empty(t, commit[0].dmlKind)
+
+	pipelinedDML := buildTiKVWriteBillingDemoOperators("update", dmlMetrics, true)
+	require.Len(t, pipelinedDML, 1)
+	require.Equal(t, readBillingDemoStatusPartial, pipelinedDML[0].status)
+	require.Equal(t, readBillingDemoReasonPipelinedWritePartial, pipelinedDML[0].reason)
+	require.Empty(t, pipelinedDML[0].units)
+
+	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder.MarkPipelined()
+	pipelinedCommit := buildTxnCommitBillingDemoResult(ctx, commitMetrics, nil)
+	require.Len(t, pipelinedCommit.operators, 1)
+	require.Equal(t, readBillingDemoStatusPartial, pipelinedCommit.operators[0].status)
+	require.Equal(t, readBillingDemoReasonPipelinedWritePartial, pipelinedCommit.operators[0].reason)
+	require.Empty(t, pipelinedCommit.operators[0].units)
+}
+
 func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
-	require.Equal(t, "v2", readBillingDemoWeightVersion)
+	t.Skip("v3 opclass-weight expectations are superseded by TestReadBillingDemoV4FormulaContract")
+	require.Equal(t, "v3-resource-formula-uncalibrated", readBillingDemoWeightVersion)
 	tidbWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiDB, readBillingDemoOpClassProjection, readBillingDemoWeightVersion)
 	require.True(t, ok)
 	tikvWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiKV, readBillingDemoOpClassProjection, readBillingDemoWeightVersion)
@@ -468,7 +1233,7 @@ func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 				require.Equal(t, 1, orderRows)
 
 				stats := buildReadBillingDemoStatementStats(result)
-				require.Equal(t, "v2", stats.WeightVersion)
+				require.Equal(t, "v3-resource-formula-uncalibrated", stats.WeightVersion)
 				var orderSamples int
 				for _, sample := range stats.BaseUnits {
 					if sample.Unit == readBillingDemoUnitOrderWork {
@@ -582,11 +1347,10 @@ func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 		require.True(t, ok)
 		require.Greater(t, unit.value, float64(maxInt64))
 
-		hugeTopN := physicalop.PhysicalTopN{Offset: ^uint64(0), Count: ^uint64(0)}.Init(ctx, stats, 0)
+		hugeTopN := physicalop.PhysicalTopN{Offset: math.MaxUint64 - 1, Count: 1}.Init(ctx, stats, 0)
 		unit, ok = readBillingDemoOrderingWorkUnit(&FlatOperator{Origin: hugeTopN, IsRoot: true, StoreType: kv.TiDB}, readBillingDemoOpClassTopN, 1)
 		require.True(t, ok)
-		require.Greater(t, unit.value, 64.0)
-		require.LessOrEqual(t, unit.value, 65.0)
+		require.Equal(t, 1.0, unit.value)
 
 		malformedCopTopN := physicalop.PhysicalTopN{Offset: 1, Count: 3}.Init(ctx, stats, 0)
 		_, ok = readBillingDemoOrderingWorkUnit(&FlatOperator{Origin: malformedCopTopN, IsRoot: false, StoreType: kv.TiKV}, readBillingDemoOpClassTopN, 8)
@@ -641,6 +1405,7 @@ func TestExplainRUComponentSnapshotStatusAndWeights(t *testing.T) {
 }
 
 func TestReadBillingDemoWriteDMLResult(t *testing.T) {
+	t.Skip("v3 commit-detail formula expectations are superseded by TestReadBillingDemoV4WriteRequests")
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder = &stmtctx.PreviewKVMutationRecorder{}
 	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder.RecordSet(5, 7)
@@ -752,7 +1517,7 @@ func TestReadBillingDemoWriteDMLResult(t *testing.T) {
 	// Pipelined transactions expose a non-nil CommitDetails without logical
 	// WriteKeys/WriteSize. The incomplete payload must not become billable zero
 	// units merely because the detail object exists.
-	pipelinedResult := buildTiKVWriteBillingDemoOperators("update", &tikvutil.CommitDetails{}, ruv2Metrics, true)
+	pipelinedResult := buildTiKVWriteBillingDemoOperators("update", ruv2Metrics, true)
 	require.Len(t, pipelinedResult, 1)
 	require.Equal(t, readBillingDemoStatusPartial, pipelinedResult[0].status)
 	require.Equal(t, readBillingDemoReasonPipelinedWritePartial, pipelinedResult[0].reason)
@@ -853,7 +1618,14 @@ func TestReadBillingDemoRangeScanUsesProcessedKeyAverage(t *testing.T) {
 
 	buildUnits := func(scanDetail *tikvutil.ScanDetail) readBillingDemoCopUnitOutcome {
 		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
-		runtimeStats.RecordCopStats(scan.ID(), kv.TiKV, scanDetail, tikvutil.TimeDetail{}, nil)
+		one := uint64(1)
+		zero := uint64(0)
+		runtimeStats.RecordExpectedCopTasks([]int{scan.ID()})
+		runtimeStats.RecordCopStats(scan.ID(), kv.TiKV, scanDetail, tikvutil.TimeDetail{}, &tipb.ExecutorExecutionSummary{
+			TimeProcessedNs: &one,
+			NumProducedRows: &zero,
+			NumIterations:   &one,
+		})
 		return readBillingDemoCopUnits(
 			newReadBillingDemoCopEstimator(tree, runtimeStats),
 			1,
@@ -862,21 +1634,22 @@ func TestReadBillingDemoRangeScanUsesProcessedKeyAverage(t *testing.T) {
 	}
 
 	outcome := buildUnits(&tikvutil.ScanDetail{TotalKeys: 10, ProcessedKeys: 5, ProcessedKeysSize: 100})
-	require.True(t, outcome.success)
+	require.True(t, outcome.success, "%+v", outcome.failure)
 	units := outcome.units
 	require.Equal(t, 1.0, readBillingDemoUnitValue(units, readBillingDemoUnitFixedEvents, readBillingDemoInputSideAll))
 	require.Equal(t, 10.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
 	require.Equal(t, 200.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
+	require.Equal(t, 200.0, readBillingDemoUnitValue(units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 	require.Equal(t, readBillingDemoInputSourceScanDetail, readBillingDemoUnitSource(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
 	require.Equal(t, explainRUWidthSourceScanDetailProcessedAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
 
 	outcome = buildUnits(&tikvutil.ScanDetail{})
-	require.False(t, outcome.success)
-	require.Nil(t, outcome.units)
-	require.Equal(t, readBillingDemoReasonMissingScanWidthEvidence, outcome.failure.reason)
+	require.True(t, outcome.success)
+	require.Equal(t, 0.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 }
 
 func TestReadBillingDemoCopInputEstimator(t *testing.T) {
+	t.Skip("v3 byte-width estimator expectations do not apply to the v4 resource formula")
 	ctx := mock.NewContext()
 	col := &expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	schema := expression.NewSchema(col)
@@ -938,7 +1711,7 @@ func TestReadBillingDemoCopInputEstimator(t *testing.T) {
 		}{
 			{name: "selection", node: &FlatOperator{Origin: selection, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthKnown, expectedOrderWork: -1},
 			{name: "limit", node: &FlatOperator{Origin: limit, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthKnown, expectedOrderWork: -1},
-			{name: "topn", node: &FlatOperator{Origin: topN, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthKnown, expectedOrderWork: 12},
+			{name: "topn", node: &FlatOperator{Origin: topN, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthKnown, expectedOrderWork: 8},
 			{name: "projection", node: &FlatOperator{Origin: projection, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1},
 			{name: "hashagg", node: &FlatOperator{Origin: hashAgg, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1, expectOutputUnits: true},
 			{name: "streamagg", node: &FlatOperator{Origin: streamAgg, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1, expectOutputUnits: true},
@@ -1635,6 +2408,9 @@ func TestReadBillingDemoHashJoinUnitsUseBuildProbeSides(t *testing.T) {
 	schema := expression.NewSchema(col)
 	stats := &property.StatsInfo{RowCount: 10}
 	join := (&physicalop.PhysicalHashJoin{}).Init(ctx, stats, 0)
+	join.EqualConditions = []*expression.ScalarFunction{{}}
+	join.LeftJoinKeys = []*expression.Column{col}
+	join.RightJoinKeys = []*expression.Column{col}
 	left := physicalop.PhysicalProjection{}.Init(ctx, stats, 0)
 	right := physicalop.PhysicalProjection{}.Init(ctx, stats, 0)
 	join.SetSchema(schema)
@@ -1655,6 +2431,7 @@ func TestReadBillingDemoHashJoinUnitsUseBuildProbeSides(t *testing.T) {
 	recordRootRows(join.ID(), 6)
 	recordRootRows(left.ID(), 4)
 	recordRootRows(right.ID(), 6)
+	runtimeStats.RegisterStats(join.ID(), &readBillingDemoHashStatsForTest{rows: 3})
 
 	units, reason, ok := readBillingDemoRootUnits(
 		runtimeStats,
@@ -1668,15 +2445,26 @@ func TestReadBillingDemoHashJoinUnitsUseBuildProbeSides(t *testing.T) {
 	require.Equal(t, 1.0, readBillingDemoUnitValue(units, readBillingDemoUnitFixedEvents, readBillingDemoInputSideAll))
 	require.Equal(t, 4.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideBuild))
 	require.Equal(t, 6.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideProbe))
-	require.Equal(t, 40.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideBuild))
-	require.Equal(t, 60.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideProbe))
+	require.Equal(t, 1.0, readBillingDemoUnitValue(units, readBillingDemoUnitExpressionCount, readBillingDemoInputSideAll))
+	require.Equal(t, 10.0, readBillingDemoUnitValue(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+	require.Equal(t, 3.0, readBillingDemoUnitValue(units, readBillingDemoUnitHashStateRows, readBillingDemoInputSideBuild))
+	require.Equal(t, 6.0, readBillingDemoUnitValue(units, readBillingDemoUnitJoinOutputRows, readBillingDemoInputSideAll))
 	require.Equal(t, 6.0, readBillingDemoUnitValue(units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
 	require.Equal(t, 60.0, readBillingDemoUnitValue(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
-	require.Equal(t, readBillingDemoInputSourceRuntimeChunkBytes, readBillingDemoUnitSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideBuild))
-	require.Equal(t, explainRUWidthSourceRuntimeChunkAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideProbe))
+	require.Equal(t, readBillingDemoInputSourceHashJoinRuntime, readBillingDemoUnitSource(units, readBillingDemoUnitHashStateRows, readBillingDemoInputSideBuild))
 	require.Equal(t, readBillingDemoInputSourceRuntimeChunkBytes, readBillingDemoUnitSource(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
 	require.Equal(t, explainRUWidthSourceRuntimeChunkAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
 }
+
+type readBillingDemoHashStatsForTest struct{ rows int64 }
+
+func (*readBillingDemoHashStatsForTest) String() string { return "" }
+func (s *readBillingDemoHashStatsForTest) Clone() execdetails.RuntimeStats {
+	return &readBillingDemoHashStatsForTest{rows: s.rows}
+}
+func (*readBillingDemoHashStatsForTest) Merge(execdetails.RuntimeStats) {}
+func (*readBillingDemoHashStatsForTest) Tp() int                        { return 1_000_000 }
+func (s *readBillingDemoHashStatsForTest) HashTableRows() int64         { return s.rows }
 
 func readBillingDemoUnitValue(units []readBillingDemoUnit, unitName, side string) float64 {
 	for _, unit := range units {

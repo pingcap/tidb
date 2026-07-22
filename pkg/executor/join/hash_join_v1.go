@@ -1082,6 +1082,8 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 	if err == nil {
 		if err = <-fetchBuildSideRowsOk; err != nil {
 			e.buildFinished <- err
+		} else if e.stats != nil && e.RowContainer != nil {
+			addHashTableRows(&e.stats.hashTableRows, e.RowContainer.hashStateRows())
 		}
 	}
 }
