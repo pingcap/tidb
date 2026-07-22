@@ -138,7 +138,7 @@ func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
 	request = buildRequest(kv.TiFlash)
 	response, err = Select(checkRequest(func(req *kv.Request) {
 		require.Nil(t, req.CoprRequestLimiter)
-		require.Nil(t, req.QueryCopStoreLimiter)
+		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
 	}), dctx, request, colTypes)
 	require.NoError(t, err)
 	require.NoError(t, response.Close())
