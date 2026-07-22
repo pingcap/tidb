@@ -8,6 +8,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -193,6 +194,18 @@ func TestLoadableFunctionMockedSelectOnTable(t *testing.T) {
 	tk.MustQuery("select udf_tbl(id) from t_udf_tbl order by id").Check(
 		testkit.Rows("2", "3", "4"),
 	)
+
+	tk.Session().GetSessionVars().SetProjectionConcurrency(4)
+	rows := tk.MustQuery("explain analyze select sum(udf_tbl(id)) from t_udf_tbl").Rows()
+	projectionFound := false
+	for _, row := range rows {
+		if !strings.Contains(row[0].(string), "Projection") {
+			continue
+		}
+		projectionFound = true
+		require.Contains(t, row[5], "Concurrency:OFF")
+	}
+	require.True(t, projectionFound)
 }
 
 func TestLoadableFunctionMockedInitFailure(t *testing.T) {

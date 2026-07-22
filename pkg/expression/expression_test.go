@@ -235,6 +235,14 @@ func TestVectorizable(t *testing.T) {
 		Function: &storedFuncSig{},
 	})
 	require.False(t, Vectorizable(exprs))
+
+	loadableFunc := &ScalarFunction{
+		FuncName: pmodel.NewCIStr("test_loadable_func"),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Function: &loadableFuncSig{},
+	}
+	require.False(t, Vectorizable([]Expression{loadableFunc}))
+	require.False(t, Vectorizable([]Expression{newFunctionWithMockCtx(ast.Abs, loadableFunc)}))
 }
 
 type testTableBuilder struct {
