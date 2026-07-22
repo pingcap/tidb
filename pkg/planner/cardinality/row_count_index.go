@@ -502,6 +502,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				countResult, err := GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
+				failpoint.InjectCall("afterRecursiveIndexEstimation", idxID, &countResult, &err)
 				if err != nil {
 					continue
 				}
