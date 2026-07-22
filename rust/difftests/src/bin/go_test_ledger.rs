@@ -29,6 +29,8 @@
 //! ```text
 //! cd rust
 //! cargo run -j 12 -p difftest --bin go_test_ledger -- --write
+//! cargo run -j 12 -p difftest --bin go_test_ledger -- --write-package-support
+//! cargo run -j 12 -p difftest --bin go_test_ledger -- --check-package-support
 //! cargo run -j 12 -p difftest --bin go_test_ledger -- --write-evidence
 //! cargo run -j 12 -p difftest --bin go_test_ledger -- --check-inventory
 //! cargo run -j 12 -p difftest --bin go_test_ledger -- --check
@@ -52,12 +54,16 @@ mod evidence_fragments;
 use evidence_fragments::{sorted_tsv_files, validate_fragment_owner};
 
 const LEDGER_RELATIVE_PATH: &str = "rust/difftests/corpus/coverage/go_test_inventory.tsv";
+const GO_SOURCE_LEDGER_RELATIVE_PATH: &str =
+    "rust/difftests/corpus/coverage/go_source_inventory.tsv";
 const GO_DECLARATION_INVENTORY_RELATIVE_PATH: &str =
     "rust/difftests/corpus/coverage/go_test_declaration_inventory.tsv";
 const GO_FIXTURE_ACCESS_INVENTORY_RELATIVE_PATH: &str =
     "rust/difftests/corpus/coverage/go_test_fixture_access_inventory.tsv";
 const GO_ARTIFACT_INVENTORY_RELATIVE_PATH: &str =
     "rust/difftests/corpus/coverage/go_test_artifact_inventory.tsv";
+const GO_PACKAGE_SUPPORT_INVENTORY_RELATIVE_PATH: &str =
+    "rust/difftests/corpus/coverage/go_package_support_inventory.tsv";
 const EVIDENCE_DIRECTORY_RELATIVE_PATH: &str = "rust/difftests/corpus/coverage/evidence/tests";
 const TEST_DOMAIN_MANIFEST_RELATIVE_PATH: &str =
     "rust/difftests/corpus/coverage/go_test_domain_manifest.tsv";
@@ -116,6 +122,18 @@ struct GoTestFixtureAccess {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct GoTestArtifact {
     path: String,
+    sha256: String,
+}
+
+/// One source-controlled non-Go artifact owned by its nearest ancestor Go
+/// package. Package-complete transcreation uses this inventory in addition to
+/// the production-source and test-obligation ledgers so build metadata,
+/// generator inputs, recursive testdata, and package-local helpers cannot fall
+/// between independently scheduled packages.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct GoPackageSupportArtifact {
+    package_path: String,
+    support_path: String,
     sha256: String,
 }
 
@@ -1176,6 +1194,298 @@ fn inventory_files(root: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Returns the repository-relative paths in the Git index. Package support is
+/// intentionally index-defined rather than walk-defined: untracked worktree
+/// files must not silently become claim obligations, while every checked-in
+/// helper and generated input must be stable across worktrees.
+fn tracked_paths(root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["ls-files", "-z", "--cached"])
+        .output()
+        .map_err(|error| format!("list tracked files with git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git ls-files failed while generating package support inventory:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let mut paths = Vec::new();
+    for raw in output.stdout.split(|byte| *byte == 0) {
+        if raw.is_empty() {
+            continue;
+        }
+        let path = std::str::from_utf8(raw)
+            .map_err(|_| "tracked package support paths must be valid UTF-8".to_owned())?;
+        if path.contains(['\t', '\n', '\r']) {
+            return Err(format!(
+                "tracked path {path:?} cannot be represented in the package support TSV"
+            ));
+        }
+        paths.push(path.replace('\\', "/"));
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn is_ignored_package_support_path(path: &str) -> bool {
+    let mut components = path.split('/');
+    if matches!(components.next(), Some("rust")) {
+        return true;
+    }
+    path.split('/')
+        .any(|component| matches!(component, ".git" | "vendor" | "node_modules"))
+}
+
+fn parent_path(path: &str) -> Option<&str> {
+    path.rsplit_once('/').map(|(parent, _)| parent)
+}
+
+fn is_below_testdata(path: &str) -> bool {
+    path.split('/').any(|component| component == "testdata")
+}
+
+fn go_package_directories(inventoried_go_paths: &BTreeSet<String>) -> BTreeSet<String> {
+    inventoried_go_paths
+        .iter()
+        .filter(|path| !is_below_testdata(path) && !is_ignored_package_support_path(path))
+        .map(|path| parent_path(path).unwrap_or(".").to_owned())
+        .collect()
+}
+
+fn nearest_go_package<'a>(support_path: &str, packages: &'a BTreeSet<String>) -> Option<&'a str> {
+    let mut candidate = parent_path(support_path).unwrap_or(".");
+    loop {
+        if let Some(package) = packages.get(candidate) {
+            return Some(package);
+        }
+        if candidate == "." {
+            return None;
+        }
+        candidate = candidate.rsplit_once('/').map_or(".", |(parent, _)| parent);
+    }
+}
+
+fn package_support_ownership(
+    paths: &[String],
+    inventoried_go_paths: &BTreeSet<String>,
+) -> Vec<(String, String)> {
+    let packages = go_package_directories(inventoried_go_paths);
+    paths
+        .iter()
+        .filter(|path| {
+            !inventoried_go_paths.contains(path.as_str())
+                && !is_ignored_package_support_path(path.as_str())
+        })
+        .filter_map(|path| {
+            nearest_go_package(path, &packages).map(|package| (package.to_owned(), path.to_owned()))
+        })
+        .collect()
+}
+
+fn package_support_sha256(root: &Path, support_path: &str) -> Result<String, String> {
+    let path = root.join(support_path);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("inspect package support artifact {support_path}: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(&path)
+            .map_err(|error| format!("read package support symlink {support_path}: {error}"))?;
+        return Ok(sha256(target.as_os_str().as_encoded_bytes()));
+    }
+    if metadata.is_file() {
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("read package support artifact {support_path}: {error}"))?;
+        return Ok(sha256(&bytes));
+    }
+    if metadata.is_dir() {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(["ls-files", "--stage", "--", support_path])
+            .output()
+            .map_err(|error| format!("inspect tracked directory {support_path}: {error}"))?;
+        if output.status.success() {
+            let record = String::from_utf8_lossy(&output.stdout);
+            let fields: Vec<_> = record.split_whitespace().collect();
+            if fields.len() >= 3
+                && fields[0] == "160000"
+                && fields[1].len() == 40
+                && fields[1].bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Ok(sha256(format!("gitlink\0{}", fields[1]).as_bytes()));
+            }
+        }
+    }
+    Err(format!(
+        "tracked package support path {support_path} is neither a file, symlink, nor Git submodule"
+    ))
+}
+
+fn inventoried_go_paths(
+    root: &Path,
+    current_test_entries: Option<&BTreeSet<Entry>>,
+) -> Result<BTreeSet<String>, String> {
+    let source_path = root.join(GO_SOURCE_LEDGER_RELATIVE_PATH);
+    let source = fs::read_to_string(&source_path)
+        .map_err(|error| format!("read {}: {error}", source_path.display()))?;
+    let mut paths = BTreeSet::new();
+    for line in source
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let path = line.split('\t').next().unwrap_or_default();
+        if path.ends_with(".go") {
+            paths.insert(path.to_owned());
+        }
+    }
+    if let Some(entries) = current_test_entries {
+        paths.extend(
+            entries
+                .iter()
+                .filter(|entry| entry.kind == "go_test_file")
+                .map(|entry| entry.path.clone()),
+        );
+    } else {
+        let test_path = root.join(LEDGER_RELATIVE_PATH);
+        let source = fs::read_to_string(&test_path)
+            .map_err(|error| format!("read {}: {error}", test_path.display()))?;
+        for line in source
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        {
+            let fields: Vec<_> = line.split('\t').collect();
+            if fields.len() >= 2 && fields[0] == "go_test_file" {
+                paths.insert(fields[1].to_owned());
+            }
+        }
+    }
+    Ok(paths)
+}
+
+fn collect_go_package_support_artifacts(
+    root: &Path,
+    inventoried_go_paths: &BTreeSet<String>,
+) -> Result<Vec<GoPackageSupportArtifact>, String> {
+    let paths = tracked_paths(root)?;
+    let mut artifacts: Vec<_> = package_support_ownership(&paths, &inventoried_go_paths)
+        .into_iter()
+        .map(|(package_path, support_path)| {
+            let sha256 = package_support_sha256(root, &support_path)?;
+            Ok(GoPackageSupportArtifact {
+                package_path,
+                support_path,
+                sha256,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    artifacts.sort();
+    Ok(artifacts)
+}
+
+fn render_go_package_support_inventory(artifacts: &[GoPackageSupportArtifact]) -> String {
+    let mut text = String::from(
+        "# Generated by cargo run -p difftest --bin go_test_ledger -- --write-package-support.\n",
+    );
+    text.push_str("# package_path\tsupport_path\tsha256\n");
+    for artifact in artifacts {
+        text.push_str(&format!(
+            "{}\t{}\t{}\n",
+            artifact.package_path, artifact.support_path, artifact.sha256
+        ));
+    }
+    text
+}
+
+fn parse_go_package_support_inventory(
+    path: &Path,
+    source: &str,
+) -> Result<Vec<GoPackageSupportArtifact>, String> {
+    let mut artifacts = Vec::new();
+    let mut seen_paths = BTreeSet::new();
+    for (index, line) in source.lines().enumerate() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<_> = line.split('\t').collect();
+        if fields.len() != 3 {
+            return Err(format!(
+                "{}:{}: expected package path, support path, and SHA-256",
+                path.display(),
+                index + 1
+            ));
+        }
+        if fields[0].is_empty()
+            || fields[1].is_empty()
+            || fields[1].len() <= fields[0].len()
+            || (fields[0] != "."
+                && !fields[1]
+                    .strip_prefix(fields[0])
+                    .is_some_and(|suffix| suffix.starts_with('/')))
+            || fields[2].len() != 64
+            || !fields[2]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(format!(
+                "{}:{}: invalid package support inventory row",
+                path.display(),
+                index + 1
+            ));
+        }
+        let artifact = GoPackageSupportArtifact {
+            package_path: fields[0].to_owned(),
+            support_path: fields[1].to_owned(),
+            sha256: fields[2].to_owned(),
+        };
+        if !seen_paths.insert(artifact.support_path.clone()) {
+            return Err(format!(
+                "{}:{}: support artifact path must be unique",
+                path.display(),
+                index + 1
+            ));
+        }
+        artifacts.push(artifact);
+    }
+    if artifacts.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(format!(
+            "{}: package support records must be strictly sorted by package and path",
+            path.display()
+        ));
+    }
+    Ok(artifacts)
+}
+
+fn checked_go_package_support_inventory(
+    root: &Path,
+    current_test_entries: Option<&BTreeSet<Entry>>,
+    write: bool,
+) -> Result<Vec<GoPackageSupportArtifact>, String> {
+    let go_paths = inventoried_go_paths(root, current_test_entries)?;
+    let generated = collect_go_package_support_artifacts(root, &go_paths)?;
+    let want = render_go_package_support_inventory(&generated);
+    let inventory = root.join(GO_PACKAGE_SUPPORT_INVENTORY_RELATIVE_PATH);
+    if write {
+        fs::create_dir_all(inventory.parent().expect("inventory path has a parent"))
+            .map_err(|error| format!("create package support inventory directory: {error}"))?;
+        fs::write(&inventory, &want)
+            .map_err(|error| format!("write {}: {error}", inventory.display()))?;
+        return Ok(generated);
+    }
+    let got = fs::read_to_string(&inventory).map_err(|error| {
+        format!(
+            "cannot read {} ({error}); generate it with cargo run -p difftest --bin go_test_ledger -- --write-package-support",
+            inventory.display()
+        )
+    })?;
+    if got != want {
+        return Err(format!(
+            "{} is stale: a tracked package support artifact or nearest-package boundary changed. Regenerate it before assigning package-complete work.",
+            inventory.display()
+        ));
+    }
+    parse_go_package_support_inventory(&inventory, &got)
+}
+
 fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -1926,10 +2236,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     if !matches!(
         mode.as_str(),
-        "--write" | "--write-evidence" | "--check-inventory" | "--check" | "--summary" | "--queue"
+        "--write"
+            | "--write-package-support"
+            | "--check-package-support"
+            | "--write-evidence"
+            | "--check-inventory"
+            | "--check"
+            | "--summary"
+            | "--queue"
     ) {
         return Err(format!(
-            "unknown mode {mode:?}; use --write, --write-evidence, --check-inventory, --check, --summary, or --queue <ring>"
+            "unknown mode {mode:?}; use --write, --write-package-support, --check-package-support, --write-evidence, --check-inventory, --check, --summary, or --queue <ring>"
         )
         .into());
     }
@@ -1950,6 +2267,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let root = repo_root();
+    if matches!(
+        mode.as_str(),
+        "--write-package-support" | "--check-package-support"
+    ) {
+        let artifacts =
+            checked_go_package_support_inventory(&root, None, mode == "--write-package-support")
+                .map_err(|error| format!("Go package support inventory invalid: {error}"))?;
+        println!("go_package_support_artifact: {}", artifacts.len());
+        return Ok(());
+    }
     let declarations = checked_go_test_declaration_inventory(&root, &mode)
         .map_err(|error| format!("Go test declaration inventory invalid: {error}"))?;
     let fixture_accesses = checked_go_test_fixture_access_inventory(&root, &mode)
@@ -1959,6 +2286,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| format!("SQL fixture inventory invalid: {error}"))?;
     checked_go_test_artifact_inventory(&root, &entries, &mode)
         .map_err(|error| format!("Go test artifact inventory invalid: {error}"))?;
+    checked_go_package_support_inventory(&root, Some(&entries), mode == "--write")
+        .map_err(|error| format!("Go package support inventory invalid: {error}"))?;
     // Inventory generation must remain usable while independent feature waves
     // are editing sparse evidence. Evidence is deliberately a later full-gate
     // concern: `--check` reconciles it, while `--write` and
@@ -2014,11 +2343,12 @@ mod tests {
         bazel_test_targets, collect, expected_result_stem, generate_go_test_declaration_inventory,
         generate_go_test_fixture_access_inventory, go_test_subtest_entries, is_make_test_target,
         is_queue_obligation, is_shell_test, is_sql_fixture, is_sql_result, is_test_suite_artifact,
-        is_testdata_artifact, make_test_targets, package_ownership_unit,
-        parse_go_test_artifact_inventory, render_go_test_artifact_inventory, rendered, repo_root,
-        result_matches_input, result_owners, ring_for, sha256, source_ownership_unit,
+        is_testdata_artifact, make_test_targets, package_ownership_unit, package_support_ownership,
+        parse_go_package_support_inventory, parse_go_test_artifact_inventory,
+        render_go_package_support_inventory, render_go_test_artifact_inventory, rendered,
+        repo_root, result_matches_input, result_owners, ring_for, sha256, source_ownership_unit,
         test_artifacts, validate_sql_fixture_pairs, validate_test_domain_partition, Entry,
-        Evidence, GoTestArtifact, TestDomain,
+        Evidence, GoPackageSupportArtifact, GoTestArtifact, TestDomain,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
@@ -2125,6 +2455,103 @@ mod tests {
             1,
         );
         assert!(parse_go_test_artifact_inventory(Path::new("artifact.tsv"), &malformed).is_err());
+    }
+
+    #[test]
+    fn package_support_uses_nearest_real_package_and_keeps_recursive_testdata() {
+        let paths = vec![
+            "pkg/foo/BUILD.bazel",
+            "pkg/foo/embed/schema.sql",
+            "pkg/foo/foo.go",
+            "pkg/foo/testdata/nested/expected.txt",
+            "pkg/foo/testdata/nested/helper.go",
+            "pkg/foo/worker/BUILD.bazel",
+            "pkg/foo/worker/testdata/input.json",
+            "pkg/foo/worker/worker.go",
+            "pkg/foobar/BUILD.bazel",
+            "pkg/foobar/foobar.go",
+            "pkg/server/internal/handshake/BUILD.bazel",
+            "pkg/server/internal/handshake/handshake.go",
+            "pkg/testonly/BUILD.bazel",
+            "pkg/testonly/only_test.go",
+            "pkg/testonly/testdata/fixture.txt",
+            "pkg/foo/vendor/dependency/config.json",
+            "rust/crates/example/assets/schema.sql",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        let inventoried_go_paths = BTreeSet::from([
+            "pkg/foo/foo.go".to_owned(),
+            "pkg/foo/worker/worker.go".to_owned(),
+            "pkg/foobar/foobar.go".to_owned(),
+            "pkg/server/internal/handshake/handshake.go".to_owned(),
+            "pkg/testonly/only_test.go".to_owned(),
+        ]);
+
+        assert_eq!(
+            package_support_ownership(&paths, &inventoried_go_paths),
+            vec![
+                ("pkg/foo".to_owned(), "pkg/foo/BUILD.bazel".to_owned()),
+                ("pkg/foo".to_owned(), "pkg/foo/embed/schema.sql".to_owned()),
+                (
+                    "pkg/foo".to_owned(),
+                    "pkg/foo/testdata/nested/expected.txt".to_owned(),
+                ),
+                (
+                    "pkg/foo".to_owned(),
+                    "pkg/foo/testdata/nested/helper.go".to_owned(),
+                ),
+                (
+                    "pkg/foo/worker".to_owned(),
+                    "pkg/foo/worker/BUILD.bazel".to_owned(),
+                ),
+                (
+                    "pkg/foo/worker".to_owned(),
+                    "pkg/foo/worker/testdata/input.json".to_owned(),
+                ),
+                ("pkg/foobar".to_owned(), "pkg/foobar/BUILD.bazel".to_owned(),),
+                (
+                    "pkg/server/internal/handshake".to_owned(),
+                    "pkg/server/internal/handshake/BUILD.bazel".to_owned(),
+                ),
+                (
+                    "pkg/testonly".to_owned(),
+                    "pkg/testonly/BUILD.bazel".to_owned(),
+                ),
+                (
+                    "pkg/testonly".to_owned(),
+                    "pkg/testonly/testdata/fixture.txt".to_owned(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn package_support_inventory_is_sorted_unique_and_content_bound() {
+        let artifacts = vec![
+            GoPackageSupportArtifact {
+                package_path: "pkg/example".to_owned(),
+                support_path: "pkg/example/BUILD.bazel".to_owned(),
+                sha256: sha256(b"build metadata"),
+            },
+            GoPackageSupportArtifact {
+                package_path: "pkg/example".to_owned(),
+                support_path: "pkg/example/testdata/input.txt".to_owned(),
+                sha256: sha256(b"fixture"),
+            },
+        ];
+        let rendered = render_go_package_support_inventory(&artifacts);
+        assert_eq!(
+            parse_go_package_support_inventory(Path::new("package-support.tsv"), &rendered)
+                .unwrap(),
+            artifacts
+        );
+        let duplicate = format!("{rendered}{}", rendered.lines().last().unwrap());
+        assert!(
+            parse_go_package_support_inventory(Path::new("package-support.tsv"), &duplicate)
+                .is_err()
+        );
     }
 
     #[test]
