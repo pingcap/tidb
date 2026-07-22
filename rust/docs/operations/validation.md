@@ -20,11 +20,12 @@ scripts/rewrite-gate.sh leaf <package> <test-target> [<filter>]
 scripts/rewrite-gate.sh static
 
 # Internal derived-state refresh used by campaign_close.py --gate. It is scoped
-# and checked by campaign_close; do not use it to bypass package ownership.
+# and checked by package claims; do not use it to bypass package ownership.
 scripts/rewrite-gate.sh prepare
 
-# Whole-package/frontier acceptance. Normally invoke this through
-# campaign_close.py --gate so preparation and receipt close stay coordinated.
+# Whole-package/frontier acceptance. Invoke it through campaign_close.py with
+# --package for the normal path or --campaign for an inseparable frontier so
+# preparation and receipt close stay coordinated.
 scripts/rewrite-gate.sh integrate
 ```
 

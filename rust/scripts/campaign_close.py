@@ -13,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Atomically close a package-complete schema-2 rewrite campaign.
+"""Atomically close one package or a package-complete schema-2 campaign.
 
 The default mode is a read-only preflight. ``--gate`` runs the full shared
 integration gate while every package claim remains active. Only the exact gate
-receipt can authorize one transaction that marks all package manifests covered,
-integrates the campaign, archives its membership, and releases its claims.
+receipt can authorize one transaction that marks package manifests covered,
+writes immutable receipts, and releases exact claims. The ordinary one-package
+path derives the transaction directly from its claim; tracked campaigns are
+reserved for dependency-inseparable multi-package frontiers.
 
 Legacy slice promotion and ungated campaign close are deliberately unsupported.
 Historical integrated schema-1 campaigns remain readable through the queue.
@@ -63,18 +65,20 @@ GENERATED_PATHS = (Path("STATUS.md"), SOURCE_LEDGER, TEST_LEDGER)
 
 
 class ClosePlan:
-    """A fully validated package campaign status transaction."""
+    """A fully validated package or campaign status transaction."""
 
     def __init__(
         self,
-        campaign: str,
+        close_kind: str,
+        close_id: str,
         members: tuple[str, ...],
         active_claim_owners: tuple[str, ...],
         claim_digests: tuple[tuple[str, str], ...],
         package_records: dict[str, dict[str, object]],
         writes: dict[Path, str],
     ) -> None:
-        self.campaign = campaign
+        self.close_kind = close_kind
+        self.close_id = close_id
         self.members = members
         self.active_members = members
         self.active_claim_owners = active_claim_owners
@@ -240,20 +244,20 @@ def _validate_member(
     test_evidence: dict[str, list[dict[str, str]]],
 ) -> None:
     if record["schema"] != "2":
-        raise ValueError(f"campaign member {member} is not a schema-2 package")
+        raise ValueError(f"closing member {member} is not a schema-2 package")
     if record["status"] not in {"ready", "active"}:
         raise ValueError(
-            f"campaign package {member} must be ready or active before close; "
+            f"package {member} must be ready or active before close; "
             f"found {record['status']}"
         )
     if claim.get("schema") != 2 or claim.get("owner") != member:
-        raise ValueError(f"campaign package {member} requires its active schema-2 claim")
+        raise ValueError(f"package {member} requires its active schema-2 claim")
     expected = _expected_claim(record)
     for field, values in expected.items():
         actual = claim.get(field)
         if not isinstance(actual, list) or sorted(set(actual)) != values:
             raise ValueError(
-                f"campaign package {member} claim differs from its frozen {field}"
+                f"package {member} claim differs from its frozen {field}"
             )
     _require_covered_evidence(
         root, member, "source", record["go_sources"], source_rows, source_evidence
@@ -288,62 +292,52 @@ def _validate_member(
             )
 
 
-def _exact_campaign_claims(
+def _exact_package_claims(
     root: Path, members: Iterable[str]
 ) -> dict[str, dict[str, object]]:
-    """Return the exact active schema-2 claim set for campaign members."""
+    """Return the exact active schema-2 claim set for closing members."""
     members = tuple(members)
     claims = queue.validate_claims(root)
     claim_by_owner = {str(claim["owner"]): claim for claim in claims}
     missing = [member for member in members if member not in claim_by_owner]
     if missing:
         raise ValueError(
-            f"campaign package {missing[0]} has no active claim; every member must be active"
+            f"package {missing[0]} has no active claim; every member must be active"
         )
     legacy_claims = sorted(
         str(claim["owner"]) for claim in claims if claim.get("schema") != 2
     )
     if legacy_claims:
         raise ValueError(
-            "package campaign close requires exact active schema-2 claims; "
+            "package close requires exact active schema-2 claims; "
             f"found legacy claim {legacy_claims[0]}"
         )
     extra = sorted(set(claim_by_owner) - set(members))
     if extra:
         raise ValueError(
-            "package campaign members must exactly match active schema-2 claims; "
-            f"active claim {extra[0]} is outside the campaign"
+            "closing package members must exactly match active schema-2 claims; "
+            f"active claim {extra[0]} is outside the close set"
         )
     return claim_by_owner
 
 
-def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
-    """Preflight complete package evidence and return the status mutation."""
-    if not queue.OWNER_RE.fullmatch(campaign_name):
-        raise ValueError("invalid campaign name")
+def _build_members_close_plan(
+    root: Path,
+    *,
+    close_kind: str,
+    close_id: str,
+    members: tuple[str, ...],
+    transaction_writes: dict[Path, str],
+) -> ClosePlan:
+    """Preflight exact package members and assemble their atomic mutation."""
     slices = queue.load_slices(root)
-    campaigns = queue.load_campaigns(root, slices)
-    campaign = campaigns.get(campaign_name)
-    if campaign is None:
-        raise ValueError(f"unknown campaign {campaign_name}")
-    if campaign["schema"] != "2":
-        raise ValueError(
-            f"campaign {campaign_name} is legacy schema 1 and cannot be closed"
-        )
-    if campaign["status"] not in {"planned", "active"}:
-        raise ValueError(
-            f"campaign {campaign_name} must be planned or active before close; "
-            f"found {campaign['status']}"
-        )
-
-    members = tuple(str(member) for member in campaign["slices"])
-    claim_by_owner = _exact_campaign_claims(root, members)
+    claim_by_owner = _exact_package_claims(root, members)
 
     source_rows = {str(row["path"]): row for row in queue.load_source_rows(root)}
     test_rows = {queue.test_key(row): row for row in queue.load_test_rows(root)}
     source_evidence = _evidence_records(root, "source")
     test_evidence = _evidence_records(root, "test")
-    writes: dict[Path, str] = {}
+    writes = dict(transaction_writes)
     package_records: dict[str, dict[str, object]] = {}
     for member in members:
         record = slices[member]
@@ -368,21 +362,74 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
         )
         package_records[member] = record
 
-    campaign_path = Path(campaign["_path"])
-    writes[campaign_path] = _replace_status(
-        campaign_path, str(campaign["status"]), "integrated"
-    )
-    archive_path = root / queue.INTEGRATED_CAMPAIGN_MEMBERS
-    writes[archive_path] = _archived_members_text(
-        archive_path, campaign_name, members
-    )
     active_owners = tuple(sorted(claim_by_owner))
     digests = tuple(
         (owner, queue.file_digest(Path(claim_by_owner[owner]["_path"])))
         for owner in active_owners
     )
     return ClosePlan(
-        campaign_name, members, active_owners, digests, package_records, writes
+        close_kind,
+        close_id,
+        members,
+        active_owners,
+        digests,
+        package_records,
+        writes,
+    )
+
+
+def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
+    """Preflight a dependency-inseparable multi-package campaign."""
+    if not queue.OWNER_RE.fullmatch(campaign_name):
+        raise ValueError("invalid campaign name")
+    slices = queue.load_slices(root)
+    campaigns = queue.load_campaigns(root, slices)
+    campaign = campaigns.get(campaign_name)
+    if campaign is None:
+        raise ValueError(f"unknown campaign {campaign_name}")
+    if campaign["schema"] != "2":
+        raise ValueError(
+            f"campaign {campaign_name} is legacy schema 1 and cannot be closed"
+        )
+    if campaign["status"] not in {"planned", "active"}:
+        raise ValueError(
+            f"campaign {campaign_name} must be planned or active before close; "
+            f"found {campaign['status']}"
+        )
+
+    members = tuple(str(member) for member in campaign["slices"])
+    campaign_path = Path(campaign["_path"])
+    writes = {
+        campaign_path: _replace_status(
+            campaign_path, str(campaign["status"]), "integrated"
+        )
+    }
+    archive_path = root / queue.INTEGRATED_CAMPAIGN_MEMBERS
+    writes[archive_path] = _archived_members_text(
+        archive_path, campaign_name, members
+    )
+    return _build_members_close_plan(
+        root,
+        close_kind="campaign",
+        close_id=campaign_name,
+        members=members,
+        transaction_writes=writes,
+    )
+
+
+def build_package_close_plan(root: Path, owner: str) -> ClosePlan:
+    """Derive an ordinary one-package transaction from its exact active claim."""
+    if not queue.OWNER_RE.fullmatch(owner):
+        raise ValueError("invalid package owner")
+    slices = queue.load_slices(root)
+    if owner not in slices:
+        raise ValueError(f"unknown package {owner}")
+    return _build_members_close_plan(
+        root,
+        close_kind="package",
+        close_id=owner,
+        members=(owner,),
+        transaction_writes={},
     )
 
 
@@ -467,19 +514,19 @@ def _validate_prepared_ledger_scope(
     return changed
 
 
-def prepare_close_plan(
+PlanBuilder = Callable[[Path, str], ClosePlan]
+
+
+def _prepare_members_close_plan(
     root: Path,
-    campaign_name: str,
+    close_id: str,
+    members: tuple[str, ...],
+    plan_builder: PlanBuilder,
     *,
     command_runner: CommandRunner = _run,
 ) -> ClosePlan:
     """Refresh derived package rows, reject unrelated churn, then preflight."""
-    slices = queue.load_slices(root)
-    campaign = queue.load_campaigns(root, slices).get(campaign_name)
-    if campaign is None:
-        raise ValueError(f"unknown campaign {campaign_name}")
-    members = tuple(str(member) for member in campaign["slices"])
-    claims = _exact_campaign_claims(root, members)
+    claims = _exact_package_claims(root, members)
     source_claim_owners = {
         str(anchor): member
         for member in members
@@ -506,20 +553,59 @@ def prepare_close_plan(
             kind="test",
             claim_owner_by_anchor=test_claim_owners,
         )
-        plan = build_close_plan(root, campaign_name)
+        plan = plan_builder(root, close_id)
     except BaseException:
         _restore(before)
         raise
     print(
-        f"campaign_prepare\t{campaign_name}\t"
+        f"{plan.close_kind}_prepare\t{close_id}\t"
         f"source_rows={source_changes}\ttest_rows={test_changes}"
     )
     return plan
 
 
+def prepare_close_plan(
+    root: Path,
+    campaign_name: str,
+    *,
+    command_runner: CommandRunner = _run,
+) -> ClosePlan:
+    """Refresh derived rows and preflight a multi-package campaign close."""
+    slices = queue.load_slices(root)
+    campaign = queue.load_campaigns(root, slices).get(campaign_name)
+    if campaign is None:
+        raise ValueError(f"unknown campaign {campaign_name}")
+    members = tuple(str(member) for member in campaign["slices"])
+    return _prepare_members_close_plan(
+        root,
+        campaign_name,
+        members,
+        build_close_plan,
+        command_runner=command_runner,
+    )
+
+
+def prepare_package_close_plan(
+    root: Path,
+    owner: str,
+    *,
+    command_runner: CommandRunner = _run,
+) -> ClosePlan:
+    """Refresh derived rows and preflight a claim-derived package close."""
+    return _prepare_members_close_plan(
+        root,
+        owner,
+        (owner,),
+        build_package_close_plan,
+        command_runner=command_runner,
+    )
+
+
 def _same_plan(left: ClosePlan, right: ClosePlan) -> bool:
     return (
-        left.members == right.members
+        left.close_kind == right.close_kind
+        and left.close_id == right.close_id
+        and left.members == right.members
         and left.active_claim_owners == right.active_claim_owners
         and left.claim_digests == right.claim_digests
         and left.package_records.keys() == right.package_records.keys()
@@ -568,9 +654,13 @@ def apply_close_plan(
     try:
         command_runner(["scripts/rewrite-gate.sh", "integrate"], root)
         with queue.claim_lock(root):
-            current = build_close_plan(root, plan.campaign)
+            current = (
+                build_package_close_plan(root, plan.close_id)
+                if plan.close_kind == "package"
+                else build_close_plan(root, plan.close_id)
+            )
             if not _same_plan(current, plan):
-                raise ValueError("package campaign inputs changed after preflight")
+                raise ValueError("package close inputs changed after preflight")
             _validate_receipt(root, plan)
             claims = {
                 str(claim["owner"]): claim for claim in queue.validate_claims(root)
@@ -594,9 +684,10 @@ def apply_close_plan(
                     queue.package_receipt_payload(
                         root,
                         member,
-                        plan.campaign,
+                        plan.close_id,
                         plan.package_records[member],
                         gate_receipt,
+                        close_kind=plan.close_kind,
                     ),
                 )
             if validate:
@@ -617,7 +708,15 @@ def apply_close_plan(
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--campaign", required=True)
+    target = result.add_mutually_exclusive_group(required=True)
+    target.add_argument(
+        "--package",
+        help="derive a one-package close directly from this exact active claim",
+    )
+    target.add_argument(
+        "--campaign",
+        help="close a tracked dependency-inseparable multi-package frontier",
+    )
     result.add_argument(
         "--gate",
         action="store_true",
@@ -629,15 +728,25 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     arguments = parser().parse_args()
     try:
+        close_id = arguments.package or arguments.campaign
+        assert close_id is not None
         if arguments.gate:
-            plan = prepare_close_plan(RUST_ROOT, arguments.campaign)
+            plan = (
+                prepare_package_close_plan(RUST_ROOT, close_id)
+                if arguments.package
+                else prepare_close_plan(RUST_ROOT, close_id)
+            )
             apply_close_plan(RUST_ROOT, plan)
             action = "gated-and-integrated"
         else:
-            plan = build_close_plan(RUST_ROOT, arguments.campaign)
+            plan = (
+                build_package_close_plan(RUST_ROOT, close_id)
+                if arguments.package
+                else build_close_plan(RUST_ROOT, close_id)
+            )
             action = "dry-run"
         print(
-            f"campaign_close\t{action}\t{plan.campaign}\t"
+            f"{plan.close_kind}_close\t{action}\t{plan.close_id}\t"
             f"members={len(plan.members)}\t"
             f"active_claims={len(plan.active_claim_owners)}\t"
             f"writes={len(plan.writes)}"

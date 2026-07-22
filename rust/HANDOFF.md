@@ -69,7 +69,7 @@ states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
 that any upstream Go package is completely transcreated unless a package
 receipt says so.
 
-Two leaf packages currently have schema-2 receipts under
+Three leaf packages currently have schema-2 receipts under
 [`workstreams/package-receipts/`](workstreams/package-receipts/):
 
 - `pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
@@ -80,6 +80,10 @@ Two leaf packages currently have schema-2 receipts under
   one-call writer semantics, the original package tests/support, and the
   declared production consumer seam. It does not credit downstream AST-node
   packages.
+- `pkg/parser/mysql`, implemented across `tidb-error` and `tidb-mysql`. Its
+  receipt covers all ten production files, all eleven original Go tests, build
+  metadata, exact error-code/name/SQLSTATE authorities, Unicode tables, and the
+  declared parser/protocol consumer seams.
 
 ## Whole-package gaps
 
@@ -116,10 +120,12 @@ generated ledgers and must not be converted into percentage progress.
    package test/support inventory. Rust-specific redesign is limited to
    runtime mechanisms that cannot be carried faithfully, such as GC pools,
    goroutine ownership, or untyped registries.
-5. Run focused package checks during implementation. At close, let
-   `campaign_close.py --gate` refresh only the active package's derived ledger
-   rows, reject unrelated churn, run static checks first, then run full
-   workspace tests, Clippy, and applicable live gates using 12 jobs.
+5. Run focused package checks during implementation. Close an ordinary package
+   directly with `campaign_close.py --package <owner> --gate`; it derives the
+   transaction from the exact claim, refreshes only that package's ledger rows,
+   runs static checks first, then runs full workspace tests, Clippy, and
+   applicable live gates using 12 jobs. Create a tracked campaign only when two
+   or more packages are genuinely dependency-inseparable.
 6. Issue a package receipt only after inventory closure and required
    differential/live evidence. Until then every carried ledger row stays
    honestly untriaged, partial, or blocked.
@@ -150,9 +156,11 @@ dispatch template for new package work.
    result as staging only; never promote it independently.
 5. Add exact source/test/support evidence only after the complete package
    contract and all original tests are represented.
-6. Close the entire frontier with `campaign_close.py --gate`, issue every
-   immutable package receipt atomically, regenerate status, and run the Ready
-   profile before starting the following frontier.
+6. Close one package with `campaign_close.py --package <owner> --gate`. For a
+   genuinely inseparable group only, close the tracked frontier with
+   `campaign_close.py --campaign <campaign> --gate`. Both paths issue receipts
+   atomically, regenerate status, and require the Ready profile before the next
+   package starts.
 
 The highest-value first frontier is the connected SQL transaction path:
 `pkg/kv`/`pkg/store` dependencies, `pkg/session`/`pkg/sessionctx`, and the

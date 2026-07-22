@@ -246,6 +246,12 @@ class CampaignCloseTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _keep_only_package_a_claim(self) -> Path:
+        (self.root / "workstreams/claims/package-b.claim.json").unlink()
+        package_b = self.root / "workstreams/slices/package-b.toml"
+        self._replace_once(package_b, 'status = "active"', 'status = "ready"')
+        return package_b
+
     def _gate_runner(self, command: list[str], root: Path) -> None:
         if command == ["scripts/rewrite-gate.sh", "integrate"]:
             claims = campaign_close.queue.validate_claims(root)
@@ -368,9 +374,7 @@ class CampaignCloseTest(unittest.TestCase):
             'slices = ["package-a"]\n',
             encoding="utf-8",
         )
-        (self.root / "workstreams/claims/package-b.claim.json").unlink()
-        package_b = self.root / "workstreams/slices/package-b.toml"
-        self._replace_once(package_b, 'status = "active"', 'status = "ready"')
+        package_b = self._keep_only_package_a_claim()
 
         plan = campaign_close.build_close_plan(self.root, "campaign-x")
         self.assertEqual(plan.members, ("package-a",))
@@ -387,6 +391,72 @@ class CampaignCloseTest(unittest.TestCase):
             (self.root / "workstreams/package-receipts/package-a.json").is_file()
         )
         self.assertIn('status = "ready"', package_b.read_text(encoding="utf-8"))
+
+    def test_direct_package_preflight_needs_no_campaign_record(self) -> None:
+        package_b = self._keep_only_package_a_claim()
+        self.campaign_path.unlink()
+
+        plan = campaign_close.build_package_close_plan(self.root, "package-a")
+
+        self.assertEqual(plan.close_kind, "package")
+        self.assertEqual(plan.close_id, "package-a")
+        self.assertEqual(plan.members, ("package-a",))
+        self.assertEqual(len(plan.writes), 1)
+        self.assertFalse(self.archive_path.exists())
+        self.assertIn('status = "ready"', package_b.read_text(encoding="utf-8"))
+
+    def test_direct_package_close_writes_receipt_without_campaign_history(self) -> None:
+        package_b = self._keep_only_package_a_claim()
+        campaign_before = self.campaign_path.read_bytes()
+
+        plan = campaign_close.build_package_close_plan(self.root, "package-a")
+        campaign_close.apply_close_plan(
+            self.root, plan, command_runner=self._gate_runner
+        )
+
+        self.assertEqual(self.campaign_path.read_bytes(), campaign_before)
+        self.assertFalse(self.archive_path.exists())
+        self.assertIn('status = "ready"', package_b.read_text(encoding="utf-8"))
+        receipt = json.loads(
+            (
+                self.root
+                / "workstreams/package-receipts/package-a.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(receipt["schema"], 2)
+        self.assertEqual(
+            receipt["close"], {"kind": "package", "id": "package-a"}
+        )
+        record = campaign_close.queue.load_slices(self.root)["package-a"]
+        campaign_close.queue.validate_package_receipt(
+            self.root, "package-a", record
+        )
+
+    def test_direct_package_close_rejects_any_other_active_claim(self) -> None:
+        with self.assertRaisesRegex(ValueError, "active claim package-b is outside"):
+            campaign_close.build_package_close_plan(self.root, "package-a")
+
+    def test_direct_package_prepare_scopes_generated_rows_to_its_claim(self) -> None:
+        self._keep_only_package_a_claim()
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+
+        def prepare(command: list[str], root: Path) -> None:
+            self.assertEqual(command, ["scripts/rewrite-gate.sh", "prepare"])
+            self._replace_once(
+                source,
+                "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+                "evidence/source/package-a.tsv\tcomplete",
+                "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+                "evidence/source/package-a.tsv\tprepared",
+            )
+            (root / "STATUS.md").write_text("prepared\n", encoding="utf-8")
+
+        plan = campaign_close.prepare_package_close_plan(
+            self.root, "package-a", command_runner=prepare
+        )
+
+        self.assertEqual(plan.members, ("package-a",))
+        self.assertIn("evidence/source/package-a.tsv\tprepared", source.read_text())
 
     def test_rejects_active_claim_outside_campaign(self) -> None:
         self.campaign_path.write_text(

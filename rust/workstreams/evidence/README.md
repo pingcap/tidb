@@ -7,26 +7,26 @@ generated source queue and own their leaf corpus or selector plus one stable
 owner-named source/test evidence fragment. They do not concurrently edit
 generated inventories, snapshots, parser manifests, or Cargo roots.
 
-Campaign throughput is reported as production and original-test obligations
-promoted per full gate, not as wave count or Rust LOC. Ordinary batches should
-reach nine production files or fifty original obligations unless a named
-correctness/dependency boundary requires an earlier gate.
+Throughput is reported as production and original-test obligations promoted per
+full gate, not as wave count or Rust LOC. Gate one complete package at a time;
+batch only packages that cannot be accepted independently.
 
 A package is never promoted one member or evidence row at a time. Every
 expanded source and original-test row must already be owned by the package at
-`COVERED`, with exact checked evidence, before campaign close can start. The
-steward closes the complete schema-2 campaign through one command:
+`COVERED`, with exact checked evidence, before package close can start. The
+ordinary close derives its transaction directly from the exact active claim:
 
 ```sh
-scripts/campaign_close.py --campaign <campaign> --gate
+scripts/campaign_close.py --package <owner> --gate
 ```
 
-The integration gate runs while every campaign package claim remains active.
-Only its exact claim/workspace receipt authorizes the locked transaction that
-marks all package manifests covered, integrates the campaign, archives its
-membership, emits durable package receipts, and releases the claims. Any gate,
-receipt, validation, or dashboard failure restores the pre-gate bookkeeping.
-Schema-1 campaign history remains readable but cannot be closed again.
+The integration gate runs while the package claim remains active. Only its
+exact claim/workspace receipt authorizes the locked transaction that marks the
+manifest covered, emits the durable package receipt, and releases the claim.
+No campaign file or membership history is created. For a genuinely
+dependency-inseparable multi-package frontier, use `--campaign <campaign>`;
+that exceptional path promotes all members atomically and archives membership.
+Any gate, receipt, validation, or dashboard failure restores pre-gate state.
 
 Every upstream obligation remains generated in
 `difftests/corpus/coverage/go_test_inventory.tsv`. Dispatch exact,
@@ -75,7 +75,7 @@ Successful close writes one immutable
 manifest, every source/test/support evidence artifact, support dispositions,
 Rust targets and paths, and the exact gate claim/workspace result. A covered
 package and every downstream dependency must validate against this receipt;
-campaign close refuses to overwrite an existing receipt.
+package close refuses to overwrite an existing receipt.
 
 Production ownership is a separate generated dimension. Select its exact
 target-crate queue from `difftests/corpus/coverage/go_source_inventory.tsv`

@@ -1873,17 +1873,23 @@ def package_completion_snapshot(
 def package_receipt_payload(
     root: Path,
     owner: str,
-    campaign: str,
+    close_id: str,
     record: dict[str, object],
     gate_receipt: dict[str, object],
+    *,
+    close_kind: str = "campaign",
 ) -> dict[str, object]:
     claim = gate_receipt.get("claims", {}).get(owner)
     if not isinstance(claim, dict) or not isinstance(claim.get("claim_sha256"), str):
         raise ValueError(f"gate receipt is missing exact package claim {owner}")
+    if close_kind not in {"package", "campaign"}:
+        raise ValueError(f"invalid package receipt close kind {close_kind}")
+    if close_kind == "package" and close_id != owner:
+        raise ValueError("direct package receipt id must equal its owner")
     return {
-        "schema": 1,
+        "schema": 2,
         "owner": owner,
-        "campaign": campaign,
+        "close": {"kind": close_kind, "id": close_id},
         "package": package_completion_snapshot(root, owner, record),
         "gate": {
             "command": ["scripts/rewrite-gate.sh", "integrate"],
@@ -1904,12 +1910,31 @@ def validate_package_receipt(
         receipt = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid package receipt {path}: {error}") from error
-    if (
-        receipt.get("schema") != 1
-        or receipt.get("owner") != owner
-        or not isinstance(receipt.get("campaign"), str)
-        or not OWNER_RE.fullmatch(str(receipt.get("campaign", "")))
-    ):
+    schema = receipt.get("schema")
+    identity_valid = receipt.get("owner") == owner
+    if schema == 1:
+        campaign = receipt.get("campaign")
+        identity_valid = (
+            identity_valid
+            and isinstance(campaign, str)
+            and OWNER_RE.fullmatch(campaign) is not None
+        )
+    elif schema == 2:
+        close = receipt.get("close")
+        identity_valid = identity_valid and isinstance(close, dict)
+        if isinstance(close, dict):
+            close_kind = close.get("kind")
+            close_id = close.get("id")
+            identity_valid = (
+                identity_valid
+                and close_kind in {"package", "campaign"}
+                and isinstance(close_id, str)
+                and OWNER_RE.fullmatch(close_id) is not None
+                and (close_kind != "package" or close_id == owner)
+            )
+    else:
+        identity_valid = False
+    if not identity_valid:
         raise ValueError(f"{path}: invalid package receipt identity")
     expected = package_completion_snapshot(root, owner, record)
     if receipt.get("package") != expected:

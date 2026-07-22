@@ -56,6 +56,15 @@ package receipts before its Rust code reaches the shared branch.
   owner/anchor rollback regressions and passed static inventories, 100 Python
   governance tests, workspace Clippy/tests, parser isolation, and repository
   `make -j12 lint`.
+- [x] (2026-07-22) Audited, repaired, fully gated, and receipted the complete
+  `pkg/parser/mysql` package across `tidb-error` and `tidb-mysql`. The proof now
+  compares all 954 error constants, 952 error-name entries, and 244 SQLSTATE
+  entries against a source-derived Go oracle and executes the checked Unicode
+  generator from the package test target.
+- [x] (2026-07-22) Removed tracked campaign choreography from the ordinary
+  single-package close path. `campaign_close.py --package <owner> --gate` now
+  derives the atomic transaction directly from the exact active claim; tracked
+  campaigns remain only for dependency-inseparable multi-package frontiers.
 
 ## Surprises & Discoveries
 
@@ -120,6 +129,12 @@ package receipts before its Rust code reaches the shared branch.
   test-ledger rendering, transient claim count in `STATUS.md`, and stale
   source-ledger rendering before the fourth attempt passed. None of the three
   late failures was a semantic Rust failure.
+- Observation: a one-member campaign duplicated information already frozen by
+  the package manifest and exact claim, yet required a campaign file, status
+  mutation, archive row, and extra commits around every package.
+  Evidence: closing `pkg/parser/mysql` changed three campaign bookkeeping
+  surfaces in addition to the manifest and receipt even though the campaign had
+  exactly one member and the claim already fixed every accepted input.
 
 ## Decision Log
 
@@ -194,12 +209,21 @@ package receipts before its Rust code reaches the shared branch.
   transient inputs without forcing meaningless implementation and release
   commits. Live claim state remains authoritative through the queue command.
   Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: derive the normal single-package close from its exact schema-2
+  claim; reserve tracked campaigns for two or more packages that cannot be
+  accepted independently.
+  Rationale: the claim already supplies the complete membership, base revision,
+  inventory, and write set. Removing the duplicate campaign record shortens the
+  loop without weakening the shared gate, rollback, or immutable receipt. This
+  supersedes using a one-member campaign as the ordinary close form.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective
 
 The whole-package workflow and atomic receipt lifecycle are implemented.
-`pkg/server/internal/handshake` and the repaired `pkg/parser/format` now have
-current content-bound receipts. The parser-format repair executes the complete
+`pkg/server/internal/handshake`, repaired `pkg/parser/format`, and
+`pkg/parser/mysql` now have current content-bound receipts. The parser-format
+repair executes the complete
 generated Go simple-case oracle through the public Rust restore context and
 adds byte and writer-boundary regressions; its receipt also records the real
 field-type consumer seam that the earlier manifest omitted.
@@ -207,7 +231,8 @@ field-type consumer seam that the earlier manifest omitted.
 The immediate outcome is to select and claim the next dependency-ready whole
 package from the checked DAG before any implementation commit. The single
 owner must declare stable leaves and every mutable integration seam, then close
-that package through the same full gate and atomic receipt transaction.
+that package directly from its exact claim through the full gate and atomic
+receipt transaction.
 
 Before that claim, the close loop was shortened at the mechanism layer:
 active-package ledger rows are regenerated under exact claim scope, static
@@ -267,8 +292,10 @@ candidate receives a complete inventory/dependency audit before selection.
 Finally, transcreate each selected package directly from all Go production and
 test/support artifacts. A package that cannot close stays unintegrated and
 reports its exact dependency blocker. The implementation owner lands shared
-seams in dependency order, runs one reused 12-job Ready gate, issues receipts,
-releases claims, and regenerates status.
+seams in dependency order and closes an ordinary package directly from its
+claim. A tracked campaign is created only when several packages are
+inseparable. Both forms run one reused 12-job Ready gate, issue receipts,
+release claims, and regenerate status.
 
 ## Concrete Steps
 
@@ -286,11 +313,11 @@ Inspect a package manifest and atomically claim it:
 
 Work in the current checkout when there is one worker; a branch/worktree is an
 optional isolation mechanism, not part of package acceptance. Run focused
-checks during implementation. After the package frontier freezes, close it
-from `rust/` with one checkout-specific target:
+checks during implementation. After the package freezes, close it from `rust/`
+with one checkout-specific target:
 
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/private/tmp/tidb-rust-package-gate \
-      python3 scripts/campaign_close.py --campaign <campaign> --gate
+      python3 scripts/campaign_close.py --package <package-owner> --gate
 
 Expected governance output contains zero active legacy partial claims and a
 package table whose expanded counts match the ledgers. Expected integration
@@ -326,8 +353,9 @@ promote ledger state. If the inventory changes after claim, the checker must
 fail. Abandon and recreate the claim from the new checked manifest rather than
 amending a schema-2 snapshot.
 
-`campaign_close.py --gate` prepares derived source/test rows before its close
-preflight. Preparation restores its snapshot on generator, scope, or preflight
+`campaign_close.py --package <owner> --gate` prepares derived source/test rows
+before its close preflight. Preparation restores its snapshot on generator,
+scope, or preflight
 failure. Once preparation succeeds, a later workspace-gate failure retains the
 now-current derived files but still rolls back every receipt, status transition,
 and claim release; the next attempt therefore does not repeat bookkeeping.
@@ -351,8 +379,9 @@ frontier before any new Rust implementation commit is made.
 `rust/scripts/work-unit-queue.py` remains the sole claim authority. Its
 schema-2 loader returns expanded `go_sources`, `go_tests`, `module_sources`,
 and `module_tests` internally even though the manifest declares only packages.
-Claims persist those arrays as frozen evidence. Campaign and receipt tooling
-must consume the same expansion instead of maintaining another package parser.
+Claims persist those arrays as frozen evidence. Direct package close, campaign,
+and receipt tooling must consume the same expansion instead of maintaining
+another package parser.
 
 The generated Go ledgers are inputs and are never hand-edited. Package
 dependency records refer only to complete package manifests or explicit

@@ -186,14 +186,16 @@ stateDiagram-v2
     Ready --> Claimed: claim complete package
     Claimed --> Ready: abandon claim
     Claimed --> Gated: focused and frontier gates pass
-    Gated --> Covered: atomic campaign close and receipt
+    Gated --> Covered: atomic package close and receipt
     Covered --> Ready: reopen-package transaction
 ```
 
-Normal completion is an atomic campaign transaction: validate claims,
-dependency closure, source/test/support coverage, exact write-set hashes,
-focused evidence, shared frontier gates, and package receipts; then promote all
-members together. A failed gate promotes nothing.
+Normal completion is an atomic transaction derived from one exact package
+claim. It validates dependency closure, source/test/support coverage, exact
+write-set hashes, focused evidence, and shared gates before issuing the receipt
+and releasing the claim. A failed gate promotes nothing. Tracked campaigns are
+reserved for dependency-inseparable multi-package frontiers and apply the same
+transaction to all members together.
 
 When later auditing finds missing behavior, tests, support artifacts, consumer
 paths, or incorrect parity, `reopen-package` is mandatory. The transaction:
@@ -230,12 +232,13 @@ For each package or dependency-closed frontier:
    concurrency semantics.
 5. Port or differentially cover every original test and support artifact.
 6. Run focused package gates during development using a reused Cargo target.
-7. At close, regenerate only the active claims' source/test ledger rows and
+7. At close, regenerate only the active claim's source/test ledger rows and
    stable dashboard. Reject any unrelated generated churn.
 8. Run static ownership, dependency, and generated-inventory gates before the
    expensive 12-job workspace tests and Clippy; repeat static validation after
    tests before issuing the gate receipt.
-9. Close the campaign atomically, generate the receipt, and refresh status.
+9. Close the package directly from its claim, generate the receipt, and refresh
+   status. Use a campaign only for an inseparable multi-package frontier.
 10. If the audit or gate exposes a cross-package flaw, fix the owning package or
    reopen its receipt; do not add a downstream conditional workaround.
 
@@ -383,11 +386,12 @@ silently delete historical compatibility evidence from an accepted revision.
 
 ### Workspace gate
 
-A dependency frontier closes only after its package gates pass together in one
-clean integration state. Cheap static/generated checks run first so stale
-bookkeeping cannot waste a workspace build. Completion and release candidates
-additionally require the repository Ready verification profile, including
-repository lint when code changed. Expensive live suites run when the frontier
+A package closes only after its gates pass in one clean integration state. An
+inseparable dependency frontier closes only after all member gates pass
+together. Cheap static/generated checks run first so stale bookkeeping cannot
+waste a workspace build. Completion and release candidates additionally
+require the repository Ready verification profile, including repository lint
+when code changed. Expensive live suites run when the package or frontier
 touches their contract; they are never replaced by mocks when real PD/TiKV
 behavior is at issue.
 

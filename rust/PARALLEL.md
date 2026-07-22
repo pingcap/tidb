@@ -151,7 +151,7 @@ Translate the package from Go before redesigning it:
 | --- | --- | --- | --- |
 | Package | implementation loop | manifest inventory read, complete source/test translation, focused tests, formatting, anchors, `git diff --check` | Focused only |
 | Static | before integration | package manifests, DAG, claims, duplicate ownership, generated ledgers, paths, transfer records | Evidence tools only |
-| Integrate | frontier close | frozen package frontier, workspace tests, all-target Clippy, differential rings, required live proofs | One reused 12-job target |
+| Integrate | package/frontier close | frozen package or inseparable frontier, workspace tests, all-target Clippy, differential rings, required live proofs | One reused 12-job target |
 
 Set `CARGO_BUILD_JOBS=12` for every Cargo build. Reuse one checkout-specific
 target directory and never share it across Git worktrees because evidence
@@ -208,7 +208,7 @@ the whole package satisfies its receipt.
 
 ## Integration sequence
 
-For each frontier:
+For each package or inseparable frontier:
 
 1. Generate and audit complete package inventories.
 2. Freeze dependency contracts, stable Rust paths, integration seams, and the
@@ -217,11 +217,11 @@ For each frontier:
    worker.
 4. Translate and test packages in dependency order.
 5. Land seam changes in dependency order.
-6. Let package close regenerate the active claims' derived ledger rows and
+6. Let package close regenerate the active claim's derived ledger rows and
    reject any unrelated generated change.
 7. Run static ownership/DAG/generated checks before expensive work.
-8. Run one 12-job workspace/differential/live gate for the frozen frontier,
-   then repeat static validation before attestation.
+8. Run one 12-job workspace/differential/live gate for the frozen package or
+   inseparable frontier, then repeat static validation before attestation.
 9. Issue receipts, release claims, and regenerate stable status only after the
    gate.
 
@@ -237,8 +237,9 @@ receipt. It requires a globally quiescent claim/gate state, refuses packages
 with covered transitive dependents, removes the receipt, and returns the
 manifest to a dependency-ready, legally claimable `ready` state. Reopen covered
 dependents first, then their dependencies. Historical campaign manifests and
-`workstreams/campaigns/integrated-members.tsv` remain immutable evidence; the
-new repair closes through a new campaign and receipt.
+`workstreams/campaigns/integrated-members.tsv` remain immutable evidence. An
+ordinary repair closes directly from its new exact claim; create a new campaign
+only if the repair is inseparable from other packages.
 
 If a package cannot close, keep it `blocked`, record the exact missing package
 obligations, release or preserve its claim deliberately, and continue with
