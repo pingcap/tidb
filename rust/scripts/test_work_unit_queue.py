@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import fcntl
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -31,9 +32,35 @@ SCRIPT = Path(__file__).with_name("work-unit-queue.py")
 class WorkUnitQueueTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        self.repo = Path(self.temporary.name) / "repo"
+        self.root = self.repo / "rust"
+        self.root.mkdir(parents=True)
+        (self.repo / "go.mod").write_text(
+            "module github.com/pingcap/tidb\n\ngo 1.25\n", encoding="utf-8"
+        )
         self.shared_fixture_artifact = self.root.parent / "a"
         self.shared_fixture_artifact.write_text("evidence", encoding="utf-8")
+        for relative, contents in (
+            ("pkg/planner/foo.go", "package planner\n\nfunc foo() {}\n"),
+            ("pkg/planner/bar.go", "package planner\n\nfunc bar() {}\n"),
+            ("pkg/planner/foo_test.go", "package planner\n\nfunc TestFoo() {}\n"),
+            ("pkg/planner/other_test.go", "package planner\n\nfunc TestOther() {}\n"),
+        ):
+            destination = self.repo / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(contents, encoding="utf-8")
+        (self.root / "Cargo.toml").write_text(
+            '[workspace]\nresolver = "2"\nmembers = '
+            '["crates/tidb-planner", "crates/tidb-server"]\n',
+            encoding="utf-8",
+        )
+        for crate in ("tidb-planner", "tidb-server"):
+            crate_root = self.root / "crates" / crate
+            crate_root.mkdir(parents=True)
+            (crate_root / "Cargo.toml").write_text(
+                f'[package]\nname = "{crate}"\nversion = "0.0.0"\n',
+                encoding="utf-8",
+            )
         coverage = self.root / "difftests/corpus/coverage"
         coverage.mkdir(parents=True)
         (coverage / "go_source_inventory.tsv").write_text(
@@ -68,10 +95,30 @@ class WorkUnitQueueTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+        subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
 
     def tearDown(self) -> None:
-        self.shared_fixture_artifact.unlink(missing_ok=True)
         self.temporary.cleanup()
+
+    def write_tracked(self, relative: str, contents: str | bytes) -> str:
+        """Writes and stages one fixture artifact, returning its SHA-256."""
+        destination = self.repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(contents, bytes):
+            destination.write_bytes(contents)
+            digest = hashlib.sha256(contents).hexdigest()
+        else:
+            destination.write_text(contents, encoding="utf-8")
+            digest = hashlib.sha256(contents.encode()).hexdigest()
+        subprocess.run(["git", "add", "--", relative], cwd=self.repo, check=True)
+        return digest
+
+    def upstream_digests(self, *relative_paths: str) -> dict[str, str]:
+        return {
+            relative: hashlib.sha256((self.repo / relative).read_bytes()).hexdigest()
+            for relative in sorted(relative_paths)
+        }
 
     def test_check_rejects_comma_separated_source_evidence_artifacts(self) -> None:
         inventory = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
@@ -197,6 +244,7 @@ class WorkUnitQueueTest(unittest.TestCase):
         status: str = "ready",
         depends_on: list[str] | None = None,
         module_packages: list[str] | None = None,
+        rust_paths: list[str] | None = None,
     ) -> Path:
         slices = self.root / "workstreams/slices"
         slices.mkdir(parents=True, exist_ok=True)
@@ -212,7 +260,7 @@ class WorkUnitQueueTest(unittest.TestCase):
             f"go_packages = {json.dumps(packages)}\n"
             f"module_packages = {json.dumps(module_packages or [])}\n"
             f"depends_on = {json.dumps(depends_on or [])}\n"
-            f'rust_paths = ["rust/crates/tidb-planner/src/{name}.rs"]\n',
+            f"rust_paths = {json.dumps(rust_paths or [f'rust/crates/{target}/src/{name}.rs' for target in targets])}\n",
             encoding="utf-8",
         )
         return path
@@ -224,25 +272,30 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertIn("go_package", result.stdout)
         self.assertIn("pkg/planner\t2\t2\t0\t2\t2\t2", result.stdout)
 
-    def test_claim_rejects_overlapping_source_and_release_unlocks_it(self) -> None:
+    def test_raw_claim_dispatch_is_disabled_and_legacy_can_only_abandon(self) -> None:
         anchor = "pkg/planner/foo_test.go:10:TestFoo"
-        self.run_tool(
-            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go", "--test", anchor
-        )
-        claim_path = self.root / "workstreams/claims/agent-a.claim.json"
-        claim = json.loads(claim_path.read_text())
-        self.assertEqual(claim["schema"], 1)
-        self.assertEqual(claim["sources"], ["pkg/planner/foo.go"])
-        self.assertEqual(claim["tests"], [anchor])
         failure = self.run_tool(
-            "claim", "--owner", "agent-b", "--source", "pkg/planner/foo.go", success=False
+            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go",
+            "--test", anchor, success=False,
         )
-        self.assertIn("already claimed", failure.stderr)
+        self.assertIn("raw claim dispatch is disabled", failure.stderr)
+        claim_path = self.root / "workstreams/claims/agent-a.claim.json"
+        claim_path.parent.mkdir(parents=True)
+        claim_path.write_text(
+            json.dumps(
+                {"schema": 1, "owner": "agent-a", "sources": ["pkg/planner/foo.go"], "tests": [anchor]}
+            ),
+            encoding="utf-8",
+        )
+        integrated = self.run_tool(
+            "release", "--owner", "agent-a", "--integrated", success=False
+        )
+        self.assertIn("only schema-2 package claims", integrated.stderr)
         self.run_tool("release", "--owner", "agent-a", "--abandon")
-        self.run_tool("claim", "--owner", "agent-b", "--source", "pkg/planner/foo.go")
+        self.assertFalse(claim_path.exists())
 
-    def test_claim_can_own_a_multi_source_vertical_slice(self) -> None:
-        self.run_tool(
+    def test_raw_multi_source_claim_cannot_bypass_package_dispatch(self) -> None:
+        result = self.run_tool(
             "claim",
             "--owner",
             "agent-a",
@@ -250,21 +303,10 @@ class WorkUnitQueueTest(unittest.TestCase):
             "pkg/planner/foo.go",
             "--source",
             "pkg/planner/bar.go",
-        )
-        path = self.root / "workstreams/claims/agent-a.claim.json"
-        self.assertEqual(
-            json.loads(path.read_text())["sources"],
-            ["pkg/planner/bar.go", "pkg/planner/foo.go"],
-        )
-        result = self.run_tool(
-            "claim",
-            "--owner",
-            "agent-b",
-            "--source",
-            "pkg/planner/bar.go",
             success=False,
         )
-        self.assertIn("already claimed", result.stderr)
+        self.assertIn("raw claim dispatch is disabled", result.stderr)
+        self.assertFalse((self.root / "workstreams/claims/agent-a.claim.json").exists())
 
     def test_ready_slice_requires_covered_dependencies_and_claims_all_sources(self) -> None:
         slices = self.root / "workstreams/slices"
@@ -497,6 +539,12 @@ class WorkUnitQueueTest(unittest.TestCase):
                     "rust_paths": ["rust/crates/tidb-planner/src/foo.rs"],
                     "module_sources": [],
                     "module_tests": [],
+                    "upstream_sha256": self.upstream_digests(
+                        "pkg/planner/bar.go",
+                        "pkg/planner/foo.go",
+                        "pkg/planner/foo_test.go",
+                        "pkg/planner/other_test.go",
+                    ),
                 }
             ),
             encoding="utf-8",
@@ -514,6 +562,12 @@ class WorkUnitQueueTest(unittest.TestCase):
                     "rust_paths": ["rust/crates/tidb-planner/src/foo.rs"],
                     "module_sources": [],
                     "module_tests": [],
+                    "upstream_sha256": self.upstream_digests(
+                        "pkg/planner/bar.go",
+                        "pkg/planner/foo.go",
+                        "pkg/planner/foo_test.go",
+                        "pkg/planner/other_test.go",
+                    ),
                 }
             ),
             encoding="utf-8",
@@ -599,14 +653,11 @@ class WorkUnitQueueTest(unittest.TestCase):
             encoding="utf-8",
         )
         implementation.write_text("checked implementation", encoding="utf-8")
-        self.run_tool(
-            "claim",
-            "--owner", "planner-consumer",
-            "--source", "pkg/planner/foo.go",
-            "--test", "pkg/planner/foo_test.go:10:TestFoo",
+        failure = self.run_tool(
+            "claim", "--owner", "planner-consumer",
+            "--source", "pkg/planner/foo.go", success=False,
         )
-        failure = self.run_tool("gate-begin", success=False)
-        self.assertIn("only schema-2 package claims", failure.stderr)
+        self.assertIn("raw claim dispatch is disabled", failure.stderr)
         return
         self.run_tool("gate-finish")
         implementation.write_text("edited after gate", encoding="utf-8")
@@ -619,11 +670,11 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
 
     def test_gate_finish_rejects_even_an_undeclared_edit_during_the_gate(self) -> None:
-        self.run_tool(
-            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go"
+        failure = self.run_tool(
+            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go",
+            success=False,
         )
-        failure = self.run_tool("gate-begin", success=False)
-        self.assertIn("only schema-2 package claims", failure.stderr)
+        self.assertIn("raw claim dispatch is disabled", failure.stderr)
         return
         (self.root / "undeclared.rs").write_text("changed during gate", encoding="utf-8")
         failure = self.run_tool("gate-finish", success=False)
@@ -643,11 +694,11 @@ class WorkUnitQueueTest(unittest.TestCase):
             f'rust_paths = ["{implementation_relative}"]\n',
             encoding="utf-8",
         )
-        self.run_tool(
-            "claim", "--owner", "domain-owner", "--source", "pkg/planner/foo.go"
+        failure = self.run_tool(
+            "claim", "--owner", "domain-owner", "--source", "pkg/planner/foo.go",
+            success=False,
         )
-        failure = self.run_tool("gate-begin", success=False)
-        self.assertIn("only schema-2 package claims", failure.stderr)
+        self.assertIn("raw claim dispatch is disabled", failure.stderr)
         return
         self.run_tool("gate-finish")
         domain = self.root / "workstreams/domains/planner.toml"
@@ -659,12 +710,13 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertIn("receipt for domain-owner is stale", failure.stderr)
 
     def test_gate_rejects_double_begin_and_mid_gate_evidence_edits(self) -> None:
-        self.run_tool(
-            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go"
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
         )
-        failure = self.run_tool("gate-begin", success=False)
-        self.assertIn("only schema-2 package claims", failure.stderr)
-        return
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+        self.run_tool("gate-begin")
         duplicate = self.run_tool("gate-begin", success=False)
         self.assertIn("already has an active begin snapshot", duplicate.stderr)
         evidence = self.root / "difftests/corpus/coverage/evidence/source/mid-gate.tsv"
@@ -699,16 +751,11 @@ class WorkUnitQueueTest(unittest.TestCase):
             f'rust_paths = ["{second_relative}"]\n',
             encoding="utf-8",
         )
-        self.run_tool(
+        first_claim = self.run_tool(
             "claim", "--owner", "slice-a", "--source", "pkg/planner/foo.go",
-            "--test", "pkg/planner/foo_test.go:10:TestFoo",
+            "--test", "pkg/planner/foo_test.go:10:TestFoo", success=False,
         )
-        self.run_tool(
-            "claim", "--owner", "slice-b", "--source", "pkg/planner/bar.go",
-            "--test", "pkg/planner/other_test.go:20:TestOther",
-        )
-        failure = self.run_tool("gate-begin", success=False)
-        self.assertIn("only schema-2 package claims", failure.stderr)
+        self.assertIn("raw claim dispatch is disabled", first_claim.stderr)
         return
         self.run_tool("gate-finish")
         receipt = self.root / "workstreams/integration-receipt.json"
@@ -721,8 +768,13 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertFalse(receipt.exists())
 
     def test_release_requires_explicit_integrated_or_abandon_mode(self) -> None:
-        self.run_tool(
-            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go"
+        claims = self.root / "workstreams/claims"
+        claims.mkdir(parents=True)
+        (claims / "agent-a.claim.json").write_text(
+            json.dumps(
+                {"schema": 1, "owner": "agent-a", "sources": ["pkg/planner/foo.go"], "tests": []}
+            ),
+            encoding="utf-8",
         )
         result = self.run_tool("release", "--owner", "agent-a", success=False)
         self.assertIn("one of the arguments --integrated --abandon is required", result.stderr)
@@ -862,17 +914,20 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertIn("stale test anchor", result.stderr)
 
     def test_claim_transaction_rejects_a_concurrent_writer(self) -> None:
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
         claims = self.root / "workstreams/claims"
         claims.mkdir(parents=True)
         descriptor = os.open(claims / ".lock", os.O_CREAT | os.O_RDWR, 0o600)
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             result = self.run_tool(
-                "claim",
+                "claim-slice",
                 "--owner",
-                "agent-a",
-                "--source",
-                "pkg/planner/foo.go",
+                "planner-package",
+                "--slice",
+                "planner-package",
                 success=False,
             )
             self.assertIn("transaction already active", result.stderr)
@@ -880,40 +935,23 @@ class WorkUnitQueueTest(unittest.TestCase):
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
 
-    def test_amend_adds_a_discovered_test_and_rejects_another_owners_anchor(self) -> None:
-        first = "pkg/planner/foo_test.go:10:TestFoo"
-        second = "pkg/planner/other_test.go:20:TestOther"
-        self.run_tool(
-            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go", "--test", first
-        )
-        self.run_tool("amend", "--owner", "agent-a", "--test", second)
-        path = self.root / "workstreams/claims/agent-a.claim.json"
-        self.assertEqual(json.loads(path.read_text())["tests"], [first, second])
-        self.run_tool("release", "--owner", "agent-a", "--abandon")
-        self.run_tool(
-            "claim", "--owner", "agent-b", "--source", "pkg/planner/bar.go", "--test", second
-        )
-        self.run_tool(
-            "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go", "--test", first
+    def test_amend_cannot_extend_a_frozen_legacy_claim(self) -> None:
+        claims = self.root / "workstreams/claims"
+        claims.mkdir(parents=True)
+        (claims / "agent-a.claim.json").write_text(
+            json.dumps(
+                {"schema": 1, "owner": "agent-a", "sources": ["pkg/planner/foo.go"], "tests": []}
+            ),
+            encoding="utf-8",
         )
         result = self.run_tool(
-            "amend", "--owner", "agent-a", "--test", second, success=False
+            "amend", "--owner", "agent-a", "--test",
+            "pkg/planner/other_test.go:20:TestOther", success=False,
         )
-        self.assertIn("already claimed", result.stderr)
-
-    def test_amend_adds_a_source_and_rejects_another_owners_source(self) -> None:
-        self.run_tool("claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go")
-        self.run_tool(
-            "amend", "--owner", "agent-a", "--source", "pkg/planner/bar.go"
-        )
-        path = self.root / "workstreams/claims/agent-a.claim.json"
-        self.assertEqual(
-            json.loads(path.read_text())["sources"],
-            ["pkg/planner/bar.go", "pkg/planner/foo.go"],
-        )
+        self.assertIn("claim amendment is disabled", result.stderr)
         self.run_tool("release", "--owner", "agent-a", "--abandon")
-        self.run_tool("claim", "--owner", "agent-b", "--source", "pkg/planner/bar.go")
-        self.run_tool("claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go")
+
+    def test_amend_cannot_create_or_extend_partial_source_ownership(self) -> None:
         result = self.run_tool(
             "amend",
             "--owner",
@@ -922,7 +960,7 @@ class WorkUnitQueueTest(unittest.TestCase):
             "pkg/planner/bar.go",
             success=False,
         )
-        self.assertIn("already claimed", result.stderr)
+        self.assertIn("claim amendment is disabled", result.stderr)
 
     def test_check_rejects_a_transfer_without_the_new_ledger_owner(self) -> None:
         transfers = self.root / "difftests/corpus/coverage/evidence/transfers"
@@ -1256,6 +1294,18 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
 
     def test_package_claim_expands_nearest_package_testdata_and_support(self) -> None:
+        for relative in (
+            "pkg/planner/sub/child.go",
+            "pkg/planner/testdata/fixture.go",
+            "pkg/planner/sub/child_test.go",
+            "pkg/planner/testdata/deep/fixture_test.go",
+        ):
+            self.write_tracked(relative, f"package fixture // {relative}\n")
+        root_build = self.write_tracked("pkg/planner/BUILD.bazel", "root build\n")
+        result_fixture = self.write_tracked(
+            "pkg/planner/testdata/result.txt", "expected result\n"
+        )
+        sub_build = self.write_tracked("pkg/planner/sub/BUILD.bazel", "sub build\n")
         sources = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
         with sources.open("a", encoding="utf-8") as output:
             output.write(
@@ -1271,9 +1321,9 @@ class WorkUnitQueueTest(unittest.TestCase):
         support = self.root / "difftests/corpus/coverage/go_package_support_inventory.tsv"
         support.write_text(
             "# package_path\tsupport_path\tsha256\n"
-            f"pkg/planner\tpkg/planner/BUILD.bazel\t{'a' * 64}\n"
-            f"pkg/planner\tpkg/planner/testdata/result.txt\t{'b' * 64}\n"
-            f"pkg/planner/sub\tpkg/planner/sub/BUILD.bazel\t{'c' * 64}\n",
+            f"pkg/planner\tpkg/planner/BUILD.bazel\t{root_build}\n"
+            f"pkg/planner\tpkg/planner/testdata/result.txt\t{result_fixture}\n"
+            f"pkg/planner/sub\tpkg/planner/sub/BUILD.bazel\t{sub_build}\n",
             encoding="utf-8",
         )
         self.write_package_slice(
@@ -1295,10 +1345,11 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertFalse(any("pkg/planner/sub/BUILD" in item for item in claim["supports"]))
 
     def test_package_claim_detects_support_digest_and_inventory_drift(self) -> None:
+        digest = self.write_tracked("pkg/planner/BUILD.bazel", "root build\n")
         support = self.root / "difftests/corpus/coverage/go_package_support_inventory.tsv"
         support.write_text(
             "# package_path\tsupport_path\tsha256\n"
-            f"pkg/planner\tpkg/planner/BUILD.bazel\t{'a' * 64}\n",
+            f"pkg/planner\tpkg/planner/BUILD.bazel\t{digest}\n",
             encoding="utf-8",
         )
         self.write_package_slice(
@@ -1311,7 +1362,7 @@ class WorkUnitQueueTest(unittest.TestCase):
             encoding="utf-8",
         )
         failure = self.run_tool("check", success=False)
-        self.assertIn("missing supports", failure.stderr)
+        self.assertIn("stale sha256", failure.stderr)
 
     def test_package_slice_requires_exact_multi_target_and_ring_sets(self) -> None:
         source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
@@ -1332,6 +1383,9 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertIn("pkg/planner\ttidb-planner,tidb-server\t2\t250", listing.stdout)
 
     def test_test_only_package_is_claimable_and_visible(self) -> None:
+        self.write_tracked(
+            "pkg/testonly/only_test.go", "package testonly\n\nfunc TestOnly() {}\n"
+        )
         tests = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
         with tests.open("a", encoding="utf-8") as output:
             output.write(
@@ -1385,7 +1439,7 @@ class WorkUnitQueueTest(unittest.TestCase):
             "amend", "--owner", "planner-package", "--test",
             "pkg/planner/foo_test.go:10:TestFoo", success=False,
         )
-        self.assertIn("immutable expanded snapshots", amend.stderr)
+        self.assertIn("claim amendment is disabled", amend.stderr)
 
     def test_schema2_fails_closed_for_external_packages_and_legacy_dependencies(self) -> None:
         manifest = self.write_package_slice(
@@ -1439,6 +1493,10 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertIn("missing frozen schema-1 slice registry", failure.stderr)
 
     def test_schema2_campaign_is_dispatchable_but_cannot_be_frozen(self) -> None:
+        self.write_tracked("pkg/other/other.go", "package other\n")
+        self.write_tracked(
+            "pkg/other/other_test.go", "package other\n\nfunc TestOtherPackage() {}\n"
+        )
         source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
         with source.open("a", encoding="utf-8") as output:
             output.write(
@@ -1500,9 +1558,22 @@ class WorkUnitQueueTest(unittest.TestCase):
             success=False,
         )
         self.assertIn("only schema-2", claim_slice.stderr)
-        self.run_tool("claim", "--owner", "repair", "--source", "pkg/planner/foo.go")
+        raw_claim = self.run_tool(
+            "claim", "--owner", "repair", "--source", "pkg/planner/foo.go",
+            success=False,
+        )
+        self.assertIn("raw claim dispatch is disabled", raw_claim.stderr)
+        claims = self.root / "workstreams/claims"
+        claims.mkdir(parents=True)
+        (claims / "repair.claim.json").write_text(
+            json.dumps(
+                {"schema": 1, "owner": "repair", "sources": ["pkg/planner/foo.go"], "tests": []}
+            ),
+            encoding="utf-8",
+        )
         gate = self.run_tool("gate-begin", success=False)
         self.assertIn("only schema-2 package claims", gate.stderr)
+        self.run_tool("release", "--owner", "repair", "--abandon")
 
     def test_schema2_gate_still_detects_mid_gate_workspace_drift(self) -> None:
         self.write_package_slice(
@@ -1516,6 +1587,186 @@ class WorkUnitQueueTest(unittest.TestCase):
         failure = self.run_tool("gate-finish", success=False)
         self.assertIn("changed while the shared gate was running", failure.stderr)
         self.run_tool("gate-abort")
+
+    def test_package_claim_freezes_source_test_and_deletion_bytes(self) -> None:
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+        claim = json.loads(
+            (self.root / "workstreams/claims/planner-package.claim.json").read_text()
+        )
+        self.assertEqual(
+            list(claim["upstream_sha256"]),
+            [
+                "pkg/planner/bar.go",
+                "pkg/planner/foo.go",
+                "pkg/planner/foo_test.go",
+                "pkg/planner/other_test.go",
+            ],
+        )
+        for relative, replacement in (
+            ("pkg/planner/foo.go", "package planner\n\nfunc zzz() {}\n"),
+            ("pkg/planner/foo_test.go", "package planner\n\nfunc TestBad() {}\n"),
+        ):
+            path = self.repo / relative
+            original = path.read_bytes()
+            path.write_text(replacement, encoding="utf-8")
+            failure = self.run_tool("check", success=False)
+            self.assertIn(f"snapshot is stale at {relative}", failure.stderr)
+            path.write_bytes(original)
+            self.run_tool("check")
+        deleted = self.repo / "pkg/planner/bar.go"
+        contents = deleted.read_bytes()
+        deleted.unlink()
+        failure = self.run_tool("check", success=False)
+        self.assertIn("cannot read Go source", failure.stderr)
+        deleted.write_bytes(contents)
+
+    def test_support_digest_checks_file_and_symlink_target(self) -> None:
+        regular_sha = self.write_tracked("pkg/planner/BUILD.bazel", "build\n")
+        target = self.repo / "pkg/planner/fixture-link"
+        target.symlink_to("first-target")
+        subprocess.run(
+            ["git", "add", "--", "pkg/planner/fixture-link"],
+            cwd=self.repo,
+            check=True,
+        )
+        link_sha = hashlib.sha256(b"first-target").hexdigest()
+        support = self.root / "difftests/corpus/coverage/go_package_support_inventory.tsv"
+        support.write_text(
+            "# package_path\tsupport_path\tsha256\n"
+            f"pkg/planner\tpkg/planner/BUILD.bazel\t{regular_sha}\n"
+            f"pkg/planner\tpkg/planner/fixture-link\t{link_sha}\n",
+            encoding="utf-8",
+        )
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+        target.unlink()
+        target.symlink_to("second-target")
+        failure = self.run_tool("check", success=False)
+        self.assertIn("stale sha256 for pkg/planner/fixture-link", failure.stderr)
+
+    def test_schema2_rust_paths_are_canonical_disjoint_and_cover_targets(self) -> None:
+        for invalid in (
+            "/tmp/owned.rs",
+            "rust/crates/tidb-planner/../tidb-server/src/lib.rs",
+        ):
+            manifest = self.write_package_slice(
+                "planner-package",
+                packages=["pkg/planner"],
+                targets=["tidb-planner"],
+                rust_paths=[invalid],
+            )
+            failure = self.run_tool("check", success=False)
+            self.assertIn("invalid Rust path", failure.stderr)
+            manifest.unlink()
+        manifest = self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-missing"],
+            rust_paths=["rust/crates/tidb-missing/src/lib.rs"],
+        )
+        missing = self.run_tool("check", success=False)
+        self.assertIn("not a Rust workspace crate: tidb-missing", missing.stderr)
+        manifest.unlink()
+        self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner", "tidb-server"],
+            rust_paths=["rust/crates/tidb-planner/src/lib.rs"],
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("target tidb-server has no Rust path", failure.stderr)
+
+    def test_schema2_rejects_duplicate_packages_and_rust_subtree_overlap(self) -> None:
+        self.write_package_slice(
+            "planner-a", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.write_package_slice(
+            "planner-b", packages=["pkg/planner"], targets=["tidb-server"]
+        )
+        duplicate = self.run_tool("check", success=False)
+        self.assertIn("already has canonical schema-2 manifest", duplicate.stderr)
+        (self.root / "workstreams/slices/planner-b.toml").unlink()
+        self.write_tracked("pkg/other/other.go", "package other\n")
+        with (self.root / "difftests/corpus/coverage/go_source_inventory.tsv").open(
+            "a", encoding="utf-8"
+        ) as output:
+            output.write(
+                "pkg/other/other.go\t1\ttidb-planner\tfalse\tUNTRIAGED\t-\t-\t-\n"
+            )
+        self.write_package_slice(
+            "other-package",
+            packages=["pkg/other"],
+            targets=["tidb-planner"],
+            rings=["unassigned"],
+            rust_paths=["rust/crates/tidb-planner/src/shared/child.rs"],
+        )
+        planner = self.root / "workstreams/slices/planner-a.toml"
+        planner.write_text(
+            planner.read_text().replace(
+                'rust/crates/tidb-planner/src/planner-a.rs',
+                "rust/crates/tidb-planner/src/shared",
+            ),
+            encoding="utf-8",
+        )
+        overlap = self.run_tool("check", success=False)
+        self.assertIn("Rust ownership overlaps manifests", overlap.stderr)
+
+    def test_ready_package_requires_internal_source_and_test_dependencies(self) -> None:
+        self.write_tracked("pkg/types/types.go", "package types\n")
+        source_inventory = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        with source_inventory.open("a", encoding="utf-8") as output:
+            output.write(
+                "pkg/types/types.go\t1\ttidb-planner\tfalse\tUNTRIAGED\t-\t-\t-\n"
+            )
+        planner_source = self.repo / "pkg/planner/foo.go"
+        planner_source.write_text(
+            'package planner\nimport _ "github.com/pingcap/tidb/pkg/types"\nfunc foo() {}\n',
+            encoding="utf-8",
+        )
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        missing = self.run_tool("check", success=False)
+        self.assertIn("pkg/types has no canonical schema-2", missing.stderr)
+        self.write_package_slice(
+            "types-package",
+            packages=["pkg/types"],
+            targets=["tidb-planner"],
+            rings=["unassigned"],
+        )
+        undeclared = self.run_tool("check", success=False)
+        self.assertIn("requires depends_on = types-package", undeclared.stderr)
+        planner_manifest = self.root / "workstreams/slices/planner-package.toml"
+        planner_manifest.write_text(
+            planner_manifest.read_text().replace(
+                "depends_on = []", 'depends_on = ["types-package"]'
+            ),
+            encoding="utf-8",
+        )
+        self.run_tool("check")
+        planner_source.write_text("package planner\nfunc foo() {}\n", encoding="utf-8")
+        planner_test = self.repo / "pkg/planner/foo_test.go"
+        planner_test.write_text(
+            'package planner\nimport _ "github.com/pingcap/tidb/pkg/types"\nfunc TestFoo() {}\n',
+            encoding="utf-8",
+        )
+        planner_manifest.write_text(
+            planner_manifest.read_text().replace(
+                'depends_on = ["types-package"]', "depends_on = []"
+            ),
+            encoding="utf-8",
+        )
+        test_dependency = self.run_tool("check", success=False)
+        self.assertIn("requires depends_on = types-package", test_dependency.stderr)
 
 
 if __name__ == "__main__":

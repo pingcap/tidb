@@ -9,45 +9,27 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 0
-- Active slices: 0
-- Declared ready slices: 2
-- Partial slices: 124
-- Covered slices: 7
-- Blocked slices: 1
+- Active package claims: 0
+- Inventory packages: 0
+- Declared ready packages: 2
+- Active packages: 0
+- Covered packages: 0
+- Blocked packages: 1
 
-## Campaigns
+## Package campaigns
 
-| Campaign | Status | Slices |
+| Campaign | Status | Packages |
 | --- | --- | --- |
-| 2026-07-read-path-01 | integrated | 6 |
-| 2026-07-read-path-02 | integrated | 6 |
-| 2026-07-read-path-07 | integrated | 3 |
-| 2026-07-read-path-08 | integrated | 2 |
-| 2026-07-read-path-09 | integrated | 2 |
-| 2026-07-read-path-10 | integrated | 2 |
-| 2026-07-read-path-11 | integrated | 3 |
-| 2026-07-read-path-12 | integrated | 3 |
-| 2026-07-read-path-13 | integrated | 4 |
-| 2026-07-read-path-14 | integrated | 4 |
-| 2026-07-read-path-15 | integrated | 4 |
-| 2026-07-read-path-16 | integrated | 3 |
-| 2026-07-read-path-17 | integrated | 3 |
-| 2026-07-read-path-18 | integrated | 4 |
-| 2026-07-read-path-19 | integrated | 7 |
-| 2026-07-read-path-20 | integrated | 5 |
-| 2026-07-read-path-21 | integrated | 6 |
-| 2026-07-read-path-22 | integrated | 6 |
-| 2026-07-read-path-23 | integrated | 6 |
-| 2026-07-read-path-24 | integrated | 6 |
-| 2026-07-read-path-25 | frozen | 7 |
-| 2026-07-read-path-26 | integrated | 8 |
-| 2026-07-read-path-27 | integrated | 4 |
-| 2026-07-read-path-28 | frozen | 5 |
-| 2026-07-runtime-closure-03 | integrated | 6 |
-| 2026-07-runtime-closure-04 | integrated | 6 |
-| 2026-07-runtime-closure-05 | integrated | 6 |
-| 2026-07-runtime-closure-06 | integrated | 3 |
+| 2026-07-package-frontier-01 | planned | 2 |
+
+## Legacy schema-1 evidence
+
+Legacy records are retained as bounded evidence only. They do not
+contribute to the package queue, package campaigns, or package completion.
+
+- Legacy claims present: 0
+- Legacy slice records: 164
+- Legacy campaign records: 28
 
 ## Pinned external Go universes
 
@@ -125,39 +107,6 @@ External module counts are pinned porting obligations and are not included in Ti
 | transaction | 1113 | 103 | 54 | 6 |
 | parser | 308 | 38 | 76 | 5 |
 
-## Blocked slices
+## Blocked packages
 
-- `datatype-core-time-authority`: single CoreTime calendar, arithmetic, week, timezone, and DST authority; blocked until the distinct time.go CoreTime constructor/bit layout, Duration clock value, and error identities are owned without substituting codec PackedTime
-
-## Retired slices
-
-- `datatype-conversion-context`
-- `datatype-datum-sentinel-order`
-- `datatype-field-type-authority`
-- `datatype-output-format-authority`
-- `datatype-truncate-policy`
-- `distsql-cop-paging-continuation`
-- `distsql-cop-read-task-runtime`
-- `distsql-copr-cache-key-admission`
-- `distsql-copr-cache-live-runtime`
-- `distsql-injected-query-runtime`
-- `distsql-query-response-runtime`
-- `distsql-read-bytes-ema`
-- `distsql-region-location-coverage`
-- `distsql-region-task-construction`
-- `distsql-select-response-consumption`
-- `distsql-tikv-unary-rpc-contract`
-- `executor-lack-handles-wave`
-- `executor-lead-lag-live-window-runtime`
-- `executor-table-index-reader-runtime`
-- `executor-window-ranking-live-runtime`
-- `expression-aggregate-descriptor-authority`
-- `expression-field-name-resolution`
-- `mysql-error-catalog`
-- `planner-cardinality-live-index-choice`
-- `session-count-warning-wave133`
-- `session-protocol-status-publication`
-- `session-warning-handler-authority`
-- `session-warning-live-publication`
-- `shared-terror-error-identity`
-- `txnkv-copr-key-ranges`
+- `server-internal-dump-package`: MySQL result, prepared-statement, column-metadata, and connection packets share one source-faithful authority for length-encoded values, little-endian integers, binary TIME, and binary DATE/DATETIME/TIMESTAMP values.

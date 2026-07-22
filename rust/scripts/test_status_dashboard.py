@@ -59,12 +59,45 @@ class StatusDashboardTest(unittest.TestCase):
     def test_render_identifies_dashboard_as_non_parity_percentage(self) -> None:
         rendered = dashboard.render()
         self.assertIn("ownership states, not product-parity percentages", rendered)
-        self.assertIn("- Active slices:", rendered)
-        self.assertIn("## Blocked slices", rendered)
+        self.assertIn("- Active package claims:", rendered)
+        self.assertIn("- Declared ready packages:", rendered)
+        self.assertIn("## Blocked packages", rendered)
+        self.assertIn("## Legacy schema-1 evidence", rendered)
         self.assertIn("## Pinned external Go universes", rendered)
         self.assertIn("github.com/tikv/client-go/v2", rendered)
         self.assertIn("github.com/tikv/pd/client", rendered)
         self.assertIn("not included in TiDB product-parity totals", rendered)
+
+    def test_legacy_records_do_not_increment_current_package_queue(self) -> None:
+        slices = [
+            {"schema": "1", "status": "ready"},
+            {"schema": "1", "status": "covered"},
+            {"schema": "2", "status": "ready"},
+            {"schema": "2", "status": "active"},
+        ]
+        claims = [
+            {"schema": 1, "owner": "legacy-ready"},
+            {"schema": 2, "owner": "package-active"},
+        ]
+
+        counts, active_claims = dashboard.queue_status(slices, claims)
+
+        self.assertEqual(counts["ready"], 1)
+        self.assertEqual(counts["active"], 1)
+        self.assertEqual(counts["covered"], 0)
+        self.assertEqual(active_claims, 1)
+
+    def test_legacy_campaigns_are_not_package_campaigns(self) -> None:
+        campaigns = [
+            {"schema": "1", "campaign": "legacy", "status": "integrated"},
+            {"schema": "2", "campaign": "packages", "status": "planned"},
+        ]
+
+        package_campaigns = dashboard.records_for_schema(campaigns, 2)
+
+        self.assertEqual(
+            [campaign["campaign"] for campaign in package_campaigns], ["packages"]
+        )
 
     def test_external_ownership_counts_include_checked_promotions(self) -> None:
         rendered = dashboard.render()

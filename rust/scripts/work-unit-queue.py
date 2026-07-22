@@ -25,6 +25,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tomllib
 from typing import Iterator
@@ -49,6 +50,10 @@ INTEGRATED_CAMPAIGN_MEMBERS = CAMPAIGNS_DIR / "integrated-members.tsv"
 INTEGRATION_RECEIPT = Path("workstreams/integration-receipt.json")
 INTEGRATION_ATTEMPT = Path("workstreams/integration-attempt.json")
 OWNER_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
+GO_TOKEN_RE = re.compile(
+    r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|`[^`]*`|[A-Za-z_]\w*|[()]',
+    re.DOTALL,
+)
 OPEN_STATUSES = {"UNTRIAGED", "PARTIAL", "BLOCKED"}
 SLICE_STATUSES = {"ready", "active", "partial", "covered", "blocked", "retired"}
 PACKAGE_SLICE_STATUSES = {"inventory", "ready", "active", "blocked", "covered"}
@@ -235,6 +240,77 @@ def _normalized_package(value: str, *, qualified: bool) -> tuple[str | None, str
     return universe, package
 
 
+def _normalized_repo_path(value: str, *, label: str) -> str:
+    """Returns one canonical repository-relative POSIX path."""
+    candidate = Path(value)
+    if (
+        not value
+        or value.startswith("/")
+        or value.endswith("/")
+        or candidate.is_absolute()
+        or candidate.as_posix() != value
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+        or any(character in value for character in ("\0", "\n", "\r", "\t"))
+    ):
+        raise ValueError(f"invalid {label} {value!r}; use a canonical repo-relative path")
+    return value
+
+
+def _paths_overlap(first: str, second: str) -> bool:
+    """Whether either canonical path owns the other path's subtree."""
+    first_parts = Path(first).parts
+    second_parts = Path(second).parts
+    shortest = min(len(first_parts), len(second_parts))
+    return first_parts[:shortest] == second_parts[:shortest]
+
+
+def _first_path_overlap(
+    paths: list[tuple[str, str]],
+) -> tuple[str, str, str, str] | None:
+    """Returns the first deterministic ancestor/descendant ownership collision."""
+    ordered = sorted(paths)
+    for index, (first_path, first_owner) in enumerate(ordered):
+        for second_path, second_owner in ordered[index + 1 :]:
+            if _paths_overlap(first_path, second_path):
+                return first_path, first_owner, second_path, second_owner
+    return None
+
+
+def load_workspace_crates(root: Path) -> dict[str, str]:
+    """Maps Cargo package names to canonical repository-relative crate roots."""
+    workspace_path = root / "Cargo.toml"
+    if not workspace_path.is_file():
+        raise ValueError(f"{workspace_path}: Rust workspace manifest is missing")
+    with workspace_path.open("rb") as source:
+        workspace = tomllib.load(source)
+    members = workspace.get("workspace", {}).get("members")
+    if not isinstance(members, list) or not all(
+        isinstance(member, str) and member for member in members
+    ):
+        raise ValueError(f"{workspace_path}: workspace.members must be a string array")
+    repo_prefix = root.relative_to(root.parent).as_posix()
+    crates: dict[str, str] = {}
+    for member in members:
+        normalized = _normalized_repo_path(member, label="workspace member")
+        matches = sorted(root.glob(normalized)) if any(char in member for char in "*?[") else [root / normalized]
+        if not matches:
+            raise ValueError(f"{workspace_path}: workspace member {member!r} matches no crate")
+        for directory in matches:
+            cargo_path = directory / "Cargo.toml"
+            if not cargo_path.is_file():
+                raise ValueError(f"{cargo_path}: workspace crate manifest is missing")
+            with cargo_path.open("rb") as cargo_source:
+                cargo = tomllib.load(cargo_source)
+            name = cargo.get("package", {}).get("name")
+            if not isinstance(name, str) or not OWNER_RE.fullmatch(name):
+                raise ValueError(f"{cargo_path}: package.name must be a valid crate target")
+            if name in crates:
+                raise ValueError(f"{workspace_path}: duplicate workspace package {name}")
+            relative_member = directory.relative_to(root).as_posix()
+            crates[name] = f"{repo_prefix}/{relative_member}"
+    return crates
+
+
 def _nearest_package(path: str, packages: set[str]) -> str | None:
     """Assigns a test/support path to its nearest ancestor Go package."""
     parent = Path(path).parent
@@ -244,6 +320,97 @@ def _nearest_package(path: str, packages: set[str]) -> str | None:
             return candidate
         parent = parent.parent
     return None
+
+
+def _go_module_path(repo_root: Path) -> str:
+    go_mod = repo_root / "go.mod"
+    if not go_mod.is_file():
+        raise ValueError(f"{go_mod}: missing Go module manifest")
+    for line_number, raw_line in enumerate(
+        go_mod.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        line = raw_line.split("//", 1)[0].strip()
+        if not line.startswith("module"):
+            continue
+        fields = line.split()
+        if len(fields) != 2 or fields[0] != "module":
+            raise ValueError(f"{go_mod}:{line_number}: invalid module directive")
+        return fields[1]
+    raise ValueError(f"{go_mod}: missing module directive")
+
+
+def _unquote_go_import(path: Path, token: str) -> str:
+    if token.startswith("`"):
+        return token[1:-1].replace("\r", "")
+    try:
+        value = json.loads(token)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{path}: unsupported Go import literal {token!r}") from error
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{path}: invalid empty Go import path")
+    return value
+
+
+def go_file_imports(path: Path) -> set[str]:
+    """Extracts import paths from one Go file without selecting build tags."""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ValueError(f"cannot read Go source {path}: {error}") from error
+    tokens = [
+        match.group(0)
+        for match in GO_TOKEN_RE.finditer(source)
+        if not match.group(0).startswith(("//", "/*"))
+    ]
+    imports: set[str] = set()
+    index = 0
+    while index < len(tokens):
+        if tokens[index] != "import":
+            index += 1
+            continue
+        index += 1
+        if index >= len(tokens):
+            raise ValueError(f"{path}: incomplete Go import declaration")
+        if tokens[index].startswith(('"', "`")):
+            imports.add(_unquote_go_import(path, tokens[index]))
+            index += 1
+            continue
+        if tokens[index] != "(":
+            # A single import may carry a local alias (`name`, `_`, or `.`).
+            # The lexer intentionally drops punctuation other than parens, so
+            # a dot alias appears as the following string literal.
+            if re.fullmatch(r"[A-Za-z_]\w*", tokens[index]):
+                index += 1
+            if index < len(tokens) and tokens[index].startswith(('"', "`")):
+                imports.add(_unquote_go_import(path, tokens[index]))
+                index += 1
+                continue
+        if index >= len(tokens) or tokens[index] != "(":
+            raise ValueError(f"{path}: invalid Go import declaration")
+        index += 1
+        while index < len(tokens) and tokens[index] != ")":
+            if tokens[index].startswith(('"', "`")):
+                imports.add(_unquote_go_import(path, tokens[index]))
+            index += 1
+        if index >= len(tokens):
+            raise ValueError(f"{path}: unterminated Go import block")
+        index += 1
+    return imports
+
+
+def internal_go_dependencies(
+    root: Path, sources: list[str]
+) -> set[str]:
+    """Returns direct TiDB package imports across every tracked source variant."""
+    module_prefix = _go_module_path(root.parent) + "/"
+    dependencies: set[str] = set()
+    for source in sources:
+        for imported in go_file_imports(root.parent / source):
+            if not imported.startswith(module_prefix):
+                continue
+            package = imported.removeprefix(module_prefix)
+            dependencies.add(package)
+    return dependencies
 
 
 def _go_package_directories(
@@ -291,15 +458,13 @@ def _module_package_directories(
 def load_support_rows(root: Path) -> dict[str, dict[str, str]]:
     """Loads content-addressed package support anchors."""
     rows: dict[str, dict[str, str]] = {}
+    tracked = _tracked_entries(root.parent)
     for package, support_path, sha256 in read_tsv(root / SUPPORT_LEDGER, 3):
         _, normalized = _normalized_package(package, qualified=False)
+        support_path = _normalized_repo_path(support_path, label="support path")
         candidate = Path(support_path)
         if (
-            not support_path
-            or support_path.startswith("/")
-            or candidate.as_posix() != support_path
-            or any(part in {"", ".", ".."} for part in candidate.parts)
-            or not candidate.is_relative_to(Path(normalized))
+            not candidate.is_relative_to(Path(normalized))
         ):
             raise ValueError(
                 f"{root / SUPPORT_LEDGER}: invalid support path {support_path!r} "
@@ -313,6 +478,12 @@ def load_support_rows(root: Path) -> dict[str, dict[str, str]]:
         if support_path in {row["path"] for row in rows.values()}:
             raise ValueError(
                 f"{root / SUPPORT_LEDGER}: duplicate support path {support_path}"
+            )
+        actual_sha256 = tracked_path_digest(root.parent, support_path, tracked)
+        if actual_sha256 != sha256:
+            raise ValueError(
+                f"{root / SUPPORT_LEDGER}: stale sha256 for {support_path}; "
+                f"expected {actual_sha256}, found {sha256}"
             )
         rows[anchor] = {
             "package": normalized,
@@ -511,6 +682,7 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
     module_source_rows = load_module_source_rows(root)
     module_test_rows = load_module_test_rows(root)
     support_rows = load_support_rows(root)
+    workspace_crates = load_workspace_crates(root)
     known_sources = set(source_rows)
     known_tests = set(test_rows)
     legacy_path = root / LEGACY_SCHEMA1_SLICES
@@ -556,6 +728,20 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                 isinstance(item, str) and item for item in record[field]
             ):
                 raise ValueError(f"{path}: {field} must be a string array")
+        record["rust_paths"] = sorted(
+            {
+                _normalized_repo_path(item, label="Rust path")
+                for item in record["rust_paths"]
+            }
+        )
+        internal_overlap = _first_path_overlap(
+            [(rust_path, str(record.get("slice", path.stem))) for rust_path in record["rust_paths"]]
+        )
+        if internal_overlap is not None:
+            first, _first_owner, second, _second_owner = internal_overlap
+            raise ValueError(
+                f"{path}: Rust paths overlap by ancestry: {first} and {second}"
+            )
         name = str(record["slice"])
         if not OWNER_RE.fullmatch(name) or path.name != f"{name}.toml":
             raise ValueError(f"{path}: invalid slice name or filename")
@@ -613,8 +799,6 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
             for field in (
                 "targets",
                 "rings",
-                "go_packages",
-                "module_packages",
             ):
                 value = record.get(field, [])
                 if not isinstance(value, list) or not all(
@@ -622,6 +806,30 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                 ):
                     raise ValueError(f"{path}: {field} must be a string array")
                 record[field] = sorted(set(value))
+            for field, qualified in (
+                ("go_packages", False),
+                ("module_packages", True),
+            ):
+                value = record.get(field, [])
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str) and item for item in value
+                ):
+                    raise ValueError(f"{path}: {field} must be a string array")
+                normalized_packages = [
+                    raw
+                    if qualified
+                    else _normalized_package(raw, qualified=False)[1]
+                    for raw in value
+                ]
+                if qualified:
+                    normalized_packages = [
+                        f"{universe}::{package}"
+                        for raw in value
+                        for universe, package in [
+                            _normalized_package(raw, qualified=True)
+                        ]
+                    ]
+                record[field] = sorted(set(normalized_packages))
             if not record["targets"] or not all(
                 OWNER_RE.fullmatch(item) for item in record["targets"]
             ):
@@ -637,6 +845,29 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                     f"{path}: external package support inventory is unavailable; "
                     "schema-2 module_packages fail closed"
                 )
+            missing_targets = sorted(set(record["targets"]) - set(workspace_crates))
+            if missing_targets:
+                raise ValueError(
+                    f"{path}: schema-2 target is not a Rust workspace crate: "
+                    f"{missing_targets[0]}"
+                )
+            uncovered_targets = [
+                target
+                for target in record["targets"]
+                if not any(
+                    Path(rust_path).is_relative_to(Path(workspace_crates[target]))
+                    for rust_path in record["rust_paths"]
+                )
+            ]
+            if uncovered_targets:
+                target = uncovered_targets[0]
+                raise ValueError(
+                    f"{path}: target {target} has no Rust path inside workspace crate "
+                    f"{workspace_crates[target]}"
+                )
+            record["_target_crates"] = {
+                target: workspace_crates[target] for target in record["targets"]
+            }
             sources, tests, supports = expand_go_packages(
                 list(record["go_packages"]), source_rows, test_rows, support_rows
             )
@@ -773,6 +1004,67 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                 f"{nonlegacy_schema[0]}"
             )
 
+    package_owners: dict[tuple[str, str], str] = {}
+    schema2_rust_paths: list[tuple[str, str]] = []
+    for name, record in sorted(records.items()):
+        if record["schema"] != "2":
+            continue
+        for kind, packages in (
+            ("Go package", record["go_packages"]),
+            ("module package", record["module_packages"]),
+        ):
+            for package in packages:
+                key = (kind, package)
+                previous = package_owners.get(key)
+                if previous is not None:
+                    raise ValueError(
+                        f"{record['_path']}: {kind} {package} already has canonical "
+                        f"schema-2 manifest {previous}"
+                    )
+                package_owners[key] = name
+        schema2_rust_paths.extend(
+            (rust_path, name) for rust_path in record["rust_paths"]
+        )
+    for name, record in sorted(records.items()):
+        if record["schema"] != "2" or record["status"] not in {
+            "ready",
+            "active",
+            "covered",
+        }:
+            continue
+        owned_packages = set(record["go_packages"])
+        dependency_sources = set(record["go_sources"])
+        dependency_sources.update(
+            _test_source_path(anchor)
+            for anchor in record["go_tests"]
+            if _test_source_path(anchor).endswith(".go")
+        )
+        dependency_sources.update(
+            support_rows[anchor]["path"]
+            for anchor in record["go_supports"]
+            if support_rows[anchor]["path"].endswith(".go")
+        )
+        dependencies = internal_go_dependencies(root, sorted(dependency_sources))
+        for package in sorted(dependencies - owned_packages):
+            dependency_owner = package_owners.get(("Go package", package))
+            if dependency_owner is None:
+                raise ValueError(
+                    f"{record['_path']}: direct internal Go import {package} has no "
+                    "canonical schema-2 package manifest"
+                )
+            if dependency_owner not in record["depends_on"]:
+                raise ValueError(
+                    f"{record['_path']}: direct internal Go import {package} requires "
+                    f"depends_on = {dependency_owner}"
+                )
+    manifest_overlap = _first_path_overlap(schema2_rust_paths)
+    if manifest_overlap is not None:
+        first, first_owner, second, second_owner = manifest_overlap
+        raise ValueError(
+            f"schema-2 Rust ownership overlaps manifests {first_owner} ({first}) "
+            f"and {second_owner} ({second})"
+        )
+
     for name, record in records.items():
         for dependency in record["depends_on"]:
             if dependency == name:
@@ -895,6 +1187,7 @@ def load_campaigns(
         seen_module_sources: dict[str, str] = {}
         seen_module_tests: dict[str, str] = {}
         seen_rust_paths: dict[str, str] = {}
+        campaign_rust_paths: list[tuple[str, str]] = []
         for member in members:
             slice_record = slices[member]
             for label, values, seen in (
@@ -912,12 +1205,24 @@ def load_campaigns(
                             f"{seen[value]} and {member}"
                         )
                     seen[value] = member
+                    if label == "Rust path":
+                        campaign_rust_paths.append((value, member))
+        rust_overlap = _first_path_overlap(campaign_rust_paths)
+        if rust_overlap is not None:
+            first, first_owner, second, second_owner = rust_overlap
+            raise ValueError(
+                f"{path}: campaign Rust paths overlap slices {first_owner} ({first}) "
+                f"and {second_owner} ({second})"
+            )
         if status in {"planned", "active"}:
             unregistered_targets: dict[str, set[str]] = {}
             for member in members:
                 slice_record = slices[member]
                 for target in slice_record["rust_targets"]:
-                    cargo_path = root / "crates" / target / "Cargo.toml"
+                    crate_root = slice_record.get("_target_crates", {}).get(target)
+                    if crate_root is None:
+                        continue
+                    cargo_path = root.parent / str(crate_root) / "Cargo.toml"
                     if not cargo_path.is_file():
                         continue
                     with cargo_path.open("rb") as cargo_source:
@@ -1146,12 +1451,14 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
     load_campaigns(root, slices)
     sources = {str(row["path"]) for row in load_source_rows(root)}
     tests = {test_key(row) for row in load_test_rows(root)}
+    supports = load_support_rows(root)
     seen_sources: dict[str, str] = {}
     seen_tests: dict[str, str] = {}
     seen_supports: dict[str, str] = {}
     seen_module_sources: dict[str, str] = {}
     seen_module_tests: dict[str, str] = {}
     seen_rust_paths: dict[str, str] = {}
+    active_rust_paths: list[tuple[str, str]] = []
     claims = load_claims(root)
     for claim in claims:
         path = Path(claim["_path"])
@@ -1252,6 +1559,29 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     f"{path}: schema-2 claim for slice {owner} must exactly match "
                     f"its go_sources and go_tests; {'; '.join(differences)}"
                 )
+            upstream_sha256 = claim.get("upstream_sha256")
+            if not isinstance(upstream_sha256, dict) or not all(
+                isinstance(key, str)
+                and isinstance(value, str)
+                and re.fullmatch(r"[0-9a-f]{64}", value)
+                for key, value in upstream_sha256.items()
+            ):
+                raise ValueError(
+                    f"{path}: schema-2 claim requires a path-to-sha256 upstream snapshot"
+                )
+            expected_upstream_sha256 = upstream_snapshot(
+                root, claimed_sources, list(claimed_tests), claimed_supports
+            )
+            if upstream_sha256 != expected_upstream_sha256:
+                changed = sorted(
+                    key
+                    for key in set(upstream_sha256) | set(expected_upstream_sha256)
+                    if upstream_sha256.get(key) != expected_upstream_sha256.get(key)
+                )
+                raise ValueError(
+                    f"{path}: upstream package snapshot is stale at {changed[0]}"
+                )
+            claim["_upstream_sha256"] = expected_upstream_sha256
             claim["_rust_paths"] = claimed_rust_paths
             for rust_path in claim["_rust_paths"]:
                 if rust_path in seen_rust_paths:
@@ -1260,8 +1590,10 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                         f"{seen_rust_paths[rust_path]} and {owner}"
                     )
                 seen_rust_paths[rust_path] = owner
+                active_rust_paths.append((rust_path, owner))
         else:
             claim["_rust_paths"] = []
+            claim["_upstream_sha256"] = {}
         claim["_sources"] = claimed_sources
         claim["_supports"] = claimed_supports
         claim["_module_sources"] = claimed_module_sources
@@ -1281,6 +1613,8 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                 )
             seen_tests[item] = owner
         for item in claimed_supports:
+            if item not in supports:
+                raise ValueError(f"{path}: stale support anchor {item!r}")
             if item in seen_supports:
                 raise ValueError(
                     f"support {item} overlaps claims {seen_supports[item]} and {owner}"
@@ -1298,6 +1632,13 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     f"module test {item} overlaps claims {seen_module_tests[item]} and {owner}"
                 )
             seen_module_tests[item] = owner
+    rust_overlap = _first_path_overlap(active_rust_paths)
+    if rust_overlap is not None:
+        first, first_owner, second, second_owner = rust_overlap
+        raise ValueError(
+            f"Rust path ownership overlaps claims {first_owner} ({first}) and "
+            f"{second_owner} ({second})"
+        )
     return claims
 
 
@@ -1485,6 +1826,96 @@ def validate_package_receipt(
     return receipt
 
 
+def _tracked_entries(repo_root: Path) -> dict[str, tuple[str, str]]:
+    """Reads the stage-zero Git index as path -> (mode, object id)."""
+    result = subprocess.run(
+        ["git", "ls-files", "--stage", "-z"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        message = result.stderr.decode(errors="replace").strip()
+        raise ValueError(f"cannot inspect tracked upstream artifacts: {message}")
+    entries: dict[str, tuple[str, str]] = {}
+    for raw_record in result.stdout.split(b"\0"):
+        if not raw_record:
+            continue
+        header, separator, raw_path = raw_record.partition(b"\t")
+        fields = header.split()
+        if not separator or len(fields) != 3:
+            raise ValueError("git ls-files returned an invalid stage record")
+        mode, object_id, stage = (field.decode("ascii") for field in fields)
+        if stage != "0":
+            raise ValueError(
+                "cannot snapshot upstream artifacts with unresolved Git index stages"
+            )
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        entries[path] = (mode, object_id)
+    return entries
+
+
+def tracked_path_digest(
+    repo_root: Path,
+    relative_path: str,
+    tracked: dict[str, tuple[str, str]] | None = None,
+) -> str:
+    """Hashes the actual bytes or symlink target of one tracked artifact."""
+    relative_path = _normalized_repo_path(relative_path, label="upstream path")
+    entries = tracked if tracked is not None else _tracked_entries(repo_root)
+    entry = entries.get(relative_path)
+    if entry is None:
+        raise ValueError(f"upstream artifact is not tracked by Git: {relative_path}")
+    mode, object_id = entry
+    path = repo_root / relative_path
+    if mode == "160000":
+        if not path.exists():
+            raise ValueError(f"tracked Git submodule is missing: {relative_path}")
+        return hashlib.sha256(f"gitlink\0{object_id}".encode()).hexdigest()
+    if mode == "120000":
+        if not path.is_symlink():
+            raise ValueError(f"tracked symlink is missing or replaced: {relative_path}")
+        target = os.readlink(path)
+        return hashlib.sha256(os.fsencode(target)).hexdigest()
+    if not mode.startswith("100"):
+        raise ValueError(
+            f"unsupported tracked artifact mode {mode} for {relative_path}"
+        )
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"tracked file is missing or replaced: {relative_path}")
+    return file_digest(path)
+
+
+def _test_source_path(anchor: str) -> str:
+    source_and_line, separator, _name = anchor.rpartition(":")
+    source_path, line_separator, line = source_and_line.rpartition(":")
+    if not separator or not line_separator or not line.isdigit() or not source_path:
+        raise ValueError(f"invalid test anchor {anchor!r}; use PATH:LINE:NAME")
+    return source_path
+
+
+def upstream_snapshot(
+    root: Path,
+    sources: list[str],
+    tests: list[str],
+    supports: list[str],
+) -> dict[str, str]:
+    """Content-addresses every unique upstream file owned by a package claim."""
+    support_rows = load_support_rows(root)
+    paths = set(sources)
+    paths.update(_test_source_path(anchor) for anchor in tests)
+    for anchor in supports:
+        row = support_rows.get(anchor)
+        if row is None:
+            raise ValueError(f"stale support anchor {anchor!r}")
+        paths.add(row["path"])
+    tracked = _tracked_entries(root.parent)
+    return {
+        path: tracked_path_digest(root.parent, path, tracked)
+        for path in sorted(paths)
+    }
+
+
 def release_workspace_digest(root: Path) -> str:
     """Hashes inputs that must remain immutable after a successful gate.
 
@@ -1583,6 +2014,7 @@ def claim_digests(claims: list[dict[str, object]]) -> dict[str, object]:
     return {
         str(claim["owner"]): {
             "claim_sha256": file_digest(Path(claim["_path"])),
+            "upstream_sha256": claim["_upstream_sha256"],
         }
         for claim in claims
     }
@@ -1685,6 +2117,7 @@ def consume_integration_receipt(root: Path, claim: dict[str, object]) -> None:
         )
     current = {
         "claim_sha256": file_digest(Path(claim["_path"])),
+        "upstream_sha256": claim["_upstream_sha256"],
     }
     if (
         recorded != current
@@ -1733,7 +2166,7 @@ def parse_module_test_anchor(value: str) -> str:
     return f"{module}::{parse_test_anchor(anchor)}"
 
 
-def claim(
+def claim_package(
     root: Path,
     owner: str,
     sources: list[str],
@@ -1765,6 +2198,10 @@ def claim(
         package_slice = (
             new_slice if new_slice is not None and new_slice["schema"] == "2" else None
         )
+        if package_slice is None:
+            raise ValueError(
+                f"schema-2 package claim for {owner} requires a matching package manifest"
+            )
         if package_slice is not None and (
             normalized_sources != list(package_slice["go_sources"])
             or normalized_tests != list(package_slice["go_tests"])
@@ -1776,9 +2213,7 @@ def claim(
                 f"schema-2 package claim for {owner} must exactly match its "
                 "expanded package inventory; use claim-slice"
             )
-        new_rust_paths = (
-            set(package_slice["rust_paths"]) if package_slice is not None else set()
-        )
+        new_rust_paths = set(package_slice["rust_paths"])
         for active in claims:
             if active["owner"] == owner:
                 raise ValueError(f"owner {owner} already has an active claim")
@@ -1811,10 +2246,15 @@ def claim(
                 raise ValueError(
                     f"module test {module_test_overlap[0]} is already claimed by {active['owner']}"
                 )
-            rust_overlap = sorted(set(active["_rust_paths"]) & new_rust_paths)
-            if rust_overlap:
+            rust_overlap = _first_path_overlap(
+                [(path, str(active["owner"])) for path in active["_rust_paths"]]
+                + [(path, owner) for path in new_rust_paths]
+            )
+            if rust_overlap is not None:
+                first, first_owner, second, second_owner = rust_overlap
                 raise ValueError(
-                    f"Rust path {rust_overlap[0]} is already claimed by {active['owner']}"
+                    f"Rust path ownership overlaps claims {first_owner} ({first}) and "
+                    f"{second_owner} ({second})"
                 )
         sources = {str(row["path"]) for row in load_source_rows(root)}
         known_tests = {test_key(row) for row in load_test_rows(root)}
@@ -1836,7 +2276,7 @@ def claim(
             raise ValueError(f"unknown qualified module test anchor {unknown_module_tests[0]}")
         destination = root / CLAIMS_DIR / f"{owner}.claim.json"
         payload = {
-            "schema": 2 if package_slice is not None else 1,
+            "schema": 2,
             "owner": owner,
             "sources": normalized_sources,
             "tests": normalized_tests,
@@ -1844,12 +2284,28 @@ def claim(
             "rust_paths": sorted(new_rust_paths) if package_slice is not None else [],
             "module_sources": normalized_module_sources,
             "module_tests": normalized_module_tests,
+            "upstream_sha256": upstream_snapshot(
+                root, normalized_sources, normalized_tests, normalized_supports
+            ),
         }
         descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             json.dump(payload, output, indent=2, sort_keys=True)
             output.write("\n")
     print(destination.relative_to(root))
+
+
+def claim(
+    _root: Path,
+    _owner: str,
+    _sources: list[str],
+    _tests: list[str],
+) -> None:
+    """Rejects the retired partial-anchor dispatch path."""
+    raise ValueError(
+        "raw claim dispatch is disabled; claim one complete schema-2 package "
+        "with claim-slice"
+    )
 
 
 def release(root: Path, owner: str, integrated: bool, abandon: bool) -> None:
@@ -1893,62 +2349,11 @@ def release(root: Path, owner: str, integrated: bool, abandon: bool) -> None:
 
 
 def amend(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
-    if not OWNER_RE.fullmatch(owner):
-        raise ValueError("invalid owner")
-    source_additions = set(sources)
-    test_additions = {parse_test_anchor(item) for item in tests}
-    if not source_additions and not test_additions:
-        raise ValueError("amend requires at least one --source or --test anchor")
-    with claim_lock(root):
-        claims = validate_claims(root)
-        current = next((item for item in claims if item["owner"] == owner), None)
-        if current is None:
-            raise ValueError(f"owner {owner} has no active claim")
-        if current["schema"] == 2:
-            raise ValueError(
-                "schema-2 package claims are immutable expanded snapshots; "
-                "edit the package manifest and reclaim instead"
-            )
-        known_sources = {str(row["path"]) for row in load_source_rows(root)}
-        unknown_sources = sorted(source_additions - known_sources)
-        if unknown_sources:
-            raise ValueError(f"unknown source anchor {unknown_sources[0]}")
-        known_tests = {test_key(row) for row in load_test_rows(root)}
-        unknown = sorted(test_additions - known_tests)
-        if unknown:
-            raise ValueError(f"unknown test anchor {unknown[0]}")
-        for active in claims:
-            if active["owner"] == owner:
-                continue
-            source_overlap = sorted(set(active["_sources"]) & source_additions)
-            if source_overlap:
-                raise ValueError(
-                    f"source {source_overlap[0]} is already claimed by {active['owner']}"
-                )
-            test_overlap = sorted(set(active["tests"]) & test_additions)
-            if test_overlap:
-                raise ValueError(
-                    f"test {test_overlap[0]} is already claimed by {active['owner']}"
-                )
-        payload = {
-            "schema": 1,
-            "owner": owner,
-            "sources": sorted(set(current["_sources"]) | source_additions),
-            "tests": sorted(set(current["tests"]) | test_additions),
-            "supports": list(current["_supports"]),
-            "module_sources": list(current["_module_sources"]),
-            "module_tests": list(current["_module_tests"]),
-        }
-        destination = root / CLAIMS_DIR / f"{owner}.claim.json"
-        temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
-        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-                json.dump(payload, output, indent=2, sort_keys=True)
-                output.write("\n")
-            os.replace(temporary, destination)
-        finally:
-            temporary.unlink(missing_ok=True)
+    del root, owner, sources, tests
+    raise ValueError(
+        "claim amendment is disabled; package snapshots are immutable, so abandon "
+        "and reclaim the complete schema-2 package"
+    )
 
 
 def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
@@ -2264,7 +2669,7 @@ def claim_slice(root: Path, owner: str, slice_name: str) -> None:
         unmet = unmet_slice_prerequisites(record, records)
         detail = f"; unmet prerequisites: {'; '.join(unmet)}" if unmet else ""
         raise ValueError(f"vertical slice {slice_name} is not ready{detail}")
-    claim(
+    claim_package(
         root,
         owner,
         list(record["go_sources"]),

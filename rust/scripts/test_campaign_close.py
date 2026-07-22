@@ -21,6 +21,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -37,6 +38,15 @@ class CampaignCloseTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.repository = Path(self.temporary.name)
         self.root = self.repository / "rust"
+        (self.repository / "go.mod").write_text(
+            "module github.com/pingcap/tidb\n\ngo 1.25\n", encoding="utf-8"
+        )
+        self.root.mkdir()
+        (self.root / "Cargo.toml").write_text(
+            '[workspace]\nmembers = ["."]\n\n'
+            '[package]\nname = "tidb-planner"\nversion = "0.0.0"\n',
+            encoding="utf-8",
+        )
         coverage = self.root / "difftests/corpus/coverage"
         (coverage / "evidence/source").mkdir(parents=True)
         (coverage / "evidence/tests").mkdir(parents=True)
@@ -137,6 +147,15 @@ class CampaignCloseTest(unittest.TestCase):
                         "rust_paths": [f"rust/impl-{suffix}.rs"],
                         "module_sources": [],
                         "module_tests": [],
+                        "upstream_sha256": {
+                            source: hashlib.sha256(
+                                upstream_source.read_bytes()
+                            ).hexdigest(),
+                            f"{package}/source_test.go": hashlib.sha256(
+                                (self.repository / f"{package}/source_test.go").read_bytes()
+                            ).hexdigest(),
+                            f"{package}/testdata/case.txt": support_sha,
+                        },
                     },
                     indent=2,
                     sort_keys=True,
@@ -160,6 +179,8 @@ class CampaignCloseTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.archive_path = campaigns / "integrated-members.tsv"
+        subprocess.run(["git", "init", "-q"], cwd=self.repository, check=True)
+        subprocess.run(["git", "add", "."], cwd=self.repository, check=True)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -229,10 +250,10 @@ class CampaignCloseTest(unittest.TestCase):
     def test_rejects_missing_or_stale_support_and_disposition(self) -> None:
         support = self.repository / "pkg/a/testdata/case.txt"
         support.unlink()
-        with self.assertRaisesRegex(ValueError, "support is missing"):
+        with self.assertRaisesRegex(ValueError, "missing or replaced"):
             campaign_close.build_close_plan(self.root, "campaign-x")
         support.write_text("changed\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "support digest changed"):
+        with self.assertRaisesRegex(ValueError, "stale sha256"):
             campaign_close.build_close_plan(self.root, "campaign-x")
 
     def test_rejects_missing_duplicate_and_stale_support_evidence(self) -> None:
