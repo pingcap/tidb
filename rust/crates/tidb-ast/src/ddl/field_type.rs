@@ -15,6 +15,9 @@
 //! Go `pkg/parser/ddl_fieldtype_parser.go` AST payload and restore boundary.
 
 use crate::util::escape_string_literal;
+use tidb_datatype::{
+    enum_set_display_length_from_lengths, field_type_has_charset, FieldTypeCode, FieldTypeFlags,
+};
 
 /// One parenthesized field-type argument.
 ///
@@ -41,6 +44,14 @@ impl ColumnTypeArg {
         match self {
             Self::Text(value) => value.clone(),
             Self::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        }
+    }
+
+    /// Returns the Go-string byte length retained by this argument.
+    pub fn byte_len(&self) -> usize {
+        match self {
+            Self::Text(value) => value.len(),
+            Self::Bytes(value) => value.len(),
         }
     }
 
@@ -88,6 +99,51 @@ pub struct ColumnType {
 }
 
 impl ColumnType {
+    fn semantic_code_and_flags(&self) -> (FieldTypeCode, u32) {
+        let (code, intrinsically_binary) = match self.name.as_str() {
+            "VARCHAR" => (FieldTypeCode::Varchar, false),
+            "CHAR" => (FieldTypeCode::String, false),
+            "VARBINARY" => (FieldTypeCode::Varchar, true),
+            "BINARY" => (FieldTypeCode::String, true),
+            "TINYTEXT" => (FieldTypeCode::TinyBlob, false),
+            "MEDIUMTEXT" => (FieldTypeCode::MediumBlob, false),
+            "LONGTEXT" => (FieldTypeCode::LongBlob, false),
+            "TEXT" => (FieldTypeCode::Blob, false),
+            "TINYBLOB" => (FieldTypeCode::TinyBlob, true),
+            "MEDIUMBLOB" => (FieldTypeCode::MediumBlob, true),
+            "LONGBLOB" => (FieldTypeCode::LongBlob, true),
+            "BLOB" => (FieldTypeCode::Blob, true),
+            "ENUM" => (FieldTypeCode::Enum, false),
+            "SET" => (FieldTypeCode::Set, false),
+            _ => (FieldTypeCode::Unspecified, false),
+        };
+        let flags = if intrinsically_binary || self.binary {
+            FieldTypeFlags::BINARY
+        } else {
+            0
+        };
+        (code, flags)
+    }
+
+    /// Applies `pkg/parser/types.HasCharset` to a parsed column type.
+    pub fn has_charset(&self) -> bool {
+        let (code, flags) = self.semantic_code_and_flags();
+        field_type_has_charset(code, flags)
+    }
+
+    /// Returns parser-computed ENUM/SET display length, if applicable.
+    pub fn enum_set_display_length(&self) -> Option<i64> {
+        let code = match self.name.as_str() {
+            "ENUM" => FieldTypeCode::Enum,
+            "SET" => FieldTypeCode::Set,
+            _ => return None,
+        };
+        Some(enum_set_display_length_from_lengths(
+            code,
+            self.args.iter().map(ColumnTypeArg::byte_len),
+        ))
+    }
+
     /// Applies TiDB's parser-time IEEE precision normalization for one
     /// `FLOAT(p)` argument before restore.
     pub fn normalize_float_precision(&mut self) {

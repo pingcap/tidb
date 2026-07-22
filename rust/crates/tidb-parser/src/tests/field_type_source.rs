@@ -16,6 +16,83 @@
 
 use super::*;
 
+fn parsed_column_type(sql: &str) -> ColumnType {
+    let Stmt::Ddl(ddl) = parse(sql).expect("parse field-type source row") else {
+        panic!("expected DDL statement");
+    };
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
+        panic!("expected CREATE TABLE");
+    };
+    table.columns.into_iter().next().expect("source column").ty
+}
+
+/// Exact SQL rows from `pkg/parser/types/field_type_test.go:TestHasCharsetFromStmt`.
+#[test]
+fn parser_types_test_has_charset_from_stmt() {
+    for (source_type, expected) in [
+        ("int", false),
+        ("real", false),
+        ("float", false),
+        ("bit", false),
+        ("bool", false),
+        ("char(1)", true),
+        ("national char(1)", true),
+        ("binary", false),
+        ("varchar(1)", true),
+        ("national varchar(1)", true),
+        ("varbinary(1)", false),
+        ("year", false),
+        ("date", false),
+        ("time", false),
+        ("datetime", false),
+        ("timestamp", false),
+        ("blob", false),
+        ("tinyblob", false),
+        ("mediumblob", false),
+        ("longblob", false),
+        ("bit", false),
+        ("text", true),
+        ("tinytext", true),
+        ("mediumtext", true),
+        ("longtext", true),
+        ("json", false),
+        ("enum('1')", true),
+        ("set('1')", true),
+    ] {
+        let sql = format!("CREATE TABLE t(a {source_type})");
+        assert_eq!(parsed_column_type(&sql).has_charset(), expected, "{sql}");
+    }
+}
+
+/// Exact SQL rows from `pkg/parser/types/field_type_test.go:TestEnumSetFlen`.
+#[test]
+fn parser_types_test_enum_set_flen() {
+    for (source_type, expected) in [
+        ("enum('a')", 1),
+        ("enum('a', 'b')", 1),
+        ("enum('a', 'bb')", 2),
+        ("enum('a', 'b', 'c')", 1),
+        ("enum('a', 'bb', 'c')", 2),
+        ("enum('a', 'bb', 'c')", 2),
+        ("enum('')", 0),
+        ("enum('a', '')", 1),
+        ("set('a')", 1),
+        ("set('a', 'b')", 3),
+        ("set('a', 'bb')", 4),
+        ("set('a', 'b', 'c')", 5),
+        ("set('a', 'bb', 'c')", 6),
+        ("set('')", 0),
+        ("set('a', '')", 2),
+    ] {
+        let sql = format!("CREATE TABLE t(a {source_type})");
+        assert_eq!(
+            parsed_column_type(&sql).enum_set_display_length(),
+            Some(expected),
+            "{sql}"
+        );
+    }
+}
+
 #[test]
 fn existing_field_type_source_rows_stay_at_the_shared_column_boundary() {
     // `pkg/parser/parser_test.go:TestSimple` and

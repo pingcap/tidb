@@ -25,20 +25,38 @@ pub use value::{default_field_type_for_value, FieldTypeValue};
 
 /// Parser normalization used for ENUM/SET display length.
 pub fn enum_set_display_length(code: FieldTypeCode, elems: &[impl AsRef<str>]) -> i64 {
+    enum_set_display_length_from_lengths(code, elems.iter().map(|elem| elem.as_ref().len()))
+}
+
+/// Parser normalization used for ENUM/SET display length when the source
+/// elements are byte strings rather than Rust UTF-8 strings.
+pub fn enum_set_display_length_from_lengths(
+    code: FieldTypeCode,
+    lengths: impl IntoIterator<Item = usize>,
+) -> i64 {
+    let lengths = lengths.into_iter().map(|length| length as i64);
     match code {
-        FieldTypeCode::Enum => elems
-            .iter()
-            .map(|elem| elem.as_ref().len() as i64)
-            .max()
-            .unwrap_or(0),
+        FieldTypeCode::Enum => lengths.max().unwrap_or(0),
         FieldTypeCode::Set => {
-            let payload = elems
-                .iter()
-                .map(|elem| elem.as_ref().len() as i64)
-                .sum::<i64>();
-            payload + elems.len().saturating_sub(1) as i64
+            let lengths = lengths.collect::<Vec<_>>();
+            lengths.iter().sum::<i64>() + lengths.len().saturating_sub(1) as i64
         }
         _ => UNSPECIFIED_LENGTH,
+    }
+}
+
+/// Source `HasCharset` rule shared by parser syntax and runtime field types.
+pub const fn field_type_has_charset(code: FieldTypeCode, flags: u32) -> bool {
+    match code {
+        FieldTypeCode::Varchar
+        | FieldTypeCode::String
+        | FieldTypeCode::VarString
+        | FieldTypeCode::Blob
+        | FieldTypeCode::TinyBlob
+        | FieldTypeCode::MediumBlob
+        | FieldTypeCode::LongBlob => flags & FieldTypeFlags::BINARY == 0,
+        FieldTypeCode::Enum | FieldTypeCode::Set => true,
+        _ => false,
     }
 }
 
@@ -846,17 +864,7 @@ impl FieldType {
 
     /// Mirrors `FieldType.HasCharset`.
     pub const fn has_charset(&self) -> bool {
-        match self.code() {
-            FieldTypeCode::Varchar
-            | FieldTypeCode::String
-            | FieldTypeCode::VarString
-            | FieldTypeCode::Blob
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob => !self.has_flag(FieldTypeFlags::BINARY),
-            FieldTypeCode::Enum | FieldTypeCode::Set => true,
-            _ => false,
-        }
+        field_type_has_charset(self.code(), self.flags())
     }
 
     /// Returns whether this is one of the currently ported string SQL types.

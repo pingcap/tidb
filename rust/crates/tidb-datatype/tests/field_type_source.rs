@@ -16,8 +16,11 @@
 use tidb_datatype::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
     merge_field_type, str_to_type, type_str, type_to_str, EvalType, FieldType, FieldTypeCode as C,
-    FieldTypeFlags as F, FieldTypeValue as V, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
+    FieldTypeFlags as F, FieldTypeValue as V, ERR_DATA_OUT_OF_RANGE, ERR_ILLEGAL_VALUE_FOR_TYPE,
+    ERR_INVALID_DEFAULT, ERR_TRUNCATED_WRONG_VALUE, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
+use tidb_error::mysql::{errcode, errname};
+use tidb_error::terror::TerrorClass;
 
 fn all_types() -> Vec<FieldType> {
     [
@@ -114,6 +117,37 @@ fn parser_str_to_type() {
     assert_eq!(type_to_str(C::LongBlob, "binary"), "longblob");
     assert_eq!(type_to_str(C::Null, "binary"), "binary");
     assert!(C::VectorFloat32.is_type_vector());
+}
+
+#[test]
+fn parser_exported_error_prototypes_match_source() {
+    for (error, code, message) in [
+        (
+            &*ERR_INVALID_DEFAULT,
+            errcode::ErrInvalidDefault,
+            errname::ErrInvalidDefault,
+        ),
+        (
+            &*ERR_DATA_OUT_OF_RANGE,
+            errcode::ErrDataOutOfRange,
+            errname::ErrDataOutOfRange,
+        ),
+        (
+            &*ERR_TRUNCATED_WRONG_VALUE,
+            errcode::ErrTruncatedWrongValue,
+            errname::ErrTruncatedWrongValue,
+        ),
+        (
+            &*ERR_ILLEGAL_VALUE_FOR_TYPE,
+            errcode::ErrIllegalValueForType,
+            errname::ErrIllegalValueForType,
+        ),
+    ] {
+        assert_eq!(error.class(), TerrorClass::Types);
+        assert_eq!(error.code().value(), isize::try_from(code).unwrap());
+        assert_eq!(error.message(), message.raw);
+        assert_eq!(error.to_sql_error().code, code);
+    }
 }
 
 #[test]
@@ -398,9 +432,8 @@ fn parser_element_binary_literal_markers_follow_go_set_elems_ownership() {
     assert!(!field.elem_is_binary_literal(1));
 }
 
-/// Go: pkg/parser/types/field_type_test.go:197 TestHasCharsetFromStmt.
 #[test]
-fn parser_has_charset_rows() {
+fn field_type_has_charset_covers_every_source_code_family() {
     let rows = [
         (C::Long, false),
         (C::Double, false),

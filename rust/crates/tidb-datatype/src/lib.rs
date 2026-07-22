@@ -42,6 +42,7 @@ mod fsp;
 mod multibyte_encoding;
 mod overflow;
 mod packed_time;
+mod parser_types_errors;
 mod time_parse;
 mod truncate;
 pub mod utf8_encoding;
@@ -109,9 +110,9 @@ pub use field_name::{
 };
 pub use field_type::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
-    merge_field_type, set_type_flag, str_to_type, type_str, type_to_str, FieldType, FieldTypeCode,
-    FieldTypeFlags, FieldTypeValue, MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
-    VAR_STORAGE_LEN,
+    enum_set_display_length_from_lengths, field_type_has_charset, merge_field_type, set_type_flag,
+    str_to_type, type_str, type_to_str, FieldType, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
+    MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
 pub use format::{
     output_format, FlatFormatter, FormatFragment, FormatWriteError, Formatter, IndentFormatter,
@@ -129,6 +130,10 @@ pub use overflow::{
     sub_int_with_uint, sub_uint64, sub_uint_with_int, OverflowError,
 };
 pub use packed_time::{PackedTime, PackedTimeError, PackedTimeParts};
+pub use parser_types_errors::{
+    ERR_DATA_OUT_OF_RANGE, ERR_ILLEGAL_VALUE_FOR_TYPE, ERR_INVALID_DEFAULT,
+    ERR_TRUNCATED_WRONG_VALUE,
+};
 pub use time_parse::parse_date_format;
 pub use truncate::{is_truncation_error_code, TruncationPolicy};
 pub use utf8_encoding::{
