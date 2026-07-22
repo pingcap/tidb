@@ -407,6 +407,7 @@ func (sm *Manager) cleanupTaskLoop() {
 	sm.logger.Info("cleanup loop start")
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
+	sm.doCleanupTasks()
 	for {
 		select {
 		case <-sm.ctx.Done():
@@ -420,38 +421,39 @@ func (sm *Manager) cleanupTaskLoop() {
 	}
 }
 
-// doCleanupTasks keeps cleaning limited batches until there is no immediately cleanable task.
+// doCleanupTasks keeps cleaning limited batches while each batch transfers at least one task.
 func (sm *Manager) doCleanupTasks() {
-	for sm.doCleanupTask() {
+	for sm.doCleanupTask() > 0 {
 	}
 }
 
 // doCleanupTask processes one batch of cleanup routine defined by each type of tasks and cleanupMeta.
+// It returns the number of tasks transferred to history.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) doCleanupTask() bool {
+func (sm *Manager) doCleanupTask() int {
 	failpoint.InjectCall("doCleanupTask")
 	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
 		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
-		return false
+		return 0
 	}
 	if len(tasks) == 0 {
-		return false
+		return 0
 	}
 	sm.logger.Info("cleanup routine start")
-	err = sm.cleanupFinishedTasks(tasks)
+	transferredTaskCount, err := sm.cleanupFinishedTasks(tasks)
 	if err != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
-		return false
+		return transferredTaskCount
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
 	sm.logger.Info("cleanup routine success")
-	return true
+	return transferredTaskCount
 }
 
-func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
+func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) (int, error) {
 	type singleCleanUpTask struct {
 		task    *proto.Task
 		cleanUp CleanUpRoutine
@@ -517,13 +519,13 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	}
 
 	failpoint.Inject("mockTransferErr", func() {
-		failpoint.Return(errors.New("transfer err"))
+		failpoint.Return(0, errors.New("transfer err"))
 	})
 
 	if err := sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks); err != nil {
-		return err
+		return 0, err
 	}
-	return firstErr
+	return len(cleanedTasks), nil
 }
 
 func (sm *Manager) collectLoop() {

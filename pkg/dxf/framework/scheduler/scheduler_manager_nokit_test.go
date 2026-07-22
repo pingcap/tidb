@@ -209,6 +209,30 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	mgr.doCleanupTasks()
 	require.True(t, ctrl.Satisfied())
 
+	// Keep draining after a partial cleanup failure if some tasks were moved to history.
+	cleanupTaskType := proto.TaskType("CleanupWithError")
+	cleanupErr := errors.New("cleanup failed")
+	cleanup := &singleCleanUpCallRecorder{failTaskID: 4, cleanUpErr: cleanupErr}
+	RegisterSchedulerCleanUpFactory(cleanupTaskType, func() CleanUpRoutine {
+		return cleanup
+	})
+	t.Cleanup(ClearSchedulerCleanUpFactory)
+	partialTasks := []*proto.Task{
+		{TaskBase: proto.TaskBase{ID: 3}},
+		{TaskBase: proto.TaskBase{ID: 4, Type: cleanupTaskType}},
+	}
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(partialTasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, partialTasks[:1]).Return(nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(nil, nil)
+	mgr.doCleanupTasks()
+	require.True(t, ctrl.Satisfied())
+
+	// Stop draining when cleanup cannot move any task to history.
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(partialTasks[1:], nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.Len(0)).Return(nil)
+	mgr.doCleanupTasks()
+	require.True(t, ctrl.Satisfied())
+
 	// fail in transfer
 	mockErr := errors.New("transfer err")
 	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
@@ -220,6 +244,33 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
+
+	// The cleanup loop should run once immediately instead of waiting for a signal or ticker.
+	loopCtx, cancel := context.WithCancel(context.Background())
+	loopMgr := NewManager(loopCtx, nil, taskMgr, "2", proto.NodeResourceForTest)
+	cleanupStarted := make(chan struct{})
+	loopDone := make(chan struct{})
+	taskMgr.EXPECT().GetCleanupTasks(loopMgr.ctx).DoAndReturn(func(context.Context) ([]*proto.Task, error) {
+		close(cleanupStarted)
+		return nil, nil
+	})
+	go func() {
+		defer close(loopDone)
+		loopMgr.cleanupTaskLoop()
+	}()
+	startedImmediately := false
+	select {
+	case <-cleanupStarted:
+		startedImmediately = true
+	case <-time.After(3 * time.Second):
+	}
+	cancel()
+	select {
+	case <-loopDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cleanup task loop did not stop")
+	}
+	require.True(t, startedImmediately)
 }
 
 func TestSchedulerCleanupFinishedTasks(t *testing.T) {
@@ -256,7 +307,9 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 		}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(tasks)).Return(nil)
 
-		require.NoError(t, mgr.cleanupFinishedTasks(tasks))
+		cleanedTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		require.NoError(t, err)
+		require.Equal(t, len(tasks), cleanedTaskCount)
 		require.Equal(t, [][]int64{{1, 4}}, importCleanUp.batchCalls)
 		require.Empty(t, importCleanUp.cleanUpCalls)
 		require.Equal(t, [][]int64{{2, 5}}, otherBatchCleanUp.batchCalls)
@@ -292,7 +345,9 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 		cleanedTasks := []*proto.Task{tasks[0], tasks[1], tasks[5]}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(cleanedTasks)).Return(nil)
 
-		require.ErrorIs(t, mgr.cleanupFinishedTasks(tasks), cleanUpErr)
+		cleanedTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		require.NoError(t, err)
+		require.Equal(t, len(cleanedTasks), cleanedTaskCount)
 		require.Equal(t, []int64{2, 4}, singleCleanUp.cleanUpCalls)
 		require.Empty(t, batchCleanUp.batchCalls)
 	})
@@ -329,7 +384,9 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 		cleanedTasks := []*proto.Task{tasks[2], tasks[5]}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(cleanedTasks)).Return(nil)
 
-		require.ErrorIs(t, mgr.cleanupFinishedTasks(tasks), cleanUpErr)
+		cleanedTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		require.NoError(t, err)
+		require.Equal(t, len(cleanedTasks), cleanedTaskCount)
 		require.Equal(t, []int64{3}, singleCleanUp.cleanUpCalls)
 		require.Equal(t, 1, len(importCleanUp.batchCalls)+len(otherBatchCleanUp.batchCalls))
 	})
@@ -345,7 +402,9 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, Type: noCleanUpTaskType}}}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(transferErr)
 
-		require.ErrorIs(t, mgr.cleanupFinishedTasks(tasks), transferErr)
+		cleanedTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		require.ErrorIs(t, err, transferErr)
+		require.Zero(t, cleanedTaskCount)
 	})
 }
 

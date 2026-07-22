@@ -65,7 +65,7 @@
 - `pkg/dxf/framework/scheduler/balancer_test.go` - dxf/framework/scheduler: Tests balance one task.
 - `pkg/dxf/framework/scheduler/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/dxf/framework/scheduler/nodes_test.go` - dxf/framework/scheduler: Tests maintain live nodes.
-- `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager scheduler ordering and batched cleanup dispatch.
+- `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager scheduler ordering, progress-based cleanup draining, and startup cleanup.
 - `pkg/dxf/framework/scheduler/scheduler_manager_test.go` - dxf/framework/scheduler: Tests cleanup routine and bounded cleanup-batch draining.
 - `pkg/dxf/framework/scheduler/scheduler_nokit_test.go` - dxf/framework/scheduler: Tests scheduler on next stage.
 - `pkg/dxf/framework/scheduler/scheduler_test.go` - dxf/framework/scheduler: Tests task fail in manager.
