@@ -457,6 +457,30 @@ abc,10,11,11,11,11
 	})
 }
 
+func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOnce() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
+	bak := conflictedkv.BufferedHandleLimit
+	conflictedkv.BufferedHandleLimit = 2
+	s.T().Cleanup(func() {
+		conflictedkv.BufferedHandleLimit = bak
+	})
+
+	// Issue #69799: handle 1 occurs in separate buffers because its two array
+	// elements conflict with different rows.
+	s.testSingleFileConflictResolution(
+		`create table t (
+			pk bigint primary key clustered,
+			a json not null,
+			unique key uk_a ((cast(a->'$' as unsigned array)))
+		)`,
+		"1,\"[1000,2000]\"\n2,\"[1000]\"\n3,\"[2000]\"\n",
+		[]string{},
+	)
+}
+
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
