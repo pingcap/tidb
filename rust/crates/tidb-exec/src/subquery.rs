@@ -177,13 +177,24 @@ impl Database {
                 expr: Box::new(rec(expr)?),
                 as_type: *as_type,
             },
-            Expr::Func { name, args } => Expr::Func {
+            Expr::Func {
+                name,
+                args,
+                origin_position,
+            } => Expr::Func {
                 name: name.clone(),
+                origin_position: *origin_position,
                 args: args.iter().map(rec).collect::<Result<_, _>>()?,
             },
-            Expr::GenericFuncCall { schema, name, args } => Expr::GenericFuncCall {
+            Expr::GenericFuncCall {
+                schema,
+                name,
+                args,
+                origin_position,
+            } => Expr::GenericFuncCall {
                 schema: schema.clone(),
                 name: name.clone(),
+                origin_position: *origin_position,
                 args: args.iter().map(rec).collect::<Result<_, _>>()?,
             },
             Expr::Row(values) => Expr::Row(values.iter().map(rec).collect::<Result<_, _>>()?),

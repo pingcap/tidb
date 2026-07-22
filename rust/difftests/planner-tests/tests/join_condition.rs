@@ -146,6 +146,7 @@ fn ambiguous_and_unsupported_shapes_are_never_join_keys() {
             Expr::Func {
                 name: "LOWER".to_owned(),
                 args: vec![col(&["left", "id"])],
+                origin_position: 0,
             },
             col(&["right", "id"]),
         )),

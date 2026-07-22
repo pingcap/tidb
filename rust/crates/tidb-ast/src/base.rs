@@ -42,7 +42,7 @@ pub struct NodeText {
 /// Statement families were already boxed to keep the root enum small. Keeping
 /// metadata at that existing ownership boundary preserves stable movement and
 /// pattern matching without a side table or a second wrapper around `Stmt`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct NodeBox<T> {
     value: Box<T>,
     text: NodeText,
@@ -67,9 +67,56 @@ impl<T> NodeBox<T> {
         &mut self.text
     }
 
+    /// Replaces the node's exact source bytes.
+    pub fn set_text(&mut self, encoding: Option<Encoding>, text: impl Into<Vec<u8>>) {
+        self.text.set_text(encoding, text);
+    }
+
+    /// Marks whether `NO_BACKSLASH_ESCAPES` was active for this node.
+    pub fn set_no_backslash_escapes(&mut self, value: bool) {
+        self.text.set_no_backslash_escapes(value);
+    }
+
+    /// Returns the node text decoded to UTF-8.
+    pub fn text(&self) -> &[u8] {
+        self.text.text()
+    }
+
+    /// Returns the node's exact original source bytes.
+    pub fn original_text(&self) -> &[u8] {
+        self.text.original_text()
+    }
+
+    /// Sets the byte offset in the original SQL input.
+    pub fn set_origin_text_position(&mut self, offset: usize) {
+        self.text.set_origin_text_position(offset);
+    }
+
+    /// Returns the byte offset in the original SQL input.
+    pub const fn origin_text_position(&self) -> usize {
+        self.text.origin_text_position()
+    }
+
     /// Consumes the wrapper and returns its payload.
     pub fn into_inner(self) -> T {
         *self.value
+    }
+}
+
+// Source text and offsets describe where a node came from, not what the AST
+// means. Keeping them out of equality mirrors TiDB's expression comparison,
+// which clears origin positions before comparing trees.
+impl<T: PartialEq> PartialEq for NodeBox<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl<T: Eq> Eq for NodeBox<T> {}
+
+impl<T: crate::Visitable> crate::Visitable for NodeBox<T> {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        self.value.accept(visitor)
     }
 }
 

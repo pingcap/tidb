@@ -1611,7 +1611,7 @@ fn resolve_prepared_aggregate(
             args,
         },
         alias,
-    }] = select.fields.as_slice()
+    }] = &select.fields[..]
     else {
         return unsupported(UnsupportedReadOnlyFeature::Aggregate);
     };

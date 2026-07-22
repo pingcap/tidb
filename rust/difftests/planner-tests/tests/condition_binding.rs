@@ -57,6 +57,7 @@ fn residual_columns_bind_in_source_order_to_full_schema() {
         Expr::Func {
             name: "LOWER".to_owned(),
             args: vec![col(&["right", "payload"])],
+            origin_position: 0,
         },
     );
     let plan = bind_residual(&expr, &schema()).expect("known residual columns should bind");

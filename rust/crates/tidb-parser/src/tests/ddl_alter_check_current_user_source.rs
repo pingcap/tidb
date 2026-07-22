@@ -45,7 +45,7 @@ fn alter_add_check_bare_current_user_restores_as_nullary_function() {
             right,
         ) if matches!(
             left.as_ref(),
-            tidb_ast::Expr::Func { name, args }
+            tidb_ast::Expr::Func { name, args, .. }
                 if name == "CURRENT_USER" && args.is_empty()
         ) && matches!(right.as_ref(), tidb_ast::Expr::Column(path) if path == &["f4".to_owned()])
     ));

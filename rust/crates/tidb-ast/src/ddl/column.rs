@@ -131,6 +131,8 @@ pub enum ColumnOption {
     Generated {
         /// The generated expression.
         expression: Expr,
+        /// Exact trimmed source text of the generated expression.
+        expression_text: Vec<u8>,
         /// Whether the source selected physical `STORED` materialization;
         /// false restores as Go's canonical `VIRTUAL` default.
         stored: bool,
@@ -345,7 +347,9 @@ impl ColumnOption {
                 out.push_str("DEFAULT ");
                 restore_column_default_expression(e, out);
             }
-            ColumnOption::Generated { expression, stored } => {
+            ColumnOption::Generated {
+                expression, stored, ..
+            } => {
                 out.push_str("GENERATED ALWAYS AS(");
                 expression.restore_into(out);
                 if *stored {
@@ -391,7 +395,9 @@ impl ColumnOption {
     fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
         match self {
             ColumnOption::InlineKey(key) => key.restore_into_with_context(out, context),
-            ColumnOption::Generated { expression, stored } => {
+            ColumnOption::Generated {
+                expression, stored, ..
+            } => {
                 out.push_str("GENERATED ALWAYS AS(");
                 expression.restore_into_with_context(out, context);
                 out.push_str(if *stored { ") STORED" } else { ") VIRTUAL" });
@@ -497,7 +503,9 @@ impl crate::Visitable for ColumnOption {
                 }
                 let _ = field_0;
             }
-            Self::Generated { expression, stored } => {
+            Self::Generated {
+                expression, stored, ..
+            } => {
                 if !crate::Visitable::accept(expression, visitor) {
                     return false;
                 }

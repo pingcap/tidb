@@ -14,7 +14,7 @@
 
 //! Partition payloads shared by `CREATE TABLE` and `ALTER TABLE`.
 
-use crate::PartitionType;
+use crate::{NodeBox, PartitionType};
 
 use super::{back_quote, push_name_path, Expr, TableOption};
 
@@ -90,7 +90,7 @@ pub enum AlterPartitionAction {
     /// as execution metadata but omitted by Go's canonical restore.
     FirstPartitionLessThan {
         /// The exclusive upper bound for the first interval partition.
-        expr: Expr,
+        expr: NodeBox<Expr>,
         /// Whether the source requested `IF EXISTS`.
         if_exists: bool,
     },
@@ -99,7 +99,7 @@ pub enum AlterPartitionAction {
     /// `NO_WRITE_TO_BINLOG` marker after the bound.
     LastPartitionLessThan {
         /// The exclusive upper bound for the last interval partition.
-        expr: Expr,
+        expr: NodeBox<Expr>,
         /// Whether the source requested `NO_WRITE_TO_BINLOG`/`LOCAL`.
         no_write_to_binlog: bool,
     },
@@ -107,13 +107,13 @@ pub enum AlterPartitionAction {
     /// `AlterTableReorganizeLastPartition` specification.
     SplitMaxValuePartition {
         /// The exclusive upper bound for the new partition.
-        expr: Expr,
+        expr: NodeBox<Expr>,
     },
     /// `MERGE FIRST PARTITION LESS THAN (expr)`. Go stores this as the
     /// `AlterTableReorganizeFirstPartition` specification.
     MergeFirstPartitionLessThan {
         /// The exclusive upper bound for the merged first partition.
-        expr: Expr,
+        expr: NodeBox<Expr>,
     },
     /// `REBUILD|OPTIMIZE|REPAIR PARTITION`.
     Maintain {
@@ -384,7 +384,7 @@ pub struct PartitionMethod {
     /// The requested partition/subpartition count.
     pub count: u64,
     /// RANGE interval partitioning extension.
-    pub interval: Option<PartitionInterval>,
+    pub interval: Option<crate::NodeBox<PartitionInterval>>,
 }
 
 /// `RANGE ... INTERVAL (...)` creation-only syntax.

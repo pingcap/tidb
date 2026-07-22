@@ -16,9 +16,10 @@
 
 use super::*;
 use tidb_ast::{
-    AddPartitionSpec, AlterPartitionAction, Expr, PartitionDefinition, PartitionDefinitionClause,
-    PartitionIndexUpdate, PartitionInterval, PartitionMaintenanceOp, PartitionMethod,
-    PartitionType, PartitionValue, SubPartitionDefinition, TableOption, TablePartitioning,
+    AddPartitionSpec, AlterPartitionAction, Expr, NodeBox, PartitionDefinition,
+    PartitionDefinitionClause, PartitionIndexUpdate, PartitionInterval, PartitionMaintenanceOp,
+    PartitionMethod, PartitionType, PartitionValue, SubPartitionDefinition, TableOption,
+    TablePartitioning,
 };
 
 /// Direct source-shaped translation of Go's `parsePartitionOptions`.  CREATE
@@ -163,6 +164,7 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                 method.expr = Some(parse_partition_expr(parser)?);
             }
             if kind == PartitionType::Range && parser.is_kw("INTERVAL") {
+                let interval_start = parser.peek().offset;
                 parser.bump();
                 parser.expect_op("(")?;
                 let expr = parser.parse_expr(prec::NONE)?;
@@ -201,7 +203,8 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                 } else {
                     false
                 };
-                method.interval = Some(PartitionInterval {
+                let interval_end = parser.peek().offset;
+                let mut interval = tidb_ast::NodeBox::new(PartitionInterval {
                     expr,
                     unit,
                     first_range_end,
@@ -209,6 +212,14 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                     null_partition,
                     maxvalue_partition,
                 });
+                if interval_end > interval_start {
+                    interval.set_text(
+                        None,
+                        parser.source.as_bytes()[interval_start..interval_end].to_vec(),
+                    );
+                }
+                interval.set_origin_text_position(interval_start);
+                method.interval = Some(interval);
             }
         }
         PartitionType::SystemTime => {
@@ -290,6 +301,25 @@ fn parse_partition_less_than_bound(parser: &mut Parser, position: &str) -> PResu
     parser.expect_kw("LESS")?;
     parser.expect_kw("THAN")?;
     parse_partition_expr(parser)
+}
+
+fn parse_partition_less_than_bound_with_source(
+    parser: &mut Parser,
+    position: &str,
+    start: usize,
+) -> PResult<NodeBox<Expr>> {
+    parser.expect_kw(position)?;
+    parser.expect_kw("PARTITION")?;
+    parser.expect_kw("LESS")?;
+    parser.expect_kw("THAN")?;
+    let expr = parse_partition_expr(parser)?;
+    let end = parser.peek().offset;
+    let mut bound = NodeBox::new(expr);
+    if end > start && end <= parser.source.len() {
+        bound.set_text(None, parser.source.as_bytes()[start..end].to_vec());
+    }
+    bound.set_origin_text_position(start);
+    Ok(bound)
 }
 
 fn validate_partitioning(
@@ -399,7 +429,8 @@ pub(super) fn parse_alter_partition_action(
         return Ok(Some(action));
     }
     if parser.is_kw("FIRST") {
-        let expr = parse_partition_less_than_bound(parser, "FIRST")?;
+        let start = parser.peek().offset;
+        let expr = parse_partition_less_than_bound_with_source(parser, "FIRST", start)?;
         let if_exists = if parser.is_kw("IF") {
             parser.bump();
             parser.expect_kw("EXISTS")?;
@@ -413,7 +444,8 @@ pub(super) fn parse_alter_partition_action(
         }));
     }
     if parser.is_kw("LAST") {
-        let expr = parse_partition_less_than_bound(parser, "LAST")?;
+        let start = parser.peek().offset;
+        let expr = parse_partition_less_than_bound_with_source(parser, "LAST", start)?;
         let no_write_to_binlog = parse_no_write_to_binlog(parser);
         return Ok(Some(AlterPartitionAction::LastPartitionLessThan {
             expr,
@@ -421,8 +453,9 @@ pub(super) fn parse_alter_partition_action(
         }));
     }
     if parser.is_kw("MERGE") && parser.is_kw_at(1, "FIRST") {
+        let start = parser.peek().offset;
         parser.bump();
-        let expr = parse_partition_less_than_bound(parser, "FIRST")?;
+        let expr = parse_partition_less_than_bound_with_source(parser, "FIRST", start)?;
         return Ok(Some(AlterPartitionAction::MergeFirstPartitionLessThan {
             expr,
         }));
@@ -652,10 +685,16 @@ pub(super) fn parse_alter_partition_action(
     if parser.is_kw("SPLIT") && parser.is_kw_at(1, "MAXVALUE") {
         parser.bump();
         parser.expect_kw("MAXVALUE")?;
+        let start = parser.peek().offset;
         parser.expect_kw("PARTITION")?;
         parser.expect_kw("LESS")?;
         parser.expect_kw("THAN")?;
-        let expr = parse_partition_expr(parser)?;
+        let mut expr = NodeBox::new(parse_partition_expr(parser)?);
+        let end = parser.peek().offset;
+        if end > start && end <= parser.source.len() {
+            expr.set_text(None, parser.source.as_bytes()[start..end].to_vec());
+        }
+        expr.set_origin_text_position(start);
         return Ok(Some(AlterPartitionAction::SplitMaxValuePartition { expr }));
     }
     if parser.is_kw("REMOVE") && parser.is_kw_at(1, "PARTITIONING") {

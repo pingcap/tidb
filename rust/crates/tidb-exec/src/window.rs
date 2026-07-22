@@ -331,16 +331,27 @@ pub(crate) fn resolve_windows(expr: &Expr, windows: &[(Expr, Vec<Datum>)], row_i
             Box::new(resolve_windows(left, windows, row_idx)),
             Box::new(resolve_windows(right, windows, row_idx)),
         ),
-        Expr::Func { name, args } => Expr::Func {
+        Expr::Func {
+            name,
+            args,
+            origin_position,
+        } => Expr::Func {
             name: name.clone(),
+            origin_position: *origin_position,
             args: args
                 .iter()
                 .map(|a| resolve_windows(a, windows, row_idx))
                 .collect(),
         },
-        Expr::GenericFuncCall { schema, name, args } => Expr::GenericFuncCall {
+        Expr::GenericFuncCall {
+            schema,
+            name,
+            args,
+            origin_position,
+        } => Expr::GenericFuncCall {
             schema: schema.clone(),
             name: name.clone(),
+            origin_position: *origin_position,
             args: args
                 .iter()
                 .map(|a| resolve_windows(a, windows, row_idx))
@@ -568,16 +579,27 @@ fn rewrite_window_over(expr: &Expr, windows: &[(String, WindowDef)]) -> Result<E
             Box::new(rewrite_window_over(left, windows)?),
             Box::new(rewrite_window_over(right, windows)?),
         ),
-        Expr::Func { name, args } => Expr::Func {
+        Expr::Func {
+            name,
+            args,
+            origin_position,
+        } => Expr::Func {
             name: name.clone(),
+            origin_position: *origin_position,
             args: args
                 .iter()
                 .map(|a| rewrite_window_over(a, windows))
                 .collect::<Result<_, _>>()?,
         },
-        Expr::GenericFuncCall { schema, name, args } => Expr::GenericFuncCall {
+        Expr::GenericFuncCall {
+            schema,
+            name,
+            args,
+            origin_position,
+        } => Expr::GenericFuncCall {
             schema: schema.clone(),
             name: name.clone(),
+            origin_position: *origin_position,
             args: args
                 .iter()
                 .map(|a| rewrite_window_over(a, windows))

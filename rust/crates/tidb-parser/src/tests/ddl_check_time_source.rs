@@ -55,7 +55,7 @@ fn bare_check_time_keywords_are_typed_nullary_functions() {
     };
     assert!(matches!(
         function.as_ref(),
-        Expr::Func { name, args } if name == "LOCALTIME" && args.is_empty()
+        Expr::Func { name, args, .. } if name == "LOCALTIME" && args.is_empty()
     ));
 }
 

@@ -458,16 +458,27 @@ impl Database {
                 Box::new(self.fold_group_aggregates(left, group, cols, outer)?),
                 Box::new(self.fold_group_aggregates(right, group, cols, outer)?),
             ),
-            Expr::Func { name, args } => Expr::Func {
+            Expr::Func {
+                name,
+                args,
+                origin_position,
+            } => Expr::Func {
                 name: name.clone(),
+                origin_position: *origin_position,
                 args: args
                     .iter()
                     .map(|a| self.fold_group_aggregates(a, group, cols, outer))
                     .collect::<Result<Vec<_>, _>>()?,
             },
-            Expr::GenericFuncCall { schema, name, args } => Expr::GenericFuncCall {
+            Expr::GenericFuncCall {
+                schema,
+                name,
+                args,
+                origin_position,
+            } => Expr::GenericFuncCall {
                 schema: schema.clone(),
                 name: name.clone(),
+                origin_position: *origin_position,
                 args: args
                     .iter()
                     .map(|a| self.fold_group_aggregates(a, group, cols, outer))

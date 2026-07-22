@@ -558,7 +558,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         // whole statement. The function node's address is stable while this
         // parsed statement is evaluated; an argument-slice view is not,
         // because temporary views can be reused for siblings.
-        Expr::Func { name, args } => {
+        Expr::Func { name, args, .. } => {
             eval_func(name, args, cols, Some(expr as *const Expr as usize))
         }
         // `EXTRACT(unit FROM value)` is sugar for calling the SAME

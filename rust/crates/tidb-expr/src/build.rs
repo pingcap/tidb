@@ -150,7 +150,7 @@ impl BuildContext {
                 Ok(binary_string_type())
             }
             Expr::Collate { .. } => Ok(self.character_string_type()),
-            Expr::Func { name, args }
+            Expr::Func { name, args, .. }
                 if name.eq_ignore_ascii_case("UNHEX")
                     || name.eq_ignore_ascii_case("FROM_BASE64")
                     || (name.eq_ignore_ascii_case("CHAR_FUNC")
@@ -158,7 +158,7 @@ impl BuildContext {
             {
                 Ok(binary_string_type())
             }
-            Expr::Func { name, args } if name.eq_ignore_ascii_case("CHAR_FUNC") => {
+            Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("CHAR_FUNC") => {
                 match args.last() {
                     Some(Expr::RawString(_)) => Ok(self.character_string_type()),
                     _ => unresolved_string_length_type(),
@@ -166,7 +166,7 @@ impl BuildContext {
             }
             // Go's ELT result is binary if any selectable value has binary
             // string type, independent of the runtime selector value.
-            Expr::Func { name, args } if name.eq_ignore_ascii_case("ELT") => {
+            Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("ELT") => {
                 let mut unresolved = false;
                 for argument in args.iter().skip(1) {
                     match self.string_length_argument_type(argument) {

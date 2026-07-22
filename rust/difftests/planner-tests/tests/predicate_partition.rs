@@ -80,6 +80,7 @@ fn mutable_and_opaque_shapes_never_become_pushdown_claims() {
             Expr::Func {
                 name: "RAND".to_owned(),
                 args: Vec::new(),
+                origin_position: 0,
             },
             Expr::In {
                 expr: Box::new(col("left", "id")),
@@ -108,6 +109,7 @@ fn a_single_child_function_keeps_dependency_but_requires_effects_check() {
         [Expr::Func {
             name: "LOWER".to_owned(),
             args: vec![col("right", "payload")],
+            origin_position: 0,
         }],
         &schema(),
     )

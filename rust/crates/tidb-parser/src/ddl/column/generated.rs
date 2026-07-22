@@ -52,7 +52,17 @@ impl Parser {
         }
 
         self.expect_op("(")?;
+        let expression_start = self.peek().offset;
         let expression = self.parse_expr(prec::NONE)?;
+        let expression_end = self.peek().offset;
+        let expression_text = if expression_end > expression_start {
+            self.source[expression_start..expression_end]
+                .trim()
+                .as_bytes()
+                .to_vec()
+        } else {
+            Vec::new()
+        };
         self.expect_op(")")?;
         let stored = if self.is_kw("STORED") {
             self.bump();
@@ -63,6 +73,10 @@ impl Parser {
             }
             false
         };
-        Ok(ColumnOption::Generated { expression, stored })
+        Ok(ColumnOption::Generated {
+            expression,
+            expression_text,
+            stored,
+        })
     }
 }

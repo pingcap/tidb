@@ -21,6 +21,25 @@
 
 use super::*;
 
+#[test]
+fn function_calls_preserve_original_source_offsets() {
+    let Stmt::Query(query) = parse("SELECT s.a(), b();").expect("function calls parse") else {
+        panic!("expected query statement");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("expected SELECT statement");
+    };
+    let positions: Vec<_> = select
+        .fields
+        .iter()
+        .map(|field| match field {
+            SelectField::Expr { expr, .. } => expr.origin_text_position(),
+            SelectField::Wildcard(_) => panic!("expected function field"),
+        })
+        .collect();
+    assert_eq!(positions, vec![7, 14]);
+}
+
 /// `pkg/parser/ast/functions_test.go::TestFunctionsVisitorCover`.
 #[test]
 fn test_functions_visitor_cover() {

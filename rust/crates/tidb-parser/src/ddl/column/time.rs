@@ -43,6 +43,7 @@ impl Parser {
             Expr::Func {
                 name: self.bump().text,
                 args: Vec::new(),
+                origin_position: 0,
             }
         } else {
             self.parse_expr(prec::NONE)?
@@ -95,6 +96,7 @@ impl Parser {
         Ok(Expr::Func {
             name: name.to_owned(),
             args,
+            origin_position: 0,
         })
     }
 }

@@ -41,6 +41,7 @@ fn conjunction_preserves_comparison_and_function_residuals() {
         Expr::Func {
             name: "RAND".to_owned(),
             args: Vec::new(),
+            origin_position: 0,
         },
     );
     let ResidualPredicate::All(children) = classify_residual(&expr) else {

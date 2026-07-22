@@ -68,3 +68,22 @@ fn interval_partition_source_rows_reject_like_go() {
         assert!(parse(sql).is_err(), "source SQL should reject: {sql}");
     }
 }
+
+#[test]
+fn interval_partition_preserves_syntactic_sugar_source_metadata() {
+    let sql = "CREATE TABLE t (c1 int, c2 datetime) PARTITION BY RANGE COLUMNS (c2) INTERVAL (1 day) first partition less than (\"2022-01-02\") last partition less than (\"2022-06-01\") NULL PARTITION MAXVALUE PARTITION";
+    let Stmt::Ddl(ddl) = parse(sql).expect("interval partition parses") else {
+        panic!("expected DDL statement");
+    };
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.as_ref() else {
+        panic!("expected CREATE TABLE");
+    };
+    let interval = table
+        .partitioning
+        .as_ref()
+        .and_then(|partitioning| partitioning.method.interval.as_ref())
+        .expect("interval metadata");
+    let start = sql.find("INTERVAL").expect("INTERVAL offset");
+    assert_eq!(interval.origin_text_position(), start);
+    assert_eq!(interval.original_text(), sql[start..].as_bytes());
+}

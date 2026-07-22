@@ -74,7 +74,22 @@ impl Parser {
     /// newly added top-level command can accidentally become valid inside a
     /// binding merely because the generic statement parser learnt it.
     fn parse_binding_statement(&mut self) -> PResult<Box<Stmt>> {
-        let statement = self.parse_statement()?;
+        let start = self.peek().offset;
+        let mut statement = self.parse_statement()?;
+        let end = if self.at_eof() {
+            self.source.len()
+        } else {
+            self.peek().offset
+        };
+        if end > start {
+            statement.set_text(
+                None,
+                self.source[start..end]
+                    .trim_end_matches([';', ' ', '\t', '\n'])
+                    .as_bytes()
+                    .to_vec(),
+            );
+        }
         match &statement {
             Stmt::Query(_) => Ok(Box::new(statement)),
             Stmt::Dml(dml)

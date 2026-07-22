@@ -43,7 +43,7 @@ pub struct CreateViewStmt {
     pub columns: Vec<String>,
     /// The view query. This uses the typed query envelope so a view cannot
     /// accidentally contain a DDL/DML/session statement.
-    pub query: Box<QueryStmt>,
+    pub query: crate::NodeBox<QueryStmt>,
     /// Whether the whole query was enclosed in the `AS (...)` form.
     pub query_parenthesized: bool,
     /// The optional view check option.

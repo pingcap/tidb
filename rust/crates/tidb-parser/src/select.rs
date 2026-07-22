@@ -121,6 +121,7 @@ impl Parser {
             }
             self.expect_kw("AS")?;
             self.expect_op("(")?;
+            let query_start = self.peek().offset;
             // Go's CTE production delegates the body to the general
             // subquery parser, so another WITH may start this body. The
             // existing QueryStmt/WithClause representation already owns
@@ -131,11 +132,19 @@ impl Parser {
             } else {
                 self.parse_select_or_setopr()?
             };
+            let query_end = self.peek().offset;
+            let mut query = tidb_ast::NodeBox::new(query);
+            if query_end > query_start {
+                query.set_text(
+                    None,
+                    self.source.as_bytes()[query_start..query_end].to_vec(),
+                );
+            }
             self.expect_op(")")?;
             ctes.push(Cte {
                 name,
                 columns,
-                query: Box::new(query),
+                query,
             });
             if self.is_op(",") {
                 self.bump();
@@ -483,7 +492,7 @@ impl Parser {
             calc_found_rows: false,
             distinct: false,
             all: false,
-            fields: vec![SelectField::Wildcard(Vec::new())],
+            fields: vec![SelectField::Wildcard(Vec::new())].into(),
             values: Vec::new(),
             from: Some(Join {
                 left: JoinNode::Table(table),
@@ -547,7 +556,7 @@ impl Parser {
             calc_found_rows: false,
             distinct: false,
             all: false,
-            fields: vec![SelectField::Wildcard(Vec::new())],
+            fields: vec![SelectField::Wildcard(Vec::new())].into(),
             values,
             from: None,
             where_clause: None,
@@ -1555,32 +1564,43 @@ impl Parser {
         Ok(expr)
     }
 
-    pub(crate) fn parse_select_list(&mut self) -> PResult<Vec<SelectField>> {
-        let mut fields = vec![self.parse_select_field()?];
+    pub(crate) fn parse_select_list(&mut self) -> PResult<tidb_ast::SelectFieldList> {
+        let mut fields = tidb_ast::SelectFieldList::default();
+        let (field, text) = self.parse_select_field()?;
+        fields.push_with_text(field, text);
         while self.is_op(",") {
             self.bump();
-            fields.push(self.parse_select_field()?);
+            let (field, text) = self.parse_select_field()?;
+            fields.push_with_text(field, text);
         }
         Ok(fields)
     }
 
-    fn parse_select_field(&mut self) -> PResult<SelectField> {
-        if self.is_op("*") {
+    fn parse_select_field(&mut self) -> PResult<(SelectField, Vec<u8>)> {
+        let start = self.peek().offset;
+        let field = if self.is_op("*") {
             self.bump();
-            return Ok(SelectField::Wildcard(Vec::new()));
-        }
+            SelectField::Wildcard(Vec::new())
         // A qualified wildcard (`t.*`, `db.t.*`) looks like a name path up
         // until its final segment, which is `*` instead of another name —
         // try that shape before falling through to general expression
         // parsing (whose name-path parsing stops at a trailing `.` that
         // isn't followed by an identifier, so it would otherwise choke on
         // the unconsumed `.` `*`).
-        if let Some(path) = self.try_take_wildcard() {
-            return Ok(SelectField::Wildcard(path));
-        }
-        let expr = self.parse_expr(prec::NONE)?;
-        let alias = self.parse_opt_alias()?;
-        Ok(SelectField::Expr { expr, alias })
+        } else if let Some(path) = self.try_take_wildcard() {
+            SelectField::Wildcard(path)
+        } else {
+            let expr = self.parse_expr(prec::NONE)?;
+            let alias = self.parse_opt_alias()?;
+            SelectField::Expr { expr, alias }
+        };
+        let end = self.peek().offset;
+        let text = if end > start {
+            self.source[start..end].trim().as_bytes().to_vec()
+        } else {
+            Vec::new()
+        };
+        Ok((field, text))
     }
 
     /// If the upcoming tokens form a qualified wildcard — `IDENT ('.' IDENT)*
@@ -1982,7 +2002,16 @@ impl Parser {
         if self.is_kw("LATERAL") {
             self.bump();
             self.expect_op("(")?;
+            let query_start = self.peek().offset;
             let subquery = self.parse_derived_query_payload()?;
+            let query_end = self.peek().offset;
+            let mut subquery = tidb_ast::NodeBox::new(subquery);
+            if query_end > query_start {
+                subquery.set_text(
+                    None,
+                    self.source.as_bytes()[query_start..query_end].to_vec(),
+                );
+            }
             self.expect_op(")")?;
             if self.is_kw("AS") {
                 self.bump();
@@ -1999,7 +2028,7 @@ impl Parser {
                 self.expect_op(")")?;
             }
             return Ok(JoinNode::Derived {
-                subquery: Box::new(subquery),
+                subquery,
                 alias: Some(alias),
                 lateral: true,
                 column_names,
@@ -2033,7 +2062,16 @@ impl Parser {
         }
         if self.looks_like_derived_table() {
             self.bump(); // (
+            let query_start = self.peek().offset;
             let subquery = self.parse_derived_query_payload()?;
+            let query_end = self.peek().offset;
+            let mut subquery = tidb_ast::NodeBox::new(subquery);
+            if query_end > query_start {
+                subquery.set_text(
+                    None,
+                    self.source.as_bytes()[query_start..query_end].to_vec(),
+                );
+            }
             self.expect_op(")")?;
             // Unlike `LATERAL`, a plain derived table's alias is
             // OPTIONAL (confirmed via `godump restore`: `SELECT * FROM
@@ -2042,7 +2080,7 @@ impl Parser {
             // plain table reference already gets via `parse_table_ref`.
             let alias = self.parse_opt_alias()?;
             return Ok(JoinNode::Derived {
-                subquery: Box::new(subquery),
+                subquery,
                 alias,
                 lateral: false,
                 column_names: Vec::new(),
@@ -2235,13 +2273,19 @@ impl Parser {
     /// `parseExistsSubquery` uses the general `parseSubquery` path, so an
     /// every scalar, `EXISTS`, `IN`, and `ANY`/`ALL` body can retain a set
     /// operation without narrowing to one select term.
-    pub(crate) fn parse_query_subquery(&mut self) -> PResult<QueryStmt> {
+    pub(crate) fn parse_query_subquery(&mut self) -> PResult<tidb_ast::NodeBox<QueryStmt>> {
         self.expect_op("(")?;
+        let start = self.peek().offset;
         let query = if self.is_kw("WITH") {
             self.parse_with_select()?
         } else {
             self.parse_select_or_setopr()?
         };
+        let end = self.peek().offset;
+        let mut query = tidb_ast::NodeBox::new(query);
+        if end > start {
+            query.set_text(None, self.source.as_bytes()[start..end].to_vec());
+        }
         self.expect_op(")")?;
         Ok(query)
     }

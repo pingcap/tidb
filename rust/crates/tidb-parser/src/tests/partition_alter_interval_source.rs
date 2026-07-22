@@ -46,7 +46,7 @@ fn alter_interval_partition_bounds_keep_typed_go_payload() {
         alter.actions,
         vec![tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::LastPartitionLessThan {
-                expr: tidb_ast::Expr::Int("100".to_owned()),
+                expr: tidb_ast::NodeBox::new(tidb_ast::Expr::Int("100".to_owned())),
                 no_write_to_binlog: false,
             }
         )]
@@ -64,7 +64,7 @@ fn alter_interval_partition_bounds_keep_typed_go_payload() {
         alter.actions,
         vec![tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::FirstPartitionLessThan {
-                expr: tidb_ast::Expr::Int("30".to_owned()),
+                expr: tidb_ast::NodeBox::new(tidb_ast::Expr::Int("30".to_owned())),
                 if_exists: false,
             }
         )]
@@ -81,4 +81,45 @@ fn alter_interval_partition_bounds_preserve_source_options() {
         r("ALTER TABLE ipt LAST PARTITION LESS THAN (100) NO_WRITE_TO_BINLOG"),
         "ALTER TABLE `ipt` LAST PARTITION LESS THAN (100) NO_WRITE_TO_BINLOG"
     );
+}
+
+#[test]
+fn alter_interval_partition_bounds_preserve_go_rewrite_source() {
+    for (sql, expected) in [
+        (
+            "ALTER TABLE ipt FIRST PARTITION LESS THAN (30)",
+            "FIRST PARTITION LESS THAN (30)",
+        ),
+        (
+            "ALTER TABLE ipt LAST PARTITION LESS THAN (100)",
+            "LAST PARTITION LESS THAN (100)",
+        ),
+        (
+            "ALTER TABLE ipt MERGE FIRST PARTITION LESS THAN (60)",
+            "MERGE FIRST PARTITION LESS THAN (60)",
+        ),
+        (
+            "ALTER TABLE ipt SPLIT MAXVALUE PARTITION LESS THAN (140)",
+            "PARTITION LESS THAN (140)",
+        ),
+    ] {
+        let Stmt::Ddl(ddl) = parse(sql).expect("parse interval ALTER") else {
+            panic!("expected DDL");
+        };
+        let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
+            panic!("expected ALTER TABLE");
+        };
+        let [tidb_ast::AlterTableAction::Partition(action)] = alter.actions.as_slice() else {
+            panic!("expected one partition action");
+        };
+        let bound = match action {
+            tidb_ast::AlterPartitionAction::FirstPartitionLessThan { expr, .. }
+            | tidb_ast::AlterPartitionAction::LastPartitionLessThan { expr, .. }
+            | tidb_ast::AlterPartitionAction::MergeFirstPartitionLessThan { expr }
+            | tidb_ast::AlterPartitionAction::SplitMaxValuePartition { expr } => expr,
+            _ => panic!("expected interval bound"),
+        };
+        assert_eq!(bound.original_text(), expected.as_bytes());
+        assert_eq!(bound.origin_text_position(), sql.find(expected).unwrap());
+    }
 }

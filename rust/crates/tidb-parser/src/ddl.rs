@@ -643,6 +643,7 @@ impl Parser {
             self.expect_op(")")?;
         }
         self.expect_kw("AS")?;
+        let query_start = self.peek().offset;
         // A sole `AS (SELECT ...)` keeps its outer braces in the view AST,
         // while `(SELECT ...) UNION (SELECT ...)` is a set operation whose
         // braces belong to the individual terms. Parse the first parenthesized
@@ -676,6 +677,17 @@ impl Parser {
             };
             (query, false)
         };
+        let query_end = self.peek().offset;
+        let mut query = tidb_ast::NodeBox::new(query);
+        if query_end > query_start {
+            query.set_text(
+                None,
+                self.source[query_start..query_end]
+                    .trim()
+                    .as_bytes()
+                    .to_vec(),
+            );
+        }
         let check_option = if self.is_kw("WITH") {
             self.bump();
             let local = if self.is_kw("LOCAL") {
@@ -704,7 +716,7 @@ impl Parser {
             security,
             name,
             columns,
-            query: Box::new(query),
+            query,
             query_parenthesized,
             check_option,
         })

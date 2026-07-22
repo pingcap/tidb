@@ -62,7 +62,20 @@ impl Parser {
             }
         }
         self.expect_op(")")?;
-        let body = Box::new(self.parse_procedure_statement()?);
+        let body_start = self.peek().offset;
+        let body = self.parse_procedure_statement()?;
+        let body_end = if self.at_eof() {
+            self.source.len()
+        } else {
+            self.peek().offset
+        };
+        let mut body = tidb_ast::NodeBox::new(body);
+        if body_end > body_start {
+            body.set_text(
+                None,
+                self.source[body_start..body_end].trim().as_bytes().to_vec(),
+            );
+        }
         Ok(CreateProcedureStmt {
             if_not_exists,
             name,

@@ -176,7 +176,7 @@ pub fn classify_residual(expr: &Expr) -> ResidualPredicate {
                 right: operand_shape(right),
             }))
         }
-        Expr::Func { name, args } | Expr::GenericFuncCall { name, args, .. } => {
+        Expr::Func { name, args, .. } | Expr::GenericFuncCall { name, args, .. } => {
             ResidualPredicate::Leaf(ResidualLeaf::deferred(ResidualLeafKind::Function {
                 name: name.clone(),
                 arity: args.len(),

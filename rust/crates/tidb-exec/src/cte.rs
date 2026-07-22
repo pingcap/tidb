@@ -122,7 +122,7 @@ fn rewrite_join_node_ctes(
                 .find(|(n, _)| n.eq_ignore_ascii_case(&tr.name[0]))
             {
                 Some((_, query)) => JoinNode::Derived {
-                    subquery: Box::new(QueryStmt::Select(Box::new(query.clone()))),
+                    subquery: tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(query.clone()))),
                     alias: Some(tr.alias.clone().unwrap_or_else(|| tr.name[0].clone())),
                     lateral: false,
                     column_names: Vec::new(),
@@ -143,15 +143,18 @@ fn rewrite_join_node_ctes(
             alias,
             lateral,
             column_names,
-        } => JoinNode::Derived {
-            subquery: Box::new(match subquery.as_ref() {
-                QueryStmt::Select(s) => QueryStmt::Select(Box::new(rewrite_select_ctes(s, ctes)?)),
-                other => other.clone(),
-            }),
-            alias: alias.clone(),
-            lateral: *lateral,
-            column_names: column_names.clone(),
-        },
+        } => {
+            let mut rewritten = subquery.clone();
+            if let QueryStmt::Select(select) = rewritten.as_mut() {
+                *select = Box::new(rewrite_select_ctes(select, ctes)?);
+            }
+            JoinNode::Derived {
+                subquery: rewritten,
+                alias: alias.clone(),
+                lateral: *lateral,
+                column_names: column_names.clone(),
+            }
+        }
         JoinNode::Join(inner) => JoinNode::Join(Box::new(rewrite_join_ctes(inner, ctes)?)),
         other => other.clone(),
     })

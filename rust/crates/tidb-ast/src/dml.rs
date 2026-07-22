@@ -120,7 +120,7 @@ pub struct InsertStmt {
     /// literal `VALUES` list. A [`QueryStmt`] restored directly
     /// after the table/column list with no `VALUES` keyword. When
     /// present, `rows` is empty.
-    pub source: Option<Box<QueryStmt>>,
+    pub source: Option<crate::NodeBox<QueryStmt>>,
     /// Whether [`Self::source`] was enclosed in the source-position
     /// parentheses accepted by TiDB's `InsertStmt` grammar: `INSERT INTO t
     /// (SELECT ...)` or `INSERT INTO t (a) (SELECT ...)`. This is separate
@@ -137,7 +137,7 @@ pub struct InsertStmt {
     /// Optional positional column aliases attached to `row_alias`.
     pub column_aliases: Vec<String>,
     /// Optional TiDB `RETURNING` projection.
-    pub returning: Vec<SelectField>,
+    pub returning: crate::SelectFieldList,
     /// Whether the values were written in `SET col=val, ...` assignment
     /// form rather than `[cols] VALUES (...)`. The two are equivalent —
     /// the parser keeps its typed LHS paths in [`InsertStmt::set_columns`]
@@ -244,7 +244,7 @@ pub enum ImportSource {
     /// ...)`.
     Select {
         /// Source query.
-        query: Box<QueryStmt>,
+        query: crate::NodeBox<QueryStmt>,
         /// Whether the source query was enclosed in parentheses.
         parenthesized: bool,
     },
@@ -387,7 +387,7 @@ pub struct UpdateStmt {
     /// The optional single-table `LIMIT` tail.
     pub limit: Option<Limit>,
     /// Optional TiDB `RETURNING` projection.
-    pub returning: Vec<SelectField>,
+    pub returning: crate::SelectFieldList,
 }
 
 /// The shape of an `UPDATE`: an ordinary single-table update, or a
@@ -461,7 +461,7 @@ pub struct DeleteStmt {
     /// The optional single-table `LIMIT` tail.
     pub limit: Option<Limit>,
     /// Optional TiDB `RETURNING` projection.
-    pub returning: Vec<SelectField>,
+    pub returning: crate::SelectFieldList,
 }
 
 /// The shape of a `DELETE`: an ordinary single-table delete, or a

@@ -770,6 +770,7 @@ fn date_add_sub() {
                     unit: "DAY".to_string(),
                 },
             ],
+            origin_position: 7,
         }
     );
 

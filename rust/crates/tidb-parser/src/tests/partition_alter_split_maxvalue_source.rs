@@ -52,7 +52,7 @@ fn alter_split_maxvalue_partition_retains_bound_expression() {
         alter.actions,
         vec![tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::SplitMaxValuePartition {
-                expr: tidb_ast::Expr::Int("140".to_owned()),
+                expr: tidb_ast::NodeBox::new(tidb_ast::Expr::Int("140".to_owned())),
             }
         )]
     );

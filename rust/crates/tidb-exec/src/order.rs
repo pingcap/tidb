@@ -173,16 +173,27 @@ pub(crate) fn resolve_having_aliases(expr: &Expr, fields: &[SelectField]) -> Exp
             Box::new(resolve_having_aliases(left, fields)),
             Box::new(resolve_having_aliases(right, fields)),
         ),
-        Expr::Func { name, args } => Expr::Func {
+        Expr::Func {
+            name,
+            args,
+            origin_position,
+        } => Expr::Func {
             name: name.clone(),
+            origin_position: *origin_position,
             args: args
                 .iter()
                 .map(|a| resolve_having_aliases(a, fields))
                 .collect(),
         },
-        Expr::GenericFuncCall { schema, name, args } => Expr::GenericFuncCall {
+        Expr::GenericFuncCall {
+            schema,
+            name,
+            args,
+            origin_position,
+        } => Expr::GenericFuncCall {
             schema: schema.clone(),
             name: name.clone(),
+            origin_position: *origin_position,
             args: args
                 .iter()
                 .map(|a| resolve_having_aliases(a, fields))

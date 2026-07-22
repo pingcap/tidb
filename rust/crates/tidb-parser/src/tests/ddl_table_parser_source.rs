@@ -38,29 +38,39 @@ fn generated_option(sql: &str) -> tidb_ast::ColumnOption {
 fn ordinary_generated_column_source_cases_keep_one_typed_option() {
     // These three inputs are `pkg/parser/parser_test.go:TestGeneratedColumn`.
     // The expected SQL includes Go AST canonicalization, not input spelling.
-    for (sql, expected, stored) in [
+    for (sql, expected, stored, expression_text) in [
         (
             "create table t (c int, d int generated always as (c + 1) virtual)",
             "CREATE TABLE `t` (`c` INT,`d` INT GENERATED ALWAYS AS(`c`+1) VIRTUAL)",
             false,
+            b"c + 1".as_slice(),
         ),
         (
             "create table t (c int, d int as (   c + 1   ) virtual)",
             "CREATE TABLE `t` (`c` INT,`d` INT GENERATED ALWAYS AS(`c`+1) VIRTUAL)",
             false,
+            b"c + 1".as_slice(),
         ),
         (
             "create table t (c int, d int as (1 + 1) stored)",
             "CREATE TABLE `t` (`c` INT,`d` INT GENERATED ALWAYS AS(1+1) STORED)",
             true,
+            b"1 + 1".as_slice(),
         ),
     ] {
         let statement = parse(sql).expect("parse Go generated-column source case");
         assert_eq!(statement.restore(), expected, "source SQL: {sql}");
-        assert!(matches!(
-            generated_option(sql),
-            tidb_ast::ColumnOption::Generated { stored: actual, .. } if actual == stored
-        ));
+        let option = generated_option(sql);
+        let tidb_ast::ColumnOption::Generated {
+            stored: actual,
+            expression_text: actual_text,
+            ..
+        } = option
+        else {
+            panic!("expected generated option");
+        };
+        assert_eq!(actual, stored, "source SQL: {sql}");
+        assert_eq!(actual_text, expression_text, "source SQL: {sql}");
     }
 }
 

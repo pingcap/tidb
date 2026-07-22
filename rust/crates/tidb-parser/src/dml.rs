@@ -181,7 +181,7 @@ impl Parser {
                 );
             }
             ImportSource::Select {
-                query: Box::new(query),
+                query: tidb_ast::NodeBox::new(query),
                 parenthesized,
             }
         };
@@ -360,7 +360,7 @@ impl Parser {
         let mut source_parenthesized = false;
         let mut columns_specified = false;
         let columns = if self.is_parenthesized_insert_source() {
-            source = Some(Box::new(self.parse_parenthesized_insert_source()?));
+            source = Some(self.parse_parenthesized_insert_source()?);
             source_parenthesized = true;
             Vec::new()
         } else if self.is_op("(") {
@@ -403,15 +403,15 @@ impl Parser {
             // its typed query source (`InsertStmt.Select`). Keep that same
             // ownership boundary by reusing the shared query parser rather
             // than making INSERT carry a text-only prefix.
-            source = Some(Box::new(self.parse_with_select()?));
+            source = Some(tidb_ast::NodeBox::new(self.parse_with_select()?));
         } else if self.is_kw("SELECT") {
-            source = Some(Box::new(self.parse_select_or_setopr()?));
+            source = Some(tidb_ast::NodeBox::new(self.parse_select_or_setopr()?));
         } else if self.is_kw("TABLE") {
-            source = Some(Box::new(tidb_ast::QueryStmt::Select(Box::new(
-                self.parse_table_statement()?,
-            ))));
+            source = Some(tidb_ast::NodeBox::new(tidb_ast::QueryStmt::Select(
+                Box::new(self.parse_table_statement()?),
+            )));
         } else if self.is_parenthesized_insert_source() {
-            source = Some(Box::new(self.parse_parenthesized_insert_source()?));
+            source = Some(self.parse_parenthesized_insert_source()?);
             source_parenthesized = true;
         } else {
             // `VALUE` is an accepted synonym for `VALUES` (real MySQL/TiDB
@@ -468,7 +468,7 @@ impl Parser {
             Vec::new()
         };
         let returning = if replace {
-            Vec::new()
+            tidb_ast::SelectFieldList::default()
         } else {
             self.parse_returning_fields()?
         };
@@ -501,13 +501,21 @@ impl Parser {
         self.is_op("(") && (self.is_kw_at(1, "SELECT") || self.is_kw_at(1, "WITH"))
     }
 
-    fn parse_parenthesized_insert_source(&mut self) -> PResult<tidb_ast::QueryStmt> {
+    fn parse_parenthesized_insert_source(
+        &mut self,
+    ) -> PResult<tidb_ast::NodeBox<tidb_ast::QueryStmt>> {
         self.expect_op("(")?;
+        let start = self.peek().offset;
         let source = if self.is_kw("WITH") {
             self.parse_with_select()?
         } else {
             self.parse_select_or_setopr()?
         };
+        let end = self.peek().offset;
+        let mut source = tidb_ast::NodeBox::new(source);
+        if end > start {
+            source.set_text(None, self.source.as_bytes()[start..end].to_vec());
+        }
         self.expect_op(")")?;
         Ok(source)
     }
@@ -723,7 +731,7 @@ impl Parser {
             return Err(self.err_here("multi-table DELETE does not allow ORDER BY or LIMIT"));
         }
         let returning = if matches!(&kind, DeleteKind::Multi { .. }) {
-            Vec::new()
+            tidb_ast::SelectFieldList::default()
         } else {
             self.parse_returning_fields()?
         };
@@ -740,9 +748,9 @@ impl Parser {
         })
     }
 
-    fn parse_returning_fields(&mut self) -> PResult<Vec<tidb_ast::SelectField>> {
+    fn parse_returning_fields(&mut self) -> PResult<tidb_ast::SelectFieldList> {
         if !self.is_kw("RETURNING") {
-            return Ok(Vec::new());
+            return Ok(tidb_ast::SelectFieldList::default());
         }
         self.bump();
         self.parse_select_list()

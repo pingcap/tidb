@@ -67,7 +67,7 @@ pub struct CreateTableAsQuery {
     /// Go's duplicate-key policy for rows materialized by this CTAS.
     pub on_duplicate: CreateTableOnDuplicate,
     /// The CTAS result source.
-    pub query: Box<QueryStmt>,
+    pub query: crate::NodeBox<QueryStmt>,
     /// Whether the source result set was wrapped in outer `(...)`.
     pub parenthesized: bool,
 }

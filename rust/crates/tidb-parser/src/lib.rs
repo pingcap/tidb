@@ -391,6 +391,7 @@ pub fn parse_multi_with_mariadb(sql: &str, enable_mariadb: bool) -> PResult<Vec<
 }
 
 struct Parser {
+    source: String,
     toks: Vec<Token>,
     pos: usize,
     enable_mariadb: bool,
@@ -405,6 +406,7 @@ impl Parser {
 
     fn new_with_mariadb(sql: &str, enable_mariadb: bool) -> Self {
         Parser {
+            source: sql.to_owned(),
             toks: Lexer::new(sql).tokenize(),
             pos: 0,
             enable_mariadb,
@@ -430,6 +432,7 @@ impl Parser {
     /// token boundary around dots.
     fn new_hint(sql: &str) -> Self {
         Parser {
+            source: sql.to_owned(),
             toks: Lexer::new(sql).with_hint_mode().tokenize(),
             pos: 0,
             enable_mariadb: false,
@@ -711,13 +714,31 @@ impl Parser {
         if !explore && is_name_or_keyword(self.peek()) {
             return self.parse_describe_table();
         }
-        let statement = if self.is_op("(") && self.is_op_at(1, "(") && self.is_kw_at(2, "VALUES") {
-            Stmt::Query(tidb_ast::NodeBox::new(
-                self.parse_explain_parenthesized_values()?,
-            ))
-        } else {
-            self.parse_statement()?
-        };
+        let statement_start = self.peek().offset;
+        let mut statement =
+            if self.is_op("(") && self.is_op_at(1, "(") && self.is_kw_at(2, "VALUES") {
+                Stmt::Query(tidb_ast::NodeBox::new(
+                    self.parse_explain_parenthesized_values()?,
+                ))
+            } else {
+                self.parse_statement()?
+            };
+        if explore {
+            let statement_end = if self.at_eof() {
+                self.source.len()
+            } else {
+                self.peek().offset
+            };
+            if statement_end > statement_start {
+                statement.set_text(
+                    None,
+                    self.source[statement_start..statement_end]
+                        .trim()
+                        .as_bytes()
+                        .to_vec(),
+                );
+            }
+        }
         if !(matches!(&statement, Stmt::Query(_) | Stmt::Dml(_))
             || matches!(
                 &statement,
@@ -841,11 +862,29 @@ impl Parser {
                 limit,
             }
         } else if self.is_kw("WITH") {
-            PlanReplayerTarget::Statement(Box::new(Stmt::Query(tidb_ast::NodeBox::new(
-                self.parse_with_select()?,
-            ))))
+            let start = self.peek().offset;
+            let mut statement = Stmt::Query(tidb_ast::NodeBox::new(self.parse_with_select()?));
+            let end = if self.at_eof() {
+                self.source.len()
+            } else {
+                self.peek().offset
+            };
+            if end > start {
+                statement.set_text(None, self.source.as_bytes()[start..end].to_vec());
+            }
+            PlanReplayerTarget::Statement(Box::new(statement))
         } else {
-            PlanReplayerTarget::Statement(Box::new(self.parse_statement()?))
+            let start = self.peek().offset;
+            let mut statement = self.parse_statement()?;
+            let end = if self.at_eof() {
+                self.source.len()
+            } else {
+                self.peek().offset
+            };
+            if end > start {
+                statement.set_text(None, self.source.as_bytes()[start..end].to_vec());
+            }
+            PlanReplayerTarget::Statement(Box::new(statement))
         };
         Ok(Stmt::Admin(tidb_ast::NodeBox::new(
             AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Dump {

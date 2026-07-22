@@ -1043,7 +1043,7 @@ impl Database {
 fn resolve_values_fn(e: &Expr, cols: &[String], proposed: &Row) -> Result<Expr, ExecError> {
     let rec = |x: &Expr| resolve_values_fn(x, cols, proposed);
     Ok(match e {
-        Expr::Func { name, args } if name.eq_ignore_ascii_case("VALUES") => {
+        Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("VALUES") => {
             let [Expr::Column(path)] = args.as_slice() else {
                 return Err(ExecError::Unsupported("VALUES() argument"));
             };
@@ -1080,13 +1080,24 @@ fn resolve_values_fn(e: &Expr, cols: &[String], proposed: &Row) -> Result<Expr, 
             expr: Box::new(rec(expr)?),
             as_type: *as_type,
         },
-        Expr::Func { name, args } => Expr::Func {
+        Expr::Func {
+            name,
+            args,
+            origin_position,
+        } => Expr::Func {
             name: name.clone(),
+            origin_position: *origin_position,
             args: args.iter().map(rec).collect::<Result<_, _>>()?,
         },
-        Expr::GenericFuncCall { schema, name, args } => Expr::GenericFuncCall {
+        Expr::GenericFuncCall {
+            schema,
+            name,
+            args,
+            origin_position,
+        } => Expr::GenericFuncCall {
             schema: schema.clone(),
             name: name.clone(),
+            origin_position: *origin_position,
             args: args.iter().map(rec).collect::<Result<_, _>>()?,
         },
         other => other.clone(),

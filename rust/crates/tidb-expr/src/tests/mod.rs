@@ -481,6 +481,7 @@ fn char_length_rejects_unresolved_field_type_before_runtime_datum() {
     let expression = Expr::Func {
         name: "CHAR_LENGTH".to_string(),
         args: vec![Expr::Column(vec!["binary_col".to_string()])],
+        origin_position: 0,
     };
     assert_eq!(
         eval_in(&expression, &RuntimeBytes),

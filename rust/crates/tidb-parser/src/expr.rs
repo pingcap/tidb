@@ -148,11 +148,13 @@ impl Parser {
                 let extract = Expr::Func {
                     name: "JSON_EXTRACT".to_string(),
                     args: vec![left, path],
+                    origin_position: 0,
                 };
                 left = if unquote {
                     Expr::Func {
                         name: "JSON_UNQUOTE".to_string(),
                         args: vec![extract],
+                        origin_position: 0,
                     }
                 } else {
                     extract
@@ -206,7 +208,7 @@ impl Parser {
                     op,
                     left: Box::new(left),
                     all,
-                    subquery: Box::new(subquery),
+                    subquery,
                 };
                 continue;
             }
@@ -259,10 +261,12 @@ impl Parser {
             BinaryOp::Plus if left_is_interval => Ok(Expr::Func {
                 name: "DATE_ADD".to_string(),
                 args: vec![right, left],
+                origin_position: 0,
             }),
             BinaryOp::Plus if right_is_interval => Ok(Expr::Func {
                 name: "DATE_ADD".to_string(),
                 args: vec![left, right],
+                origin_position: 0,
             }),
             BinaryOp::Minus if left_is_interval => {
                 Err(self.err_here("INTERVAL cannot be the left operand of -"))
@@ -270,6 +274,7 @@ impl Parser {
             BinaryOp::Minus if right_is_interval => Ok(Expr::Func {
                 name: "DATE_SUB".to_string(),
                 args: vec![left, right],
+                origin_position: 0,
             }),
             _ => Ok(Expr::Binary(op, Box::new(left), Box::new(right))),
         }
@@ -485,7 +490,11 @@ impl Parser {
                 let name = self.bump().text;
                 self.expect_op("(")?;
                 self.expect_op(")")?;
-                Ok(Expr::Func { name, args: vec![] })
+                Ok(Expr::Func {
+                    name,
+                    args: vec![],
+                    origin_position: t.offset,
+                })
             }
             // A plain scalar-function keyword before `(` (e.g. `IF`, `COALESCE`)
             // is an ordinary function call.
@@ -526,7 +535,11 @@ impl Parser {
                 {
                     let name = t.text.to_ascii_uppercase();
                     self.bump();
-                    Ok(Expr::Func { name, args: vec![] })
+                    Ok(Expr::Func {
+                        name,
+                        args: vec![],
+                        origin_position: t.offset,
+                    })
                 }
                 "NOT" => {
                     if min_prec > prec::NOT {
@@ -549,7 +562,7 @@ impl Parser {
                     self.bump();
                     let subquery = self.parse_query_subquery()?;
                     Ok(Expr::Exists {
-                        subquery: Box::new(subquery),
+                        subquery,
                         not: false,
                     })
                 }
@@ -678,6 +691,7 @@ impl Parser {
                     Ok(Expr::Func {
                         name: "NEXTVAL".to_string(),
                         args: vec![Expr::Column(path)],
+                        origin_position: t.offset,
                     })
                 }
                 "ROW" => self.parse_row_constructor(),
@@ -796,6 +810,7 @@ impl Parser {
                     Ok(Expr::Func {
                         name: "INSERT_FUNC".to_string(),
                         args,
+                        origin_position: t.offset,
                     })
                 }
                 // `DATE`/`TIME`/`TIMESTAMP 'literal'` — an ODBC-style typed
@@ -888,7 +903,7 @@ impl Parser {
                         // valid here in TiDB's source grammar and must not be
                         // prematurely narrowed to `SelectStmt`.
                         let sub = self.parse_query_subquery()?;
-                        Ok(Expr::Subquery(Box::new(sub)))
+                        Ok(Expr::Subquery(sub))
                     } else {
                         self.bump();
                         let e = self.parse_expr(prec::NONE)?;
@@ -1066,6 +1081,7 @@ impl Parser {
         Ok(Expr::Func {
             name: name.to_string(),
             args: vec![date, interval],
+            origin_position: 0,
         })
     }
 
@@ -1205,6 +1221,7 @@ impl Parser {
             return Ok(Expr::Func {
                 name: "CHAR".to_string(),
                 args: vec![],
+                origin_position: 0,
             });
         }
         let mut args = vec![self.parse_expr(prec::NONE)?];
@@ -1225,6 +1242,7 @@ impl Parser {
         Ok(Expr::Func {
             name: "CHAR_FUNC".to_string(),
             args,
+            origin_position: 0,
         })
     }
 
@@ -1341,6 +1359,7 @@ impl Parser {
         Ok(Expr::Func {
             name: name.to_string(),
             args,
+            origin_position: 0,
         })
     }
 
@@ -1556,6 +1575,7 @@ impl Parser {
             && self.peek_n(3).kind == TokenKind::Op
             && self.peek_n(3).text == "("
         {
+            let origin_position = self.peek().offset;
             let schema = self.bump().text;
             self.bump(); // .
             let name = self.bump().text;
@@ -1569,7 +1589,12 @@ impl Parser {
                 }
             }
             self.expect_op(")")?;
-            return Ok(Expr::GenericFuncCall { schema, name, args });
+            return Ok(Expr::GenericFuncCall {
+                schema,
+                name,
+                args,
+                origin_position,
+            });
         }
         if self.peek_n(1).kind == TokenKind::Op && self.peek_n(1).text == "(" {
             return self.parse_named_func();
@@ -1579,6 +1604,7 @@ impl Parser {
 
     /// Parses `name ( arg, ... )` where the current token is the function name.
     fn parse_named_func(&mut self) -> PResult<Expr> {
+        let origin_position = self.peek().offset;
         let name = self.bump().text;
         self.expect_op("(")?;
         let mut args = Vec::new();
@@ -1590,7 +1616,11 @@ impl Parser {
             }
         }
         self.expect_op(")")?;
-        Ok(Expr::Func { name, args })
+        Ok(Expr::Func {
+            name,
+            args,
+            origin_position,
+        })
     }
 
     /// Parses the datetime functions whose optional argument is an integer
@@ -1599,6 +1629,7 @@ impl Parser {
     /// `1+1` here; routing these names through the generic expression parser
     /// would incorrectly accept them as unary/binary expressions.
     fn parse_datetime_precision_func(&mut self) -> PResult<Expr> {
+        let origin_position = self.peek().offset;
         let name = self.bump().text;
         self.expect_op("(")?;
         let mut args = Vec::new();
@@ -1609,7 +1640,11 @@ impl Parser {
             args.push(Expr::Int(self.bump().text));
         }
         self.expect_op(")")?;
-        Ok(Expr::Func { name, args })
+        Ok(Expr::Func {
+            name,
+            args,
+            origin_position,
+        })
     }
 
     /// Parses an aggregate call `NAME([DISTINCT|ALL] arg [, arg ...])`;
@@ -1965,15 +2000,21 @@ impl Parser {
             // shape; scalar and `ANY`/`ALL` remain `SelectStmt`-only here.
             if self.is_op("(") && (self.is_kw_at(1, "SELECT") || self.is_kw_at(1, "WITH")) {
                 self.bump(); // (
+                let start = self.peek().offset;
                 let subquery = if self.is_kw("WITH") {
                     self.parse_with_select()?
                 } else {
                     self.parse_select_or_setopr()?
                 };
+                let end = self.peek().offset;
+                let mut subquery = tidb_ast::NodeBox::new(subquery);
+                if end > start {
+                    subquery.set_text(None, self.source.as_bytes()[start..end].to_vec());
+                }
                 self.expect_op(")")?;
                 return Ok(Expr::InSubquery {
                     expr: Box::new(left),
-                    subquery: Box::new(subquery),
+                    subquery,
                     not,
                 });
             }

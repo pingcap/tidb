@@ -1047,6 +1047,7 @@ mod tests {
                 expr: Expr::Func {
                     name: "vec_cosine_distance".to_string(),
                     args: vec![Expr::Column(vec!["a".to_string()])],
+                    origin_position: 0,
                 },
                 desc: false,
             }],

@@ -42,11 +42,27 @@ impl Parser {
             self.expect_op("=")?;
             format = self.parse_misc_string("TRACE format")?;
         }
+        let statement_start = self.peek().offset;
+        let mut statement = self.parse_statement()?;
+        let statement_end = if self.at_eof() {
+            self.source.len()
+        } else {
+            self.peek().offset
+        };
+        if statement_end > statement_start {
+            statement.set_text(
+                None,
+                self.source[statement_start..statement_end]
+                    .trim_end_matches([';', ' ', '\t', '\n'])
+                    .as_bytes()
+                    .to_vec(),
+            );
+        }
         Ok(TraceStmt {
             format,
             trace_plan,
             trace_plan_target,
-            statement: Box::new(self.parse_statement()?),
+            statement: Box::new(statement),
         })
     }
 

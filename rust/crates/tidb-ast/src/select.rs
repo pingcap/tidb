@@ -15,7 +15,7 @@
 //! `WITH`/window/lock clauses) and their restore.
 
 use crate::util::{back_quote, escape_string_literal};
-use crate::{Expr, LoadDataFields, LoadDataLines, QueryStmt, StatementPriority};
+use crate::{Expr, LoadDataFields, LoadDataLines, NodeText, QueryStmt, StatementPriority};
 
 /// A set-operation statement: a chain of `SELECT` terms joined by set operators,
 /// with optional statement-level `ORDER BY` / `LIMIT`.
@@ -254,7 +254,7 @@ pub struct SelectStmt {
     /// Whether an explicit `ALL` was specified (preserved on restore).
     pub all: bool,
     /// The select list.
-    pub fields: Vec<SelectField>,
+    pub fields: SelectFieldList,
     /// The expression lists for standalone `VALUES ROW(...), ...`. Each
     /// element is one row and preserves its zero-or-more expressions exactly;
     /// empty rows are valid in this grammar. Empty for `SELECT` and `TABLE`.
@@ -658,7 +658,7 @@ pub struct Cte {
     /// as-is.
     pub columns: Vec<String>,
     /// The CTE's own query.
-    pub query: Box<QueryStmt>,
+    pub query: crate::NodeBox<QueryStmt>,
 }
 
 /// One `ORDER BY` item.
@@ -984,6 +984,98 @@ pub enum SelectField {
         /// The `AS` alias, if present.
         alias: Option<String>,
     },
+}
+
+/// A SELECT/RETURNING field list together with the source metadata Go embeds
+/// in each `SelectField` node.
+///
+/// The semantic AST remains a contiguous `SelectField` slice for planners and
+/// executors. Parser-only source context is stored beside that slice under the
+/// same owner, avoiding wrappers throughout every consumer.
+#[derive(Debug, Clone, Default)]
+pub struct SelectFieldList {
+    fields: Vec<SelectField>,
+    text: Vec<NodeText>,
+}
+
+impl SelectFieldList {
+    /// Appends a field with empty source metadata.
+    pub fn push(&mut self, field: SelectField) {
+        self.fields.push(field);
+        self.text.push(NodeText::default());
+    }
+
+    /// Appends a field and records its exact source bytes.
+    pub fn push_with_text(&mut self, field: SelectField, source: impl Into<Vec<u8>>) {
+        let mut text = NodeText::default();
+        text.set_text(None, source);
+        self.fields.push(field);
+        self.text.push(text);
+    }
+
+    /// Returns decoded source text for field `index`.
+    pub fn text(&self, index: usize) -> Option<&[u8]> {
+        self.text.get(index).map(NodeText::text)
+    }
+
+    /// Returns exact source bytes for field `index`.
+    pub fn original_text(&self, index: usize) -> Option<&[u8]> {
+        self.text.get(index).map(NodeText::original_text)
+    }
+}
+
+impl From<Vec<SelectField>> for SelectFieldList {
+    fn from(fields: Vec<SelectField>) -> Self {
+        let text = vec![NodeText::default(); fields.len()];
+        Self { fields, text }
+    }
+}
+
+impl std::ops::Deref for SelectFieldList {
+    type Target = [SelectField];
+
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+
+impl std::ops::DerefMut for SelectFieldList {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.fields
+    }
+}
+
+impl IntoIterator for SelectFieldList {
+    type Item = SelectField;
+    type IntoIter = std::vec::IntoIter<SelectField>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.fields.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a SelectFieldList {
+    type Item = &'a SelectField;
+    type IntoIter = std::slice::Iter<'a, SelectField>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.fields.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut SelectFieldList {
+    type Item = &'a mut SelectField;
+    type IntoIter = std::slice::IterMut<'a, SelectField>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.fields.iter_mut()
+    }
+}
+
+impl PartialEq for SelectFieldList {
+    fn eq(&self, other: &Self) -> bool {
+        self.fields == other.fields
+    }
 }
 
 impl SelectField {
@@ -1890,7 +1982,7 @@ pub enum JoinNode {
     /// definition — parsed by the SAME `parse_select_or_setopr`.
     Derived {
         /// The subquery.
-        subquery: Box<QueryStmt>,
+        subquery: crate::NodeBox<QueryStmt>,
         /// The alias — grammatically OPTIONAL for a plain derived table
         /// (confirmed via `godump restore`: `SELECT * FROM (SELECT 1)`
         /// alone, no alias at all, is valid and restores unchanged), but

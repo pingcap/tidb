@@ -141,7 +141,7 @@ impl Database {
             let first = so
                 .terms
                 .first()
-                .map(|t| t.body.representative_select().fields.as_slice())
+                .map(|t| &t.body.representative_select().fields[..])
                 .unwrap_or(&[]);
             let idxs: Vec<(usize, bool)> = so
                 .order_by

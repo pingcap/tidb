@@ -224,121 +224,123 @@ fn infer_type(
             reason,
         })
     };
-    let result = match expr {
-        Expr::Null => Ok(type_metadata(
-            FieldTypeCode::Null,
-            0,
-            Some(0),
-            Some(0),
-            Collation::Binary,
-        )),
-        Expr::Bool(_) => Ok(type_metadata(
-            FieldTypeCode::LongLong,
-            0,
-            Some(1),
-            Some(0),
-            Collation::Binary,
-        )),
-        Expr::Int(value) => Ok(type_metadata(
-            FieldTypeCode::LongLong,
-            0,
-            Some(value.len() as u32),
-            Some(0),
-            Collation::Binary,
-        )),
-        Expr::Decimal(value) => {
-            let scale = value
-                .split_once('.')
-                .map_or(0, |(_, frac)| frac.len() as u8);
-            Ok(type_metadata(
-                FieldTypeCode::NewDecimal,
+    let result =
+        match expr {
+            Expr::Null => Ok(type_metadata(
+                FieldTypeCode::Null,
                 0,
-                Some(value.len() as u32 + 1),
-                Some(scale),
+                Some(0),
+                Some(0),
                 Collation::Binary,
-            ))
-        }
-        Expr::Float(value) => {
-            let flen = value.to_string().len() as u32;
-            Ok(type_metadata(
-                FieldTypeCode::Double,
-                0,
-                Some(flen),
-                None,
-                Collation::Binary,
-            ))
-        }
-        Expr::String(value) | Expr::RawString(value) => Ok(type_metadata(
-            FieldTypeCode::VarString,
-            0,
-            Some(value.len() as u32),
-            None,
-            default_collation,
-        )),
-        Expr::CharsetString { charset, value } => {
-            let collation =
-                Charset::from_name(charset).map_or(default_collation, Charset::default_collation);
-            Ok(type_metadata(
-                FieldTypeCode::VarString,
-                0,
-                Some(value.len() as u32),
-                None,
-                collation,
-            ))
-        }
-        Expr::Hex(value) => Ok(type_metadata(
-            FieldTypeCode::VarString,
-            UNSIGNED_FLAG,
-            Some((value.len() * 3) as u32),
-            Some(0),
-            Collation::Binary,
-        )),
-        Expr::Bit(value) => Ok(type_metadata(
-            FieldTypeCode::VarString,
-            0,
-            Some((value.len() * 3) as u32),
-            Some(0),
-            Collation::Binary,
-        )),
-        Expr::Paren(inner) => infer_type(inner, default_collation),
-        Expr::Unary(op, inner) => match op {
-            UnaryOp::Not | UnaryOp::NotKeyword => Ok(type_metadata(
+            )),
+            Expr::Bool(_) => Ok(type_metadata(
                 FieldTypeCode::LongLong,
                 0,
                 Some(1),
                 Some(0),
                 Collation::Binary,
             )),
-            UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNeg => {
-                infer_type(inner, default_collation)
-            }
-        },
-        Expr::Binary(op, left, right) => {
-            if matches!(
-                op,
-                BinaryOp::Eq
-                    | BinaryOp::NullEq
-                    | BinaryOp::Ge
-                    | BinaryOp::Gt
-                    | BinaryOp::Le
-                    | BinaryOp::Lt
-                    | BinaryOp::Ne
-                    | BinaryOp::LogicAnd
-                    | BinaryOp::LogicOr
-                    | BinaryOp::LogicXor
-            ) {
+            Expr::Int(value) => Ok(type_metadata(
+                FieldTypeCode::LongLong,
+                0,
+                Some(value.len() as u32),
+                Some(0),
+                Collation::Binary,
+            )),
+            Expr::Decimal(value) => {
+                let scale = value
+                    .split_once('.')
+                    .map_or(0, |(_, frac)| frac.len() as u8);
                 Ok(type_metadata(
+                    FieldTypeCode::NewDecimal,
+                    0,
+                    Some(value.len() as u32 + 1),
+                    Some(scale),
+                    Collation::Binary,
+                ))
+            }
+            Expr::Float(value) => {
+                let flen = value.to_string().len() as u32;
+                Ok(type_metadata(
+                    FieldTypeCode::Double,
+                    0,
+                    Some(flen),
+                    None,
+                    Collation::Binary,
+                ))
+            }
+            Expr::String(value) | Expr::RawString(value) => Ok(type_metadata(
+                FieldTypeCode::VarString,
+                0,
+                Some(value.len() as u32),
+                None,
+                default_collation,
+            )),
+            Expr::CharsetString { charset, value } => {
+                let collation = Charset::from_name(charset)
+                    .map_or(default_collation, Charset::default_collation);
+                Ok(type_metadata(
+                    FieldTypeCode::VarString,
+                    0,
+                    Some(value.len() as u32),
+                    None,
+                    collation,
+                ))
+            }
+            Expr::Hex(value) => Ok(type_metadata(
+                FieldTypeCode::VarString,
+                UNSIGNED_FLAG,
+                Some((value.len() * 3) as u32),
+                Some(0),
+                Collation::Binary,
+            )),
+            Expr::Bit(value) => Ok(type_metadata(
+                FieldTypeCode::VarString,
+                0,
+                Some((value.len() * 3) as u32),
+                Some(0),
+                Collation::Binary,
+            )),
+            Expr::Paren(inner) => infer_type(inner, default_collation),
+            Expr::Unary(op, inner) => match op {
+                UnaryOp::Not | UnaryOp::NotKeyword => Ok(type_metadata(
                     FieldTypeCode::LongLong,
                     0,
                     Some(1),
                     Some(0),
                     Collation::Binary,
-                ))
-            } else {
-                let left = infer_type(left, default_collation)?;
-                let right = infer_type(right, default_collation)?;
-                let code =
-                    if left.code == FieldTypeCode::Double || right.code == FieldTypeCode::Double {
+                )),
+                UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNeg => {
+                    infer_type(inner, default_collation)
+                }
+            },
+            Expr::Binary(op, left, right) => {
+                if matches!(
+                    op,
+                    BinaryOp::Eq
+                        | BinaryOp::NullEq
+                        | BinaryOp::Ge
+                        | BinaryOp::Gt
+                        | BinaryOp::Le
+                        | BinaryOp::Lt
+                        | BinaryOp::Ne
+                        | BinaryOp::LogicAnd
+                        | BinaryOp::LogicOr
+                        | BinaryOp::LogicXor
+                ) {
+                    Ok(type_metadata(
+                        FieldTypeCode::LongLong,
+                        0,
+                        Some(1),
+                        Some(0),
+                        Collation::Binary,
+                    ))
+                } else {
+                    let left = infer_type(left, default_collation)?;
+                    let right = infer_type(right, default_collation)?;
+                    let code = if left.code == FieldTypeCode::Double
+                        || right.code == FieldTypeCode::Double
+                    {
                         FieldTypeCode::Double
                     } else if left.code == FieldTypeCode::NewDecimal
                         || right.code == FieldTypeCode::NewDecimal
@@ -347,115 +349,112 @@ fn infer_type(
                     } else {
                         FieldTypeCode::LongLong
                     };
-                Ok(type_metadata(code, 0, None, None, Collation::Binary))
+                    Ok(type_metadata(code, 0, None, None, Collation::Binary))
+                }
             }
-        }
-        Expr::Cast(cast) => match &cast.cast_type {
-            CastType::Signed => Ok(type_metadata(
-                FieldTypeCode::LongLong,
-                0,
-                None,
-                Some(0),
-                Collation::Binary,
-            )),
-            CastType::Unsigned => Ok(type_metadata(
-                FieldTypeCode::LongLong,
-                UNSIGNED_FLAG,
-                None,
-                Some(0),
-                Collation::Binary,
-            )),
-            CastType::Char { len, charset } => {
-                let collation = charset
-                    .as_deref()
-                    .and_then(Charset::from_name)
-                    .map_or(default_collation, Charset::default_collation);
-                Ok(type_metadata(
+            Expr::Cast(cast) => match &cast.cast_type {
+                CastType::Signed => Ok(type_metadata(
+                    FieldTypeCode::LongLong,
+                    0,
+                    None,
+                    Some(0),
+                    Collation::Binary,
+                )),
+                CastType::Unsigned => Ok(type_metadata(
+                    FieldTypeCode::LongLong,
+                    UNSIGNED_FLAG,
+                    None,
+                    Some(0),
+                    Collation::Binary,
+                )),
+                CastType::Char { len, charset } => {
+                    let collation = charset
+                        .as_deref()
+                        .and_then(Charset::from_name)
+                        .map_or(default_collation, Charset::default_collation);
+                    Ok(type_metadata(
+                        FieldTypeCode::VarString,
+                        0,
+                        *len,
+                        None,
+                        collation,
+                    ))
+                }
+                CastType::Binary { len } => Ok(type_metadata(
                     FieldTypeCode::VarString,
                     0,
                     *len,
                     None,
-                    collation,
-                ))
-            }
-            CastType::Binary { len } => Ok(type_metadata(
-                FieldTypeCode::VarString,
-                0,
-                *len,
-                None,
-                Collation::Binary,
-            )),
-            CastType::Decimal { flen, scale } => Ok(type_metadata(
-                FieldTypeCode::NewDecimal,
-                0,
-                (*flen != 0).then_some(*flen),
-                Some(*scale as u8),
-                Collation::Binary,
-            )),
-            CastType::Date => Ok(type_metadata(
-                FieldTypeCode::Date,
-                0,
-                Some(10),
-                None,
-                Collation::Binary,
-            )),
-            CastType::DateTime { fsp } => Ok(type_metadata(
-                FieldTypeCode::Datetime,
-                0,
-                Some(19),
-                fsp.map(|v| v as u8),
-                Collation::Binary,
-            )),
-            CastType::Time { fsp } => Ok(type_metadata(
-                FieldTypeCode::Duration,
-                0,
-                Some(10),
-                fsp.map(|v| v as u8),
-                Collation::Binary,
-            )),
-            CastType::Year => Ok(type_metadata(
-                FieldTypeCode::Year,
-                0,
-                Some(4),
-                Some(0),
-                Collation::Binary,
-            )),
-            CastType::Double | CastType::Float => Ok(type_metadata(
-                FieldTypeCode::Double,
-                0,
-                None,
-                None,
-                Collation::Binary,
-            )),
-            CastType::Json => unresolved("JSON result metadata requires a JSON value domain"),
-        },
-        Expr::Func { name, args } => {
-            infer_function(name, args, default_collation).ok_or_else(|| {
-                ResultFieldResolveError::MissingType {
+                    Collation::Binary,
+                )),
+                CastType::Decimal { flen, scale } => Ok(type_metadata(
+                    FieldTypeCode::NewDecimal,
+                    0,
+                    (*flen != 0).then_some(*flen),
+                    Some(*scale as u8),
+                    Collation::Binary,
+                )),
+                CastType::Date => Ok(type_metadata(
+                    FieldTypeCode::Date,
+                    0,
+                    Some(10),
+                    None,
+                    Collation::Binary,
+                )),
+                CastType::DateTime { fsp } => Ok(type_metadata(
+                    FieldTypeCode::Datetime,
+                    0,
+                    Some(19),
+                    fsp.map(|v| v as u8),
+                    Collation::Binary,
+                )),
+                CastType::Time { fsp } => Ok(type_metadata(
+                    FieldTypeCode::Duration,
+                    0,
+                    Some(10),
+                    fsp.map(|v| v as u8),
+                    Collation::Binary,
+                )),
+                CastType::Year => Ok(type_metadata(
+                    FieldTypeCode::Year,
+                    0,
+                    Some(4),
+                    Some(0),
+                    Collation::Binary,
+                )),
+                CastType::Double | CastType::Float => Ok(type_metadata(
+                    FieldTypeCode::Double,
+                    0,
+                    None,
+                    None,
+                    Collation::Binary,
+                )),
+                CastType::Json => unresolved("JSON result metadata requires a JSON value domain"),
+            },
+            Expr::Func { name, args, .. } => infer_function(name, args, default_collation)
+                .ok_or_else(|| ResultFieldResolveError::MissingType {
                     expression: expression.clone(),
-                }
-            })?
-        }
-        Expr::Aggregate { name, args, .. } => infer_aggregate(name, args, default_collation),
-        Expr::Window { name, args, .. } => {
-            // An aggregate keeps its aggregate result metadata when used as
-            // a window function. In particular, the variance/stddev family
-            // remains DOUBLE(23); scalar inference has no authority for
-            // those names and used to reject an otherwise executable query.
-            match AggregateKind::from_name(name) {
-                Some(_) => infer_aggregate(name, args, default_collation),
-                None => infer_function(name, args, default_collation).ok_or_else(|| {
-                    ResultFieldResolveError::MissingType {
-                        expression: expression.clone(),
-                    }
                 })?,
+            Expr::Aggregate { name, args, .. } => infer_aggregate(name, args, default_collation),
+            Expr::Window { name, args, .. } => {
+                // An aggregate keeps its aggregate result metadata when used as
+                // a window function. In particular, the variance/stddev family
+                // remains DOUBLE(23); scalar inference has no authority for
+                // those names and used to reject an otherwise executable query.
+                match AggregateKind::from_name(name) {
+                    Some(_) => infer_aggregate(name, args, default_collation),
+                    None => infer_function(name, args, default_collation).ok_or_else(|| {
+                        ResultFieldResolveError::MissingType {
+                            expression: expression.clone(),
+                        }
+                    })?,
+                }
             }
-        }
-        Expr::Column(_) => Err(ResultFieldResolveError::MissingType {
-            expression: expression.clone(),
-        }),
-        _ => unresolved("expression has no dependency-closed result type"),
-    };
+            Expr::Column(_) => Err(ResultFieldResolveError::MissingType {
+                expression: expression.clone(),
+            }),
+            _ => unresolved("expression has no dependency-closed result type"),
+        };
     result
 }
 

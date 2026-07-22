@@ -32,6 +32,138 @@ fn root_statement_preserves_source_text_and_position() {
 }
 
 #[test]
+fn select_fields_preserve_their_exact_source_text() {
+    fn field_texts(statement: &tidb_ast::Stmt) -> Vec<&[u8]> {
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("expected query statement");
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+            panic!("expected SELECT statement");
+        };
+        (0..select.fields.len())
+            .map(|index| select.fields.text(index).expect("field metadata"))
+            .collect()
+    }
+
+    let statement = parse("select a from t").expect("SELECT parses");
+    assert_eq!(field_texts(&statement), vec![b"a".as_slice()]);
+
+    let statements =
+        parse_multi("SELECT 'foo'; SELECT 'foo;bar','baz'; select 'foo' , 'bar' , 'baz' ;select 1")
+            .expect("multi-statement SELECT parses");
+    assert_eq!(field_texts(&statements[0]), vec![b"'foo'".as_slice()]);
+    assert_eq!(
+        field_texts(&statements[1]),
+        vec![b"'foo;bar'".as_slice(), b"'baz'".as_slice()]
+    );
+    assert_eq!(
+        field_texts(&statements[2]),
+        vec![
+            b"'foo'".as_slice(),
+            b"'bar'".as_slice(),
+            b"'baz'".as_slice(),
+        ]
+    );
+    assert_eq!(field_texts(&statements[3]), vec![b"1".as_slice()]);
+}
+
+#[test]
+fn nested_queries_preserve_their_exact_source_text() {
+    fn scalar_subquery_text(statement: &tidb_ast::Stmt) -> &[u8] {
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("expected query statement");
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+            panic!("expected SELECT statement");
+        };
+        let tidb_ast::SelectField::Expr { expr, .. } = &select.fields[0] else {
+            panic!("expected expression field");
+        };
+        let tidb_ast::Expr::Binary(_, _, right) = expr else {
+            panic!("expected comparison expression");
+        };
+        let tidb_ast::Expr::Subquery(subquery) = right.as_ref() else {
+            panic!("expected scalar subquery");
+        };
+        subquery.text()
+    }
+
+    for (sql, expected) in [
+        ("SELECT 1 > (select 1)", b"select 1".as_slice()),
+        (
+            "SELECT 1 > (select 1 union select 2)",
+            b"select 1 union select 2".as_slice(),
+        ),
+    ] {
+        let statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(scalar_subquery_text(&statement), expected, "{sql}");
+    }
+
+    let statement = parse("CREATE VIEW v AS SELECT * FROM t").expect("view parses");
+    let tidb_ast::Stmt::Ddl(ddl) = statement else {
+        panic!("expected DDL statement");
+    };
+    let tidb_ast::DdlStmt::CreateView(view) = ddl.as_ref() else {
+        panic!("expected CREATE VIEW");
+    };
+    assert_eq!(view.query.text(), b"SELECT * FROM t");
+}
+
+#[test]
+fn nested_statement_owners_preserve_go_source_text_boundaries() {
+    let statement = parse("trace format = 'row' select a from t").expect("TRACE parses");
+    let tidb_ast::Stmt::Admin(admin) = statement else {
+        panic!("expected admin statement");
+    };
+    let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() else {
+        panic!("expected TRACE");
+    };
+    assert_eq!(trace.statement.text(), b"select a from t");
+
+    for (sql, expected_text) in [
+        ("explain explore select 1", b"select 1".as_slice()),
+        ("explain select 1", b"".as_slice()),
+    ] {
+        let statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        let tidb_ast::Stmt::Admin(admin) = statement else {
+            panic!("expected admin statement");
+        };
+        let tidb_ast::AdminStmt::Explain(explain) = admin.as_ref() else {
+            panic!("expected EXPLAIN");
+        };
+        let inner = explain.statement().expect("nested EXPLAIN statement");
+        assert_eq!(inner.text(), expected_text, "{sql}");
+    }
+
+    let statement =
+        parse("create binding for select 1 using select 2").expect("CREATE BINDING parses");
+    let tidb_ast::Stmt::Admin(admin) = statement else {
+        panic!("expected admin statement");
+    };
+    let tidb_ast::AdminStmt::CreateBinding(binding) = admin.as_ref() else {
+        panic!("expected CREATE BINDING");
+    };
+    let tidb_ast::CreateBindingSource::Statement { target } = &binding.source else {
+        panic!("expected statement binding");
+    };
+    assert_eq!(target.origin.text(), b"select 1");
+    assert_eq!(
+        target.hinted.as_ref().expect("hinted statement").text(),
+        b"select 2"
+    );
+
+    let statement =
+        parse("create procedure p() begin select 1; end").expect("CREATE PROCEDURE parses");
+    let tidb_ast::Stmt::Ddl(ddl) = statement else {
+        panic!("expected DDL statement");
+    };
+    let tidb_ast::DdlStmt::CreateProcedure(procedure) = ddl.as_ref() else {
+        panic!("expected CREATE PROCEDURE");
+    };
+    assert_eq!(procedure.body.text(), b"begin select 1; end");
+}
+
+#[test]
 fn rejects_unsupported() {
     // Out-of-scope constructs error rather than mis-parse. (`TRUNCATE
     // TABLE` used to sit here but is now modelled — see `ddl` tests.)

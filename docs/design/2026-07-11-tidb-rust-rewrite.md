@@ -2,7 +2,7 @@
 
 - Author: qiliu
 - Status: active
-- Last revised: 2026-07-22
+- Last revised: 2026-07-23
 
 ## Outcome
 
@@ -62,14 +62,17 @@ material, never evidence of package completion.
 
 ## Development loop
 
-There is one worker and one loop:
+There is one worker and one loop. No workflow object exists besides the active
+package, the current Go owner file, Git, and ordinary tests:
 
-1. Choose one dependency-ready Go package.
-2. Translate its production files and complete test/support owners directly.
-3. Compile and test only the Rust owners changed by the current edit.
-4. Commit and push every cohesive green checkpoint.
-5. After every source and test owner has moved, run package-wide parity and
-   declare the Go package complete.
+1. Choose one dependency-ready Go package and walk its Go files in source
+   order.
+2. Translate one whole production file together with its whole test owner.
+3. Run only the affected Rust tests; fix every broken consumer directly when a
+   shared type changes.
+4. Commit and push the green edit, then immediately take the next Go file.
+5. Once, at package close, compare the directory inventories and run the broad
+   Go/Rust parity suites.
 
 The whole Go package is the **completion and parity-claim boundary**, not a
 branch, commit, or integration gate. Keeping weeks of valid work in one frozen
@@ -77,6 +80,11 @@ working tree slows development and increases merge risk without improving
 correctness. Intermediate commits may cover any coherent subset of the active
 package, but their messages and status reports must say that the package is
 still open.
+
+Do not maintain campaign numbers, queues, claims, receipts, per-test status
+rows, frozen slices, or integration branches. They duplicate information
+already present in Go source, test output, and Git. A package-close inventory is
+generated from the live trees instead of manually updated during coding.
 
 The source layout follows ownership, not implementation history. Each Go
 production or test file has one primary Rust owner module. Do not create modules
@@ -87,9 +95,12 @@ closed. Existing leaf modules are folded back into their Go owner while that
 owner is completed.
 
 Run focused compiler or test commands whenever useful. Do not run workspace
-sweeps after every local edit. Run them when a shared public API changes and
-once at package close. The Go tree is the inventory and behavior authority,
-Cargo and Go are the runners, and Git records small recoverable checkpoints.
+sweeps after every local edit. A shared public API change is migrated through
+all compile failures in the same edit, without a compatibility layer, and gets
+one workspace compile before commit. Full Clippy, tests, docs, differential,
+and live checks run once at package close. The Go tree is the inventory and
+behavior authority, Cargo and Go are the runners, and Git records small
+recoverable checkpoints.
 
 ## Target architecture
 

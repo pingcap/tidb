@@ -397,7 +397,7 @@ pub struct CreateProcedureStmt {
     /// Signature parameters.
     pub parameters: Vec<ProcedureParameter>,
     /// Procedure body.
-    pub body: Box<ProcedureStatement>,
+    pub body: crate::NodeBox<ProcedureStatement>,
 }
 
 impl CreateProcedureStmt {

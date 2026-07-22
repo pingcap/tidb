@@ -63,7 +63,7 @@ fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
     }, SelectField::Expr {
         expr: Expr::ParamMarker { position: 1 },
         ..
-    }] = statement.fields.as_slice()
+    }] = &statement.fields[..]
     else {
         panic!("projection markers must retain source order");
     };
@@ -81,7 +81,7 @@ fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
             panic!("expected SELECT");
         };
         assert!(matches!(
-            select.fields.as_slice(),
+            &select.fields[..],
             [SelectField::Expr {
                 expr: Expr::ParamMarker { position: 0 },
                 ..

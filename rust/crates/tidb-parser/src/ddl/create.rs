@@ -188,7 +188,7 @@ impl Parser {
         }
         Ok(query.map(|query| CreateTableAsQuery {
             on_duplicate,
-            query: Box::new(query),
+            query: tidb_ast::NodeBox::new(query),
             parenthesized,
         }))
     }

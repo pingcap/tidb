@@ -46,7 +46,7 @@ fn alter_merge_first_partition_keeps_typed_go_payload() {
         alter.actions,
         vec![tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::MergeFirstPartitionLessThan {
-                expr: tidb_ast::Expr::Int("60".to_owned()),
+                expr: tidb_ast::NodeBox::new(tidb_ast::Expr::Int("60".to_owned())),
             }
         )]
     );

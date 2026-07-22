@@ -196,6 +196,8 @@ pub enum Expr {
         name: String,
         /// The call arguments.
         args: Vec<Expr>,
+        /// Byte offset of the function name in the original SQL.
+        origin_position: usize,
     },
     /// A schema-qualified GENERIC function call: `schema.func(args...)`
     /// — a real, separate grammar shape from a plain builtin call
@@ -217,6 +219,8 @@ pub enum Expr {
         name: String,
         /// The call arguments.
         args: Vec<Expr>,
+        /// Byte offset of the schema name in the original SQL.
+        origin_position: usize,
     },
     /// An aggregate function call `NAME([DISTINCT] arg [, arg ...])` (e.g.
     /// `COUNT`, `SUM`). Every aggregate this crate models takes exactly one
@@ -557,7 +561,7 @@ pub enum Expr {
     /// position, including a top-level set operation. Keeping the typed
     /// [`QueryStmt`] envelope here preserves that source grammar instead of
     /// rejecting a scalar subquery solely because its body is a `UNION`.
-    Subquery(Box<QueryStmt>),
+    Subquery(crate::NodeBox<QueryStmt>),
     /// `[NOT] EXISTS (SELECT ...)` or a set-operation query.
     ///
     /// TiDB's `parseExistsSubquery` delegates to the general subquery
@@ -567,7 +571,7 @@ pub enum Expr {
     /// `SelectStmt` and losing its semantics.
     Exists {
         /// The subquery.
-        subquery: Box<QueryStmt>,
+        subquery: crate::NodeBox<QueryStmt>,
         /// Whether negated (`NOT EXISTS`).
         not: bool,
     },
@@ -583,7 +587,7 @@ pub enum Expr {
         /// The tested expression.
         expr: Box<Expr>,
         /// The subquery.
-        subquery: Box<QueryStmt>,
+        subquery: crate::NodeBox<QueryStmt>,
         /// Whether negated (`NOT IN`).
         not: bool,
     },
@@ -596,7 +600,7 @@ pub enum Expr {
         /// `true` for `ALL`, `false` for `ANY`/`SOME`.
         all: bool,
         /// The subquery.
-        subquery: Box<QueryStmt>,
+        subquery: crate::NodeBox<QueryStmt>,
     },
     /// `CASE [value] (WHEN cond THEN result)+ [ELSE result] END` — `value`
     /// present is the "simple" form (`WHEN` clauses compare `value = cond`
@@ -775,6 +779,32 @@ pub enum GetFormatSelector {
 }
 
 impl Expr {
+    /// Returns the source byte offset retained for ordinary function calls.
+    pub const fn origin_text_position(&self) -> usize {
+        match self {
+            Self::Func {
+                origin_position, ..
+            }
+            | Self::GenericFuncCall {
+                origin_position, ..
+            } => *origin_position,
+            _ => 0,
+        }
+    }
+
+    /// Replaces the source byte offset retained for ordinary function calls.
+    pub fn set_origin_text_position(&mut self, position: usize) {
+        match self {
+            Self::Func {
+                origin_position, ..
+            }
+            | Self::GenericFuncCall {
+                origin_position, ..
+            } => *origin_position = position,
+            _ => {}
+        }
+    }
+
     /// Formats this expression using Go AST's `ExprNode.Format` contract.
     ///
     /// This is intentionally separate from [`Self::restore`]: `Format`
@@ -832,7 +862,7 @@ impl Expr {
                 out.push(')');
             }
             Self::Row(_) => panic!("Format is not implemented for row expressions"),
-            Self::Func { name, args } => {
+            Self::Func { name, args, .. } => {
                 out.push_str(&name.to_ascii_lowercase());
                 out.push('(');
                 format_expr_list(args, out, ", ");
@@ -1023,7 +1053,7 @@ impl Expr {
     /// Fallible restore for source AST shapes whose validity is checked at
     /// restore time rather than parse time.
     pub fn try_restore(&self) -> Result<String, String> {
-        if let Self::Func { name, args } = self {
+        if let Self::Func { name, args, .. } = self {
             if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() != 2 {
                 return Err(
                     "Incorrect parameter count in the call to native function 'json_memberof'"
@@ -1236,7 +1266,7 @@ impl Expr {
                 }
                 out.push(')');
             }
-            Expr::Func { name, args } => {
+            Expr::Func { name, args, .. } => {
                 if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() == 2 {
                     args[0].restore_into_with_context(out, context);
                     out.push_str(" MEMBER OF (");
@@ -1254,7 +1284,9 @@ impl Expr {
                 }
                 out.push(')');
             }
-            Expr::GenericFuncCall { schema, name, args } => {
+            Expr::GenericFuncCall {
+                schema, name, args, ..
+            } => {
                 out.push_str(&back_quote(schema));
                 out.push('.');
                 out.push_str(&back_quote(name));
@@ -2371,7 +2403,7 @@ impl crate::Visitable for Expr {
                 }
                 let _ = field_0;
             }
-            Self::Func { name, args } => {
+            Self::Func { name, args, .. } => {
                 for value in args.iter_mut() {
                     if !crate::Visitable::accept(value, visitor) {
                         return false;
@@ -2380,7 +2412,9 @@ impl crate::Visitable for Expr {
                 let _ = name;
                 let _ = args;
             }
-            Self::GenericFuncCall { schema, name, args } => {
+            Self::GenericFuncCall {
+                schema, name, args, ..
+            } => {
                 for value in args.iter_mut() {
                     if !crate::Visitable::accept(value, visitor) {
                         return false;
