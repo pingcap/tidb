@@ -63,7 +63,9 @@ type ClientDiscover struct {
 		// See https://github.com/grpc/grpc-go/issues/5321
 		*grpc.ClientConn
 		leaderSnapshot autoIDLeaderSnapshot
-		version        uint64
+		// version advances on every reset so stale callers cannot reset a
+		// newer connection.
+		version uint64
 	}
 }
 
@@ -86,6 +88,8 @@ type autoIDLeaderSnapshot struct {
 	createRevision int64
 }
 
+// equal includes campaign metadata because a new campaign can reuse the same
+// address.
 func (s autoIDLeaderSnapshot) equal(other autoIDLeaderSnapshot) bool {
 	return s.address == other.address &&
 		s.electionKey == other.electionKey &&
@@ -149,6 +153,8 @@ func (s *notLeaderRetryState) reset() {
 	*s = notLeaderRetryState{}
 }
 
+// Match only the direct codes.Unknown/"not leader" wire error emitted by the
+// AutoID service; all other errors retain the existing retry behavior.
 func isAutoIDNotLeaderError(err error) bool {
 	grpcStatus, ok := status.FromError(err)
 	return ok && grpcStatus.Code() == codes.Unknown && grpcStatus.Message() == "not leader"
@@ -289,6 +295,8 @@ func (sp *singlePointAlloc) repeatedNotLeaderError(
 	return errors.AddStack(&notLeaderFastFailError{cause: ErrAutoincReadFailed.FastGen(message)})
 }
 
+// handled is false for non-target errors. For handled errors, terminalErr stops
+// the request; otherwise retryImmediately controls whether the caller skips backoff.
 func (sp *singlePointAlloc) handleNotLeaderError(
 	ctx context.Context,
 	operation string,

@@ -35,6 +35,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
 )
 
@@ -152,8 +153,15 @@ func newNotLeaderTestAllocator(t *testing.T, etcdCli *clientv3.Client) *singlePo
 		},
 	}
 	t.Cleanup(func() {
+		allocator.mu.RLock()
+		grpcConn := allocator.mu.ClientConn
+		allocator.mu.RUnlock()
 		allocator.ResetConn(nil)
-		time.Sleep(250 * time.Millisecond)
+		if grpcConn != nil {
+			require.Eventually(t, func() bool {
+				return grpcConn.GetState() == connectivity.Shutdown
+			}, 2*time.Second, 10*time.Millisecond)
+		}
 	})
 	return allocator
 }
@@ -474,6 +482,31 @@ func TestAutoIDNotLeaderRetry(t *testing.T) {
 				require.Equal(t, "fast-failed", terminalFields["outcome"])
 				require.Equal(t, autoIDNotLeaderAction, terminalFields["action"])
 				require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
+			})
+		}
+	})
+
+	t.Run("nonzero duration gates alloc and rebase", func(t *testing.T) {
+		const minDuration = 300 * time.Millisecond
+		for _, operation := range []string{"alloc", "rebase"} {
+			t.Run(operation, func(t *testing.T) {
+				etcdCli := newAutoIDTestEtcdClient(t)
+				service := &scriptedAutoIDServer{
+					alloc:  func(int64) (*autoid.AutoIDResponse, error) { return nil, notLeader },
+					rebase: func(int64) (*autoid.RebaseResponse, error) { return nil, notLeader },
+				}
+				address := startScriptedAutoIDServer(t, service)
+				putAutoIDLeader(t, etcdCli, "candidate-1", address)
+				allocator := newNotLeaderTestAllocator(t, etcdCli)
+				allocator.notLeaderPolicy.minDuration = minDuration
+
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				start := time.Now()
+				err := runAutoIDTestOperation(ctx, operation, allocator)
+				elapsed := time.Since(start)
+				require.True(t, IsNotLeaderFastFailError(err))
+				require.GreaterOrEqual(t, elapsed, minDuration)
 			})
 		}
 	})
