@@ -200,6 +200,58 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	scanLimiter.rateLimit.PutToken()
 	scanLimiter.release()
 
+	starvationController := exec.NewAdaptiveLimitController(1000, 32, 128, 32, 128)
+	waitingLookup := &IndexLookUpExecutor{
+		adaptiveLimitController: starvationController,
+		resultCh:                make(chan *lookupTableTask, 1),
+	}
+	starvationLimiter := newAdaptiveCoprRequestLimiter(4, 1)
+	waitingLookup.adaptiveCoprRequestLimiter.Store(starvationLimiter)
+	readyTask := &lookupTableTask{}
+	waitingLookup.resultCh <- readyTask
+	received, ok := waitingLookup.receiveResultTask()
+	require.True(t, ok)
+	require.Same(t, readyTask, received)
+	require.Equal(t, 1, starvationController.SuggestedScanConcurrency(4))
+
+	type receivedLookupTask struct {
+		task *lookupTableTask
+		ok   bool
+	}
+	receiveBlockedTask := func(expected *lookupTableTask, expectedConcurrency int) {
+		result := make(chan receivedLookupTask, 1)
+		go func() {
+			task, ok := waitingLookup.receiveResultTask()
+			result <- receivedLookupTask{task: task, ok: ok}
+		}()
+		require.Eventually(t, func() bool {
+			starvationLimiter.mu.Lock()
+			defer starvationLimiter.mu.Unlock()
+			return starvationLimiter.concurrency == expectedConcurrency
+		}, time.Second, time.Millisecond)
+		waitingLookup.resultCh <- expected
+		select {
+		case received := <-result:
+			require.True(t, received.ok)
+			require.Same(t, expected, received.task)
+		case <-time.After(time.Second):
+			require.Fail(t, "blocked lookup consumer did not receive the task")
+		}
+	}
+
+	receiveBlockedTask(&lookupTableTask{}, 2)
+	require.Equal(t, 2, starvationController.SuggestedScanConcurrency(4))
+	require.False(t, starvationController.ObserveLookupConsumerBlocked())
+
+	reserved, ok, err = starvationController.ReserveLookup(context.Background(), 32)
+	require.NoError(t, err)
+	require.True(t, ok)
+	starvationController.CompleteLookup(reserved, reserved, reserved)
+	receiveBlockedTask(&lookupTableTask{}, 4)
+	require.Equal(t, 4, starvationController.SuggestedScanConcurrency(4))
+	waitingLookup.adaptiveCoprRequestLimiter.Store(nil)
+	starvationLimiter.release()
+
 	pendingTracker := memory.NewTracker(-1, -1)
 	worker := &indexWorker{adaptiveLimitController: controller, batchSize: 2, memTracker: pendingTracker}
 	handles := make([]kv.Handle, 0, 2)

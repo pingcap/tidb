@@ -515,7 +515,8 @@ type IndexLookUpExecutor struct {
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 
-	adaptiveLimitController *exec.AdaptiveLimitController
+	adaptiveLimitController    *exec.AdaptiveLimitController
+	adaptiveCoprRequestLimiter atomic.Pointer[adaptiveCoprRequestLimiter]
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -893,13 +894,18 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			worker.adaptiveLimitController = e.adaptiveLimitController
 		}
 		if worker.adaptiveLimitController != nil {
-			worker.batchSize = worker.adaptiveLimitController.SuggestedBatchSize(worker.maxBatchSize)
+			worker.minBatchSize = min(max(e.InitCap(), 1), worker.maxBatchSize)
+			worker.batchSize = worker.adaptiveLimitController.SuggestedBatchSize(worker.minBatchSize, worker.maxBatchSize)
 			scanConcurrencyCeiling := max(e.dctx.DistSQLConcurrency, 1)
 			worker.adaptiveCoprRequestLimiter = newAdaptiveCoprRequestLimiter(
 				scanConcurrencyCeiling,
 				worker.adaptiveLimitController.SuggestedScanConcurrency(scanConcurrencyCeiling),
 			)
-			defer worker.adaptiveCoprRequestLimiter.release()
+			e.adaptiveCoprRequestLimiter.Store(worker.adaptiveCoprRequestLimiter)
+			defer func() {
+				e.adaptiveCoprRequestLimiter.CompareAndSwap(worker.adaptiveCoprRequestLimiter, nil)
+				worker.adaptiveCoprRequestLimiter.release()
+			}()
 		} else {
 			worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 		}
@@ -1373,7 +1379,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if enableStats {
 		start = time.Now()
 	}
-	task, ok := <-e.resultCh
+	task, ok := e.receiveResultTask()
 	if !ok {
 		return nil, nil
 	}
@@ -1403,6 +1409,21 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	e.resultCurr = task
 	e.completeAdaptiveLookupTask(e.resultCurr)
 	return e.resultCurr, nil
+}
+
+func (e *IndexLookUpExecutor) receiveResultTask() (*lookupTableTask, bool) {
+	select {
+	case task, ok := <-e.resultCh:
+		return task, ok
+	default:
+	}
+	if e.adaptiveLimitController != nil && e.adaptiveLimitController.ObserveLookupConsumerBlocked() {
+		if limiter := e.adaptiveCoprRequestLimiter.Load(); limiter != nil {
+			limiter.growTo(e.adaptiveLimitController.SuggestedScanConcurrency(limiter.ceiling))
+		}
+	}
+	task, ok := <-e.resultCh
+	return task, ok
 }
 
 func (e *IndexLookUpExecutor) completeAdaptiveLookupTask(task *lookupTableTask) {
@@ -1448,6 +1469,7 @@ type indexWorker struct {
 
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
+	minBatchSize int
 	maxBatchSize int
 	maxChunkSize int
 
@@ -1730,7 +1752,7 @@ func (w *indexWorker) extractLookupTaskData(
 ) (data extractedLookupTaskData, err error) {
 	data.startTime = time.Now()
 	if w.adaptiveLimitController != nil {
-		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
+		reserved, ok, err := w.adaptiveLimitController.ReserveLookupTask(ctx, w.minBatchSize, w.batchSize)
 		if err != nil {
 			return data, err
 		}
@@ -1746,7 +1768,7 @@ func (w *indexWorker) extractLookupTaskData(
 		data.adaptiveLimitReservation = reserved
 		w.batchSize = reserved
 		defer func() {
-			w.batchSize = w.adaptiveLimitController.SuggestedBatchSize(w.maxBatchSize)
+			w.batchSize = w.adaptiveLimitController.SuggestedBatchSize(w.minBatchSize, w.maxBatchSize)
 		}()
 	}
 	if w.idxLookup.indexLookUpPushDown {
