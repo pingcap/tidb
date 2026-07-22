@@ -2,6 +2,6 @@ schema = "2"
 campaign = "2026-07-package-frontier-01"
 status = "planned"
 slices = [
-  "server-internal-dump-package",
+  "parser-format-package",
   "server-internal-handshake-package",
 ]

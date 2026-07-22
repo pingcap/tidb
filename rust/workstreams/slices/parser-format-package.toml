@@ -1,0 +1,19 @@
+schema = "2"
+slice = "parser-format-package"
+status = "ready"
+targets = ["tidb-ast", "tidb-datatype"]
+rings = ["parser"]
+consumer = "All AST restoration and SQL metadata formatting share the complete pkg/parser/format contract: stateful indentation, output escaping, every restore flag, restore context writers, special comments, and CTE scope restoration."
+test_target = "parser_format_package_source"
+go_packages = ["pkg/parser/format"]
+module_packages = []
+depends_on = []
+rust_paths = [
+  "rust/crates/tidb-ast/src/format.rs",
+  "rust/crates/tidb-ast/src/lib.rs",
+  "rust/crates/tidb-ast/tests/parser_format_package_source.rs",
+  "rust/crates/tidb-datatype/src/format.rs",
+  "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/tests/format_source.rs",
+  "rust/crates/tidb-datatype/tests/parser_format_package_source.rs",
+]

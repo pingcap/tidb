@@ -29,8 +29,9 @@ package receipts before its Rust code reaches the shared branch.
 - [x] (2026-07-22) Rewrote the design, handoff, and parallel protocol around
   complete package ownership and removed dated campaign history.
 - [ ] Add and test the fail-closed schema-2 package manifest, package inventory
-  view, frozen claims, and legacy registry.
-- [ ] Generate and review the first dependency-ready package frontier.
+  view, frozen claims, legacy registry, import closure, and package receipts.
+- [x] (2026-07-22) Generated and reviewed the first dependency-ready package
+  frontier: `pkg/parser/format` and `pkg/server/internal/handshake`.
 - [ ] Claim source/test/Rust-write-disjoint complete packages and create their
   in-repository worktrees.
 - [ ] Transcreate the first complete package frontier from Go source and all
@@ -56,6 +57,17 @@ package receipts before its Rust code reaches the shared branch.
   Evidence: the generated test ledger contains Go test package directories and
   fixture/build/support rows that do not have a production source with the
   same filename stem.
+- Observation: source inventory closure alone does not prove dependency
+  closure.
+  Evidence: the first draft selected `pkg/server/internal/dump`, but its Go
+  source imports uncovered `pkg/parser/mysql` and `pkg/types`. The package was
+  changed to `blocked`, and schema-2 validation is being extended to derive
+  and enforce direct internal imports rather than trusting `depends_on = []`.
+- Observation: `pkg/parser/format` is an immediate real example of one Go
+  package mapping to multiple Rust crates.
+  Evidence: its stateful formatter and output escaping belong to
+  `tidb-datatype`, while its restore flags, context, special-comment writer,
+  and CTE scope belong to `tidb-ast`; both must close under one package receipt.
 
 ## Decision Log
 
@@ -80,13 +92,19 @@ package receipts before its Rust code reaches the shared branch.
   in parallel and merge into the package staging branch, but no sub-result is
   independently integrated or counted complete.
   Date/Author: 2026-07-22 / Codex.
+- Decision: reject a ready package when any direct internal TiDB import is
+  neither inside the same umbrella manifest nor represented by a covered
+  schema-2 dependency.
+  Rationale: existing Rust helpers for an imported type are partial evidence,
+  not proof that the dependency package contract is complete.
+  Date/Author: 2026-07-22 / Codex.
 
 ## Outcomes & Retrospective
 
-The policy and current-state documentation are complete. Queue enforcement and
-the first package receipt remain open. Do not report package progress or resume
-Rust implementation until the schema-2 checker passes and the frontier's
-complete inventories have been independently reviewed.
+The policy, current-state documentation, and first independently audited
+frontier manifests are complete. Queue hardening and the first package receipt
+remain open. Do not report package completion or resume Rust implementation
+until the schema-2 checker passes with direct internal-import closure.
 
 ## Context and Orientation
 
