@@ -3,6 +3,8 @@
 
 //! Locale-aware `FORMAT()` number grouping and separators.
 
+use crate::charset::is_unicode_decimal_digit;
+
 /// Separator/grouping rules for a MySQL locale.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocaleFormatStyle {
@@ -111,20 +113,20 @@ pub fn locale_format_style(locale: &str) -> (LocaleFormatStyle, bool) {
     }
 }
 
-fn standard_grouping(integer: &str, separator: &str) -> String {
+fn standard_grouping_bytes(integer: &[u8], separator: &[u8]) -> Vec<u8> {
     let first = match integer.len() % 3 {
         0 if !integer.is_empty() => 3,
         value => value,
     };
-    let mut result = String::with_capacity(integer.len() + integer.len() / 3 * separator.len());
-    result.push_str(&integer[..first]);
+    let mut result = Vec::with_capacity(integer.len() + integer.len() / 3 * separator.len());
+    result.extend_from_slice(&integer[..first]);
     for position in (first..integer.len()).step_by(3) {
-        result.push_str(separator);
-        result.push_str(&integer[position..position + 3]);
+        result.extend_from_slice(separator);
+        result.extend_from_slice(&integer[position..position + 3]);
     }
     result
 }
-fn indian_grouping(integer: &str, separator: &str) -> String {
+fn indian_grouping_bytes(integer: &[u8], separator: &[u8]) -> Vec<u8> {
     if integer.len() <= 3 {
         return integer.to_owned();
     }
@@ -134,15 +136,32 @@ fn indian_grouping(integer: &str, separator: &str) -> String {
     if first == 0 && !remaining.is_empty() {
         first = 2
     }
-    let mut result = String::with_capacity(integer.len() + integer.len() / 2 * separator.len());
-    result.push_str(&remaining[..first]);
+    let mut result = Vec::with_capacity(integer.len() + integer.len() / 2 * separator.len());
+    result.extend_from_slice(&remaining[..first]);
     for position in (first..remaining.len()).step_by(2) {
-        result.push_str(separator);
-        result.push_str(&remaining[position..position + 2]);
+        result.extend_from_slice(separator);
+        result.extend_from_slice(&remaining[position..position + 2]);
     }
-    result.push_str(separator);
-    result.push_str(&integer[split..]);
+    result.extend_from_slice(separator);
+    result.extend_from_slice(&integer[split..]);
     result
+}
+
+fn scalar_grouping(integer: &str, separator: &str, indian: bool) -> String {
+    let characters: Vec<_> = integer.chars().collect();
+    let mut groups = Vec::new();
+    let mut end = characters.len();
+    let mut width = 3;
+    while end > 0 {
+        let start = end.saturating_sub(width);
+        groups.push(characters[start..end].iter().collect::<String>());
+        end = start;
+        if indian {
+            width = 2;
+        }
+    }
+    groups.reverse();
+    groups.join(separator)
 }
 
 /// Input-domain error for the caller-guaranteed non-empty source arguments.
@@ -171,15 +190,18 @@ pub fn format_by_locale(
 }
 
 fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) -> String {
-    let precision = if precision.chars().next().is_some_and(char::is_numeric) {
+    // The Go source applies unicode.IsDigit to rune(precision[0]), which is a
+    // single byte converted to a rune. Consequently only an ASCII first digit
+    // can start a precision, while subsequent runes use Unicode Nd membership.
+    let precision = if precision.as_bytes()[0].is_ascii_digit() {
         &precision[..precision
             .char_indices()
-            .find_map(|(i, c)| (!c.is_numeric()).then_some(i))
+            .find_map(|(i, c)| (!is_unicode_decimal_digit(c)).then_some(i))
             .unwrap_or(precision.len())]
     } else {
         "0"
     };
-    let places = precision.parse::<usize>().ok();
+    let places = precision.parse::<u64>().ok();
     let normalized = if let Some(rest) = number.strip_prefix("-.") {
         format!("-0.{rest}")
     } else if let Some(rest) = number.strip_prefix('.') {
@@ -188,16 +210,19 @@ fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) ->
         number.to_owned()
     };
     let number = normalized.as_str();
+    // Go repeats the byte-to-rune conversion for the first number digit.
     let invalid = if let Some(rest) = number.strip_prefix('-') {
-        !rest.chars().next().is_some_and(char::is_numeric)
+        !rest.as_bytes().first().is_some_and(u8::is_ascii_digit)
     } else {
-        !number.chars().next().is_some_and(char::is_numeric)
+        !number.as_bytes()[0].is_ascii_digit()
     };
     if invalid {
         let mut result = "0".to_owned();
         if let Some(value) = places.filter(|v| *v > 0) {
             result.push_str(style.decimal_point);
-            result.extend(std::iter::repeat_n('0', value));
+            if let Ok(value) = usize::try_from(value) {
+                result.extend(std::iter::repeat_n('0', value));
+            }
         }
         return result;
     }
@@ -210,7 +235,8 @@ fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) ->
     let valid_end = unsigned
         .char_indices()
         .find_map(|(i, c)| {
-            if c.is_numeric() || i == 1 && second_is_dot || c == '.' && !second_is_dot {
+            if is_unicode_decimal_digit(c) || i == 1 && second_is_dot || c == '.' && !second_is_dot
+            {
                 None
             } else {
                 Some(i)
@@ -221,20 +247,49 @@ fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) ->
     let parts: Vec<_> = valid.split('.').collect();
     let integer = parts[0];
     let grouped = if style.thousands_separator.is_empty() {
-        integer.to_owned()
+        integer.as_bytes().to_owned()
     } else if style.indian_grouping {
-        indian_grouping(integer, style.thousands_separator)
+        indian_grouping_bytes(integer.as_bytes(), style.thousands_separator.as_bytes())
     } else {
-        standard_grouping(integer, style.thousands_separator)
+        standard_grouping_bytes(integer.as_bytes(), style.thousands_separator.as_bytes())
     };
-    let mut result = String::from(sign);
-    result.push_str(&grouped);
-    if let Some(value) = places.filter(|v| *v > 0) {
-        result.push_str(style.decimal_point);
+    let mut result = sign.as_bytes().to_vec();
+    result.extend_from_slice(&grouped);
+    if let Some(value) = places
+        .filter(|v| *v > 0)
+        .and_then(|v| usize::try_from(v).ok())
+    {
+        result.extend_from_slice(style.decimal_point.as_bytes());
         let fraction = if parts.len() == 2 { parts[1] } else { "" };
         let take = fraction.len().min(value);
-        result.push_str(&fraction[..take]);
-        result.extend(std::iter::repeat_n('0', value - take));
+        result.extend_from_slice(&fraction.as_bytes()[..take]);
+        result.extend(std::iter::repeat_n(b'0', value - take));
     }
-    result
+    if let Ok(result) = String::from_utf8(result) {
+        return result;
+    }
+
+    // Go's grouping and precision count UTF-8 bytes and can therefore return
+    // malformed UTF-8 when a separator or precision boundary splits a rune.
+    // Rust's public String contract cannot represent those bytes. Only for
+    // that otherwise-unrepresentable case, regroup and truncate by Unicode
+    // scalar values; valid Go UTF-8 output is always returned byte-for-byte.
+    let mut normalized = String::from(sign);
+    normalized.push_str(&scalar_grouping(
+        integer,
+        style.thousands_separator,
+        style.indian_grouping,
+    ));
+    if let Some(value) = places
+        .filter(|v| *v > 0)
+        .and_then(|v| usize::try_from(v).ok())
+    {
+        normalized.push_str(style.decimal_point);
+        let fraction = if parts.len() == 2 { parts[1] } else { "" };
+        let mut fraction = fraction.chars();
+        for _ in 0..value {
+            normalized.push(fraction.next().unwrap_or('0'));
+        }
+    }
+    normalized
 }

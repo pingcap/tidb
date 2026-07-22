@@ -8,6 +8,9 @@
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+use std::sync::{OnceLock, RwLock};
+
+use tidb_error::mysql::{errcode::ErrWrongValueForVar, FormatArg, SqlError};
 
 const MYSQL_COMPATIBILITY_VERSION: &str = "8.0.11";
 /// Fixed separator embedded in TiDB's MySQL-compatible server version.
@@ -17,14 +20,79 @@ const TIDBX_RELEASE_VERSION_PREFIX: &str = "CLOUD.";
 pub const LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER: &str = "v8.4.0-this-is-a-placeholder";
 /// Next-generation development-build placeholder.
 pub const TIDBX_PLACEHOLDER_RELEASE_VERSION: &str = "v26.3.0-this-is-a-placeholder";
-/// Build-time default release version before linker/build injection.
-pub const TIDB_RELEASE_VERSION: &str = LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER;
-/// Build-time default server version before linker/build injection.
-pub const SERVER_VERSION: &str = "8.0.11-TiDB-v8.4.0-this-is-a-placeholder";
+/// Build-time default release version. Cargo/build environments may inject the
+/// same value that the Go linker writes into `TiDBReleaseVersion`.
+pub const TIDB_RELEASE_VERSION: &str = match option_env!("TIDB_RELEASE_VERSION") {
+    Some(version) => version,
+    None => LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER,
+};
+/// Classic development-build server-version placeholder.
+/// Runtime consumers must use [`runtime_versions`], whose default incorporates
+/// an injected [`TIDB_RELEASE_VERSION`].
+pub const LEGACY_SERVER_VERSION_PLACEHOLDER: &str = "8.0.11-TiDB-v8.4.0-this-is-a-placeholder";
 /// Earliest accepted next-generation release year.
 pub const TiDBXVerMinYear: u64 = 2025;
 /// Latest accepted next-generation release year.
 pub const TiDBXVerMaxYear: u64 = 2099;
+
+/// Process-wide versions consumed by handshakes, status reporting, and SQL
+/// builtins. A single lock keeps release/server reads and updates coherent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeVersions {
+    /// TiDB release version, corresponding to Go's mutable
+    /// `TiDBReleaseVersion` package variable.
+    pub tidb_release_version: String,
+    /// MySQL-compatible server version, corresponding to Go's mutable
+    /// `ServerVersion` package variable.
+    pub server_version: String,
+}
+
+impl RuntimeVersions {
+    fn build_default() -> Self {
+        Self {
+            tidb_release_version: TIDB_RELEASE_VERSION.to_owned(),
+            server_version: format!(
+                "{MYSQL_COMPATIBILITY_VERSION}{VersionSeparator}{TIDB_RELEASE_VERSION}"
+            ),
+        }
+    }
+}
+
+static RUNTIME_VERSIONS: OnceLock<RwLock<RuntimeVersions>> = OnceLock::new();
+
+fn runtime_version_state() -> &'static RwLock<RuntimeVersions> {
+    RUNTIME_VERSIONS.get_or_init(|| RwLock::new(RuntimeVersions::build_default()))
+}
+
+/// Returns one coherent snapshot of the mutable process-wide versions.
+#[must_use]
+pub fn runtime_versions() -> RuntimeVersions {
+    runtime_version_state()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Atomically replaces both process-wide versions.
+///
+/// Keeping the pair update atomic avoids a handshake observing a release from
+/// one configuration and a server version from another.
+pub fn set_runtime_versions(release_version: impl Into<String>, server_version: impl Into<String>) {
+    *runtime_version_state()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = RuntimeVersions {
+        tidb_release_version: release_version.into(),
+        server_version: server_version.into(),
+    };
+}
+
+/// Restores the build-injected defaults. This is primarily useful for
+/// embedding/tests that repeatedly construct a server in one process.
+pub fn reset_runtime_versions() {
+    *runtime_version_state()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = RuntimeVersions::build_default();
+}
 
 /// Rewrites only the classic development placeholder into its next-gen form.
 #[must_use]
@@ -46,6 +114,34 @@ impl fmt::Display for InvalidReleaseVersion {
 }
 impl Error for InvalidReleaseVersion {}
 
+fn valid_semver_identifier(identifier: &str) -> bool {
+    identifier.is_empty()
+        || identifier.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
+fn parse_coreos_semver(raw: &str) -> Option<(i64, i64, i64, &str)> {
+    // This deliberately follows coreos/go-semver v0.3.1's Set method rather
+    // than the stricter Rust semver crate: split metadata first, then
+    // prerelease, accept leading zeroes, and parse all numeric fields as i64.
+    let (without_metadata, metadata) = raw.split_once('+').map_or((raw, ""), |parts| parts);
+    let (version, prerelease) = without_metadata
+        .split_once('-')
+        .map_or((without_metadata, ""), |parts| parts);
+    if !valid_semver_identifier(prerelease) || !valid_semver_identifier(metadata) {
+        return None;
+    }
+    let mut parts = version.splitn(3, '.');
+    let major = parts.next()?.parse::<i64>().ok()?;
+    let minor = parts.next()?.parse::<i64>().ok()?;
+    let patch = parts.next()?.parse::<i64>().ok()?;
+    Some((major, minor, patch, prerelease))
+}
+
 /// Converts `vYY.month.patch[-pre]` into `CLOUD.YYYYMM.patch[-pre]`.
 pub fn build_tidbx_release_version(release: &str) -> Result<String, InvalidReleaseVersion> {
     let Some(raw) = release.strip_prefix('v') else {
@@ -53,23 +149,31 @@ pub fn build_tidbx_release_version(release: &str) -> Result<String, InvalidRelea
             "invalid TiDB release version {release:?}, should start with 'v'"
         )));
     };
-    let version = semver::Version::parse(raw).map_err(|_| {
+    let (major, minor, patch, prerelease) = parse_coreos_semver(raw).ok_or_else(|| {
         InvalidReleaseVersion(format!(
             "invalid TiDB release version {release:?}, expect a semantic version"
         ))
     })?;
-    let year = 2000 + version.major;
-    if !(TiDBXVerMinYear..=TiDBXVerMaxYear).contains(&year) || !(1..=12).contains(&version.minor) {
+    // Validate before addition so hostile or simply malformed i64 input cannot
+    // overflow in debug or release builds.
+    let major = u64::try_from(major).ok();
+    let min_major = TiDBXVerMinYear.saturating_sub(2000);
+    let max_major = TiDBXVerMaxYear.saturating_sub(2000);
+    if !major.is_some_and(|major| (min_major..=max_major).contains(&major))
+        || !(1..=12).contains(&minor)
+    {
         return Err(InvalidReleaseVersion(format!("invalid TiDB release version {release:?}, the semantic version part should be in [2-digit-year].[month].[fix-version]-[xxx] format")));
     }
-    let pre = if version.pre.is_empty() {
+    let year = 2000_u64 + major.expect("validated release-year offset");
+    debug_assert!((TiDBXVerMinYear..=TiDBXVerMaxYear).contains(&year));
+    let pre = if prerelease.is_empty() {
         String::new()
     } else {
-        format!("-{}", version.pre)
+        format!("-{prerelease}")
     };
     Ok(format!(
         "{TIDBX_RELEASE_VERSION_PREFIX}{year}{:02}.{}{pre}",
-        version.minor, version.patch
+        minor, patch
     ))
 }
 
@@ -508,17 +612,19 @@ pub struct InvalidSqlMode {
     pub partial: SqlMode,
     /// Exact invalid token.
     pub value: String,
+    /// Authoritative MySQL error identity and catalog-rendered message.
+    pub sql_error: SqlError,
 }
 impl fmt::Display for InvalidSqlMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Variable 'sql_mode' can't be set to the value of '{}'",
-            self.value
-        )
+        self.sql_error.fmt(f)
     }
 }
-impl Error for InvalidSqlMode {}
+impl Error for InvalidSqlMode {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.sql_error)
+    }
+}
 
 /// Parses an already-formatted comma-separated SQL mode, retaining Go's
 /// partial-result contract on the first invalid token.
@@ -532,10 +638,15 @@ pub fn get_sql_mode(input: &str) -> Result<SqlMode, InvalidSqlMode> {
             Some(mode) => result = result | mode,
             None if value.is_empty() => {}
             None => {
+                let sql_error = SqlError::new(
+                    ErrWrongValueForVar,
+                    &[FormatArg::from("sql_mode"), FormatArg::from(value)],
+                );
                 return Err(InvalidSqlMode {
                     partial: result,
                     value: value.to_owned(),
-                })
+                    sql_error,
+                });
             }
         }
     }
