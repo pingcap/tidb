@@ -1257,7 +1257,7 @@ execute stmt using @a,@b;
 COL1	COL2	COL4	COL3	COL5
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select @@session.tidb_enable_plan_cache_for_param_limit;
 @@session.tidb_enable_plan_cache_for_param_limit
 1
@@ -1727,7 +1727,7 @@ execute stmt16 using @v0, @v1, @v2;
 c_int	c_str	c_datetime	c_timestamp	c_double	c_decimal	c_enum
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 prepare stmt from 'select c_enum from t1';
 execute stmt;
 c_enum
@@ -1856,7 +1856,7 @@ select * from t1, t2 where t1.a=t2.a and t1.b<10;
 a	b	c	a	b	c
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select * from t1, t2;
 a	b	c	a	b	c
 select * from t1, t2;
@@ -1870,7 +1870,7 @@ select * from t1, t2 where t1.a<t2.a and t2.c=10;
 a	b	c	a	b	c
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select * from t1 tx, t1 ty;
 a	b	c	a	b	c
 select * from t1 tx, t1 ty;
@@ -1905,7 +1905,7 @@ select * from t1 inner join t2 on t1.a=t2.a and t2.c<10;
 a	b	c	a	b	c
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select * from t1 left join t2 on t1.a=t2.a;
 a	b	c	a	b	c
 select * from t1 left join t2 on t1.a=t2.a;
@@ -1919,21 +1919,21 @@ select * from t1 left join t2 on t1.a=t2.a and t2.c<10;
 a	b	c	a	b	c
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select * from t1, t4 where t1.a=t4.a and t4.x=10;
 a	b	c	a	x
 select * from t1, t4 where t1.a=t4.a and t4.x=10;
 a	b	c	a	x
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select * from t1 inner join t4 on t1.a=t4.a and t4.x=10;
 a	b	c	a	x
 select * from t1 inner join t4 on t1.a=t4.a and t4.x=10;
 a	b	c	a	x
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select * from t1, t2, t3;
 a	b	c	a	b	c	a	b	c
 select * from t1, t2, t3;
@@ -2415,7 +2415,7 @@ execute stmt using @b;
 ipk	i_id	i_set_id	p_id	p_set_id	m_id	m_i_id	m_i_set_id	d	p_sources	nslc	cl	fii	fpi	ipk	created_time	arrival_time	updated_time	timestamp_data
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set @@tidb_opt_fix_control = default;
 set @orig_tidb_enable_prepared_plan_cache=@@session.tidb_enable_prepared_plan_cache;
 set tidb_enable_prepared_plan_cache=1;
