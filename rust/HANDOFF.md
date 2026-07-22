@@ -69,7 +69,7 @@ states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
 that any upstream Go package is completely transcreated unless a package
 receipt says so.
 
-Five leaf packages currently have schema-2 receipts under
+Six leaf packages currently have schema-2 receipts under
 [`workstreams/package-receipts/`](workstreams/package-receipts/):
 
 - `pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
@@ -94,6 +94,11 @@ Five leaf packages currently have schema-2 receipts under
   and keyword classification, one-call byte-writer behavior including short
   writes and ignored errors, restore-flag precedence, and every original
   package test/build obligation.
+- `pkg/parser/terror`, implemented in `tidb-error` with required consumer
+  changes in `tidb-datatype` and `tidb-txnkv`. Its receipt covers machine-width
+  classes/codes, registration and freeze semantics, RFC/MySQL identities,
+  compatible JSON, generation/comparison/logging/termination helpers,
+  Rust-native stack capture, and every original package test/build obligation.
 
 ## Whole-package gaps
 
@@ -135,14 +140,13 @@ generated ledgers and must not be converted into percentage progress.
    runtime mechanisms that cannot be carried faithfully, such as GC pools,
    goroutine ownership, or untyped registries.
 5. Run focused package checks during implementation. Close an ordinary package
-   directly with `campaign_close.py --package <owner> --gate`; it derives the
-   transaction from the exact claim, refreshes only that package's ledger rows,
-   builds evidence tools once, runs independent read-only static checks
-   concurrently, then runs full workspace tests, Clippy, and applicable live
-   gates using 12 jobs. The final content digest replaces a duplicate post-test
-   static pass, and digest traversal prunes excluded Cargo build trees before
-   descent. Create a tracked campaign only when two or more packages are
-   genuinely dependency-inseparable.
+   with `work-unit-queue.py close-package --owner <owner>`. The command derives
+   the transaction from the exact claim, regenerates and validates only its
+   inventory, derives every touched Cargo crate from the declared Rust paths,
+   runs formatting plus strict all-target Clippy, one library test binary per
+   touched crate, and only explicitly touched integration-test targets with 12
+   jobs, then issues the receipt atomically. Create a tracked campaign only
+   when two or more packages are genuinely dependency-inseparable.
 6. Issue a package receipt only after inventory closure and required
    differential/live evidence. Until then every carried ledger row stays
    honestly untriaged, partial, or blocked.
@@ -173,11 +177,13 @@ dispatch template for new package work.
    result as staging only; never promote it independently.
 5. Add exact source/test/support evidence only after the complete package
    contract and all original tests are represented.
-6. Close one package with `campaign_close.py --package <owner> --gate`. For a
+6. Close one package with `work-unit-queue.py close-package --owner <owner>`.
+   For a
    genuinely inseparable group only, close the tracked frontier with
    `campaign_close.py --campaign <campaign> --gate`. Both paths issue receipts
-   atomically, regenerate status, and require the Ready profile before the next
-   package starts.
+   atomically and regenerate status. Run `rewrite-gate.sh checkpoint` once for
+   a grouped integration/push checkpoint, followed by the repository Ready
+   profile before claiming the branch ready.
 
 The highest-value first frontier is the connected SQL transaction path:
 `pkg/kv`/`pkg/store` dependencies, `pkg/session`/`pkg/sessionctx`, and the

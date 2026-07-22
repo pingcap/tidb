@@ -15,12 +15,12 @@
 
 """Atomically close one package or a package-complete schema-2 campaign.
 
-The default mode is a read-only preflight. ``--gate`` runs the full shared
-integration gate while every package claim remains active. Only the exact gate
-receipt can authorize one transaction that marks package manifests covered,
-writes immutable receipts, and releases exact claims. The ordinary one-package
-path derives the transaction directly from its claim; tracked campaigns are
-reserved for dependency-inseparable multi-package frontiers.
+The default mode is a read-only preflight. ``--gate`` runs touched-crate checks
+for one package or the shared workspace gate for a genuinely inseparable
+campaign while every claim remains active. Only the exact gate receipt can
+authorize one transaction that marks package manifests covered, writes
+immutable receipts, and releases exact claims. The ordinary one-package path
+derives the transaction directly from its claim.
 
 Legacy slice promotion and ungated campaign close are deliberately unsupported.
 Historical integrated schema-1 campaigns remain readable through the queue.
@@ -321,6 +321,34 @@ def _exact_package_claims(
     return claim_by_owner
 
 
+def _require_exact_raw_claim_set(root: Path, members: Iterable[str]) -> None:
+    """Cheaply reject the wrong close set before generated ledgers are refreshed."""
+    members = tuple(members)
+    claims = queue.load_claims(root)
+    owners: list[str] = []
+    for claim in claims:
+        owner = claim.get("owner")
+        if not isinstance(owner, str) or not queue.OWNER_RE.fullmatch(owner):
+            raise ValueError("package close requires valid active claim owners")
+        if claim.get("schema") != 2:
+            raise ValueError(
+                "package close requires exact active schema-2 claims; "
+                f"found legacy claim {owner}"
+            )
+        owners.append(owner)
+    missing = sorted(set(members) - set(owners))
+    if missing:
+        raise ValueError(
+            f"package {missing[0]} has no active claim; every member must be active"
+        )
+    extra = sorted(set(owners) - set(members))
+    if extra:
+        raise ValueError(
+            "closing package members must exactly match active schema-2 claims; "
+            f"active claim {extra[0]} is outside the close set"
+        )
+
+
 def _build_members_close_plan(
     root: Path,
     *,
@@ -526,21 +554,25 @@ def _prepare_members_close_plan(
     command_runner: CommandRunner = _run,
 ) -> ClosePlan:
     """Refresh derived package rows, reject unrelated churn, then preflight."""
-    claims = _exact_package_claims(root, members)
-    source_claim_owners = {
-        str(anchor): member
-        for member in members
-        for anchor in claims[member]["_sources"]
-    }
-    test_claim_owners = {
-        str(anchor): member
-        for member in members
-        for anchor in claims[member]["tests"]
-    }
+    # A committed ownership transfer intentionally makes the old generated
+    # ledger stale. Validate only the exact raw claim set before regeneration;
+    # full claim and transfer validation runs immediately after prepare.
+    _require_exact_raw_claim_set(root, members)
     paths = {root / path for path in GENERATED_PATHS}
     before = _snapshot(paths)
     try:
         command_runner(["scripts/rewrite-gate.sh", "prepare"], root)
+        claims = _exact_package_claims(root, members)
+        source_claim_owners = {
+            str(anchor): member
+            for member in members
+            for anchor in claims[member]["_sources"]
+        }
+        test_claim_owners = {
+            str(anchor): member
+            for member in members
+            for anchor in claims[member]["tests"]
+        }
         source_changes = _validate_prepared_ledger_scope(
             before[root / SOURCE_LEDGER],
             (root / SOURCE_LEDGER).read_bytes(),
@@ -629,6 +661,12 @@ def _validate_receipt(root: Path, plan: ClosePlan) -> None:
         raise ValueError("gate receipt package manifest digest differs from the workspace")
 
 
+def _gate_command(plan: ClosePlan) -> list[str]:
+    if plan.close_kind == "package":
+        return queue.package_gate_command(plan.package_records[plan.close_id])
+    return ["scripts/rewrite-gate.sh", "integrate"]
+
+
 def apply_close_plan(
     root: Path,
     plan: ClosePlan,
@@ -636,7 +674,7 @@ def apply_close_plan(
     command_runner: CommandRunner = _run,
     validate: bool = True,
 ) -> None:
-    """Gate, integrate, and release every package as one rollback transaction."""
+    """Gate, receipt, and release every package as one rollback transaction."""
     paths = plan.touched_paths | {root / path for path in GENERATED_PATHS}
     paths |= {
         root / queue.CLAIMS_DIR / f"{owner}.claim.json"
@@ -652,7 +690,8 @@ def apply_close_plan(
     }
     before = _snapshot(paths)
     try:
-        command_runner(["scripts/rewrite-gate.sh", "integrate"], root)
+        gate_command = _gate_command(plan)
+        command_runner(gate_command, root)
         with queue.claim_lock(root):
             current = (
                 build_package_close_plan(root, plan.close_id)
@@ -688,6 +727,7 @@ def apply_close_plan(
                         plan.package_records[member],
                         gate_receipt,
                         close_kind=plan.close_kind,
+                        gate_command=gate_command,
                     ),
                 )
             if validate:

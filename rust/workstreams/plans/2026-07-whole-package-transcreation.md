@@ -98,6 +98,17 @@ package receipts before its Rust code reaches the shared branch.
   package grouping reduced the existing parser queue query from about 40
   seconds to under 4 seconds; the dependency-checked frontier completes in
   under 3 seconds.
+- [x] (2026-07-22) Audited, transcreated, and directly receipted the complete
+  `pkg/parser/terror` package, including every original test/build obligation
+  and required `tidb-datatype`/`tidb-txnkv` consumer changes.
+- [x] (2026-07-22) Removed the full-workspace build from the ordinary package
+  hot loop. `close-package` now regenerates and validates the exact package,
+  derives all touched Cargo crates, runs only their all-target Clippy, library
+  tests, and explicitly touched integration-test targets under the frozen
+  receipt, and reserves the complete workspace/governance sweep for an
+  explicit grouped checkpoint and push/release readiness. On the warm cache,
+  the former three-crate package test sweep took 138.31 seconds; the narrowed
+  equivalent took 3.96 seconds.
 
 ## Surprises & Discoveries
 
@@ -303,13 +314,22 @@ package receipts before its Rust code reaches the shared branch.
   validation, and exact claiming should happen just in time, while receipts and
   the close gate continue to protect correctness.
   Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: ordinary package close validates only the exact package inventory
+  and Cargo crates containing its declared Rust paths; reserve the full
+  workspace/governance sweep for explicit grouped checkpoints and
+  push/release readiness.
+  Rationale: package preflight already proves exact ownership and inventory.
+  Rebuilding every unrelated crate after every leaf adds release-level latency
+  without package-level evidence. The frozen receipt still fails on mutation,
+  and checkpoints preserve cross-workspace integration proof.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective
 
 The whole-package workflow and atomic receipt lifecycle are implemented.
 `pkg/server/internal/handshake`, repaired `pkg/parser/format`,
-`pkg/parser/mysql`, `pkg/parser/util`, and `pkg/parser/opcode` now have current
-content-bound receipts. The parser-format
+`pkg/parser/mysql`, `pkg/parser/util`, `pkg/parser/opcode`, and
+`pkg/parser/terror` now have current content-bound receipts. The parser-format
 repair executes the complete
 generated Go simple-case oracle through the public Rust restore context and
 adds byte and writer-boundary regressions; its receipt also records the real
@@ -384,8 +404,9 @@ test/support artifacts. A package that cannot close stays unintegrated and
 reports its exact dependency blocker. The implementation owner lands shared
 seams in dependency order and closes an ordinary package directly from its
 claim. A tracked campaign is created only when several packages are
-inseparable. Both forms run one reused 12-job Ready gate, issue receipts,
-release claims, and regenerate status.
+inseparable. Ordinary close validates its touched crates and issues the frozen
+receipt; grouped checkpoints run the reused 12-job full workspace gate before
+push/release readiness.
 
 ## Concrete Steps
 
@@ -409,10 +430,14 @@ checks during implementation. After the package freezes, close it from `rust/`
 with one checkout-specific target:
 
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/private/tmp/tidb-rust-package-gate \
-      python3 scripts/campaign_close.py --package <package-owner> --gate
+      python3 scripts/work-unit-queue.py close-package --owner <package-owner>
+
+At a grouped integration/push boundary, run the full checkpoint once:
+
+    CARGO_BUILD_JOBS=12 scripts/rewrite-gate.sh checkpoint
 
 Expected governance output contains zero active legacy partial claims and a
-package table whose expanded counts match the ledgers. Expected integration
+package table whose expanded counts match the ledgers. Expected close
 output includes an immutable receipt for every claimed package. Only then may
 a manifest become `covered` and its claim be released as integrated.
 
@@ -445,10 +470,10 @@ promote ledger state. If the inventory changes after claim, the checker must
 fail. Abandon and recreate the claim from the new checked manifest rather than
 amending a schema-2 snapshot.
 
-`campaign_close.py --package <owner> --gate` prepares derived source/test rows
-before its close preflight. Preparation restores its snapshot on generator,
+`work-unit-queue.py close-package --owner <owner>` prepares derived source/test
+rows before its close preflight. Preparation restores its snapshot on generator,
 scope, or preflight
-failure. Once preparation succeeds, a later workspace-gate failure retains the
+failure. Once preparation succeeds, a later touched-crate gate failure retains the
 now-current derived files but still rolls back every receipt, status transition,
 and claim release; the next attempt therefore does not repeat bookkeeping.
 

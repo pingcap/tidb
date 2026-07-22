@@ -1913,6 +1913,7 @@ def package_receipt_payload(
     gate_receipt: dict[str, object],
     *,
     close_kind: str = "campaign",
+    gate_command: list[str] | None = None,
 ) -> dict[str, object]:
     claim = gate_receipt.get("claims", {}).get(owner)
     if not isinstance(claim, dict) or not isinstance(claim.get("claim_sha256"), str):
@@ -1921,13 +1922,22 @@ def package_receipt_payload(
         raise ValueError(f"invalid package receipt close kind {close_kind}")
     if close_kind == "package" and close_id != owner:
         raise ValueError("direct package receipt id must equal its owner")
+    gate_command = gate_command or ["scripts/rewrite-gate.sh", "integrate"]
+    if gate_command[:2] not in (
+        ["scripts/rewrite-gate.sh", "integrate"],
+        ["scripts/rewrite-gate.sh", "package"],
+    ):
+        raise ValueError("invalid package receipt gate command")
+    if gate_command[:2] == ["scripts/rewrite-gate.sh", "package"]:
+        if gate_command != package_gate_command(record):
+            raise ValueError("package receipt gate does not match touched Rust crates")
     return {
         "schema": 2,
         "owner": owner,
         "close": {"kind": close_kind, "id": close_id},
         "package": package_completion_snapshot(root, owner, record),
         "gate": {
-            "command": ["scripts/rewrite-gate.sh", "integrate"],
+            "command": gate_command,
             "result": "passed",
             "claim_sha256": claim["claim_sha256"],
             "workspace_sha256": gate_receipt.get("workspace_sha256"),
@@ -1975,9 +1985,17 @@ def validate_package_receipt(
     if receipt.get("package") != expected:
         raise ValueError(f"{path}: package inventory or artifact digest is stale")
     gate = receipt.get("gate")
+    gate_command = gate.get("command") if isinstance(gate, dict) else None
+    valid_gate_command = gate_command == ["scripts/rewrite-gate.sh", "integrate"]
+    if (
+        isinstance(gate_command, list)
+        and len(gate_command) >= 3
+        and gate_command[:2] == ["scripts/rewrite-gate.sh", "package"]
+    ):
+        valid_gate_command = gate_command == package_gate_command(record)
     if (
         not isinstance(gate, dict)
-        or gate.get("command") != ["scripts/rewrite-gate.sh", "integrate"]
+        or not valid_gate_command
         or gate.get("result") != "passed"
         or not all(
             isinstance(gate.get(field), str) and gate[field]
@@ -1990,6 +2008,45 @@ def validate_package_receipt(
     ):
         raise ValueError(f"{path}: incomplete package gate attestation")
     return receipt
+
+
+def package_gate_targets(record: dict[str, object]) -> list[str]:
+    """Returns Cargo packages containing the exact Rust files in a package."""
+    targets = {
+        Path(str(path)).parts[2]
+        for path in record["rust_paths"]
+        if len(Path(str(path)).parts) >= 4
+        and Path(str(path)).parts[:2] == ("rust", "crates")
+    }
+    # Schema-2 test fixtures and generator-only packages predate crate-path
+    # derivation. Their declared targets remain the canonical fallback.
+    if not targets:
+        targets = {str(target) for target in record["rust_targets"]}
+    if not targets or any(
+        re.fullmatch(r"[A-Za-z0-9_-]+", target) is None for target in targets
+    ):
+        raise ValueError("package has no valid Cargo target to validate")
+    return sorted(targets)
+
+
+def package_gate_command(record: dict[str, object]) -> list[str]:
+    """Builds the deterministic touched-crate and touched-test gate command."""
+    packages = package_gate_targets(record)
+    tests = sorted(
+        {
+            f"{parts[2]}:{Path(parts[4]).stem}"
+            for path in record["rust_paths"]
+            for parts in [Path(str(path)).parts]
+            if len(parts) == 5
+            and parts[:2] == ("rust", "crates")
+            and parts[3] == "tests"
+            and parts[4].endswith(".rs")
+        }
+    )
+    command = ["scripts/rewrite-gate.sh", "package", *packages]
+    if tests:
+        command.extend(["--", *tests])
+    return command
 
 
 def _tracked_entries(repo_root: Path) -> dict[str, tuple[str, str]]:
@@ -3508,6 +3565,11 @@ def parser() -> argparse.ArgumentParser:
         help="atomically reopen one exact receipted schema-2 package for repair",
     )
     reopen_command.add_argument("--owner", required=True)
+    close_command = subcommands.add_parser(
+        "close-package",
+        help="validate touched Rust crates and atomically close one whole package",
+    )
+    close_command.add_argument("--owner", required=True)
     subcommands.add_parser("gate-begin", help=argparse.SUPPRESS)
     subcommands.add_parser("gate-finish", help=argparse.SUPPRESS)
     subcommands.add_parser("gate-abort", help=argparse.SUPPRESS)
@@ -3562,6 +3624,18 @@ def main() -> int:
             amend(RUST_ROOT, arguments.owner, arguments.source, arguments.test)
         elif arguments.command == "reopen-package":
             reopen_package(RUST_ROOT, arguments.owner)
+        elif arguments.command == "close-package":
+            subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/campaign_close.py",
+                    "--package",
+                    arguments.owner,
+                    "--gate",
+                ],
+                cwd=RUST_ROOT,
+                check=True,
+            )
         elif arguments.command == "gate-begin":
             begin_integration(RUST_ROOT)
         elif arguments.command == "gate-finish":

@@ -271,7 +271,10 @@ class CampaignCloseTest(unittest.TestCase):
         return package_b
 
     def _gate_runner(self, command: list[str], root: Path) -> None:
-        if command == ["scripts/rewrite-gate.sh", "integrate"]:
+        if command == ["scripts/rewrite-gate.sh", "integrate"] or command[:2] == [
+            "scripts/rewrite-gate.sh",
+            "package",
+        ]:
             claims = campaign_close.queue.validate_claims(root)
             campaign_close.queue.atomic_write_json(
                 root / campaign_close.queue.INTEGRATION_RECEIPT,
@@ -423,6 +426,27 @@ class CampaignCloseTest(unittest.TestCase):
         self.assertFalse(self.archive_path.exists())
         self.assertIn('status = "ready"', package_b.read_text(encoding="utf-8"))
 
+    def test_package_gate_derives_every_touched_crate(self) -> None:
+        self._keep_only_package_a_claim()
+        plan = campaign_close.build_package_close_plan(self.root, "package-a")
+        plan.package_records["package-a"]["rust_paths"] = [
+            "rust/crates/tidb-error/src/lib.rs",
+            "rust/crates/tidb-txnkv/tests/source.rs",
+            "rust/scripts/generator.py",
+        ]
+
+        self.assertEqual(
+            campaign_close._gate_command(plan),
+            [
+                "scripts/rewrite-gate.sh",
+                "package",
+                "tidb-error",
+                "tidb-txnkv",
+                "--",
+                "tidb-txnkv:source",
+            ],
+        )
+
     def test_direct_package_close_writes_receipt_without_campaign_history(self) -> None:
         package_b = self._keep_only_package_a_claim()
         campaign_before = self.campaign_path.read_bytes()
@@ -444,6 +468,10 @@ class CampaignCloseTest(unittest.TestCase):
         self.assertEqual(receipt["schema"], 2)
         self.assertEqual(
             receipt["close"], {"kind": "package", "id": "package-a"}
+        )
+        self.assertEqual(
+            receipt["gate"]["command"],
+            ["scripts/rewrite-gate.sh", "package", "tidb-planner"],
         )
         record = campaign_close.queue.load_slices(self.root)["package-a"]
         campaign_close.queue.validate_package_receipt(
@@ -475,6 +503,34 @@ class CampaignCloseTest(unittest.TestCase):
 
         self.assertEqual(plan.members, ("package-a",))
         self.assertIn("evidence/source/package-a.tsv\tprepared", source.read_text())
+
+    def test_prepare_refreshes_a_terminal_transfer_before_full_validation(self) -> None:
+        self._keep_only_package_a_claim()
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        self._replace_once(source, "COVERED\tpackage-a", "COVERED\told-owner")
+        transfer = (
+            self.root
+            / "difftests/corpus/coverage/evidence/transfers/package-a.tsv"
+        )
+        transfer.write_text(
+            "# old_owner\tnew_owner\tsource_path\ttest_path\ttest_line\t"
+            "test_name\tretired_artifacts\tnew_artifacts\tnote\n"
+            "old-owner\tpackage-a\tpkg/a/source.go\t-\t-\t-\t-\t"
+            "rust/impl-a.rs\twhole package owns the source\n",
+            encoding="utf-8",
+        )
+
+        def prepare(command: list[str], root: Path) -> None:
+            self.assertEqual(command, ["scripts/rewrite-gate.sh", "prepare"])
+            self._replace_once(source, "COVERED\told-owner", "COVERED\tpackage-a")
+            (root / "STATUS.md").write_text("prepared\n", encoding="utf-8")
+
+        plan = campaign_close.prepare_package_close_plan(
+            self.root, "package-a", command_runner=prepare
+        )
+
+        self.assertEqual(plan.members, ("package-a",))
+        self.assertIn("COVERED\tpackage-a", source.read_text(encoding="utf-8"))
 
     def test_rejects_active_claim_outside_campaign(self) -> None:
         self.campaign_path.write_text(

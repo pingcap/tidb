@@ -1,6 +1,6 @@
 schema = "2"
 slice = "parser-terror-package"
-status = "ready"
+status = "covered"
 targets = ["tidb-error"]
 rings = ["parser"]
 consumer = "Provides the complete Rust-native pkg/parser/terror contract: machine-width error classes and codes, registration/freeze, RFC identities, generation and comparison, MySQL conversion, compatible JSON, logging/termination helpers, and Rust-native stack capture; downstream error-owning packages are not credited here."

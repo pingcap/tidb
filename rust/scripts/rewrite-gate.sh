@@ -30,7 +30,7 @@ if [ -z "${CARGO_TARGET_DIR:-}" ]; then
 fi
 
 usage() {
-    echo "usage: $0 status | leaf <package> <test-target> [filter] | prepare | static | integrate" >&2
+    echo "usage: $0 status | leaf <package> <test-target> [filter] | prepare | static | package <cargo-package>... [-- <cargo-package>:<test-target>...] | checkpoint | integrate" >&2
     exit 2
 }
 
@@ -129,6 +129,69 @@ case ${1:-} in
         [ "$#" -eq 1 ] || usage
         cargo fmt --all -- --check
         static_gates
+        git -C .. diff --check -- rust
+        ;;
+    package)
+        shift
+        [ "$#" -ge 1 ] || usage
+        package_args=""
+        while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+            package=$1
+            case $package in
+                *[!A-Za-z0-9_-]*)
+                    echo "invalid Cargo package: $package" >&2
+                    exit 2
+                    ;;
+            esac
+            package_args="$package_args -p $package"
+            shift
+        done
+        test_specs=""
+        if [ "$#" -gt 0 ]; then
+            shift
+            test_specs="$*"
+        fi
+        scripts/work-unit-queue.py gate-begin
+        trap 'scripts/work-unit-queue.py gate-abort >/dev/null 2>&1 || true' EXIT HUP INT TERM
+        cargo fmt --all -- --check
+        # Package close already regenerated and validated the exact Go package
+        # inventory. Only compile and test crates changed by this package.
+        # shellcheck disable=SC2086 # package names are restricted above.
+        cargo clippy --offline --locked -j12 $package_args --all-targets -- -D warnings
+        # shellcheck disable=SC2086 # package names are restricted above.
+        # Run one library test binary per touched crate, then only integration
+        # test targets explicitly present in the package's frozen Rust paths.
+        # This avoids launching every unrelated integration binary in a large
+        # crate such as tidb-txnkv.
+        # shellcheck disable=SC2086 # package names are restricted above.
+        cargo test --offline --locked -j12 $package_args --lib
+        for spec in $test_specs; do
+            test_package=${spec%%:*}
+            test_target=${spec#*:}
+            case $test_package:$test_target in
+                *[!A-Za-z0-9_:-]*)
+                    echo "invalid Cargo test target: $spec" >&2
+                    exit 2
+                    ;;
+            esac
+            cargo test --offline --locked -j12 -p "$test_package" --test "$test_target"
+        done
+        git -C .. diff --check -- rust
+        scripts/work-unit-queue.py gate-finish
+        trap - EXIT HUP INT TERM
+        ;;
+    checkpoint)
+        [ "$#" -eq 1 ] || usage
+        cargo fmt --all -- --check
+        static_gates
+        cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
+        cargo test --offline --locked -j12 --workspace -q
+        python3 -m unittest \
+            scripts/test_campaign_close.py \
+            scripts/test_work_unit_queue.py \
+            scripts/test_status_dashboard.py
+        parser_test_tree=$(cargo tree --offline --locked -p difftest-parser-tests)
+        test -z "$(printf '%s\n' "$parser_test_tree" | grep -E 'tidb-(expr|exec)' || true)"
         git -C .. diff --check -- rust
         ;;
     integrate)

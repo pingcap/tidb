@@ -1,0 +1,147 @@
+{
+  "close": {
+    "id": "parser-terror-package",
+    "kind": "package"
+  },
+  "gate": {
+    "claim_sha256": "671f2301f4c4d535a8befb1d3b3a6935e2b6a6039a83bcffd623181c364bb8c6",
+    "command": [
+      "scripts/rewrite-gate.sh",
+      "integrate"
+    ],
+    "result": "passed",
+    "slice_manifests_sha256": "50d7e95cebc2b466b8a95e19eb9294d6c579e59db84c4b26d1c77ab1b7b461cd",
+    "workspace_sha256": "1e37c512db2111870d3fa4d7ada67f6a80c62af9fd0490384823f133b4f30019"
+  },
+  "owner": "parser-terror-package",
+  "package": {
+    "go_packages": [
+      "pkg/parser/terror"
+    ],
+    "integration_paths": [
+      "rust/Cargo.lock",
+      "rust/crates/tidb-error/Cargo.toml"
+    ],
+    "inventory_sha256": "c3be92ee0551903eb22064592d1c7e5bb15955c4d1ec5c1afe471ffeb5e566e9",
+    "manifest": {
+      "path": "rust/workstreams/slices/parser-terror-package.toml",
+      "sha256": "ee98240ae8b42b7ba32120f58a8836860260fe0f4082fe1a19f4e5fe7cfe6df8"
+    },
+    "module_packages": [],
+    "module_sources": [],
+    "module_tests": [],
+    "rust_paths": [
+      {
+        "path": "rust/crates/tidb-datatype/src/binary_literal.rs",
+        "sha256": "f627b49882865f40f9d2efb342830866ffda5ee6c5c052a105e227618395a2fb"
+      },
+      {
+        "path": "rust/crates/tidb-error/src/terror.rs",
+        "sha256": "a4946d8854383cb084d8d6ccd41580da1deb0f89b4dd2cd9f0962d60181739bc"
+      },
+      {
+        "path": "rust/crates/tidb-error/tests/terror_source.rs",
+        "sha256": "1c2fc43f8615c464158ccf3a3f8b6b5c39aaef7506cf5baaf082003f4d6537d8"
+      },
+      {
+        "path": "rust/crates/tidb-txnkv/src/driver_error.rs",
+        "sha256": "39f54309f0c5a733ffd9449bb62c9fc1b6d28be312102e14c81b8144d19a2295"
+      },
+      {
+        "path": "rust/crates/tidb-txnkv/tests/driver_error_source.rs",
+        "sha256": "058c6db80500fcba8dc38cb2301c2999e4f3850ccdf4722b54951f178fa9ef19"
+      }
+    ],
+    "rust_targets": [
+      "tidb-error"
+    ],
+    "sources": [
+      {
+        "anchor": "pkg/parser/terror/terror.go",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/source/parser-terror-package.tsv",
+        "evidence_sha256": "5607d15451cb2ed77224f444aba63adfa554412d1fd578983394429fb5308150",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "61c7846d70c03699da9b68fa044b85724918ca298413292a4556ce1b01345bf9"
+      }
+    ],
+    "supports": [
+      {
+        "anchor": "pkg/parser/terror/BUILD.bazel@a07beed91c8b8e732ebe6eb7db039cabc695ae78905786b7a94ae7777ef0c30b",
+        "disposition": "build-metadata-reviewed",
+        "evidence_artifact": "rust/workstreams/slices/parser-terror-package.toml",
+        "evidence_sha256": "ee98240ae8b42b7ba32120f58a8836860260fe0f4082fe1a19f4e5fe7cfe6df8",
+        "note": "Reviewed the complete package build metadata: terror.go and terror_test.go map to the tidb-error authority and dedicated terror_source target; the BUILD file declares no fixture or generated-source obligation.",
+        "path": "pkg/parser/terror/BUILD.bazel",
+        "sha256": "a07beed91c8b8e732ebe6eb7db039cabc695ae78905786b7a94ae7777ef0c30b"
+      }
+    ],
+    "tests": [
+      {
+        "anchor": "pkg/parser/terror/BUILD.bazel:16:terror_test",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "a07beed91c8b8e732ebe6eb7db039cabc695ae78905786b7a94ae7777ef0c30b"
+      },
+      {
+        "anchor": "pkg/parser/terror/terror_test.go:0:terror_test.go",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "f69233f5ed6d58d2ef7d2498b979837af620b9c3f07058a6c8faafec0c087016"
+      },
+      {
+        "anchor": "pkg/parser/terror/terror_test.go:129:TestLog",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "f69233f5ed6d58d2ef7d2498b979837af620b9c3f07058a6c8faafec0c087016"
+      },
+      {
+        "anchor": "pkg/parser/terror/terror_test.go:134:TestTraceAndLocation",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "f69233f5ed6d58d2ef7d2498b979837af620b9c3f07058a6c8faafec0c087016"
+      },
+      {
+        "anchor": "pkg/parser/terror/terror_test.go:28:TestErrCode",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "f69233f5ed6d58d2ef7d2498b979837af620b9c3f07058a6c8faafec0c087016"
+      },
+      {
+        "anchor": "pkg/parser/terror/terror_test.go:33:TestTError",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "f69233f5ed6d58d2ef7d2498b979837af620b9c3f07058a6c8faafec0c087016"
+      },
+      {
+        "anchor": "pkg/parser/terror/terror_test.go:69:TestJson",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "f69233f5ed6d58d2ef7d2498b979837af620b9c3f07058a6c8faafec0c087016"
+      },
+      {
+        "anchor": "pkg/parser/terror/terror_test.go:91:TestErrorEqual",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-terror-package.tsv",
+        "evidence_sha256": "22c35fb8c3b27022b777ec355953bea3807bc4fb475d51336a73c30fed40c4fe",
+        "owner": "parser-terror-package",
+        "status": "COVERED",
+        "upstream_sha256": "f69233f5ed6d58d2ef7d2498b979837af620b9c3f07058a6c8faafec0c087016"
+      }
+    ]
+  },
+  "schema": 2
+}

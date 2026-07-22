@@ -157,13 +157,14 @@ Translate the package from Go before redesigning it:
 | Lane | When | Required proof | Shared workspace build |
 | --- | --- | --- | --- |
 | Package | implementation loop | manifest inventory read, complete source/test translation, focused tests, formatting, anchors, `git diff --check` | Focused only |
-| Static | before integration | package manifests, DAG, claims, duplicate ownership, generated ledgers, paths, transfer records | Evidence tools only |
-| Integrate | package/frontier close | frozen package or inseparable frontier, workspace tests, all-target Clippy, differential rings, required live proofs | One reused 12-job target |
+| Package close | after package implementation | regenerate and validate the exact package inventory, then format, all-target Clippy, touched-crate library tests, and explicitly touched integration-test targets under one frozen receipt | Touched crates only |
+| Checkpoint | grouped integration and before push/release | all manifests, DAG, claims, generated ledgers, workspace tests, all-target Clippy, governance tests, isolation, and required differential/live proofs | One reused 12-job target |
 
 Set `CARGO_BUILD_JOBS=12` for every Cargo build. Reuse one checkout-specific
 target directory and never share it across Git worktrees because evidence
-binaries embed their checkout through `CARGO_MANIFEST_DIR`. Only the integration
-step runs the full gate; focused loops do not repeatedly pay that cost.
+binaries embed their checkout through `CARGO_MANIFEST_DIR`. Only an explicit
+checkpoint runs the full workspace gate; focused loops and ordinary package
+close do not repeatedly pay that cost.
 
 An integration receipt hashes the frozen package claims and immutable Rust
 workspace before and after the gate. Durable leaf receipts content-address
@@ -227,16 +228,19 @@ For each package or inseparable frontier:
 3. Keep the current checkout when there is one worker.
 4. Translate and test packages in dependency order.
 5. Land seam changes in dependency order.
-6. Let package close regenerate the active claim's derived ledger rows and
-   reject any unrelated generated change.
-7. Build evidence tools once and run independent read-only static
-   ownership/DAG/generated/differential checks concurrently before expensive
-   work.
-8. Run one 12-job workspace/differential/live gate for the frozen package or
-   inseparable frontier. Attest only if the exact gate-begin input digest is
-   unchanged; do not repeat the identical static pass.
-9. Issue receipts, release claims, and regenerate stable status only after the
-   gate.
+6. Run `work-unit-queue.py close-package --owner <package-owner>`. It
+   regenerates and validates the active claim's exact ledger rows, derives the
+   touched Cargo crates, runs all-target Clippy plus their library and explicit
+   package test targets with 12 jobs, freezes the checked input digest, then
+   issues the receipt and status transaction.
+7. Continue with the next dependency-ready package. Run
+   `rewrite-gate.sh checkpoint` at a grouped integration/push boundary, not
+   after every package. The checkpoint runs static ownership/DAG/generated
+   checks concurrently before full workspace Clippy/tests and governance
+   tests.
+8. Run required differential or live gates when the accumulated contract
+   reaches their boundary. Real PD/TiKV behavior is never waived by the faster
+   local package loop.
 
 A receipted package that needs repair must first be reopened as one complete
 package transaction:

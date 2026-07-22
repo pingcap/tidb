@@ -238,16 +238,19 @@ For each package or dependency-closed frontier:
    concurrency semantics.
 5. Port or differentially cover every original test and support artifact.
 6. Run focused package gates during development using a reused Cargo target.
-7. At close, regenerate only the active claim's source/test ledger rows and
-   stable dashboard. Reject any unrelated generated churn.
-8. Build evidence tools once, run independent read-only static ownership,
-   dependency, generated-inventory, and differential checks concurrently before
-   the expensive 12-job workspace tests and Clippy, then issue the receipt only
-   if the gate-begin workspace digest is unchanged. Do not rerun an identical
-   static pass when the content-addressed snapshot already proves no input
-   changed.
-9. Close the package directly from its claim, generate the receipt, and refresh
-   status. Use a campaign only for an inseparable multi-package frontier.
+7. At close, regenerate and validate only the active claim's source/test ledger
+   rows, derive the Cargo crates containing its declared Rust paths, then run
+   formatting, strict all-target Clippy, one library test binary per touched
+   crate, and the explicitly touched integration-test targets with 12 jobs.
+   Reject unrelated generated churn and issue the receipt only if the frozen
+   input digest remains unchanged.
+8. Close the package directly from its claim through
+   `work-unit-queue.py close-package --owner <owner>`, generate the receipt,
+   and refresh status. Use a campaign only for an inseparable multi-package
+   frontier.
+9. Run the full static, workspace Clippy/test, governance, isolation, and
+   applicable differential/live suite once at an explicit grouped checkpoint
+   and before push/release readiness, not after every leaf package.
 10. If the audit or gate exposes a cross-package flaw, fix the owning package or
    reopen its receipt; do not add a downstream conditional workaround.
 
@@ -264,11 +267,13 @@ new Rust dependency. They remain serialized and gate-attested; dependency
 changes must never escape the package claim merely because those files sit
 above its target crate.
 
-The normal single-worker control surface has two commands: `frontier` selects
-only dependency-ready whole packages, and `start-package` scaffolds and claims
-the chosen package. The general package inventory remains an audit view; it is
-not a scheduling queue. Full workspace tests and Clippy run once at atomic
-close, while focused package checks remain the implementation loop.
+The normal single-worker control surface has three commands: `frontier`
+selects only dependency-ready whole packages, `start-package` scaffolds and
+claims the chosen package, and `close-package` validates the touched crates and
+receipts it atomically. The general package inventory remains an audit view;
+it is not a scheduling queue. Full workspace tests and Clippy run at grouped
+checkpoints and before push/release, while focused checks remain the package
+implementation loop.
 
 ## Translation rules
 
@@ -405,20 +410,17 @@ silently delete historical compatibility evidence from an accepted revision.
    registration, capability routing, topology change, failover, and ownership
    transitions.
 
-### Workspace gate
+### Workspace checkpoint
 
-A package closes only after its gates pass in one clean integration state. An
-inseparable dependency frontier closes only after all member gates pass
-together. Cheap static/generated checks run first so stale bookkeeping cannot
-waste a workspace build. Independent read-only checks run concurrently, and a
-single successful pass remains valid through attestation only while the exact
-checked-input digest stays frozen. Digest traversal prunes excluded build and
-runtime trees before descent; excluded artifacts never affect the digest and
-must not consume close latency. Completion and release candidates
-additionally require the repository Ready verification profile, including
-repository lint when code changed. Expensive live suites run when the package
-or frontier touches their contract; they are never replaced by mocks when real
-PD/TiKV behavior is at issue.
+An ordinary package closes after exact inventory validation and touched-crate
+gates pass in one frozen state. The full workspace gate is a grouped checkpoint
+before push/release and after mechanism or shared-foundation changes; it is not
+a tax on every leaf package. Cheap static/generated checks run first, followed
+by workspace all-target Clippy/tests, governance tests, isolation checks, and
+the repository Ready profile including lint when code changed. Independent
+read-only checks run concurrently. Digest traversal prunes excluded build and
+runtime trees. Expensive live suites run when the accumulated package contract
+touches their boundary; mocks never replace real PD/TiKV proof.
 
 ## Deployment ladder
 
