@@ -151,10 +151,12 @@ Parallel work follows the package dependency DAG. A team claims one package or
 a dependency-closed package group, declares the entire Rust write set, and
 owns the complete package receipt. Independent teams must be disjoint across
 Go source, original test/support artifacts, and mutable Rust paths. A large
-package still has one implementation claim, one integration owner, and one
-completion decision. Read-only inventory and review work may be delegated, but
-the package cannot be split into independently mergeable implementation claims.
-New partial package implementations are not integrated into the shared branch.
+package still has one umbrella claim, one integration owner, and one completion
+decision. Inside that umbrella, subagents may implement disjoint Rust crates or
+crate-local leaves in parallel when their write sets and interfaces are frozen.
+Those internal branches are package-staging inputs, not independently
+promotable claims or package-completion evidence. New partial Go-package
+implementations are not integrated into the shared branch.
 
 Agents do not pay a workspace build for every translated file. Package teams
 run focused checks against a reused checkout-specific target. One integration
@@ -398,11 +400,12 @@ overlap across Go sources, test/support artifacts, and mutable Rust paths.
 
 A package team owns all Rust implementation paths, mirrored package tests, and
 owner-named evidence declared by its package manifest. Read-only inventory and
-review audits may run in parallel, but implementation is not divided into
-independently mergeable file/function/branch claims. Crate routing, test
-registration, manifests, generated inventories, and current status are
-steward-owned integration products. Claims coordinate work but cannot hide,
-waive, or promote a ledger obligation.
+review audits may run in parallel, and write-disjoint Rust-crate subteams may
+implement behind the package's single umbrella claim. Their work merges only
+into the package staging branch and cannot be integrated independently. Crate
+routing, test registration, manifests, generated inventories, and current
+status are steward-owned integration products. Claims coordinate work but
+cannot hide, waive, or promote a ledger obligation.
 
 Validation has three scopes: focused package gates, a static merged-inventory
 gate, and one full workspace test/Clippy/differential/live gate after a

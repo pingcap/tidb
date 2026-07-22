@@ -41,8 +41,10 @@ split the rest of the package by branch.
   client or mock runtime.
 - Rust crate boundaries are implementation boundaries, not permission to split
   an upstream package's acceptance. One Go package may map to several crates,
-  but one package owner remains responsible for the complete inventory and
-  package receipt.
+  and write-disjoint crate subteams may work in parallel behind one umbrella
+  package claim. One package owner remains responsible for the complete
+  inventory, staging integration, and package receipt; no crate sub-result is
+  independently promoted to the shared branch.
 - Shared crate roots, manifests, generated inventories, and cross-package
   routing are steward-owned integration seams. Each package team owns the
   package's complete declared Rust implementation and mirrored package tests.
@@ -99,6 +101,8 @@ generated ledgers and must not be converted into percentage progress.
    subset as a transcreation unit.
 3. Declare the complete Rust write set before creating worktrees. Separate
    package teams must be source/test/write disjoint; stewards own shared seams.
+   Within one package claim, subagents may own disjoint Rust crates or leaves,
+   but their branches merge only into the package staging branch.
 4. Translate directly from the Go implementation and port the complete
    package test/support inventory. Rust-specific redesign is limited to
    runtime mechanisms that cannot be carried faithfully, such as GC pools,

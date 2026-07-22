@@ -23,7 +23,10 @@ be marked package-complete.
 
 Rust crate boundaries do not weaken this rule. One Go package may map to
 multiple crates, and a dependency-closed package group may share one campaign,
-but each package keeps a complete manifest and receipt.
+but each package keeps one complete umbrella claim, manifest, integration
+decision, and receipt. Write-disjoint Rust-crate subteams may work in parallel
+inside that umbrella; their outputs are not independently promotable package
+claims.
 
 ## Start here
 
@@ -69,10 +72,12 @@ Build a DAG whose nodes are whole Go packages. Dispatch only:
 
 Prepare more than one source/test/write-disjoint package at a time so agents
 can work in parallel. Do not manufacture parallelism by splitting one package
-across implementation branches. A package lead may delegate read-only
-inventory or review audits, but the package has one implementation claim, one
-frozen inventory, one integration owner, and one receipt. No file, function,
-branch, or test subset is independently integrated.
+into independently promotable implementation claims. A package lead may
+delegate inventory/review work and implementation of frozen, write-disjoint
+Rust crates or crate-local leaves. Those branches merge into one package
+staging branch; the package still has one claim, one frozen inventory, one
+integration owner, and one receipt. No file, function, branch, Rust crate, or
+test subset is independently integrated into the shared branch.
 
 Order the ready frontier by:
 
@@ -92,6 +97,14 @@ package claim. Local lease files remain ignored coordination state. Feature
 teams may edit only their declared Rust package leaves, mirrored tests, and
 owner-named evidence. They do not edit shared manifests, crate roots,
 `Cargo.toml`, generated inventories, status, or this protocol.
+
+For a Go package mapped to several Rust crates, the package owner may create
+temporary `codex/<package-owner>/<rust-subtree>` branches and worktrees. Each
+subteam receives a write-disjoint subset of the already-declared umbrella Rust
+write set and a frozen interface. The package owner integrates those branches
+into `codex/<package-owner>`; only that staging branch can enter the shared
+frontier gate. A subteam cannot release, promote, or receipt part of the Go
+package.
 
 Shared edits are serialized through named stewards:
 

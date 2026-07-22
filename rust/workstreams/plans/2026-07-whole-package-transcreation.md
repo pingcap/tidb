@@ -76,7 +76,9 @@ package receipts before its Rust code reaches the shared branch.
 - Decision: allow multiple Rust target crates but only one package claim and
   receipt.
   Rationale: Rust crate boundaries are compile/ownership mechanisms and do not
-  weaken upstream package acceptance.
+  weaken upstream package acceptance. Write-disjoint crate subteams may work
+  in parallel and merge into the package staging branch, but no sub-result is
+  independently integrated or counted complete.
   Date/Author: 2026-07-22 / Codex.
 
 ## Outcomes & Retrospective
