@@ -11,7 +11,7 @@ the source or obligation still has explicit unported behavior.
 
 - Active package claims: 0
 - Inventory packages: 0
-- Declared ready packages: 0
+- Declared ready packages: 3
 - Active packages: 0
 - Covered packages: 2
 - Blocked packages: 1
@@ -21,6 +21,7 @@ the source or obligation still has explicit unported behavior.
 | Campaign | Status | Packages |
 | --- | --- | --- |
 | 2026-07-package-frontier-01 | integrated | 2 |
+| 2026-07-package-frontier-02 | planned | 3 |
 
 ## Legacy schema-1 evidence
 

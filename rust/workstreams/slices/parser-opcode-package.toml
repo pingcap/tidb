@@ -1,0 +1,18 @@
+schema = "2"
+slice = "parser-opcode-package"
+status = "ready"
+targets = ["tidb-ast"]
+rings = ["parser"]
+consumer = "Provides the complete Rust-native pkg/parser/opcode authority: every operator value, name, literal, keyword classification, and restore behavior; downstream expression and planner package completion is not credited here."
+test_target = "parser_opcode_package_source"
+go_packages = ["pkg/parser/opcode"]
+module_packages = []
+depends_on = ["parser-format-package"]
+rust_paths = [
+  "rust/crates/tidb-ast/src/opcode.rs",
+  "rust/crates/tidb-ast/tests/parser_opcode_package_source.rs",
+]
+integration_paths = [
+  "rust/crates/tidb-ast/src/expr.rs",
+  "rust/crates/tidb-ast/src/lib.rs",
+]
