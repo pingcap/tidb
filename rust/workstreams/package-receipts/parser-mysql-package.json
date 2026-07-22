@@ -1,14 +1,17 @@
 {
-  "campaign": "2026-07-package-frontier-02",
+  "close": {
+    "id": "parser-mysql-package",
+    "kind": "package"
+  },
   "gate": {
-    "claim_sha256": "67d730b81ee804fd840db7e06a72d1d5d44aef4ceef880d721c33b086e097e1c",
+    "claim_sha256": "149008f8bf0d2cfad3626a513742bee4b80cb084504ec56f70ba4e1f237a196f",
     "command": [
       "scripts/rewrite-gate.sh",
       "integrate"
     ],
     "result": "passed",
     "slice_manifests_sha256": "7319d2251438d2e131b7626285d4459412c946bd325937c66cbd3caa3442dfca",
-    "workspace_sha256": "20d824b0ccde1205b0844c9ecad415ff6e8b4d97573a3351bb9af4f6d44e263c"
+    "workspace_sha256": "b8c6de8e9cd7c0c1eb9d5459c666eaa1ef2dfaa0008659e343d638c9cfea5701"
   },
   "owner": "parser-mysql-package",
   "package": {
@@ -309,5 +312,5 @@
       }
     ]
   },
-  "schema": 1
+  "schema": 2
 }

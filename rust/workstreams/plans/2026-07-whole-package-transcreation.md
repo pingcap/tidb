@@ -65,6 +65,9 @@ package receipts before its Rust code reaches the shared branch.
   single-package close path. `campaign_close.py --package <owner> --gate` now
   derives the atomic transaction directly from the exact active claim; tracked
   campaigns remain only for dependency-inseparable multi-package frontiers.
+  Reopening and re-closing `pkg/parser/mysql` through the new path passed the
+  real full gate and replaced only its receipt with a direct-close schema-2
+  receipt; campaign state and membership history were unchanged.
 
 ## Surprises & Discoveries
 
