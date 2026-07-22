@@ -355,5 +355,16 @@ fn generic_formatter_v_delegates_to_kind_specific_go_formatting() {
     assert_eq!(render("%#8.2v", FormatArg::from("hello")), "    \"he\"");
     let custom = FormatArg::new("display", "debug", "custom");
     assert_eq!(render("%.4v", custom.clone()), "disp");
-    assert_eq!(render("%#v", custom), "debug");
+    assert_eq!(render("%#v", custom.clone()), "debug");
+    assert_eq!(render("%#.4v", custom.clone()), "debu");
+    assert_eq!(render("%#08.4v", custom), "0000debu");
+
+    assert_eq!(render("%.2T", FormatArg::nil()), "<nil>");
+    assert_eq!(render("%08.2T", FormatArg::nil()), "000<nil>");
+
+    assert_eq!(render("%08x", FormatArg::from(0.0_f64)), "00x0p+00");
+    assert_eq!(render("%#x", FormatArg::from(0.0_f64)), "0x0.0000p+00");
+    assert_eq!(render("%#X", FormatArg::from(0.0_f64)), "0X0.P+00");
+    assert_eq!(render("%#x", FormatArg::from(1.5_f64)), "0x1.8000p+00");
+    assert_eq!(render("%#X", FormatArg::from(1.5_f64)), "0X1.8P+00");
 }

@@ -569,6 +569,19 @@ fn pad_width(value: String, spec: FormatSpec, numeric: bool) -> String {
     format!("{}{value}", " ".repeat(padding))
 }
 
+fn pad_hex_float_width(value: String, spec: FormatSpec) -> String {
+    let Some(padding) = spec
+        .width
+        .map(|width| width.saturating_sub(value.chars().count()))
+        .filter(|padding| *padding > 0 && spec.zero && !spec.left)
+    else {
+        return pad_width(value, spec, true);
+    };
+    let sign_length = usize::from(value.starts_with(['+', '-', ' ']));
+    let (sign, magnitude) = value.split_at(sign_length);
+    format!("{sign}{}{magnitude}", "0".repeat(padding))
+}
+
 fn decimal_integer(argument: &FormatArg, spec: FormatSpec) -> String {
     let value = argument.display.as_str();
     let (negative, digits) = value
@@ -638,13 +651,26 @@ fn binary_float_hex(argument: &FormatArg, upper: bool, spec: FormatSpec) -> Stri
             )
         };
     if exponent_bits == 0 && fraction == 0 {
-        let fraction = spec.precision.map_or_else(String::new, |precision| {
-            if precision == 0 {
-                String::new()
-            } else {
-                format!(".{}", "0".repeat(precision))
-            }
-        });
+        let fraction = spec.precision.map_or_else(
+            || {
+                if spec.alternate {
+                    if upper {
+                        ".".to_owned()
+                    } else {
+                        ".0000".to_owned()
+                    }
+                } else {
+                    String::new()
+                }
+            },
+            |precision| {
+                if precision == 0 {
+                    String::new()
+                } else {
+                    format!(".{}", "0".repeat(precision))
+                }
+            },
+        );
         let sign = if negative {
             "-"
         } else if spec.plus {
@@ -664,7 +690,7 @@ fn binary_float_hex(argument: &FormatArg, upper: bool, spec: FormatSpec) -> Stri
             if upper { "0X0" } else { "0x0" },
             if upper { 'P' } else { 'p' }
         );
-        return pad_width(raw, spec, true);
+        return pad_hex_float_width(raw, spec);
     }
     let (mut exponent, fraction, fraction_bits) = if exponent_bits == 0 {
         let highest_bit = 63 - fraction.leading_zeros();
@@ -732,6 +758,11 @@ fn binary_float_hex(argument: &FormatArg, upper: bool, spec: FormatSpec) -> Stri
         }
         digits
     };
+    let fraction = if spec.alternate && !upper && spec.precision.is_none() && fraction.len() < 4 {
+        format!("{fraction}{}", "0".repeat(4 - fraction.len()))
+    } else {
+        fraction
+    };
     let point = if fraction.is_empty() && !spec.alternate {
         String::new()
     } else {
@@ -748,10 +779,9 @@ fn binary_float_hex(argument: &FormatArg, upper: bool, spec: FormatSpec) -> Stri
     } else {
         ""
     };
-    pad_width(
+    pad_hex_float_width(
         format!("{sign}{prefix}{point}{exponent_marker}{exponent:+03}"),
         spec,
-        true,
     )
 }
 
@@ -1128,12 +1158,17 @@ fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
                     decimal_integer(argument, spec)
                 }
                 FormatKind::Float => general_float(argument, false, spec),
-                FormatKind::Custom if go_syntax => pad_width(argument.debug.clone(), spec, false),
+                FormatKind::Custom if go_syntax => {
+                    pad_width(truncate(&argument.debug, spec.precision), spec, false)
+                }
                 FormatKind::Custom => {
                     pad_width(truncate(&argument.display, spec.precision), spec, false)
                 }
                 _ => pad_width(argument.display.clone(), spec, false),
             }
+        }
+        b'T' if argument.kind == FormatKind::Nil => {
+            pad_width(argument.type_name.clone(), spec, false)
         }
         b'T' => pad_width(truncate(&argument.type_name, spec.precision), spec, false),
         b't' if argument.kind == FormatKind::Bool => {
