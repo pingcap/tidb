@@ -630,6 +630,51 @@ impl AlterTableStmt {
     }
 }
 
+/// `ATTRIBUTES [=] {DEFAULT | 'attributes'}` payload owned by one ALTER TABLE
+/// specification. `None` is Go's explicit DEFAULT state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttributesSpec {
+    /// Attribute text, or `None` for `DEFAULT`.
+    pub attributes: Option<String>,
+}
+
+impl AttributesSpec {
+    fn restore_into(&self, out: &mut String) {
+        out.push_str("ATTRIBUTES=");
+        match &self.attributes {
+            Some(attributes) => {
+                out.push('\'');
+                out.push_str(&escape_string_literal(attributes));
+                out.push('\'');
+            }
+            None => out.push_str("DEFAULT"),
+        }
+    }
+}
+
+/// `STATS_OPTIONS [=] {DEFAULT | 'options'}` payload owned by one ALTER
+/// TABLE specification. It is distinct from CREATE TABLE's individual
+/// `STATS_*` table options, matching Go's AST and visitor boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatsOptionsSpec {
+    /// Statistics option text, or `None` for `DEFAULT`.
+    pub options: Option<String>,
+}
+
+impl StatsOptionsSpec {
+    fn restore_into(&self, out: &mut String) {
+        out.push_str("STATS_OPTIONS=");
+        match &self.options {
+            Some(options) => {
+                out.push('\'');
+                out.push_str(&escape_string_literal(options));
+                out.push('\'');
+            }
+            None => out.push_str("DEFAULT"),
+        }
+    }
+}
+
 impl AlterTableAction {
     fn is_suppressed(&self, context: RestoreContext) -> bool {
         (context.flags().has_with_ttl_enable_off()
@@ -911,17 +956,8 @@ impl AlterTableAction {
                     out.push_str("REMOVE TTL");
                 });
             }
-            AlterTableAction::SetAttributes { attributes } => {
-                out.push_str("ATTRIBUTES=");
-                match attributes {
-                    Some(attributes) => {
-                        out.push('\'');
-                        out.push_str(&escape_string_literal(attributes));
-                        out.push('\'');
-                    }
-                    None => out.push_str("DEFAULT"),
-                }
-            }
+            AlterTableAction::SetAttributes(spec) => spec.restore_into(out),
+            AlterTableAction::SetStatsOptions(spec) => spec.restore_into(out),
             AlterTableAction::WithValidation => out.push_str("WITH VALIDATION"),
             AlterTableAction::WithoutValidation => out.push_str("WITHOUT VALIDATION"),
             AlterTableAction::AddIndexConstraint(constraint) => {
@@ -1028,10 +1064,10 @@ pub enum AlterTableAction {
     /// `ATTRIBUTES [=] {DEFAULT | 'attributes'}`. This is a distinct Go
     /// `AlterTableAttributes` specification, rather than a generic table
     /// option; `None` retains Go's `DEFAULT` payload exactly.
-    SetAttributes {
-        /// Attribute text, or `None` for `ATTRIBUTES=DEFAULT`.
-        attributes: Option<String>,
-    },
+    SetAttributes(AttributesSpec),
+    /// `STATS_OPTIONS [=] {DEFAULT | 'options'}` with its distinct Go AST
+    /// node and visitor boundary.
+    SetStatsOptions(StatsOptionsSpec),
     /// `WITH VALIDATION`. Go represents this as a standalone ALTER TABLE
     /// specification that may be ordered with other specifications; the
     /// seed executor keeps it typed but rejects it before transaction
@@ -1562,6 +1598,28 @@ impl crate::Visitable for SplitRegionStmt {
     }
 }
 
+impl crate::Visitable for AttributesSpec {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { attributes } = self;
+        let _ = attributes;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for StatsOptionsSpec {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { options } = self;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
 impl crate::Visitable for AlterTableAction {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
@@ -1595,8 +1653,17 @@ impl crate::Visitable for AlterTableAction {
             Self::SetAffinity { level } => {
                 let _ = level;
             }
-            Self::SetAttributes { attributes } => {
-                let _ = attributes;
+            Self::SetAttributes(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetStatsOptions(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
             }
             Self::WithValidation => {}
             Self::WithoutValidation => {}

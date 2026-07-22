@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go-source coverage for table-level `ALTER TABLE ... ATTRIBUTES`.
+//! Go-source coverage for the table-level ALTER specifications whose payload
+//! is exactly `[=] {DEFAULT|string}`: `ATTRIBUTES` and `STATS_OPTIONS`.
 //! `pkg/parser/ddl_alter_handlers.go:parseAlterTableOptions` owns the exact
 //! `[=] {DEFAULT|string}` grammar and `ast.AttributesSpec.Restore` owns its
 //! canonical equals-sign/single-quoted output.
@@ -53,4 +54,73 @@ fn alter_table_attributes_match_go_parser_and_restore() {
     ] {
         assert!(parse(sql).is_err(), "Go rejects: {sql}");
     }
+
+    let Stmt::Ddl(ddl) = parse("ALTER TABLE t ATTRIBUTES='zone=sh'").unwrap() else {
+        panic!("expected DDL statement");
+    };
+    let DdlStmt::AlterTable(table) = ddl.into_inner() else {
+        panic!("expected ALTER TABLE statement");
+    };
+    assert_eq!(
+        table.actions,
+        [AlterTableAction::SetAttributes(tidb_ast::AttributesSpec {
+            attributes: Some("zone=sh".to_string()),
+        })]
+    );
+}
+
+#[test]
+fn alter_table_stats_options_transcreates_all_go_parser_rows() {
+    for (sql, expected) in [
+        (
+            "ALTER TABLE t STATS_OPTIONS='str'",
+            "ALTER TABLE `t` STATS_OPTIONS='str'",
+        ),
+        (
+            "ALTER TABLE t STATS_OPTIONS='str1,str2'",
+            "ALTER TABLE `t` STATS_OPTIONS='str1,str2'",
+        ),
+        (
+            "ALTER TABLE t STATS_OPTIONS=\"str1,str2\"",
+            "ALTER TABLE `t` STATS_OPTIONS='str1,str2'",
+        ),
+        (
+            "ALTER TABLE t STATS_OPTIONS 'str1,str2'",
+            "ALTER TABLE `t` STATS_OPTIONS='str1,str2'",
+        ),
+        (
+            "ALTER TABLE t STATS_OPTIONS \"str1,str2\"",
+            "ALTER TABLE `t` STATS_OPTIONS='str1,str2'",
+        ),
+        (
+            "ALTER TABLE t STATS_OPTIONS=DEFAULT",
+            "ALTER TABLE `t` STATS_OPTIONS=DEFAULT",
+        ),
+        (
+            "ALTER TABLE t STATS_OPTIONS=default",
+            "ALTER TABLE `t` STATS_OPTIONS=DEFAULT",
+        ),
+        (
+            "ALTER TABLE t STATS_OPTIONS=DeFaUlT",
+            "ALTER TABLE `t` STATS_OPTIONS=DEFAULT",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+    assert!(parse("ALTER TABLE t STATS_OPTIONS").is_err());
+
+    let Stmt::Ddl(ddl) = parse("ALTER TABLE t STATS_OPTIONS='sample=1'").unwrap() else {
+        panic!("expected DDL statement");
+    };
+    let DdlStmt::AlterTable(table) = ddl.into_inner() else {
+        panic!("expected ALTER TABLE statement");
+    };
+    assert_eq!(
+        table.actions,
+        [AlterTableAction::SetStatsOptions(
+            tidb_ast::StatsOptionsSpec {
+                options: Some("sample=1".to_string()),
+            }
+        )]
+    );
 }

@@ -28,6 +28,7 @@ fn test_ddl_visitor_cover() {
         "RENAME TABLE t1 TO t2",
         "TRUNCATE TABLE t",
         "ALTER TABLE t ADD COLUMN a INT DEFAULT 1",
+        "ALTER TABLE t ATTRIBUTES='zone=sh', STATS_OPTIONS='sample=1'",
         "CREATE INDEX i ON t (a)",
         "CREATE TABLE t (a INT DEFAULT 1, CONSTRAINT c CHECK (a > 0))",
         "CREATE VIEW v AS SELECT 1",

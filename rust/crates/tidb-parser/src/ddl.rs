@@ -950,7 +950,28 @@ impl Parser {
                 self.bump();
                 Some(decode_string(&token.text))
             };
-            AlterTableAction::SetAttributes { attributes }
+            AlterTableAction::SetAttributes(tidb_ast::AttributesSpec { attributes })
+        } else if self.is_kw("STATS_OPTIONS") {
+            // Go gives STATS_OPTIONS its own AlterTableStatsOptions spec and
+            // StatsOptionsSpec child rather than treating it as a table
+            // option. Preserve the optional equals sign and the closed
+            // DEFAULT-or-string payload.
+            self.bump();
+            if self.is_op("=") {
+                self.bump();
+            }
+            let options = if self.is_kw("DEFAULT") {
+                self.bump();
+                None
+            } else {
+                let token = self.peek().clone();
+                if token.kind != TokenKind::Str {
+                    return Err(self.err_here("expected STATS_OPTIONS string literal or DEFAULT"));
+                }
+                self.bump();
+                Some(decode_string(&token.text))
+            };
+            AlterTableAction::SetStatsOptions(tidb_ast::StatsOptionsSpec { options })
         } else if let Some(action) = alter::shard_row_id_bits::parse(self)? {
             action
         } else if self.starts_alter_table_charset_or_collation_option() {
