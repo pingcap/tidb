@@ -305,3 +305,24 @@ fn generic_formatter_edge_values_preserve_original_go_domains() {
     );
     assert_eq!(render("%08v", FormatArg::from(-1.5_f64)), "-00001.5");
 }
+
+#[test]
+fn generic_formatter_go_print_radix_zero_and_rounded_g_boundaries() {
+    assert_eq!(render("%q", FormatArg::from('\u{0e00}')), "'\\u0e00'");
+    assert_eq!(render("%q", FormatArg::from('\u{10ffff}')), "'\\U0010ffff'");
+    assert_eq!(
+        render("%#q", FormatArg::from("\u{feff}abc")),
+        "\"\\ufeffabc\""
+    );
+    assert_eq!(render("%#v", FormatArg::from("\0")), "\"\\x00\"");
+
+    assert_eq!(render("%#08b", FormatArg::from(7_i64)), "0b00000111");
+    assert_eq!(render("%#08O", FormatArg::from(7_i64)), "0o00000007");
+    for format in ["%#.0b", "%#.0o", "%.0x", "%#.0x"] {
+        assert_eq!(render(format, FormatArg::from(0_i64)), "", "{format}");
+    }
+
+    assert_eq!(render("%.2g", FormatArg::from(99.9_f64)), "1e+02");
+    assert_eq!(render("%.2G", FormatArg::from(99.9_f64)), "1E+02");
+    assert_eq!(render("%.2g", FormatArg::from(9.99_f64)), "10");
+}
