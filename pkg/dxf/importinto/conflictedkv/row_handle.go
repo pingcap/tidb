@@ -32,7 +32,7 @@ const (
 	// might not be ingested to downstream, so we choose a small value for its init
 	// size.
 	initMapSizeForConflictedRows = 128
-	handleMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
+	rowKeyMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
 )
 
 // HandleFilter is used to filter row handles.
@@ -46,21 +46,21 @@ func NewHandleFilter(set *BoundedHandleSet) *HandleFilter {
 	return &HandleFilter{set: set}
 }
 
-func (f *HandleFilter) needSkip(handle tidbkv.Handle) bool {
+func (f *HandleFilter) needSkip(rowKey tidbkv.Key) bool {
 	if f == nil {
 		return false
 	}
-	return f.set.Contains(handle)
+	return f.set.Contains(rowKey)
 }
 
-// BoundedHandleSet is a set of row handles with a size limit.
+// BoundedHandleSet is a set of data row keys with a size limit.
 // this set is not goroutine safe.
 type BoundedHandleSet struct {
 	logger *zap.Logger
 	// we use a shared size, as we collect conflicted rows concurrently
 	sharedSize *atomic.Int64
 	sizeLimit  int64
-	handles    map[string]bool
+	rowKeys    map[string]bool
 }
 
 // NewBoundedHandleSet creates a new BoundedHandleSet.
@@ -73,42 +73,42 @@ func NewBoundedHandleSet(logger *zap.Logger, sharedSize *atomic.Int64, limit int
 		logger:     logger,
 		sharedSize: sharedSize,
 		sizeLimit:  limit,
-		handles:    make(map[string]bool, size),
+		rowKeys:    make(map[string]bool, size),
 	}
 }
 
-// Add adds a handle to the set.
-func (s *BoundedHandleSet) Add(handle tidbkv.Handle) {
+// Add adds a data row key to the set.
+func (s *BoundedHandleSet) Add(rowKey tidbkv.Key) {
 	if s.BoundExceeded() {
 		return
 	}
 
-	hdlStr := handle.String()
-	delta := int64(len(hdlStr)) + handleMapEntryShallowSize
+	keyStr := string(rowKey)
+	delta := int64(len(keyStr)) + rowKeyMapEntryShallowSize
 	newSize := s.sharedSize.Add(delta)
-	s.handles[hdlStr] = true
+	s.rowKeys[keyStr] = true
 
 	// log when exceeding the limit for the first time
 	if newSize >= s.sizeLimit && newSize-delta < s.sizeLimit {
 		s.logger.Info("too many conflict rows from index, skip checking",
-			zap.String("totalHandleSize", units.BytesSize(float64(s.sharedSize.Load()))),
+			zap.String("totalRowKeySize", units.BytesSize(float64(s.sharedSize.Load()))),
 			zap.String("sizeLimit", units.BytesSize(float64(s.sizeLimit))),
-			zap.Int("localHandleCount", len(s.handles)))
-		// Note: we still keep the handles in memory, to make it merged into the
-		// global handle set, so we can avoid handling other KV groups of same
-		// handle as much as possible.
+			zap.Int("localRowKeyCount", len(s.rowKeys)))
+		// Note: we still keep the row keys in memory, to make them merged into the
+		// global set, so we can avoid handling other KV groups of the same row as
+		// much as possible.
 		return
 	}
 }
 
-// Contains checks whether the handle is in the set.
-func (s *BoundedHandleSet) Contains(handle tidbkv.Handle) bool {
+// Contains checks whether the data row key is in the set.
+func (s *BoundedHandleSet) Contains(rowKey tidbkv.Key) bool {
 	// during handling the first kv group, this map is empty, we can avoid calling
-	// handle.String()
-	if len(s.handles) == 0 {
+	// string(rowKey)
+	if len(s.rowKeys) == 0 {
 		return false
 	}
-	return s.handles[handle.String()]
+	return s.rowKeys[string(rowKey)]
 }
 
 // Merge merges another BoundedHandleSet into this one.
@@ -116,7 +116,7 @@ func (s *BoundedHandleSet) Merge(other *BoundedHandleSet) {
 	if other == nil {
 		return
 	}
-	maps.Copy(s.handles, other.handles)
+	maps.Copy(s.rowKeys, other.rowKeys)
 }
 
 // BoundExceeded checks whether the size limit is exceeded.

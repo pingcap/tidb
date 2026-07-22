@@ -75,7 +75,7 @@ type KVHandler interface {
 // EncodedRowHandler handles the re-encoded row from conflict KV.
 // exported for test.
 type EncodedRowHandler interface {
-	HandleEncodedRow(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error
+	HandleEncodedRow(ctx context.Context, rowKey tidbkv.Key, row []types.Datum, kvPairs *kv.Pairs) error
 }
 
 var _ Handler = (*BaseHandler)(nil)
@@ -144,7 +144,7 @@ func (h *BaseHandler) Close(context.Context) (err error) {
 // re-encode the row from the handle and value of data KV into KV pairs and handle
 // them using the EncodedRowHandler.
 func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
-	handle tidbkv.Handle, val []byte) (err error) {
+	rowKey tidbkv.Key, handle tidbkv.Handle, val []byte) (err error) {
 	tblMeta := h.targetTable.Meta()
 	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx.GetExprCtx(),
 		h.targetTable, handle, h.targetTable.Cols(), val)
@@ -160,7 +160,7 @@ func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
 		return errors.Trace(err)
 	}
 
-	err = h.HandleEncodedRow(ctx, handle, decodedData, kvPairs)
+	err = h.HandleEncodedRow(ctx, rowKey, decodedData, kvPairs)
 	kvPairs.Clear()
 	if err != nil {
 		return errors.Trace(err)
@@ -195,12 +195,17 @@ func (h *DataKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error 
 	if err != nil {
 		return err
 	}
-	return h.encodeAndHandleRow(ctx, handle, kv.Value)
+	return h.encodeAndHandleRow(ctx, key, handle, kv.Value)
 }
 
-type handleOfTable struct {
-	tableID int64
-	handle  tidbkv.Handle
+type rowKeyWithHandle struct {
+	rowKey tidbkv.Key
+	handle tidbkv.Handle
+}
+
+func encodeDataRowKey(tableID int64, handle tidbkv.Handle) tidbkv.Key {
+	recordPrefix := tablecodec.GenTableRecordPrefix(tableID)
+	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
 
 // IndexKVHandler handles conflicted index KVs.
@@ -210,8 +215,8 @@ type IndexKVHandler struct {
 	snapshot  *LazyRefreshedSnapshot
 	hdlFilter *HandleFilter
 
-	targetIdx       *model.IndexInfo
-	bufferedHandles []handleOfTable
+	targetIdx    *model.IndexInfo
+	bufferedRows []rowKeyWithHandle
 }
 
 var (
@@ -268,28 +273,29 @@ func (h *IndexKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error
 	if err != nil {
 		return err
 	}
-	if h.hdlFilter.needSkip(handle) {
+	// The filter and snapshot lookup need the data row key, not this index key.
+	rowKey := encodeDataRowKey(tableID, handle)
+	if h.hdlFilter.needSkip(rowKey) {
 		return nil
 	}
 
-	h.bufferedHandles = append(h.bufferedHandles, handleOfTable{handle: handle, tableID: tableID})
+	h.bufferedRows = append(h.bufferedRows, rowKeyWithHandle{rowKey: rowKey, handle: handle})
 
-	if len(h.bufferedHandles) >= BufferedHandleLimit {
+	if len(h.bufferedRows) >= BufferedHandleLimit {
 		return h.handleBufferedHandles(ctx)
 	}
 	return nil
 }
 
 func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
-	if len(h.bufferedHandles) == 0 {
+	if len(h.bufferedRows) == 0 {
 		return nil
 	}
-	rowKeys := make([]tidbkv.Key, 0, len(h.bufferedHandles))
-	rowKeys2Handle := make(map[string]tidbkv.Handle, len(h.bufferedHandles))
-	for _, hdl := range h.bufferedHandles {
-		rowKey := tablecodec.EncodeRowKeyWithHandle(hdl.tableID, hdl.handle)
-		rowKeys = append(rowKeys, rowKey)
-		rowKeys2Handle[string(rowKey)] = hdl.handle
+	rowKeys := make([]tidbkv.Key, 0, len(h.bufferedRows))
+	rowKeys2Handle := make(map[string]tidbkv.Handle, len(h.bufferedRows))
+	for _, row := range h.bufferedRows {
+		rowKeys = append(rowKeys, row.rowKey)
+		rowKeys2Handle[string(row.rowKey)] = row.handle
 	}
 
 	res, err := h.snapshot.BatchGet(ctx, rowKeys)
@@ -298,11 +304,11 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 	}
 	for rowKey, val := range res {
 		handle := rowKeys2Handle[rowKey]
-		if err := h.encodeAndHandleRow(ctx, handle, val.Value); err != nil {
+		if err := h.encodeAndHandleRow(ctx, tidbkv.Key(rowKey), handle, val.Value); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	h.bufferedHandles = h.bufferedHandles[:0]
+	h.bufferedRows = h.bufferedRows[:0]
 	return nil
 }
 

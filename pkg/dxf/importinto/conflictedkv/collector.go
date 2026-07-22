@@ -152,7 +152,7 @@ func (c *Collector) Run(ctx context.Context, ch chan *simplesst.KVPair) (err err
 }
 
 // HandleEncodedRow handles the re-encoded row from conflict KV.
-func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
+func (c *Collector) HandleEncodedRow(ctx context.Context, rowKey tidbkv.Key,
 	row []types.Datum, kvPairs *kv.Pairs) error {
 	// every conflicted row from data KV group must be recorded, but for index KV
 	// group, they might come from the same row, so we only need to record it on
@@ -160,10 +160,10 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	// currently, we use memory to do this check, if it's too large, we just skip
 	// the checking and skip later checksum.
 	//
-	// an alternative solution is to upload those handles to sort storage and
+	// an alternative solution is to upload those row keys to sort storage and
 	// check them in another pass later.
 	if c.kvGroup != globalsort.DataKVGroup {
-		c.hdlSet.Add(handle)
+		c.hdlSet.Add(rowKey)
 	}
 
 	if err := c.recordRowToFile(ctx, row); err != nil {

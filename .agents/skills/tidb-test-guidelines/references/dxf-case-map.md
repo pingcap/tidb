@@ -128,7 +128,7 @@
 - `pkg/dxf/importinto/conflictedkv/deleter_internal_test.go` - dxf/importinto/conflictedkv: Tests commit error propagation when deleting buffered keys.
 - `pkg/dxf/importinto/conflictedkv/deleter_test.go` - dxf/importinto/conflictedkv: Tests deleter.
 - `pkg/dxf/importinto/conflictedkv/handler_test.go` - dxf/importinto/conflictedkv: Tests handler.
-- `pkg/dxf/importinto/conflictedkv/row_handle_test.go` - dxf/importinto/conflictedkv: Tests handle filter.
+- `pkg/dxf/importinto/conflictedkv/row_handle_test.go` - dxf/importinto/conflictedkv: Tests row-key-based handle filter and bounded set.
 
 ## pkg/dxf/operator
 

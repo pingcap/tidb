@@ -180,7 +180,7 @@ func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) (re
 }
 
 // HandleEncodedRow implements the EncodedRowHandler interface.
-func (d *Deleter) HandleEncodedRow(ctx context.Context, _ tidbkv.Handle, _ []types.Datum, kvPairs *kv.Pairs) error {
+func (d *Deleter) HandleEncodedRow(ctx context.Context, _ tidbkv.Key, _ []types.Datum, kvPairs *kv.Pairs) error {
 	return d.gatherAndDeleteKeysWithRetry(ctx, kvPairs.Pairs)
 }
 

@@ -141,13 +141,13 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 			// when write to the conflicted row file, it will be formated as `("id", "value")`
 			row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
 			pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprint(123 * (i + 1)))}}}
-			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 		}
 		require.NoError(t, coll.Close(ctx))
 		if kvGroup == globalsort.DataKVGroup {
-			require.Empty(t, coll.hdlSet.handles)
+			require.Empty(t, coll.hdlSet.rowKeys)
 		} else {
-			require.Equal(t, rowCount, len(coll.hdlSet.handles))
+			require.Equal(t, rowCount, len(coll.hdlSet.rowKeys))
 		}
 		kvBytes := 184 + rowCount*len(store.GetCodec().GetKeyspace())
 		// for nextgen, the crc sum of keyspace is 0 since the row number is even.
@@ -220,7 +220,7 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	for i := range rowCount {
 		row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
 		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprint(123 * (i + 1)))}}}
-		require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+		require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 		expectedSum.Update(pairs.Pairs)
 	}
 	require.NoError(t, coll.Close(ctx))
@@ -316,11 +316,11 @@ func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.
 	row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
 	for i := range 3 {
 		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("a-%d", i))}}}
-		require.NoError(t, coll1.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+		require.NoError(t, coll1.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 	}
 	for i := range 3 {
 		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("b-%d", i))}}}
-		require.NoError(t, coll2.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+		require.NoError(t, coll2.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 	}
 	require.NoError(t, coll1.Close(ctx))
 	require.NoError(t, coll2.Close(ctx))

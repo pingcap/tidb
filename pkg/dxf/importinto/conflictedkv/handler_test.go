@@ -39,10 +39,10 @@ import (
 	"go.uber.org/zap"
 )
 
-type mockHandleEncodedRowFn func(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error
+type mockHandleEncodedRowFn func(ctx context.Context, rowKey tidbkv.Key, row []types.Datum, kvPairs *kv.Pairs) error
 
-func (h mockHandleEncodedRowFn) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
-	return h(ctx, handle, row, kvPairs)
+func (h mockHandleEncodedRowFn) HandleEncodedRow(ctx context.Context, rowKey tidbkv.Key, row []types.Datum, kvPairs *kv.Pairs) error {
+	return h(ctx, rowKey, row, kvPairs)
 }
 
 type mockTrafficRecorder struct {
@@ -101,7 +101,10 @@ func TestHandler(t *testing.T) {
 			tbl := cleanupEnvFn(t, tableName)
 			encoder := getEncoder(t, tbl)
 			var rowCnt, kvPairCnt int64
-			mockEncodedKVHdl := mockHandleEncodedRowFn(func(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
+			mockEncodedKVHdl := mockHandleEncodedRowFn(func(ctx context.Context, rowKey tidbkv.Key, row []types.Datum, kvPairs *kv.Pairs) error {
+				handle, err := tablecodec.DecodeRowKey(rowKey)
+				require.NoError(t, err)
+				require.Equal(t, tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle), rowKey)
 				rowCnt++
 				kvPairCnt += int64(len(kvPairs.Pairs))
 				return nil
@@ -165,16 +168,19 @@ func TestHandler(t *testing.T) {
 			encoder := getEncoder(t, tbl)
 			require.NoError(t, err)
 			var sharedSize atomic.Int64
-			alreadyProcessedHandles := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
-			alreadyProcessedHandles.Add(tidbkv.IntHandle(1))
-			alreadyProcessedHandles.Add(tidbkv.IntHandle(3))
+			alreadyProcessedRowKeys := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+			alreadyProcessedRowKeys.Add(tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(1)))
+			alreadyProcessedRowKeys.Add(tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(3)))
 
 			var (
 				rowCnt, kvPairCnt int64
 				handledHandles    = make(map[string]struct{})
 			)
-			mockEncodedKVHdl := mockHandleEncodedRowFn(func(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
-				require.False(t, alreadyProcessedHandles.Contains(handle), "should not handle the handles in the filter set")
+			mockEncodedKVHdl := mockHandleEncodedRowFn(func(ctx context.Context, rowKey tidbkv.Key, row []types.Datum, kvPairs *kv.Pairs) error {
+				handle, err := tablecodec.DecodeRowKey(rowKey)
+				require.NoError(t, err)
+				require.Equal(t, tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, handle), rowKey)
+				require.False(t, alreadyProcessedRowKeys.Contains(rowKey), "should not handle the row keys in the filter set")
 				rowCnt++
 				kvPairCnt += int64(len(kvPairs.Pairs))
 				handledHandles[handle.String()] = struct{}{}
@@ -187,7 +193,7 @@ func TestHandler(t *testing.T) {
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
 				conflictedkv.NewLazyRefreshedSnapshot(store, trafficRec),
-				conflictedkv.NewHandleFilter(alreadyProcessedHandles),
+				conflictedkv.NewHandleFilter(alreadyProcessedRowKeys),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
 			var ch = make(chan *simplesst.KVPair, 10)

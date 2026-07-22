@@ -66,9 +66,9 @@
 //     checksum of the original row. since there might be multiple UKs for a
 //     single row, we need to avoid calculating the checksum multiple times for
 //     the same row. currently, we do this deduplication in memory by maintaining
-//     a set of handles processed. if the number of handles is too large to fit
-//     in memory, we will skip the later checksum part, as we cannot get the exact
-//     checksum in this case.
+//     a set of processed data row keys. if the number of row keys is too large to
+//     fit in memory, we will skip the later checksum part, as we cannot get the
+//     exact checksum in this case.
 //
 // the latter step resolves the conflicts by deleting all the KVs related to the
 // conflicted rows from the cluster, the logic to get all those KVs is similar
