@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/util"
+	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
 var (
@@ -547,6 +548,169 @@ type TableSource struct {
 }
 
 func (*TableSource) resultSet() {}
+func (*JSONTableExpr) resultSet() {}
+
+// JSONTableColumnKind represents the kind of JSON_TABLE column
+type JSONTableColumnKind int
+
+const (
+	JSONTableColumnOrdinality JSONTableColumnKind = iota
+	JSONTableColumnPath
+	JSONTableColumnExists
+	JSONTableColumnNested
+)
+
+// JSONTableHandlerKind represents the handler type for ON EMPTY/ERROR
+type JSONTableHandlerKind int
+
+const (
+	JSONTableHandlerNull JSONTableHandlerKind = iota
+	JSONTableHandlerDefault
+	JSONTableHandlerError
+)
+
+// JSONTableHandler represents ON EMPTY or ON ERROR handler
+type JSONTableHandler struct {
+	Kind    JSONTableHandlerKind
+	Default ExprNode
+}
+
+// JSONTableHandlers is a struct for parser to hold both handlers
+type JSONTableHandlers struct {
+	OnEmpty  *JSONTableHandler
+    OnError  *JSONTableHandler
+}
+
+// JSONTableColumn represents a column definition in JSON_TABLE
+type JSONTableColumn struct {
+	Name       string
+	Kind       JSONTableColumnKind
+	FieldType  *types.FieldType
+	Path       string
+	OnEmpty    *JSONTableHandler
+	OnError    *JSONTableHandler
+	NestedPath string
+	NestedCols []*JSONTableColumn
+}
+
+// JSONTableExpr represents JSON_TABLE expression in FROM clause
+type JSONTableExpr struct {
+	node
+	Expr    ExprNode
+	Path    string
+	Columns []*JSONTableColumn
+	Alias   CIStr
+}
+
+// Restore implements Node interface.
+func (n *JSONTableExpr) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("JSON_TABLE")
+	ctx.WritePlain("(")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore JSONTableExpr.Expr")
+	}
+	ctx.WritePlain(", ")
+	ctx.WriteString(n.Path)
+	ctx.WriteKeyWord(" COLUMNS ")
+	ctx.WritePlain("(")
+	for i, col := range n.Columns {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := restoreJSONTableColumn(ctx, col); err != nil {
+			return err
+		}
+	}
+	ctx.WritePlain(")")
+	ctx.WritePlain(")")
+	if n.Alias.L != "" {
+		ctx.WriteKeyWord(" AS ")
+		ctx.WriteName(n.Alias.O)
+	}
+	return nil
+}
+
+func restoreJSONTableColumn(ctx *format.RestoreCtx, col *JSONTableColumn) error {
+	switch col.Kind {
+	case JSONTableColumnOrdinality:
+		ctx.WriteName(col.Name)
+		ctx.WriteKeyWord(" FOR ORDINALITY")
+	case JSONTableColumnPath:
+		ctx.WriteName(col.Name)
+		if col.FieldType != nil {
+			if err := col.FieldType.Restore(ctx); err != nil {
+				return err
+			}
+		}
+		ctx.WriteKeyWord(" PATH ")
+		ctx.WriteString(col.Path)
+		if col.OnEmpty != nil {
+			if err := restoreJSONTableHandler(ctx, col.OnEmpty, "EMPTY"); err != nil {
+				return err
+			}
+		}
+		if col.OnError != nil {
+			if err := restoreJSONTableHandler(ctx, col.OnError, "ERROR"); err != nil {
+				return err
+			}
+		}
+	case JSONTableColumnExists:
+		ctx.WriteName(col.Name)
+		if col.FieldType != nil {
+			if err := col.FieldType.Restore(ctx); err != nil {
+				return err
+			}
+		}
+		ctx.WriteKeyWord(" EXISTS PATH ")
+		ctx.WriteString(col.Path)
+	case JSONTableColumnNested:
+		ctx.WriteKeyWord("NESTED PATH ")
+		ctx.WriteString(col.NestedPath)
+		ctx.WriteKeyWord(" COLUMNS ")
+		ctx.WritePlain("(")
+		for i, nestedCol := range col.NestedCols {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := restoreJSONTableColumn(ctx, nestedCol); err != nil {
+				return err
+			}
+		}
+		ctx.WritePlain(")")
+	}
+	return nil
+}
+
+func restoreJSONTableHandler(ctx *format.RestoreCtx, handler *JSONTableHandler, handlerType string) error {
+	switch handler.Kind {
+	case JSONTableHandlerNull:
+		ctx.WriteKeyWord("NULL ON " + handlerType)
+	case JSONTableHandlerDefault:
+		ctx.WriteKeyWord("DEFAULT ")
+		if err := handler.Default.Restore(ctx); err != nil {
+			return err
+		}
+		ctx.WriteKeyWord(" ON " + handlerType)
+	case JSONTableHandlerError:
+		ctx.WriteKeyWord("ERROR ON " + handlerType)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *JSONTableExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*JSONTableExpr)
+	node, ok := n.Expr.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
+}
 
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {

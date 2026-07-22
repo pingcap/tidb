@@ -787,6 +787,11 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
 	jsonSumCrc32          "JSON_SUM_CRC32"
+	jsonTable 			  "JSON_TABLE"
+	nested				  "NESTED"
+	ordinality			  "ORDINALITY"
+	pathKwd				  "PATH"
+	emptyKwd			  "EMPTY"
 	leader                "LEADER"
 	leaderConstraints     "LEADER_CONSTRAINTS"
 	learner               "LEARNER"
@@ -1207,6 +1212,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	VirtualOrStored                        "indicate generated column is stored or not"
 	ColumnOptionListOpt                    "optional column definition option list"
 	CommonTableExpr                        "Common table expression"
+	JSONTableColumnList					   "JSON_TABLE column list"
+	JSONTableColumnDef					   "JSON_TABLE column definition"
+	JSONTableHandlersOpt				   "optional JSON_TABLE handlers"
+	OptPath								   "optional PATH keyword"
 	CompletionTypeWithinTransaction        "overwrite system variable completion_type within current transaction"
 	ConnectionOption                       "single connection options"
 	ConnectionOptionList                   "connection options for CREATE USER statement"
@@ -2026,7 +2035,7 @@ DirectResourceGroupRunawayOption:
 	}
 |	"WATCH" EqOpt ResourceGroupRunawayWatchOption WatchDurationOption
 	{
-		dur := strings.ToLower($4.(string))
+		dur := strings.ToLower($4.(ast.ValueExpr).GetString())
 		if dur == "unlimited" {
 			dur = ""
 		}
@@ -10616,6 +10625,169 @@ TableFactor:
 		j := $2.(*ast.Join)
 		j.ExplicitParens = true
 		$$ = $2
+	} 
+|	jsonTable '(' Expression ',' StringLiteral "COLUMNS" '(' JSONTableColumnList ')' ')' TableAsName
+	{
+		$$ = &ast.TableSource{
+			Source: &ast.JSONTableExpr{
+				Expr:    $3.(ast.ExprNode),
+				Path:    $5.(ast.ValueExpr).GetString(),
+				Columns: $8.([]*ast.JSONTableColumn),
+				Alias:   $11.(ast.CIStr),
+			},
+			AsName: $11.(ast.CIStr),
+		}
+	}
+
+JSONTableColumnList:
+	JSONTableColumnDef
+	{
+		$$ = []*ast.JSONTableColumn{$1.(*ast.JSONTableColumn)}
+	}
+|	JSONTableColumnList ',' JSONTableColumnDef
+	{
+		$$ = append($1.([]*ast.JSONTableColumn), $3.(*ast.JSONTableColumn))
+	}
+
+JSONTableColumnDef:
+	Identifier "FOR" ordinality
+	{
+		$$ = &ast.JSONTableColumn{
+			Name: $1,
+			Kind: ast.JSONTableColumnOrdinality,
+		}
+	}
+|	Identifier CastType "PATH" StringLiteral JSONTableHandlersOpt
+	{
+		col := $5.(*ast.JSONTableHandlers)
+		$$ = &ast.JSONTableColumn{
+			Name:      $1,
+			Kind:      ast.JSONTableColumnPath,
+			FieldType: $2.(*types.FieldType),
+			Path:      $4.(ast.ValueExpr).GetString(),
+			OnEmpty:   col.OnEmpty,
+			OnError:   col.OnError,
+		}
+	}
+|	Identifier CastType "EXISTS" "PATH" StringLiteral
+	{
+		$$ = &ast.JSONTableColumn{
+			Name:      $1,
+			Kind:      ast.JSONTableColumnExists,
+			FieldType: $2.(*types.FieldType),
+			Path:      $5.(ast.ValueExpr).GetString(),
+		}
+	}
+|	nested OptPath StringLiteral "COLUMNS" '(' JSONTableColumnList ')'
+	{
+		$$ = &ast.JSONTableColumn{
+			Kind:       ast.JSONTableColumnNested,
+			NestedPath: $3.(ast.ValueExpr).GetString(),
+			NestedCols: $6.([]*ast.JSONTableColumn),
+		}
+	}
+
+OptPath:
+	/* empty */
+	{
+		$$ = nil
+	}
+|	pathKwd
+	{
+		$$ = nil
+	}
+
+JSONTableHandlersOpt:
+	/* empty */
+	{
+		$$ = &ast.JSONTableHandlers{}
+	}
+|	"NULL" "ON" emptyKwd
+	{
+		$$ = &ast.JSONTableHandlers{OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull}}
+	}
+|	"DEFAULT" Expression "ON" emptyKwd
+	{
+		$$ = &ast.JSONTableHandlers{OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $2.(ast.ExprNode)}}
+	}
+|	"ERROR" "ON" emptyKwd
+	{
+		$$ = &ast.JSONTableHandlers{OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError}}
+	}
+|	"NULL" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull}}
+	}
+|	"DEFAULT" Expression "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $2.(ast.ExprNode)}}
+	}
+|	"ERROR" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError}}
+	}
+|	"NULL" "ON" emptyKwd "NULL" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull},
+		}
+	}
+|	"NULL" "ON" emptyKwd "DEFAULT" Expression "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $5.(ast.ExprNode)},
+		}
+	}
+|	"NULL" "ON" emptyKwd "ERROR" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError},
+		}
+	}
+|	"DEFAULT" Expression "ON" emptyKwd "NULL" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $2.(ast.ExprNode)},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull},
+		}
+	}
+|	"DEFAULT" Expression "ON" emptyKwd "DEFAULT" Expression "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $2.(ast.ExprNode)},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $6.(ast.ExprNode)},
+		}
+	}
+|	"DEFAULT" Expression "ON" emptyKwd "ERROR" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $2.(ast.ExprNode)},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError},
+		}
+	}
+|	"ERROR" "ON" emptyKwd "NULL" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerNull},
+		}
+	}
+|	"ERROR" "ON" emptyKwd "DEFAULT" Expression "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerDefault, Default: $5.(ast.ExprNode)},
+		}
+	}
+|	"ERROR" "ON" emptyKwd "ERROR" "ON" "ERROR"
+	{
+		$$ = &ast.JSONTableHandlers{
+			OnEmpty: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError},
+			OnError: &ast.JSONTableHandler{Kind: ast.JSONTableHandlerError},
+		}
 	}
 
 PartitionNameListOpt:
