@@ -457,7 +457,7 @@ fn escaped_character(character: char, quote: char, ascii_only: bool) -> String {
         '\\' => "\\\\".to_owned(),
         '\'' if quote == '\'' => "\\'".to_owned(),
         '"' if quote == '"' => "\\\"".to_owned(),
-        value if u32::from(value) <= 0xff && !go_is_print(value) => {
+        value if u32::from(value) < 0x80 && !go_is_print(value) => {
             format!("\\x{:02x}", u32::from(value))
         }
         value if u32::from(value) <= 0xffff && !go_is_print(value) => {
@@ -477,12 +477,15 @@ fn quoted_character(character: char) -> String {
     quoted_character_with_ascii(character, false)
 }
 
+fn go_can_backquote(character: char) -> bool {
+    if !character.is_ascii() {
+        return character != '\u{feff}';
+    }
+    character == '\t' || ((' '..='~').contains(&character) && character != '`')
+}
+
 fn quoted_string(value: &str, alternate: bool, ascii_only: bool) -> String {
-    if alternate
-        && value
-            .chars()
-            .all(|character| character != '`' && (go_is_print(character) || character == '\t'))
-    {
+    if alternate && value.chars().all(go_can_backquote) {
         return format!("`{value}`");
     }
     let mut rendered = String::with_capacity(value.len() + 2);

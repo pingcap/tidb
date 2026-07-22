@@ -310,6 +310,11 @@ fn generic_formatter_edge_values_preserve_original_go_domains() {
 fn generic_formatter_go_print_radix_zero_and_rounded_g_boundaries() {
     assert_eq!(render("%q", FormatArg::from('\u{0e00}')), "'\\u0e00'");
     assert_eq!(render("%q", FormatArg::from('\u{10ffff}')), "'\\U0010ffff'");
+    assert_eq!(render("%q", FormatArg::from('\u{ad}')), "'\\u00ad'");
+    assert_eq!(render("%q", FormatArg::from("\u{ad}")), "\"\\u00ad\"");
+    assert_eq!(render("%+q", FormatArg::from("\u{ad}")), "\"\\u00ad\"");
+    assert_eq!(render("%#q", FormatArg::from("\u{0e00}")), "`\u{0e00}`");
+    assert_eq!(render("%#q", FormatArg::from("\u{10ffff}")), "`\u{10ffff}`");
     assert_eq!(
         render("%#q", FormatArg::from("\u{feff}abc")),
         "\"\\ufeffabc\""
