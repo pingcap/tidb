@@ -51,7 +51,7 @@ func ParseServiceURL(raw string) (ServiceURL, error) {
 		if strings.HasPrefix(raw, prefix) {
 			address := strings.TrimPrefix(raw, prefix)
 			if address == "" {
-				return ServiceURL{}, errors.Errorf("URL must not be empty: %s", raw)
+				return ServiceURL{}, errors.Errorf("URL address must not be empty: %s", raw)
 			}
 			return ServiceURL{scheme: scheme, address: address}, nil
 		}

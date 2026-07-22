@@ -79,11 +79,13 @@ func TestParseServiceURLRejectsInvalidInput(t *testing.T) {
 		"ftp://127.0.0.1:2379",
 		"http://127.0.0.1",
 		"http://127.0.0.1:2379/path",
-		"unix://",
 	} {
 		_, err := ParseServiceURL(raw)
 		require.Error(t, err, raw)
 	}
+
+	_, err := ParseServiceURL("unix://")
+	require.EqualError(t, err, "URL address must not be empty: unix://")
 }
 
 func TestNormalizeServiceURL(t *testing.T) {

@@ -42,6 +42,17 @@ type PDClientFactory func(
 	opts ...opt.ClientOption,
 ) (pd.Client, error)
 
+var defaultPDClientFactory PDClientFactory = func(
+	ctx context.Context,
+	_ pd.APIContext,
+	callerComponent caller.Component,
+	svrAddrs []string,
+	security pd.SecurityOption,
+	opts ...opt.ClientOption,
+) (pd.Client, error) {
+	return pd.NewClientWithContext(ctx, callerComponent, svrAddrs, security, opts...)
+}
+
 // NewEtcdMetaServiceClient creates a ServiceClient backed by etcd and PD clients.
 // When etcdCli is nil but pdCli is not, it returns a PD-only client that still
 // implements GetPDAddrs and GetPDHttpAddrs.
@@ -130,12 +141,17 @@ func DialEtcdClient(
 	pdClientOpts []opt.ClientOption,
 	etcdCfg clientv3.Config,
 ) (*clientv3.Client, error) {
+	apiCtx := keyspace.BuildAPIContext(keyspaceName)
 	if pdClientFactory == nil {
-		pdClientFactory = pd.NewClientWithAPIContext
+		// DialEtcdClient only needs member discovery plus one explicit keyspace
+		// metadata lookup. Using a V2 PD client here would issue another
+		// LoadKeyspace RPC during client initialization.
+		pdClientFactory = defaultPDClientFactory
+		apiCtx = pd.NewAPIContextV1()
 	}
 
 	pdCli, err := pdClientFactory(
-		ctx, keyspace.BuildAPIContext(keyspaceName), callerComponent, pdAddrs, security, pdClientOpts...,
+		ctx, apiCtx, callerComponent, pdAddrs, security, pdClientOpts...,
 	)
 	if err != nil {
 		return nil, err

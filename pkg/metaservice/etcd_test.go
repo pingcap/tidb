@@ -162,29 +162,75 @@ func TestNewClientReturnsNilWithoutClients(t *testing.T) {
 }
 
 func TestDialEtcdClientMissingKeyspaceMetaIncludesKeyspaceName(t *testing.T) {
-	pdCli := &mockPDClient{}
-	_, err := DialEtcdClient(
-		context.Background(),
-		"missing-ks",
-		[]string{"127.0.0.1:2379"},
-		pd.SecurityOption{},
-		func(
-			context.Context,
-			pd.APIContext,
-			caller.Component,
-			[]string,
-			pd.SecurityOption,
-			...opt.ClientOption,
+	t.Run("custom factory keeps keyspace api context", func(t *testing.T) {
+		pdCli := &mockPDClient{}
+		_, err := DialEtcdClient(
+			context.Background(),
+			"missing-ks",
+			[]string{"127.0.0.1:2379"},
+			pd.SecurityOption{},
+			func(
+				_ context.Context,
+				apiCtx pd.APIContext,
+				_ caller.Component,
+				_ []string,
+				_ pd.SecurityOption,
+				_ ...opt.ClientOption,
+			) (pd.Client, error) {
+				require.Equal(t, pd.V2, apiCtx.GetAPIVersion())
+				require.Equal(t, "missing-ks", apiCtx.GetKeyspaceName())
+				return pdCli, nil
+			},
+			caller.Component("test"),
+			nil,
+			clientv3.Config{},
+		)
+		require.Error(t, err)
+		require.EqualError(t, err, `keyspace meta not found for keyspace "missing-ks"`)
+		require.Equal(t, []string{"missing-ks"}, pdCli.loadedKeyspaceNames)
+	})
+
+	t.Run("default factory loads keyspace once with v1 pd client", func(t *testing.T) {
+		oldFactory := defaultPDClientFactory
+		t.Cleanup(func() {
+			defaultPDClientFactory = oldFactory
+		})
+
+		pdCli := &mockPDClient{
+			keyspaceMeta: &keyspacepb.KeyspaceMeta{
+				Id:     47,
+				Name:   "ks-default",
+				Config: map[string]string{"gc_management_type": "keyspace_level"},
+			},
+		}
+		defaultPDClientFactory = func(
+			_ context.Context,
+			apiCtx pd.APIContext,
+			_ caller.Component,
+			_ []string,
+			_ pd.SecurityOption,
+			_ ...opt.ClientOption,
 		) (pd.Client, error) {
+			require.Equal(t, pd.V1, apiCtx.GetAPIVersion())
+			require.Empty(t, apiCtx.GetKeyspaceName())
 			return pdCli, nil
-		},
-		caller.Component("test"),
-		nil,
-		clientv3.Config{},
-	)
-	require.Error(t, err)
-	require.EqualError(t, err, `keyspace meta not found for keyspace "missing-ks"`)
-	require.Equal(t, []string{"missing-ks"}, pdCli.loadedKeyspaceNames)
+		}
+
+		etcdCli, err := DialEtcdClient(
+			context.Background(),
+			"ks-default",
+			[]string{"pd-proxy:2379"},
+			pd.SecurityOption{},
+			nil,
+			caller.Component("test"),
+			nil,
+			clientv3.Config{},
+		)
+		require.NoError(t, err)
+		defer etcdCli.Close()
+		require.Equal(t, []string{"ks-default"}, pdCli.loadedKeyspaceNames)
+		require.Equal(t, []string{"pd-proxy:2379"}, etcdCli.Endpoints())
+	})
 }
 
 // TestGetPDAddrsWithRealClient tests the GetPDAddrs method with a real etcd client
