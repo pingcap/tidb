@@ -321,6 +321,12 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
             "package campaign close requires exact active schema-2 claims; "
             f"found legacy claim {legacy_claims[0]}"
         )
+    extra = sorted(set(claim_by_owner) - set(members))
+    if extra:
+        raise ValueError(
+            "package campaign members must exactly match active schema-2 claims; "
+            f"active claim {extra[0]} is outside the campaign"
+        )
 
     source_rows = {str(row["path"]): row for row in queue.load_source_rows(root)}
     test_rows = {queue.test_key(row): row for row in queue.load_test_rows(root)}

@@ -1164,7 +1164,7 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
 def load_campaigns(
     root: Path, slices: dict[str, dict[str, object]]
 ) -> dict[str, dict[str, object]]:
-    """Loads checked multi-slice batches and proves their parallel write sets."""
+    """Loads checked package frontiers and proves their write sets."""
     directory = root / CAMPAIGNS_DIR
     if not directory.exists():
         return {}
@@ -1209,8 +1209,10 @@ def load_campaigns(
             isinstance(member, str) and member for member in members
         ):
             raise ValueError(f"{path}: slices must be a non-empty string array")
-        if len(members) < 2 or len(set(members)) != len(members):
-            raise ValueError(f"{path}: campaign slices must contain two or more unique members")
+        if not members or len(set(members)) != len(members):
+            raise ValueError(
+                f"{path}: campaign slices must contain one or more unique members"
+            )
         unknown = sorted(set(members) - set(slices))
         if unknown:
             raise ValueError(f"{path}: unknown campaign slice {unknown[0]}")

@@ -14,7 +14,13 @@
 
 //! Complete restore-context half of `pkg/parser/format`.
 
-use tidb_ast::{CteRestorer, RestoreContext, RestoreCtx, RestoreFlags};
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
+use tidb_ast::{
+    CteRestorer, RestoreContext, RestoreCtx, RestoreFlags, GO_SIMPLE_CASE_UNICODE_VERSION,
+};
 
 #[test]
 fn original_test_restore_ctx_and_source_priority() {
@@ -216,4 +222,80 @@ fn cte_scopes_restore_the_exact_visible_prefix() {
         scope.record_cte_name("temporary");
     }
     assert!(empty.cte_names.is_empty());
+}
+
+#[test]
+fn keyword_and_name_case_use_go_simple_rune_mappings() {
+    assert_eq!(GO_SIMPLE_CASE_UNICODE_VERSION, "15.0.0");
+    let input = "straße ß ﬃ İ ΐ ᾀ ὒ ǰ";
+
+    let mut upper_keyword = RestoreCtx::new(RestoreFlags::KEYWORD_UPPERCASE, String::new());
+    upper_keyword.write_keyword(input);
+    assert_eq!(upper_keyword.into_inner(), "STRAßE ß ﬃ İ ΐ ᾈ ὒ ǰ");
+
+    let mut lower_keyword = RestoreCtx::new(RestoreFlags::KEYWORD_LOWERCASE, String::new());
+    lower_keyword.write_keyword(input);
+    assert_eq!(lower_keyword.into_inner(), "straße ß ﬃ i ΐ ᾀ ὒ ǰ");
+
+    let mut upper_name = RestoreCtx::new(RestoreFlags::NAME_UPPERCASE, String::new());
+    upper_name.write_name(input);
+    assert_eq!(upper_name.into_inner(), "STRAßE ß ﬃ İ ΐ ᾈ ὒ ǰ");
+
+    let mut lower_name = RestoreCtx::new(RestoreFlags::NAME_LOWERCASE, String::new());
+    lower_name.write_name(input);
+    assert_eq!(lower_name.into_inner(), "straße ß ﬃ i ΐ ᾀ ὒ ǰ");
+}
+
+#[test]
+fn generated_simple_case_table_matches_the_go_oracle() {
+    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/generate-parser-format-simple-case.py");
+    let output = Command::new("python3")
+        .arg(generator)
+        .arg("--check")
+        .output()
+        .expect("run parser-format simple-case generator check");
+    assert!(
+        output.status.success(),
+        "generator check failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn restore_keyword_matches_every_non_identity_go_simple_case_mapping() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/parser_format_simple_case.tsv");
+    let contents = fs::read_to_string(fixture).expect("read generated Go simple-case oracle");
+    let mut mapped_rows = 0;
+    for line in contents.lines().filter(|line| !line.starts_with('#')) {
+        let mut fields = line.split('\t');
+        let codepoint = u32::from_str_radix(fields.next().expect("codepoint"), 16).unwrap();
+        let upper = u32::from_str_radix(fields.next().expect("uppercase"), 16).unwrap();
+        let lower = u32::from_str_radix(fields.next().expect("lowercase"), 16).unwrap();
+        assert!(fields.next().is_none(), "unexpected oracle field: {line}");
+
+        let input = char::from_u32(codepoint).unwrap().to_string();
+        let expected_upper = char::from_u32(upper).unwrap().to_string();
+        let expected_lower = char::from_u32(lower).unwrap().to_string();
+
+        let mut upper_ctx = RestoreCtx::new(RestoreFlags::KEYWORD_UPPERCASE, String::new());
+        upper_ctx.write_keyword(&input);
+        assert_eq!(
+            upper_ctx.into_inner(),
+            expected_upper,
+            "uppercase U+{codepoint:04X}"
+        );
+
+        let mut lower_ctx = RestoreCtx::new(RestoreFlags::KEYWORD_LOWERCASE, String::new());
+        lower_ctx.write_keyword(&input);
+        assert_eq!(
+            lower_ctx.into_inner(),
+            expected_lower,
+            "lowercase U+{codepoint:04X}"
+        );
+        mapped_rows += 1;
+    }
+    assert_eq!(mapped_rows, 2_879, "oracle must not be truncated");
 }

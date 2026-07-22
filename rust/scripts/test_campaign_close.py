@@ -246,6 +246,41 @@ class CampaignCloseTest(unittest.TestCase):
         self.assertEqual(self.campaign_path.read_bytes(), before)
         self.assertFalse(self.archive_path.exists())
 
+    def test_single_package_campaign_closes_atomically(self) -> None:
+        self.campaign_path.write_text(
+            'schema = "2"\ncampaign = "campaign-x"\nstatus = "active"\n'
+            'slices = ["package-a"]\n',
+            encoding="utf-8",
+        )
+        (self.root / "workstreams/claims/package-b.claim.json").unlink()
+        package_b = self.root / "workstreams/slices/package-b.toml"
+        self._replace_once(package_b, 'status = "active"', 'status = "ready"')
+
+        plan = campaign_close.build_close_plan(self.root, "campaign-x")
+        self.assertEqual(plan.members, ("package-a",))
+        self.assertEqual(plan.active_members, ("package-a",))
+        campaign_close.apply_close_plan(
+            self.root, plan, command_runner=self._gate_runner
+        )
+
+        self.assertEqual(
+            self.archive_path.read_text(encoding="utf-8"),
+            "campaign-x\tpackage-a\n",
+        )
+        self.assertTrue(
+            (self.root / "workstreams/package-receipts/package-a.json").is_file()
+        )
+        self.assertIn('status = "ready"', package_b.read_text(encoding="utf-8"))
+
+    def test_rejects_active_claim_outside_campaign(self) -> None:
+        self.campaign_path.write_text(
+            'schema = "2"\ncampaign = "campaign-x"\nstatus = "active"\n'
+            'slices = ["package-a"]\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "active claim package-b is outside"):
+            campaign_close.build_close_plan(self.root, "campaign-x")
+
     def test_rejects_untriaged_package_row(self) -> None:
         inventory = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
         self._replace_once(inventory, "COVERED\tpackage-a", "UNTRIAGED\t-")

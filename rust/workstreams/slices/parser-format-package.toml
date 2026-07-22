@@ -10,13 +10,17 @@ module_packages = []
 depends_on = []
 rust_paths = [
   "rust/crates/tidb-ast/src/format.rs",
+  "rust/crates/tidb-ast/src/format/simple_case.rs",
+  "rust/crates/tidb-ast/tests/data/parser_format_simple_case.tsv",
   "rust/crates/tidb-ast/tests/parser_format_package_source.rs",
   "rust/crates/tidb-datatype/src/format.rs",
   "rust/crates/tidb-datatype/tests/format_source.rs",
   "rust/crates/tidb-datatype/tests/parser_format_package_source.rs",
+  "rust/scripts/generate-parser-format-simple-case.py",
 ]
 integration_paths = [
   "rust/crates/tidb-ast/src/lib.rs",
   "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/src/field_type/mod.rs",
   "rust/crates/tidb-datatype/tests/field_type_source.rs",
 ]

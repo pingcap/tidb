@@ -110,7 +110,10 @@ pub use dml_stmt::{BatchDml, BatchDmlDryRun, BatchDmlStmt, DmlStmt};
 pub use explain::{DescribeTableStmt, ExplainStmt, StatsLockStmt, StatsLockTable};
 pub use expr::*;
 pub use flush::FlushStmt;
-pub use format::{CteRestorer, CteScope, RestoreContext, RestoreCtx, RestoreFlags, RestoreWriter};
+pub use format::{
+    CteRestorer, CteScope, RestoreContext, RestoreCtx, RestoreFlags, RestoreWriter,
+    GO_SIMPLE_CASE_UNICODE_VERSION,
+};
 pub use load_data::{
     ColumnOrUserVar, LoadDataFields, LoadDataLines, LoadDataOnDuplicate, LoadDataOption,
     LoadDataStmt,

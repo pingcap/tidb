@@ -14,9 +14,16 @@
 
 //! SQL restore state from `pkg/parser/format/format.go`.
 
+mod simple_case;
+
 use std::convert::Infallible;
 use std::fmt::{self, Write};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut, Not};
+
+use simple_case::{to_lowercase as go_simple_lowercase, to_uppercase as go_simple_uppercase};
+
+/// Unicode version used by Go's simple-rune case mapping in this transcreation.
+pub const GO_SIMPLE_CASE_UNICODE_VERSION: &str = simple_case::GO_UNICODE_VERSION;
 
 /// Formatting switches used while restoring SQL text.
 ///
@@ -341,9 +348,9 @@ impl<W: RestoreWriter> RestoreCtx<W> {
     /// Writes a keyword using source uppercase/lowercase priority.
     pub fn write_keyword(&mut self, keyword: &str) {
         let keyword = if self.flags.has_keyword_uppercase() {
-            keyword.to_uppercase()
+            go_simple_uppercase(keyword)
         } else if self.flags.has_keyword_lowercase() {
-            keyword.to_lowercase()
+            go_simple_lowercase(keyword)
         } else {
             keyword.to_owned()
         };
@@ -401,9 +408,9 @@ impl<W: RestoreWriter> RestoreCtx<W> {
     /// Writes a name using source case and quote priority.
     pub fn write_name(&mut self, name: &str) {
         let mut name = if self.flags.has_name_uppercase() {
-            name.to_uppercase()
+            go_simple_uppercase(name)
         } else if self.flags.has_name_lowercase() {
-            name.to_lowercase()
+            go_simple_lowercase(name)
         } else {
             name.to_owned()
         };

@@ -29,8 +29,12 @@ const STATE_BEGIN_LINE: u8 = 1;
 pub enum FormatFragment<'a> {
     /// Literal template text. Newlines participate in indentation state.
     Text(&'a str),
+    /// Literal template bytes, including non-UTF-8 source bytes.
+    TextBytes(&'a [u8]),
     /// Opaque, preformatted value text.
     Value(String),
+    /// Opaque, preformatted value bytes, including non-UTF-8 bytes.
+    ValueBytes(&'a [u8]),
     /// Increase the indentation level.
     Indent,
     /// Decrease the indentation level.
@@ -43,10 +47,20 @@ impl<'a> FormatFragment<'a> {
         Self::Text(text)
     }
 
+    /// Creates literal template bytes without UTF-8 normalization.
+    pub const fn text_bytes(bytes: &'a [u8]) -> Self {
+        Self::TextBytes(bytes)
+    }
+
     /// Formats a value with Rust's complete native formatting surface and
     /// stores the result as opaque text.
     pub fn value(arguments: fmt::Arguments<'_>) -> Self {
         Self::Value(fmt::format(arguments))
+    }
+
+    /// Creates opaque, preformatted value bytes without UTF-8 normalization.
+    pub const fn value_bytes(bytes: &'a [u8]) -> Self {
+        Self::ValueBytes(bytes)
     }
 }
 
@@ -64,10 +78,14 @@ pub trait Formatter: Write {
     fn format(&mut self, fragments: &[FormatFragment<'_>]) -> Result<usize, FormatWriteError>;
 }
 
-/// A formatter write failure retaining the exact successful byte count.
+/// A formatter write failure from the source-compatible single writer call.
 #[derive(Debug)]
 pub struct FormatWriteError {
-    /// Bytes successfully written before `error`.
+    /// Bytes reported before `error`.
+    ///
+    /// [`Write::write`] cannot return a partial count together with an error,
+    /// so this is zero for the formatter's one call. It remains explicit for
+    /// callers adapting richer writer interfaces.
     pub written: usize,
     /// The underlying writer error.
     pub error: io::Error,
@@ -120,6 +138,9 @@ impl<W: Write> IndentFormatter<W> {
                 FormatFragment::Text(text) => {
                     self.push_template_text(flat, text.as_bytes(), &mut buffer);
                 }
+                FormatFragment::TextBytes(bytes) => {
+                    self.push_template_text(flat, bytes, &mut buffer);
+                }
                 FormatFragment::Value(value) => {
                     if self.state == STATE_BEGIN_LINE {
                         self.push_indent(flat, &mut buffer);
@@ -130,11 +151,18 @@ impl<W: Write> IndentFormatter<W> {
                     // Newlines inside the value are opaque and do not alter it.
                     self.state = STATE_TEXT;
                 }
+                FormatFragment::ValueBytes(value) => {
+                    if self.state == STATE_BEGIN_LINE {
+                        self.push_indent(flat, &mut buffer);
+                    }
+                    buffer.extend_from_slice(value);
+                    self.state = STATE_TEXT;
+                }
                 FormatFragment::Indent => self.indent_level += 1,
                 FormatFragment::Unindent => self.indent_level -= 1,
             }
         }
-        write_counted(&mut self.writer, &buffer)
+        write_once(&mut self.writer, &buffer)
     }
 
     fn push_template_text(&mut self, flat: bool, text: &[u8], buffer: &mut Vec<u8>) {
@@ -230,22 +258,8 @@ pub fn output_format(input: &str) -> String {
     output
 }
 
-fn write_counted(writer: &mut impl Write, mut buffer: &[u8]) -> Result<usize, FormatWriteError> {
-    let total = buffer.len();
-    let mut written_total = 0;
-    while !buffer.is_empty() {
-        let written = writer.write(buffer).map_err(|error| FormatWriteError {
-            written: written_total,
-            error,
-        })?;
-        if written == 0 {
-            return Err(FormatWriteError {
-                written: written_total,
-                error: io::Error::new(io::ErrorKind::WriteZero, "failed to write formatted output"),
-            });
-        }
-        written_total += written;
-        buffer = &buffer[written..];
-    }
-    Ok(total)
+fn write_once(writer: &mut impl Write, buffer: &[u8]) -> Result<usize, FormatWriteError> {
+    writer
+        .write(buffer)
+        .map_err(|error| FormatWriteError { written: 0, error })
 }

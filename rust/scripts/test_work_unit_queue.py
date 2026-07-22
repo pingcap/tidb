@@ -1826,6 +1826,20 @@ class WorkUnitQueueTest(unittest.TestCase):
         failure = self.run_tool("check", success=False)
         self.assertIn("schema-2 campaigns cannot use the legacy frozen state", failure.stderr)
 
+    def test_schema2_campaign_accepts_one_whole_package(self) -> None:
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        campaigns = self.root / "workstreams/campaigns"
+        campaigns.mkdir(parents=True)
+        (campaigns / "single-package.toml").write_text(
+            'schema = "2"\ncampaign = "single-package"\nstatus = "planned"\n'
+            'slices = ["planner-package"]\n',
+            encoding="utf-8",
+        )
+        result = self.run_tool("check")
+        self.assertIn("campaigns\t1", result.stdout)
+
     def test_frozen_legacy_work_is_never_ready_claimable_or_gateable(self) -> None:
         slices = self.root / "workstreams/slices"
         slices.mkdir(parents=True)

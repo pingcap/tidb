@@ -96,6 +96,23 @@ fn formatted_values_are_opaque_to_commands_and_newline_state() {
 }
 
 #[test]
+fn formatter_preserves_non_utf8_template_and_value_bytes() {
+    let mut indented = IndentFormatter::new(Vec::new(), "  ");
+    indented
+        .format(&[
+            F::Indent,
+            F::text_bytes(&[0xff, b'\n']),
+            F::value_bytes(&[0xfe, b'\n']),
+            F::text_bytes(&[b'\n', 0xfd]),
+        ])
+        .unwrap();
+    assert_eq!(
+        indented.into_inner(),
+        &[b' ', b' ', 0xff, b'\n', b' ', b' ', 0xfe, b'\n', b'\n', b' ', b' ', 0xfd]
+    );
+}
+
+#[test]
 fn formatter_uses_native_width_precision_indexing_and_radix() {
     let mut formatter = IndentFormatter::new(Vec::new(), "  ");
     formatter
@@ -118,19 +135,21 @@ fn formatter_uses_native_width_precision_indexing_and_radix() {
 }
 
 #[derive(Default)]
-struct FailingWriter {
+struct BoundedWriter {
     bytes: Vec<u8>,
-    remaining: usize,
+    limit: usize,
+    calls: usize,
+    fail: bool,
 }
 
-impl Write for FailingWriter {
+impl Write for BoundedWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        if self.remaining == 0 {
+        self.calls += 1;
+        if self.fail {
             return Err(io::Error::other("writer failed"));
         }
-        let written = self.remaining.min(buffer.len());
+        let written = self.limit.min(buffer.len());
         self.bytes.extend_from_slice(&buffer[..written]);
-        self.remaining -= written;
         Ok(written)
     }
 
@@ -140,18 +159,46 @@ impl Write for FailingWriter {
 }
 
 #[test]
-fn formatter_error_retains_partial_write_count() {
-    let writer = FailingWriter {
+fn formatter_performs_one_write_and_preserves_short_write_results() {
+    let writer = BoundedWriter {
         bytes: Vec::new(),
-        remaining: 4,
+        limit: 4,
+        calls: 0,
+        fail: false,
+    };
+    let mut formatter = IndentFormatter::new(writer, "  ");
+    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 4);
+    let writer = formatter.into_inner();
+    assert_eq!(writer.calls, 1);
+    assert_eq!(writer.bytes, b"abcd");
+
+    let writer = BoundedWriter {
+        bytes: Vec::new(),
+        limit: 0,
+        calls: 0,
+        fail: false,
+    };
+    let mut formatter = IndentFormatter::new(writer, "  ");
+    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 0);
+    let writer = formatter.into_inner();
+    assert_eq!(writer.calls, 1);
+    assert!(writer.bytes.is_empty());
+
+    let writer = BoundedWriter {
+        bytes: Vec::new(),
+        limit: usize::MAX,
+        calls: 0,
+        fail: true,
     };
     let mut formatter = IndentFormatter::new(writer, "  ");
     let error = formatter
         .format(&[F::text("abcdef")])
-        .expect_err("writer must fail after four bytes");
-    assert_eq!(error.written, 4);
+        .expect_err("writer must return its error from the sole write call");
+    assert_eq!(error.written, 0);
     assert_eq!(error.error.kind(), io::ErrorKind::Other);
-    assert_eq!(formatter.into_inner().bytes, b"abcd");
+    let writer = formatter.into_inner();
+    assert_eq!(writer.calls, 1);
+    assert!(writer.bytes.is_empty());
 }
 
 #[test]
