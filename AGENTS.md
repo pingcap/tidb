@@ -21,6 +21,9 @@ This file provides guidance to agents working in this repository.
    unit. A claim MUST include every production source,
    build/platform/generated variant and input, original test/support artifact,
    fixture, build artifact, and required validation gate for that package.
+   One Go package MAY map to multiple Rust crates when that gives native
+   boundaries or faster builds, but the Go package retains one atomic claim,
+   complete inventory, integration decision, and receipt.
    Partial file/function/branch/feature ports MAY remain explicit seed
    evidence, but MUST NOT be dispatched, integrated, or reported as a
    transcreated package.
