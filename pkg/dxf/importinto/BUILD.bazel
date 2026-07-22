@@ -98,6 +98,7 @@ go_test(
     name = "importinto_test",
     timeout = "short",
     srcs = [
+        "clean_up_test.go",
         "collect_conflicts_test.go",
         "conflict_resolution_test.go",
         "encode_and_sort_operator_test.go",
@@ -165,6 +166,8 @@ go_test(
         "//pkg/util/mock",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_johannesboyne_gofakes3//:gofakes3",
+        "@com_github_johannesboyne_gofakes3//backend/s3mem",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

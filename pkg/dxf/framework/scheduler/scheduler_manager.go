@@ -445,22 +445,60 @@ func (sm *Manager) doCleanupTask() {
 }
 
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
-	cleanedTasks := make([]*proto.Task, 0)
+	type singleCleanUpTask struct {
+		task    *proto.Task
+		cleanUp CleanUpRoutine
+	}
+	type batchCleanUpTaskGroup struct {
+		cleanUp BatchCleanUpRoutine
+		tasks   []*proto.Task
+	}
+
+	singleCleanUpTasks := make([]singleCleanUpTask, 0)
+	batchCleanUpTaskGroups := make(map[proto.TaskType]*batchCleanUpTaskGroup)
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
 	var firstErr error
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
-		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
-		if cleanupFactory != nil {
-			cleanup := cleanupFactory()
-			err := cleanup.CleanUp(sm.ctx, task)
-			if err != nil {
+		if group, ok := batchCleanUpTaskGroups[task.Type]; ok {
+			group.tasks = append(group.tasks, task)
+			continue
+		}
+
+		cleanUpFactory := getSchedulerCleanUpFactory(task.Type)
+		if cleanUpFactory == nil {
+			cleanedTasks = append(cleanedTasks, task)
+			continue
+		}
+		cleanUp := cleanUpFactory()
+		if batchCleanUp, ok := cleanUp.(BatchCleanUpRoutine); ok {
+			batchCleanUpTaskGroups[task.Type] = &batchCleanUpTaskGroup{
+				cleanUp: batchCleanUp,
+				tasks:   []*proto.Task{task},
+			}
+			continue
+		}
+		singleCleanUpTasks = append(singleCleanUpTasks, singleCleanUpTask{
+			task:    task,
+			cleanUp: cleanUp,
+		})
+	}
+
+	for _, cleanUpTask := range singleCleanUpTasks {
+		if err := cleanUpTask.cleanUp.CleanUp(sm.ctx, cleanUpTask.task); err != nil {
+			// maybe consider continue cleaning other tasks on error later.
+			firstErr = err
+			break
+		}
+		cleanedTasks = append(cleanedTasks, cleanUpTask.task)
+	}
+	if firstErr == nil {
+		for _, group := range batchCleanUpTaskGroups {
+			if err := group.cleanUp.CleanUpBatch(sm.ctx, group.tasks); err != nil {
 				firstErr = err
 				break
 			}
-			cleanedTasks = append(cleanedTasks, task)
-		} else {
-			// if task doesn't register cleanup function, mark it as cleaned.
-			cleanedTasks = append(cleanedTasks, task)
+			cleanedTasks = append(cleanedTasks, group.tasks...)
 		}
 	}
 	if firstErr != nil {

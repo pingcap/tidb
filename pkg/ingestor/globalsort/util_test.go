@@ -19,13 +19,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+type walkCountingStorage struct {
+	storeapi.Storage
+	count atomic.Int32
+}
+
+func (s *walkCountingStorage) WalkDir(
+	ctx context.Context,
+	opt *storeapi.WalkOption,
+	fn func(path string, size int64) error,
+) error {
+	s.count.Add(1)
+	return s.Storage.WalkDir(ctx, opt, fn)
+}
 
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
@@ -91,15 +107,13 @@ func TestGetAllFileNames(t *testing.T) {
 	}, filenames)
 }
 
-func TestCleanUpFiles(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
+func writeCleanupTestFiles(ctx context.Context, t *testing.T, store storeapi.Storage, dir string) {
 	w := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
 		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", "0")
+		Build(store, dir, "0")
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
 	for i := range 30 {
@@ -110,22 +124,38 @@ func TestCleanUpFiles(t *testing.T) {
 		err := w.WriteRow(ctx, key, values[i], nil)
 		require.NoError(t, err)
 	}
-	err := w.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+}
 
-	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask")
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	baseStore := objstore.NewMemStorage()
+	store := &walkCountingStorage{Storage: baseStore}
+	writeCleanupTestFiles(ctx, t, store, "/subtask")
+	writeCleanupTestFiles(ctx, t, store, "/subtask2")
+	writeCleanupTestFiles(ctx, t, store, "/kept")
+
+	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask", "subtask2")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+		"/subtask2/0/0", "/subtask2/0/1", "/subtask2/0/2",
+		"/subtask2/0_stat/0", "/subtask2/0_stat/1", "/subtask2/0_stat/2",
 	}, filenames)
+	require.Equal(t, int32(1), store.count.Load())
 
-	require.NoError(t, CleanUpFiles(ctx, store, "subtask"))
+	store.count.Store(0)
+	require.NoError(t, CleanUpFiles(ctx, store, "subtask", "subtask2"))
+	require.Equal(t, int32(1), store.count.Load())
 
-	filenames, err = simplesst.GetAllFileNames(ctx, store, "subtask")
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "subtask", "subtask2")
 	require.NoError(t, err)
 	require.Equal(t, []string(nil), filenames)
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "kept")
+	require.NoError(t, err)
+	require.Len(t, filenames, 6)
 }
 
 func TestSortedKVMeta(t *testing.T) {
