@@ -161,3 +161,52 @@ fn generic_formatter_quotes_strings_and_renders_rust_char_as_rune() {
         "fmt.Sprint renders a rune's numeric codepoint"
     );
 }
+
+#[test]
+fn generic_formatter_honors_go_flags_width_and_verb_precision() {
+    for (format, expected) in [
+        ("%+d", "+7"),
+        ("%05d", "00007"),
+        ("%-5d", "7    "),
+        ("% d", " 7"),
+    ] {
+        assert_eq!(render(format, FormatArg::from(7_i64)), expected);
+    }
+    assert_eq!(render("%05d", FormatArg::from(-7_i64)), "-0007");
+    assert_eq!(render("% d", FormatArg::from(-7_i64)), "-7");
+
+    assert_eq!(render("%.2g", FormatArg::from(123.45_f64)), "1.2e+02");
+    assert_eq!(render("%.2G", FormatArg::from(123.45_f64)), "1.2E+02");
+    assert_eq!(render("%#.0e", FormatArg::from(1.0_f64)), "1.e+00");
+    assert_eq!(render("%#.0e", FormatArg::from(1.5_f64)), "2.e+00");
+    assert_eq!(render("%#.0E", FormatArg::from(1.0_f64)), "1.E+00");
+    assert_eq!(render("%#.3g", FormatArg::from(1.2_f64)), "1.20");
+    assert_eq!(render("%#.3G", FormatArg::from(1.2_f64)), "1.20");
+
+    assert_eq!(render("%.2x", FormatArg::from(1.5_f64)), "0x1.80p+00");
+    assert_eq!(render("%.2X", FormatArg::from(1.5_f64)), "0X1.80P+00");
+    assert_eq!(render("%.0x", FormatArg::from(1.5_f64)), "0x1p+01");
+    assert_eq!(render("%#.0x", FormatArg::from(1.5_f64)), "0x1.p+01");
+    assert_eq!(render("%#.0X", FormatArg::from(1.5_f64)), "0X1.P+01");
+    assert_eq!(
+        render("%.2x", FormatArg::from(f64::MIN_POSITIVE / 2_f64.powi(52))),
+        "0x1.00p-1074"
+    );
+    assert_eq!(
+        render("%.2X", FormatArg::from(f32::MIN_POSITIVE / 2_f32.powi(23))),
+        "0X1.00P-149"
+    );
+
+    // Go applies hexadecimal string precision to input bytes, not runes.
+    assert_eq!(render("%.1x", FormatArg::from("éx")), "c3");
+    assert_eq!(render("%.2x", FormatArg::from("éx")), "c3a9");
+    assert_eq!(render("%.3x", FormatArg::from("éx")), "c3a978");
+    assert_eq!(render("%5s", FormatArg::from("é")), "    é");
+    assert_eq!(render("%-5s", FormatArg::from("é")), "é    ");
+    assert_eq!(render("%+08d", FormatArg::from(7_i64)), "+0000007");
+    assert_eq!(render("%#012x", FormatArg::from(31_i64)), "0x00000000001f");
+    assert_eq!(
+        render("%#16.2x", FormatArg::from(1.5_f64)),
+        "      0x1.80p+00"
+    );
+}

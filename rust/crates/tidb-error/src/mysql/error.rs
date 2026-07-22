@@ -321,20 +321,67 @@ fn truncate(value: &str, precision: Option<usize>) -> String {
     )
 }
 
-fn decimal_integer(argument: &FormatArg, precision: Option<usize>) -> String {
-    let value = argument.display.as_str();
-    let (sign, digits) = value
-        .strip_prefix('-')
-        .map_or(("", value), |digits| ("-", digits));
-    let zeroes = precision
-        .map(|minimum| minimum.saturating_sub(digits.len()))
-        .unwrap_or(0);
-    format!("{sign}{}{digits}", "0".repeat(zeroes))
+#[derive(Clone, Copy, Debug, Default)]
+struct FormatSpec {
+    alternate: bool,
+    left: bool,
+    plus: bool,
+    space: bool,
+    zero: bool,
+    width: Option<usize>,
+    precision: Option<usize>,
 }
 
-fn binary_float_hex(argument: &FormatArg, upper: bool) -> String {
+fn pad_width(value: String, spec: FormatSpec, numeric: bool) -> String {
+    let Some(padding) = spec
+        .width
+        .map(|width| width.saturating_sub(value.chars().count()))
+        .filter(|padding| *padding > 0)
+    else {
+        return value;
+    };
+    if spec.left {
+        return format!("{value}{}", " ".repeat(padding));
+    }
+    if numeric && spec.zero && spec.precision.is_none() {
+        let sign_length = usize::from(value.starts_with(['+', '-', ' ']));
+        let rest = &value[sign_length..];
+        let prefix_length = sign_length
+            + if rest.starts_with("0x") || rest.starts_with("0X") {
+                2
+            } else {
+                0
+            };
+        let (prefix, rest) = value.split_at(prefix_length);
+        return format!("{prefix}{}{rest}", "0".repeat(padding));
+    }
+    format!("{}{value}", " ".repeat(padding))
+}
+
+fn decimal_integer(argument: &FormatArg, spec: FormatSpec) -> String {
+    let value = argument.display.as_str();
+    let (negative, digits) = value
+        .strip_prefix('-')
+        .map_or((false, value), |digits| (true, digits));
+    let sign = if negative {
+        "-"
+    } else if spec.plus {
+        "+"
+    } else if spec.space {
+        " "
+    } else {
+        ""
+    };
+    let zeroes = spec
+        .precision
+        .map(|minimum| minimum.saturating_sub(digits.len()))
+        .unwrap_or(0);
+    pad_width(format!("{sign}{}{digits}", "0".repeat(zeroes)), spec, true)
+}
+
+fn binary_float_hex(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String {
     if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-        return argument.display.clone();
+        return pad_width(argument.display.clone(), spec, true);
     }
     let (negative, exponent_bits, fraction, stored_fraction_bits, bias, subnormal_exponent) =
         if argument.type_name == "float32" {
@@ -367,53 +414,140 @@ fn binary_float_hex(argument: &FormatArg, upper: bool) -> String {
             )
         };
     if exponent_bits == 0 && fraction == 0 {
-        return format!("{}0x0p+00", if negative { "-" } else { "" });
+        let fraction = spec.precision.map_or_else(String::new, |precision| {
+            if precision == 0 {
+                String::new()
+            } else {
+                format!(".{}", "0".repeat(precision))
+            }
+        });
+        let sign = if negative {
+            "-"
+        } else if spec.plus {
+            "+"
+        } else if spec.space {
+            " "
+        } else {
+            ""
+        };
+        let point = if spec.alternate && fraction.is_empty() {
+            "."
+        } else {
+            &fraction
+        };
+        let raw = format!(
+            "{sign}{}{point}{}+00",
+            if upper { "0X0" } else { "0x0" },
+            if upper { 'P' } else { 'p' }
+        );
+        return pad_width(raw, spec, true);
     }
-    let (exponent, fraction, fraction_nibbles) = if exponent_bits == 0 {
+    let (mut exponent, fraction, fraction_bits) = if exponent_bits == 0 {
         let highest_bit = 63 - fraction.leading_zeros();
         let fraction_without_leader = fraction ^ (1_u64 << highest_bit);
-        let nibbles = highest_bit.div_ceil(4);
-        let shift = nibbles * 4 - highest_bit;
         (
             subnormal_exponent + i32::try_from(highest_bit).expect("fraction bit index"),
-            fraction_without_leader << shift,
-            usize::try_from(nibbles).expect("small nibble count"),
+            fraction_without_leader,
+            highest_bit,
         )
     } else {
-        let nibbles = stored_fraction_bits.div_ceil(4);
-        let shift = nibbles * 4 - stored_fraction_bits;
         (
             i32::try_from(exponent_bits).expect("small exponent") - bias,
-            fraction << shift,
-            usize::try_from(nibbles).expect("small nibble count"),
+            fraction,
+            stored_fraction_bits,
         )
     };
-    let mut fraction = if upper {
-        format!("{fraction:0fraction_nibbles$X}")
+
+    let exact_nibbles = fraction_bits.div_ceil(4);
+    let aligned_fraction = fraction << (exact_nibbles * 4 - fraction_bits);
+    let fraction = if let Some(precision) = spec.precision {
+        let target_bits = precision.saturating_mul(4);
+        if target_bits >= usize::try_from(fraction_bits).expect("small fraction width") {
+            let exact_nibbles = usize::try_from(exact_nibbles).expect("small nibble count");
+            let mut digits = if exact_nibbles == 0 {
+                String::new()
+            } else if upper {
+                format!("{aligned_fraction:0exact_nibbles$X}")
+            } else {
+                format!("{aligned_fraction:0exact_nibbles$x}")
+            };
+            digits.push_str(&"0".repeat(precision.saturating_sub(exact_nibbles)));
+            digits
+        } else {
+            let target_bits = u32::try_from(target_bits).expect("target below fraction width");
+            let dropped = fraction_bits - target_bits;
+            let significand = (1_u64 << fraction_bits) | fraction;
+            let mut retained = significand >> dropped;
+            let remainder = significand & ((1_u64 << dropped) - 1);
+            let halfway = 1_u64 << (dropped - 1);
+            if remainder > halfway || remainder == halfway && retained & 1 == 1 {
+                retained += 1;
+            }
+            if retained == 2_u64 << target_bits {
+                exponent += 1;
+                retained = 1_u64 << target_bits;
+            }
+            let fraction = retained ^ (1_u64 << target_bits);
+            if precision == 0 {
+                String::new()
+            } else if upper {
+                format!("{fraction:0precision$X}")
+            } else {
+                format!("{fraction:0precision$x}")
+            }
+        }
     } else {
-        format!("{fraction:0fraction_nibbles$x}")
+        let exact_nibbles = usize::try_from(exact_nibbles).expect("small nibble count");
+        let mut digits = if upper {
+            format!("{aligned_fraction:0exact_nibbles$X}")
+        } else {
+            format!("{aligned_fraction:0exact_nibbles$x}")
+        };
+        while digits.ends_with('0') {
+            digits.pop();
+        }
+        digits
     };
-    while fraction.ends_with('0') {
-        fraction.pop();
-    }
-    let point = if fraction.is_empty() {
+    let point = if fraction.is_empty() && !spec.alternate {
         String::new()
     } else {
         format!(".{fraction}")
     };
     let prefix = if upper { "0X1" } else { "0x1" };
     let exponent_marker = if upper { 'P' } else { 'p' };
-    format!(
-        "{}{prefix}{point}{exponent_marker}{exponent:+03}",
-        if negative { "-" } else { "" }
+    let sign = if negative {
+        "-"
+    } else if spec.plus {
+        "+"
+    } else if spec.space {
+        " "
+    } else {
+        ""
+    };
+    pad_width(
+        format!("{sign}{prefix}{point}{exponent_marker}{exponent:+03}"),
+        spec,
+        true,
     )
 }
 
-fn scientific_float(argument: &FormatArg, upper: bool, precision: Option<usize>) -> String {
-    if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-        return argument.display.clone();
+fn apply_float_sign(value: String, spec: FormatSpec) -> String {
+    if value.starts_with(['+', '-']) || value == "NaN" {
+        value
+    } else if spec.plus {
+        format!("+{value}")
+    } else if spec.space {
+        format!(" {value}")
+    } else {
+        value
     }
-    let precision = precision.unwrap_or(6);
+}
+
+fn scientific_float(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String {
+    if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
+        return pad_width(apply_float_sign(argument.display.clone(), spec), spec, true);
+    }
+    let precision = spec.precision.unwrap_or(6);
     let raw = if argument.type_name == "float32" {
         let value = argument
             .display
@@ -427,61 +561,143 @@ fn scientific_float(argument: &FormatArg, upper: bool, precision: Option<usize>)
             .expect("stored finite float64");
         format!("{value:.precision$e}")
     };
-    let (mantissa, exponent) = raw.split_once('e').expect("scientific format exponent");
+    let (mut mantissa, exponent) = raw.split_once('e').expect("scientific format exponent");
+    let owned_mantissa;
+    if spec.alternate && !mantissa.contains('.') {
+        owned_mantissa = format!("{mantissa}.");
+        mantissa = &owned_mantissa;
+    }
     let exponent = exponent.parse::<i32>().expect("numeric exponent");
     let marker = if upper { 'E' } else { 'e' };
-    format!("{mantissa}{marker}{exponent:+03}")
+    pad_width(
+        apply_float_sign(format!("{mantissa}{marker}{exponent:+03}"), spec),
+        spec,
+        true,
+    )
 }
 
-fn render_argument(
-    verb: u8,
-    alternate: bool,
-    precision: Option<usize>,
-    argument: &FormatArg,
-) -> String {
+fn general_float(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String {
+    if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
+        return pad_width(apply_float_sign(argument.display.clone(), spec), spec, true);
+    }
+    let value = argument
+        .display
+        .parse::<f64>()
+        .expect("stored finite float");
+    let precision = spec.precision.unwrap_or(6).max(1);
+    let exponent = if value == 0.0 {
+        0
+    } else {
+        value.abs().log10().floor() as i32
+    };
+    let mut rendered = if exponent < -4 || exponent >= i32::try_from(precision).unwrap_or(i32::MAX)
+    {
+        let scientific_spec = FormatSpec {
+            width: None,
+            plus: false,
+            space: false,
+            zero: false,
+            left: false,
+            precision: Some(precision - 1),
+            ..spec
+        };
+        scientific_float(argument, upper, scientific_spec)
+    } else {
+        let decimal_places =
+            usize::try_from(i32::try_from(precision).unwrap_or(i32::MAX) - exponent - 1)
+                .unwrap_or(0);
+        if argument.type_name == "float32" {
+            let value = argument.display.parse::<f32>().expect("stored float32");
+            format!("{value:.decimal_places$}")
+        } else {
+            format!("{value:.decimal_places$}")
+        }
+    };
+    if !spec.alternate {
+        let exponent = rendered.find(['e', 'E']);
+        let suffix = exponent.map(|position| rendered.split_off(position));
+        if rendered.contains('.') {
+            while rendered.ends_with('0') {
+                rendered.pop();
+            }
+            if rendered.ends_with('.') {
+                rendered.pop();
+            }
+        }
+        if let Some(suffix) = suffix {
+            rendered.push_str(&suffix);
+        }
+    } else if !rendered.contains('.') {
+        if let Some(position) = rendered.find(['e', 'E']) {
+            rendered.insert(position, '.');
+        } else {
+            rendered.push('.');
+        }
+    }
+    if upper {
+        rendered = rendered.replace('e', "E");
+    }
+    pad_width(apply_float_sign(rendered, spec), spec, true)
+}
+
+fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
     match verb {
         b's' => match argument.kind {
-            FormatKind::String | FormatKind::Custom => truncate(&argument.display, precision),
+            FormatKind::String | FormatKind::Custom => {
+                pad_width(truncate(&argument.display, spec.precision), spec, false)
+            }
             _ => mismatch(verb, argument),
         },
         b'd' => match argument.kind {
             FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char | FormatKind::Custom => {
-                decimal_integer(argument, precision)
+                decimal_integer(argument, spec)
             }
             _ => mismatch(verb, argument),
         },
         b'q' => match argument.kind {
-            FormatKind::String => format!("{:?}", truncate(&argument.display, precision)),
+            FormatKind::String => pad_width(
+                format!("{:?}", truncate(&argument.display, spec.precision)),
+                spec,
+                false,
+            ),
             FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => {
-                quoted_character(integer_character(argument))
+                pad_width(quoted_character(integer_character(argument)), spec, false)
             }
             _ => mismatch(verb, argument),
         },
         b'c' => match argument.kind {
             FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => {
-                integer_character(argument).to_string()
+                pad_width(integer_character(argument).to_string(), spec, false)
             }
             _ => mismatch(verb, argument),
         },
-        b'v' if alternate => match argument.kind {
-            FormatKind::String => format!("{:?}", truncate(&argument.display, precision)),
-            _ => argument.debug.clone(),
+        b'v' if spec.alternate => match argument.kind {
+            FormatKind::String => pad_width(
+                format!("{:?}", truncate(&argument.display, spec.precision)),
+                spec,
+                false,
+            ),
+            _ => pad_width(argument.debug.clone(), spec, false),
         },
         b'v' => match argument.kind {
-            FormatKind::String | FormatKind::Custom => truncate(&argument.display, precision),
-            FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => {
-                decimal_integer(argument, precision)
+            FormatKind::String | FormatKind::Custom => {
+                pad_width(truncate(&argument.display, spec.precision), spec, false)
             }
-            _ => argument.display.clone(),
+            FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => {
+                decimal_integer(argument, spec)
+            }
+            _ => pad_width(argument.display.clone(), spec, false),
         },
-        b'T' => argument.type_name.clone(),
-        b't' if argument.kind == FormatKind::Bool => argument.display.clone(),
+        b'T' => pad_width(argument.type_name.clone(), spec, false),
+        b't' if argument.kind == FormatKind::Bool => {
+            pad_width(argument.display.clone(), spec, false)
+        }
         b'f' if argument.kind == FormatKind::Float => {
             if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-                argument.display.clone()
+                pad_width(apply_float_sign(argument.display.clone(), spec), spec, true)
             } else {
-                let precision = precision.unwrap_or(6);
-                if argument.type_name == "float32" {
+                let precision = spec.precision.unwrap_or(6);
+                let mut rendered = if argument.type_name == "float32" {
                     argument.display.parse::<f32>().map_or_else(
                         |_| argument.display.clone(),
                         |value| format!("{value:.precision$}"),
@@ -491,19 +707,25 @@ fn render_argument(
                         |_| argument.display.clone(),
                         |value| format!("{value:.precision$}"),
                     )
+                };
+                if spec.alternate && !rendered.contains('.') {
+                    rendered.push('.');
                 }
+                pad_width(apply_float_sign(rendered, spec), spec, true)
             }
         }
         b'e' | b'E' if argument.kind == FormatKind::Float => {
-            scientific_float(argument, verb == b'E', precision)
+            scientific_float(argument, verb == b'E', spec)
         }
-        b'g' if argument.kind == FormatKind::Float => argument.display.clone(),
-        b'G' if argument.kind == FormatKind::Float => argument.display.replace('e', "E"),
+        b'g' | b'G' if argument.kind == FormatKind::Float => {
+            general_float(argument, verb == b'G', spec)
+        }
         b'x' | b'X' if argument.kind == FormatKind::String => {
             let upper = verb == b'X';
-            let value = truncate(&argument.display, precision);
-            value.as_bytes().iter().fold(
-                String::with_capacity(value.len() * 2),
+            let bytes = argument.display.as_bytes();
+            let bytes = &bytes[..spec.precision.unwrap_or(bytes.len()).min(bytes.len())];
+            let rendered = bytes.iter().fold(
+                String::with_capacity(bytes.len() * 2),
                 |mut output, byte| {
                     use std::fmt::Write as _;
                     let _ = if upper {
@@ -513,24 +735,36 @@ fn render_argument(
                     };
                     output
                 },
-            )
+            );
+            pad_width(rendered, spec, false)
         }
         b'x' | b'X' if argument.kind == FormatKind::Float => {
-            binary_float_hex(argument, verb == b'X')
+            binary_float_hex(argument, verb == b'X', spec)
         }
         b'x' | b'X' if argument.kind == FormatKind::Signed => {
             let value = argument
                 .display
                 .parse::<i128>()
                 .expect("stored signed integer");
-            let sign = if value < 0 { "-" } else { "" };
+            let sign = if value < 0 {
+                "-"
+            } else if spec.plus {
+                "+"
+            } else if spec.space {
+                " "
+            } else {
+                ""
+            };
             let magnitude = value.unsigned_abs();
-            let digits = if verb == b'X' {
+            let mut digits = if verb == b'X' {
                 format!("{magnitude:X}")
             } else {
                 format!("{magnitude:x}")
             };
-            let prefix = if alternate {
+            if let Some(precision) = spec.precision {
+                digits.insert_str(0, &"0".repeat(precision.saturating_sub(digits.len())));
+            }
+            let prefix = if spec.alternate {
                 if verb == b'X' {
                     "0X"
                 } else {
@@ -539,7 +773,13 @@ fn render_argument(
             } else {
                 ""
             };
-            format!("{sign}{prefix}{digits}")
+            let width_spec = FormatSpec {
+                width: spec.width.map(|width| {
+                    width + usize::from(spec.zero && spec.precision.is_none()) * prefix.len()
+                }),
+                ..spec
+            };
+            pad_width(format!("{sign}{prefix}{digits}"), width_spec, true)
         }
         b'x' | b'X' if matches!(argument.kind, FormatKind::Unsigned | FormatKind::Char) => {
             let value = if argument.kind == FormatKind::Char {
@@ -550,7 +790,7 @@ fn render_argument(
                     .parse::<u128>()
                     .expect("stored unsigned integer")
             };
-            let prefix = if alternate {
+            let prefix = if spec.alternate {
                 if verb == b'X' {
                     "0X"
                 } else {
@@ -559,11 +799,28 @@ fn render_argument(
             } else {
                 ""
             };
-            if verb == b'X' {
-                format!("{prefix}{value:X}")
+            let mut digits = if verb == b'X' {
+                format!("{value:X}")
             } else {
-                format!("{prefix}{value:x}")
+                format!("{value:x}")
+            };
+            if let Some(precision) = spec.precision {
+                digits.insert_str(0, &"0".repeat(precision.saturating_sub(digits.len())));
             }
+            let sign = if spec.plus {
+                "+"
+            } else if spec.space {
+                " "
+            } else {
+                ""
+            };
+            let width_spec = FormatSpec {
+                width: spec.width.map(|width| {
+                    width + usize::from(spec.zero && spec.precision.is_none()) * prefix.len()
+                }),
+                ..spec
+            };
+            pad_width(format!("{sign}{prefix}{digits}"), width_spec, true)
         }
         _ => mismatch(verb, argument),
     }
@@ -592,16 +849,26 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
         }
 
         cursor += 1;
-        let mut alternate = false;
+        let mut spec = FormatSpec::default();
         while let Some(flag @ (b'#' | b'-' | b'+' | b' ' | b'0')) = bytes.get(cursor).copied() {
-            alternate |= flag == b'#';
+            match flag {
+                b'#' => spec.alternate = true,
+                b'-' => spec.left = true,
+                b'+' => spec.plus = true,
+                b' ' => spec.space = true,
+                b'0' => spec.zero = true,
+                _ => unreachable!(),
+            }
             cursor += 1;
         }
+        let width_start = cursor;
         while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
             cursor += 1;
         }
+        if cursor > width_start {
+            spec.width = template[width_start..cursor].parse().ok();
+        }
 
-        let mut precision = None;
         let mut bad_precision = false;
         if bytes.get(cursor) == Some(&b'.') {
             cursor += 1;
@@ -609,7 +876,7 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
                 let dynamic = args.get(argument_index).and_then(|arg| arg.precision);
                 argument_index += 1;
                 match dynamic {
-                    Some(value) if value >= 0 => precision = usize::try_from(value).ok(),
+                    Some(value) if value >= 0 => spec.precision = usize::try_from(value).ok(),
                     _ => bad_precision = true,
                 }
                 cursor += 1;
@@ -618,7 +885,7 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
                 while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
                     cursor += 1;
                 }
-                precision = template[start..cursor].parse().ok();
+                spec.precision = template[start..cursor].parse().ok();
             }
         }
 
@@ -650,7 +917,7 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
         } else {
             argument
         };
-        let rendered = render_argument(verb, alternate, precision, argument);
+        let rendered = render_argument(verb, spec, argument);
         match (sensitive, redaction_mode()) {
             (true, RedactionMode::Marker) => {
                 output.push('‹');
