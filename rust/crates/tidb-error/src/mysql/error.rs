@@ -117,6 +117,23 @@ impl From<bool> for FormatArg {
     }
 }
 
+macro_rules! float_format_arg {
+    ($($type:ty => $go_name:literal),+ $(,)?) => {$(
+        impl From<$type> for FormatArg {
+            fn from(value: $type) -> Self {
+                Self::new(value.to_string(), value.to_string(), $go_name)
+            }
+        }
+    )+};
+}
+float_format_arg! { f32 => "float32", f64 => "float64" }
+
+impl From<char> for FormatArg {
+    fn from(value: char) -> Self {
+        Self::new(value.to_string(), format!("{value:?}"), "int32")
+    }
+}
+
 /// MySQL wire error information produced while executing SQL.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqlError {
@@ -133,7 +150,7 @@ impl SqlError {
     #[must_use]
     pub fn new(code: u16, args: &[FormatArg]) -> Self {
         let message = message_by_code(code).map_or_else(
-            || args.iter().map(|arg| arg.display.as_str()).collect(),
+            || sprint(args),
             |entry| format_template(entry.raw, entry.redact_arg_pos, args),
         );
         Self {
@@ -152,6 +169,22 @@ impl SqlError {
             state: mysql_state(code),
         }
     }
+}
+
+// fmt.Sprint inserts a space between adjacent operands only when neither one
+// is a string. This subtle rule matters for unknown error codes.
+fn sprint(args: &[FormatArg]) -> String {
+    let mut output = String::new();
+    let mut previous_was_string = false;
+    for (index, argument) in args.iter().enumerate() {
+        let is_string = argument.type_name == "string";
+        if index != 0 && !previous_was_string && !is_string {
+            output.push(' ');
+        }
+        output.push_str(&argument.display);
+        previous_was_string = is_string;
+    }
+    output
 }
 
 impl fmt::Display for SqlError {

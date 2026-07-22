@@ -12,6 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Workspace-owned seam for shared MySQL constants and value contracts.
+//! Complete Rust transcreation of `pkg/parser/mysql` value contracts.
 //!
-//! Package behavior is added only under a checked whole-package claim.
+//! Generated error codes, messages, SQLSTATEs, and formatting live in the
+//! dependency-leaf `tidb-error` crate; all remaining package contracts live
+//! here so the original Go package stays one atomic inventory and receipt.
+
+pub mod charset;
+pub mod consts;
+pub mod locale;
+pub mod privilege;
+pub mod types;
+pub mod util;
+
+pub use charset::*;
+pub use consts::*;
+pub use locale::*;
+pub use privilege::*;
+pub use types::*;
+pub use util::*;
