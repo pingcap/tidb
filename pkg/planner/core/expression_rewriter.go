@@ -55,6 +55,13 @@ import (
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
 var EvalSubqueryFirstRow func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, sctx base.PlanContext) (row []types.Datum, err error)
 
+func evalSubqueryFirstRowForLogicalPlanBuild(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, sctx base.PlanContext) (row []types.Datum, err error) {
+	if vars := sctx.GetSessionVars(); vars != nil && vars.EnableAlternativeLogicalPlans {
+		vars.StmtCtx.MarkAlternativeLogicalPlanEvaluatedSubquery()
+	}
+	return EvalSubqueryFirstRow(ctx, p, is, sctx)
+}
+
 // evalAstExprWithPlanCtx evaluates ast expression with plan context.
 // Different with expression.EvalSimpleAst, it uses planner context and is more powerful to build some special expressions
 // like subquery, window function, etc.
@@ -1137,7 +1144,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		}
 		b.recordRoutineScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
 		b.recordExplainSetScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), 1)
-		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+		row, err := evalSubqueryFirstRowForLogicalPlanBuild(ctx, physicalPlan, b.is, b.ctx)
 		if err != nil {
 			er.err = err
 			return v, true
@@ -1410,7 +1417,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	}
 	planCtx.builder.recordRoutineScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
 	planCtx.builder.recordExplainSetScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
-	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
+	row, err := evalSubqueryFirstRowForLogicalPlanBuild(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {
 		er.err = err
 		return v, true

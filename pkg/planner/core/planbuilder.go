@@ -270,7 +270,10 @@ type PlanBuilder struct {
 	//   finish building the subquery or CTE.
 	handleHelper *handleColHelper
 
+	// read-only meta derived from ast node.
 	hintProcessor *hint.QBHintHandler
+	// mutable state of QBHint when building.
+	hintState *hint.QBHintBuildState
 	// qbOffset is the offsets of current processing select stmts.
 	qbOffset []int
 
@@ -606,6 +609,9 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
+	if processor != nil {
+		b.hintState = processor.NewBuildState()
+	}
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
 	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelateInSelect
 	if savedBlockNames == nil {
@@ -648,6 +654,14 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	// Add more fields if they are safe to be reused.
 
 	return b
+}
+
+// HandleUnusedViewHints appends warnings for unused view hints in the current build.
+func (b *PlanBuilder) HandleUnusedViewHints() {
+	if b.hintProcessor == nil {
+		return
+	}
+	b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState))
 }
 
 // Build builds the ast node to a Plan.
@@ -936,7 +950,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 					return nil, err
 				}
 				b.recordExplainSetScalarSubquery(ctx, physicalPlan, possiblePlan.QueryBlockOffset(), possiblePlan.Schema().Len())
-				row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+				row, err := evalSubqueryFirstRowForLogicalPlanBuild(ctx, physicalPlan, b.is, b.ctx)
 				if err != nil {
 					return nil, err
 				}

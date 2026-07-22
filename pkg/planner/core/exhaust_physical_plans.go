@@ -559,6 +559,11 @@ func constructIndexJoin(
 		DefaultValues:   p.DefaultValues,
 	}
 
+	fromDecorrelatedApply := p.FromDecorrelatedApply && outerIdx == 0
+	decorrelatedApplyID := 0
+	if fromDecorrelatedApply {
+		decorrelatedApplyID = p.DecorrelatedApplyID
+	}
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
 		innerPlan:        innerTask.Plan(),
@@ -567,6 +572,9 @@ func constructIndexJoin(
 		CompareFilters:   compareFilters,
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
+		// Only count candidates that keep the original Apply outer/inner order.
+		FromDecorrelatedApply: fromDecorrelatedApply,
+		DecorrelatedApplyID:   decorrelatedApplyID,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens

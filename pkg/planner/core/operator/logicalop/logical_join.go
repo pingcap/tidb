@@ -146,6 +146,17 @@ type LogicalJoin struct {
 
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
+
+	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
+	// first logical round. It is only used to decide whether an equivalent same-order
+	// PhysicalIndexJoin candidate has already been generated. A rule that reconstructs
+	// the join tree must not copy this provenance unless it can prove the new join keeps
+	// the original Apply's outer/inner relationship; losing the marker only causes a
+	// conservative extra alternative round.
+	FromDecorrelatedApply bool
+	// DecorrelatedApplyID identifies the Apply that produced this Join in the
+	// alternative logical plan first round.
+	DecorrelatedApplyID int
 }
 
 // Init initializes LogicalJoin.

@@ -112,6 +112,29 @@ One-minute flow (ignoring details):
 3. On a plan-cache hit, planner MUST still validate fences and rebuild
    param-dependent pieces; reuse is never a blind memoization.
 
+### 3.1 Alternative Logical-Plan Rounds Are Isolated Transactions
+
+When alternative logical plans are enabled, each build/optimization round is a
+speculative transaction over statement-scoped planner state. A losing round
+MUST NOT leave metadata that is observable from the winning plan.
+
+Maintenance rules:
+- Add per-round initialization to `resetLogicalPlanBuildRoundState`; do not add
+  one-off resets at individual round call sites.
+- Keep resets introduced solely for candidate isolation behind
+  `EnableAlternativeLogicalPlans`; changing how state accumulates on the
+  feature-off path is a separate behavior change and requires dedicated tests.
+- If a new field's winning value must survive the round, snapshot and restore it
+  in `logicalPlanBuildCtx` or `stmtctx.LogicalPlanBuildState`, as appropriate.
+- Mutable pointer-backed values must either be freshly allocated after every
+  reset or deeply cloned. Saving and restoring an aliased pointer is not enough.
+- `OptimizerDebugTrace` starts recording before the individual build rounds, so
+  preserve its outer context and clone its context tree in the round snapshot.
+  Do not clear it in the per-round reset; that would discard command/binding
+  trace entries recorded before candidate optimization starts.
+- Extend `TestLogicalPlanBuildRoundStateResetAndRestore` when adding new
+  round-local planner state.
+
 ## 4. Plan Cache Invariants (Prepared / Non-Prepared / Instance)
 
 The plan cache is a correctness boundary. The common failure mode is treating it

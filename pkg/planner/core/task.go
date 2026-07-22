@@ -141,6 +141,7 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	markAlternativeLogicalPlanSameOrderIndexJoin(&p.PhysicalIndexJoin)
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
@@ -154,6 +155,7 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	markAlternativeLogicalPlanSameOrderIndexJoin(&p.PhysicalIndexJoin)
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
@@ -167,6 +169,7 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	markAlternativeLogicalPlanSameOrderIndexJoin(p)
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
@@ -175,6 +178,13 @@ func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	t := &RootTask{}
 	t.SetPlan(p)
 	return t
+}
+
+func markAlternativeLogicalPlanSameOrderIndexJoin(p *PhysicalIndexJoin) {
+	if !p.FromDecorrelatedApply {
+		return
+	}
+	p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSameOrderIndexJoin(p.DecorrelatedApplyID)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.

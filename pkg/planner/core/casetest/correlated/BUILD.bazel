@@ -4,13 +4,18 @@ go_test(
     name = "correlated_test",
     timeout = "short",
     srcs = [
+        "alternative_logical_plan_review_test.go",
         "correlated_test.go",
         "main_test.go",
     ],
     flaky = True,
     deps = [
+        "//pkg/domain",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
+        "//pkg/util/dbterror/exeerrors",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )

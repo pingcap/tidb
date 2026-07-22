@@ -63,7 +63,7 @@ func (ssctx *ScalarSubqueryEvalCtx) selfEval() error {
 		return ssctx.evalErr
 	}
 	ssctx.evaled = true
-	row, err := EvalSubqueryFirstRow(ssctx.ctx, ssctx.scalarSubQuery, ssctx.is, ssctx.SCtx())
+	row, err := evalSubqueryFirstRowForLogicalPlanBuild(ssctx.ctx, ssctx.scalarSubQuery, ssctx.is, ssctx.SCtx())
 	if err != nil {
 		ssctx.evalErr = err
 		return err
