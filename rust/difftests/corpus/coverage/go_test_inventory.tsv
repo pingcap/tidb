@@ -246,7 +246,7 @@ bazel_test_target	pkg/parser/mysql/BUILD.bazel	26	mysql_test	parser	COVERED	pars
 bazel_test_target	pkg/parser/opcode/BUILD.bazel	11	opcode_test	parser	COVERED	parser-opcode-package	rust/difftests/corpus/coverage/evidence/tests/parser-opcode-package.tsv	The original package test target is represented by the dedicated parser_opcode_package_source Rust integration target and exercised by the package campaign.
 bazel_test_target	pkg/parser/terror/BUILD.bazel	16	terror_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/types/BUILD.bazel	21	types_test	parser	UNTRIAGED	-	-	-
-bazel_test_target	pkg/parser/util/BUILD.bazel	13	util_test	parser	COVERED	parser-util-package	rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv	The original package target is represented by dedicated source tests in tidb-lexer and tidb-hash plus parser and planner consumer tests, all exercised together by the package campaign.
+bazel_test_target	pkg/parser/util/BUILD.bazel	13	util_test	parser	COVERED	parser-util-package	rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv	The original package target is represented by dedicated source tests in tidb-lexer and tidb-hash plus parser and planner consumer tests, all exercised together by the direct package gate.
 bazel_test_target	pkg/planner/cardinality/BUILD.bazel	48	cardinality_test	plan	UNTRIAGED	-	-	-
 bazel_test_target	pkg/planner/cascades/BUILD.bazel	20	cascades_test	plan	UNTRIAGED	-	-	-
 bazel_test_target	pkg/planner/cascades/base/BUILD.bazel	16	base_test	plan	UNTRIAGED	-	-	-

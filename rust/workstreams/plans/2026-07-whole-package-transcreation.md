@@ -68,6 +68,12 @@ package receipts before its Rust code reaches the shared branch.
   Reopening and re-closing `pkg/parser/mysql` through the new path passed the
   real full gate and replaced only its receipt with a direct-close schema-2
   receipt; campaign state and membership history were unchanged.
+- [x] (2026-07-22) Audited, repaired, fully gated, and directly receipted the
+  complete `pkg/parser/util` package across `tidb-hash`, `tidb-lexer`,
+  `tidb-parser`, and `tidb-planner`. The source-owned hashing interface now
+  preserves arbitrary Go string bytes and matches Go's malformed UTF-8 range
+  semantics; all original package test/build obligations and consumer seams
+  are covered. Stable status now reports four covered schema-2 packages.
 
 ## Surprises & Discoveries
 
@@ -138,6 +144,12 @@ package receipts before its Rust code reaches the shared branch.
   Evidence: closing `pkg/parser/mysql` changed three campaign bookkeeping
   surfaces in addition to the manifest and receipt even though the campaign had
   exactly one member and the claim already fixed every accepted input.
+- Observation: passing existing Rust tests did not prove the input domain of a
+  source-owned Go interface.
+  Evidence: `pkg/parser/util.IHasher.HashString` accepts arbitrary Go string
+  bytes, but the Rust trait accepted only `&str`. Exact malformed UTF-8 oracles
+  exposed the narrowing and the complete package close repaired it before
+  issuing a receipt.
 
 ## Decision Log
 
@@ -224,18 +236,19 @@ package receipts before its Rust code reaches the shared branch.
 ## Outcomes & Retrospective
 
 The whole-package workflow and atomic receipt lifecycle are implemented.
-`pkg/server/internal/handshake`, repaired `pkg/parser/format`, and
-`pkg/parser/mysql` now have current content-bound receipts. The parser-format
+`pkg/server/internal/handshake`, repaired `pkg/parser/format`,
+`pkg/parser/mysql`, and `pkg/parser/util` now have current content-bound
+receipts. The parser-format
 repair executes the complete
 generated Go simple-case oracle through the public Rust restore context and
 adds byte and writer-boundary regressions; its receipt also records the real
 field-type consumer seam that the earlier manifest omitted.
 
-The immediate outcome is to select and claim the next dependency-ready whole
-package from the checked DAG before any implementation commit. The single
-owner must declare stable leaves and every mutable integration seam, then close
-that package directly from its exact claim through the full gate and atomic
-receipt transaction.
+The immediate outcome is to reduce gate latency without weakening its
+attestation, then claim the dependency-ready `pkg/parser/opcode` package before
+any implementation commit. The single owner must declare stable leaves and
+every mutable integration seam, then close that package directly from its exact
+claim through the full gate and atomic receipt transaction.
 
 Before that claim, the close loop was shortened at the mechanism layer:
 active-package ledger rows are regenerated under exact claim scope, static

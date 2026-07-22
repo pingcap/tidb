@@ -1,6 +1,6 @@
 schema = "2"
 slice = "parser-util-package"
-status = "ready"
+status = "covered"
 targets = ["tidb-hash", "tidb-lexer", "tidb-parser", "tidb-planner"]
 rings = ["parser"]
 consumer = "Provides the complete Rust-native pkg/parser/util leaf contract: exact MySQL byte unescaping and the dependency-inversion hashing interface, with existing parser and planner duplicates converged on those authorities; downstream package completion is not credited here."

@@ -1,0 +1,125 @@
+{
+  "close": {
+    "id": "parser-util-package",
+    "kind": "package"
+  },
+  "gate": {
+    "claim_sha256": "7039559f851e673f9a3fc4df615804006067b2e5ee4574f0b77f5efd6f6995f5",
+    "command": [
+      "scripts/rewrite-gate.sh",
+      "integrate"
+    ],
+    "result": "passed",
+    "slice_manifests_sha256": "7319d2251438d2e131b7626285d4459412c946bd325937c66cbd3caa3442dfca",
+    "workspace_sha256": "3b8aaced4790fe2d976d232e24547f45a502deac0dd608eec25f1856ae975fc5"
+  },
+  "owner": "parser-util-package",
+  "package": {
+    "go_packages": [
+      "pkg/parser/util"
+    ],
+    "integration_paths": [
+      "rust/crates/tidb-hash/src/lib.rs",
+      "rust/crates/tidb-lexer/src/lib.rs",
+      "rust/crates/tidb-parser/src/lib.rs",
+      "rust/crates/tidb-planner/Cargo.toml",
+      "rust/crates/tidb-planner/src/hash_equaler.rs"
+    ],
+    "inventory_sha256": "e2c710275c38b6d161517a21c97c12dc686fa37f5e600ba075e7cd3ccd12ab70",
+    "manifest": {
+      "path": "rust/workstreams/slices/parser-util-package.toml",
+      "sha256": "d2e3f3980053e61ed14354bbea8a1a4bd2acbc3062f725c3d66440bba9c2d6ca"
+    },
+    "module_packages": [],
+    "module_sources": [],
+    "module_tests": [],
+    "rust_paths": [
+      {
+        "path": "rust/crates/tidb-hash/src/hash64.rs",
+        "sha256": "eda4912d88be744b929a79604abb9e8a31fa24ca96d945e1bf5386722b1ccb08"
+      },
+      {
+        "path": "rust/crates/tidb-hash/tests/parser_util_package_source.rs",
+        "sha256": "be513244ac1ef67dcd97933d796b45b7fb31a807fe96a5b81f77df41a5c96325"
+      },
+      {
+        "path": "rust/crates/tidb-lexer/src/escape.rs",
+        "sha256": "5b8b574a9f1647e3d287b3b7bf511e8fa4974484b1ea1b4023652cb1740ce180"
+      },
+      {
+        "path": "rust/crates/tidb-lexer/tests/parser_util_package_source.rs",
+        "sha256": "b9d91405e68871251ba3ff908954ee54db7c80618745167f225a87ba292d2f80"
+      },
+      {
+        "path": "rust/crates/tidb-parser/tests/parser_util_consumer_source.rs",
+        "sha256": "e21b88a27a7cf77cea64323af8d58ee38a6bd7a8fa667e43160127a46bc09c50"
+      },
+      {
+        "path": "rust/crates/tidb-planner/tests/parser_util_consumer_source.rs",
+        "sha256": "7b08ea39606bf6449d7ab12601ad096d9fb9cc42a520d12260300742aac05d01"
+      }
+    ],
+    "rust_targets": [
+      "tidb-hash",
+      "tidb-lexer",
+      "tidb-parser",
+      "tidb-planner"
+    ],
+    "sources": [
+      {
+        "anchor": "pkg/parser/util/escape.go",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/source/parser-util-package.tsv",
+        "evidence_sha256": "bc65283c13aefd7542c261a971d41d43e9c6760dc777279745c5f2f242f498a4",
+        "owner": "parser-util-package",
+        "status": "COVERED",
+        "upstream_sha256": "f0309b887fe939b82b1d9bd1538c2c5682706f38f8ede631ade79f087f080b7d"
+      },
+      {
+        "anchor": "pkg/parser/util/hash64.go",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/source/parser-util-package.tsv",
+        "evidence_sha256": "bc65283c13aefd7542c261a971d41d43e9c6760dc777279745c5f2f242f498a4",
+        "owner": "parser-util-package",
+        "status": "COVERED",
+        "upstream_sha256": "77bf450dfe3106f3892b2476f30ae98e58c8f88b11bdbe8d9f00507fa74865be"
+      }
+    ],
+    "supports": [
+      {
+        "anchor": "pkg/parser/util/BUILD.bazel@ebe3a1fc5c9ff26f2b9da693b0aef297dd83d1f52027497ad9fc2c147f66d3c1",
+        "disposition": "build-metadata-reviewed",
+        "evidence_artifact": "rust/workstreams/slices/parser-util-package.toml",
+        "evidence_sha256": "d2e3f3980053e61ed14354bbea8a1a4bd2acbc3062f725c3d66440bba9c2d6ca",
+        "note": "Reviewed the complete package build metadata: escape.go, hash64.go, and escape_test.go map to the shared lexer and hash authorities plus parser and planner consumers; the BUILD file declares no fixture or generated-source obligation.",
+        "path": "pkg/parser/util/BUILD.bazel",
+        "sha256": "ebe3a1fc5c9ff26f2b9da693b0aef297dd83d1f52027497ad9fc2c147f66d3c1"
+      }
+    ],
+    "tests": [
+      {
+        "anchor": "pkg/parser/util/BUILD.bazel:13:util_test",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv",
+        "evidence_sha256": "4547fda1b56aa17745f96718081759c11b5a9935b4814eac54513c90d48143f3",
+        "owner": "parser-util-package",
+        "status": "COVERED",
+        "upstream_sha256": "ebe3a1fc5c9ff26f2b9da693b0aef297dd83d1f52027497ad9fc2c147f66d3c1"
+      },
+      {
+        "anchor": "pkg/parser/util/escape_test.go:0:escape_test.go",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv",
+        "evidence_sha256": "4547fda1b56aa17745f96718081759c11b5a9935b4814eac54513c90d48143f3",
+        "owner": "parser-util-package",
+        "status": "COVERED",
+        "upstream_sha256": "efce4f7fa653e427863565741ca131217cd2a2474d9f9e5a302ca839c65241cf"
+      },
+      {
+        "anchor": "pkg/parser/util/escape_test.go:22:TestUnescapeChar",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv",
+        "evidence_sha256": "4547fda1b56aa17745f96718081759c11b5a9935b4814eac54513c90d48143f3",
+        "owner": "parser-util-package",
+        "status": "COVERED",
+        "upstream_sha256": "efce4f7fa653e427863565741ca131217cd2a2474d9f9e5a302ca839c65241cf"
+      }
+    ]
+  },
+  "schema": 2
+}

@@ -69,7 +69,7 @@ states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
 that any upstream Go package is completely transcreated unless a package
 receipt says so.
 
-Three leaf packages currently have schema-2 receipts under
+Four leaf packages currently have schema-2 receipts under
 [`workstreams/package-receipts/`](workstreams/package-receipts/):
 
 - `pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
@@ -84,6 +84,11 @@ Three leaf packages currently have schema-2 receipts under
   receipt covers all ten production files, all eleven original Go tests, build
   metadata, exact error-code/name/SQLSTATE authorities, Unicode tables, and the
   declared parser/protocol consumer seams.
+- `pkg/parser/util`, implemented across `tidb-hash`, `tidb-lexer`,
+  `tidb-parser`, and `tidb-planner`. Its receipt covers both production files,
+  every original test/build obligation, arbitrary-byte Go string hashing with
+  malformed UTF-8 rune iteration, MySQL escape behavior, and the declared
+  parser/planner consumer seams.
 
 ## Whole-package gaps
 
