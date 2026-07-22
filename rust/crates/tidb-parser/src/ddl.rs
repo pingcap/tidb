@@ -1271,10 +1271,13 @@ impl Parser {
                     self.bump();
                 }
                 let if_exists = self.parse_if_exists()?;
-                AlterTableAction::DropColumn {
-                    if_exists,
-                    name: self.parse_name()?,
+                let name = self.parse_name()?;
+                // MySQL's optional RESTRICT/CASCADE suffix is accepted by
+                // Go and intentionally omitted by AlterTableSpec.Restore.
+                if self.is_kw("RESTRICT") || self.is_kw("CASCADE") {
+                    self.bump();
                 }
+                AlterTableAction::DropColumn { if_exists, name }
             }
         } else if let Some(action) = alter::index_visibility::parse(self)? {
             action

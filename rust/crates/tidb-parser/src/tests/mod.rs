@@ -119,6 +119,7 @@ mod ctas_source;
 mod cte_scalar_union_source;
 mod ddl;
 mod ddl_alter_check_current_user_source;
+mod ddl_ast_source;
 mod ddl_attributes_source;
 mod ddl_check_time_source;
 mod ddl_column_check_source;
