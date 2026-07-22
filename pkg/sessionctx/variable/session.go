@@ -271,6 +271,32 @@ func (s *SessionVars) RUV2Weights() execdetails.RUV2Weights {
 	return ruv2WeightsFromConfig(config.DefaultRUV2Config())
 }
 
+// IsAnalyzeSkipColumnType reports whether ANALYZE never collects column statistics
+// for a column of the given type: vector columns (skipped unconditionally, as
+// collecting them is meaningless) and the types configured in
+// tidb_analyze_skip_column_types (JSON, BLOB and large TEXT by default). Such
+// columns never have loadable statistics, so estimation gains nothing from them and
+// their load status is meaningless. This mirrors the skip in the stats sync-load
+// path (statsSyncLoad.handleOneItemTaskWithSCtx).
+func (s *SessionVars) IsAnalyzeSkipColumnType(ft *types.FieldType) bool {
+	if ft == nil {
+		return false
+	}
+	switch ft.GetType() {
+	case mysql.TypeTiDBVectorFloat32, mysql.TypeJSON:
+		// Vector and JSON never carry column statistics regardless of configuration:
+		// vector is skipped unconditionally by ANALYZE, and JSON has no histogram
+		// semantics and is in the default skip set. Treat them as skipped even when
+		// AnalyzeSkipColumnTypes is not populated (e.g. lightweight sessions).
+		return true
+	}
+	if len(s.AnalyzeSkipColumnTypes) == 0 {
+		return false
+	}
+	_, skip := s.AnalyzeSkipColumnTypes[types.TypeToStr(ft.GetType(), ft.GetCharset())]
+	return skip
+}
+
 func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
 	return execdetails.RUV2Weights{
 		RUScale:                 cfg.RUScale,

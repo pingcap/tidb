@@ -88,6 +88,14 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
+	// Drop columns whose statistics are never collected (vector, and the types in
+	// tidb_analyze_skip_column_types such as JSON/BLOB/large TEXT) from the load request:
+	// they have no stats to load, so requesting them only wastes a sync/async-load
+	// round-trip that the load path skips anyway. Index items are kept, so statistics for
+	// indexes built over such columns (e.g. a multi-valued index over a JSON column) are
+	// still loaded — that is why this filtering happens here rather than on the columns
+	// fed to collectSyncIndices above.
+	histNeededItems = filterNeverAnalyzedColumns(plan.SCtx(), histNeededItems, tblID2TblInfo)
 	if len(histNeededItems) == 0 {
 		return plan, planChanged, nil
 	}
@@ -281,6 +289,30 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
 		copy(ds.PossibleAccessPaths, ds.AllPossibleAccessPaths)
 	}
+}
+
+// filterNeverAnalyzedColumns removes column load items whose statistics are never
+// collected (vector, or the types in tidb_analyze_skip_column_types). Index items are
+// left untouched, so indexes built over such columns still load their statistics.
+func filterNeverAnalyzedColumns(
+	sctx planctx.PlanContext,
+	items []model.StatsLoadItem,
+	tblID2TblInfo map[int64]*model.TableInfo,
+) []model.StatsLoadItem {
+	sv := sctx.GetSessionVars()
+	filtered := items[:0]
+	for _, item := range items {
+		if !item.IsIndex {
+			if tblInfo := tblID2TblInfo[item.TableID]; tblInfo != nil {
+				if colInfo := tblInfo.GetColumnByID(item.ID); colInfo != nil &&
+					sv.IsAnalyzeSkipColumnType(&colInfo.FieldType) {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func (CollectPredicateColumnsPoint) expandStatsNeededColumnsForStaticPruning(
