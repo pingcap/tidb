@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	formatutil "github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -355,7 +356,7 @@ func (d *packedRowDecoder) decode(
 ) ([]types.Datum, error) {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
-		return nil, errors.Annotatef(err, "decode packed backup row key %x", key)
+		return nil, errors.Annotatef(err, "decode packed backup row key %s", redact.Key(key))
 	}
 	d.decodeChunk.Reset()
 	if err := executor.DecodeRowValToChunkWithBuildContext(
@@ -368,7 +369,7 @@ func (d *packedRowDecoder) decode(
 		d.decodeChunk,
 		d.rowDecoder,
 	); err != nil {
-		return nil, errors.Annotatef(err, "decode packed backup row value at key %x", key)
+		return nil, errors.Annotatef(err, "decode packed backup row value at key %s", redact.Key(key))
 	}
 	return d.decodeChunk.GetRow(0).GetDatumRow(d.fieldTypes), nil
 }

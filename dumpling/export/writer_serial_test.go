@@ -12,8 +12,12 @@ import (
 
 	"github.com/pingcap/errors"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/pkg/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // BytesWriter is a Writer implementation on top of bytes.Buffer that is useful for testing.
@@ -383,12 +387,20 @@ func TestSQLDataTypes(t *testing.T) {
 }
 
 func TestWrite(t *testing.T) {
+	originalRedactMode := redact.NeedRedact()
+	redact.InitRedact(true)
+	t.Cleanup(func() { redact.InitRedact(originalRedactMode) })
+
+	core, logs := observer.New(zap.WarnLevel)
+	logger := log.NewAppLogger(zap.New(core))
+	tctx := tcontext.Background().WithLogger(logger)
+
 	mocksw := &mockPoisonWriter{}
 	src := []string{"test", "loooooooooooooooooooong", "poison"}
 	exp := []string{"test", "loooooooooooooooooooong", "poison_error"}
 
 	for i, s := range src {
-		err := write(tcontext.Background(), mocksw, s)
+		err := write(tctx, mocksw, s)
 		if err != nil {
 			require.EqualError(t, err, exp[i])
 		} else {
@@ -396,7 +408,12 @@ func TestWrite(t *testing.T) {
 			require.Equal(t, exp[i], mocksw.buf)
 		}
 	}
-	require.NoError(t, write(tcontext.Background(), mocksw, "test"))
+	require.NoError(t, write(tctx, mocksw, "test"))
+	logs.TakeAll()
+	require.EqualError(t, writeBytes(tctx, mocksw, []byte("poison")), "poison_error")
+	entries := logs.TakeAll()
+	require.Len(t, entries, 1)
+	require.Equal(t, "?", entries[0].ContextMap()["heading 200 characters"])
 }
 
 // cloneConfigForTest clones a dumpling config.

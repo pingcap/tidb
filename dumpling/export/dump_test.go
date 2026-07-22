@@ -768,6 +768,10 @@ func TestAdjustTableCollation(t *testing.T) {
 }
 
 func TestUnregisterMetrics(t *testing.T) {
+	originalRedactMode := errors.RedactLogEnabled.Load()
+	errors.RedactLogEnabled.Store(errors.RedactLogDisable)
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalRedactMode) })
+
 	ctx := context.Background()
 	conf := &Config{
 		SQL:          "not empty",
@@ -778,6 +782,7 @@ func TestUnregisterMetrics(t *testing.T) {
 
 	_, err := NewDumper(ctx, conf)
 	require.Error(t, err)
+	require.Equal(t, errors.RedactLogEnable, errors.RedactLogEnabled.Load())
 	_, err = NewDumper(ctx, conf)
 	// should not panic
 	require.Error(t, err)

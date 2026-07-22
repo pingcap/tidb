@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/stretchr/testify/require"
 )
 
@@ -249,6 +250,16 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 		rows := readPackedTestRows(t, store, table)
 		require.Equal(t, testCase.rows, rows, testCase.table)
 	}
+
+	originalRedactMode := redact.NeedRedact()
+	redact.InitRedact(true)
+	t.Cleanup(func() { redact.InitRedact(originalRedactMode) })
+	decoder, err := newPackedRowDecoder(packedChild)
+	require.NoError(t, err)
+	_, err = decoder.decode([]byte("sensitive-row-key"), nil)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "73656e7369746976652d726f772d6b6579")
+	require.Contains(t, err.Error(), "decode packed backup row key ?")
 }
 
 func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) []string {

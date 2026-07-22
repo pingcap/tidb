@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/pkg/caller"
 	gatomic "go.uber.org/atomic"
@@ -77,6 +78,8 @@ type Dumper struct {
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
+	redact.InitRedact(true)
+
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
 		b, err := objstore.ParseBackend(path, nil)

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -438,7 +439,7 @@ func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error 
 		// str might be very long, only output the first 200 chars
 		outputLength := min(len(p), 200)
 		tctx.L().Warn("fail to write",
-			zap.ByteString("heading 200 characters", p[:outputLength]),
+			zap.String("heading 200 characters", redact.Value(string(p[:outputLength]))),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "Part number must be an integer between 1 and 10000") {
 			err = errors.Annotate(err, "workaround: dump file exceeding 50GB, please specify -F=256MB -r=200000 to avoid this problem")
