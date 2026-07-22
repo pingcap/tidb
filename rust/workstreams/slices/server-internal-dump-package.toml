@@ -9,8 +9,12 @@ go_packages = ["pkg/server/internal/dump"]
 module_packages = []
 depends_on = []
 rust_paths = [
+  "rust/crates/tidb-protocol/src/dump.rs",
+  "rust/crates/tidb-protocol/src/column.rs",
   "rust/crates/tidb-protocol/src/result.rs",
   "rust/crates/tidb-protocol/src/prepared_statement.rs",
   "rust/crates/tidb-protocol/src/lib.rs",
   "rust/crates/tidb-protocol/tests/dump_package_source.rs",
+  "rust/crates/tidb-protocol/tests/result_source.rs",
+  "rust/crates/tidb-protocol/tests/prepared_statement_protocol_source.rs",
 ]

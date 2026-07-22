@@ -12,4 +12,6 @@ rust_paths = [
   "rust/crates/tidb-server/src/handshake.rs",
   "rust/crates/tidb-server/src/lib.rs",
   "rust/crates/tidb-server/tests/handshake_response_package_source.rs",
+  "rust/crates/tidb-server/tests/handshake_source.rs",
+  "rust/crates/tidb-server/tests/compressed_command_io_source.rs",
 ]
