@@ -2511,43 +2511,27 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	globalMemArbitrator := memory.GlobalMemArbitrator()
-	arbitratorMode := globalMemArbitrator.WorkMode()
-	enableWaitAverse := sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable
 	execUseArbitrator := globalMemArbitrator != nil && sessVars.ConnectionID != 0 &&
 		sessVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit &&
 		sessVars.StmtCtx.MemSensitive
 	compilePlanMemQuota := int64(0) // mem quota for compiler & optimizer
+	quotaReserved := int64(0)
 	if execUseArbitrator {
 		compilePlanMemQuota = approxCompilePlanMemQuota(normalizedSQL, sessVars.StmtCtx.InSelectStmt)
 		execUseArbitrator = compilePlanMemQuota > 0
 	}
 
 	releaseCommonQuota := func() { // release common quota
-		if compilePlanMemQuota > 0 {
-			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -compilePlanMemQuota)
-			compilePlanMemQuota = 0
+		if quotaReserved > 0 {
+			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -quotaReserved)
+			quotaReserved = 0
 		}
 	}
 
 	if execUseArbitrator {
-		intoErrBeforeExec := func() error {
-			if enableWaitAverse {
-				metrics.GlobalMemArbitratorSubTasks.CancelWaitAversePlan.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
-			}
-			if arbitratorMode == memory.ArbitratorModeStandard {
-				metrics.GlobalMemArbitratorSubTasks.CancelStandardModePlan.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
-			}
-			return nil
-		}
-
 		if globalMemArbitrator.AtMemRisk() {
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
-			}
-			if err := intoErrBeforeExec(); err != nil {
-				return nil, err
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
@@ -2558,15 +2542,13 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			}
 		}
 
-		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
+		ok := globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
+		quotaReserved += compilePlanMemQuota
 		defer releaseCommonQuota()
 
-		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
+		if !ok { // for SQL which needs to be controlled by mem-arbitrator
 			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
 				s.sessionPlanCache.DeleteAll()
-				// one more chance to get quota after clearing plan cache
-			} else if err := intoErrBeforeExec(); err != nil {
-				return nil, err
 			}
 		}
 	}
@@ -2654,16 +2636,19 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			}
 		}
 
-		digestKey := normalizedSQL
-		// digestKey := sessVars.StmtCtx.OriginalSQL
+		digestID := buildMemArbitratorDigestID(
+			normalizedSQL,
+			sessVars.StmtCtx.Tables,
+			sessVars.CurrentDB,
+		)
 
 		tracker := sessVars.StmtCtx.MemTracker
 		if !tracker.InitMemArbitrator(
 			globalMemArbitrator,
 			sessVars.MemTracker.Killer,
-			digestKey,
+			digestID,
 			memPriority,
-			enableWaitAverse,
+			sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable,
 			reserveSize,
 			s.isInternal(),
 		) {
@@ -2741,6 +2726,48 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 	}
 	return recordSet, nil
+}
+
+func buildMemArbitratorDigestID(
+	normalizedSQL string,
+	tables []stmtctx.TableEntry,
+	currentDB string,
+) uint64 {
+	if normalizedSQL == "" {
+		return memory.InvalidDigestID
+	}
+
+	builder := memory.NewDigestIDBuilder()
+	builder.AddString("v1")
+	builder.AddString(normalizedSQL)
+
+	// The planner already deduplicates StmtCtx.Tables. Keep its order here to
+	// avoid allocating and sorting a copy; an order change only causes a harmless
+	// profile cache miss.
+	hasResolvedTable := false
+	for _, tbl := range tables {
+		db := strings.ToLower(tbl.DB)
+		table := strings.ToLower(tbl.Table)
+		if db == "" && table == "" {
+			continue
+		}
+
+		if !hasResolvedTable {
+			builder.AddString("resolved-tables")
+			hasResolvedTable = true
+		}
+		builder.AddString(db)
+		builder.AddString(table)
+	}
+
+	if !hasResolvedTable {
+		// Some statements do not generate table visit information. Use the
+		// current DB as a conservative fallback.
+		builder.AddString("default-db")
+		builder.AddString(strings.ToLower(currentDB))
+	}
+
+	return builder.Sum64()
 }
 
 var isNextGenForRUV2 = kerneltype.IsNextGen
