@@ -210,3 +210,61 @@ fn generic_formatter_honors_go_flags_width_and_verb_precision() {
         "      0x1.80p+00"
     );
 }
+
+#[test]
+fn generic_formatter_shared_width_and_remaining_primitive_verbs_match_go() {
+    assert_eq!(render("%+07.2f", FormatArg::from(1.0_f64)), "+001.00");
+    assert_eq!(render("%+07.2F", FormatArg::from(1.0_f64)), "+001.00");
+    assert_eq!(render("%05s", FormatArg::from("abc")), "00abc");
+    assert_eq!(render("%06.0d", FormatArg::from(0_i64)), "      ");
+
+    for (format, expected) in [("%5q", "  \"a\""), ("%-5q", "\"a\"  "), ("%05q", "00\"a\"")] {
+        assert_eq!(render(format, FormatArg::from("a")), expected);
+    }
+    for (format, expected) in [("%5c", "    A"), ("%-5c", "A    "), ("%05c", "0000A")] {
+        assert_eq!(render(format, FormatArg::from('A')), expected);
+    }
+    for (format, expected) in [("%6t", "  true"), ("%-6t", "true  "), ("%06t", "00true")] {
+        assert_eq!(render(format, FormatArg::from(true)), expected);
+    }
+    for (format, expected) in [
+        ("%10T", "     int64"),
+        ("%-10T", "int64     "),
+        ("%010T", "00000int64"),
+    ] {
+        assert_eq!(render(format, FormatArg::from(1_i64)), expected);
+    }
+
+    for (format, expected) in [
+        ("%b", "111"),
+        ("%#b", "0b111"),
+        ("%08b", "00000111"),
+        ("%o", "7"),
+        ("%#o", "07"),
+        ("%O", "0o7"),
+        ("%#O", "0o07"),
+    ] {
+        assert_eq!(render(format, FormatArg::from(7_i64)), expected);
+    }
+    assert_eq!(render("%U", FormatArg::from('A')), "U+0041");
+    assert_eq!(render("%#U", FormatArg::from('A')), "U+0041 'A'");
+    assert_eq!(render("%12U", FormatArg::from('A')), "      U+0041");
+    assert_eq!(
+        render("%b", FormatArg::from(1.5_f64)),
+        "6755399441055744p-52"
+    );
+    assert_eq!(
+        render("%.3b", FormatArg::from(1.5_f64)),
+        "6755399441055744p-52"
+    );
+    assert_eq!(render("%#q", FormatArg::from("abc")), "`abc`");
+    assert_eq!(render("%#q", FormatArg::from("a\nb")), "\"a\\nb\"");
+    assert_eq!(render("%+q", FormatArg::from("é")), "\"\\u00e9\"");
+    assert_eq!(render("%#x", FormatArg::from("abc")), "0x616263");
+    assert_eq!(render("% x", FormatArg::from("abc")), "61 62 63");
+    assert_eq!(render("%# x", FormatArg::from("abc")), "0x61 0x62 0x63");
+    assert_eq!(render("%#X", FormatArg::from("ab")), "0X6162");
+    assert_eq!(render("%+v", FormatArg::from(7_i64)), "7");
+    assert_eq!(render("% v", FormatArg::from(7_i64)), " 7");
+    assert_eq!(render("%05v", FormatArg::from(7_i64)), "00007");
+}
