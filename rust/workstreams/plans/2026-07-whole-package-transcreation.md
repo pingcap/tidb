@@ -26,7 +26,7 @@ package receipts before its Rust code reaches the shared branch.
 
 - [x] (2026-07-22) Froze all existing schema-1 feature slices as legacy
   evidence and abandoned active partial-slice claims.
-- [x] (2026-07-22) Rewrote the design, handoff, and parallel protocol around
+- [x] (2026-07-22) Rewrote the design, handoff, and execution protocol around
   complete package ownership and removed dated campaign history.
 - [x] (2026-07-22) Added and tested the fail-closed schema-2 package manifest,
   package inventory view, frozen claims, legacy registry, direct-import
@@ -35,14 +35,17 @@ package receipts before its Rust code reaches the shared branch.
   frontier: `pkg/parser/format` and `pkg/server/internal/handshake`.
 - [x] (2026-07-22) Claimed source/test/support-complete, Rust-write-disjoint
   `pkg/parser/format` and `pkg/server/internal/handshake` package manifests.
-- [x] (2026-07-22) Transcreated the first complete package frontier from Go
-  source and every original test/support artifact. The parser-format package
-  is split across `tidb-ast` and `tidb-datatype` under one umbrella receipt.
-- [x] (2026-07-22) Ran the reused 12-job integration gate and issued immutable
-  receipts for both packages.
-- [x] (2026-07-22) Regenerated status: two schema-2 packages are covered, no
-  package claim remains active, and the remaining source/test ledgers stay
-  explicitly partial or untriaged.
+- [x] (2026-07-22) Built and initially gated the first package frontier from Go
+  source and the declared original test/support inventory. The parser-format
+  package spans `tidb-ast` and `tidb-datatype`; its later audit and receipt
+  reopening are recorded below.
+- [x] (2026-07-22) Ran the reused 12-job integration gate and issued receipts
+  for both packages.
+- [x] (2026-07-22) Added an atomic `reopen-package` transition and used it when
+  a later audit invalidated the `pkg/parser/format` receipt.
+- [x] (2026-07-22) Regenerated status: one schema-2 package remains covered,
+  `pkg/parser/format` is ready for complete repair, no package claim remains
+  active, and all remaining source/test rows stay partial or untriaged.
 
 ## Surprises & Discoveries
 
@@ -90,6 +93,12 @@ package receipts before its Rust code reaches the shared branch.
   Evidence: the first frontier existed before schema-2 `base_commit` claims.
   Future package claims must be created before their implementation commits so
   the committed-diff guard can reject every out-of-claim Rust change.
+- Observation: a passing package campaign can still contain a false-positive
+  receipt when its semantic oracle or consumer write set is incomplete.
+  Evidence: the `pkg/parser/format` audit found Rust full-Unicode casing where
+  Go applies simple-rune casing, different short-write behavior, and an omitted
+  production consumer integration path. The receipt was reopened rather than
+  preserving an incorrect covered count.
 
 ## Decision Log
 
@@ -110,9 +119,9 @@ package receipts before its Rust code reaches the shared branch.
 - Decision: allow multiple Rust target crates but only one package claim and
   receipt.
   Rationale: Rust crate boundaries are compile/ownership mechanisms and do not
-  weaken upstream package acceptance. Write-disjoint crate subteams may work
-  in parallel and merge into the package staging branch, but no sub-result is
-  independently integrated or counted complete.
+  weaken upstream package acceptance. Crate-local intermediate results remain
+  staging under one implementation owner; no sub-result is independently
+  integrated or counted complete.
   Date/Author: 2026-07-22 / Codex.
 - Decision: reject a ready package when any direct internal TiDB import is
   neither inside the same umbrella manifest nor represented by a covered
@@ -120,7 +129,7 @@ package receipts before its Rust code reaches the shared branch.
   Rationale: existing Rust helpers for an imported type are partial evidence,
   not proof that the dependency package contract is complete.
   Date/Author: 2026-07-22 / Codex.
-- Decision: distinguish stable package-owned Rust paths from steward-owned
+- Decision: distinguish stable package-owned Rust paths from shared
   integration paths in every schema-2 manifest and receipt.
   Rationale: stable files need exclusive ownership and durable content hashes;
   crate roots, dispatch, and shared consumer seams need exact gate-time scope
@@ -133,22 +142,32 @@ package receipts before its Rust code reaches the shared branch.
   support dispositions, a shared gate receipt, and all package receipts before
   it releases any claim.
   Date/Author: 2026-07-22 / Codex.
+- Decision: execute package/frontier implementation through one owner and
+  serialize all mutable integration seams.
+  Rationale: whole-package responsibility, evidence, and rollback stay
+  unambiguous; concurrency is not allowed to split acceptance or create a
+  second authority.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: treat a package receipt as durable evidence for an exact accepted
+  revision, not as irrevocable truth.
+  Rationale: later semantic or inventory discoveries must lower reported
+  coverage immediately. `reopen-package` performs the fail-closed transition
+  and refuses dependency-inconsistent reopening.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective
 
-The whole-package workflow and its first dependency-ready frontier are
-complete. `pkg/parser/format` and `pkg/server/internal/handshake` each have a
-content-bound immutable receipt, although the first maps to two Rust crates.
-The integration campaign passed workspace formatting, strict all-target
-Clippy, all Rust tests, the 86 governance regressions, source/test/support
-ledgers, 51,598 parser-oracle inputs, and plan inventory checks; repository
-`make -j12 lint` also passed.
+The whole-package workflow and atomic receipt lifecycle are implemented.
+`pkg/server/internal/handshake` retains a content-bound receipt.
+`pkg/parser/format` does not: its receipt was reopened after a semantic and
+consumer-path audit found missing parity. The earlier integration campaign
+remains historical evidence that its then-declared gates passed; it is no
+longer current package-completion evidence.
 
-This closes two small leaf packages, not the parser module, server subsystem,
-or SQL-node rewrite. The immediate next outcome is a larger dependency-closed
-frontier chosen from the checked package DAG. Its claims must precede all
-implementation commits, package teams must own stable leaves only, and the
-steward must own every declared integration seam.
+The immediate outcome is to repair and re-gate the complete
+`pkg/parser/format` package, then select the next dependency-closed frontier
+from the checked DAG. Every claim must precede implementation commits, and the
+single owner must declare stable leaves and all mutable integration seams.
 
 ## Context and Orientation
 
@@ -194,16 +213,16 @@ all Rust targets, production source count and lines, original obligation count,
 aggregate status, and active owner. It includes test-only packages and packages
 whose production rows are covered but tests remain open.
 
-Fourth, generate the first frontier from the checked package view. Prefer
+Fourth, generate each frontier from the checked package view. Prefer
 packages that are dependency-ready, advance the connected SQL-node path, and
 have disjoint Rust writes. Small packages may prove the workflow, but the same
 frontier must include a high-value dependency package so completion is not
 gamed through trivial package counts. Every candidate receives an independent
-inventory/dependency audit before dispatch.
+inventory/dependency audit before selection.
 
 Finally, transcreate each selected package directly from all Go production and
 test/support artifacts. A package that cannot close stays unintegrated and
-reports its exact dependency blocker. The integration steward lands shared
+reports its exact dependency blocker. The implementation owner lands shared
 seams in dependency order, runs one reused 12-job Ready gate, issues receipts,
 releases claims, and regenerates status.
 
@@ -221,10 +240,10 @@ Inspect a package manifest and atomically claim it:
     python3 rust/scripts/work-unit-queue.py claim-slice \
       --owner <package-owner> --slice <package-owner>
 
-Create one branch/worktree per accepted package under `rust/.worktrees/` and
-use the `codex/` branch prefix. Package teams run only their focused checks.
-After a meaningful frontier freezes, the integration steward closes it from
-`rust/` with one checkout-specific target:
+Create one branch/worktree for the active accepted package under
+`rust/.worktrees/` and use the `codex/` branch prefix. Run focused checks during
+implementation. After a meaningful frontier freezes, close it from `rust/`
+with one checkout-specific target:
 
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/private/tmp/tidb-rust-package-gate \
       python3 scripts/campaign_close.py --campaign <campaign> --gate
@@ -266,7 +285,7 @@ amending a schema-2 snapshot.
 Package worktrees are isolated by complete upstream and Rust write sets.
 Preserve unrelated files in the primary checkout. Never delete or rewrite
 schema-1 evidence to resolve an overlap; fix the package manifest, dependency
-contract, or steward ownership instead.
+contract, or integration-path ownership instead.
 
 ## Artifacts and Notes
 

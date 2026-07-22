@@ -1,8 +1,9 @@
-# Parallel package transcreation protocol
+# Whole-package transcreation execution protocol
 
-This is the execution contract for concurrent Go-to-Rust work. The minimum
-unit of ownership, implementation, validation, and completion is one complete
-upstream Go package or module.
+This is the execution contract for Go-to-Rust work. The filename is retained
+for tool and link compatibility. Execution is serial under one implementation
+owner; the minimum unit of ownership, implementation, validation, and
+completion is one complete upstream Go package or module.
 
 ## Non-negotiable package boundary
 
@@ -24,9 +25,8 @@ be marked package-complete.
 Rust crate boundaries do not weaken this rule. One Go package may map to
 multiple crates, and a dependency-closed package group may share one campaign,
 but each package keeps one complete umbrella claim, manifest, integration
-decision, and receipt. Write-disjoint Rust-crate subteams may work in parallel
-inside that umbrella; their outputs are not independently promotable package
-claims.
+decision, and receipt. Crate-local intermediate results are staging inside that
+umbrella; they are not independently promotable package claims.
 
 ## Start here
 
@@ -37,7 +37,7 @@ claims.
 3. Read the owning Go package documentation, every production file, and its
    complete test/support inventory.
 4. Read the checked package manifest and dependency-DAG record. If either is
-   missing or stale, the package is not dispatchable.
+   missing or stale, the package is not claimable.
 5. Read the relevant workstream README and
    [`docs/operations/validation.md`](docs/operations/validation.md).
 
@@ -47,37 +47,34 @@ them.
 
 ## Package manifest contract
 
-Before dispatch, the evidence steward generates and checks one manifest per Go
-package or pinned external module package. The manifest must record:
+Before implementation, generate and check one manifest per Go package or
+pinned external module package. The manifest must record:
 
 - upstream module/version and package import path;
 - every production, test, fixture, support, generated, and build artifact;
-- target Rust crates, stable package-owned paths, and steward-owned seams;
+- target Rust crates, stable package-owned paths, and shared integration seams;
 - package dependencies and the exact contracts consumed from them;
 - focused Rust targets, Go-oracle selectors, differential rings, and live gates;
-- the shared seams that require a named steward; and
+- every shared seam that must be serialized in the active claim; and
 - state: `inventory`, `ready`, `active`, `blocked`, or `covered`.
 
 `covered` is legal only after the generated inventory is closed and a receipt
 records every required gate. Compilation, one live query, or coverage of a
 subset of ledger rows is not package coverage.
 
-## Dependency-first dispatch
+## Dependency-first selection
 
-Build a DAG whose nodes are whole Go packages. Dispatch only:
+Build a DAG whose nodes are whole Go packages. Claim only:
 
 - a single package whose package dependencies expose the required checked
   contracts; or
 - a dependency-closed package group owned by one integration campaign.
 
-Prepare more than one source/test/write-disjoint package at a time so agents
-can work in parallel. Do not manufacture parallelism by splitting one package
-into independently promotable implementation claims. A package lead may
-delegate inventory/review work and implementation of frozen, write-disjoint
-Rust crates or crate-local leaves. Those branches merge into one package
-staging branch; the package still has one claim, one frozen inventory, one
-integration owner, and one receipt. No file, function, branch, Rust crate, or
-test subset is independently integrated into the shared branch.
+Work through one active package or dependency-closed frontier at a time. Do not
+split one package into independently promotable implementation claims. The
+package has one claim, one frozen inventory, one implementation owner, one
+integration decision, and one receipt. No file, function, branch, Rust crate,
+or test subset is independently integrated as completed work.
 
 Order the ready frontier by:
 
@@ -88,29 +85,26 @@ Order the ready frontier by:
 
 ## Ownership and worktrees
 
-The dispatcher acquires the complete package claim before creating a worktree.
+Acquire the complete package claim before creating a worktree.
 Claims must reject overlap in upstream source, original test/support artifacts,
-and stable package-owned Rust paths. `rust_paths` are exclusive package-agent
-leaves. `integration_paths` are existing shared crate seams edited only by the
-integration steward; they may overlap across package manifests but must not
+and stable package-owned Rust paths. `rust_paths` are exclusive package leaves.
+`integration_paths` are existing shared crate seams changed serially with the
+active package; they may overlap across package manifests but must not
 overlap any schema-2 stable path by ancestry. The claim freezes both exact
 lists.
 
-Use one `codex/<package-owner>` branch and one writable in-repo worktree per
-package claim. Local lease files remain ignored coordination state. Feature
-teams may edit only their declared Rust package leaves, mirrored tests, and
-owner-named evidence. They do not edit shared manifests, crate roots,
-`Cargo.toml`, generated inventories, status, or this protocol.
+Use one `codex/<package-owner>` branch and one writable in-repo worktree for the
+active package claim. Local lease files remain ignored coordination state. Edit
+only declared package leaves, mirrored tests, owner-named evidence, and frozen
+integration paths. Update shared manifests, crate roots, `Cargo.toml`, generated
+inventories, status, and this protocol only as part of the controlled package
+integration step.
 
-For a Go package mapped to several Rust crates, the package owner may create
-temporary `codex/<package-owner>/<rust-subtree>` branches and worktrees. Each
-subteam receives a write-disjoint subset of the already-declared umbrella Rust
-write set and a frozen interface. The package owner integrates those branches
-into `codex/<package-owner>`; only that staging branch can enter the shared
-frontier gate. A subteam cannot release, promote, or receipt part of the Go
-package.
+For a Go package mapped to several Rust crates, keep all crate work inside the
+same umbrella claim and integration branch. A crate-local intermediate result
+cannot release, promote, or receipt part of the Go package.
 
-Shared edits are serialized through named stewards:
+Shared edits are serialized:
 
 - AST/parser routing;
 - datatype and evaluation-context authority;
@@ -119,8 +113,8 @@ Shared edits are serialized through named stewards:
 - transaction/storage runtime authority; and
 - workspace, manifests, ledgers, receipts, and validation.
 
-When two packages require the same mutable seam, freeze the leaf APIs first
-and give the seam to one steward. Do not hide the collision behind different
+When two packages require the same mutable seam, freeze the leaf APIs first and
+change that seam in dependency order. Do not hide a collision behind different
 owner names.
 
 Every schema-2 claim freezes the current Git `base_commit`. Claims entering a
@@ -151,22 +145,22 @@ Translate the package from Go before redesigning it:
 
 ## Validation lanes
 
-| Lane | Owner | Required proof | Shared workspace build |
+| Lane | When | Required proof | Shared workspace build |
 | --- | --- | --- | --- |
-| Package | package team | manifest inventory read, complete source/test translation, focused tests, formatting, anchors, `git diff --check` | Focused only |
-| Static | evidence steward | package manifests, DAG, claims, duplicate ownership, generated ledgers, paths, transfer records | Evidence tools only |
-| Integrate | integration steward | frozen package frontier, workspace tests, all-target Clippy, differential rings, required live proofs | One reused 12-job target |
+| Package | implementation loop | manifest inventory read, complete source/test translation, focused tests, formatting, anchors, `git diff --check` | Focused only |
+| Static | before integration | package manifests, DAG, claims, duplicate ownership, generated ledgers, paths, transfer records | Evidence tools only |
+| Integrate | frontier close | frozen package frontier, workspace tests, all-target Clippy, differential rings, required live proofs | One reused 12-job target |
 
 Set `CARGO_BUILD_JOBS=12` for every Cargo build. Reuse one checkout-specific
 target directory and never share it across Git worktrees because evidence
 binaries embed their checkout through `CARGO_MANIFEST_DIR`. Only the integration
-steward runs the full gate; package teams stay in focused loops.
+step runs the full gate; focused loops do not repeatedly pay that cost.
 
 An integration receipt hashes the frozen package claims and immutable Rust
 workspace before and after the gate. Durable leaf receipts content-address
 stable `rust_paths`; they record integration seam path names and the shared gate
 attestation without hashing seam bytes. This preserves proof of the package
-leaf while allowing later packages to reuse a steward-owned seam. Any change
+leaf while allowing later packages to reuse a serialized shared seam. Any change
 during the gate or committed Rust code outside the active write-set union
 invalidates the gate.
 
@@ -182,7 +176,7 @@ invalidates the gate.
 - Evidence fragments remain owner-named and append-only. Ownership transfer
   uses checked transfer records; never silently delete or rewrite history.
 - Claims coordinate writes but cannot change ledger state. Generated status and
-  ledgers are integration outputs, not feature-team edit surfaces.
+  ledgers are integration outputs, not implementation-loop edit surfaces.
 - A package receipt enumerates its complete inventory and exact focused,
   differential, fault, and live gates. Missing inventory makes the receipt
   invalid.
@@ -210,14 +204,14 @@ the whole package satisfies its receipt.
 
 ## Integration sequence
 
-For each parallel frontier:
+For each frontier:
 
 1. Generate and audit complete package inventories.
 2. Freeze dependency contracts, stable Rust paths, integration seams, and the
    shared Git base.
-3. Atomically claim every package and create worktrees.
-4. Translate and test packages independently; keep shared seams unchanged.
-5. Have stewards land seam changes and generated artifacts in dependency order.
+3. Atomically claim every package and create the active worktree.
+4. Translate and test packages in dependency order.
+5. Land seam changes and generated artifacts in dependency order.
 6. Run static ownership/DAG checks.
 7. Run one 12-job workspace/differential/live gate for the frozen frontier.
 8. Issue receipts, release claims, and regenerate status only after the gate.
@@ -238,9 +232,10 @@ dependents first, then their dependencies. Historical campaign manifests and
 new repair closes through a new campaign and receipt.
 
 If a package cannot close, keep it `blocked`, record the exact missing package
-obligations, and continue with another source/test/write-disjoint ready package.
-Keep unfinished implementation on its package branch; do not integrate or
-split the missing branches into a smaller completion unit.
+obligations, release or preserve its claim deliberately, and continue with
+another dependency-ready package. Keep unfinished implementation on its
+package branch; do not integrate or split the missing branches into a smaller
+completion unit.
 
 ## Workstreams
 
@@ -257,6 +252,6 @@ split the missing branches into a smaller completion unit.
 - [Server](workstreams/server/README.md)
 
 The physical workspace boundaries are described in
-[`docs/architecture/workspace.md`](docs/architecture/workspace.md). The next
-implementation step is to add the checked package-manifest and package-DAG
-format without modifying legacy schema-1 records or generated ledger status.
+[`docs/architecture/workspace.md`](docs/architecture/workspace.md). Current
+next work and blockers belong in [`HANDOFF.md`](HANDOFF.md) and generated
+[`STATUS.md`](STATUS.md), not in this stable protocol.

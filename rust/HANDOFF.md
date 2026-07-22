@@ -41,13 +41,12 @@ split the rest of the package by branch.
   client or mock runtime.
 - Rust crate boundaries are implementation boundaries, not permission to split
   an upstream package's acceptance. One Go package may map to several crates,
-  and write-disjoint crate subteams may work in parallel behind one umbrella
-  package claim. One package owner remains responsible for the complete
-  inventory, staging integration, and package receipt; no crate sub-result is
-  independently promoted to the shared branch.
+  but one implementation owner remains responsible for the complete inventory,
+  integration, and package receipt; no crate sub-result is independently
+  promoted.
 - Shared crate roots, manifests, generated inventories, and cross-package
-  routing are steward-owned integration seams. Each package team owns the
-  package's complete declared Rust implementation and mirrored package tests.
+  routing are serialized integration seams. The active package claim declares
+  every implementation, test, evidence, and integration path it may change.
 
 ## Verified live facts
 
@@ -70,13 +69,17 @@ states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
 that any upstream Go package is completely transcreated unless a package
 receipt says so.
 
-Two leaf packages now have immutable schema-2 receipts under
+One leaf package currently has a schema-2 receipt under
 [`workstreams/package-receipts/`](workstreams/package-receipts/):
-`pkg/parser/format`, implemented across `tidb-ast` and `tidb-datatype`, and
-`pkg/server/internal/handshake`, implemented in `tidb-server`. These receipts
-close only their exact package inventories. They do not close the surrounding
-`pkg/parser` module, server handshake parser/authentication lifecycle, or
-`pkg/server` subsystem.
+`pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
+that exact package inventory, not the server handshake parser/authentication
+lifecycle or the `pkg/server` subsystem.
+
+The former `pkg/parser/format` receipt has been reopened. Audit found Go/Rust
+parity gaps in Unicode casing and short-write behavior, and its manifest missed
+a production consumer integration path. Its existing implementation across
+`tidb-ast` and `tidb-datatype` is seed evidence until the complete package is
+repaired, re-gated, and issued a new receipt.
 
 ## Whole-package gaps
 
@@ -100,24 +103,22 @@ whole-package obligations:
 This table describes the shape of the remaining work. It does not replace the
 generated ledgers and must not be converted into percentage progress.
 
-## Package-based parallel workflow
+## Package execution workflow
 
 1. Generate a package manifest from the authoritative Go tree. Freeze every
    source, test, support, fixture, generated, and build-metadata obligation.
-2. Resolve the package dependency DAG. A team may claim one package or a
-   dependency-closed package group; it may not claim a partial file/function
-   subset as a transcreation unit.
-3. Declare the complete Rust write set before creating worktrees. Separate
-   package teams must be source/test/write disjoint; stewards own shared seams.
-   Within one package claim, subagents may own disjoint Rust crates or leaves,
-   but their branches merge only into the package staging branch.
+2. Resolve the package dependency DAG. Claim one package or a dependency-closed
+   package group; never claim a partial file/function subset as a transcreation
+   unit.
+3. Declare the complete Rust write set, including shared integration seams,
+   before creating a worktree or changing behavior.
 4. Translate directly from the Go implementation and port the complete
    package test/support inventory. Rust-specific redesign is limited to
    runtime mechanisms that cannot be carried faithfully, such as GC pools,
    goroutine ownership, or untyped registries.
-5. Run focused package checks in package worktrees. Batch shared routing,
+5. Run focused package checks during implementation. Then run shared routing,
    manifests, generated inventories, full workspace tests, Clippy, and live
-   gates through one integration steward using 12 jobs.
+   gates in one clean integration state using 12 jobs.
 6. Issue a package receipt only after inventory closure and required
    differential/live evidence. Until then every carried ledger row stays
    honestly untriaged, partial, or blocked.
@@ -141,12 +142,11 @@ dispatch template for new package work.
 2. Freeze every package claim before its first implementation commit. The
    common `base_commit` and committed-diff guard must cover the full work, not
    only a takeover snapshot.
-3. Declare exclusive stable `rust_paths` and steward-owned shared
+3. Declare exclusive stable `rust_paths` and serialized shared
    `integration_paths` before creating package worktrees. A Go package may
    span several Rust crates under one umbrella claim and receipt.
-4. Dispatch source/test/support-disjoint package teams and write-disjoint
-   crate subteams. Merge crate sub-results only into the package staging
-   branch; never promote them independently.
+4. Transcreate the package through one owner. Treat any crate-local intermediate
+   result as staging only; never promote it independently.
 5. Add exact source/test/support evidence only after the complete package
    contract and all original tests are represented.
 6. Close the entire frontier with `campaign_close.py --gate`, issue every
@@ -164,8 +164,8 @@ normal-2PC leaves are inputs, not completion evidence.
 - Read [`STATUS.md`](STATUS.md), the relevant package manifest, the owning Go
   package docs/source/tests, [`PARALLEL.md`](PARALLEL.md), root `AGENTS.md`, and
   `PLANS.md` before editing.
-- Use 12 jobs for builds. Feature teams run focused checks; the integrator runs
-  the shared Ready gate.
+- Use 12 jobs for builds. Run focused checks during implementation and the
+  shared Ready gate before a completion claim.
 - Keep unsupported behavior fail-closed before state mutation or PD/TiKV
   publication, but do not treat fail-closed partial behavior as transcreation.
 - Do not add compatibility aliases, duplicate codecs, a second transaction
