@@ -220,17 +220,35 @@ class CampaignCloseTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_integrate_fails_static_before_expensive_workspace_work(self) -> None:
+    def test_integrate_runs_static_once_before_expensive_workspace_work(self) -> None:
         integrate = GATE_SCRIPT.read_text(encoding="utf-8").split(
             "    integrate)", 1
         )[1]
         first_static = integrate.index("        static_gates")
         clippy = integrate.index("        cargo clippy")
         tests = integrate.index("        cargo test")
-        last_static = integrate.rindex("        static_gates")
+        finish = integrate.index("        scripts/work-unit-queue.py gate-finish")
         self.assertLess(first_static, clippy)
         self.assertLess(clippy, tests)
-        self.assertGreater(last_static, tests)
+        self.assertLess(tests, finish)
+        self.assertEqual(integrate.count("        static_gates"), 1)
+
+    def test_static_checks_are_parallel_read_only_jobs(self) -> None:
+        gate = GATE_SCRIPT.read_text(encoding="utf-8")
+        static = gate.split("static_gates() {", 1)[1].split("\n}", 1)[0]
+        build = static.index("    build_evidence_tools")
+        first_job = static.index("    run_static_check")
+        wait = static.index("    wait_static_checks")
+        self.assertLess(build, first_job)
+        self.assertLess(first_job, wait)
+        self.assertIn(
+            'run_static_check "$CARGO_TARGET_DIR/debug/go_test_ledger" --check',
+            static,
+        )
+        self.assertIn(
+            'run_static_check "$CARGO_TARGET_DIR/debug/integration_parser_golden" --check',
+            static,
+        )
 
     def test_prepare_regenerates_only_derived_close_surfaces(self) -> None:
         prepare = GATE_SCRIPT.read_text(encoding="utf-8").split(

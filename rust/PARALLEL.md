@@ -219,9 +219,12 @@ For each package or inseparable frontier:
 5. Land seam changes in dependency order.
 6. Let package close regenerate the active claim's derived ledger rows and
    reject any unrelated generated change.
-7. Run static ownership/DAG/generated checks before expensive work.
+7. Build evidence tools once and run independent read-only static
+   ownership/DAG/generated/differential checks concurrently before expensive
+   work.
 8. Run one 12-job workspace/differential/live gate for the frozen package or
-   inseparable frontier, then repeat static validation before attestation.
+   inseparable frontier. Attest only if the exact gate-begin input digest is
+   unchanged; do not repeat the identical static pass.
 9. Issue receipts, release claims, and regenerate stable status only after the
    gate.
 

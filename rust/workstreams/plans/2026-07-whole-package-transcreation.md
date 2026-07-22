@@ -74,6 +74,12 @@ package receipts before its Rust code reaches the shared branch.
   preserves arbitrary Go string bytes and matches Go's malformed UTF-8 range
   semantics; all original package test/build obligations and consumer seams
   are covered. Stable status now reports four covered schema-2 packages.
+- [x] (2026-07-22) Shortened the shared close gate without weakening its proof:
+  build evidence tools once, fan out all independent read-only static checks,
+  and use the existing begin/finish workspace digest to replace the duplicate
+  post-test static pass. On the same warm target, one static stage fell from
+  20.58 seconds to 9.70 seconds; a close now avoids about 31 seconds of
+  previously serialized or repeated static work.
 
 ## Surprises & Discoveries
 
@@ -150,6 +156,13 @@ package receipts before its Rust code reaches the shared branch.
   bytes, but the Rust trait accepted only `&str`. Exact malformed UTF-8 oracles
   exposed the narrowing and the complete package close repaired it before
   issuing a receipt.
+- Observation: the integration gate serialized independent readers and then
+  reran all of them after testing, although `gate-finish` already rejects any
+  checked-input mutation by digest.
+  Evidence: the warm static stage took 20.58 seconds, including a 6.666-second
+  Go-test-ledger scan. Concurrent execution reduced it to 9.70 seconds, and
+  removing the redundant second pass preserves the same frozen-input
+  attestation while avoiding another full static stage.
 
 ## Decision Log
 
@@ -232,6 +245,12 @@ package receipts before its Rust code reaches the shared branch.
   loop without weakening the shared gate, rollback, or immutable receipt. This
   supersedes using a one-member campaign as the ordinary close form.
   Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: run independent read-only static gates concurrently once per close
+  and let the existing gate-begin/gate-finish digest prove their inputs remained
+  unchanged through workspace tests.
+  Rationale: rerunning deterministic readers on byte-identical inputs adds
+  latency but no evidence; the digest fails closed on any mutation.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective
 
@@ -251,9 +270,10 @@ every mutable integration seam, then close that package directly from its exact
 claim through the full gate and atomic receipt transaction.
 
 Before that claim, the close loop was shortened at the mechanism layer:
-active-package ledger rows are regenerated under exact claim scope, static
-checks run before workspace work, and the stable dashboard no longer depends
-on ignored leases. This changes failure latency, not package acceptance.
+active-package ledger rows are regenerated under exact claim scope, independent
+static checks fan out before workspace work, the content digest replaces a
+duplicate post-test pass, and the stable dashboard no longer depends on ignored
+leases. This changes failure latency, not package acceptance.
 
 ## Context and Orientation
 

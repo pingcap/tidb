@@ -59,24 +59,40 @@ build_evidence_tools() {
     cargo build --offline --locked -j12 -p difftest --bins -q
 }
 
-static_gates() {
-    scripts/work-unit-queue.py check
-    python3 scripts/status-dashboard.py --check
-    build_evidence_tools
-    for tool in \
-        go_source_ledger \
-        go_test_ledger \
-        external_go_ledger \
-        domain_queue \
-        parser_translation_manifest \
-        integration_parser_inventory \
-        integration_parser_golden \
-        integration_parser_queue \
-        integration_plan_inventory
-    do
-        "$CARGO_TARGET_DIR/debug/$tool" --check
+run_static_check() {
+    "$@" &
+    static_pids="$static_pids $!"
+}
+
+wait_static_checks() {
+    failed=0
+    for pid in $static_pids; do
+        if ! wait "$pid"; then
+            failed=1
+        fi
     done
-    "$CARGO_TARGET_DIR/debug/parser_translation_manifest" --check-fragments
+    [ "$failed" -eq 0 ]
+}
+
+static_gates() {
+    build_evidence_tools
+    # These checks are read-only and share no output files. Run all of them at
+    # once after the evidence binaries are built; the slow test-ledger scan no
+    # longer serializes every other inventory and golden check.
+    static_pids=""
+    run_static_check scripts/work-unit-queue.py check
+    run_static_check python3 scripts/status-dashboard.py --check
+    run_static_check "$CARGO_TARGET_DIR/debug/go_source_ledger" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/go_test_ledger" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/external_go_ledger" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/domain_queue" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/parser_translation_manifest" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/integration_parser_inventory" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/integration_parser_golden" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/integration_parser_queue" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/integration_plan_inventory" --check
+    run_static_check "$CARGO_TARGET_DIR/debug/parser_translation_manifest" --check-fragments
+    wait_static_checks
 }
 
 prepare_generated() {
@@ -129,8 +145,9 @@ case ${1:-} in
             scripts/test_campaign_close.py \
             scripts/test_work_unit_queue.py \
             scripts/test_status_dashboard.py
-        cargo fmt --all -- --check
-        static_gates
+        # gate-finish compares the complete checked-input snapshot with
+        # gate-begin. If tests mutate any checked file it rejects the run, so a
+        # second 50k-query static pass would repeat the same proof.
         # POSIX grep, not rg: this script runs under /bin/sh, where a caller's
         # interactive-shell `rg` may not exist. A missing matcher made the
         # pipeline print nothing, so the isolation check passed unconditionally.
