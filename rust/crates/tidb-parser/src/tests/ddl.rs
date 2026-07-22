@@ -230,6 +230,72 @@ fn alter_table_statement_options_transcreate_the_complete_go_action_family() {
 }
 
 #[test]
+fn alter_table_extended_statistics_transcreate_all_go_ast_restore_rows() {
+    for (sql, expected) in [
+        (
+            "ALTER TABLE t add stats_extended s1 cardinality(a,b)",
+            "ALTER TABLE `t` ADD STATS_EXTENDED `s1` CARDINALITY(`a`, `b`)",
+        ),
+        (
+            "ALTER TABLE t add stats_extended if not exists s1 cardinality(a,b)",
+            "ALTER TABLE `t` ADD STATS_EXTENDED IF NOT EXISTS `s1` CARDINALITY(`a`, `b`)",
+        ),
+        (
+            "ALTER TABLE t add stats_extended s1 correlation(a,b)",
+            "ALTER TABLE `t` ADD STATS_EXTENDED `s1` CORRELATION(`a`, `b`)",
+        ),
+        (
+            "ALTER TABLE t add stats_extended if not exists s1 correlation(a,b)",
+            "ALTER TABLE `t` ADD STATS_EXTENDED IF NOT EXISTS `s1` CORRELATION(`a`, `b`)",
+        ),
+        (
+            "ALTER TABLE t add stats_extended s1 dependency(a,b)",
+            "ALTER TABLE `t` ADD STATS_EXTENDED `s1` DEPENDENCY(`a`, `b`)",
+        ),
+        (
+            "ALTER TABLE t add stats_extended if not exists s1 dependency(a,b)",
+            "ALTER TABLE `t` ADD STATS_EXTENDED IF NOT EXISTS `s1` DEPENDENCY(`a`, `b`)",
+        ),
+        (
+            "ALTER TABLE t drop stats_extended s1",
+            "ALTER TABLE `t` DROP STATS_EXTENDED `s1`",
+        ),
+        (
+            "ALTER TABLE t drop stats_extended if exists s1",
+            "ALTER TABLE `t` DROP STATS_EXTENDED IF EXISTS `s1`",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+
+    for sql in [
+        "ALTER TABLE t ADD STATS_EXTENDED s",
+        "ALTER TABLE t ADD STATS_EXTENDED s CARDINALITY()",
+        "ALTER TABLE t ADD STATS_EXTENDED s UNKNOWN(a,b)",
+        "ALTER TABLE t DROP STATS_EXTENDED",
+    ] {
+        assert!(parse(sql).is_err(), "unexpectedly accepted: {sql}");
+    }
+
+    let statement = parse("ALTER TABLE t ADD STATS_EXTENDED s DEPENDENCY(a,b)").unwrap();
+    let Stmt::Ddl(ddl) = statement else {
+        panic!("expected DDL statement");
+    };
+    let DdlStmt::AlterTable(alter) = ddl.into_inner() else {
+        panic!("expected ALTER TABLE statement");
+    };
+    assert_eq!(
+        only_alter_action(&alter),
+        AlterTableAction::AddStatistics {
+            if_not_exists: false,
+            name: "s".to_string(),
+            stats_type: tidb_ast::ExtendedStatsType::Dependency,
+            columns: vec!["a".to_string(), "b".to_string()],
+        }
+    );
+}
+
+#[test]
 fn test_alter_table_with_special_comment_restore() {
     let flags = tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT;
     for (sql, expected) in [

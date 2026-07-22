@@ -1010,6 +1010,38 @@ impl AlterTableAction {
                     "DISCARD TABLESPACE"
                 });
             }
+            AlterTableAction::AddStatistics {
+                if_not_exists,
+                name,
+                stats_type,
+                columns,
+            } => {
+                out.push_str("ADD STATS_EXTENDED ");
+                if *if_not_exists {
+                    out.push_str("IF NOT EXISTS ");
+                }
+                out.push_str(&back_quote(name));
+                out.push(' ');
+                out.push_str(match stats_type {
+                    crate::ExtendedStatsType::Cardinality => "CARDINALITY(",
+                    crate::ExtendedStatsType::Dependency => "DEPENDENCY(",
+                    crate::ExtendedStatsType::Correlation => "CORRELATION(",
+                });
+                for (index, column) in columns.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&back_quote(column));
+                }
+                out.push(')');
+            }
+            AlterTableAction::DropStatistics { if_exists, name } => {
+                out.push_str("DROP STATS_EXTENDED ");
+                if *if_exists {
+                    out.push_str("IF EXISTS ");
+                }
+                out.push_str(&back_quote(name));
+            }
             AlterTableAction::WithValidation => out.push_str("WITH VALIDATION"),
             AlterTableAction::WithoutValidation => out.push_str("WITHOUT VALIDATION"),
             AlterTableAction::AddIndexConstraint(constraint) => {
@@ -1130,6 +1162,24 @@ pub enum AlterTableAction {
     SecondaryLoad(bool),
     /// Table `IMPORT TABLESPACE` when true and `DISCARD TABLESPACE` when false.
     TablespaceImport(bool),
+    /// `ADD STATS_EXTENDED [IF NOT EXISTS] name kind(columns...)`.
+    AddStatistics {
+        /// Source guard.
+        if_not_exists: bool,
+        /// Extended-statistics name.
+        name: String,
+        /// Cardinality, dependency, or correlation.
+        stats_type: crate::ExtendedStatsType,
+        /// Unqualified column names in source order.
+        columns: Vec<String>,
+    },
+    /// `DROP STATS_EXTENDED [IF EXISTS] name`.
+    DropStatistics {
+        /// Source guard.
+        if_exists: bool,
+        /// Extended-statistics name.
+        name: String,
+    },
     /// `WITH VALIDATION`. Go represents this as a standalone ALTER TABLE
     /// specification that may be ordered with other specifications; the
     /// seed executor keeps it typed but rejects it before transaction
@@ -1748,6 +1798,24 @@ impl crate::Visitable for AlterTableAction {
                 let _ = field_0;
             }
             Self::Force => {}
+            Self::AddStatistics {
+                if_not_exists,
+                name,
+                stats_type,
+                columns,
+            } => {
+                if !crate::Visitable::accept(stats_type, visitor) {
+                    return false;
+                }
+                let _ = if_not_exists;
+                let _ = name;
+                let _ = stats_type;
+                let _ = columns;
+            }
+            Self::DropStatistics { if_exists, name } => {
+                let _ = if_exists;
+                let _ = name;
+            }
             Self::WithValidation => {}
             Self::WithoutValidation => {}
             Self::SetKeysEnabled(field_0) => {

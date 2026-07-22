@@ -1046,6 +1046,45 @@ impl Parser {
                 }
             }
             AlterTableAction::SetTableOptions { options }
+        } else if self.is_kw("ADD") && self.is_kw_at(1, "STATS_EXTENDED") {
+            self.bump();
+            self.bump();
+            let if_not_exists = self.parse_if_not_exists()?;
+            let name = self.parse_name()?;
+            let stats_type = if self.is_kw("CARDINALITY") {
+                self.bump();
+                tidb_ast::ExtendedStatsType::Cardinality
+            } else if self.is_kw("DEPENDENCY") {
+                self.bump();
+                tidb_ast::ExtendedStatsType::Dependency
+            } else if self.is_kw("CORRELATION") {
+                self.bump();
+                tidb_ast::ExtendedStatsType::Correlation
+            } else {
+                return Err(self.err_here(
+                    "expected CARDINALITY, DEPENDENCY, or CORRELATION after STATS_EXTENDED name",
+                ));
+            };
+            self.expect_op("(")?;
+            let mut columns = vec![self.parse_name()?];
+            while self.is_op(",") {
+                self.bump();
+                columns.push(self.parse_name()?);
+            }
+            self.expect_op(")")?;
+            AlterTableAction::AddStatistics {
+                if_not_exists,
+                name,
+                stats_type,
+                columns,
+            }
+        } else if self.is_kw("DROP") && self.is_kw_at(1, "STATS_EXTENDED") {
+            self.bump();
+            self.bump();
+            AlterTableAction::DropStatistics {
+                if_exists: self.parse_if_exists()?,
+                name: self.parse_name()?,
+            }
         } else if self.is_kw("ADD") {
             self.bump();
             if self.is_kw("PARTITION") {
