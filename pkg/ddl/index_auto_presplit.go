@@ -138,7 +138,7 @@ func planAutoPresplitIndexRegions(
 		topN, err = statsProvider.LoadColumnTopN(
 			ctx, sctx, tblInfo.ID, leadingCol.ID, cfg.maxTopNKeysPerPhysical)
 		if err != nil {
-			return nil, "failed to load leading column TopN from storage", err
+			return nil, "", fmt.Errorf("failed to load leading column TopN from storage: %w", err)
 		}
 	} else {
 		topN = colStats.TopN
@@ -146,14 +146,14 @@ func planAutoPresplitIndexRegions(
 
 	topNRows, err := buildAutoPresplitTopNRows(sctx, statsTbl, topN, leadingCol, cfg)
 	if err != nil {
-		return nil, "failed to build TopN split keys", err
+		return nil, "", fmt.Errorf("failed to build TopN split keys: %w", err)
 	}
 	if len(topNRows) == 0 {
 		return nil, "no split strategy matched", nil
 	}
 	splitKeys, err := getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, topNRows)
 	if err != nil {
-		return nil, "failed to build TopN split keys", err
+		return nil, "", fmt.Errorf("failed to build TopN split keys: %w", err)
 	}
 
 	splitKeys = sortAndDedupeAutoPresplitKeys(splitKeys)

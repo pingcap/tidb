@@ -113,9 +113,9 @@ func TestShowCommentsFromJob(t *testing.T) {
 
 	job.ReorgMeta = &model.DDLReorgMeta{
 		ReorgTp: model.ReorgTypeTxn,
-		AutoPresplitIndexRegionResults: []model.AutoPresplitIndexRegionResult{{
+		AutoPresplitResults: []model.AutoPresplitResult{{
 			IndexName:            "idx",
-			Status:               model.AutoPresplitIndexRegionStatusSplit,
+			Status:               model.AutoPresplitStatusSplit,
 			SplitKeyCount:        3,
 			SplitRegionCount:     3,
 			ScatteredRegionCount: 2,
@@ -124,8 +124,8 @@ func TestShowCommentsFromJob(t *testing.T) {
 	res = showCommentsFromJob(job)
 	require.Equal(t, "txn, auto_presplit_index_region=idx(split, split_keys=3, split_regions=3, scattered_regions=2)", res)
 
-	job.ReorgMeta.AutoPresplitIndexRegionResults[0] = model.AutoPresplitIndexRegionResult{
-		IndexName: "idx", Status: model.AutoPresplitIndexRegionStatusSkipped, Reason: "stats pseudo",
+	job.ReorgMeta.AutoPresplitResults[0] = model.AutoPresplitResult{
+		IndexName: "idx", Status: model.AutoPresplitStatusSkipped, Reason: "stats pseudo",
 	}
 	res = showCommentsFromJob(job)
 	require.Equal(t, "txn, auto_presplit_index_region=idx(skipped, reason=\"stats pseudo\")", res)
@@ -155,9 +155,9 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 	res = showCommentsFromSubjob(subJob, false, true)
 	require.Equal(t, "ingest", res)
 
-	subJob.AutoPresplitIndexRegionResults = []model.AutoPresplitIndexRegionResult{{
+	subJob.AutoPresplitResults = []model.AutoPresplitResult{{
 		IndexName:        "idx",
-		Status:           model.AutoPresplitIndexRegionStatusFailed,
+		Status:           model.AutoPresplitStatusFailed,
 		SplitKeyCount:    3,
 		SplitRegionCount: 1,
 		Reason:           "mock split error",
