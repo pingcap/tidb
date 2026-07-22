@@ -495,24 +495,6 @@ func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 
-func (s *Server) startAdvertisedStatusEndpointCheck(ctx context.Context) {
-	if s.dom == nil {
-		return
-	}
-	ddl := s.dom.DDL()
-	if ddl == nil {
-		return
-	}
-	advertisedstatus.Start(ctx, advertisedstatus.Options{
-		ReportStatus:     s.cfg.Status.ReportStatus,
-		StatusListener:   s.statusListener,
-		AdvertiseAddress: s.cfg.AdvertiseAddress,
-		LocalID:          ddl.GetID(),
-		Scheme:           util.InternalHTTPSchema(),
-		BaseHTTPClient:   util.InternalHTTPClient(),
-	})
-}
-
 // Run runs the server.
 func (s *Server) Run(dom *domain.Domain) error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
@@ -544,9 +526,16 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
-	advertisedStatusEndpointCheckCtx, cancelAdvertisedStatusEndpointCheck := context.WithCancel(context.Background())
-	defer cancelAdvertisedStatusEndpointCheck()
-	s.startAdvertisedStatusEndpointCheck(advertisedStatusEndpointCheckCtx)
+	if s.cfg.Status.ReportStatus {
+		advertisedStatusEndpointCheckCtx, cancelAdvertisedStatusEndpointCheck := context.WithCancel(context.Background())
+		defer cancelAdvertisedStatusEndpointCheck()
+		advertisedstatus.Start(advertisedStatusEndpointCheckCtx, advertisedstatus.Options{
+			ReportStatus:     s.cfg.Status.ReportStatus,
+			StatusListener:   s.statusListener,
+			AdvertiseAddress: s.cfg.AdvertiseAddress,
+			LocalID:          s.dom.DDL().GetID(),
+		})
+	}
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
