@@ -19,7 +19,7 @@
 //! `Op(0).Format(...)` both produce an empty string. Values outside the
 //! source table panic when inspected, just like indexing Go's `ops` array.
 
-use std::fmt;
+use std::{fmt, io};
 
 use crate::{RestoreCtx, RestoreWriter};
 
@@ -202,7 +202,7 @@ const OPS: [OpInfo; 33] = [
 
 /// Source-faithful SQL opcode value.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Op(i32);
+pub struct Op(isize);
 
 #[allow(non_upper_case_globals)]
 impl Op {
@@ -313,12 +313,12 @@ impl Op {
     ///
     /// Zero preserves Go's empty zero value. Inspecting a value outside
     /// `0..=32` panics with the same fail-fast behavior as Go's table index.
-    pub const fn from_value(value: i32) -> Self {
+    pub const fn from_value(value: isize) -> Self {
         Self(value)
     }
 
     /// Returns the exact source integer representation.
-    pub const fn value(self) -> i32 {
+    pub const fn value(self) -> isize {
         self.0
     }
 
@@ -338,10 +338,11 @@ impl Op {
 
     /// Writes the source literal without transforming keyword case.
     ///
-    /// Writer failures are deliberately ignored, matching Go's discarded
-    /// `io.WriteString` result.
-    pub fn format<W: fmt::Write + ?Sized>(self, writer: &mut W) {
-        let _ = writer.write_str(self.literal());
+    /// Exactly one byte write is attempted. Its count and error are
+    /// deliberately ignored, matching Go's discarded `io.WriteString` result
+    /// for an ordinary `io.Writer`, including short writes.
+    pub fn format<W: io::Write + ?Sized>(self, writer: &mut W) {
+        let _ = writer.write(self.literal().as_bytes());
     }
 
     /// Returns whether restore treats this operator as a keyword.

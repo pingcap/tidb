@@ -14,6 +14,8 @@
 
 //! Complete package-contract tests for `pkg/parser/opcode`.
 
+use std::io;
+
 use tidb_ast::{BinaryOp, Op, RestoreCtx, RestoreFlags, UnaryOp};
 
 const SOURCE_ROWS: [(Op, &str, &str, bool); 32] = [
@@ -56,7 +58,7 @@ fn every_source_value_name_literal_and_keyword_bit_is_exact() {
     assert_eq!(Op::ALL, SOURCE_ROWS.map(|row| row.0));
 
     for (index, (op, name, literal, is_keyword)) in SOURCE_ROWS.into_iter().enumerate() {
-        assert_eq!(op.value(), i32::try_from(index).unwrap() + 1);
+        assert_eq!(op.value(), isize::try_from(index).unwrap() + 1);
         assert_eq!(op.name(), name);
         assert_eq!(op.to_string(), name);
         assert_eq!(op.literal(), literal);
@@ -68,19 +70,63 @@ fn every_source_value_name_literal_and_keyword_bit_is_exact() {
 #[test]
 fn format_matches_every_source_table_entry_including_zero_value() {
     for (op, _, literal, _) in SOURCE_ROWS {
-        let mut formatted = String::new();
+        let mut formatted = Vec::new();
         op.format(&mut formatted);
-        assert_eq!(formatted, literal);
+        assert_eq!(formatted, literal.as_bytes());
     }
 
-    let mut zero = String::new();
+    let mut zero = Vec::new();
     Op::default().format(&mut zero);
     assert_eq!(Op::default(), Op::INVALID);
     assert_eq!(Op::default().value(), 0);
     assert_eq!(Op::default().name(), "");
     assert_eq!(Op::default().to_string(), "");
-    assert_eq!(zero, "");
+    assert_eq!(zero, b"");
     assert!(!Op::default().is_keyword());
+}
+
+#[derive(Default)]
+struct OneByteWriter {
+    bytes: Vec<u8>,
+    writes: usize,
+}
+
+impl io::Write for OneByteWriter {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        self.writes += 1;
+        if let Some(byte) = input.first() {
+            self.bytes.push(*byte);
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct ErrorWriter;
+
+impl io::Write for ErrorWriter {
+    fn write(&mut self, _input: &[u8]) -> io::Result<usize> {
+        Err(io::Error::other("source writer failure"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn format_attempts_one_byte_write_and_discards_its_result() {
+    let mut short = OneByteWriter::default();
+    Op::LogicAnd.format(&mut short);
+    assert_eq!(short.writes, 1);
+    assert_eq!(short.bytes, b"A");
+
+    Op::LogicAnd.format(&mut ErrorWriter);
 }
 
 #[test]
@@ -107,6 +153,24 @@ fn restore_transforms_only_keywords_through_the_shared_context() {
                 literal.to_owned()
             }
         );
+
+        let mut unchanged = RestoreCtx::new(RestoreFlags::from_bits(0), String::new());
+        op.restore(&mut unchanged);
+        assert_eq!(unchanged.into_inner(), literal);
+
+        let mut upper_wins = RestoreCtx::new(
+            RestoreFlags::KEYWORD_UPPERCASE | RestoreFlags::KEYWORD_LOWERCASE,
+            String::new(),
+        );
+        op.restore(&mut upper_wins);
+        assert_eq!(
+            upper_wins.into_inner(),
+            if is_keyword {
+                literal.to_uppercase()
+            } else {
+                literal.to_owned()
+            }
+        );
     }
 
     let mut zero = RestoreCtx::new(RestoreFlags::DEFAULT, String::new());
@@ -116,10 +180,17 @@ fn restore_transforms_only_keywords_through_the_shared_context() {
 
 #[test]
 fn values_outside_the_source_table_fail_fast_when_inspected() {
-    for value in [-1, 33] {
+    for value in [isize::MIN, -1, 33, isize::MAX] {
         assert!(std::panic::catch_unwind(|| Op::from_value(value).name()).is_err());
         assert!(std::panic::catch_unwind(|| Op::from_value(value).literal()).is_err());
         assert!(std::panic::catch_unwind(|| Op::from_value(value).is_keyword()).is_err());
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    {
+        let wider_than_i32 = i32::MAX as isize + 1;
+        assert_eq!(Op::from_value(wider_than_i32).value(), wider_than_i32);
+        assert!(std::panic::catch_unwind(|| Op::from_value(wider_than_i32).name()).is_err());
     }
 }
 
