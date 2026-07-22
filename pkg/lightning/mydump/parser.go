@@ -678,8 +678,6 @@ func OpenReader(
 	decompressCfg storage.DecompressConfig,
 ) (reader storage.ReadSeekCloser, err error) {
 	switch {
-	case fileMeta.Type == SourceTypeParquet:
-		reader, err = OpenParquetReader(ctx, store, fileMeta.Path)
 	case fileMeta.Compression != CompressionNone:
 		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
 		if err2 != nil {
