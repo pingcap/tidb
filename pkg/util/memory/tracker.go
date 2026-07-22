@@ -1287,29 +1287,21 @@ func (t *Tracker) InitMemArbitrator(
 	}
 
 	uid := t.SessionID.Load()
-	var cancelChan <-chan struct{}
-	if killer != nil {
-		cancelChan = killer.GetKillEventChan()
-	}
-	ctx := NewArbitrationContext(
-		cancelChan,
-		nil,
-		memPriority,
-		waitAverse,
-		true,
-	)
-
 	m := &memArbitrator{
 		MemArbitrator: g,
 		uid:           uid,
 		killer:        killer,
 		digestID:      digestID,
 		reserveSize:   explicitReserveSize,
-		ctx:           ctx,
 		isInternal:    isInternal,
 	}
 	t.MemArbitrator = m
-	ctx.arbitrateHelper = m
+	m.ctx = NewArbitrationContext(
+		m,
+		memPriority,
+		waitAverse,
+		true,
+	)
 
 	if explicitReserveSize == 0 && digestID != InvalidDigestID {
 		if maxMem, found := g.GetDigestProfileCache(digestID, g.approxUnixTimeSec()); found {
@@ -1336,6 +1328,13 @@ func (m *memArbitrator) Finish() {
 	if m.isInternal { // internal session stats
 		globalArbitrator.metrics.pools.internalSession.Add(-1)
 	}
+}
+
+func (m *memArbitrator) Done() <-chan struct{} {
+	if m.killer == nil {
+		return nil
+	}
+	return m.killer.GetKillEventChan()
 }
 
 func (m *memArbitrator) Stop(reason ArbitratorStopReason) bool {
