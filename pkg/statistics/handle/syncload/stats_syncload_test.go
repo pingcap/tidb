@@ -421,8 +421,13 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	<-h.DDLEventCh()
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 	tk.MustExec("analyze table t columns a, b")
+<<<<<<< HEAD
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, h.InitStatsLite(context.TODO()))
+=======
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, h.InitStatsLite(context.TODO(), dom.InfoSchema()))
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	tblInfo := tbl.Meta()
@@ -466,7 +471,7 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Analyze c then test sync load again
 	tk.MustExec("analyze table t columns a, b, c")
-	require.NoError(t, h.InitStatsLite(context.TODO()))
+	require.NoError(t, h.InitStatsLite(context.TODO(), dom.InfoSchema()))
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
 	require.Eventually(t, func() bool {
 		statsTbl, ok = h.Get(tblInfo.ID)
