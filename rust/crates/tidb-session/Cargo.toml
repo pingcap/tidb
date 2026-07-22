@@ -1,0 +1,11 @@
+[package]
+name = "tidb-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Session lifecycle and state authority for the TiDB Rust rewrite."
+
+[lints]
+workspace = true

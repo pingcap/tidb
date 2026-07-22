@@ -7,7 +7,9 @@
 resolver = "2"
 members = [
     "crates/tidb-error",
+    "crates/tidb-hash",
     "crates/tidb-lexer",
+    "crates/tidb-mysql",
     "crates/tidb-ast",
     "crates/tidb-parser",
     "crates/tidb-proto",
@@ -22,6 +24,7 @@ members = [
     "crates/tidb-expr",
     "crates/tidb-exec",
     "crates/tidb-server",
+    "crates/tidb-session",
     "difftests",
     "difftests/parser-tests",
     "difftests/planner-tests",
