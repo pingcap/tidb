@@ -12,7 +12,6 @@ rust/
   scripts/
     run-*.sh           bounded live/real-cluster checks
   docs/                current architecture and validation guidance
-  HANDOFF.md           current status and active ExecPlan
 ```
 
 ## Crate responsibilities

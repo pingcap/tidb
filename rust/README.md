@@ -10,7 +10,6 @@ through TiDB's serialized protocols and the differential rings.
 
 ## Start here
 
-- [`HANDOFF.md`](HANDOFF.md): current package state and active ExecPlan.
 - [`docs/architecture/workspace.md`](docs/architecture/workspace.md): crate
   boundaries and target concurrency boundaries.
 - [`docs/operations/validation.md`](docs/operations/validation.md): exact WIP
@@ -67,14 +66,17 @@ Do not create files for individual syntax alternatives, bugs, waves, or test
 rows. A Rust-native split is justified only by a stable dependency boundary,
 not by partial completion.
 
-At whole-package closure, run the ordinary repository validation commands:
+At whole-package closure, run formatting, the Go package tests, the owning Rust
+crate tests, and package-specific generators or differential checks. Compile
+direct reverse dependencies when a public Rust API changed. For example:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
-cargo test --offline --locked -j12 --workspace --all-targets
+cargo test --offline --locked -j12 -p <owning-crate> --all-targets
 ```
 
-The only active state is the package name, the current source owner, and the
-package definition of done in [`HANDOFF.md`](HANDOFF.md). There are no queues,
-campaigns, receipts, freeze gates, or separate integration ceremonies.
+Workspace-wide Clippy/tests, repository lint, and live-cluster checks run at
+dependency-layer integration points and deployable milestones, not after every
+leaf package. There are no status files, queues, campaigns, receipts, freeze
+gates, or separate integration ceremonies; the source tree, tests, and Git are
+the state.

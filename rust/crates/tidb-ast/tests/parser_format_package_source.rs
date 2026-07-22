@@ -248,8 +248,8 @@ fn keyword_and_name_case_use_go_simple_rune_mappings() {
 
 #[test]
 fn generated_simple_case_table_matches_the_go_oracle() {
-    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../scripts/generate-parser-format-simple-case.py");
+    let generator =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/generate-go-simple-case.py");
     let output = Command::new("python3")
         .arg(generator)
         .arg("--check")

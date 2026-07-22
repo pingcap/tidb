@@ -587,7 +587,7 @@ pub fn combination_sql_mode(name: &str) -> Option<&'static [&'static str]> {
 /// Uppercases, expands combinations, and removes duplicates in source order.
 #[must_use]
 pub fn format_sql_mode_str(input: &str) -> String {
-    let upper = input.trim_end_matches(' ').to_uppercase();
+    let upper = crate::to_uppercase(input.trim_end_matches(' '));
     let mut seen = HashSet::new();
     let mut output = Vec::new();
     for part in upper.split(',').filter(|part| !part.is_empty()) {
@@ -691,13 +691,10 @@ impl Priority {
 /// Parses a priority case-insensitively, defaulting to no priority.
 #[must_use]
 pub fn priority_from_str(value: &str) -> Priority {
-    if value.eq_ignore_ascii_case("HIGH_PRIORITY") {
-        Priority::High
-    } else if value.eq_ignore_ascii_case("LOW_PRIORITY") {
-        Priority::Low
-    } else if value.eq_ignore_ascii_case("DELAYED") {
-        Priority::Delayed
-    } else {
-        Priority::None
+    match crate::to_uppercase(value).as_str() {
+        "HIGH_PRIORITY" => Priority::High,
+        "LOW_PRIORITY" => Priority::Low,
+        "DELAYED" => Priority::Delayed,
+        _ => Priority::None,
     }
 }

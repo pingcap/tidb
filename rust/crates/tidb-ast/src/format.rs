@@ -14,16 +14,14 @@
 
 //! SQL restore state from `pkg/parser/format/format.go`.
 
-mod simple_case;
-
 use std::convert::Infallible;
 use std::fmt::{self, Write};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut, Not};
 
-use simple_case::{to_lowercase as go_simple_lowercase, to_uppercase as go_simple_uppercase};
+use tidb_mysql::{to_lowercase as go_simple_lowercase, to_uppercase as go_simple_uppercase};
 
 /// Unicode version used by Go's simple-rune case mapping in this transcreation.
-pub const GO_SIMPLE_CASE_UNICODE_VERSION: &str = simple_case::GO_UNICODE_VERSION;
+pub const GO_SIMPLE_CASE_UNICODE_VERSION: &str = tidb_mysql::GO_UNICODE_VERSION;
 
 /// Formatting switches used while restoring SQL text.
 ///

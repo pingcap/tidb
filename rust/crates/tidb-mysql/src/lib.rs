@@ -16,12 +16,13 @@
 //!
 //! Generated error codes, messages, SQLSTATEs, and formatting live in the
 //! dependency-leaf `tidb-error` crate; all remaining package contracts live
-//! here so the original Go package stays one atomic inventory and receipt.
+//! here so the original Go package remains one complete transcreation unit.
 
 pub mod charset;
 pub mod consts;
 pub mod locale;
 pub mod privilege;
+mod simple_case;
 pub mod types;
 pub mod util;
 
@@ -29,5 +30,6 @@ pub use charset::*;
 pub use consts::*;
 pub use locale::*;
 pub use privilege::*;
+pub use simple_case::{to_lowercase, to_uppercase, GO_UNICODE_VERSION};
 pub use types::*;
 pub use util::*;

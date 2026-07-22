@@ -92,7 +92,7 @@ const NONE_COMMA_LOCALES: &[&str] = &[
 /// Unknown locales use the source `en_US` fallback while returning false.
 #[must_use]
 pub fn locale_format_style(locale: &str) -> (LocaleFormatStyle, bool) {
-    let locale = locale.to_lowercase();
+    let locale = crate::to_lowercase(locale);
     let key = locale.as_str();
     if COMMA_DOT_LOCALES.contains(&key) {
         (COMMA_DOT, true)
@@ -147,24 +147,9 @@ fn indian_grouping_bytes(integer: &[u8], separator: &[u8]) -> Vec<u8> {
     result
 }
 
-fn scalar_grouping(integer: &str, separator: &str, indian: bool) -> String {
-    let characters: Vec<_> = integer.chars().collect();
-    let mut groups = Vec::new();
-    let mut end = characters.len();
-    let mut width = 3;
-    while end > 0 {
-        let start = end.saturating_sub(width);
-        groups.push(characters[start..end].iter().collect::<String>());
-        end = start;
-        if indian {
-            width = 2;
-        }
-    }
-    groups.reverse();
-    groups.join(separator)
-}
-
-/// Input-domain error for the caller-guaranteed non-empty source arguments.
+/// Unreachable error type retained for the source `(string, bool, error)`
+/// result shape. The Go implementation panics before returning when either
+/// caller-guaranteed input is empty, and the Rust implementation does too.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EmptyLocaleNumberInput;
 impl std::fmt::Display for EmptyLocaleNumberInput {
@@ -174,22 +159,21 @@ impl std::fmt::Display for EmptyLocaleNumberInput {
 }
 impl std::error::Error for EmptyLocaleNumberInput {}
 
-/// Formats a decimal string using MySQL locale rules, returning whether the
-/// locale was recognized. Numeric conversion intentionally follows the source:
-/// it truncates at the first invalid character and pads/truncates precision.
+/// Formats a decimal string using MySQL locale rules, returning the exact Go
+/// string bytes and whether the locale was recognized. Numeric conversion
+/// intentionally follows the source: it truncates at the first invalid
+/// character and pads/truncates precision. The output is bytes because Go's
+/// byte-counted grouping can split a UTF-8 rune.
 pub fn format_by_locale(
     number: &str,
     precision: &str,
     locale: &str,
-) -> Result<(String, bool), EmptyLocaleNumberInput> {
-    if number.is_empty() || precision.is_empty() {
-        return Err(EmptyLocaleNumberInput);
-    }
+) -> Result<(Vec<u8>, bool), EmptyLocaleNumberInput> {
     let (style, found) = locale_format_style(locale);
     Ok((format_with_style(number, precision, style), found))
 }
 
-fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) -> String {
+fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) -> Vec<u8> {
     // The Go source applies unicode.IsDigit to rune(precision[0]), which is a
     // single byte converted to a rune. Consequently only an ASCII first digit
     // can start a precision, while subsequent runes use Unicode Nd membership.
@@ -212,16 +196,16 @@ fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) ->
     let number = normalized.as_str();
     // Go repeats the byte-to-rune conversion for the first number digit.
     let invalid = if let Some(rest) = number.strip_prefix('-') {
-        !rest.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        !rest.as_bytes()[0].is_ascii_digit()
     } else {
         !number.as_bytes()[0].is_ascii_digit()
     };
     if invalid {
-        let mut result = "0".to_owned();
+        let mut result = b"0".to_vec();
         if let Some(value) = places.filter(|v| *v > 0) {
-            result.push_str(style.decimal_point);
+            result.extend_from_slice(style.decimal_point.as_bytes());
             if let Ok(value) = usize::try_from(value) {
-                result.extend(std::iter::repeat_n('0', value));
+                result.extend(std::iter::repeat_n(b'0', value));
             }
         }
         return result;
@@ -265,31 +249,5 @@ fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) ->
         result.extend_from_slice(&fraction.as_bytes()[..take]);
         result.extend(std::iter::repeat_n(b'0', value - take));
     }
-    if let Ok(result) = String::from_utf8(result) {
-        return result;
-    }
-
-    // Go's grouping and precision count UTF-8 bytes and can therefore return
-    // malformed UTF-8 when a separator or precision boundary splits a rune.
-    // Rust's public String contract cannot represent those bytes. Only for
-    // that otherwise-unrepresentable case, regroup and truncate by Unicode
-    // scalar values; valid Go UTF-8 output is always returned byte-for-byte.
-    let mut normalized = String::from(sign);
-    normalized.push_str(&scalar_grouping(
-        integer,
-        style.thousands_separator,
-        style.indian_grouping,
-    ));
-    if let Some(value) = places
-        .filter(|v| *v > 0)
-        .and_then(|v| usize::try_from(v).ok())
-    {
-        normalized.push_str(style.decimal_point);
-        let fraction = if parts.len() == 2 { parts[1] } else { "" };
-        let mut fraction = fraction.chars();
-        for _ in 0..value {
-            normalized.push(fraction.next().unwrap_or('0'));
-        }
-    }
-    normalized
+    result
 }

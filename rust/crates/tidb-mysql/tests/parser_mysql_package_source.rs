@@ -74,6 +74,8 @@ fn test_sql_mode() {
         format_sql_mode_str("ansi,ANSI  "),
         "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"
     );
+    assert_eq!(format_sql_mode_str("straße"), "STRAßE");
+    assert_eq!(priority_from_str("hıgh_priority"), Priority::High);
     let invalid = get_sql_mode("ANSI_QUOTES,BOGUS").unwrap_err();
     assert_eq!(invalid.partial, ModeANSIQuotes);
     assert_eq!(invalid.value, "BOGUS");
@@ -267,19 +269,19 @@ fn production_tables_and_locale_helpers_match_source() {
     }
     assert_eq!(
         format_by_locale("1234567.8", "2", "de_DE").unwrap(),
-        ("1.234.567,80".to_owned(), true)
+        (b"1.234.567,80".to_vec(), true)
     );
     assert_eq!(
         format_by_locale("1234567890.1234", "3", "en_IN").unwrap(),
-        ("1,23,45,67,890.123".to_owned(), true)
+        (b"1,23,45,67,890.123".to_vec(), true)
     );
     assert_eq!(
         format_by_locale("bad", "2", "not_REAL").unwrap(),
-        ("0.00".to_owned(), false)
+        (b"0.00".to_vec(), false)
     );
     assert_eq!(
         format_by_locale("12.3.4", "2", "en_US").unwrap(),
-        ("12.00".to_owned(), true)
+        (b"12.00".to_vec(), true)
     );
     assert_eq!(default_field_length_and_decimal(TypeLonglong), (20, 0));
     assert_eq!(
@@ -316,47 +318,54 @@ fn range_graph_matches_unicode_is_one_of_union() {
 }
 
 #[test]
-fn locale_unicode_edges_follow_go_without_panicking() {
+fn locale_unicode_edges_and_source_panics_follow_go() {
     assert_eq!(
         format_by_locale("١٢٣٤.٥", "2", "en_US").unwrap(),
-        ("0.00".to_owned(), true)
+        (b"0.00".to_vec(), true)
     );
     assert_eq!(
         format_by_locale("Ⅷ", "2", "en_US").unwrap(),
-        ("0.00".to_owned(), true)
+        (b"0.00".to_vec(), true)
     );
     assert_eq!(
         format_by_locale("½", "2", "en_US").unwrap(),
-        ("0.00".to_owned(), true)
+        (b"0.00".to_vec(), true)
     );
     assert_eq!(
         format_by_locale("1234.5", "٢", "en_US").unwrap(),
-        ("1,234".to_owned(), true)
+        (b"1,234".to_vec(), true)
     );
-    // Go byte-groups this row into invalid UTF-8. Rust preserves the same
-    // accepted Nd input but groups scalar values to keep its String valid.
+    // Go groups and truncates Go strings by byte offsets even when that splits
+    // a UTF-8 rune. The Rust owner returns the same bytes without normalization.
     assert_eq!(
         format_by_locale("1٢34.5", "2", "en_US").unwrap(),
-        ("1,٢34.50".to_owned(), true)
+        (b"1\xd9,\xa234.50".to_vec(), true)
     );
     // These byte-grouping boundaries remain valid UTF-8, so Rust preserves
     // the Go result exactly instead of invoking the String normalization.
     assert_eq!(
         format_by_locale("12٣4.5", "2", "en_US").unwrap(),
-        ("12,٣4.50".to_owned(), true)
+        ("12,٣4.50".as_bytes().to_vec(), true)
     );
     assert_eq!(
         format_by_locale("123٤.5", "2", "en_US").unwrap(),
-        ("12,3٤.50".to_owned(), true)
+        ("12,3٤.50".as_bytes().to_vec(), true)
     );
     // Nl and No are numeric categories, but Go unicode.IsDigit accepts only
     // Nd here, so scanning stops before them.
     assert_eq!(
         format_by_locale("1Ⅷ2.3", "2", "en_US").unwrap(),
-        ("1.00".to_owned(), true)
+        (b"1.00".to_vec(), true)
     );
     assert_eq!(
         format_by_locale("1½2.3", "2", "en_US").unwrap(),
-        ("1.00".to_owned(), true)
+        (b"1.00".to_vec(), true)
     );
+    assert_eq!(
+        format_by_locale("1.٢", "1", "en_US").unwrap(),
+        (b"1.\xd9".to_vec(), true)
+    );
+    assert!(std::panic::catch_unwind(|| format_by_locale("", "2", "en_US")).is_err());
+    assert!(std::panic::catch_unwind(|| format_by_locale("1", "", "en_US")).is_err());
+    assert!(std::panic::catch_unwind(|| format_by_locale("-", "2", "en_US")).is_err());
 }

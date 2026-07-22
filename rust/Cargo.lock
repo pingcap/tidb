@@ -1055,6 +1055,7 @@ dependencies = [
  "serde_json",
  "tidb-datatype",
  "tidb-lexer",
+ "tidb-mysql",
 ]
 
 [[package]]

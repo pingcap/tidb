@@ -68,14 +68,21 @@ owners. Run a focused test only when it gives immediate feedback for the code
 being changed. Fix shared-API consumers in place; do not add compatibility
 layers.
 
-At package close, compare the live Go directory with its Rust owners and run
-the broad Go, Rust, differential, lint, and live checks once. Until that close
-succeeds, the package is simply open; files, commits, crates, and test subsets
-are not completion units.
+At package close, compare the live Go directory with its Rust owners, then run
+only the Go package tests, owning Rust crate tests, package differential or
+generator checks, and formatting. If a public Rust API changed, compile its
+direct reverse dependencies. Commit immediately and take the next package.
 
-No campaigns, queues, claims, receipts, ledgers, freezes, integration branches,
-or manually maintained per-file status exist. Go is the specification, ordinary
-tests are the feedback loop, and Git is recovery.
+Workspace-wide tests, Clippy, repository lint, and live-cluster checks run at
+dependency-layer integration points and deployable milestones, not after every
+leaf package. A package that directly owns a wire, storage, concurrency, or
+external-service contract still runs its relevant live check before close.
+Until the package checks succeed it is simply open; files, commits, crates, and
+test subsets are not completion units.
+
+No campaigns, queues, claims, receipts, ledgers, freezes, handoff/status files,
+integration branches, or manually maintained per-file status exist. Go is the
+specification, ordinary tests are the feedback loop, and Git is recovery.
 
 Organize Rust by stable cohesive responsibility. One Go package may map to
 multiple Rust modules or crates, but never create a module merely to isolate a
