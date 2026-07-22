@@ -1,4 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_show_ident_parser.go#showSimpleTypes[ENGINES]	rust/crates/tidb-parser/src/show/engines.rs	partial	SHOW ENGINES is an identifier-dispatched leaf with the shared LIKE/WHERE filter payload; its executor-visible source row is selected exactly from executor.test:1660.
-restore:pkg/parser/ast/dml.go#ShowStmt.Restore[ShowEngines]	rust/crates/tidb-ast/src/stmt/show/engines.rs	partial	Restores the canonical SHOW ENGINES spelling and preserves Go's optional LIKE/WHERE expression payload.
-runtime:pkg/executor/show.go#ShowExec[ShowEngines]	rust/crates/tidb-exec/src/admin_runtime.rs	partial	Rejects storage-engine catalog inspection before transaction mutation because the seed has no engine registry or result schema.

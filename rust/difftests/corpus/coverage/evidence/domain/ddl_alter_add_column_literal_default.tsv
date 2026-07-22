@@ -1,4 +1,0 @@
-go_source_surface	rust_owner	coverage
-pkg/parser/ddl_alter_handlers.go:44-62; pkg/parser/ddl_table_parser.go:205-261; pkg/parser/ast/ddl.go:3733-3764	tidb-ast/src/ddl.rs; tidb-parser/src/ddl.rs; tidb-parser/src/ddl/column/options.rs	typed grouped ADD COLUMN list, string-literal DEFAULT payload, and source-canonical restore
-tests/integrationtest/t/ddl/column.test:35-39; integration_parser_golden.tsv	tidb-parser/src/tests/alter_add_columns_source.rs; difftests/parser-tests/tests/selectors/alter/alter_add_column_literal_default_selector.rs	Three accepted Go rows with numeric/datetime literal defaults selected dynamically
-ALTER TABLE execution capability	tidb-exec/src/ddl/table_capability.rs	Explicit Unsupported before transaction or catalog mutation for grouped column lists

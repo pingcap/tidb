@@ -1,2 +1,0 @@
-go_source	rust_module	status
-pkg/parser/reserved_words.go	rust/crates/tidb-lexer/src/reserved.rs	partial

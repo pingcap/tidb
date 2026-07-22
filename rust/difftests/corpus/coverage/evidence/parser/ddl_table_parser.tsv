@@ -1,2 +1,0 @@
-go_source	rust_module	status
-pkg/parser/ddl_table_parser.go	rust/crates/tidb-parser/src/ddl/column/options.rs	partial

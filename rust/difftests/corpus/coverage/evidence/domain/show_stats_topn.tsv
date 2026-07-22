@@ -1,2 +1,0 @@
-go_owner	rust_module	status	note
-map:pkg/parser/ddl_show_ident_parser.go#showSimpleTypes[STATS_TOPN]	rust/crates/tidb-parser/src/show.rs	partial	SHOW STATS_TOPN uses its own typed Like/Where payload and source-owned parser tests; STATS_BUCKETS, STATS_HISTOGRAMS, and other statistics SHOW entries remain separate leaves.

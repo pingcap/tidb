@@ -1,4 +1,0 @@
-go_owner	rust_module	status	supporting_declaration
-file:pkg/ddl/affinity.go	rust/crates/tidb-exec/src/ddl/affinity.rs	partial	Deterministic affinity-level normalization, table/partition group IDs, and missing-partition validation are ported; TiKV key encoding, PD calls, catalog mutation, coordinator ordering, and cleanup remain open.
-file:pkg/ddl/affinity.go	rust/crates/tidb-exec/src/ddl/table_capability.rs	partial	CREATE TABLE AFFINITY now runs the typed level validator before the existing pre-commit unsupported boundary; physical affinity publication remains open.
-tests:pkg/ddl/affinity_test.go	rust/crates/tidb-exec/src/tests/ddl_affinity.rs	partial	The three source unit-test boundaries cover table definitions, partition definitions/missing metadata, and stable group IDs; PD interaction and DDL lifecycle tests remain external.

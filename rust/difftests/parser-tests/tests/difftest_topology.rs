@@ -138,7 +138,6 @@ fn every_selector_is_owned_once_and_every_root_entrypoint_is_explicit() {
         "tests/integration_parser_inventory.rs".to_owned(),
         "tests/lexer_diff.rs".to_owned(),
         "tests/parser_diff.rs".to_owned(),
-        "tests/parser_translation_manifest.rs".to_owned(),
     ]);
     assert_eq!(
         non_shard_roots, expected_ring_roots,

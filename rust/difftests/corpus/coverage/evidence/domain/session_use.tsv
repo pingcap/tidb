@@ -1,3 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/admin_stmt_parser.go#HandParser.parseUseStmt	rust/crates/tidb-parser/src/statement.rs	covered	Go parseUseStmt consumes an identifier-like token, which includes non-reserved PLAN_CACHE; the Rust USE branch uses parse_name_or_keyword locally and keeps reserved SELECT rejected. Direct source rows and the exact explainfor.test:240 selector prove the boundary.
-method:pkg/parser/ast/misc.go#UseStmt.Restore	rust/crates/tidb-ast/src/stmt/session.rs	covered	UseStmt.Restore writes USE plus a backquoted database name, matching the checked Go oracle for USE plan_cache.

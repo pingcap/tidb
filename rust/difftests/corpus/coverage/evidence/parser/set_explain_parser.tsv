@@ -1,2 +1,0 @@
-go_source	rust_module	status
-pkg/parser/set_explain_parser.go	rust/crates/tidb-parser/src/set.rs	partial

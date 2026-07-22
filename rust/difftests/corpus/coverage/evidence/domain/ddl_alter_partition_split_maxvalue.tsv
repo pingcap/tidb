@@ -1,4 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_alter_parser.go#HandParser.parseSplitRegionSpec[MAXVALUE]	rust/crates/tidb-parser/src/ddl_partition.rs	covered	SPLIT MAXVALUE PARTITION LESS THAN (expr) is represented as a dedicated partition action and exact selectors cover every globally closed accepted integration row (1564, 1593).
-restore:pkg/parser/ast/ddl.go#AlterTableSpec.Restore[AlterTableReorganizeLastPartition]	rust/crates/tidb-ast/src/ddl_partition.rs	covered	Restores canonical SPLIT MAXVALUE PARTITION LESS THAN (expr) spelling with the bound expression preserved.
-runtime:pkg/ddl/executor.go#AlterTable[partition-actions]	rust/crates/tidb-exec/src/partition.rs	covered	Rejects interval split before catalog or transaction mutation because the seed catalog has no interval partition management path.

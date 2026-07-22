@@ -1,3 +1,0 @@
-go_owner	rust_module	status
-func:pkg/parser/ddl_table_parser.go#normalizeDDLFuncName	rust/crates/tidb-parser/src/ddl/column/time.rs	partial
-method:pkg/parser/ddl_table_parser.go#HandParser.parseNowSymOptionFraction	rust/crates/tidb-parser/src/ddl/column/time.rs	partial

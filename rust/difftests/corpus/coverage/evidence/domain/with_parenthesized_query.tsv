@@ -1,3 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/select_parser.go#HandParser.parseWithStmt; pkg/parser/ast/dml.go#SelectStmt.Restore	rust/crates/tidb-parser/src/select.rs;rust/crates/tidb-ast/src/select.rs	covered	A sole parenthesized outer query after a WITH prefix preserves Go's SelectStmt.IsInBraces bit, so the query body restores with its own parentheses instead of silently dropping the source wrapper.
-tests:tests/integrationtest/t/planner/core/issuetest/planner_issue.test#574	rust/crates/tidb-parser/src/tests/with_parenthesized_source.rs;rust/difftests/parser-tests/tests/selectors/query/with_parenthesized_selector.rs	covered	The exact accepted planner-issue row is asserted directly and selected dynamically from the checked Go parser oracle.

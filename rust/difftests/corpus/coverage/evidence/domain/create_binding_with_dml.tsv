@@ -1,4 +1,0 @@
-go_source_surface	rust_owner	coverage
-pkg/parser/binding_parser.go:28-66; pkg/planner/core/preprocess.go:525-539; pkg/parser/ast/dml.go:1251-1300	rust/crates/tidb-parser/src/binding.rs; rust/crates/tidb-ast/src/stmt/dml.rs	Leading WITH UPDATE remains a bindable DML target; the Rust DmlStmt::With envelope admits only INSERT/UPDATE/DELETE inner families and restores the two temptable source rows exactly
-tests/integrationtest/t/bindinfo/temptable.test:51,67; integration_parser_golden.tsv	rust/crates/tidb-parser/src/tests/create_binding_with_dml_source.rs; rust/difftests/parser-tests/tests/selectors/dml/create_binding_with_dml_selector.rs	Two accepted single-statement Go rows with exact canonical restore
-CREATE BINDING execution capability	rust/crates/tidb-exec/src/tests/session.rs	Existing binding execution boundary rejects CREATE BINDING before catalog or transaction mutation

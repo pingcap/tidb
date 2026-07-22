@@ -1,3 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_show_parser.go#HandParser.parseShowStmt;restore:pkg/parser/ast/dml.go#ShowStmt.Restore	rust/crates/tidb-parser/src/show/open_tables.rs;rust/crates/tidb-ast/src/stmt/show/open_tables.rs	partial	SHOW OPEN TABLES with optional IN or FROM schema; shared LIKE/WHERE filter payload remains an independent source slice.
-runtime:pkg/executor/show.go#ShowExec	rust/crates/tidb-exec/src/admin_runtime.rs	partial	Rejects the open-table cache and metadata-lock inspection before transaction mutation.

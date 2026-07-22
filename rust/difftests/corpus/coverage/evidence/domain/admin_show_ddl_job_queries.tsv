@@ -1,2 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/admin_stmt_parser.go#HandParser.parseAdminShow	rust/crates/tidb-parser/src/admin.rs	partial	ADMIN SHOW DDL JOB QUERIES is typed as exact ID-list or LIMIT offset/count alternatives, source-tested against all six direct TestAdminStmt rows, and rejected before executor mutation. Bare ADMIN SHOW DDL is a separate typed unit leaf with its own direct source evidence.

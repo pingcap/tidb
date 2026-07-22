@@ -1,4 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/expr_parser.go#HandParser.parseCharsetIntroducer	rust/crates/tidb-parser/src/expr.rs	partial	The UNDERSCORE_CHARSET production accepts string, hex, and bit literals; hex/bit payloads restore through TiDB's ordinary x'...' / b'...' ValueExpr form.
-tests:tests/integrationtest/t/planner/core/integration.test#1712	rust/difftests/parser-tests/tests/selectors/query/explain_binary_charset_selector.rs;rust/crates/tidb-parser/src/tests/explain_binary_source.rs	partial	Exact accepted EXPLAIN FORMAT='plan_tree' row proves both _binary hex operands and explicit COLLATE binary restore against the checked Go oracle.
-execution capability	rust/crates/tidb-exec/src/tests/session.rs#explain_is_explicitly_unsupported	unsupported	The existing EXPLAIN executor boundary rejects every typed EXPLAIN before catalog or transaction mutation; this binary-charset row does not add a second renderer path.

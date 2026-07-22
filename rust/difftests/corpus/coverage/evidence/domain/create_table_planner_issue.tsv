@@ -1,3 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_table_parser.go#parseCreateTableStmt	rust/crates/tidb-parser/src/ddl/create.rs;rust/crates/tidb-lexer/src/lib.rs	covered	The source-shaped CREATE TABLE envelope now executes TiDB's empty-feature-id `/*T! ... */` comments like Go, preserving SHARD_ROW_ID_BITS and PRE_SPLIT_REGIONS in the canonical restore.
-tests:tests/integrationtest/t/planner/core/issuetest/planner_issue.test#280-294	rust/crates/tidb-parser/src/tests/create_table_planner_issue_source.rs;rust/difftests/parser-tests/tests/selectors/create/create_table_planner_issue_selector.rs	covered	Exact Go-accepted CREATE TABLE restore row is asserted directly and replayed through the static oracle selector.

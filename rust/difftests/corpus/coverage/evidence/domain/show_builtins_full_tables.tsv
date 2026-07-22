@@ -1,7 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_show_parser.go#HandParser.parseShowStmt[builtins]	rust/crates/tidb-parser/src/show.rs;rust/crates/tidb-ast/src/stmt/admin.rs	partial	SHOW BUILTINS is a dedicated identifier-dispatched leaf with no LIKE/WHERE suffix; its exact executor corpus row is selected from show.test:299.
-restore:pkg/parser/ast/dml.go#ShowStmt.Restore[ShowBuiltins]	rust/crates/tidb-ast/src/stmt/admin.rs	partial	Restores the typed unit leaf as SHOW BUILTINS, matching Go's source spelling.
-runtime:pkg/executor/show.go#ShowExec[ShowBuiltins]	rust/crates/tidb-exec/src/admin_runtime.rs	partial	Rejects builtin-function registry inspection before transaction mutation because the seed has no registry or result schema.
-method:pkg/parser/ddl_show_parser.go#HandParser.parseShowStmt[full-tables]	rust/crates/tidb-parser/src/show.rs;rust/crates/tidb-ast/src/stmt/show.rs	partial	SHOW FULL TABLES preserves FULL, optional FROM/IN schema, and Go's shared LIKE/WHERE filter payload; exact planner corpus row is selected from memtable_predicate_extractor.test:44.
-restore:pkg/parser/ast/dml.go#ShowStmt.Restore[ShowTables]	rust/crates/tidb-ast/src/stmt/show.rs	partial	Restores SHOW FULL TABLES canonically with IN schema spelling and expression filters.
-runtime:pkg/executor/show.go#ShowExec[ShowTables]	rust/crates/tidb-exec/src/admin_runtime.rs	partial	Rejects table metadata inspection before transaction mutation because the seed has no information-schema visibility or result schema.

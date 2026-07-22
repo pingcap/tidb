@@ -1,2 +1,0 @@
-go_owner	rust_module	status
-method:pkg/parser/ddl_table_parser.go#HandParser.parseColumnOptions	rust/crates/tidb-parser/src/ddl/column/options.rs	partial

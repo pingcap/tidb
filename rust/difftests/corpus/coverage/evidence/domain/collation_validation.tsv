@@ -1,4 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/charset/charset.go#GetCollationByName	rust/crates/tidb-lexer/src/collation.rs	covered	The full Go collation catalog and utf8mb3 aliases are source-owned once at the lexer metadata layer and consumed by DDL parser branches.
-method:pkg/parser/expr_parser.go#parseCollateExpr	rust/crates/tidb-parser/src/expr.rs	covered	Expression COLLATE suffixes now use the same full source registry and reject unknown names at Go's CollationName boundary.
-tests:tests/integrationtest/t/collation_misc.test#36	rust/difftests/parser-tests/tests/selectors/alter/collation_validation_selector.rs;rust/crates/tidb-parser/src/tests/collation_source.rs	covered	The exact Go-rejected ALTER COLUMN utf8bin row is selected from the checked oracle and direct DDL alias/unknown vectors cover column, table, ALTER, and database lookup boundaries.

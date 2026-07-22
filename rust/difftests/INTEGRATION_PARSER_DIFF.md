@@ -69,5 +69,5 @@ relabeled as a normal lexical SQL boundary.
 This ring proves parser-source coverage and Go parser behavior only. It does
 not execute fixture SQL, reproduce mysql-tester session state, establish
 planner/executor parity, or make the Rust parser's current parse failures
-acceptable. It is the measurable queue for implementing those missing grammar
+acceptable. It directly identifies missing grammar
 and restore paths.

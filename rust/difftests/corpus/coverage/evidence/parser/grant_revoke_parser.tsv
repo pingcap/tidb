@@ -1,2 +1,0 @@
-go_source	rust_module	status
-pkg/parser/grant_revoke_parser.go	rust/crates/tidb-parser/src/privilege.rs	partial

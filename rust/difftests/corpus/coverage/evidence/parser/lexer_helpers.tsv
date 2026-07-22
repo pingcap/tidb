@@ -1,2 +1,0 @@
-go_source	rust_module	status
-pkg/parser/lexer_helpers.go	rust/crates/tidb-lexer/src/lib.rs	partial

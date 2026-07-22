@@ -1,5 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/select_parser.go#HandParser.parseSubquery	rust/crates/tidb-parser/src/select.rs;rust/crates/tidb-ast/src/select.rs	partial	Leading parenthesized set-operation queries preserve TiDB's statement-level wrapper bit.
-method:pkg/parser/select_clauses_parser.go#HandParser.maybeParseUnion	rust/crates/tidb-parser/src/select.rs;rust/crates/tidb-parser/src/tests/parenthesized_setopr_source.rs	partial	Trailing ORDER BY/LIMIT after the closing source parenthesis is folded into the wrapped SetOprStmt before restore.
-method:pkg/parser/ast/dml.go#SetOprStmt.Restore	rust/crates/tidb-ast/src/select.rs	partial	Typed restore encloses the full set-operation chain and its statement tail in one pair of parentheses.
-tests:integration_parser_golden	rust/difftests/parser-tests/tests/selectors/query/parenthesized_setopr_selector.rs	partial	Exact selector covers all three globally closed accepted rows at db_partition lines 1072/1088 and planner_issue lines 773-780.

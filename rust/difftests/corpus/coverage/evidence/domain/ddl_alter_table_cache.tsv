@@ -1,4 +1,0 @@
-go_source_surface	rust_owner	coverage
-pkg/parser/ddl_alter_handlers.go:763-775; pkg/parser/ast/ddl.go:4189-4194	tidb-ast/src/ddl/alter/cache.rs; tidb-parser/src/ddl/alter/cache.rs	CACHE/NOCACHE dedicated typed action and canonical restore
-pkg/parser/parser_test.go:2620-2621; integration_parser_golden.tsv	tidb-parser/src/tests/alter_table_cache_source.rs; difftests/parser-tests/tests/selectors/alter/alter_table_cache_selector.rs	Direct TestDDL rows plus 53 accepted single-statement Go corpus rows
-ALTER TABLE execution capability	tidb-exec/src/ddl/table_capability.rs; tidb-exec/src/tests/ddl.rs	Explicit Unsupported before transaction or catalog mutation

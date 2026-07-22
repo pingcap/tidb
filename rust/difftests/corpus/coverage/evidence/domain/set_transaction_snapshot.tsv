@@ -1,6 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/set_explain_parser.go#HandParser.parseSetTransaction	rust/crates/tidb-parser/src/set.rs	partial	READ ONLY AS OF TIMESTAMP is restored through the existing typed SetStmt envelope as tx_read_ts, preserving Go's expression payload and AS OF token form.
-method:pkg/parser/ast/misc.go#SetStmt.Restore	rust/crates/tidb-ast/src/stmt/set.rs	covered	The generic SetStmt restore already emits the source-owned @@SESSION.tx_read_ts assignment produced by parseSetTransaction.
-tests:pkg/parser/parser_test.go#TestAsOfClause	rust/crates/tidb-parser/src/tests/set_transaction_snapshot_source.rs	partial	Direct Go rows cover literal and NOW()/INTERVAL timestamp expressions plus typed tx_read_ts ownership.
-tests:tests/integrationtest/t/executor/index_lookup_pushdown.test#stale_read	rust/difftests/parser-tests/tests/selectors/set/set_transaction_snapshot_selector.rs	partial	Dynamic selector covers the accepted single-statement SET TRANSACTION READ ONLY AS OF TIMESTAMP integration row; multi-statement runner rows stay out of the selector.
-execution capability	rust/crates/tidb-exec/src/session_runtime.rs	partial	The seed executor leaves tx_read_ts unsupported through the existing SET variable boundary, so no snapshot or transaction state is mutated.

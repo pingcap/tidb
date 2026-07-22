@@ -1,5 +1,0 @@
-go_source_surface	rust_owner	coverage
-pkg/parser/ddl_table_option_parser.go:218-249; pkg/parser/ast/ddl.go:3165-3191	tidb-ast/src/ddl/table_option.rs; tidb-parser/src/ddl/alter/ttl.rs	ALTER TTL, TTL_ENABLE, TTL_JOB_INTERVAL typed options and TTL special-comment restore
-pkg/parser/ddl_alter_handlers.go:573-580; pkg/parser/ast/ddl.go:4198-4199	tidb-ast/src/ddl/alter/ttl.rs; tidb-ast/src/ddl.rs	REMOVE TTL dedicated action and special-comment restore
-pkg/parser/parser_test.go:8118-8128; tests/integrationtest/t/ddl/bdr_mode.test:139-140	tidb-parser/src/tests/alter_table_ttl_source.rs	Direct Go parser and BDR source examples
-ALTER TABLE execution capability	tidb-exec/src/ddl/table_capability.rs; tidb-exec/src/tests/ddl.rs	Unsupported before transaction or catalog mutation

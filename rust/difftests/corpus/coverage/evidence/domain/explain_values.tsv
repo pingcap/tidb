@@ -1,6 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/set_explain_parser.go#HandParser.parseExplainStmt	rust/crates/tidb-parser/src/lib.rs	partial	The EXPLAIN explainable-statement dispatch admits the parenthesized VALUES target and preserves the FORMAT payload.
-method:pkg/parser/select_parser.go#HandParser.parseSubquery	rust/crates/tidb-parser/src/select.rs;rust/crates/tidb-ast/src/select.rs	partial	The narrow nested VALUES path mirrors Go IsInBraces plus outer ORDER BY folding, restoring one canonical parenthesized query pair.
-method:pkg/parser/ast/dml.go#SelectStmt.Restore	rust/crates/tidb-ast/src/select.rs	partial	Typed VALUES restore keeps the empty ROW() spelling, canonical FORMAT quoting, and statement-level ORDER BY inside the enclosing pair.
-tests:tests/integrationtest/t/planner/core/plan.test#172	rust/difftests/parser-tests/tests/selectors/query/explain_values_selector.rs;rust/crates/tidb-parser/src/tests/explain_values_source.rs	partial	Exact accepted source row is selected from the checked Go parser oracle and covered by direct source assertions.
-execution capability	rust/crates/tidb-exec/src/admin_runtime.rs	unsupported	EXPLAIN remains parser-only in this rewrite slice and is rejected before transaction or catalog mutation.

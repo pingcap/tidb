@@ -84,6 +84,11 @@ No campaigns, queues, claims, receipts, ledgers, freezes, handoff/status files,
 integration branches, or manually maintained per-file status exist. Go is the
 specification, ordinary tests are the feedback loop, and Git is recovery.
 
+Do not create coverage evidence files, translation manifests, selector receipts,
+or test-to-test mapping tables. Keep executable differential inputs and goldens;
+delete the bookkeeping around them. To find a gap, run the complete Go package
+tests and its Rust/differential tests, fix the first real mismatch, and rerun.
+
 Organize Rust by stable cohesive responsibility. One Go package may map to
 multiple Rust modules or crates, but never create a module merely to isolate a
 partial port or a single test case.

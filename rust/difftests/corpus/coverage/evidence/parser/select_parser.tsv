@@ -1,2 +1,0 @@
-go_source	rust_module	status
-pkg/parser/select_parser.go	rust/crates/tidb-parser/src/select.rs	partial

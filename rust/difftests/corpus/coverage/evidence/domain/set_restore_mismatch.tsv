@@ -1,4 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/set_explain_parser.go#parseVariableAssignment	rust/crates/tidb-parser/src/set.rs	partial	SET @@ system-variable names use Go's lower-case normalization while bare variable names retain source spelling; direct trailing-dot SET decimal values restore without the dot.
-tests:tests/integrationtest/t/executor/insert.test#907,913;tests/integrationtest/t/executor/prepared.test#240	rust/crates/tidb-parser/src/tests/set_restore_mismatch_source.rs	partial	Source-shaped assertions cover two @@SQL_MODE canonicalization rows and the prepared SET @a = 1. trailing-dot decimal row.
-execution capability	rust/crates/tidb-exec/src	unsupported	SET execution remains outside this parser-only port; existing executor boundary tests document the unsupported path.

@@ -1,2 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/expr_cast_parser.go#HandParser.parseCurrentFunc	rust/crates/tidb-parser/src/expr.rs	partial	Bare CURRENT_USER is restored as the nullary CURRENT_USER() function in ALTER TABLE ADD CHECK expressions; the shared ADD CHECK executor remains an explicit pre-mutation Unsupported boundary.

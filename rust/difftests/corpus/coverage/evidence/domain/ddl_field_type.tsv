@@ -1,2 +1,0 @@
-go_owner	rust_module	status
-file:pkg/parser/ddl_fieldtype_parser.go	rust/crates/tidb-parser/src/ddl/field_type.rs	partial

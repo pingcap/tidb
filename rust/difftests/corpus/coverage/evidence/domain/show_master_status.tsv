@@ -1,4 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_show_parser.go#HandParser.parseShowStmt[master]	rust/crates/tidb-parser/src/show.rs	partial	SHOW MASTER STATUS is a dedicated parser branch with no suffix; its exact executor corpus row is selected from executor.test:1666 and restored canonically.
-restore:pkg/parser/ast/dml.go#ShowStmt.Restore[ShowMasterStatus]	rust/crates/tidb-ast/src/stmt/admin.rs	partial	Restores the typed unit leaf as SHOW MASTER STATUS, matching Go's source spelling.
-runtime:pkg/executor/show.go#ShowExec[ShowMasterStatus]	rust/crates/tidb-exec/src/admin_runtime.rs	partial	Rejects binlog-position inspection before transaction mutation because the seed has no binlog state or result schema.

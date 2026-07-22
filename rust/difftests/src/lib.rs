@@ -267,11 +267,11 @@ mod corpus_contract_tests {
     }
 
     #[test]
-    fn contract_rejects_markdown_in_executable_namespace_but_allows_coverage_evidence() {
+    fn contract_rejects_markdown_in_executable_namespace_but_allows_coverage_notes() {
         let root = temp_repo();
         fs::write(
-            root.join("rust/difftests/corpus/coverage/evidence.md"),
-            "evidence\n",
+            root.join("rust/difftests/corpus/coverage/note.md"),
+            "note\n",
         )
         .unwrap();
         fs::write(

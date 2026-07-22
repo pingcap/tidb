@@ -1,5 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_alter_handlers.go#parseMergeFirstPartitionFrom	rust/crates/tidb-parser/src/ddl_partition.rs	partial	MERGE FIRST PARTITION LESS THAN maps to a dedicated typed action, separate from interval FIRST/LAST and SPLIT MAXVALUE branches.
-method:pkg/parser/ast/ddl.go#AlterTableSpec.Restore	rust/crates/tidb-ast/src/ddl_partition.rs	covered	Canonical restore emits MERGE FIRST PARTITION LESS THAN (expr) from the typed expression payload.
-tests:tests/integrationtest/t/ddl/db_partition.test#1562,1591	rust/difftests/parser-tests/tests/selectors/alter/alter_partition_merge_first_selector.rs	partial	Both accepted integration rows are selected by exact source path and line and matched byte-for-byte against the checked Go oracle.
-execution capability	rust/crates/tidb-exec/src/partition.rs;rust/crates/tidb-exec/src/tests/partition_merge_first.rs	unsupported	The seed catalog rejects MERGE FIRST PARTITION before implicit commit or catalog mutation.

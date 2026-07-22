@@ -1,5 +1,0 @@
-go_source_surface	rust_owner	coverage
-pkg/parser/ddl_alter_handlers.go:606-620; pkg/parser/ddl_table_option_parser.go:106-115,344-348,467-481	rust/crates/tidb-parser/src/ddl/alter/auto_id_options.rs; rust/crates/tidb-ast/src/ddl/table_option.rs	AUTO_ID_CACHE/AUTO_RANDOM_BASE typed SetTableOptions leaves, including FORCE AUTO_RANDOM_BASE, with integer-only payload boundaries
-pkg/parser/ast/ddl.go:2929-2946; pkg/parser/parser_test.go:3943-3946	rust/crates/tidb-parser/src/tests/alter_auto_id_options_source.rs	Exact canonical restore and source rows for optional equals, repeated options, and FORCE modifier
-integration_parser_golden.tsv	rust/difftests/parser-tests/tests/selectors/alter/alter_auto_id_options_selector.rs	Dynamic selector covers all 11 accepted single-statement ALTER TABLE auto-ID rows
-ALTER TABLE execution capability	rust/crates/tidb-exec/src/ddl/table_capability.rs	Explicit Unsupported before transaction or catalog mutation

@@ -1,3 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_show_ident_parser.go#HandParser.parseShowIdentBased	rust/crates/tidb-parser/src/show/stats_buckets.rs	partial	STATS_BUCKETS is one identifier-dispatched table-backed SHOW entry. Its distinct typed payload retains LIKE and WHERE filters, the two selectivity corpus rows, and executor pre-mutation rejection.
-method:pkg/parser/ddl_show_parser.go#HandParser.parseShowLikeOrWhere	rust/crates/tidb-parser/src/show/stats_buckets.rs	partial	Shared SHOW filtering is transited only for STATS_BUCKETS: LIKE parses at simple-expression precedence and WHERE at full-expression precedence; sibling STATS_HISTOGRAMS, STATS_LOCKED, and STATS_TOPN remain separate payloads.

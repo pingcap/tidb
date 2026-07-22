@@ -1,5 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/ddl_alter_parser.go#HandParser.parseAlterTableSpec[order]	rust/crates/tidb-parser/src/ddl.rs	partial	ALTER TABLE ORDER BY parses source column paths with optional ASC/DESC and restores canonical comma spacing; the two checked db.test rows are selected exactly.
-restore:pkg/parser/ast/ddl.go#AlterTableSpec.Restore[AlterTableOrderByColumns]	rust/crates/tidb-ast/src/ddl.rs	partial	Typed AlterOrderItem payload preserves ordered column paths and descending direction.
-method:pkg/parser/ddl_alter_parser.go#HandParser.parseAlterTableSpec[modify-qualified]	rust/crates/tidb-parser/src/ddl.rs	partial	Qualified MODIFY column names retain the Go qualifier path on the shared ColumnDef payload, covering db_integration.test:256 without widening ordinary one-name restore semantics.
-runtime:pkg/ddl/table.go#AlterTable	rust/crates/tidb-exec/src/ddl/table_capability.rs	partial	ORDER BY and qualified MODIFY are rejected before DDL mutation because the seed lacks physical row-rewrite and qualified-column catalog semantics.

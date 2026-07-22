@@ -1,2 +1,0 @@
-go_source	rust_module	status
-pkg/parser/import_brie_parser.go	rust/crates/tidb-parser/src/dml.rs	partial

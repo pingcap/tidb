@@ -1,6 +1,0 @@
-go_owner	rust_module	status	note
-method:pkg/parser/view_parser.go#HandParser.parseCreateViewStmt	rust/crates/tidb-parser/src/ddl.rs	partial	The CREATE VIEW grammar keeps Go's OR REPLACE, ALGORITHM, DEFINER, SQL SECURITY, named-column, parenthesized/set-operation, and CHECK OPTION ordering in one source-owned parser envelope.
-method:pkg/parser/ast/ddl.go#CreateViewStmt.Restore	rust/crates/tidb-ast/src/ddl/create_view.rs	partial	The physical AST leaf restores Go's always-present ALGORITHM/DEFINER/SQL SECURITY defaults and preserves the typed view query shape.
-tests:pkg/parser/parser_test.go#TestDDL	rust/crates/tidb-parser/src/tests/create_view_definer_source.rs	partial	Direct source assertions cover explicit DEFINER parenthesized UNION forms and Go's canonical default restore envelope.
-tests:integration_parser_golden	rust/difftests/parser-tests/tests/selector_create.rs	partial	The CREATE selector shard covers 86 explicit identity/security rows, 104 core rows, and three parenthesized UNION anchors from the checked integration oracle.
-execution capability	rust/crates/tidb-exec/src/ddl.rs	partial	CREATE VIEW remains explicitly unsupported before catalog or transaction mutation while parser/restore parity advances.
