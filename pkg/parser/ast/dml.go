@@ -638,6 +638,7 @@ func restoreJSONTableColumn(ctx *format.RestoreCtx, col *JSONTableColumn) error 
 	case JSONTableColumnPath:
 		ctx.WriteName(col.Name)
 		if col.FieldType != nil {
+			ctx.WritePlain(" ")
 			if err := col.FieldType.Restore(ctx); err != nil {
 				return err
 			}
@@ -645,11 +646,13 @@ func restoreJSONTableColumn(ctx *format.RestoreCtx, col *JSONTableColumn) error 
 		ctx.WriteKeyWord(" PATH ")
 		ctx.WriteString(col.Path)
 		if col.OnEmpty != nil {
+			ctx.WritePlain(" ")
 			if err := restoreJSONTableHandler(ctx, col.OnEmpty, "EMPTY"); err != nil {
 				return err
 			}
 		}
 		if col.OnError != nil {
+			ctx.WritePlain(" ")
 			if err := restoreJSONTableHandler(ctx, col.OnError, "ERROR"); err != nil {
 				return err
 			}
@@ -657,6 +660,7 @@ func restoreJSONTableColumn(ctx *format.RestoreCtx, col *JSONTableColumn) error 
 	case JSONTableColumnExists:
 		ctx.WriteName(col.Name)
 		if col.FieldType != nil {
+			ctx.WritePlain(" ")
 			if err := col.FieldType.Restore(ctx); err != nil {
 				return err
 			}

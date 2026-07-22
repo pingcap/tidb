@@ -7360,6 +7360,7 @@ UnReservedKeyword:
 |	"DUPLICATE"
 |	"DYNAMIC"
 |	"ENCRYPTION"
+|	"EMPTY"
 |	"END"
 |	"ENFORCED"
 |	"ENGINE"
@@ -7441,6 +7442,9 @@ UnReservedKeyword:
 |	"VALUE" %prec lowerThanValueKeyword
 |	"WARNINGS"
 |	"YEAR"
+|	"NESTED"
+|	"ORDINALITY"
+|	"PATH"
 |	"MODE"
 |	"WEEK"
 |	"WEIGHT_STRING"
