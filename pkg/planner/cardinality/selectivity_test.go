@@ -848,6 +848,42 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	estRows, err = strconv.ParseFloat(rows[0][1].(string), 64)
 	require.NoError(t, err)
 	require.Greater(t, estRows, 10.0)
+
+	// A virtual column at the beginning of a composite index is mapped back to
+	// that index for single-column estimation. Verify that the recursive index
+	// estimate is propagated into exponential backoff instead of being dropped.
+	tk.MustExec(`create table t3(
+		txn_seq varchar(30) primary key,
+		status varchar(2),
+		flag varchar(1),
+		batch_num varchar(20),
+		txn_suffix varchar(1) as (substr(txn_seq, 30, 1)) virtual,
+		index idx_suffix(txn_suffix, status, flag, batch_num)
+	)`)
+	tk.MustExec(`insert into t3(txn_seq, status, flag, batch_num)
+		select concat(lpad(x.a, 29, '0'), mod(x.a, 10)),
+			if(mod(x.a, 10) = 9, '00', '01'), '1', 'batch'
+		from (with recursive x as (
+			select 1 as a union all select a + 1 from x where a < 500
+		) select a from x) as x`)
+	tk.MustExec("analyze table t3 all columns with 10 topn")
+	// Virtual columns have no column statistics, while idx_suffix has TopN.
+	require.Empty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't3' and column_name = 'txn_suffix' and is_index = 0").Rows())
+	require.NotEmpty(t, tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't3' and column_name = 'idx_suffix' and is_index = 1").Rows())
+	tk.MustQuery("select count(*) from t3 where txn_suffix = '9' and status = '00'").Check(testkit.Rows("50"))
+
+	rows = tk.MustQuery("explain format='brief' select * from t3 use index(idx_suffix) where txn_suffix = '9' and status = '00'").Rows()
+	indexScanEstRows := ""
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			indexScanEstRows = row[1].(string)
+			break
+		}
+	}
+	require.NotEmpty(t, indexScanEstRows)
+	estRows, err = strconv.ParseFloat(indexScanEstRows, 64)
+	require.NoError(t, err)
+	require.Greater(t, estRows, 1.0)
 }
 
 func TestNewIndexWithColumnStats(t *testing.T) {
