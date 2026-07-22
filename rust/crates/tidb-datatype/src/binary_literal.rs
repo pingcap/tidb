@@ -135,7 +135,10 @@ impl BinaryLiteral {
     fn truncated_wrong_value_error(&self) -> TerrorError {
         TerrorError::registered_standard(
             TerrorClass::Types,
-            TerrorCode::new(i32::from(errcode::ErrTruncatedWrongValue)),
+            TerrorCode::new(
+                isize::try_from(errcode::ErrTruncatedWrongValue)
+                    .expect("MySQL error code must fit the source int domain"),
+            ),
             errname::ErrTruncatedWrongValue,
         )
         .fast_generate(

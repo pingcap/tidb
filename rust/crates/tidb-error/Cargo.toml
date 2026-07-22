@@ -7,5 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Single source-backed MySQL and TiDB error catalog for the TiDB Rust rewrite."
 
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+tracing = "0.1"
+
 [lints]
 workspace = true

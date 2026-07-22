@@ -1,0 +1,3 @@
+# Complete pkg/parser/terror source authority.
+# source_path	status	owner	rust_target	note
+pkg/parser/terror/terror.go	COVERED	parser-terror-package	rust/crates/tidb-error/src/terror.rs	The whole package is transcreated: machine-width class and code domains, all 27 fixed classes and dynamic registration, duplicate and freeze behavior, RFC identity, New/NewStdErr/NewStd/Synthesize generation, MySQL conversion registry, compatible pingcap/errors JSON, equality and class lookup, global prototypes, Call/Log/MustNil, and Rust-native stack capture.

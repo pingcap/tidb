@@ -241,8 +241,13 @@ fn catalog_error(
     message: ErrMessage,
     arguments: &[FormatArg],
 ) -> ConvertedDriverError {
-    let prototype =
-        TerrorError::registered_standard(class, TerrorCode::new(i32::from(code)), message);
+    let prototype = TerrorError::registered_standard(
+        class,
+        TerrorCode::new(
+            isize::try_from(code).expect("MySQL error code must fit the source int domain"),
+        ),
+        message,
+    );
     let error = if arguments.is_empty() {
         prototype
     } else {

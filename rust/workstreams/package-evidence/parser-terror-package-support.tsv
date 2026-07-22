@@ -1,0 +1,2 @@
+# support_path	sha256	disposition	evidence_artifact	note
+pkg/parser/terror/BUILD.bazel	a07beed91c8b8e732ebe6eb7db039cabc695ae78905786b7a94ae7777ef0c30b	build-metadata-reviewed	rust/workstreams/slices/parser-terror-package.toml	Reviewed the complete package build metadata: terror.go and terror_test.go map to the tidb-error authority and dedicated terror_source target; the BUILD file declares no fixture or generated-source obligation.

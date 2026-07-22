@@ -262,7 +262,10 @@ fn every_typed_client_branch_uses_its_source_catalog_identity() {
             panic!("typed source branch must map to a catalog terror error")
         };
         assert_eq!(converted.class(), expected_class);
-        assert_eq!(converted.code().value(), i32::from(expected_code));
+        assert_eq!(
+            converted.code().value(),
+            isize::try_from(expected_code).expect("test error code must fit the source int domain")
+        );
         assert!(
             converted.message().contains(expected_message),
             "{} did not contain {expected_message:?}",
@@ -285,7 +288,8 @@ fn gc_abort_branches_preserve_current_and_legacy_argument_shapes() {
     assert_eq!(current.class(), TerrorClass::TiKv);
     assert_eq!(
         current.code().value(),
-        i32::from(tidb::errcode::ErrTxnAbortedByGC)
+        isize::try_from(tidb::errcode::ErrTxnAbortedByGC)
+            .expect("test error code must fit the source int domain")
     );
     assert!(current.message().contains(
         "transaction start ts is 100 (start-time), txn safe point is 200 (safe-point-time)"
@@ -301,7 +305,8 @@ fn gc_abort_branches_preserve_current_and_legacy_argument_shapes() {
     assert_eq!(legacy.class(), TerrorClass::TiKv);
     assert_eq!(
         legacy.code().value(),
-        i32::from(tidb::errcode::ErrTxnAbortedByGC)
+        isize::try_from(tidb::errcode::ErrTxnAbortedByGC)
+            .expect("test error code must fit the source int domain")
     );
     assert!(legacy.message().contains(
         "transaction start ts is <unknown> (legacy-start), txn safe point is <unknown> (legacy-safe-point)"
