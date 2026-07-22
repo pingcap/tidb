@@ -1,0 +1,3 @@
+# Complete package source evidence for parser-format-package.
+# source_path	status	owner	evidence_artifact	note
+pkg/parser/format/format.go	COVERED	parser-format-package	rust/difftests/corpus/coverage/evidence/source/parser-format-package.tsv	The complete leaf package is transcreated as Rust-native formatter and restore-context authorities across tidb-datatype and tidb-ast: stateful indentation, flat formatting, output escaping, all 21 restore flags with source bit positions and priority, writer-bound restore methods, special comments, and scoped CTE tracking; arbitrary Go byte strings normalize to Rust UTF-8 and downstream AST-node packages are not credited.

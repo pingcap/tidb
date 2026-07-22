@@ -1,0 +1,2 @@
+# support_path	sha256	disposition	evidence_artifact	note
+pkg/parser/format/BUILD.bazel	affceb3be0257a762a2c106b774bf4778874d754fc1b3ffb78971febbe455fbc	build-metadata-reviewed	rust/workstreams/slices/parser-format-package.toml	Reviewed the sole package support artifact: its Go library and format_test target map to the tidb-ast and tidb-datatype crate targets plus their dedicated parser_format_package_source tests; it contains no generated source or fixture input.

@@ -9,7 +9,7 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active package claims: 0
+- Active package claims: 2
 - Inventory packages: 0
 - Declared ready packages: 2
 - Active packages: 0
@@ -55,9 +55,9 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 1873 |
+| UNTRIAGED | 1872 |
 | PARTIAL | 480 |
-| COVERED | 37 |
+| COVERED | 38 |
 | BLOCKED | 0 |
 
 ### By target crate
@@ -76,7 +76,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | test-support | 82 | 2 | 0 | 0 |
 | tooling | 83 | 0 | 0 | 0 |
 | tidb-stats | 1 | 77 | 2 | 0 |
-| tidb-parser | 22 | 45 | 8 | 0 |
+| tidb-parser | 21 | 45 | 9 | 0 |
 | unassigned | 64 | 0 | 0 | 0 |
 | tidb-datatype | 32 | 22 | 7 | 0 |
 | tidb-protocol | 39 | 14 | 3 | 0 |
@@ -91,9 +91,9 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15185 |
+| UNTRIAGED | 15180 |
 | PARTIAL | 1233 |
-| COVERED | 288 |
+| COVERED | 293 |
 | BLOCKED | 14 |
 
 ### By differential ring
@@ -105,7 +105,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | deferred-external | 3042 | 0 | 0 | 0 |
 | plan | 1730 | 177 | 5 | 0 |
 | transaction | 1113 | 103 | 54 | 6 |
-| parser | 308 | 38 | 76 | 5 |
+| parser | 303 | 38 | 81 | 5 |
 
 ## Blocked packages
 

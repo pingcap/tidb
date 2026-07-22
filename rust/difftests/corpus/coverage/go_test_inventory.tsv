@@ -241,7 +241,7 @@ bazel_test_target	pkg/parser/ast/BUILD.bazel	37	ast_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/auth/BUILD.bazel	21	auth_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/charset/BUILD.bazel	37	charset_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/duration/BUILD.bazel	11	duration_test	parser	UNTRIAGED	-	-	-
-bazel_test_target	pkg/parser/format/BUILD.bazel	10	format_test	parser	UNTRIAGED	-	-	-
+bazel_test_target	pkg/parser/format/BUILD.bazel	10	format_test	parser	COVERED	parser-format-package	rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv	The original package test target is represented by dedicated parser_format_package_source integration targets in both owning Rust crates and is exercised together by the package campaign.
 bazel_test_target	pkg/parser/mysql/BUILD.bazel	26	mysql_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/opcode/BUILD.bazel	11	opcode_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/terror/BUILD.bazel	16	terror_test	parser	UNTRIAGED	-	-	-
@@ -6185,9 +6185,9 @@ go_test	pkg/parser/digester_test.go	234	TestGenDigest	parser	UNTRIAGED	-	-	-
 go_test	pkg/parser/digester_test.go	252	BenchmarkDigestHexEncode	parser	UNTRIAGED	-	-	-
 go_test	pkg/parser/digester_test.go	260	BenchmarkDigestSprintf	parser	UNTRIAGED	-	-	-
 go_test	pkg/parser/duration/duration_test.go	23	TestParseDuration	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/format/format_test.go	34	TestFormat	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/format/format_test.go	52	TestRestoreCtx	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/format/format_test.go	86	TestRestoreSpecialComment	parser	UNTRIAGED	-	-	-
+go_test	pkg/parser/format/format_test.go	34	TestFormat	parser	COVERED	parser-format-package	rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv	Both upstream indent and flat vectors execute with identical outputs and write counts through the Rust-native typed-fragment formatter; Rust formatting replaces Go runtime printf parsing and arbitrary byte strings normalize to UTF-8.
+go_test	pkg/parser/format/format_test.go	52	TestRestoreCtx	parser	COVERED	parser-format-package	rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv	All 15 upstream flag/output cases execute exactly, including zero flags, DefaultRestoreFlags, quote escaping, case conversion, and source priority when mutually exclusive flags are combined.
+go_test	pkg/parser/format/format_test.go	86	TestRestoreSpecialComment	parser	COVERED	parser-format-package	rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv	Both feature-id forms and the upstream callback-error identity/partial-output semantics execute through the writer-bound Rust restore context.
 go_test	pkg/parser/hintparser_test.go	25	TestParseHint	parser	UNTRIAGED	-	-	-
 go_test	pkg/parser/keywords_test.go	23	TestKeywords	parser	UNTRIAGED	-	-	-
 go_test	pkg/parser/keywords_test.go	38	TestKeywordsLength	parser	UNTRIAGED	-	-	-
@@ -12298,7 +12298,7 @@ go_test_file	pkg/parser/charset/encoding_test.go	0	encoding_test.go	parser	PARTI
 go_test_file	pkg/parser/differential_test.go	0	differential_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/digester_test.go	0	digester_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/duration/duration_test.go	0	duration_test.go	parser	UNTRIAGED	-	-	-
-go_test_file	pkg/parser/format/format_test.go	0	format_test.go	parser	UNTRIAGED	-	-	-
+go_test_file	pkg/parser/format/format_test.go	0	format_test.go	parser	COVERED	parser-format-package	rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv	Every top-level test in the sole upstream test file has an exact COVERED row and executes through dedicated Rust package tests.
 go_test_file	pkg/parser/hintparser_test.go	0	hintparser_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/keywords_test.go	0	keywords_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/lateral_test.go	0	lateral_test.go	parser	UNTRIAGED	-	-	-
