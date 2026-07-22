@@ -24,13 +24,13 @@ use tidb_protocol::{
 };
 use tidb_server::handshake::CLIENT_ZSTD_COMPRESSION_ALGORITHM;
 use tidb_server::{
-    AuthHandshakeRequest, CommandIoOutcome, CompressedCommandIo, Connection, HandshakeResponse,
+    AuthHandshakeRequest, CommandIoOutcome, CompressedCommandIo, Connection, HandshakeResponse41,
     NegotiatedCompression, CLIENT_COMPRESS,
 };
 
-fn handshake_request(capability: u32, zstd_level: u8) -> AuthHandshakeRequest {
+fn handshake_request(capability: u32, zstd_level: i32) -> AuthHandshakeRequest {
     AuthHandshakeRequest {
-        response: HandshakeResponse {
+        response: HandshakeResponse41 {
             attrs: HashMap::new(),
             user: "root".to_owned(),
             db_name: String::new(),

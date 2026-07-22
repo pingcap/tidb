@@ -60,7 +60,7 @@ impl NegotiatedCompression {
         };
         Self {
             algorithm,
-            zstd_level: i32::from(request.response.zstd_level),
+            zstd_level: request.response.zstd_level,
         }
     }
 

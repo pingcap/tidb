@@ -140,9 +140,15 @@ pub struct HandshakeResponseHeader {
     pub collation: u8,
 }
 
-/// Parsed fields from a HandshakeResponse41 packet.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HandshakeResponse {
+/// Rust-native authority for Go's complete `handshake.Response41` contract.
+///
+/// [`Default`] preserves the useful semantics of Go's zero value: collection
+/// reads are empty, owned strings and authentication bytes have length zero,
+/// and every numeric field is zero. `HashMap` is the native mutable-map owner;
+/// unlike Go's nil map it can be populated without a separate allocation
+/// state, while preserving zero-value lookup and length behavior.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HandshakeResponse41 {
     /// Client connection attributes.  Duplicate keys follow Go map semantics:
     /// the last value wins.
     pub attrs: HashMap<String, String>,
@@ -155,7 +161,11 @@ pub struct HandshakeResponse {
     /// Authentication response bytes.  This is not an authentication result.
     pub auth: Vec<u8>,
     /// Requested zstd level when the corresponding capability is set.
-    pub zstd_level: u8,
+    ///
+    /// The wire field is one byte, but the zstd encoder API and negotiated
+    /// compression owner both use `i32`; normalizing once during parsing keeps
+    /// the shared response contract native to all downstream consumers.
+    pub zstd_level: i32,
     /// Client capability flags.
     pub capability: u32,
     /// Client requested collation.
@@ -191,7 +201,7 @@ pub enum AuthHandshakePhase {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthHandshakeRequest {
     /// Parsed response fields, including the exact authentication bytes.
-    pub response: HandshakeResponse,
+    pub response: HandshakeResponse41,
     /// Client/server capability intersection.
     pub negotiated_capability: u32,
     /// Exact unframed packet payload received from the client.
@@ -375,17 +385,12 @@ pub enum AuthHandshakePacket {
     Authentication(AuthHandshakeRequest),
 }
 
-impl HandshakeResponse {
+impl HandshakeResponse41 {
     fn from_header(header: HandshakeResponseHeader) -> Self {
         Self {
-            attrs: HashMap::new(),
-            user: String::new(),
-            db_name: String::new(),
-            auth_plugin: String::new(),
-            auth: Vec::new(),
-            zstd_level: 0,
             capability: header.capability,
             collation: header.collation,
+            ..Self::default()
         }
     }
 }
@@ -412,7 +417,7 @@ pub fn parse_response_header(
 }
 
 /// Parses a complete HandshakeResponse41 packet.
-pub fn parse_response(data: &[u8]) -> Result<HandshakeResponse, HandshakeError> {
+pub fn parse_response(data: &[u8]) -> Result<HandshakeResponse41, HandshakeError> {
     let (header, offset) = parse_response_header(data)?;
     parse_response_body(header, data, offset)
 }
@@ -422,8 +427,8 @@ pub fn parse_response_body(
     header: HandshakeResponseHeader,
     data: &[u8],
     mut offset: usize,
-) -> Result<HandshakeResponse, HandshakeError> {
-    let mut response = HandshakeResponse::from_header(header.clone());
+) -> Result<HandshakeResponse41, HandshakeError> {
+    let mut response = HandshakeResponse41::from_header(header.clone());
 
     let (user, next) = read_nul_string(data, offset, "user")?;
     response.user = user;
@@ -500,9 +505,9 @@ pub fn parse_response_body(
     }
 
     if header.capability & CLIENT_ZSTD_COMPRESSION_ALGORITHM != 0 {
-        response.zstd_level = *data.get(offset).ok_or_else(|| {
+        response.zstd_level = i32::from(*data.get(offset).ok_or_else(|| {
             HandshakeError::Malformed("zstd compression level is truncated".to_owned())
-        })?;
+        })?);
     }
 
     Ok(response)

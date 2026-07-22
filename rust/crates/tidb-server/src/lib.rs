@@ -98,7 +98,7 @@ pub use error_response::{frame_execution_error_response, frame_rendered_error_re
 pub use handshake::{
     negotiate_capabilities, parse_response, parse_response_body, parse_response_header,
     AuthHandshake, AuthHandshakePacket, AuthHandshakePhase, AuthHandshakeRequest, AuthPluginAction,
-    HandshakeError, HandshakeResponse, HandshakeResponseHeader, InitialHandshake,
+    HandshakeError, HandshakeResponse41, HandshakeResponseHeader, InitialHandshake,
 };
 pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerState};
 pub use mysql_connection::{
