@@ -115,6 +115,8 @@ package that cannot close remains on its package branch or is explicitly
 blocked; it is not split into smaller mergeable ports.
 
 The executable coordination contract is [`PARALLEL.md`](PARALLEL.md).
+The living migration plan is
+[`workstreams/plans/2026-07-whole-package-transcreation.md`](workstreams/plans/2026-07-whole-package-transcreation.md).
 Existing schema-1 records under [`workstreams/slices/`](workstreams/slices/)
 are frozen legacy evidence. They must not be copied, extended, or used as the
 dispatch template for new package work.
