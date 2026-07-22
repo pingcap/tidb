@@ -1367,7 +1367,7 @@ fn collect_go_package_support_artifacts(
     inventoried_go_paths: &BTreeSet<String>,
 ) -> Result<Vec<GoPackageSupportArtifact>, String> {
     let paths = tracked_paths(root)?;
-    let mut artifacts: Vec<_> = package_support_ownership(&paths, &inventoried_go_paths)
+    let mut artifacts: Vec<_> = package_support_ownership(&paths, inventoried_go_paths)
         .into_iter()
         .map(|(package_path, support_path)| {
             let sha256 = package_support_sha256(root, &support_path)?;
