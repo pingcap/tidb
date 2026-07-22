@@ -1004,33 +1004,7 @@ type selectResultRuntimeStats struct {
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
 	fetchRspDuration        time.Duration
-	limiterWait             limiterWaitRuntimeStats
-}
-
-type limiterWaitRuntimeStats struct {
-	total time.Duration
-	max   time.Duration
-}
-
-func (s *limiterWaitRuntimeStats) record(waitTime time.Duration) {
-	if waitTime <= 0 {
-		return
-	}
-	s.total += waitTime
-	if waitTime > s.max {
-		s.max = waitTime
-	}
-}
-
-func (s *limiterWaitRuntimeStats) merge(other limiterWaitRuntimeStats) {
-	s.total += other.total
-	if other.max > s.max {
-		s.max = other.max
-	}
-}
-
-func (s *limiterWaitRuntimeStats) hasValue() bool {
-	return s.total > 0
+	limiterWait             copr.LimiterWaitStats
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -1050,7 +1024,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	}
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
-	s.limiterWait.record(copStats.LimiterWaitTime)
+	s.limiterWait.Merge(copStats.LimiterWait)
 	if copStats.ReqStats != nil {
 		if s.reqStat == nil {
 			s.reqStat = copStats.ReqStats
@@ -1119,7 +1093,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
 	s.fetchRspDuration += other.fetchRspDuration
-	s.limiterWait.merge(other.limiterWait)
+	s.limiterWait.Merge(other.limiterWait)
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -1165,11 +1139,11 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(", build_task_duration: ")
 			buf.WriteString(execdetails.FormatDuration(s.buildTaskDuration))
 		}
-		if s.limiterWait.hasValue() {
+		if !s.limiterWait.IsZero() {
 			buf.WriteString(", limiter_wait:{total:")
-			buf.WriteString(execdetails.FormatDuration(s.limiterWait.total))
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.TotalTime))
 			buf.WriteString(", max:")
-			buf.WriteString(execdetails.FormatDuration(s.limiterWait.max))
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.MaxTime))
 			buf.WriteString("}")
 		}
 		if s.distSQLConcurrency > 0 {

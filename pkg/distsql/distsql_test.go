@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -149,7 +150,7 @@ func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
 	response, err = Select(checkRequest(func(req *kv.Request) {
 		require.Same(t, explicitLimiter, req.CoprRequestLimiter)
 		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
-		require.False(t, req.CoprRequestLimiter.Acquire(make(chan struct{})))
+		require.True(t, req.CoprRequestLimiter.TryAcquire())
 		req.CoprRequestLimiter.Release()
 	}), dctx, request, colTypes)
 	require.NoError(t, err)
@@ -177,9 +178,9 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		reqStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: 15,
 		fetchRspDuration:   time.Second,
-		limiterWait: limiterWaitRuntimeStats{
-			total: 3 * time.Millisecond,
-			max:   2 * time.Millisecond,
+		limiterWait: copr.LimiterWaitStats{
+			TotalTime: 3 * time.Millisecond,
+			MaxTime:   2 * time.Millisecond,
 		},
 	}
 	s1.copRespTime.Add(execdetails.Duration(time.Second))
@@ -211,9 +212,9 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		totalProcessTime: time.Second,
 		totalWaitTime:    time.Second,
 		reqStat:          tikv.NewRegionRequestRuntimeStats(),
-		limiterWait: limiterWaitRuntimeStats{
-			total: time.Millisecond,
-			max:   time.Millisecond,
+		limiterWait: copr.LimiterWaitStats{
+			TotalTime: time.Millisecond,
+			MaxTime:   time.Millisecond,
 		},
 	}
 	s1.copRespTime.Add(execdetails.Duration(time.Second))

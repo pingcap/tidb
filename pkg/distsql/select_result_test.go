@@ -61,13 +61,16 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 
 	backOffSleep["RegionMiss"] = time.Duration(200)
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
-		CopExecDetails:  execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
-		LimiterWaitTime: time.Millisecond,
+		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
+		LimiterWait: copr.LimiterWaitStats{
+			TotalTime: time.Millisecond,
+			MaxTime:   time.Millisecond,
+		},
 	}, 0, false)
 	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(200))
-	require.Equal(t, time.Millisecond, sr.stats.limiterWait.total)
-	require.Equal(t, time.Millisecond, sr.stats.limiterWait.max)
+	require.Equal(t, time.Millisecond, sr.stats.limiterWait.TotalTime)
+	require.Equal(t, time.Millisecond, sr.stats.limiterWait.MaxTime)
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
@@ -75,13 +78,16 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 
 	backOffSleep["RegionMiss"] = time.Duration(300)
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
-		CopExecDetails:  execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
-		LimiterWaitTime: 2 * time.Millisecond,
+		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
+		LimiterWait: copr.LimiterWaitStats{
+			TotalTime: 2 * time.Millisecond,
+			MaxTime:   2 * time.Millisecond,
+		},
 	}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
-	require.Equal(t, 3*time.Millisecond, sr.stats.limiterWait.total)
-	require.Equal(t, 2*time.Millisecond, sr.stats.limiterWait.max)
+	require.Equal(t, 3*time.Millisecond, sr.stats.limiterWait.TotalTime)
+	require.Equal(t, 2*time.Millisecond, sr.stats.limiterWait.MaxTime)
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {

@@ -1079,13 +1079,37 @@ type copIteratorTaskSender struct {
 }
 
 type copResponse struct {
-	pbResp          *coprocessor.Response
-	detail          *CopRuntimeStats
-	startKey        kv.Key
-	err             error
-	respSize        int64
-	respTime        time.Duration
-	limiterWaitTime time.Duration
+	pbResp      *coprocessor.Response
+	detail      *CopRuntimeStats
+	startKey    kv.Key
+	err         error
+	respSize    int64
+	respTime    time.Duration
+	limiterWait LimiterWaitStats
+}
+
+type requestAttemptAdmissionWaitStats struct {
+	sync.Mutex
+	stats LimiterWaitStats
+}
+
+func (s *requestAttemptAdmissionWaitStats) record(waitTime time.Duration) {
+	if s == nil {
+		return
+	}
+	s.Lock()
+	s.stats.Record(waitTime)
+	s.Unlock()
+}
+
+func (s *requestAttemptAdmissionWaitStats) snapshot() LimiterWaitStats {
+	if s == nil {
+		return LimiterWaitStats{}
+	}
+	s.Lock()
+	stats := s.stats
+	s.Unlock()
+	return stats
 }
 
 type copTaskResult struct {
@@ -1800,6 +1824,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	}
 	req.StoreTp = getEndPointType(task.storeType)
+	limiterWaitStats := worker.setRequestAttemptAdmission(req, task)
 	startTime := time.Now()
 	if worker.stats != nil && worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = tikv.NewRegionRequestRuntimeStats()
@@ -1822,33 +1847,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 
-	coprRequestLimiter := worker.req.CoprRequestLimiter
-	if queryCopStoreID, hasQueryCopStore, err := worker.resolveQueryCopStoreID(bo, task, req, ops); err != nil {
-		return nil, errors.Trace(err)
-	} else if hasQueryCopStore {
-		queryCopStoreLimiter := worker.req.QueryCopStoreLimiter.GetStoreLimiter(queryCopStoreID)
-		failpoint.InjectCall("onBeforeAcquireQueryCopStoreLimiter", req, queryCopStoreID)
-		if queryCopStoreLimiter != nil {
-			coprRequestLimiter = queryCopStoreLimiter
-		}
+	if req.RequestAttemptAdmission == nil {
+		failpoint.InjectCall("onBeforeSendReqCtx", req)
 	}
-	releaseCoprRequestLimiter, limiterWaitTime, exit := acquireCoprRequestLimiter(coprRequestLimiter, worker.finishCh)
-	if exit {
+	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
+		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+	if errors.Cause(err) == errCoprRequestLimiterFinished {
 		return nil, nil
 	}
-	// Keep the limiter tokens and send attempt in a small scope so the tokens
-	// are released immediately after the send attempt returns, while still
-	// remaining panic-safe.
-	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
-		defer func() {
-			if releaseCoprRequestLimiter != nil {
-				releaseCoprRequestLimiter()
-			}
-		}()
-		failpoint.InjectCall("onBeforeSendReqCtx", req)
-		return worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-			timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
-	}()
+	limiterWait := limiterWaitStats.snapshot()
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
@@ -1857,7 +1864,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		if task.storeType == kv.TiDB {
 			return worker.handleTiDBSendReqErr(err, task)
 		}
-		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx, limiterWaitTime)
+		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx, limiterWait)
 		return nil, errors.Trace(err)
 	}
 
@@ -1880,10 +1887,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	// enabled. coprocessor have a max_resp_size to control the response size,
 	// the default is 32MiB
 	if worker.req.Paging.Enable || copResp.GetRange() != nil {
-		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp, limiterWaitTime: limiterWaitTime}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{
+			pbResp: copResp, limiterWait: limiterWait,
+		}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
-		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp, limiterWaitTime: limiterWaitTime}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{
+			pbResp: copResp, limiterWait: limiterWait,
+		}, cacheKey, cacheValue, task, costTime)
 	}
 	if req.ReadType != "" && result != nil {
 		for _, remain := range result.remains {
@@ -1893,65 +1904,53 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	return result, err
 }
 
-func acquireCoprRequestLimiter(limiter *kv.CoprRequestLimiter, done <-chan struct{}) (release func(), waitTime time.Duration, exit bool) {
-	if limiter == nil {
-		return nil, 0, false
-	}
-	if limiter.TryAcquire() {
-		return limiter.Release, 0, false
-	}
+var errCoprRequestLimiterFinished = errors.New("cop request limiter finished")
 
-	waitStart := time.Now()
-	if limiter.Acquire(done) {
-		waitTime = time.Since(waitStart)
-		return nil, waitTime, true
+func (worker *copIteratorWorker) setRequestAttemptAdmission(req *tikvrpc.Request, task *copTask) *requestAttemptAdmissionWaitStats {
+	if task.storeType != kv.TiKV {
+		return nil
 	}
-	waitTime = time.Since(waitStart)
-	return limiter.Release, waitTime, false
-}
+	queryLimiter := worker.req.QueryCopStoreLimiter
+	requestLimiter := worker.req.CoprRequestLimiter
+	if queryLimiter == nil && requestLimiter == nil {
+		return nil
+	}
+	waitStats := &requestAttemptAdmissionWaitStats{}
 
-func (worker *copIteratorWorker) resolveQueryCopStoreID(
-	bo *Backoffer,
-	task *copTask,
-	rpcReq *tikvrpc.Request,
-	ops []tikv.StoreSelectorOption,
-) (storeID uint64, ok bool, err error) {
-	limiterGroup := worker.req.QueryCopStoreLimiter
-	if limiterGroup == nil || task.storeType != kv.TiKV {
-		return 0, false, nil
-	}
+	req.RequestAttemptAdmission = func(ctx context.Context, storeID uint64) (func(), error) {
+		limiter := requestLimiter
+		if queryLimiter != nil {
+			limiter = queryLimiter.GetStoreLimiter(storeID)
+			failpoint.InjectCall("onBeforeAcquireQueryCopStoreLimiter", req, storeID)
+		}
+		if limiter == nil {
+			return nil, nil
+		}
 
-	// This TiDB-side limiter pre-resolves the target TiKV store so it can pick the
-	// query-scoped per-store limiter before SendReqCtx. That duplicates part of
-	// the region/store selection work done inside SendReqCtx, and the selected
-	// store can still change there because of retries, stale cache, leader changes,
-	// or unavailable stores.
-	// TODO: Move query per-store limiter acquisition into the client-go send path
-	// after the real RPCContext is selected for each send attempt. That would
-	// avoid this extra region-cache lookup and charge tokens to the actual store
-	// used by retries.
-	replicaReadSeed := worker.replicaReadSeed
-	if seed := rpcReq.GetReplicaReadSeed(); seed != nil {
-		replicaReadSeed = *seed
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-worker.finishCh:
+			return nil, errCoprRequestLimiterFinished
+		default:
+		}
+		if limiter.TryAcquire() {
+			failpoint.InjectCall("onBeforeSendReqCtx", req)
+			return limiter.Release, nil
+		}
+		waitStart := time.Now()
+		if limiter.AcquireWithContext(ctx, worker.finishCh) {
+			waitStats.record(time.Since(waitStart))
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return nil, errCoprRequestLimiterFinished
+		}
+		waitStats.record(time.Since(waitStart))
+		failpoint.InjectCall("onBeforeSendReqCtx", req)
+		return limiter.Release, nil
 	}
-	rpcCtx, err := worker.store.GetRegionCache().GetTiKVRPCContext(
-		bo.TiKVBackoffer(),
-		task.region,
-		rpcReq.ReplicaReadType,
-		replicaReadSeed,
-		ops...,
-	)
-	if err != nil {
-		return 0, false, err
-	}
-	if rpcCtx == nil || rpcCtx.Store == nil {
-		// A nil RPC context means the cached region or store is invalid and has
-		// already been invalidated by client-go. Do not fail the query here;
-		// let SendReqCtx keep its original retry/re-resolve behavior.
-		return 0, false, nil
-	}
-
-	return rpcCtx.Store.StoreID(), true, nil
+	return waitStats
 }
 
 const (
@@ -2724,7 +2723,7 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 		resp.detail = new(CopRuntimeStats)
 		resp.detail.ScanDetail = &util.ScanDetail{}
 	}
-	resp.detail.LimiterWaitTime += resp.limiterWaitTime
+	resp.detail.LimiterWait.Merge(resp.limiterWait)
 	return worker.collectCopRuntimeStats(resp.detail, bo, rpcCtx, resp)
 }
 
@@ -2788,9 +2787,15 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}
 }
 
-func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext, limiterWaitTime time.Duration) {
+func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(
+	bo *Backoffer,
+	rpcCtx *tikv.RPCContext,
+	limiterWait LimiterWaitStats,
+) {
 	if worker.kvclient.Stats != nil && worker.stats != nil {
-		copStats := &CopRuntimeStats{LimiterWaitTime: limiterWaitTime}
+		copStats := &CopRuntimeStats{
+			LimiterWait: limiterWait,
+		}
 		worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
 		worker.stats.Lock()
 		worker.stats.stats = append(worker.stats.stats, copStats)
@@ -2798,13 +2803,41 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 	}
 }
 
+// LimiterWaitStats contains aggregated blocking wait statistics for coprocessor
+// request admission.
+type LimiterWaitStats struct {
+	TotalTime time.Duration
+	MaxTime   time.Duration
+}
+
+// Record adds one blocking admission wait.
+func (s *LimiterWaitStats) Record(waitTime time.Duration) {
+	s.TotalTime += waitTime
+	if waitTime > s.MaxTime {
+		s.MaxTime = waitTime
+	}
+}
+
+// Merge aggregates another limiter wait statistics value.
+func (s *LimiterWaitStats) Merge(other LimiterWaitStats) {
+	s.TotalTime += other.TotalTime
+	if other.MaxTime > s.MaxTime {
+		s.MaxTime = other.MaxTime
+	}
+}
+
+// IsZero reports whether no blocking admission wait was recorded.
+func (s LimiterWaitStats) IsZero() bool {
+	return s.TotalTime == 0
+}
+
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
 	execdetails.CopExecDetails
 	ReqStats *tikv.RegionRequestRuntimeStats
 
-	LimiterWaitTime time.Duration
-	CoprCacheHit    bool
+	LimiterWait  LimiterWaitStats
+	CoprCacheHit bool
 }
 
 type copIteratorRuntimeStats struct {

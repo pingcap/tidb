@@ -403,9 +403,8 @@ const (
 )
 
 // CoprRequestLimiter limits the aggregate number of in-flight cop request
-// attempts. A token covers the RPC send/receive phase only, from before
-// SendReqCtx is called until it returns. It must be created with
-// NewCoprRequestLimiter.
+// attempts. A token covers one actual RPC attempt and is released before a
+// retry selects its next store. It must be created with NewCoprRequestLimiter.
 type CoprRequestLimiter struct {
 	token chan struct{}
 }
@@ -420,14 +419,13 @@ func NewCoprRequestLimiter(n int) *CoprRequestLimiter {
 	}
 }
 
-// Acquire blocks until the limiter admits one request attempt or done is
-// closed. When it returns false, the caller must call Release exactly once.
-func (l *CoprRequestLimiter) Acquire(done <-chan struct{}) (exit bool) {
-	if l.TryAcquire() {
-		return false
-	}
-
+// AcquireWithContext blocks until the limiter admits one request attempt, ctx
+// is canceled, or done is closed. When it returns false, the caller must call
+// Release exactly once.
+func (l *CoprRequestLimiter) AcquireWithContext(ctx context.Context, done <-chan struct{}) (exit bool) {
 	select {
+	case <-ctx.Done():
+		return true
 	case <-done:
 		return true
 	case l.token <- struct{}{}:
@@ -677,11 +675,12 @@ type Request struct {
 	// sent to multiple storage units concurrently.
 	Concurrency int
 	// CoprRequestLimiter, if not nil, is used as the shared in-flight request
-	// limiter for all cop iterators created from this request. The token lifecycle
-	// is tied to request send/response receive instead of result consumption.
+	// limiter for all cop iterators created from this request when
+	// QueryCopStoreLimiter is nil.
 	CoprRequestLimiter *CoprRequestLimiter
 	// QueryCopStoreLimiter, if not nil, limits in-flight cop request attempts
-	// per TiKV store within this request's statement.
+	// per TiKV store within this request's statement and takes precedence over
+	// CoprRequestLimiter.
 	QueryCopStoreLimiter *QueryCopStoreLimiter
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel

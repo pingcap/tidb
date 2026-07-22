@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
@@ -58,6 +59,66 @@ func TestEnsureMonotonicKeyRanges(t *testing.T) {
 	})
 	reordered = ensureMonotonicKeyRanges(ctx, sortedRanges)
 	require.False(t, reordered)
+}
+
+func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
+	requestLimiter := kv.NewCoprRequestLimiter(1)
+	require.True(t, requestLimiter.TryAcquire())
+
+	queryLimiter := kv.NewQueryCopStoreLimiter(1)
+	worker := &copIteratorWorker{
+		req: &kv.Request{
+			CoprRequestLimiter:   requestLimiter,
+			QueryCopStoreLimiter: queryLimiter,
+		},
+		finishCh: make(chan struct{}),
+	}
+	rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+	waitStats := worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+	require.NotNil(t, rpcReq.RequestAttemptAdmission)
+
+	release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.False(t, requestLimiter.TryAcquire(), "per-store admission must not consume or wait for the request-local limiter")
+	type admissionResult struct {
+		release func()
+		err     error
+	}
+	secondResult := make(chan admissionResult, 1)
+	go func() {
+		release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+		secondResult <- admissionResult{release: release, err: err}
+	}()
+	select {
+	case <-secondResult:
+		require.Fail(t, "second per-store admission should wait")
+	case <-time.After(10 * time.Millisecond):
+	}
+	release()
+	second := <-secondResult
+	require.NoError(t, second.err)
+	require.NotNil(t, second.release)
+	second.release()
+	limiterWait := waitStats.snapshot()
+	require.Positive(t, limiterWait.TotalTime)
+	require.Equal(t, limiterWait.TotalTime, limiterWait.MaxTime)
+	requestLimiter.Release()
+
+	worker.req.QueryCopStoreLimiter = nil
+	rpcReq.RequestAttemptAdmission = nil
+	worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+	require.NotNil(t, rpcReq.RequestAttemptAdmission)
+
+	release, err = rpcReq.RequestAttemptAdmission(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.False(t, requestLimiter.TryAcquire(), "request-local limiter must remain the fallback")
+	release()
+
+	rpcReq.RequestAttemptAdmission = nil
+	worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiFlash})
+	require.Nil(t, rpcReq.RequestAttemptAdmission)
 }
 
 func TestBuildTasksWithoutBuckets(t *testing.T) {
