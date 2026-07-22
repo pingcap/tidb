@@ -27,6 +27,7 @@
 
 mod charset;
 mod collation;
+mod escape;
 mod keywords;
 mod reader;
 mod reserved;
@@ -35,6 +36,7 @@ mod token;
 /// Canonicalizes a recognized charset name from the generated TiDB charset table.
 pub use charset::canonical_charset;
 pub use collation::canonical_collation;
+pub use escape::unescape_char;
 
 /// Canonicalizes the legacy charset-introducer subset accepted by Go's
 /// `charset.GetDefaultCollationLegacy`. The scanner intentionally recognizes

@@ -306,7 +306,7 @@ use tidb_ast::{
     AdminStmt, DdlStmt, DescribeTableStmt, ExplainStmt, Expr, PlanReplayerDumpExplainStmt,
     StatsLockStmt, StatsLockTable, Stmt,
 };
-use tidb_lexer::{is_reserved, Lexer, Token, TokenKind};
+use tidb_lexer::{is_reserved, unescape_char, Lexer, Token, TokenKind};
 
 /// A parse failure with a human-readable reason and the byte offset at which it
 /// occurred.
@@ -877,43 +877,28 @@ fn decode_string(raw: &str) -> String {
         return raw.to_string();
     }
     let quote = bytes[0];
-    let inner = &raw[1..raw.len() - 1];
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c as u8 == quote {
+    let inner = &bytes[1..bytes.len() - 1];
+    let mut out = Vec::with_capacity(inner.len());
+    let mut offset = 0;
+    while offset < inner.len() {
+        let byte = inner[offset];
+        if byte == quote {
             // A doubled delimiter collapses to one.
-            if chars.peek().map(|&n| n as u8) == Some(quote) {
-                chars.next();
+            if inner.get(offset + 1) == Some(&quote) {
+                offset += 1;
             }
-            out.push(c);
-        } else if c == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some('r') => out.push('\r'),
-                Some('0') => out.push('\0'),
-                // Go's `pkg/parser/util.UnescapeChar` maps the MySQL
-                // backslash forms `\\b` and `\\Z` to control bytes 0x08 and
-                // 0x1A. Keep the decoded value byte-identical so AST restore
-                // preserves binary strings used by INSERT/UNHEX fixtures.
-                Some('b') => out.push('\u{0008}'),
-                Some('Z') => out.push('\u{001A}'),
-                Some('\\') => out.push('\\'),
-                Some('\'') => out.push('\''),
-                Some('"') => out.push('"'),
-                // `\%` and `\_` preserve both characters; other escapes drop the
-                // backslash.
-                Some('%') => out.push_str("\\%"),
-                Some('_') => out.push_str("\\_"),
-                Some(other) => out.push(other),
-                None => {}
+            out.push(byte);
+        } else if byte == b'\\' {
+            if let Some(&escaped) = inner.get(offset + 1) {
+                out.extend(unescape_char(escaped));
+                offset += 1;
             }
         } else {
-            out.push(c);
+            out.push(byte);
         }
+        offset += 1;
     }
-    out
+    String::from_utf8(out).expect("unescaping valid UTF-8 SQL preserves valid UTF-8")
 }
 
 #[cfg(test)]

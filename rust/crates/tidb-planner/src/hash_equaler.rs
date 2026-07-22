@@ -19,6 +19,8 @@
 //! byte-length string framing, reset/cache lifecycle, and 64-bit wrapping while
 //! leaving cascades object implementations and equality dispatch external.
 
+pub use tidb_hash::IHasher as Hasher;
+
 const OFFSET64: u64 = 14_695_981_039_346_656_037;
 const PRIME64: u64 = 1_099_511_628_211;
 
@@ -45,36 +47,6 @@ impl Hash64a {
     }
 }
 
-/// Primitive hashing operations used by cascades hash/equality implementors.
-pub trait Hasher {
-    /// Hashes a boolean as zero or one.
-    fn hash_bool(&mut self, value: bool);
-    /// Hashes a signed machine-sized integer represented by the 64-bit TiDB target.
-    fn hash_int(&mut self, value: i64);
-    /// Hashes a signed 64-bit integer.
-    fn hash_int64(&mut self, value: i64);
-    /// Hashes an unsigned 64-bit integer.
-    fn hash_uint64(&mut self, value: u64);
-    /// Hashes the IEEE-754 bit representation of a float.
-    fn hash_float64(&mut self, value: f64);
-    /// Hashes a source `rune` represented as a signed 32-bit code point.
-    fn hash_rune(&mut self, value: i32);
-    /// Hashes a UTF-8 string with its byte length followed by its runes.
-    fn hash_string(&mut self, value: &str);
-    /// Hashes one byte as a rune.
-    fn hash_byte(&mut self, value: u8);
-    /// Hashes a byte slice with its length followed by its bytes.
-    fn hash_bytes(&mut self, value: &[u8]);
-    /// Resets the digest and reuses the cache allocation.
-    fn reset(&mut self);
-    /// Replaces the reusable cache bytes.
-    fn set_cache(&mut self, cache: Vec<u8>);
-    /// Returns the reusable cache bytes.
-    fn cache(&self) -> &[u8];
-    /// Returns the current digest.
-    fn sum64(&self) -> u64;
-}
-
 /// FNV-1a planner hasher with a reusable byte cache.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HashEqualer {
@@ -86,6 +58,17 @@ impl HashEqualer {
     fn absorb(&mut self, value: u64) {
         self.hash64a.0 ^= value;
         self.hash64a.0 = self.hash64a.0.wrapping_mul(PRIME64);
+    }
+
+    /// Replaces the reusable planner encoding cache.
+    pub fn set_cache(&mut self, cache: Vec<u8>) {
+        self.cache = cache;
+    }
+
+    /// Returns the reusable planner encoding cache.
+    #[must_use]
+    pub fn cache(&self) -> &[u8] {
+        &self.cache
     }
 }
 
@@ -144,14 +127,6 @@ impl Hasher for HashEqualer {
     fn reset(&mut self) {
         self.hash64a = Hash64a::new(OFFSET64);
         self.cache.clear();
-    }
-
-    fn set_cache(&mut self, cache: Vec<u8>) {
-        self.cache = cache;
-    }
-
-    fn cache(&self) -> &[u8] {
-        &self.cache
     }
 
     fn sum64(&self) -> u64 {

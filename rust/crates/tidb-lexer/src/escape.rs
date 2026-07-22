@@ -12,10 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Workspace-owned seam for shared hashing contracts.
-//!
-//! Package behavior is added only under a checked whole-package claim.
+//! MySQL byte unescaping from `pkg/parser/util/escape.go`.
 
-mod hash64;
-
-pub use hash64::IHasher;
+/// Returns the replacement bytes for the byte following a MySQL backslash.
+///
+/// `\%` and `\_` retain the backslash because they remain pattern escapes;
+/// every other unrecognized escape discards the backslash.
+#[must_use]
+pub fn unescape_char(byte: u8) -> Vec<u8> {
+    match byte {
+        b'n' => vec![b'\n'],
+        b'0' => vec![0],
+        b'b' => vec![8],
+        b'Z' => vec![26],
+        b'r' => vec![b'\r'],
+        b't' => vec![b'\t'],
+        b'%' | b'_' => vec![b'\\', byte],
+        _ => vec![byte],
+    }
+}
