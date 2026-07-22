@@ -18,4 +18,5 @@ rust_paths = [
 integration_paths = [
   "rust/crates/tidb-ast/src/lib.rs",
   "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/tests/field_type_source.rs",
 ]

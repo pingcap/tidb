@@ -56,8 +56,8 @@ External module counts are pinned porting obligations and are not included in Ti
 | State | Count |
 | --- | --- |
 | UNTRIAGED | 1873 |
-| PARTIAL | 481 |
-| COVERED | 36 |
+| PARTIAL | 480 |
+| COVERED | 37 |
 | BLOCKED | 0 |
 
 ### By target crate
@@ -79,7 +79,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | tidb-parser | 22 | 45 | 8 | 0 |
 | unassigned | 64 | 0 | 0 | 0 |
 | tidb-datatype | 32 | 22 | 7 | 0 |
-| tidb-protocol | 39 | 15 | 2 | 0 |
+| tidb-protocol | 39 | 14 | 3 | 0 |
 | tidb-chunk | 16 | 2 | 0 | 0 |
 | eliminated-go-runtime | 14 | 0 | 0 | 0 |
 | tidb-ast | 8 | 5 | 0 | 0 |
