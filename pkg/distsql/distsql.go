@@ -60,7 +60,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	r, ctx := tracing.StartRegionEx(ctx, "distsql.Select")
 	defer r.End()
 
-	if kvReq.StoreType == kv.TiKV && dctx.QueryCopStoreLimiter != nil {
+	if dctx.QueryCopStoreLimiter != nil {
 		kvReq.QueryCopStoreLimiter = dctx.QueryCopStoreLimiter
 	}
 
