@@ -41,13 +41,19 @@ fn unescape_char_matches_every_go_vector() {
 }
 
 #[test]
-fn only_percent_and_underscore_expand_across_all_bytes() {
+fn every_byte_has_the_exact_go_result() {
     for byte in u8::MIN..=u8::MAX {
         let actual = unescape_char(byte);
-        if matches!(byte, b'%' | b'_') {
-            assert_eq!(actual, [b'\\', byte]);
-        } else {
-            assert_eq!(actual.len(), 1, "input {byte:#04x}");
-        }
+        let expected = match byte {
+            b'n' => vec![b'\n'],
+            b'0' => vec![0],
+            b'b' => vec![8],
+            b'Z' => vec![26],
+            b'r' => vec![b'\r'],
+            b't' => vec![b'\t'],
+            b'%' | b'_' => vec![b'\\', byte],
+            _ => vec![byte],
+        };
+        assert_eq!(actual, expected, "input {byte:#04x}");
     }
 }

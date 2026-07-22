@@ -24,7 +24,21 @@ fn append_parser_owned_values(hasher: &mut dyn IHasher) {
 }
 
 fn append_through_planner_alias(hasher: &mut dyn Hasher) {
+    hasher.hash_bool(false);
+    hasher.hash_int(9);
+    hasher.hash_int64(-10);
+    hasher.hash_uint64(11);
+    hasher.hash_float64(12.5);
+    hasher.hash_rune('界' as i32);
+    hasher.hash_string("planner");
     hasher.hash_byte(0xff);
+    hasher.hash_bytes(&[1, 2, 3]);
+}
+
+fn exercise_planner_cache_contract(hasher: &mut dyn Hasher) {
+    hasher.set_cache(vec![1, 2, 3]);
+    assert_eq!(hasher.cache(), &[1, 2, 3]);
+    assert_ne!(hasher.sum64(), 0);
 }
 
 #[test]
@@ -32,11 +46,10 @@ fn planner_hasher_implements_the_parser_owned_interface() {
     let mut hasher = new_hash_equaler();
     append_parser_owned_values(&mut hasher);
     append_through_planner_alias(&mut hasher);
-    let first = hasher.sum64();
-    hasher.set_cache(vec![1, 2, 3]);
-    assert_eq!(hasher.cache(), &[1, 2, 3]);
-    hasher.reset();
+    let first = IHasher::sum64(&hasher);
+    exercise_planner_cache_contract(&mut hasher);
+    IHasher::reset(&mut hasher);
     append_parser_owned_values(&mut hasher);
     append_through_planner_alias(&mut hasher);
-    assert_eq!(hasher.sum64(), first);
+    assert_eq!(IHasher::sum64(&hasher), first);
 }
