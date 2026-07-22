@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -486,6 +487,7 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
@@ -655,6 +657,7 @@ var partitionsCols = []columnInfo{
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -933,6 +936,9 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.RocksdbBlockCacheHitCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadByteStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentWaitTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogDBStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogIndexNamesStr, tp: mysql.TypeVarchar, size: 100},
 	{name: variable.SlowLogIsInternalStr, tp: mysql.TypeTiny, size: 1},
@@ -1365,6 +1371,12 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxRocksdbBlockReadCountStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read count"},
 	{name: stmtsummary.AvgRocksdbBlockReadByteStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block read byte"},
 	{name: stmtsummary.MaxRocksdbBlockReadByteStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read byte"},
+	{name: stmtsummary.AvgIARemoteReadSegmentCountStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of IA remote segments read"},
+	{name: stmtsummary.MaxIARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of IA remote segments read"},
+	{name: stmtsummary.AvgIARemoteReadSegmentSizeStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.AvgIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time spent waiting for IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time spent waiting for IA remote segment reads"},
 	{name: stmtsummary.AvgPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of prewrite phase"},
 	{name: stmtsummary.MaxPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of prewrite phase"},
 	{name: stmtsummary.AvgCommitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of commit phase"},
@@ -2647,6 +2659,12 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface. Info schema
+// tables are not persisted user tables, so they use the current process default.
+func (it *infoschemaTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
@@ -2743,6 +2761,12 @@ func (vt *VirtualTable) Allocators(_ table.AllocatorContext) autoid.Allocators {
 // Meta implements table.Table Meta interface.
 func (vt *VirtualTable) Meta() *model.TableInfo {
 	return nil
+}
+
+// UseNewCollate implements table.Table UseNewCollate interface. Virtual tables
+// are not persisted user tables, so they use the current process default.
+func (vt *VirtualTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.

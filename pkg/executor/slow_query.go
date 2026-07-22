@@ -1124,7 +1124,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		execdetails.RequestCountStr, execdetails.TotalKeysStr, execdetails.ProcessKeysStr,
 		execdetails.RocksdbDeleteSkippedCountStr, execdetails.RocksdbKeySkippedCountStr,
 		execdetails.RocksdbBlockCacheHitCountStr, execdetails.RocksdbBlockReadCountStr,
-		variable.SlowLogTxnStartTSStr, execdetails.RocksdbBlockReadByteStr:
+		variable.SlowLogTxnStartTSStr, execdetails.RocksdbBlockReadByteStr,
+		execdetails.IARemoteReadSegmentCountStr, execdetails.IARemoteReadSegmentSizeStr:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
@@ -1143,7 +1144,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		variable.SlowLogCopWaitAvg, variable.SlowLogCopWaitP90, variable.SlowLogCopWaitMax, variable.SlowLogKVTotal,
 		variable.SlowLogPDTotal, variable.SlowLogBackoffTotal, variable.SlowLogWriteSQLRespTotal, variable.SlowLogRRU,
 		variable.SlowLogWRU, variable.SlowLogWaitRUDuration, variable.SlowLogTidbCPUUsageDuration, variable.SlowLogTikvCPUUsageDuration,
-		variable.SlowLogMemArbitration, variable.SlowLogRequestUnitV2:
+		variable.SlowLogMemArbitration, execdetails.IARemoteReadSegmentWaitTimeStr, variable.SlowLogRequestUnitV2:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseFloat(value, 64)
 			if err != nil {

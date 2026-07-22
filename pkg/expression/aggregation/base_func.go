@@ -128,6 +128,8 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count()
+	case ast.AggFuncMaxCount, ast.AggFuncMinCount:
+		a.typeInfer4Count()
 	case ast.AggFuncApproxCountDistinct:
 		a.typeInfer4ApproxCountDistinct()
 	case ast.AggFuncApproxPercentile:
@@ -463,7 +465,7 @@ func (a *baseFuncDesc) typeInfer4PopOrSamp() {
 // +--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+--------------------------+
 func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 	switch a.Name {
-	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
+	case ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		v = types.NewIntDatum(0)
 	case ast.AggFuncApproxCountDistinct:
 		if a.RetTp.GetType() != mysql.TypeString {
@@ -486,6 +488,8 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncApproxPercentile:    {},
 	ast.AggFuncMax:                 {},
 	ast.AggFuncMin:                 {},
+	ast.AggFuncMaxCount:            {},
+	ast.AggFuncMinCount:            {},
 	ast.AggFuncFirstRow:            {},
 	ast.WindowFuncNtile:            {},
 	ast.AggFuncJsonArrayagg:        {},

@@ -100,6 +100,99 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestJSONExtractPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_json_extract_plan_cache (id int primary key, doc varchar(255))")
+	tk.MustExec(`insert into t_json_extract_plan_cache values (1, '{"a": 1, "b": 2}')`)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec(`prepare stmt from 'select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, ?)) = ?'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a', @val = '1'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b', @val = '2'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec(`set @path = '$.missing', @val = '1'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.a')) = '1'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.b')) = '2'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.missing')) = '1'`).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t_json_extract_plan_cache_json (id int primary key, doc json)")
+	tk.MustExec(`insert into t_json_extract_plan_cache_json values (1, '{"a": 1}')`)
+	tk.MustQuery(`select id from t_json_extract_plan_cache_json where json_extract(doc, '$.a') is not null`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache_json where json_extract(doc, '$.a') is not null`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestJSONExtractPlanCacheWithExpressionIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_json_extract_expr_idx (
+		id int primary key,
+		doc varchar(255),
+		key idx_a ((cast(json_unquote(json_extract(doc, '$.a')) as char(20))))
+	)`)
+	tk.MustExec(`insert into t_json_extract_expr_idx values
+		(1, '{"a": "match", "b": "no"}'),
+		(2, '{"a": "no", "b": "match"}')`)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec(`prepare stmt from 'select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, ?)) as char(20)) = ?'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a', @val = 'match'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b', @val = 'match'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.a')) as char(20)) = 'match'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.a')) as char(20)) = 'match'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.b')) as char(20)) = 'match'`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`create table t_json_extract_expr_idx_group (
+		id int primary key,
+		doc varchar(255),
+		key idx_a ((cast(json_unquote(json_extract(doc, '$.a')) as char(20))))
+	)`)
+	tk.MustExec(`insert into t_json_extract_expr_idx_group values
+		(1, '{"a": "one", "b": "same"}'),
+		(2, '{"a": "two", "b": "same"}')`)
+	tk.MustExec(`prepare stmt_group from 'select count(*) from t_json_extract_expr_idx_group group by cast(json_unquote(json_extract(doc, ?)) as char(20)) order by 1'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a'`)
+	tk.MustQuery("execute stmt_group using @path").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b'`)
+	tk.MustQuery("execute stmt_group using @path").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`prepare stmt_agg from 'select max(cast(json_unquote(json_extract(doc, ?)) as char(20))) from t_json_extract_expr_idx_group'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a'`)
+	tk.MustQuery("execute stmt_agg using @path").Check(testkit.Rows("two"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b'`)
+	tk.MustQuery("execute stmt_agg using @path").Check(testkit.Rows("same"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1212,6 +1305,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where j is null",                                                  // json
 		"select * from t where j is not null",                                              // json
 		"select * from t where j < 1",                                                      // json
+		"select * from t where json_extract(j, '$.a') is not null",                         // json
 		"select * from t where a > 1 and j < 1",
 		"select * from t where e is null",     // enum
 		"select * from t where e is not null", // enum
@@ -1236,6 +1330,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some unsupported Node",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",

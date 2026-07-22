@@ -145,6 +145,33 @@ func completeErr(err error, idxInfo *model.IndexInfo) error {
 	return errors.Trace(err)
 }
 
+func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
+	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+		return nil
+	}
+	if pkIdx == nil {
+		return nil
+	}
+	for i, pkIdxCol := range pkIdx.Columns {
+		pkCol := tblInfo.Columns[pkIdxCol.Offset]
+		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
+			// Since the handle data cannot be null, we can use SetNull to
+			// indicate that this column does not need to be restored.
+			handleDts[i].SetNull()
+			continue
+		}
+		tables.TryTruncateRestoredData(&handleDts[i], pkCol, pkIdxCol, targetIdx)
+		tables.ConvertDatumToTailSpaceCount(&handleDts[i], pkCol)
+	}
+	dtToRestored := handleDts[:0]
+	for _, handleDt := range handleDts {
+		if !handleDt.IsNull() {
+			dtToRestored = append(dtToRestored, handleDt)
+		}
+	}
+	return dtToRestored
+}
+
 func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
 	conditionPushed := false
 
@@ -229,11 +256,11 @@ func ExtractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []
 }
 
 // BuildHandle is exported for test.
-func BuildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
+func BuildHandle(useNewCollate bool, pkDts []types.Datum, tblInfo *model.TableInfo,
 	pkInfo *model.IndexInfo, loc *time.Location, errCtx errctx.Context) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
-		handleBytes, err := codec.EncodeKey(loc, nil, pkDts...)
+		handleBytes, err := codec.NewEncoder(useNewCollate).EncodeKey(loc, nil, pkDts...)
 		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, err

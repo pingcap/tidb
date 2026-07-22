@@ -20,10 +20,26 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
+
+type upgradeGCV2Manager struct {
+	extworkload.Manager
+	abortCount int
+}
+
+func (*upgradeGCV2Manager) Role() config.ExternalWorkloadRole {
+	return config.RoleGCV2Worker
+}
+
+func (m *upgradeGCV2Manager) AbortGCV2(context.Context) error {
+	m.abortCount++
+	return nil
+}
 
 func TestUsePipelinedDMLDisabledInStarter(t *testing.T) {
 	originalMode := deploymode.Get()
@@ -40,4 +56,25 @@ func TestUsePipelinedDMLDisabledInStarter(t *testing.T) {
 	warnings := s.sessionVars.StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
 	require.EqualError(t, warnings[0].Err, "Pipelined DML is not supported in this deployment. Fallback to standard mode")
+}
+
+func TestUpgradeGCV2AbortUsesPostLockBootstrapVersion(t *testing.T) {
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	dom.Close()
+	domap.Delete(store)
+
+	mgr := &upgradeGCV2Manager{}
+	extworkload.SetManagerForStore(store, mgr)
+	runInBootstrapSession(store, currentBootstrapVersion-1)
+
+	require.Zero(t, mgr.abortCount)
 }

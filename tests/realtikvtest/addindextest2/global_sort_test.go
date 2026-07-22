@@ -51,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -587,7 +589,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 
 	dts := []types.Datum{types.NewIntDatum(1)}
 	sctx := tk.Session().GetSessionVars().StmtCtx
-	idxKey, _, err := tablecodec.GenIndexKey(sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
+	idxKey, _, err := tablecodec.GenIndexKey(codec.NewEncoder(collate.NewCollationEnabled()), sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
@@ -728,30 +730,12 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 			jobID = job.ID
 		}
 	})
-	type observedTiKVUsageResult struct {
-		taskID              int64
-		logicalIndexKVBytes int64
-		ingestedSSTBytes    uint64
-		initialUsedBytes    int64
-	}
-	var observedResult atomic.Pointer[observedTiKVUsageResult]
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLogIngestedSSTBytes",
-		func(taskID, logicalIndexKVBytes int64, ingestedSSTBytes uint64, initialUsedBytes int64) {
-			observedResult.Store(&observedTiKVUsageResult{
-				taskID:              taskID,
-				logicalIndexKVBytes: logicalIndexKVBytes,
-				ingestedSSTBytes:    ingestedSSTBytes,
-				initialUsedBytes:    initialUsedBytes,
-			})
-		})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
 	tk.MustExec("alter table t add index idx(c);")
 	sql := `with global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history)
 		select id from global_tasks where task_key like concat('%%/', '%d');`
 	taskIDRows := tk.MustQuery(fmt.Sprintf(sql, jobID)).Rows()
 	taskID := taskIDRows[0][0].(string)
-	taskIDNum, err := strconv.ParseInt(taskID, 10, 64)
-	require.NoError(t, err)
 
 	getSummary := func(taskID string, step int64) (getReqCnt, putReqCnt, readBytes, bytes int) {
 		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
@@ -784,7 +768,6 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.Greater(t, readBytes, 0)
 	// 153 bytes for writing index records
 	require.Greater(t, bytes, 0)
-	readIndexBytes := int64(bytes)
 
 	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 2)
 	// 1 meta, 1 get size(GCS handle.Attrs make it, others too), 1 read
@@ -805,21 +788,6 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.Equal(t, 0, readBytes)
 	// 0
 	require.Equal(t, 0, bytes)
-
-	require.Eventually(t, func() bool {
-		got := observedResult.Load()
-		return got != nil &&
-			got.taskID == taskIDNum &&
-			got.logicalIndexKVBytes == readIndexBytes
-	}, 30*time.Second, 100*time.Millisecond)
-	got := observedResult.Load()
-	require.NotNil(t, got)
-	require.EqualValues(t, taskIDNum, got.taskID)
-	require.EqualValues(t, readIndexBytes, got.logicalIndexKVBytes)
-	if kerneltype.IsNextGen() {
-		require.Positive(t, got.ingestedSSTBytes)
-	}
-	require.Positive(t, got.initialUsedBytes)
 }
 
 func TestSplitRangeForTable(t *testing.T) {

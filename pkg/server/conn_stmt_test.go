@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -118,6 +119,21 @@ func (*singleRowCursorRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &singleRowCursorRecordSet{}
 
+type failedWriteResponseWriter struct {
+	delay       time.Duration
+	failOnWrite int
+	writes      int
+}
+
+func (w *failedWriteResponseWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failOnWrite {
+		time.Sleep(w.delay)
+		return 0, mysql.ErrBadConn
+	}
+	return len(p), nil
+}
+
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
@@ -185,6 +201,29 @@ func TestCursorExistsFlag(t *testing.T) {
 
 	// the following FETCH should fail, as the cursor has been automatically closed
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+}
+
+func TestResultSetWriteSQLRespDurationIncludesFailedRowWrite(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability &^= mysql.ClientDeprecateEOF
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+
+	const delay = 50 * time.Millisecond
+	c.pkt.SetBufWriter(bufio.NewWriterSize(&failedWriteResponseWriter{
+		delay:       delay,
+		failOnWrite: 4,
+	}, 1))
+	require.Error(t, c.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select * from t"...)))
+
+	require.GreaterOrEqual(t, c.Context().GetSessionVars().CacheStmtExecInfo.WriteSQLRespDuration, delay)
 }
 
 func TestCursorWithParams(t *testing.T) {

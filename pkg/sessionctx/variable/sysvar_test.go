@@ -1001,28 +1001,6 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
 }
 
-func TestSetEnforceDiskSpacePrecheckBeforeAddIndex(t *testing.T) {
-	vars := NewSessionVars(nil)
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-	enforcePrecheck := GetSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
-
-	require.Equal(t, vardef.Off, enforcePrecheck.Value)
-
-	err := mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, vardef.On)
-	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
-	require.NoError(t, err)
-	require.Equal(t, vardef.On, val)
-
-	err = mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, vardef.Off)
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
-	require.NoError(t, err)
-	require.Equal(t, vardef.Off, val)
-}
-
 func TestTiDBServerMemoryLimit(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
@@ -1928,6 +1906,57 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTiDBAnalyzeDefaultBucketAndTopNOptions(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	defer func() {
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+	}()
+
+	bucketsVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumBuckets)
+	require.NotNil(t, bucketsVar)
+	require.NoError(t, bucketsVar.SetGlobalFromHook(ctx, vars, "100", false))
+	require.Equal(t, uint64(100), vardef.AnalyzeDefaultNumBuckets.Load())
+
+	val, err := bucketsVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+
+	// Unsigned sysvar validation normalizes out-of-range values to the configured
+	// boundary instead of returning an error.
+	val, err = bucketsVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(vardef.MinTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	val, err = bucketsVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(vardef.MaxTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	topNVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumTopN)
+	require.NotNil(t, topNVar)
+	require.NoError(t, topNVar.SetGlobalFromHook(ctx, vars, "50", false))
+	require.Equal(t, uint64(50), vardef.AnalyzeDefaultNumTopN.Load())
+
+	val, err = topNVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "50", val)
+
+	val, err = topNVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(vardef.MinTiDBAnalyzeDefaultNumTopN, 10), val)
+
+	val, err = topNVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(vardef.MaxTiDBAnalyzeDefaultNumTopN, 10), val)
 }
 
 func TestTiDBOptSelectivityFactor(t *testing.T) {

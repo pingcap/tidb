@@ -1208,6 +1208,40 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumBuckets,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumBuckets, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumBuckets, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumBuckets.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumBuckets.Store(num)
+			}
+			return err
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumTopN,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumTopN, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumTopN, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumTopN,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumTopN.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumTopN.Store(num)
+			}
+			return err
+		},
+	},
+	{
 		Scope: vardef.ScopeGlobal,
 		Name:  vardef.TiDBEnableAutoAnalyzePriorityQueue,
 		Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue),
@@ -3036,7 +3070,7 @@ var defaultSysVars = []*SysVar{
 		s.MaxPagingSize = tidbOptPositiveInt32(val, vardef.DefMaxPagingSize)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
 		s.PagingSizeBytes = int(TidbOptInt64(val, int64(vardef.DefPagingSizeBytes)))
 		return nil
 	}},
@@ -3081,12 +3115,6 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatUint(vardef.DDLDiskQuota.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.DDLDiskQuota.Store(TidbOptUint64(val, vardef.DefTiDBDDLDiskQuota))
-		return nil
-	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, Value: BoolToOnOff(vardef.DefEnforceDiskSpacePrecheckBeforeAddIndex), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
-		return BoolToOnOff(vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()), nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Store(TiDBOptOn(val))
 		return nil
 	}},
 	// can't assign validate function here. Because validation function will run after GetGlobal function
@@ -4012,6 +4040,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableConnectionEventLog, Value: BoolToOnOff(vardef.DefTiDBEnableConnectionEventLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
 }
 

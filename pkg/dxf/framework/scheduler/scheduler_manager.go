@@ -154,8 +154,11 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			slotMgr:  slotMgr,
 			serverID: serverID,
 		}),
-		logger:   logger,
-		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		logger: logger,
+		// finishCh must be able to buffer finish signals for the largest runtime
+		// value of maxConcurrentTask. Otherwise, raising the limit after startup
+		// can make non-blocking sends drop signals until the periodic cleanup loop runs.
+		finishCh: make(chan struct{}, proto.MaxConcurrentTaskUpperBound),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
@@ -244,7 +247,8 @@ func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, 
 	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
-	if taskCnt >= proto.MaxConcurrentTask {
+	maxConcurrentTask := proto.GetMaxConcurrentTask()
+	if taskCnt >= maxConcurrentTask {
 		// when we have reached the limit of concurrent tasks, we only handle
 		// tasks in states that don't need resources, e.g. reverting/cancelling/
 		// pausing/modifying.
@@ -291,7 +295,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		switch task.State {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			taskCnt := sm.getSchedulerCount()
-			if taskCnt >= proto.MaxConcurrentTask {
+			if taskCnt >= proto.GetMaxConcurrentTask() {
 				continue
 			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
@@ -422,14 +426,9 @@ func (sm *Manager) cleanupTaskLoop() {
 //	tasks with global sort should clean up tmp files stored on S3.
 func (sm *Manager) doCleanupTask() {
 	failpoint.InjectCall("doCleanupTask")
-	tasks, err := sm.taskMgr.GetTasksInStates(
-		sm.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed,
-	)
+	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
-		sm.logger.Warn("get task in states failed", zap.Error(err))
+		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
 		return
 	}
 	if len(tasks) == 0 {
@@ -446,22 +445,60 @@ func (sm *Manager) doCleanupTask() {
 }
 
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
-	cleanedTasks := make([]*proto.Task, 0)
+	type singleCleanUpTask struct {
+		task    *proto.Task
+		cleanUp CleanUpRoutine
+	}
+	type batchCleanUpTaskGroup struct {
+		cleanUp BatchCleanUpRoutine
+		tasks   []*proto.Task
+	}
+
+	singleCleanUpTasks := make([]singleCleanUpTask, 0)
+	batchCleanUpTaskGroups := make(map[proto.TaskType]*batchCleanUpTaskGroup)
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
 	var firstErr error
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
-		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
-		if cleanupFactory != nil {
-			cleanup := cleanupFactory()
-			err := cleanup.CleanUp(sm.ctx, task)
-			if err != nil {
+		if group, ok := batchCleanUpTaskGroups[task.Type]; ok {
+			group.tasks = append(group.tasks, task)
+			continue
+		}
+
+		cleanUpFactory := getSchedulerCleanUpFactory(task.Type)
+		if cleanUpFactory == nil {
+			cleanedTasks = append(cleanedTasks, task)
+			continue
+		}
+		cleanUp := cleanUpFactory()
+		if batchCleanUp, ok := cleanUp.(BatchCleanUpRoutine); ok {
+			batchCleanUpTaskGroups[task.Type] = &batchCleanUpTaskGroup{
+				cleanUp: batchCleanUp,
+				tasks:   []*proto.Task{task},
+			}
+			continue
+		}
+		singleCleanUpTasks = append(singleCleanUpTasks, singleCleanUpTask{
+			task:    task,
+			cleanUp: cleanUp,
+		})
+	}
+
+	for _, cleanUpTask := range singleCleanUpTasks {
+		if err := cleanUpTask.cleanUp.CleanUp(sm.ctx, cleanUpTask.task); err != nil {
+			// maybe consider continue cleaning other tasks on error later.
+			firstErr = err
+			break
+		}
+		cleanedTasks = append(cleanedTasks, cleanUpTask.task)
+	}
+	if firstErr == nil {
+		for _, group := range batchCleanUpTaskGroups {
+			if err := group.cleanUp.CleanUpBatch(sm.ctx, group.tasks); err != nil {
 				firstErr = err
 				break
 			}
-			cleanedTasks = append(cleanedTasks, task)
-		} else {
-			// if task doesn't register cleanup function, mark it as cleaned.
-			cleanedTasks = append(cleanedTasks, task)
+			cleanedTasks = append(cleanedTasks, group.tasks...)
 		}
 	}
 	if firstErr != nil {

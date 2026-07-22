@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"encoding/hex"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -811,13 +810,6 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
 			return resp, errors.Trace(err)
 		}
-		for _, meta := range ingestMetas {
-			identity := ""
-			if len(meta.GetUuid()) > 0 {
-				identity = "classic/" + hex.EncodeToString(meta.GetUuid()) + "/" + meta.GetCfName()
-			}
-			recordIngestedSST(local.collector, identity, meta.GetLength())
-		}
 	}
 	return resp, nil
 }
@@ -975,7 +967,7 @@ func (d *dispatcher) run() error {
 	for {
 		select {
 		case <-d.workerCtx.Done():
-			return nil
+			return d.workerCtx.Err()
 		case job, ok = <-d.jobFromWorkerCh:
 		}
 		if !ok {
