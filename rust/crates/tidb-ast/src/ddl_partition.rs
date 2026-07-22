@@ -132,7 +132,7 @@ pub(super) fn restore_alter_action(
 ) {
     match action {
         AlterPartitionAction::Repartition(partitioning) => {
-            partitioning.restore_after_alter_table(out);
+            partitioning.restore_after_alter_table(out, context);
         }
         AlterPartitionAction::SetAttributes {
             partition,
@@ -182,7 +182,7 @@ pub(super) fn restore_alter_action(
                         if index > 0 {
                             out.push_str(", ");
                         }
-                        definition.restore_into(out);
+                        definition.restore_into_with_context(out, context);
                     }
                     out.push(')');
                 }
@@ -225,7 +225,7 @@ pub(super) fn restore_alter_action(
                     if index > 0 {
                         out.push_str(", ");
                     }
-                    definition.restore_into(out);
+                    definition.restore_into_with_context(out, context);
                 }
                 out.push(')');
             }
@@ -453,13 +453,13 @@ pub struct SubPartitionDefinition {
 }
 
 impl PartitionDefinition {
-    pub(super) fn restore_into(&self, out: &mut String) {
+    fn restore_into_with_context(&self, out: &mut String, context: crate::RestoreContext) {
         out.push_str("PARTITION ");
         out.push_str(&back_quote(&self.name));
         self.clause.restore_into(out);
         for option in &self.options {
             out.push(' ');
-            option.restore_into(out);
+            option.restore_into_with_context(out, context);
         }
         if !self.sub_partitions.is_empty() {
             out.push_str(" (");
@@ -467,7 +467,7 @@ impl PartitionDefinition {
                 if index > 0 {
                     out.push(',');
                 }
-                definition.restore_into(out);
+                definition.restore_into_with_context(out, context);
             }
             out.push(')');
         }
@@ -475,28 +475,31 @@ impl PartitionDefinition {
 }
 
 impl SubPartitionDefinition {
-    fn restore_into(&self, out: &mut String) {
+    fn restore_into_with_context(&self, out: &mut String, context: crate::RestoreContext) {
         out.push_str("SUBPARTITION ");
         out.push_str(&back_quote(&self.name));
         for option in &self.options {
             out.push(' ');
-            option.restore_into(out);
+            option.restore_into_with_context(out, context);
         }
     }
 }
 
 impl TablePartitioning {
-    /// Restores Go's `PartitionOptions` canonical order.
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_with_prefix(out, " PARTITION BY ");
+    pub(crate) fn restore_into_with_context(
+        &self,
+        out: &mut String,
+        context: crate::RestoreContext,
+    ) {
+        self.restore_with_prefix(out, " PARTITION BY ", context);
     }
 
     /// Restore this shared payload as a terminal `ALTER TABLE` action.
-    fn restore_after_alter_table(&self, out: &mut String) {
-        self.restore_with_prefix(out, "PARTITION BY ");
+    fn restore_after_alter_table(&self, out: &mut String, context: crate::RestoreContext) {
+        self.restore_with_prefix(out, "PARTITION BY ", context);
     }
 
-    fn restore_with_prefix(&self, out: &mut String, prefix: &str) {
+    fn restore_with_prefix(&self, out: &mut String, prefix: &str, context: crate::RestoreContext) {
         out.push_str(prefix);
         self.method.restore_into(out);
         if self.method.count > 0 && self.definitions.is_empty() {
@@ -517,7 +520,7 @@ impl TablePartitioning {
                 if index > 0 {
                     out.push(',');
                 }
-                definition.restore_into(out);
+                definition.restore_into_with_context(out, context);
             }
             out.push(')');
         }

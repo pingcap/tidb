@@ -34,6 +34,30 @@ fn table_option_source_rows_use_the_physical_option_leaf() {
             "create table t (a int) ttl_job_interval='1h'",
             "CREATE TABLE `t` (`a` INT) TTL_JOB_INTERVAL = '1h'",
         ),
+        (
+            "create table t (c int) table_checksum = 0",
+            "CREATE TABLE `t` (`c` INT) TABLE_CHECKSUM = 0",
+        ),
+        (
+            "create table t (c int) table_checksum 1",
+            "CREATE TABLE `t` (`c` INT) TABLE_CHECKSUM = 1",
+        ),
+        (
+            "create table t (c int) STATS_SAMPLE_PAGES = default",
+            "CREATE TABLE `t` (`c` INT) STATS_SAMPLE_PAGES = DEFAULT",
+        ),
+        (
+            "create table t (c int) STORAGE DISK",
+            "CREATE TABLE `t` (`c` INT) STORAGE DISK",
+        ),
+        (
+            "create table t (c int) STORAGE MEMORY",
+            "CREATE TABLE `t` (`c` INT) STORAGE MEMORY",
+        ),
+        (
+            "create table t (c int) STORAGE ENGINE text_string",
+            "CREATE TABLE `t` (`c` INT) ENGINE = text_string",
+        ),
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
     }

@@ -315,19 +315,11 @@ fn generated_columns_reject_the_same_incompatible_options_as_go() {
 }
 
 #[test]
-fn create_table_unmodeled_tails_are_rejected_instead_of_erased() {
-    // `parseCreateTableStmt` stops its Go table-option loop at the first
-    // non-option, then dispatches the remaining CREATE TABLE grammar. Rust
-    // does not model these later tails yet, so they must reach the top-level
-    // completion check rather than being consumed token-by-token and lost
-    // from restore. Creation-side PARTITION BY now has a typed owner; these
-    // The CTAS and duplicate-policy tails now have one source-shaped owner
-    // (`ctas_source`); this remaining row guards the still-unmodelled
-    // STORAGE tail.
+fn create_table_storage_tail_has_a_typed_table_option_owner() {
     let sql = "create table t (a int) storage disk engine=innodb";
-    let error = parse(sql).expect_err("unmodeled CREATE TABLE tail must not be erased");
     assert_eq!(
-        error.message, "unexpected trailing tokens",
+        r(sql),
+        "CREATE TABLE `t` (`a` INT) STORAGE DISK ENGINE = innodb",
         "source SQL: {sql}"
     );
 }

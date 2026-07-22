@@ -315,13 +315,50 @@ fn test_drop_placement_policy_restore() {
 
 #[test]
 fn test_remove_placement_restore() {
-    assert_eq!(
-        restore_with_mode(
-            "ALTER PLACEMENT POLICY p3 PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2,us-west-1'",
-            tidb_ast::PlacementRestoreMode::Skip,
+    let flags =
+        tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::SKIP_PLACEMENT_RULE_FOR_RESTORE;
+    for (sql, expected) in [
+        (
+            "CREATE TABLE t1 (id BIGINT NOT NULL PRIMARY KEY auto_increment, b varchar(255)) PLACEMENT POLICY=placement1",
+            "CREATE TABLE `t1` (`id` BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT,`b` VARCHAR(255)) ",
         ),
-        ""
-    );
+        (
+            "CREATE TABLE t4 (firstname VARCHAR(25) NOT NULL,lastname VARCHAR(25) NOT NULL,username VARCHAR(16) NOT NULL,email VARCHAR(35),joined DATE NOT NULL) PARTITION BY RANGE(YEAR(joined)) (PARTITION p0 VALUES LESS THAN (1960) PLACEMENT POLICY=p1,PARTITION p1 VALUES LESS THAN (1970),PARTITION p2 VALUES LESS THAN (1980),PARTITION p3 VALUES LESS THAN (1990),PARTITION p4 VALUES LESS THAN MAXVALUE)",
+            "CREATE TABLE `t4` (`firstname` VARCHAR(25) NOT NULL,`lastname` VARCHAR(25) NOT NULL,`username` VARCHAR(16) NOT NULL,`email` VARCHAR(35),`joined` DATE NOT NULL) PARTITION BY RANGE (YEAR(`joined`)) (PARTITION `p0` VALUES LESS THAN (1960) ,PARTITION `p1` VALUES LESS THAN (1970),PARTITION `p2` VALUES LESS THAN (1980),PARTITION `p3` VALUES LESS THAN (1990),PARTITION `p4` VALUES LESS THAN (MAXVALUE))",
+        ),
+        ("ALTER TABLE t3 PLACEMENT POLICY=DEFAULT", "ALTER TABLE `t3`"),
+        ("ALTER TABLE t1 PLACEMENT POLICY=p10", "ALTER TABLE `t1`"),
+        (
+            "ALTER TABLE t1 PLACEMENT POLICY=p10, add d text(50)",
+            "ALTER TABLE `t1` ADD COLUMN `d` TEXT(50)",
+        ),
+        ("alter table tp PARTITION p1 placement policy p2", ""),
+        (
+            "alter table t add d text(50) PARTITION p1 placement policy p2",
+            "ALTER TABLE `t` ADD COLUMN `d` TEXT(50)",
+        ),
+        (
+            "alter table tp set tiflash replica 1 PARTITION p1 placement policy p2",
+            "ALTER TABLE `tp` SET TIFLASH REPLICA 1",
+        ),
+        (
+            "ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY SET DEFAULT",
+            "",
+        ),
+        (
+            "ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY p1 charset utf8mb4",
+            "ALTER DATABASE `TestResetPlacementDB`  CHARACTER SET = utf8mb4",
+        ),
+        (
+            "ALTER PLACEMENT POLICY p3 PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2,us-west-1'",
+            "",
+        ),
+    ] {
+        let restored = parse(sql)
+            .unwrap_or_else(|error| panic!("parse placement removal row {sql}: {error:?}"))
+            .restore_with_flags(flags);
+        assert_eq!(restored, expected, "source SQL: {sql}");
+    }
 }
 
 #[test]

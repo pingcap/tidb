@@ -135,6 +135,20 @@ impl Parser {
             }
             "KEY_BLOCK_SIZE" => integer_option!(TableOption::KeyBlockSize),
             "COMPRESSION" => string_option!(TableOption::Compression),
+            "STORAGE" => {
+                self.bump();
+                if self.is_kw("ENGINE") {
+                    self.bump();
+                    self.accept_optional_equals();
+                    Some(TableOption::Engine(self.parse_table_option_word()?))
+                } else if self.is_kw("DISK") || self.is_kw("MEMORY") {
+                    Some(TableOption::StorageMedia(
+                        self.bump().text.to_ascii_uppercase(),
+                    ))
+                } else {
+                    return Err(self.err_here("expected ENGINE, DISK, or MEMORY after STORAGE"));
+                }
+            }
             "TABLESPACE" => {
                 self.bump();
                 self.accept_optional_equals();
@@ -216,6 +230,17 @@ impl Parser {
                 };
                 Some(TableOption::StatsAutoRecalc(value))
             }
+            "STATS_SAMPLE_PAGES" => {
+                self.bump();
+                self.accept_optional_equals();
+                let value = if self.is_kw("DEFAULT") {
+                    self.bump();
+                    "DEFAULT".to_string()
+                } else {
+                    self.parse_table_option_integer("STATS_SAMPLE_PAGES")?
+                };
+                Some(TableOption::StatsSamplePages(value))
+            }
             "DATA" | "INDEX" if self.is_kw_at(1, "DIRECTORY") => {
                 let is_data = keyword == "DATA";
                 self.bump();
@@ -257,6 +282,7 @@ impl Parser {
                     self.parse_table_option_word()?,
                 ))
             }
+            "TABLE_CHECKSUM" => integer_option!(TableOption::TableChecksum),
             "STATS_BUCKETS" => integer_option!(TableOption::StatsBuckets),
             "STATS_TOPN" => integer_option!(TableOption::StatsTopN),
             "STATS_SAMPLE_RATE" => {

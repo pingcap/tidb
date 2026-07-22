@@ -373,6 +373,15 @@ impl DdlStmt {
                 }
             }
             Self::AlterDatabase { name, options } => {
+                let skip_placement = context.flags().has_skip_placement_rule_for_restore();
+                if skip_placement
+                    && !options.is_empty()
+                    && options
+                        .iter()
+                        .all(|option| matches!(option, DatabaseOption::PlacementPolicy(_)))
+                {
+                    return;
+                }
                 out.push_str("ALTER DATABASE");
                 if let Some(name) = name {
                     out.push(' ');
@@ -380,11 +389,18 @@ impl DdlStmt {
                 }
                 for option in options {
                     out.push(' ');
+                    if skip_placement && matches!(option, DatabaseOption::PlacementPolicy(_)) {
+                        continue;
+                    }
                     option.restore_into(out);
                 }
             }
             Self::CreatePlacementPolicy(statement) => statement.restore_into(out),
-            Self::AlterPlacementPolicy(statement) => statement.restore_into(out),
+            Self::AlterPlacementPolicy(statement) => {
+                if !context.flags().has_skip_placement_rule_for_restore() {
+                    statement.restore_into(out);
+                }
+            }
             Self::AlterTable(table) => table.restore_into_with_context(out, context),
             Self::RenameTable(table) => table.restore_into(out),
             Self::RenameUser { pairs } => {

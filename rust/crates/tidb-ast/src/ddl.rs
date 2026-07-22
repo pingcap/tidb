@@ -601,6 +601,17 @@ impl AlterTableStmt {
     }
 
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+        if context.flags().has_skip_placement_rule_for_restore()
+            && !self.actions.is_empty()
+            && self.actions.iter().all(|action| {
+                matches!(
+                    action,
+                    AlterTableAction::Partition(AlterPartitionAction::SetPlacementPolicy { .. })
+                )
+            })
+        {
+            return;
+        }
         out.push_str("ALTER TABLE ");
         push_name_path(out, &self.name);
         let mut restored = 0;
@@ -621,12 +632,23 @@ impl AlterTableStmt {
 
 impl AlterTableAction {
     fn is_suppressed(&self, context: RestoreContext) -> bool {
-        context.flags().has_with_ttl_enable_off()
+        (context.flags().has_with_ttl_enable_off()
             && matches!(
                 self,
                 Self::SetTableOptions { options }
                     if options.iter().all(|option| matches!(option, TableOption::TtlEnable(_)))
-            )
+            ))
+            || (context.flags().has_skip_placement_rule_for_restore()
+                && matches!(
+                    self,
+                    Self::SetTableOptions { options }
+                        if options.iter().all(|option| matches!(option, TableOption::PlacementPolicy(_)))
+                ))
+            || (context.flags().has_skip_placement_rule_for_restore()
+                && matches!(
+                    self,
+                    Self::Partition(AlterPartitionAction::SetPlacementPolicy { .. })
+                ))
     }
 
     /// Go joins terminal partition replacement/removal specs with whitespace
@@ -841,6 +863,11 @@ impl AlterTableAction {
                 let mut restored = 0;
                 let mut has_ttl_definition = false;
                 for option in options {
+                    if context.flags().has_skip_placement_rule_for_restore()
+                        && matches!(option, TableOption::PlacementPolicy(_))
+                    {
+                        continue;
+                    }
                     if context.flags().has_with_ttl_enable_off()
                         && matches!(option, TableOption::TtlEnable(_))
                     {

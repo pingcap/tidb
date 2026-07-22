@@ -855,6 +855,14 @@ impl Parser {
                     .parse_alter_table_action()?
                     .expect("REMOVE was recognized as an ALTER TABLE action");
                 actions.push(action);
+            } else if self.is_kw("PARTITION") {
+                // Go's AlterTableSpecList accepts the partition-option spec
+                // directly after another spec without a comma. Its restore
+                // later treats this as a separate placement-only spec.
+                let action = self
+                    .parse_alter_table_action()?
+                    .expect("PARTITION was recognized as an ALTER TABLE action");
+                actions.push(action);
             }
             break;
         }

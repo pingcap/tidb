@@ -203,7 +203,7 @@ impl CreateTableStmt {
             TableOption::TtlEnable(false).restore_into_with_context(out, context);
         }
         if let Some(partitioning) = &self.partitioning {
-            partitioning.restore_into(out);
+            partitioning.restore_into_with_context(out, context);
         }
         // Go restores creation-side SPLIT after partitioning, but before a
         // CTAS result source and GLOBAL TEMPORARY's ON COMMIT clause.
@@ -299,7 +299,7 @@ impl CreateTableStmt {
         }
         if let Some(partitioning) = &self.partitioning {
             let mut text = String::new();
-            partitioning.restore_into(&mut text);
+            partitioning.restore_into_with_context(&mut text, context);
             out.extend_from_slice(text.as_bytes());
         }
         for split in &self.splits {

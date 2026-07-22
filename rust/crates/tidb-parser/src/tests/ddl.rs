@@ -1367,10 +1367,10 @@ fn create_table_options() {
         r("create table t (a int) row_format=dynamic key_block_size=4 comment='x'"),
         "CREATE TABLE `t` (`a` INT) ROW_FORMAT = DYNAMIC KEY_BLOCK_SIZE = 4 COMMENT = 'x'"
     );
-    // An option outside the typed AST slice must not be skipped. Successful
-    // parse-and-restore is a preservation contract, so `STORAGE DISK` stays
-    // a ParseError until it has a source-shaped AST payload.
-    assert!(parse("create table t (a int) storage disk engine=InnoDB").is_err());
+    assert_eq!(
+        r("create table t (a int) storage disk engine=InnoDB"),
+        "CREATE TABLE `t` (`a` INT) STORAGE DISK ENGINE = InnoDB"
+    );
     // `SHARD_ROW_ID_BITS`/`PRE_SPLIT_REGIONS`/`AUTO_ID_CACHE` are
     // TiDB-specific extensions, but restore as plain `KEYWORD = value`
     // with NO special-comment wrapping (confirmed via `godump restore`

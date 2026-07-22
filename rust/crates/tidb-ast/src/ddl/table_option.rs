@@ -18,6 +18,9 @@ use crate::util::{back_quote, escape_string_literal, push_name_path};
 use crate::{Expr, RestoreContext};
 
 const FEATURE_AFFINITY: &str = "affinity";
+const FEATURE_AUTO_ID_CACHE: &str = "auto_id_cache";
+const FEATURE_AUTO_RANDOM_BASE: &str = "auto_rand_base";
+const FEATURE_FORCE_AUTO_INCREMENT: &str = "force_inc";
 const FEATURE_TTL: &str = "ttl";
 
 /// One trailing `CREATE TABLE` table option. Each variant's value is
@@ -47,6 +50,10 @@ pub enum TableOption {
     Compression(String),
     /// `TABLESPACE [=] name`.
     Tablespace(String),
+    /// `STORAGE {DISK|MEMORY}`.
+    StorageMedia(String),
+    /// `STORAGE_CLASS [=] value` for constructible Go AST nodes.
+    StorageClass(String),
     /// `SHARD_ROW_ID_BITS [=] n`.
     ShardRowIdBits(String),
     /// `PRE_SPLIT_REGIONS [=] n`.
@@ -82,6 +89,8 @@ pub enum TableOption {
     Password(String),
     /// `STATS_AUTO_RECALC [=] (DEFAULT | n)`.
     StatsAutoRecalc(String),
+    /// `STATS_SAMPLE_PAGES [=] (DEFAULT | n)`.
+    StatsSamplePages(String),
     /// `NODEGROUP [=] n`.
     Nodegroup(String),
     /// `DATA DIRECTORY [=] '...'`.
@@ -116,6 +125,8 @@ pub enum TableOption {
     SecondaryEngineAttribute(String),
     /// `ENGINE_ATTRIBUTE [=] value`.
     EngineAttribute(String),
+    /// `TABLE_CHECKSUM [=] n`.
+    TableChecksum(String),
     /// `[DEFAULT] PLACEMENT POLICY (SET DEFAULT | [=] (DEFAULT | name))`.
     PlacementPolicy(String),
     /// `STATS_BUCKETS [=] n`.
@@ -126,8 +137,12 @@ pub enum TableOption {
     StatsSampleRate(String),
     /// `STATS_COL_CHOICE [=] '...'`.
     StatsColChoice(String),
+    /// A constructible `STATS_COL_CHOICE = DEFAULT` Go AST node.
+    StatsColChoiceDefault,
     /// `STATS_COL_LIST [=] '...'`.
     StatsColList(String),
+    /// A constructible `STATS_COL_LIST = DEFAULT` Go AST node.
+    StatsColListDefault,
     /// `TTL [=] col + INTERVAL value unit`.
     Ttl {
         /// The row-time column name (restored back-quoted).
@@ -163,10 +178,14 @@ impl TableOption {
     /// wraps exactly that option in a feature-special comment when requested.
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
         match self {
+            Self::Engine(v) if v.is_empty() => out.push_str("ENGINE = ''"),
             Self::Engine(v) => push_table_option_bare(out, "ENGINE", v),
             Self::AutoIncrement(v) => push_table_option_bare(out, "AUTO_INCREMENT", v),
             Self::ForceAutoIncrement(v) => {
-                out.push_str("FORCE AUTO_INCREMENT = ");
+                context.write_with_tidb_special_comment(out, FEATURE_FORCE_AUTO_INCREMENT, |out| {
+                    out.push_str("FORCE ")
+                });
+                out.push_str("AUTO_INCREMENT = ");
                 out.push_str(v);
             }
             Self::CharacterSet(v) => push_table_option_bare(out, "DEFAULT CHARACTER SET", v),
@@ -176,9 +195,22 @@ impl TableOption {
             Self::KeyBlockSize(v) => push_table_option_bare(out, "KEY_BLOCK_SIZE", v),
             Self::Compression(v) => push_table_option_string(out, "COMPRESSION", v),
             Self::Tablespace(v) => push_table_option_name(out, "TABLESPACE", v),
-            Self::ShardRowIdBits(v) => push_table_option_bare(out, "SHARD_ROW_ID_BITS", v),
-            Self::PreSplitRegions(v) => push_table_option_bare(out, "PRE_SPLIT_REGIONS", v),
-            Self::AutoIdCache(v) => push_table_option_bare(out, "AUTO_ID_CACHE", v),
+            Self::StorageMedia(v) => {
+                out.push_str("STORAGE ");
+                out.push_str(v);
+            }
+            Self::StorageClass(v) => push_table_option_string(out, "STORAGE_CLASS", v),
+            Self::ShardRowIdBits(v) => context.write_with_tidb_special_comment(out, "", |out| {
+                push_table_option_bare(out, "SHARD_ROW_ID_BITS", v)
+            }),
+            Self::PreSplitRegions(v) => context.write_with_tidb_special_comment(out, "", |out| {
+                push_table_option_bare(out, "PRE_SPLIT_REGIONS", v)
+            }),
+            Self::AutoIdCache(v) => {
+                context.write_with_tidb_special_comment(out, FEATURE_AUTO_ID_CACHE, |out| {
+                    push_table_option_bare(out, "AUTO_ID_CACHE", v)
+                })
+            }
             Self::MaxRows(v) => push_table_option_bare(out, "MAX_ROWS", v),
             Self::MinRows(v) => push_table_option_bare(out, "MIN_ROWS", v),
             Self::AvgRowLength(v) => push_table_option_bare(out, "AVG_ROW_LENGTH", v),
@@ -190,14 +222,23 @@ impl TableOption {
             Self::PackKeys => {
                 out.push_str("PACK_KEYS = DEFAULT /* TableOptionPackKeys is not supported */ ")
             }
-            Self::AutoRandomBase(v) => push_table_option_bare(out, "AUTO_RANDOM_BASE", v),
+            Self::AutoRandomBase(v) => {
+                context.write_with_tidb_special_comment(out, FEATURE_AUTO_RANDOM_BASE, |out| {
+                    push_table_option_bare(out, "AUTO_RANDOM_BASE", v)
+                })
+            }
             Self::ForceAutoRandomBase(v) => {
-                out.push_str("FORCE AUTO_RANDOM_BASE = ");
-                out.push_str(v);
+                context.write_with_tidb_special_comment(out, FEATURE_FORCE_AUTO_INCREMENT, |out| {
+                    out.push_str("FORCE ")
+                });
+                context.write_with_tidb_special_comment(out, FEATURE_AUTO_RANDOM_BASE, |out| {
+                    push_table_option_bare(out, "AUTO_RANDOM_BASE", v)
+                });
             }
             Self::Connection(v) => push_table_option_string(out, "CONNECTION", v),
             Self::Password(v) => push_table_option_string(out, "PASSWORD", v),
             Self::StatsAutoRecalc(v) => push_table_option_bare(out, "STATS_AUTO_RECALC", v),
+            Self::StatsSamplePages(v) => push_table_option_bare(out, "STATS_SAMPLE_PAGES", v),
             Self::Nodegroup(v) => push_table_option_bare(out, "NODEGROUP", v),
             Self::DataDirectory(v) => push_table_option_string(out, "DATA DIRECTORY", v),
             Self::IndexDirectory(v) => push_table_option_string(out, "INDEX DIRECTORY", v),
@@ -228,7 +269,11 @@ impl TableOption {
                 push_table_option_string(out, "SECONDARY_ENGINE_ATTRIBUTE", v)
             }
             Self::EngineAttribute(v) => push_table_option_string(out, "ENGINE_ATTRIBUTE", v),
+            Self::TableChecksum(v) => push_table_option_bare(out, "TABLE_CHECKSUM", v),
             Self::PlacementPolicy(v) => {
+                if context.flags().has_skip_placement_rule_for_restore() {
+                    return;
+                }
                 context.write_with_tidb_special_comment(out, "placement", |out| {
                     push_table_option_name(out, "PLACEMENT POLICY", v)
                 })
@@ -237,7 +282,9 @@ impl TableOption {
             Self::StatsTopN(v) => push_table_option_bare(out, "STATS_TOPN", v),
             Self::StatsSampleRate(v) => push_table_option_bare(out, "STATS_SAMPLE_RATE", v),
             Self::StatsColChoice(v) => push_table_option_string(out, "STATS_COL_CHOICE", v),
+            Self::StatsColChoiceDefault => out.push_str("STATS_COL_CHOICE = DEFAULT"),
             Self::StatsColList(v) => push_table_option_string(out, "STATS_COL_LIST", v),
+            Self::StatsColListDefault => out.push_str("STATS_COL_LIST = DEFAULT"),
             Self::Ttl {
                 column,
                 value,
@@ -330,6 +377,9 @@ impl crate::Visitable for TableOption {
             Self::Tablespace(field_0) => {
                 let _ = field_0;
             }
+            Self::StorageMedia(field_0) | Self::StorageClass(field_0) => {
+                let _ = field_0;
+            }
             Self::ShardRowIdBits(field_0) => {
                 let _ = field_0;
             }
@@ -369,6 +419,9 @@ impl crate::Visitable for TableOption {
                 let _ = field_0;
             }
             Self::StatsAutoRecalc(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsSamplePages(field_0) => {
                 let _ = field_0;
             }
             Self::Nodegroup(field_0) => {
@@ -420,6 +473,9 @@ impl crate::Visitable for TableOption {
             Self::EngineAttribute(field_0) => {
                 let _ = field_0;
             }
+            Self::TableChecksum(field_0) => {
+                let _ = field_0;
+            }
             Self::PlacementPolicy(field_0) => {
                 let _ = field_0;
             }
@@ -435,9 +491,11 @@ impl crate::Visitable for TableOption {
             Self::StatsColChoice(field_0) => {
                 let _ = field_0;
             }
+            Self::StatsColChoiceDefault => {}
             Self::StatsColList(field_0) => {
                 let _ = field_0;
             }
+            Self::StatsColListDefault => {}
             Self::Ttl {
                 column,
                 value,
@@ -464,3 +522,74 @@ impl crate::Visitable for TableOption {
     }
 }
 // END GENERATED AST VISITOR IMPLEMENTATIONS
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RestoreFlags;
+
+    fn restore(option: TableOption, flags: RestoreFlags) -> String {
+        let mut out = String::new();
+        option.restore_into_with_context(&mut out, RestoreContext::new(flags));
+        out
+    }
+
+    #[test]
+    fn constructible_go_table_option_states_restore_without_data_loss() {
+        for (option, expected) in [
+            (TableOption::Engine(String::new()), "ENGINE = ''"),
+            (
+                TableOption::StorageClass("standard".into()),
+                "STORAGE_CLASS = 'standard'",
+            ),
+            (
+                TableOption::StatsColChoiceDefault,
+                "STATS_COL_CHOICE = DEFAULT",
+            ),
+            (TableOption::StatsColListDefault, "STATS_COL_LIST = DEFAULT"),
+        ] {
+            assert_eq!(restore(option, RestoreFlags::DEFAULT), expected);
+        }
+    }
+
+    #[test]
+    fn tidb_only_table_options_honor_statement_restore_flags() {
+        let special = RestoreFlags::DEFAULT | RestoreFlags::TIDB_SPECIAL_COMMENT;
+        for (option, expected) in [
+            (
+                TableOption::AutoIdCache("1".into()),
+                "/*T![auto_id_cache] AUTO_ID_CACHE = 1 */",
+            ),
+            (
+                TableOption::AutoRandomBase("2".into()),
+                "/*T![auto_rand_base] AUTO_RANDOM_BASE = 2 */",
+            ),
+            (
+                TableOption::ShardRowIdBits("3".into()),
+                "/*T! SHARD_ROW_ID_BITS = 3 */",
+            ),
+            (
+                TableOption::PreSplitRegions("4".into()),
+                "/*T! PRE_SPLIT_REGIONS = 4 */",
+            ),
+            (
+                TableOption::ForceAutoIncrement("5".into()),
+                "/*T![force_inc] FORCE  */AUTO_INCREMENT = 5",
+            ),
+            (
+                TableOption::ForceAutoRandomBase("6".into()),
+                "/*T![force_inc] FORCE  *//*T![auto_rand_base] AUTO_RANDOM_BASE = 6 */",
+            ),
+        ] {
+            assert_eq!(restore(option, special), expected);
+        }
+
+        assert_eq!(
+            restore(
+                TableOption::PlacementPolicy("p".into()),
+                RestoreFlags::DEFAULT | RestoreFlags::SKIP_PLACEMENT_RULE_FOR_RESTORE,
+            ),
+            ""
+        );
+    }
+}
