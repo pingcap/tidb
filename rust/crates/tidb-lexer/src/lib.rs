@@ -28,6 +28,7 @@
 mod charset;
 mod collation;
 mod escape;
+mod features;
 mod keywords;
 mod reader;
 mod reserved;
@@ -37,6 +38,12 @@ mod token;
 pub use charset::canonical_charset;
 pub use collation::canonical_collation;
 pub use escape::unescape_char;
+pub use features::{
+    can_parse_feature, FEATURE_ID_AFFINITY, FEATURE_ID_AUTO_ID_CACHE, FEATURE_ID_AUTO_RANDOM,
+    FEATURE_ID_AUTO_RANDOM_BASE, FEATURE_ID_CLUSTERED_INDEX, FEATURE_ID_FORCE_AUTO_INC,
+    FEATURE_ID_GLOBAL_INDEX, FEATURE_ID_PLACEMENT, FEATURE_ID_PRESPLIT, FEATURE_ID_RESOURCE_GROUP,
+    FEATURE_ID_SPLIT_REGION, FEATURE_ID_TIDB, FEATURE_ID_TTL,
+};
 
 /// Canonicalizes the legacy charset-introducer subset accepted by Go's
 /// `charset.GetDefaultCollationLegacy`. The scanner intentionally recognizes
@@ -909,20 +916,7 @@ fn is_single_operator(ch: u8) -> bool {
 
 /// Feature ids accepted by `pkg/parser/tidb/features.go`'s `featureIDs` map.
 fn supported_feature(id: &str) -> bool {
-    matches!(
-        id,
-        "auto_rand"
-            | "auto_id_cache"
-            | "auto_rand_base"
-            | "clustered_index"
-            | "force_inc"
-            | "placement"
-            | "ttl"
-            | "global_index"
-            | "pre_split"
-            | "affinity"
-            | "region_split"
-    )
+    can_parse_feature(&[id])
 }
 
 fn ascii_upper(s: &str) -> String {

@@ -22,6 +22,9 @@ crate tests and is current in `rust/ported-packages.json`.
 - [x] Transcreated `pkg/parser/charset`, the highest-value dependency-ready
   parser leaf, including all 11 production files, 2 test files, 10 test or
   benchmark obligations, and `BUILD.bazel`.
+- [x] Transcreated dependency-ready `pkg/parser/types`, `pkg/parser/duration`,
+  and `pkg/parser/tidb` in one direct batch, closing 5 production files, 3 test
+  files, 7 test obligations, and 3 Bazel support files.
 - [ ] Continue dependency-closed parser, datatype, protocol, storage, session,
   planner, and executor packages toward the deployable read-only node.
 
@@ -64,8 +67,8 @@ crate tests and is current in `rust/ported-packages.json`.
 ## Outcomes & Retrospective
 
 The implementation loop now has two operations in `rust/scripts/port.py`:
-`inventory` and `record`. `pkg/parser/charset` is the eighth current package.
-The next outcome is another complete package, not more workflow infrastructure.
+`inventory` and `record`. Eleven Go packages are now current. The next outcome
+is another complete package, not more workflow infrastructure.
 The overall rewrite remains far from complete; current live SQL/PD/TiKV paths
 are bounded evidence, not parity.
 
@@ -86,10 +89,13 @@ Current recorded packages are:
 
 - `pkg/parser/auth`
 - `pkg/parser/charset`
+- `pkg/parser/duration`
 - `pkg/parser/format`
 - `pkg/parser/mysql`
 - `pkg/parser/opcode`
 - `pkg/parser/terror`
+- `pkg/parser/tidb`
+- `pkg/parser/types`
 - `pkg/parser/util`
 - `pkg/server/internal/handshake`
 
@@ -99,25 +105,25 @@ and domain/metadata/statistics/DDL.
 
 ## Plan of Work
 
-Next transcreate `pkg/parser/types`: 3 production files, 2 test files, 6
-test/benchmark obligations, and `BUILD.bazel`. Its five internal dependencies
-are current, and it unlocks AST/test-driver work with more downstream value
-than the independent one-file `duration` or `tidb` leaves. Always translate the
-complete package; never promote a partial feature.
+Next transcreate `pkg/parser/ast`. Its direct parser dependencies are now all
+current, and completing it unlocks `pkg/parser/test_driver` and the root parser.
+It is a large package, so audit its whole generated/source/test/support
+inventory before editing and keep one package acceptance boundary. Never
+promote a partial AST family.
 
 ## Concrete Steps
 
 Run from repository root unless a command starts with `cd rust`:
 
-    rust/scripts/port.py inventory pkg/parser/types --verbose
-    cd pkg/parser && go test ./types
+    rust/scripts/port.py inventory pkg/parser/ast --verbose
+    cd pkg/parser && go test ./ast
     cd rust && cargo test --offline --locked -j12 -p <owning-crate> --all-targets
-    cd rust && scripts/port.py record pkg/parser/types -p <owning-crate>
+    cd rust && scripts/port.py record pkg/parser/ast -p <owning-crate>
     cd rust && cargo fmt --all -- --check
     cd rust && cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
     cd rust && cargo test --offline --locked -j12 --workspace --all-targets
 
-Expected recording output ends with `recorded pkg/parser/types`. Pre-push
+Expected recording output ends with `recorded pkg/parser/ast`. Pre-push
 validation must report zero Clippy warnings, passing workspace and doc tests,
 passing `test_port.py`, and clean `git diff --check` output.
 

@@ -15,8 +15,8 @@
 
 use tidb_datatype::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
-    merge_field_type, EvalType, FieldType, FieldTypeCode as C, FieldTypeFlags as F,
-    FieldTypeValue as V, UNSPECIFIED_LENGTH,
+    merge_field_type, str_to_type, type_str, type_to_str, EvalType, FieldType, FieldTypeCode as C,
+    FieldTypeFlags as F, FieldTypeValue as V, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
 
 fn all_types() -> Vec<FieldType> {
@@ -70,6 +70,132 @@ fn assert_field(
     assert_eq!(field.charset_name(), charset);
     assert_eq!(field.collation_name(), collate);
     assert_eq!(field.flags(), flags);
+}
+
+/// Go: pkg/parser/types/etc_test.go:23 TestStrToType.
+#[test]
+fn parser_str_to_type() {
+    let codes = [
+        C::Bit,
+        C::Blob,
+        C::Date,
+        C::Datetime,
+        C::Unspecified,
+        C::NewDecimal,
+        C::Double,
+        C::Enum,
+        C::Float,
+        C::Geometry,
+        C::VectorFloat32,
+        C::Int24,
+        C::Json,
+        C::Long,
+        C::LongLong,
+        C::LongBlob,
+        C::MediumBlob,
+        C::Null,
+        C::Set,
+        C::Short,
+        C::String,
+        C::Duration,
+        C::Timestamp,
+        C::Tiny,
+        C::TinyBlob,
+        C::Varchar,
+        C::VarString,
+        C::Year,
+    ];
+    for code in codes {
+        assert_eq!(str_to_type(type_str(code)), code, "{code:?}");
+    }
+    assert_eq!(str_to_type("blob"), C::Blob);
+    assert_eq!(str_to_type("binary"), C::String);
+    assert_eq!(str_to_type("unknown"), C::Unspecified);
+    assert_eq!(type_to_str(C::LongBlob, "binary"), "longblob");
+    assert_eq!(type_to_str(C::Null, "binary"), "binary");
+    assert!(C::VectorFloat32.is_type_vector());
+}
+
+#[test]
+fn parser_remaining_field_type_surface_is_source_complete() {
+    let mut initialized = FieldType::parser(C::Long)
+        .with_flen(10)
+        .with_decimal(2)
+        .with_flags(F::UNSIGNED)
+        .with_charset_name("utf8mb4");
+    initialized.init(C::Double);
+    assert_eq!(initialized.array_element_code(), C::Double);
+    assert_eq!(initialized.flen(), UNSPECIFIED_LENGTH);
+    assert_eq!(initialized.decimal(), UNSPECIFIED_LENGTH);
+    assert_eq!(initialized.flags(), F::UNSIGNED);
+    assert_eq!(initialized.charset_name(), "utf8mb4");
+
+    let mut elements = FieldType::parser(C::Enum).with_elems(["a", "b"]);
+    elements.set_elem(1, "c");
+    assert_eq!(elements.elem(1), "c");
+    assert_eq!(elements.restore(), "ENUM('a','c')");
+
+    let restored = FieldType::parser(C::Varchar)
+        .with_flen(10)
+        .with_flags(F::BINARY)
+        .with_charset_name("utf8")
+        .with_collation_name("utf8_bin");
+    assert_eq!(
+        restored.restore(),
+        "VARCHAR(10) BINARY CHARACTER SET UTF8 COLLATE utf8_bin"
+    );
+
+    assert_eq!(
+        FieldType::parser(C::String)
+            .with_flen(8)
+            .with_charset_name("binary")
+            .with_collation_name("binary")
+            .restore_as_cast_type(true),
+        "BINARY(8)"
+    );
+    assert_eq!(
+        FieldType::parser(C::String)
+            .with_flen(8)
+            .with_charset_name("latin1")
+            .restore_as_cast_type(true),
+        "CHAR(8) CHARSET LATIN1"
+    );
+    assert_eq!(
+        FieldType::parser(C::NewDecimal)
+            .with_flen(10)
+            .with_decimal(2)
+            .with_array(true)
+            .restore_as_cast_type(false),
+        "DECIMAL(10, 2) ARRAY"
+    );
+
+    assert_eq!(FieldType::parser(C::LongLong).storage_length(), 8);
+    assert_eq!(
+        FieldType::parser(C::NewDecimal)
+            .with_flen(10)
+            .with_decimal(2)
+            .storage_length(),
+        5
+    );
+    assert_eq!(
+        FieldType::parser(C::Varchar).storage_length(),
+        VAR_STORAGE_LEN
+    );
+
+    let json_field = FieldType::parser(C::Enum)
+        .with_flags(F::NOT_NULL)
+        .with_flen(3)
+        .with_decimal(0)
+        .with_charset_name("utf8mb4")
+        .with_collation_name("utf8mb4_bin")
+        .with_elems(["a", "bb"]);
+    let encoded = json_field.to_json().unwrap();
+    assert_eq!(
+        std::str::from_utf8(&encoded).unwrap(),
+        r#"{"Tp":247,"Flag":1,"Flen":3,"Decimal":0,"Charset":"utf8mb4","Collate":"utf8mb4_bin","Elems":["a","bb"],"ElemsIsBinaryLit":null,"Array":false}"#
+    );
+    assert_eq!(FieldType::from_json(&encoded).unwrap(), json_field);
+    assert!(json_field.memory_usage() >= std::mem::size_of::<FieldType>());
 }
 
 /// Go: pkg/parser/types/field_type_test.go:30 TestFieldType.

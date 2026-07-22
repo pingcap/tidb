@@ -186,7 +186,7 @@ fn test_compressed_writer_long_zlib_and_zstd() {
         (
             CompressionAlgorithm::Zlib,
             b"test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib".as_slice(),
-            None,
+            None::<usize>,
         ),
         (
             CompressionAlgorithm::Zstd,

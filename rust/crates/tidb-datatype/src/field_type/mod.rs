@@ -16,7 +16,9 @@ mod aggregate;
 mod value;
 
 use crate::{output_format, Charset, Collation, EvalType};
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 pub use aggregate::{agg_field_type, aggregate_eval_type, merge_field_type, set_type_flag};
 pub use value::{default_field_type_for_value, FieldTypeValue};
@@ -46,6 +48,8 @@ pub const UNSPECIFIED_LENGTH: i64 = -1;
 pub const MAX_DECIMAL_SCALE: i64 = 30;
 /// MySQL's maximum DECIMAL precision accepted by parser field metadata.
 pub const MAX_DECIMAL_WIDTH: i64 = 65;
+/// Variable-width storage sentinel from the source package.
+pub const VAR_STORAGE_LEN: i64 = -1;
 
 /// MySQL/TiDB field flag bit positions from `pkg/parser/mysql/type.go`.
 ///
@@ -326,6 +330,11 @@ impl FieldTypeCode {
         matches!(self, Self::String | Self::Varchar)
     }
 
+    /// Mirrors `pkg/parser/types.IsTypeVector`.
+    pub const fn is_type_vector(self) -> bool {
+        matches!(self, Self::VectorFloat32)
+    }
+
     /// Mirrors `pkg/types/etc.go::IsTypeVarchar`.
     pub const fn is_type_varchar(self) -> bool {
         matches!(self, Self::VarString | Self::Varchar)
@@ -417,7 +426,7 @@ impl FieldTypeCode {
 /// Charset is derived from the registered collation, so contradictory string
 /// metadata cannot be represented. Length, decimal, and raw flags preserve
 /// the parser-owned metadata without imposing SQL warning or formatting policy.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct FieldType {
     code: FieldTypeCode,
     flags: u32,
@@ -429,6 +438,36 @@ pub struct FieldType {
     elems: Vec<String>,
     elems_is_binary_literal: Vec<bool>,
     array: bool,
+}
+
+impl PartialEq for FieldType {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.flags == other.flags
+            && self.flen == other.flen
+            && self.decimal == other.decimal
+            && self.charset_name == other.charset_name
+            && self.collation_name == other.collation_name
+            && self.elems == other.elems
+            && self.elems_is_binary_literal == other.elems_is_binary_literal
+            && self.array == other.array
+    }
+}
+
+impl Eq for FieldType {}
+
+impl Hash for FieldType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.code.mysql_type().hash(state);
+        self.flags.hash(state);
+        self.flen.hash(state);
+        self.decimal.hash(state);
+        self.charset_name.hash(state);
+        self.collation_name.hash(state);
+        self.elems.hash(state);
+        self.elems_is_binary_literal.hash(state);
+        self.array.hash(state);
+    }
 }
 
 impl FieldType {
@@ -495,6 +534,13 @@ impl FieldType {
     pub fn set_code(&mut self, code: FieldTypeCode) {
         self.code = code;
         self.array = false;
+    }
+
+    /// Mirrors `FieldType.Init`, preserving unrelated metadata.
+    pub fn init(&mut self, code: FieldTypeCode) {
+        self.code = code;
+        self.flen = UNSPECIFIED_LENGTH;
+        self.decimal = UNSPECIFIED_LENGTH;
     }
 
     /// Builder form of `set_code` used by value inference and consumers.
@@ -656,6 +702,16 @@ impl FieldType {
     /// Returns ENUM/SET elements in declaration order.
     pub fn elems(&self) -> &[String] {
         &self.elems
+    }
+
+    /// Updates one ENUM/SET element without changing binary-literal markers.
+    pub fn set_elem(&mut self, index: usize, element: impl Into<String>) {
+        self.elems[index] = element.into();
+    }
+
+    /// Returns one ENUM/SET element.
+    pub fn elem(&self, index: usize) -> &str {
+        &self.elems[index]
     }
 
     /// Updates an ENUM/SET element and lazily allocates binary-literal flags.
@@ -988,6 +1044,223 @@ impl FieldType {
         }
         parts.join(" ")
     }
+
+    /// Restores the field type using Go's default restore flags.
+    pub fn restore(&self) -> String {
+        let mut output = type_to_str(self.code(), &self.charset_name).to_ascii_uppercase();
+        let (precision, scale) = match self.code() {
+            FieldTypeCode::Enum | FieldTypeCode::Set => {
+                output.push('(');
+                for (index, elem) in self.elems.iter().enumerate() {
+                    if index != 0 {
+                        output.push(',');
+                    }
+                    output.push('\'');
+                    output.push_str(&elem.replace('\'', "''"));
+                    output.push('\'');
+                }
+                output.push(')');
+                (UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH)
+            }
+            FieldTypeCode::Timestamp | FieldTypeCode::Datetime | FieldTypeCode::Duration => {
+                (self.decimal, UNSPECIFIED_LENGTH)
+            }
+            FieldTypeCode::Unspecified
+            | FieldTypeCode::Float
+            | FieldTypeCode::Double
+            | FieldTypeCode::NewDecimal => (self.flen, self.decimal),
+            _ => (self.flen, UNSPECIFIED_LENGTH),
+        };
+        if precision != UNSPECIFIED_LENGTH {
+            output.push_str(&format!("({precision}"));
+            if scale != UNSPECIFIED_LENGTH {
+                output.push_str(&format!(",{scale}"));
+            }
+            output.push(')');
+        }
+        if self.is_unsigned() {
+            output.push_str(" UNSIGNED");
+        }
+        if self.has_flag(FieldTypeFlags::ZEROFILL) {
+            output.push_str(" ZEROFILL");
+        }
+        if self.has_flag(FieldTypeFlags::BINARY) && self.charset_name != "binary" {
+            output.push_str(" BINARY");
+        }
+        if self.code().is_type_char() || self.code().is_type_blob() {
+            if !self.charset_name.is_empty() && self.charset_name != "binary" {
+                output.push_str(" CHARACTER SET ");
+                output.push_str(&self.charset_name.to_ascii_uppercase());
+            }
+            if !self.collation_name.is_empty() && self.collation_name != "binary" {
+                output.push_str(" COLLATE ");
+                output.push_str(&self.collation_name);
+            }
+        }
+        output
+    }
+
+    /// Restores the restricted type grammar used by `CAST` expressions.
+    pub fn restore_as_cast_type(&self, explicit_charset: bool) -> String {
+        let mut output = String::new();
+        match self.array_element_code() {
+            FieldTypeCode::VarString | FieldTypeCode::String => {
+                let binary = self.charset_name == "binary" && self.collation_name == "binary";
+                output.push_str(if binary { "BINARY" } else { "CHAR" });
+                if self.flen != UNSPECIFIED_LENGTH {
+                    output.push_str(&format!("({})", self.flen));
+                }
+                if explicit_charset && !binary {
+                    if self.has_flag(FieldTypeFlags::BINARY) {
+                        output.push_str(" BINARY");
+                    }
+                    if self.charset_name != "binary"
+                        && self.charset_name != "utf8mb4"
+                        && !self.charset_name.is_empty()
+                    {
+                        output.push_str(" CHARSET ");
+                        output.push_str(&self.charset_name.to_ascii_uppercase());
+                    }
+                }
+            }
+            FieldTypeCode::Date => output.push_str("DATE"),
+            FieldTypeCode::Datetime => {
+                output.push_str("DATETIME");
+                if self.decimal > 0 {
+                    output.push_str(&format!("({})", self.decimal));
+                }
+            }
+            FieldTypeCode::NewDecimal => {
+                output.push_str("DECIMAL");
+                if self.flen > 0 && self.decimal > 0 {
+                    output.push_str(&format!("({}, {})", self.flen, self.decimal));
+                } else if self.flen > 0 {
+                    output.push_str(&format!("({})", self.flen));
+                }
+            }
+            FieldTypeCode::Duration => {
+                output.push_str("TIME");
+                if self.decimal > 0 {
+                    output.push_str(&format!("({})", self.decimal));
+                }
+            }
+            FieldTypeCode::LongLong => {
+                output.push_str(if self.is_unsigned() {
+                    "UNSIGNED"
+                } else {
+                    "SIGNED"
+                });
+            }
+            FieldTypeCode::Json => output.push_str("JSON"),
+            FieldTypeCode::Double => output.push_str("DOUBLE"),
+            FieldTypeCode::Float => output.push_str("FLOAT"),
+            FieldTypeCode::Year => output.push_str("YEAR"),
+            FieldTypeCode::VectorFloat32 => output.push_str("VECTOR"),
+            _ => {}
+        }
+        if self.is_array() {
+            output.push_str(" ARRAY");
+        }
+        output
+    }
+
+    /// Returns the source storage-width estimate.
+    pub fn storage_length(&self) -> i64 {
+        match self.code() {
+            FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Double
+            | FieldTypeCode::Float
+            | FieldTypeCode::Year
+            | FieldTypeCode::Duration
+            | FieldTypeCode::Date
+            | FieldTypeCode::Datetime
+            | FieldTypeCode::Timestamp
+            | FieldTypeCode::Enum
+            | FieldTypeCode::Set
+            | FieldTypeCode::Bit => 8,
+            FieldTypeCode::NewDecimal => {
+                const DIGITS_TO_BYTES: [i64; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
+                let integer = self.flen - self.decimal;
+                integer / 9 * 4
+                    + DIGITS_TO_BYTES[(integer % 9) as usize]
+                    + self.decimal / 9 * 4
+                    + DIGITS_TO_BYTES[(self.decimal % 9) as usize]
+            }
+            _ => VAR_STORAGE_LEN,
+        }
+    }
+
+    /// Serializes the source JSON field names and values.
+    pub fn to_json(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&JsonFieldType::from(self))
+    }
+
+    /// Deserializes the source JSON representation.
+    pub fn from_json(data: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice::<JsonFieldType>(data).map(Into::into)
+    }
+
+    /// Returns Rust-owned memory retained by this value.
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.charset_name.capacity()
+            + self.collation_name.capacity()
+            + self.elems.capacity() * std::mem::size_of::<String>()
+            + self.elems.iter().map(String::capacity).sum::<usize>()
+            + self.elems_is_binary_literal.capacity() * std::mem::size_of::<bool>()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[allow(non_snake_case)]
+struct JsonFieldType {
+    Tp: u8,
+    Flag: u32,
+    Flen: i64,
+    Decimal: i64,
+    Charset: String,
+    Collate: String,
+    Elems: Option<Vec<String>>,
+    ElemsIsBinaryLit: Option<Vec<bool>>,
+    Array: bool,
+}
+
+impl From<&FieldType> for JsonFieldType {
+    fn from(field: &FieldType) -> Self {
+        Self {
+            Tp: field.array_element_code().mysql_type(),
+            Flag: field.flags,
+            Flen: field.flen,
+            Decimal: field.decimal,
+            Charset: field.charset_name.clone(),
+            Collate: field.collation_name.clone(),
+            Elems: (!field.elems.is_empty()).then(|| field.elems.clone()),
+            ElemsIsBinaryLit: (!field.elems_is_binary_literal.is_empty())
+                .then(|| field.elems_is_binary_literal.clone()),
+            Array: field.array,
+        }
+    }
+}
+
+impl From<JsonFieldType> for FieldType {
+    fn from(field: JsonFieldType) -> Self {
+        let mut result = Self::parser(FieldTypeCode::from_mysql_type(field.Tp));
+        result.flags = field.Flag;
+        result.flen = field.Flen;
+        result.decimal = field.Decimal;
+        result.charset_name = field.Charset;
+        result.collation_name = field.Collate;
+        result.collation =
+            Collation::from_name(&result.collation_name).unwrap_or(Collation::Binary);
+        result.elems = field.Elems.unwrap_or_default();
+        result.elems_is_binary_literal = field.ElemsIsBinaryLit.unwrap_or_default();
+        result.array = field.Array;
+        result
+    }
 }
 
 impl fmt::Display for FieldType {
@@ -996,7 +1269,13 @@ impl fmt::Display for FieldType {
     }
 }
 
-fn type_to_str(code: FieldTypeCode, charset: &str) -> &'static str {
+/// Returns the source type label for one code.
+pub fn type_str(code: FieldTypeCode) -> &'static str {
+    type_to_str(code, "")
+}
+
+/// Returns the source type label, applying binary text/blob aliases.
+pub fn type_to_str(code: FieldTypeCode, charset: &str) -> &'static str {
     // Go compares against `charset.CharsetBin` exactly; parser-owned spelling
     // is intentionally not normalized here.
     let binary = charset == "binary";
@@ -1067,6 +1346,44 @@ fn type_to_str(code: FieldTypeCode, charset: &str) -> &'static str {
         FieldTypeCode::Year => "year",
         FieldTypeCode::NewDate => "",
         FieldTypeCode::Unknown(_) => "",
+    }
+}
+
+/// Converts a source type label to its code, including blob/binary aliases.
+pub fn str_to_type(label: &str) -> FieldTypeCode {
+    let label = label
+        .replacen("blob", "text", 1)
+        .replacen("binary", "char", 1);
+    match label.as_str() {
+        "bit" => FieldTypeCode::Bit,
+        "text" => FieldTypeCode::Blob,
+        "date" => FieldTypeCode::Date,
+        "datetime" => FieldTypeCode::Datetime,
+        "unspecified" => FieldTypeCode::Unspecified,
+        "decimal" => FieldTypeCode::NewDecimal,
+        "double" => FieldTypeCode::Double,
+        "enum" => FieldTypeCode::Enum,
+        "float" => FieldTypeCode::Float,
+        "geometry" => FieldTypeCode::Geometry,
+        "vector" => FieldTypeCode::VectorFloat32,
+        "mediumint" => FieldTypeCode::Int24,
+        "json" => FieldTypeCode::Json,
+        "int" => FieldTypeCode::Long,
+        "bigint" => FieldTypeCode::LongLong,
+        "longtext" => FieldTypeCode::LongBlob,
+        "mediumtext" => FieldTypeCode::MediumBlob,
+        "null" => FieldTypeCode::Null,
+        "set" => FieldTypeCode::Set,
+        "smallint" => FieldTypeCode::Short,
+        "char" => FieldTypeCode::String,
+        "time" => FieldTypeCode::Duration,
+        "timestamp" => FieldTypeCode::Timestamp,
+        "tinyint" => FieldTypeCode::Tiny,
+        "tinytext" => FieldTypeCode::TinyBlob,
+        "varchar" => FieldTypeCode::Varchar,
+        "var_string" => FieldTypeCode::VarString,
+        "year" => FieldTypeCode::Year,
+        _ => FieldTypeCode::Unspecified,
     }
 }
 

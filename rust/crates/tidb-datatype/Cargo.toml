@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 encoding_rs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tidb-error = { path = "../tidb-error" }
 
 [dev-dependencies]

@@ -26,6 +26,7 @@ mod binary_literal;
 pub mod char_length;
 mod charset;
 mod collation;
+mod config_duration;
 pub mod conversion_context;
 mod datum;
 mod decimal;
@@ -78,6 +79,7 @@ pub use charset::{
     get_supported_collations, remove_charset, valid_charset_and_collation, Charset, CharsetError,
     CharsetInfo, Collation, CollationInfo, PAD_NONE, PAD_SPACE,
 };
+pub use config_duration::{parse_config_duration, ConfigDurationError};
 pub use conversion_context::{
     ConversionContext, ConversionFlags, ConversionLocation, ConversionWarningAppender,
     IgnoreConversionWarnings, DEFAULT_STATEMENT_FLAGS, IGNORE_CONVERSION_WARNINGS, STRICT_FLAGS,
@@ -107,8 +109,9 @@ pub use field_name::{
 };
 pub use field_type::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
-    merge_field_type, set_type_flag, FieldType, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
-    MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
+    merge_field_type, set_type_flag, str_to_type, type_str, type_to_str, FieldType, FieldTypeCode,
+    FieldTypeFlags, FieldTypeValue, MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
+    VAR_STORAGE_LEN,
 };
 pub use format::{
     output_format, FlatFormatter, FormatFragment, FormatWriteError, Formatter, IndentFormatter,

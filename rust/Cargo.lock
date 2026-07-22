@@ -1063,6 +1063,8 @@ name = "tidb-datatype"
 version = "0.0.0"
 dependencies = [
  "encoding_rs",
+ "serde",
+ "serde_json",
  "sha2",
  "tidb-error",
 ]
