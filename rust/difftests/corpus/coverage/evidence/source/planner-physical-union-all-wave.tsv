@@ -1,2 +1,0 @@
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/physicalop/physical_union_all.go	PARTIAL	planner-physical-union-all-wave	rust/crates/tidb-planner/src/physical_union_all.rs	Ports PhysicalUnionAll.Init Union type/query-block offset/Mpp metadata and ExhaustPhysicalPlans4LogicalUnionAll sort, TiFlash, MPP partition, and root dual-candidate gates; child properties/schema/stats/context/cost/task, partition-union type switch, and runtime remain external.

@@ -1,3 +1,0 @@
-# Campaign 21 test evidence for server-concurrent-authenticated-session-runtime.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/server/tests/commontest/tidb_test.go	2561	TestExtensionConnEvent	PARTIAL	server-concurrent-authenticated-session-runtime	rust/crates/tidb-server/tests/concurrent_mysql_sessions_source.rs	Campaign 21 serves bounded authenticated connections through fixed workers, immutable identities, per-worker read sessions, explicit cancellation, and exactly-once tracking; public-network TLS, prepared statements, transactions, writes, dynamic privileges, and broad server lifecycle parity remain open.

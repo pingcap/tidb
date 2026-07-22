@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Source-translated transaction primitive tests for tidb-txnkv."
 publish = false
 autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
@@ -21,57 +22,5 @@ tidb-proto = { path = "../../crates/tidb-proto" }
 tidb-txnkv = { path = "../../crates/tidb-txnkv" }
 
 [[test]]
-name = "key_version"
-path = "tests/key_version.rs"
-
-[[test]]
-name = "handle"
-path = "tests/handle.rs"
-
-[[test]]
-name = "keyspace"
-path = "tests/keyspace.rs"
-
-[[test]]
-name = "counter"
-path = "tests/counter.rs"
-
-[[test]]
-name = "iteration"
-path = "tests/iteration.rs"
-
-[[test]]
-name = "key_helpers"
-path = "tests/key_helpers.rs"
-
-[[test]]
-name = "retry"
-path = "tests/retry.rs"
-
-[[test]]
-name = "txn_scope"
-path = "tests/txn_scope.rs"
-
-[[test]]
-name = "mvcc_metadata"
-path = "tests/mvcc_metadata.rs"
-
-[[test]]
-name = "realtikv_pd_route"
-path = "tests/realtikv_pd_route.rs"
-
-[[test]]
-name = "realtikv_region_retry"
-path = "tests/realtikv_region_retry.rs"
-
-[[test]]
-name = "realtikv_transport_retry"
-path = "tests/realtikv_transport_retry.rs"
-
-[[test]]
-name = "realtikv_replica_read"
-path = "tests/realtikv_replica_read.rs"
-
-[[test]]
-name = "realtikv_lock_recovery"
-path = "tests/realtikv_lock_recovery.rs"
+name = "all"
+path = "tests/all.rs"

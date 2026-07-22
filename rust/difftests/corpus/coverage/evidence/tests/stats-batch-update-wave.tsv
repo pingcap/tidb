@@ -1,3 +1,0 @@
-# Source-owned statistics-cache batch-update test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/cache/statscache_test.go	27	TestCacheOfBatchUpdate	PARTIAL	stats-batch-update-wave	rust/crates/tidb-stats/tests/batch_update_source.rs	Rust covers the exact batch-size boundary, update/delete ordering, mixed-list callback delivery, explicit flush, and zero-size source edge; the original callback's statistics.Table and StatsCache integration remain open.

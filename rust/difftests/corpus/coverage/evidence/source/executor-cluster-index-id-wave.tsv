@@ -1,3 +1,0 @@
-# Source-owned clustered-index identity evidence.
-# source_path status owner evidence_artifact note
-pkg/executor/internal/exec/indexusage.go	PARTIAL	executor-cluster-index-id-wave	rust/crates/tidb-exec/src/cluster_index_id.rs	The dependency-closed getClusterIndexID metadata rule from lines 130-148 is ported: PK-as-handle maps to 0, common handles select the primary index ID with source zero default, and rowid/non-clustered tables return no ID; full model.TableInfo/table wrappers and index-usage reporting remain external.

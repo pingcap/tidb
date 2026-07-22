@@ -19,12 +19,5 @@ tidb-lexer = { path = "../crates/tidb-lexer" }
 tidb-parser = { path = "../crates/tidb-parser" }
 
 [[test]]
-name = "go_test_ledger"
-path = "tests/go_test_ledger.rs"
-[[test]]
 name = "integration_plan_inventory"
 path = "tests/integration_plan_inventory.rs"
-
-[[test]]
-name = "domain_queue"
-path = "tests/domain_queue.rs"

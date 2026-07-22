@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// aggregate-test: standalone
+
 //! Source-derived tests for configured two-relation name binding.
 
 mod read_only_scan {

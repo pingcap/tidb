@@ -1,3 +1,0 @@
-# Source-owned statistics JSON metadata evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/util/json_objects.go	PARTIAL	stats-json-metadata-wave	rust/crates/tidb-stats/src/json_metadata.rs	The Rust leaf ports TiDBGlobalStats and JSONTable.Sort predicate-column ID ordering from lines 17-39 over a caller-owned partial JSON shape; tipb histogram/sketch payloads, JSON encoding, storage blocks, and statistics-handle lifecycle remain explicit external owners.

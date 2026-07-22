@@ -1,4 +1,0 @@
-# Source-owned production evidence for the ILIKE scalar and vectorized leaves.
-# source_path	status	owner	evidence_artifact	note
-pkg/expression/builtin_ilike.go	PARTIAL	expression-ilike-source-wave	rust/crates/tidb-expr/src/like.rs	The scalar ASCII-folding, escape-preserving normalization, NULL/coercion boundary, and binary wildcard match are ported as ilike_match; Go function-class construction, pattern-cache lifetime, session collations, and warning/error channels remain outside the seed evaluator.
-pkg/expression/builtin_ilike_vec.go	PARTIAL	expression-ilike-source-wave	rust/crates/tidb-expr/src/like.rs	The scalar source-owned matcher is shared, but Go chunk columns, vectorized constant-pattern memorization, per-row NULL layout, and allocator/error behavior are not represented yet; keep this file explicit PARTIAL rather than claiming vector parity.

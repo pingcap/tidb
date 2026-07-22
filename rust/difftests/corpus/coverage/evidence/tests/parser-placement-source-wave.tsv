@@ -1,6 +1,0 @@
-# Source-owned test-evidence fragment for parser-placement-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/parser/ast/ddl_test.go	771	TestCreatePlacementPolicyRestore	COVERED	parser-placement-source-wave	rust/crates/tidb-parser/src/tests/placement.rs	All six original restore assertions execute exactly across three inputs and default plus special-comment modes
-go_test	pkg/parser/ast/ddl_test.go	800	TestAlterPlacementPolicyRestore	COVERED	parser-placement-source-wave	rust/crates/tidb-parser/src/tests/placement.rs	Both original default and special-comment restore assertions execute exactly
-go_test	pkg/parser/ast/ddl_test.go	822	TestDropPlacementPolicyRestore	COVERED	parser-placement-source-wave	rust/crates/tidb-parser/src/tests/placement.rs	All four original restore assertions execute exactly across two inputs and default plus special-comment modes
-go_test	pkg/parser/ast/ddl_test.go	848	TestRemovePlacementRestore	PARTIAL	parser-placement-source-wave	rust/crates/tidb-parser/src/tests/placement.rs	The standalone ALTER PLACEMENT POLICY skip-restore row executes exactly; the other twelve table partition and database placement rows belong to other parser source domains

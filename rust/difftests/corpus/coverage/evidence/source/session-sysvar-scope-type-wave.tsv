@@ -1,3 +1,0 @@
-# Source-owned system-variable scope/type evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/sessionctx/vardef/tidb_vars.go	PARTIAL	session-sysvar-scope-type-wave	rust/crates/tidb-exec/src/sysvar_scope.rs	ScopeFlag bits/string ordering and byte-backed TypeFlag discriminants 0..7 are typed across sysvar_scope.rs and sysvar_type.rs; the wider sysvar name/default registry, validation, parsing, SET/GET dispatch, persistence, and value conversion remain external.

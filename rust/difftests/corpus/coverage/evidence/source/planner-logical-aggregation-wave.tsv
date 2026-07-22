@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-logical-aggregation-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/logical_aggregation.go	PARTIAL	planner-logical-aggregation-wave	rust/crates/tidb-planner/src/logical_aggregation.rs	Ports generated LogicalAggregation Hash64/Equals: Aggregation tag, schema, ordered AggFuncDesc metadata, GroupByItems nil/present framing, PossibleProperties ordered columns, and source HasTiFlash exclusion over normalized adapters; expression/type inference, full FieldType/ByItems metadata, plan context, statistics, optimizer rules, and runtime aggregation remain external.

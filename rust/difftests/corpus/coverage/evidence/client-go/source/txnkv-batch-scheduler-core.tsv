@@ -1,4 +1,0 @@
-# client-go source evidence for Campaign 15 BatchCommands scheduler core.
-# source_path	status	owner	evidence_artifact	note
-config/client.go	PARTIAL	txnkv-batch-scheduler-core	rust/crates/tidb-txnkv/src/rpc/batch/scheduler.rs	Preset and custom turbo-batch policy parsing now mirrors Go JSON field types, zero defaults, ignored unknown fields, source numeric acceptance, and unknown-version fallback behavior. The broader client configuration surface, dynamic reload, security, and transport construction remain external.
-internal/client/priority_queue.go	PARTIAL	txnkv-batch-scheduler-core	rust/crates/tidb-txnkv/src/rpc/batch/priority_queue.rs	The source-shaped heap preserves priority ordering, raw-layout full Take, pop-ordered partial Take, bounded Take behavior, and backing-array reference clearing without inventing stable equal-priority order. Blocking channel integration and live batch stream ownership remain external.

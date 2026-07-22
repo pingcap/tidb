@@ -1,3 +1,0 @@
-# Source-owned session reuse/close state evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/session/syssession/session.go	PARTIAL	session-reuse-state-wave	rust/crates/tidb-exec/src/session_reuse_state.rs	The IsAvoidReuse/OwnerMarkAvoidReuse and owner-gated/idempotent Close state transitions are ported; owner hooks, context close, in-use deferral, transfer/operation locking, sequence counters, and pool lifecycle remain external.

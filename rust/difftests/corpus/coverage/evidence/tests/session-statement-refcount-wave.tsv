@@ -1,3 +1,0 @@
-# Source-owned statement-context reference/freeze test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/sessionctx/stmtctx/stmtctx_test.go	0	stmtctx_test.go	PARTIAL	session-statement-refcount-wave	rust/crates/tidb-exec/tests/statement_refcount_source.rs	The supplemental Rust source-contract tests cover pkg/sessionctx/stmtctx/stmtctx.go:92-125 ReferenceCount transitions because TiDB has no dedicated Go transition test; live InitStatementContext reuse remains external

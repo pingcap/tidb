@@ -1,2 +1,0 @@
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/logical_lock.go	PARTIAL	planner-logical-lock-wave	rust/crates/tidb-planner/src/logical_lock.rs	Ports isSelectForUpdateLockType, isSelectForShareLockType, and IsSupportedSelectLockType over source AST raw discriminants; AST parsing/restore, column pruning, child plans, session context, and physical lock planning/execution remain external.

@@ -1,3 +1,0 @@
-# Whole-package ownership transfers for the first schema-2 package frontier.
-# old_owner	new_owner	source_path	test_path	test_line	test_name	retired_artifacts	new_artifacts	note
-server-live-prepared-point-read-proof	server-internal-handshake-package	pkg/server/internal/handshake/handshake.go	-	-	-	-	rust/difftests/corpus/coverage/evidence/source/server-internal-handshake-package.tsv,rust/crates/tidb-server/src/handshake_response.rs,rust/crates/tidb-server/tests/handshake_response_package_source.rs	The old prepared-read proof covered only one native-password runtime path; the complete leaf package now owns every Response41 field and explicitly excludes downstream parser and server behavior.

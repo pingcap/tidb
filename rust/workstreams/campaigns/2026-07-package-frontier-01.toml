@@ -1,7 +1,0 @@
-schema = "2"
-campaign = "2026-07-package-frontier-01"
-status = "integrated"
-slices = [
-  "parser-format-package",
-  "server-internal-handshake-package",
-]

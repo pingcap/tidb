@@ -1,4 +1,0 @@
-# Canonical MySQL/TiDB catalog authority, transferred without changing coverage boundaries.
-# source_path	status	owner	rust_target	note
-pkg/errno/errcode.go	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/src/tidb/errcode.rs	All 1,167 source definitions are translated; the blank placeholder is excluded while all 1,166 named constants and boundary aliases remain represented.
-pkg/errno/errname.go	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/src/tidb/errname.rs	All 1,164 TiDB message entries preserve source order, raw templates, redaction positions, and parser/MySQL-overriding message text.

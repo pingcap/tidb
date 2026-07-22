@@ -1,4 +1,0 @@
-# Source-owned statistics table-ID filter test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/test/infoschema/infoschema_test.go	171	TestDataForTableStatsField	PARTIAL	stats-table-id-filter-wave	rust/crates/tidb-stats/tests/table_id_filter_source.rs	Rust pins the stats-backed table-ID predicate formatting used by table row/data/index metadata; InfoSchema execution, cache refresh, schema setup, and result assertions remain external.
-go_test	pkg/executor/test/infoschema/infoschema_test.go	224	TestPartitionsTable	PARTIAL	stats-table-id-filter-wave	rust/crates/tidb-stats/tests/table_id_filter_source.rs	Rust pins the same ordered predicate for partition metadata queries; partition pruning, cache/storage lifecycle, SQL execution, and result assertions remain external.

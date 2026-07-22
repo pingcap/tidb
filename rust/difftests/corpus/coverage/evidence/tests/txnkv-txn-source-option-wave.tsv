@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for txnkv-txn-source-option-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/kv/option_test.go	23	TestSetCDCWriteSource	COVERED	txnkv-txn-source-option-wave	rust/difftests/transaction-tests/tests/key_version.rs	All three original rows and assertions execute; exhaustive crate tests additionally preserve accepted values zero through eight exact misleading error text OR-only composition invalid no-mutation and low-byte masking
-go_test	pkg/kv/option_test.go	63	TestSetLossyDDLReorgSource	COVERED	txnkv-txn-source-option-wave	rust/difftests/transaction-tests/tests/key_version.rs	All four original rows and assertions execute; exhaustive crate tests additionally cover every value zero through 255 both composition orders repeated OR behavior invalid no-mutation upper-bit presence and Lightning non-clobbering

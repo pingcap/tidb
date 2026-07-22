@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for time-wave1.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_time_test.go	2623	TestMakeDate	PARTIAL	time-wave1	rust/difftests/corpus/query/time2.txt	Representable MAKEDATE vectors
-go_test	pkg/expression/builtin_time_test.go	2677	TestMakeTime	PARTIAL	time-wave1	rust/difftests/corpus/query/time2.txt	Representable MAKETIME vectors

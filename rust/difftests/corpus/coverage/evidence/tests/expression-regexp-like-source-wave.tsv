@@ -1,3 +1,0 @@
-# Source-owned direct tests for the bounded REGEXP_LIKE scalar leaf.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_regexp_test.go	210	TestRegexpLike	PARTIAL	expression-regexp-like-source-wave	rust/crates/tidb-expr/src/regexp.rs	All source scalar rows for no-match-type, i/m/s flags, rightmost i/c precedence, empty and malformed patterns, and invalid match types execute through the production regexp_like builder; Go function-class/session collation, vectorized and cache lifecycle remain outside the seed evaluator

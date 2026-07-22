@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/test/executor/executor_test.go	2157	TestMaxOneRow	PARTIAL	planner-physical-max-one-row-wave	rust/difftests/planner-tests/tests/physical_max_one_row.rs	Rust vectors preserve the planner support gates and expected-count metadata behind the source MaxOneRow operator; full SQL subquery execution and the executor's >1-row error remain external.

@@ -1,3 +1,0 @@
-# Source-owned dependency-closed error-context policy evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/errctx/context.go	PARTIAL	session-errctx-wave	rust/crates/tidb-exec/src/error_context.rs	Rust owns the fixed seven-group level map, copy-on-write strict/group overrides, and ignore-over-warn precedence without fabricating Go errno wrappers or warning sinks.

@@ -1,3 +1,0 @@
-# Source-owned statistics-version predicate test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/statistics/handle/handletest/statstest/stats_test.go	0	stats_test.go	PARTIAL	stats-version-wave	rust/crates/tidb-stats/tests/stats_version_source.rs	The Go handle tests around lines 38, 43, 79, and 85 assert Version0 versus Version2 analyzed metadata; Rust tests directly cover all source constants, non-zero/unknown versions, synthesized positive NDV/null-count, and nonpositive boundaries. Handle/existence-map behavior remains open.

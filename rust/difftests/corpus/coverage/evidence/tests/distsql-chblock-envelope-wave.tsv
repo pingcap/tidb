@@ -1,3 +1,0 @@
-# Source-owned native CHBlock/tipb chunk envelope test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/executor/internal/mpp/local_mpp_coordinator_test.go	0	local_mpp_coordinator_test.go	PARTIAL	distsql-chblock-envelope-wave	rust/crates/tidb-distsql/tests/chblock_source.rs	The Rust tests add the missing CHBlock envelope/metadata contract beside the source MPP coordinator tests; the original file has no native CHBlock decoder assertions, so full MPP response and TiFlash codec parity remains open.

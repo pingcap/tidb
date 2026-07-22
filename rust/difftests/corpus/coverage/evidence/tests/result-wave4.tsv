@@ -1,5 +1,0 @@
-# Source-owned test-evidence fragment for result-wave4.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_time_test.go	3035	TestPeriodAdd	PARTIAL	result-wave4	rust/difftests/corpus/expr/period_arithmetic.txt	All source vectors plus NULL evaluation ordering and uint64 wrapping probes
-go_test	pkg/expression/builtin_time_test.go	3298	TestPeriodDiff	PARTIAL	result-wave4	rust/difftests/corpus/expr/period_arithmetic.txt	All source vectors plus NULL behavior and uint64 subtraction wrapping probes
-go_test	pkg/expression/builtin_miscellaneous_test.go	209	TestUUIDTimestamp	PARTIAL	result-wave4	rust/difftests/corpus/expr/misc_uuid_timestamp.txt	All TestUUIDTimestamp Version 1/6/7 and NULL-return vectors plus NULL and compact UUID parsing; malformed UUID retains the error outcome but EvalError cannot preserve TiDB error 1411 payload

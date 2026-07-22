@@ -1,3 +1,0 @@
-# Source-owned authentication-plugin metadata boundaries.
-# source_path	status	owner	evidence_artifact	note
-pkg/extension/auth.go	PARTIAL	server-auth-plugin-registry-wave	rust/crates/tidb-server/src/auth_plugin_registry.rs	AuthPluginDescriptor/AuthPluginRegistry preserve Go validateAuthPlugin's empty-name, duplicate, reserved built-in, and required AuthenticateUser/GenerateAuthString/ValidateAuthString checks; AuthPluginAdmission and ClientPluginSelection classify built-in/custom/unsupported names, native fallback, LDAP/custom client mappings, and legacy-client rejection without executing callbacks; password hashing/verification, extension setup, and privilege integration remain open.

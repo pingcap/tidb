@@ -1,6 +1,0 @@
-# Source-owned test evidence fragment for planner-pattern-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/cascades/pattern/pattern_test.go	24	TestGetOperand	PARTIAL	planner-pattern-wave	rust/difftests/planner-tests/tests/pattern.rs	Typed LogicalOperatorKind vectors cover all source operand mappings while concrete Go logical-plan construction and cascades integration remain outside the adapter.
-go_test	pkg/planner/cascades/pattern/pattern_test.go	41	TestOperandMatch	PARTIAL	planner-pattern-wave	rust/difftests/planner-tests/tests/pattern.rs	Rust vectors preserve wildcard, equal, and unequal source operand matching.
-go_test	pkg/planner/cascades/pattern/pattern_test.go	65	TestNewPattern	PARTIAL	planner-pattern-wave	rust/difftests/planner-tests/tests/pattern.rs	Rust vectors preserve source operand assignment and empty-child initialization.
-go_test	pkg/planner/cascades/pattern/pattern_test.go	75	TestPatternSetChildren	PARTIAL	planner-pattern-wave	rust/difftests/planner-tests/tests/pattern.rs	Rust vectors preserve ordered child replacement plus source engine and wildcard matching semantics.

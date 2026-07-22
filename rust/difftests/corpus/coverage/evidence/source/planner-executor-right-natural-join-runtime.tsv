@@ -1,3 +1,0 @@
-# Live RIGHT/NATURAL planner-to-executor-to-protocol source evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/join/base_join_probe.go	PARTIAL	planner-executor-right-natural-join-runtime	rust/crates/tidb-exec/src/select.rs	The live nested-loop RIGHT path preserves the right/outer relation scan order for both matches and left-NULL-extended misses, and uses the shared TRUE/FALSE/UNKNOWN status fold so ON UNKNOWN remains a nonmatch. Go hash-table build-side choice, partition workers, nullable/all-key serialization, selection vectors, chunk capacity, and physical row copying remain open.

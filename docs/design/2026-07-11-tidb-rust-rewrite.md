@@ -35,8 +35,8 @@ transaction, storage, planner, or error behavior during the rewrite.
    plans, errors, transaction behavior, KV encodings, and cluster protocols.
 3. Transcreate every in-scope Go package completely, including every original
    test and support artifact.
-4. Make progress reviewable and reversible through package receipts,
-   differential gates, and cluster-level rollout stages.
+4. Make progress reviewable and reversible through one generated package proof,
+   ordinary Git history, differential checks, and cluster-level rollout stages.
 5. Use Rust-native crate boundaries, ownership, memory management, and
    concurrency where they simplify the implementation without changing its
    contract.
@@ -64,23 +64,14 @@ The Go source and tests are the semantic authority. The design document defines
 stable architecture and acceptance rules; it does not contain volatile progress
 counts.
 
-- Current state and generated counts: [`rust/STATUS.md`](../../rust/STATUS.md)
 - Current architecture and open gaps: [`rust/HANDOFF.md`](../../rust/HANDOFF.md)
 - Active whole-package ExecPlan:
   [`rust/workstreams/plans/2026-07-whole-package-transcreation.md`](../../rust/workstreams/plans/2026-07-whole-package-transcreation.md)
-- Ownership and receipt protocol:
-  [`rust/PARALLEL.md`](../../rust/PARALLEL.md)
-- Production-source inventory:
-  [`rust/difftests/corpus/coverage/go_source_inventory.tsv`](../../rust/difftests/corpus/coverage/go_source_inventory.tsv)
-- Original test/support inventory:
-  [`rust/difftests/corpus/coverage/go_test_inventory.tsv`](../../rust/difftests/corpus/coverage/go_test_inventory.tsv)
-- Package manifests and receipts:
-  [`rust/workstreams/slices/`](../../rust/workstreams/slices/) and
-  [`rust/workstreams/package-receipts/`](../../rust/workstreams/package-receipts/)
+- Completed package proofs: [`rust/ports/`](../../rust/ports/)
+- Whole-package tool: [`rust/scripts/package-port.py`](../../rust/scripts/package-port.py)
 
-Pinned external Go modules have adjacent `external_go_*` inventories. Generated
-ledgers enumerate individual obligations; checked package manifests group those
-rows into the only valid completion unit.
+The tool reads the Go tree directly. There is no separately maintained queue or
+global source/test ledger in the implementation loop.
 
 ## System boundary
 
@@ -136,9 +127,9 @@ includes all of the following:
 - fixtures, golden results, embedded assets, and `testdata` trees;
 - failpoints, helper programs, runner scripts, and build metadata.
 
-The inventory must be exhaustive and exclusive: every artifact is owned once,
-and no artifact silently falls outside the package manifest. A receipt cannot
-be inferred from a working feature or from a subset of tests.
+The inventory must be exhaustive and exclusive: every artifact is included in
+the package digest, and no artifact silently falls outside the package proof.
+Completion cannot be inferred from a working feature or a subset of tests.
 
 ### One Go package may become multiple Rust crates
 
@@ -149,131 +140,96 @@ stable interfaces or isolates heavy dependencies.
 
 The split never weakens acceptance:
 
-- one umbrella manifest owns the complete Go package;
-- all Rust crates and shared consumer seams are declared in its write set;
+- one package proof owns the complete Go package;
+- all Rust crates, files, tests, and shared consumer seams are declared in it;
 - all constituent work is staged together;
-- the package has one gate and one completion receipt;
+- the package has one focused verification command;
 - no constituent crate can promote package coverage independently.
 
 Conversely, multiple Go packages may share a Rust foundation crate only when
-ownership and dependency receipts remain unambiguous. Shared code is not a way
+ownership and dependency proofs remain unambiguous. Shared code is not a way
 to collapse unported package obligations.
 
 ### Dependency closure
 
-Package manifests form a directed acyclic graph. A package can close only when
+Package proofs form a directed acyclic graph. A package can finish only when
 every direct internal Go dependency is either:
 
 - included in the same dependency-closed umbrella; or
-- represented by a current covered schema-2 package receipt.
+- represented by a current checked package proof.
 
 Existing Rust helpers, legacy feature slices, mocks, and connected end-to-end
-paths do not satisfy this rule. If a prerequisite is reopened, unreceipted
-dependents cannot close against it. Covered dependents must be reopened and
-removed from covered state in reverse dependency order before the prerequisite
-can be reopened. After the prerequisite is repaired, packages are re-gated in
-normal dependency order.
+paths do not satisfy this rule. If a prerequisite changes, `check` invalidates
+its proof on inventory drift and downstream completion stops until the package
+is repaired and `finish` is rerun.
 
 ## Package state and evidence lifecycle
 
-A package receipt means that one exact source revision, test inventory,
-manifest, Rust write set, and gate result were accepted together. It is durable
-evidence, not irrevocable truth.
+A package has only two states: no valid proof, or one valid proof. There is no
+ready/claimed/gated/covered state machine. Work in progress is ordinary Git
+working-tree state.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Ready
-    Ready --> Claimed: claim complete package
-    Claimed --> Ready: abandon claim
-    Claimed --> Gated: focused and frontier gates pass
-    Gated --> Covered: atomic package close and receipt
-    Covered --> Ready: reopen-package transaction
+    [*] --> Unported
+    Unported --> Proven: package-port finish
+    Proven --> Unported: Go inventory or proof becomes stale
+    Proven --> Proven: repair and rerun finish
 ```
 
-Normal completion is an atomic transaction derived from one exact package
-claim. It validates dependency closure, source/test/support coverage, exact
-write-set hashes, focused evidence, and shared gates before issuing the receipt
-and releasing the claim. A failed gate promotes nothing. Tracked campaigns are
-reserved for dependency-inseparable multi-package frontiers and apply the same
-transaction to all members together.
+`finish` derives the exact source, test, literal-subtest, benchmark, fuzz,
+example, fixture, build, and `testdata` inventory from the Go directory; checks
+direct internal dependencies; runs formatting, all-target Clippy, library
+tests, and declared integration tests; then writes one proof. It writes nothing
+on failure. The proof records the full file lists and digest, Rust crates,
+Rust paths, test targets, and direct dependencies. Git provides content
+history, review, rollback, and commit atomicity, so a second transaction log is
+strictly redundant.
 
-When later auditing finds missing behavior, tests, support artifacts, consumer
-paths, or incorrect parity, `reopen-package` is mandatory. The transaction:
-
-1. requires a covered schema-2 package with no active claim or campaign;
-2. refuses to proceed while any covered transitive dependent remains;
-3. removes the current package receipt and returns the manifest to `ready`;
-4. preserves historical campaign records as audit history;
-5. requires the package to be claimed, repaired, fully gated, and receipted
-   again.
-
-Receipts, manifest states, ledgers, and generated status must never be repaired
-by hand. A discovered false-positive receipt is a correctness defect and is
-reopened immediately; it is not protected to preserve a progress number.
-
-Unreceipted Rust code may remain as explicitly labeled staging or seed evidence.
-It cannot promote ledger rows, satisfy a dependency, authorize downstream
-completion, or be reported as a transcreated package.
+When an audit finds missing behavior or an incorrect translation, repair the
+implementation and rerun `finish`. A false positive is a correctness defect;
+do not preserve a progress number. Rust code without a valid package proof is
+seed material and is never counted as a completed package.
 
 ## Execution model
 
-The migration is executed by one implementation owner at the package/frontier
-level. Work is serial across mutable integration seams so that responsibility,
-evidence, and rollback remain unambiguous.
+The migration is executed by one implementation owner at the whole-package
+level. There is no worker allocation or ownership subsystem.
 
 For each package or dependency-closed frontier:
 
-1. Derive the dependency-ready frontier directly from the checked Go
-   inventories and direct internal imports. Do not maintain a speculative queue
-   of pre-authored package manifests for a single worker.
+1. Select a whole package whose direct internal Go dependencies already have
+   valid proofs. Use `package-port.py inventory <package>` when needed; do not
+   maintain a scheduling queue.
 2. Audit the selected package's complete Go source, test, support, generated,
-   and build inventory, then declare its Rust mapping and exact mutable write
-   set.
-3. Start the package through one rollback-on-failure command. It derives the
-   target/ring and covered dependency edges, writes and validates the schema-2
-   manifest, and freezes the exact claim before behavior-changing
-   implementation work.
-4. Transcreate the complete behavior directly from Go, preserving control-flow
+   and build inventory.
+3. Transcreate the complete behavior directly from Go, preserving control-flow
    order, constants, errors, state transitions, encodings, cancellation, and
    concurrency semantics.
-5. Port or differentially cover every original test and support artifact.
-6. Run focused package gates during development using a reused Cargo target.
-7. At close, regenerate and validate only the active claim's source/test ledger
-   rows, derive the Cargo crates containing its declared Rust paths, then run
-   formatting, strict all-target Clippy, one library test binary per touched
-   crate, and the explicitly touched integration-test targets with 12 jobs.
-   Reject unrelated generated churn and issue the receipt only if the frozen
-   input digest remains unchanged.
-8. Close the package directly from its claim through
-   `work-unit-queue.py close-package --owner <owner>`, generate the receipt,
-   and refresh status. Use a campaign only for an inseparable multi-package
-   frontier.
-9. Run the full static, workspace Clippy/test, governance, isolation, and
-   applicable differential/live suite once at an explicit grouped checkpoint
-   and before push/release readiness, not after every leaf package.
-10. If the audit or gate exposes a cross-package flaw, fix the owning package or
-   reopen its receipt; do not add a downstream conditional workaround.
+4. Port or differentially cover every original test and support artifact.
+5. Run focused crate/test commands during implementation.
+6. Finish with one command:
 
-Claims protect scope even in a single-owner workflow. Worktrees may isolate
-dirty experiments or rollback points, but they do not create independent
-completion authorities. Shared seams such as crate roots, parser/AST routing,
-datatype/evaluation context, planner/executor/session dispatch, server
-connection lifecycle, transaction/storage authority, and evidence generation
-are changed in one controlled frontier.
+   ```sh
+   cd rust
+   scripts/package-port.py finish pkg/example \
+     --crate tidb-example \
+     --rust-path rust/crates/tidb-example/src/lib.rs \
+     --rust-path rust/crates/tidb-example/tests/package_source.rs \
+     --test-target tidb-example:package_source
+   ```
 
-Package claims may also declare the workspace `Cargo.toml` and generated
-`Cargo.lock` as shared integration seams when the complete package requires a
-new Rust dependency. They remain serialized and gate-attested; dependency
-changes must never escape the package claim merely because those files sit
-above its target crate.
+7. Run full workspace Clippy/tests, package-proof checks, and the repository
+   Ready profile once before push/release or after shared-foundation changes,
+   not after every package.
+8. Run the applicable differential/live suite at the same explicit checkpoint.
+9. If the audit or verification exposes a cross-package flaw, fix the owning
+   package; do not add a downstream conditional workaround.
 
-The normal single-worker control surface has three commands: `frontier`
-selects only dependency-ready whole packages, `start-package` scaffolds and
-claims the chosen package, and `close-package` validates the touched crates and
-receipts it atomically. The general package inventory remains an audit view;
-it is not a scheduling queue. Full workspace tests and Clippy run at grouped
-checkpoints and before push/release, while focused checks remain the package
-implementation loop.
+The normal control surface is one completion command. `inventory` and `check`
+are read-only diagnostics, and `checkpoint` is the pre-push workspace sweep.
+There are no claims, worktrees, queues, campaigns, transfers, generated global
+ledgers, frozen-input digests, or completion receipts in the normal workflow.
 
 ## Translation rules
 
@@ -372,16 +328,16 @@ storage, one for session state, and one for each parser/planner/executor route.
 No single test suite proves parity. Acceptance is layered from package inventory
 to live mixed-cluster behavior.
 
-### Package gate
+### Package proof
 
-Every package receipt requires:
+Every package proof requires:
 
 1. complete source/test/support inventory with no unowned or multiply owned
    artifacts;
 2. focused Rust tests corresponding to every original Go test obligation;
 3. explicit disposition for tests that cannot run unchanged, with equivalent
    differential or integration evidence;
-4. exact manifest dependencies and Rust write-set hashes;
+4. exact direct dependencies and declared Rust paths;
 5. formatting, compilation, strict Clippy, and crate-local tests;
 6. required differential, fault, and live evidence for the package's contract.
 
@@ -412,8 +368,8 @@ silently delete historical compatibility evidence from an accepted revision.
 
 ### Workspace checkpoint
 
-An ordinary package closes after exact inventory validation and touched-crate
-gates pass in one frozen state. The full workspace gate is a grouped checkpoint
+An ordinary package finishes after exact inventory validation and touched-crate
+checks. The full workspace check is a grouped checkpoint
 before push/release and after mechanism or shared-foundation changes; it is not
 a tax on every leaf package. Cheap static/generated checks run first, followed
 by workspace all-target Clippy/tests, governance tests, isolation checks, and
@@ -478,7 +434,7 @@ cannot skip package or runtime prerequisites.
 
 | Phase | Deliverable | Exit gate |
 | --- | --- | --- |
-| 0. Language and datatype foundations | Fully receipted parser/language, type, collation, codec, and protocol-definition packages needed above them | Package inventories closed; parser and datatype differential rings pass |
+| 0. Language and datatype foundations | Fully proven parser/language, type, collation, codec, and protocol-definition packages needed above them | Package inventories closed; parser and datatype differential rings pass |
 | 1. Storage and distributed-read foundations | Production PD/region/snapshot/coprocessor path plus complete prerequisite packages | Real-cluster read, retry, fault, topology, and compatibility suites pass |
 | 2. Deployable read-only node | Standalone binary serving its declared read-only surface through the real stack | MySQL-client live test, shadow parity, TLS/auth/session/schema/MDL, and operational gates pass |
 | 3. Read-write node | Complete DML and transaction client behavior without background ownership | Transaction differential, fault-injection, upgrade, and durability gates pass |
@@ -486,30 +442,30 @@ cannot skip package or runtime prerequisites.
 
 ## Failure recovery and drift handling
 
-- Inventory drift is regenerated from source and reviewed before further
-  package closure.
-- An abandoned or stale claim is released through the queue tool, not by
-  editing the manifest.
-- A false or stale receipt is reopened through the atomic transaction.
-- A reopened prerequisite blocks dependent closure; covered dependents are
-  reopened first.
+- Inventory drift invalidates the package proof and is reviewed before further
+  package completion.
+- Work in progress needs no state cleanup; discard or revert it with ordinary
+  Git operations.
+- A false proof is repaired by fixing the implementation and rerunning
+  `package-port.py finish`.
+- A stale prerequisite blocks dependent completion until its proof is current.
 - A live proof that covers only a bounded statement or topology remains bounded
   evidence. It never expands itself into package coverage.
 - A compatibility failure is fixed in the package that owns the violated
   invariant. Downstream special cases are rejected unless the Go contract
   itself requires them.
-- Generated status is refreshed after state transitions and is never treated as
-  an editable progress narrative.
+- Progress is derived from valid files under `rust/ports/`; there is no mutable
+  status ledger.
 
 ## Principal risks and controls
 
 | Risk | Control |
 | --- | --- |
-| The Go tree changes during transcreation | Pin every manifest and receipt to source/test inventories; regenerate drift reports; rebase by package |
-| Existing partial Rust code creates false confidence | Label it seed-only; require schema-2 package receipts and dependency closure |
-| Original tests are silently omitted | Exhaustive test/support ledger, checked dispositions, and receipt-time inventory gates |
-| A valid-looking receipt later proves incomplete | Atomic `reopen-package`, reverse-dependent reopening, and full re-gating |
-| Rust crate splits hide missing Go behavior | One umbrella manifest and one receipt for the complete Go package |
+| The Go tree changes during transcreation | Content-hash the complete package inventory; invalidate stale proofs; rebase by package |
+| Existing partial Rust code creates false confidence | Count only valid whole-package proofs with dependency closure |
+| Original tests are silently omitted | Derive test files, entry points, literal subtests, benchmarks, fuzz targets, examples, fixtures, and support directly from Go at `finish` |
+| A valid-looking proof later proves incomplete | Fix the implementation and regenerate the proof; Git retains the review trail |
+| Rust crate splits hide missing Go behavior | One proof covers the complete Go package and every mapped Rust crate/path/test target |
 | SQL semantics drift during cleanup | Structural transcreation first; redesign only after parity under a separate proposal |
 | Rust client behavior lags client-go | Treat client-go as the specification; prove parity against real PD/TiKV and fault injection |
 | Mixed nodes disagree on schema or ownership | Dedicated schema-lease, MDL, system-table, rolling-upgrade, and ownership suites |
@@ -521,7 +477,7 @@ cannot skip package or runtime prerequisites.
 ### Big-bang replacement
 
 A siloed full rewrite produces no deployable feedback until the end and lets
-source drift accumulate. Package receipts plus cluster-level rollout provide
+source drift accumulate. Package proofs plus cluster-level rollout provide
 bounded, reviewable proofs earlier.
 
 ### In-process package replacement
@@ -534,7 +490,7 @@ existing network boundaries already provide a clean process-level cut.
 
 Porting only the code needed by the next demo hides unvisited branches and
 tests, creates overlapping ownership, and makes progress impossible to audit.
-Feature slices are therefore frozen legacy evidence, not new work units.
+Feature slices are therefore not accepted work units.
 
 ### Semantic redesign during translation
 
@@ -552,7 +508,7 @@ required real PD/TiKV gates.
 
 The Rust rewrite is complete only when all of the following are true:
 
-1. Every in-scope upstream Go package/module has a current schema-2 receipt at
+1. Every in-scope upstream Go package/module has a current valid proof at
    the accepted source revision, with complete source and original-test/support
    coverage.
 2. The Rust node passes parser, planner, execution, transaction, protocol, and

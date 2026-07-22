@@ -1,3 +1,0 @@
-# Source-owned next-input row/cell accounting evidence.
-# source_path status owner evidence_artifact note
-pkg/executor/internal/exec/executor.go	PARTIAL	executor-next-io-acc-wave	rust/crates/tidb-exec/src/next_io_acc.rs	The dependency-closed nextIOAcc row/cell guards, reset, and needNextIOAcc admission predicate from lines 42-89 are ported; source atomic operations, executor provider/pool reuse, BaseExecutor wiring, and RUV2 metric mapping/publication remain external.

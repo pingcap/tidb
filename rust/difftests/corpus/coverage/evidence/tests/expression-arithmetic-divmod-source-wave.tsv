@@ -1,3 +1,0 @@
-# Source-owned direct test evidence for the signedness-sensitive DIV/MOD leaf.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/expression/builtin_arithmetic_test.go	0	builtin_arithmetic_test.go	PARTIAL	expression-arithmetic-divmod-source-wave	rust/crates/tidb-expr/src/ops.rs	Direct Rust rows cover TestArithmeticIntDivide/TestArithmeticMod signed, unsigned, mixed-sign, zero-divisor, and overflow cases. Existing math-wave1 owns the broad upstream test anchors; this fragment records the newly closed mixed-signedness boundary without duplicating those rows. Decimal/real error-channel and function-class/vectorized checks remain partial.

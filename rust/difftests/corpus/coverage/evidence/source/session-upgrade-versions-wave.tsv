@@ -1,3 +1,0 @@
-# Source-owned bootstrap upgrade-version registry evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/session/upgrade_def.go	PARTIAL	session-upgrade-versions-wave	rust/crates/tidb-exec/src/upgrade_versions.rs	The ordered upgradeToVer version registry, intentional historical gaps, currentBootstrapVersion=263, and function-name pattern are ported; versioned upgrade functions, SQL/DDL mutation, bootstrap metadata, retries, and test-only current-version overrides remain external.

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for codec-rowindex-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/tablecodec/rowindexcodec/rowindexcodec_test.go	23	TestGetKeyKind	COVERED	codec-rowindex-source-wave	rust/crates/tidb-codec/tests/row_index_source.rs	All four original assertions execute byte-for-byte; Go nil and empty slices are observably identical at the Rust slice boundary

@@ -1,3 +1,0 @@
-# Source-owned statistics pool interface test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/util/util_test.go	75	TestCallSCtxFailed	PARTIAL	stats-pool-wave	rust/crates/tidb-stats/tests/stats_pool_source.rs	Rust pins the Pool resource-access and close contract obtained before the Go test's failing session callback; session checkout, internal-session cleanup, and error propagation remain external.

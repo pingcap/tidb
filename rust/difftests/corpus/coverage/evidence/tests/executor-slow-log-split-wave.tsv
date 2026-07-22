@@ -1,3 +1,0 @@
-# Source-owned slow-log field-splitting test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/slow_query_test.go	619	TestSplitByColon	PARTIAL	executor-slow-log-split-wave	rust/crates/tidb-exec/tests/slow_log_split_source.rs	Rust vectors cover plain fields, nested []/{}, empty adjacent values, timestamp text, malformed braces, and empty tails; source logging and slow-log integration remain external.

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for expression-string-space-signature-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_string_test.go	1004	TestSpaceSig	PARTIAL	expression-string-space-signature-source-wave	rust/crates/tidb-expr/src/string_fn.rs	The parameterized SPACE helper asserts the source signature's six-space success and 1001-byte max_allowed_packet NULL boundary; Go warning collection, vectorized execution, and session-owned packet setup remain outside the value-only evaluator

@@ -1,3 +1,0 @@
-# Source-owned statistics mock-fixture shape evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/cache/internal/testutil/testutil.go	PARTIAL	stats-mock-statistics-shape-wave	rust/crates/tidb-stats/src/mock_statistics_shape.rs	The Rust leaf ports NewMockStatisticsTable's caller-selected column/index counts and CMSketch/TopN/histogram flags from lines 26-78. statistics.Table and payload allocation, field types, memory accounting, cache behavior, and benchmark runtime remain external.

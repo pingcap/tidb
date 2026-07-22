@@ -1,3 +1,0 @@
-# Source-owned SHOW PLACEMENT label aggregation evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/show_placement.go	PARTIAL	executor-placement-labels-wave	rust/crates/tidb-exec/src/placement_labels.rs	The nil-store no-op, key grouping, value deduplication, and lexicographic row ordering are ported; BinaryJSON decoding/type errors, PD/store retrieval, placement policy lookup, and SQL-row encoding remain external.

@@ -1,3 +1,0 @@
-# Source-owned statistics DDL physical-ID selection evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/ddl/subscriber.go	PARTIAL	stats-ddl-physical-ids-wave	rust/crates/tidb-stats/src/ddl_physical_ids.rs	The Rust leaf ports getPhysicalIDs at lines 356-375: nil partition metadata yields the table ID, partition IDs retain order, dynamic pruning appends the table ID, and empty definitions remain distinct. DDL event dispatch, TableInfo decoding, session-variable reads, SQL/storage updates, and historical stats remain external.

@@ -1,2 +1,0 @@
-# support_path	sha256	disposition	evidence_artifact	note
-pkg/server/internal/handshake/BUILD.bazel	946a8c4281523586a9004e189cea937cdfedb6d687ed7f41d973994a6c88d581	build-metadata-reviewed	rust/workstreams/slices/server-internal-handshake-package.toml	Reviewed the sole Go support artifact: it declares the source-only internal library and visibility boundary; the Rust authority is registered in the existing tidb-server crate with no generated or fixture input.

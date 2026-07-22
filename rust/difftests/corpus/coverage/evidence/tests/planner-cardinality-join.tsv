@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-cardinality-join.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/planner/cardinality/selectivity_test.go	0	selectivity_test.go	PARTIAL	planner-cardinality-join	rust/difftests/planner-tests/tests/join.rs	The dedicated join target covers source-shaped Cartesian/equi/NA-key NDV selection threshold-off and 0.9 correlation behavior including the source negative-exponent fallback; no direct EstimateFullJoinRowCount Go test exists and the real selectivity/PlanContext owners remain open.

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-logical-table-dual-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go	114	TestLogicalTableDualHash64Equals	PARTIAL	planner-logical-table-dual-wave	rust/difftests/planner-tests/tests/logical_table_dual.rs	Rust vectors cover equal identity/hash, schema-column changes, RowCount changes, nil-versus-empty schema framing, and source rowcount ExplainInfo; full Go FieldType/collation/VirtualExpr equality and logical-plan context remain external.

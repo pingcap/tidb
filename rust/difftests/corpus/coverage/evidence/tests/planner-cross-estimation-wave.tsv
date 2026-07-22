@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-cross-estimation-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/cardinality/selectivity_test.go	1869	TestOrderingIdxSelectivityThreshold	PARTIAL	planner-cross-estimation-wave	rust/difftests/planner-tests/tests/cross_estimation.rs	Direct Rust vectors preserve the source helper's ascending/descending range selection, exact threshold, endpoint inversion, collator propagation, empty input, and full-scan path; the Go anchor's mock statistics and EXPLAIN fixture assertions remain open.

@@ -1,3 +1,0 @@
-# Source-owned decimal metadata test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/types/mydecimal_test.go	501	TestDecimalBinSize	PARTIAL	codec-decimal-metadata-source-wave	rust/crates/tidb-codec/tests/decimal_metadata_source.rs	Exact precision/scale header, DecimalPeak-equivalent payload length, remainder preservation, and malformed shape/short payload errors execute without materializing SQL semantics; full MyDecimal rounding, overflow policy, and statement warnings remain open

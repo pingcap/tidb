@@ -1,3 +1,0 @@
-# Source-owned statistics-cache key-set shard evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/cache/internal/lfu/key_set_shard.go	PARTIAL	stats-key-set-shards-wave	rust/crates/tidb-stats/src/stats_key_set_shards.rs	The Rust leaf ports the fixed 256-shard routing and aggregate Get/AddKeyValue/Remove/Keys/Len/Clear operations from lines 20-69 over caller-owned costs. Ristretto/LFU admission, statistics.Table values, async visibility, and cache integration remain explicit future owners.

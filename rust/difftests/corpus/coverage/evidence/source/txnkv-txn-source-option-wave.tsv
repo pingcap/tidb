@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for txnkv-txn-source-option-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/kv/option.go	PARTIAL	txnkv-txn-source-option-wave	rust/crates/tidb-txnkv/src/txn_source.rs	Complete lines 243 through 295 transaction-source bitfield domain preserves CDC zero-through-eight acceptance despite the printed one-through-fifteen range lossy DDL byte OR and mask semantics unmasked upper-bit presence behavior and the Lightning bit; transaction option IDs replica read request contexts internal source names and size limits remain unported

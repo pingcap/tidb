@@ -1,3 +1,0 @@
-# Source-owned test evidence for the collation-aware LIKE vertical.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_like_test.go	100	TestCILike	PARTIAL	expression-ci-like-source-wave	rust/crates/tidb-expr/src/like.rs	All 25 source rows are matched against utf8mb4_general_ci and utf8mb4_unicode_ci through like_match_with_collation; the original utf8mb4_0900_ai_ci column remains outside the registered Rust collation set, while function-class/session/vectorized lifecycle stays partial.

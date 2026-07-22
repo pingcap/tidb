@@ -1,3 +1,0 @@
-# Source-owned init-stats progress evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/initstats/load_stats_page.go	PARTIAL	stats-init-progress-wave	rust/crates/tidb-stats/src/init_stats_progress.rs	The Rust leaf ports RangeWorker.loadStats's float64 coercion, count division, step scaling, and base offset from lines 104-107, including IEEE zero-denominator behavior. Worker goroutines/channels, atomic global percentage, task processing, and logging remain external.

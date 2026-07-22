@@ -1,4 +1,0 @@
-# Source-owned direct evidence for UUID_TO_BIN and BIN_TO_UUID.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_miscellaneous_test.go	563	TestUUIDToBin	PARTIAL	expression-uuid-binary-source-wave	rust/crates/tidb-expr/src/builtin_ext/misc.rs	Canonical/uppercase/compact/braced forms, raw 16-byte output, swap flag, NULL propagation, and strict invalid-input errors are covered directly; Go warning/session state and function-class/vectorized execution remain explicit seed boundaries.
-go_test	pkg/expression/builtin_miscellaneous_test.go	684	TestBinToUUID	PARTIAL	expression-uuid-binary-source-wave	rust/crates/tidb-expr/src/builtin_ext/misc.rs	Raw binary payloads are accepted without UTF-8 conversion, canonical lower-case formatting and swap permutation match Go, with NULL and invalid-length errors covered; warning/session state and function-class/vectorized execution remain explicit seed boundaries.

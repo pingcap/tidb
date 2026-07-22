@@ -1,3 +1,0 @@
-# Source-owned pending stats-delta table-ID selection evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/usage/session_stats_collect.go	PARTIAL	stats-pending-delta-ids-wave	rust/crates/tidb-stats/src/pending_delta_ids.rs	The Rust leaf ports collectPendingStatsDeltaTableIDs from lines 220-245: empty targets select all pending map keys, non-empty targets filter to pending IDs, duplicate targets are removed, and output is ascending; variable.TableDelta values, session collectors, SQL, lock checks, and persistence remain external.

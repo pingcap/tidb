@@ -1,3 +1,0 @@
-# Source-owned DDL statistics delta SQL evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/ddl/ddl.go	PARTIAL	stats-ddl-delta-wave	rust/crates/tidb-stats/src/ddl_stats_delta.rs	The Rust leaf ports updateStatsWithCountDeltaAndModifyCountDelta's locked stats_table_locked upsert, unlocked missing stats_meta insert, existing stats_meta update, exact query text, argument order, and Go-wrapping additions from lines 95-171. Locked-table discovery, FOR UPDATE reads, session execution, DDL events, and statistics-handle lifecycle remain external.

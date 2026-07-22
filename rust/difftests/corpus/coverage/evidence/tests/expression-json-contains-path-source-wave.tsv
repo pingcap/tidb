@@ -1,3 +1,0 @@
-# Source-owned direct tests for the bounded JSON_CONTAINS_PATH scalar leaf.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_json_test.go	684	TestJSONContainsPath	PARTIAL	expression-json-contains-path-source-wave	rust/crates/tidb-expr/src/builtin_ext/json.rs	The complete representable TestJSONContainsPath table executes directly: ONE/ALL short-circuiting, multiple paths, object/array wildcard existence, case-insensitive modes, NULL propagation, invalid JSON documents, and invalid modes are covered; typed BinaryJSON values, warning/session state, function-class construction, and vectorized execution remain outside the seed evaluator

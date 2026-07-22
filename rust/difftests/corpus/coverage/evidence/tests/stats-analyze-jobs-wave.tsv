@@ -1,3 +1,0 @@
-# Source-owned analyze-job progress test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/test/analyzetest/analyze_test.go	904	TestAnalyzeJob	PARTIAL	stats-analyze-jobs-wave	rust/crates/tidb-stats/tests/analyze_jobs_source.rs	Rust mirrors the direct AnalyzeProgress cases at lines 954-974 (sub-threshold accumulation, threshold plus interval dump/reset, and immediate second-update deferral) and the AnalyzeJob zero shape; SQL persistence, show-analyze rendering, and executor/handle lifecycle remain open.

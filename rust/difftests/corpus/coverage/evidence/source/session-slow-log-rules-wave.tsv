@@ -1,3 +1,0 @@
-# Source-owned slow-log rule metadata evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/sessionctx/slowlogrule/rules.go	PARTIAL	session-slow-log-rules-wave	rust/crates/tidb-exec/src/slow_log_rules.rs	Condition/rule grouping, session effective-field invalidation state, and connection-indexed global rule metadata are typed; parser, evaluator, global hash computation, and live SessionVars attachment remain external.

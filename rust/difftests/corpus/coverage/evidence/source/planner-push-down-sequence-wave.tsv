@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-push-down-sequence-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/rule_push_down_sequence.go	PARTIAL	planner-push-down-sequence-wave	rust/crates/tidb-planner/src/push_down_sequence.rs	Ports recursive sequence traversal: root child walk, nested CTE/main-query merging, DataSource/CTE push-through, unary descent, multi-child/childless attachment, and source false planChanged flag over a structural adapter; real LogicalSequence metadata, operator construction, session context, and SQL execution remain external.

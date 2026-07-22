@@ -1,4 +1,0 @@
-# Source-owned direct tests for the raw-byte IPv4 mapped/compatible predicates.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_miscellaneous_test.go	461	TestIsIPv4Mapped	PARTIAL	expression-ip-predicate-source-wave	rust/crates/tidb-expr/src/builtin_ext/compare2.rs	All five original binary rows plus NULL and an invalid-UTF8 raw-byte boundary execute through the production byte-prefix predicate; function-class metadata, warning/session state, and vectorized execution remain outside the seed evaluator.
-go_test	pkg/expression/builtin_miscellaneous_test.go	490	TestIsIPv4Compat	PARTIAL	expression-ip-predicate-source-wave	rust/crates/tidb-expr/src/builtin_ext/compare2.rs	All six original binary rows plus NULL and an invalid-UTF8 raw-byte boundary execute through the production zero-prefix predicate; function-class metadata, warning/session state, and vectorized execution remain outside the seed evaluator.

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for server-secure-transport-policy-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/server/tests/tls/tls_test.go	374	TestTLSBasic	PARTIAL	server-secure-transport-policy-wave	rust/crates/tidb-server/tests/secure_transport_source.rs	Covers require_secure_transport rejection for plaintext TCP and acceptance of Unix/direct-TLS/gateway-secure transport facts; Go certificate generation, server lifecycle, sysvar mutation, and real client/TLS handshakes remain outside this policy leaf.

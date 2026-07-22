@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-logical-aggregation-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go	804	TestLogicalAggregationHash64Equals	PARTIAL	planner-logical-aggregation-wave	rust/crates/tidb-planner/src/logical_aggregation.rs	Inline Rust vectors mirror matching Agg/GroupBy/PossibleProperties identity, empty GroupBy divergence, ordered-property divergence, HasTiFlash exclusion, aggregate descriptor fields, and normalized schema/type identity; expression evaluation/type inference, full FieldType/ByItems metadata, plan context, statistics, optimizer rules, and runtime aggregation remain external.

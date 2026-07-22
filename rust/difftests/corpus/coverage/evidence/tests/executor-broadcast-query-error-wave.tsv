@@ -1,3 +1,0 @@
-# Source-owned BroadcastQuery compatibility-error test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/analyze_utils_test.go	28	TestIsUnsupportedBroadcastQueryErr	PARTIAL	executor-broadcast-query-error-wave	rust/crates/tidb-exec/tests/broadcast_query_error_source.rs	Rust vectors cover positive wrapped/plain messages, nil, unrelated messages, and each missing-fragment boundary; Go error-chain behavior and analyze/RPC integration remain external.

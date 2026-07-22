@@ -1,3 +1,0 @@
-# Source-owned native CHBlock/tipb chunk envelope evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/internal/mpp/local_mpp_coordinator.go	PARTIAL	distsql-chblock-envelope-wave	rust/crates/tidb-distsql/src/chblock.rs	The source sets TypeCHBlock for non-root TiFlash dispatch; the Rust leaf validates tipb Chunk/RowMeta boundaries and preserves native bytes, while ClickHouse block schema, Datum conversion, and TiFlash transport remain open.

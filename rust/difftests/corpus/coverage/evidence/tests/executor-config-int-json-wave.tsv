@@ -1,3 +1,0 @@
-# Source-owned integer SET CONFIG JSON rendering test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/set_test.go	1709	TestSetClusterConfigJSONData	PARTIAL	executor-config-int-json-wave	rust/crates/tidb-exec/tests/config_int_json_source.rs	Rust vectors cover source boolean 1/0 and decimal 2333 ETInt cases plus signed/nonzero boundaries; expression/session evaluation, other EvalType branches, and SET CONFIG integration remain external.

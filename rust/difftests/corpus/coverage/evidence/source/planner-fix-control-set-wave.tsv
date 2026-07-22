@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for planner-fix-control-set-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/util/fixcontrol/set.go	PARTIAL	planner-fix-control-set-wave	rust/crates/tidb-planner/src/fix_control.rs	Ports comma-separated key parsing, quoted/unquoted value handling, empty values, repeated-key replacement and warnings, and source parse errors; session-variable wiring and typed getters remain external.

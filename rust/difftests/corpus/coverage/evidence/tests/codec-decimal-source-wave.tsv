@@ -1,5 +1,0 @@
-# Source-owned test-evidence fragment for codec-decimal-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/util/codec/codec_test.go	620	TestDecimal	COVERED	codec-decimal-source-wave	rust/crates/tidb-codec/SOURCE_COVERAGE.md	All fourteen natural rows all fifty-four fixed 30,6 comparison and size rows all sixteen fixed 20,6 float-order rows and typed truncation and overflow paths execute across the two cited test modules
-go_test	pkg/util/codec/decimal_test.go	24	TestDecimalCodec	COVERED	codec-decimal-source-wave	rust/crates/tidb-codec/tests/decimal_fixed_source.rs	All thirteen source rows round-trip exact natural precision and scale metadata with remainder preservation
-go_test	pkg/util/codec/decimal_test.go	63	TestFrac	COVERED	codec-decimal-source-wave	rust/crates/tidb-codec/tests/decimal_fixed_source.rs	Both source rows round-trip with their exact string scale

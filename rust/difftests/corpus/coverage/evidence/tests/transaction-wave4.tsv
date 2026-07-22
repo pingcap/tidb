@@ -1,6 +1,0 @@
-# Source-owned test-evidence fragment for transaction-wave4.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-integration_fixture	tests/integrationtest/t/session/vars.test	0	vars.test	PARTIAL	transaction-wave4	rust/difftests/corpus/table/sql_safe_updates.txt	SET_VAR(sql_safe_updates) statement scope/restoration from source lines 117-123 and result lines 280-300; error-path restoration is a Rust regression extension
-go_test	pkg/sessionctx/variable/sysvar_test.go	319	TestTimeZone	PARTIAL	transaction-wave4	rust/difftests/corpus/table/time_zone_labels.txt	SYSTEM UTC and fixed-offset validation/readback; named IANA zone behavior remains out of seed scope
-go_test	pkg/sessionctx/variable/varsutil_test.go	108	TestVarsutil	PARTIAL	transaction-wave4	rust/difftests/corpus/table/foreign_key_checks.txt	FOREIGN_KEY_CHECKS 0/1 readback and modeled child/parent enforcement boundaries
-go_test	pkg/sessionctx/variable/varsutil_test.go	478	TestValidate	PARTIAL	transaction-wave4	rust/difftests/corpus/table/foreign_key_checks.txt	Typed boolean rejection for FOREIGN_KEY_CHECKS=3; broader variable matrix remains outside seed scope

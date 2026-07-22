@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-logical-show-ddl-jobs-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/logical_show_ddl_jobs.go	PARTIAL	planner-logical-show-ddl-jobs-wave	rust/crates/tidb-planner/src/logical_show_ddl_jobs.rs	Ports generated LogicalShowDDLJobs Hash64/Equals identity: ShowDDLJobs tag and LogicalSchemaProducer nil/present ordered normalized schema; untagged JobNumber, DDL stats/context, and runtime SHOW behavior remain external.

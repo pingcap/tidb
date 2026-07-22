@@ -1,9 +1,0 @@
-schema = "1"
-campaign = "2026-07-read-path-18"
-status = "integrated"
-slices = [
-  "txnkv-unlocked-store-refresh-runtime",
-  "txnkv-batch-coprocessor-dispatch-runtime",
-  "distsql-batchcommands-region-request-runtime",
-  "txnkv-live-pd-batch-topology",
-]

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-scheduler-contract-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/planner/cascades/task/task_scheduler_test.go	0	task_scheduler_test.go	PARTIAL	planner-scheduler-contract-wave	rust/difftests/planner-tests/tests/scheduler_contract.rs	The concrete TestSimpleTaskScheduler function at line 57 is already owned by planner-task-scheduler-wave; this file-level row covers only the base Scheduler interface dispatch, opaque task LIFO ordering, and Destroy contract without duplicating that function anchor.

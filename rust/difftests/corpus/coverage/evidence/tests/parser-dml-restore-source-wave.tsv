@@ -1,6 +1,0 @@
-# Source-owned parser AST restore tests for SELECT/DML leaves.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/parser/ast/dml_test.go	134	TestLimitRestore	COVERED	parser-dml-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_restore_source.rs	All LIMIT count/offset source rows restore through the typed Limit AST; parser restore differential is covered by the dedicated corpus pair.
-go_test	pkg/parser/ast/dml_test.go	146	TestWildCardFieldRestore	COVERED	parser-dml-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_restore_source.rs	All bare, table-qualified, and database-qualified wildcard rows restore with Go quoting through public SELECT parsing.
-go_test	pkg/parser/ast/dml_test.go	158	TestSelectFieldRestore	COVERED	parser-dml-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_restore_source.rs	All wildcard, aliased-column, and aliased-expression rows restore with canonical quoting and AS placement.
-go_test	pkg/parser/ast/dml_test.go	172	TestFieldListRestore	COVERED	parser-dml-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_restore_source.rs	All field-list rows are covered, including FieldList comma-space via SelectStmt::restore_field_list; full SELECT restore remains covered by the parser corpus.

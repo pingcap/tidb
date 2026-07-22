@@ -1,3 +1,0 @@
-# Complete package source evidence for server-internal-handshake-package.
-# source_path	status	owner	evidence_artifact	note
-pkg/server/internal/handshake/handshake.go	COVERED	server-internal-handshake-package	rust/difftests/corpus/coverage/evidence/source/server-internal-handshake-package.tsv	The complete eight-field Response41 aggregate is one dedicated Rust-native authority with zero-value construction and owned map/string/byte mappings; downstream parsing, authentication, compression, and connection lifecycle packages are not credited.

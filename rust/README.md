@@ -10,26 +10,23 @@ through TiDB's serialized protocols and the differential rings.
 
 ## Start here
 
-- [`HANDOFF.md`](HANDOFF.md): reviewed current counters, active gaps, and
-  environment constraints.
-- [`PARALLEL.md`](PARALLEL.md): agent ownership, protected integration seams,
-  and landing protocol.
+- [`HANDOFF.md`](HANDOFF.md): current architecture, completed packages, and
+  largest gaps.
+- [`PARALLEL.md`](PARALLEL.md): the retained link for the single-worker
+  whole-package contract.
 - [`docs/architecture/workspace.md`](docs/architecture/workspace.md): crate
   boundaries and target concurrency boundaries.
 - [`docs/operations/validation.md`](docs/operations/validation.md): exact WIP
   validation commands.
-- [`difftests/PORTING_LEDGER.md`](difftests/PORTING_LEDGER.md): every upstream
-  Go test and fixture remains an explicit obligation.
-- [`difftests/SOURCE_LEDGER.md`](difftests/SOURCE_LEDGER.md): every production
-  Go source file remains an explicit crate-routing and porting obligation.
-- [`execplans/`](execplans): living plans for multi-crate and structural work.
+- [`ports/`](ports/): the complete set of accepted whole-package proofs.
+- [`workstreams/plans/2026-07-whole-package-transcreation.md`](workstreams/plans/2026-07-whole-package-transcreation.md): active execution plan.
 
-The Go implementation is authoritative. A Rust feature starts from a bounded
-Go source domain plus its original tests; differential output verifies the
-port but does not replace reading or translating the source.
+The Go implementation is authoritative. Work starts from one complete Go
+package plus its original tests/support; differential output verifies the port
+but does not replace reading or translating the source.
 
 `Cargo.lock` is checked as part of this application workspace. Validation uses
-`--locked` so parallel agents cannot silently resolve different dependencies.
+`--locked` for reproducibility.
 
 ## Workspace
 
@@ -43,7 +40,7 @@ port but does not replace reading or translating the source.
 | `crates/tidb-txnkv` | source-backed KV key/range/version foundation; future TiKV transaction client | `pkg/kv/**`, then client-go transaction protocols |
 | `crates/tidb-expr` | expression construction/evaluation | `pkg/expression/**` |
 | `crates/tidb-exec` | seed session/catalog executor | `pkg/session/**`, `pkg/executor/**` |
-| `difftests` | shared evidence infrastructure | Go helpers, checked corpora, upstream inventory |
+| `difftests` | differential infrastructure | Go helpers and checked corpora |
 | `difftests/parser-tests` | parser-ring tests and selector shards | lexer/parser/static Go oracle only |
 | `difftests/planner-tests` | plan-ring source translations | source-backed planner primitive tests |
 | `difftests/result-tests` | result-ring tests | expression, query, and table result parity |
@@ -57,22 +54,11 @@ contains RPC, MVCC, locks, retries, or commit protocols.
 Unsupported behavior must fail before mutation. It must not be approximated
 with a locally convenient rule just to make a golden pass.
 
-## Parallel unit of work
+## Unit of work
 
-Agents own source domains, not horizontal file types. A normal feature slice
-contains:
-
-1. the owning Go implementation and original tests;
-2. one typed Rust domain envelope;
-3. focused unit/regression ports;
-4. one source-derived selector or differential corpus;
-5. exact focused validation and a narrow integration request.
-
-Shared dispatchers, `Datum`/`EvalContext`, cluster/session state, Cargo
-metadata, and checked inventory snapshots are stewarded seams. Feature workers
-do not edit them concurrently. Once a seam is split into domain envelopes,
-ownership moves down to those envelopes so unrelated features compile and land
-in parallel.
+One complete Go package or module is the minimum unit. A package may map to
+several Rust crates; all implementation and original tests still finish under
+one proof.
 
 ## Evidence model
 
@@ -90,54 +76,49 @@ The result ring's expression corpus includes source-owned scalar vectors for
 preserve NULL, separator, numeric, empty-field, and raw-binary behavior while
 keeping unsupported temporal/error/session boundaries visible.
 
-Inventory is not coverage. The production-source and upstream-test ledgers
-are independent: `UNTRIAGED`, `PARTIAL`, parser acceptance, and `Unsupported`
-are all visible obligations. A source or test row moves to covered only when
-its complete cited contract has executable Rust evidence.
-
-The module-qualified `external_go_*_inventory.tsv` ledgers independently pin
-the direct client-go and pd-client source/test universes from the offline Go
-module cache. Their ownership states do not inflate TiDB product-parity totals.
+Inventory is not coverage. Only a valid whole-package proof under `ports/`
+counts as completed; partial Rust code remains seed material.
 
 Executable corpus namespaces use paired `<topic>.txt` and
 `<topic>.golden.txt` files. Explanatory evidence belongs under
 `difftests/corpus/coverage/`; the validation gate rejects prose or orphan
 files in executable namespaces.
 
-## Development loop
+## Whole-package development loop
 
-Run Cargo commands from `rust/` and always use 12 jobs:
+Transcreate one complete Go package, translate all of its original tests, then
+finish it with one command from `rust/`:
 
 ```sh
-cargo fmt --all
-cargo test --locked -j 12 --workspace -q
-cargo clippy --locked -j 12 --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
+scripts/package-port.py finish pkg/example \
+  --crate tidb-example \
+  --rust-path rust/crates/tidb-example/src/lib.rs \
+  --rust-path rust/crates/tidb-example/tests/package_source.rs \
+  --test-target tidb-example:package_source
 ```
 
-Then run the checked inventories and the focused ring required by the change;
-the exact commands are maintained in
-[`docs/operations/validation.md`](docs/operations/validation.md). Direct Go
-wrappers run from the repository root. On local arm64 they may fail in the Go
-toolchain's `gensymlate` process; record that as unverified instead of treating
-it as a Rust failure or silently replacing the oracle.
+This derives the complete Go source/test/support inventory, checks dependency
+closure, and runs 12-job formatting, all-target Clippy, library tests, and the
+declared integration tests before writing one proof. There is no start command,
+claim, queue, campaign, transfer ledger, or separate receipt.
+
+Before push or after shared-foundation changes, run the grouped workspace check:
+
+```sh
+scripts/package-port.py checkpoint
+```
 
 ## Current structural priorities
 
-- keep shrinking AST/parser/executor roots into Go-source-owned vertical
-  domains; roots retain exhaustive routing contracts only;
-- continue `tidb-codec` and `tidb-txnkv` from complete dependency-closed Go
-  source/test units, then add timestamp/protocol/MVCC/lock/commit services only
-  with real consumers and transaction-ring evidence;
-- finish routing datatype-owned `Datum` through typed `BuildContext` and one
-  statement-scoped `EvalContext` for charset/collation, SQL mode, warnings,
-  and time;
-- introduce planner/catalog boundaries only when a complete Go-owned API,
-  an immediate consumer, and source-derived evidence move together;
-- dispatch exact Go test files, SQL fixture/result families, shell programs,
-  testdata, and suite support artifacts from the generated ledger; never use a
-  giant Go package as one agent task;
-- close the four differential rings without weakening checked snapshots.
+- select dependency-ready Go packages with downstream runtime value;
+- transcreate each selected package structurally from Go, including its full
+  input domain and error behavior;
+- translate every original test, benchmark, fuzz target, example, fixture,
+  build variant, and support file before writing its proof;
+- split a Go package across Rust crates when that improves cohesion or compile
+  time, while keeping one package proof;
+- run real PD/TiKV and MySQL-client checks when the package reaches those
+  boundaries.
 
 Progress and exact reviewed counts live only in [`HANDOFF.md`](HANDOFF.md), so
 this entrypoint does not become another per-wave changelog.

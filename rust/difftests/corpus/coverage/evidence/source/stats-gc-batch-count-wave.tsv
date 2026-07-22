@@ -1,3 +1,0 @@
-# Source-owned statistics GC batch-count evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/storage/gc.go	PARTIAL	stats-gc-batch-count-wave	rust/crates/tidb-stats/src/gc_batch_count.rs	The Rust leaf ports the pure forCount(total,batch) quotient/remainder rule from lines 183-189, including truncation-toward-zero and positive-remainder rounding with Go-compatible signed wrapping. Storage scans, SQL execution, deletion ordering, and GC timestamps remain external.

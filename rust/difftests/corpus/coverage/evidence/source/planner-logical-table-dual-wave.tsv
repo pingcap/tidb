@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-logical-table-dual-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/logical_table_dual.go	PARTIAL	planner-logical-table-dual-wave	rust/crates/tidb-planner/src/logical_table_dual.rs	Ports LogicalTableDual ExplainInfo and generated Hash64/Equals field order: TableDual tag, nil/present ordered schema columns, and RowCount; normalized column ID/UniqueID/Index/type fingerprints are represented while full FieldType/collation/VirtualExpr fields, plan context, stats, and runtime operators remain external.

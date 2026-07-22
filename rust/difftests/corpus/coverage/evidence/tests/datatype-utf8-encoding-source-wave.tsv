@@ -1,4 +1,0 @@
-# Source-owned direct behavior tests for datatype-utf8-encoding-source-wave.
-# TestEncodingValidate is already anchored by the ASCII leaf; this file-level row owns only its UTF-8/utf8mb3 subset without duplicating that function anchor.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/parser/charset/encoding_test.go	0	encoding_test.go	PARTIAL	datatype-utf8-encoding-source-wave	rust/crates/tidb-datatype/src/utf8_encoding.rs	The direct tests cover the UTF8MB4 and strict UTF8MB3 rows from TestEncodingValidate plus Peek MbLen malformed-group and Transform truncation/error boundaries; GBK GB18030 and the shared Encoding dispatcher remain open

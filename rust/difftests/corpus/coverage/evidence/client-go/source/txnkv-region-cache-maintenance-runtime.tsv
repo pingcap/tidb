@@ -1,3 +1,0 @@
-# client-go source evidence for Campaign 16 canonical region-cache maintenance.
-# source_path	status	owner	evidence_artifact	note
-internal/client/conn_monitor.go	PARTIAL	txnkv-region-cache-maintenance-runtime	rust/crates/tidb-txnkv/src/region/background.rs	One coalesced worker owns scheduled store maintenance instead of a per-store loop. Production tonic connectivity probes, timing metrics, and live reconnect feedback remain external.

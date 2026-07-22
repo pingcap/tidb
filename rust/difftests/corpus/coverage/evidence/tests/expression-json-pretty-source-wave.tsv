@@ -1,3 +1,0 @@
-# Source-owned test evidence for JSON_PRETTY.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_json_test.go	1293	TestJSONPretty	PARTIAL	expression-json-pretty-source-wave	rust/crates/tidb-expr/src/builtin_ext/json.rs	Complete representable JSON_PRETTY scalar, simple-container, and nested-container vectors with two-space indentation and sorted keys, plus NULL propagation, invalid-document errors, and arity boundaries; typed BinaryJSON/session warning/function-class/vectorized behavior remains outside the value-only evaluator

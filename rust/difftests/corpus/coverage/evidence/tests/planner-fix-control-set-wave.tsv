@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-fix-control-set-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/util/fixcontrol/fixcontrol_test.go	92	TestParseToMapEmptyValue	PARTIAL	planner-fix-control-set-wave	rust/difftests/planner-tests/tests/fix_control.rs	Direct Rust vectors cover the anchored empty-value case plus quoted/unquoted values, repeated assignment warning text, and parser boundary errors; session/testdata integration and typed getter behavior remain external.

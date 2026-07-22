@@ -1,3 +1,0 @@
-# Exact pinned client-go test evidence for txnkv-route-policy-seams.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	internal/locate/replica_selector_test.go	108	TestReplicaSelectorBasic	PARTIAL	txnkv-route-policy-seams	rust/crates/tidb-txnkv/tests/replica_selector_source.rs	The immutable route seam preserves the exact synchronous policy input while separating logical target from optional physical proxy; async and TiFlash behavior remain external.

@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for datatype-ascii-encoding-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/parser/charset/encoding_ascii.go	PARTIAL	datatype-ascii-encoding-source-wave	rust/crates/tidb-datatype/src/ascii_encoding.rs	Peek IsValid Foreach UTF-8 lead-byte grouping and Transform replacement truncation collection and first-error semantics execute byte-for-byte; charset-wide Encoding registry and shared Op dispatcher remain stewarded seams

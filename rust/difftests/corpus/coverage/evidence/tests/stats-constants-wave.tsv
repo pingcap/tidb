@@ -1,3 +1,0 @@
-# Source-owned statistics default constants test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/statistics/sample_test.go	0	sample_test.go	PARTIAL	stats-constants-wave	rust/crates/tidb-stats/tests/constants_source.rs	The Go repository has no dedicated constants test; this real statistics test file is the nearest builder/default consumer anchor, while the Rust tests pin both source values and builder/configuration consumers remain open.

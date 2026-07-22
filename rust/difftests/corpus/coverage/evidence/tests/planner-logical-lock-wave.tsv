@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/integration_test.go	1466	TestPointGetWithSelectLock	PARTIAL	planner-logical-lock-wave	rust/difftests/planner-tests/tests/logical_lock.rs	Rust vectors preserve the supported FOR UPDATE/FOR SHARE classification and reject skip-locked/unknown values behind point-get SELECT LOCK planning; full SQL/session/TiFlash planning and lock execution remain external.

@@ -1,3 +1,0 @@
-# Source-owned executor selection-buffer lifecycle test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/join/outer_join_spill_test.go	250	TestOuterJoinSpillWithSel	PARTIAL	executor-selection-buffer-lifecycle-wave	rust/crates/tidb-exec/tests/typed_condition_eval_source.rs	The Rust source-shaped test resets selected/UNKNOWN slices, replaces them from a predicate mask, retains capacity, and rejects misaligned lengths; spill/chunk reuse, vectorized kernels, and physical outer-join copying remain open.

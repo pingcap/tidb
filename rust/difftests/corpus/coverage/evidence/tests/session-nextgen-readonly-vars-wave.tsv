@@ -1,3 +1,0 @@
-# Source-owned next-generation read-only-variable test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/sessionctx/vardef/runtime_test.go	24	TestIsReadOnlyVarInNextGen	PARTIAL	session-nextgen-readonly-vars-wave	rust/crates/tidb-exec/tests/nextgen_readonly_vars_source.rs	Direct Rust vectors cover all six read-only names, case folding, unknown names, and suffix non-matches; the Go kernel-type skip gate and live variable registry remain external.

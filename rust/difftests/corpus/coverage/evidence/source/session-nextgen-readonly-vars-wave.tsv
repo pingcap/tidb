@@ -1,3 +1,0 @@
-# Source-owned next-generation read-only-variable evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/sessionctx/vardef/runtime.go	PARTIAL	session-nextgen-readonly-vars-wave	rust/crates/tidb-exec/src/nextgen_readonly_vars.rs	The six-variable case-insensitive read-only predicate is typed with source literals; lease atomics, variable defaults/registration, kernel selection, and SET dispatch remain external.

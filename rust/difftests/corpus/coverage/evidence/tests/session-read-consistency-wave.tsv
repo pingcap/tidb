@@ -1,3 +1,0 @@
-# Source-owned read-consistency test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/sessionctx/stmtctx/stmtctx_test.go	136	TestWeakConsistencyRead	PARTIAL	session-read-consistency-wave	rust/crates/tidb-exec/tests/read_consistency_source.rs	The test cases continue through line 180; direct tests cover strict/weak canonical labels, case-insensitive validation, exact IsWeak semantics, and unknown rejection while SQL execution/request isolation and transaction behavior remain external

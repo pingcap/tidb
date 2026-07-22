@@ -1,4 +1,0 @@
-# Source-owned session reuse/close test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/session/syssession/session_test.go	400	TestInternalSessionClose	PARTIAL	session-reuse-state-wave	rust/crates/tidb-exec/tests/session_reuse_state_source.rs	Rust vectors cover invalid-owner no-ops, owner close, direct close, idempotence, closed-state readback, and post-panic avoid-reuse persistence; owner hook/context-close calls, in-use deferral, panic assertions, and logging remain external.
-go_test	pkg/session/syssession/session_test.go	691	TestInternalSessionAvoidReuse	PARTIAL	session-reuse-state-wave	rust/crates/tidb-exec/tests/session_reuse_state_source.rs	Rust vectors cover owner-gated avoid-reuse marking, continued usability before close, and persistence through close; live session proxy ownership and panic recovery remain external.

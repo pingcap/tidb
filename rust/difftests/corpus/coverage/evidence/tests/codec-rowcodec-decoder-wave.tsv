@@ -1,5 +1,0 @@
-# Source-owned rowcodec decoder test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/util/rowcodec/rowcodec_test.go	278	TestTypesNewRowCodec	PARTIAL	codec-rowcodec-decoder-wave	rust/crates/tidb-codec/tests/row_decoder_source.rs	Dependency-closed raw lookup and compact payload width rows execute through the Rust decoder; typed Datum/chunk/old-row and schema/handle paths remain open.
-go_test	pkg/util/rowcodec/rowcodec_test.go	86	TestDecodeRowWithHandle	PARTIAL	codec-rowcodec-decoder-wave	rust/crates/tidb-codec/tests/row_decoder_source.rs	The raw decoder preserves source not-null/null/missing lookup and opaque value boundaries; handle reconstruction and typed chunk output remain open.
-go_test	pkg/util/rowcodec/rowcodec_test.go	697	TestVarintCompatibility	PARTIAL	codec-rowcodec-decoder-wave	rust/crates/tidb-codec/tests/row_decoder_source.rs	Compact signed/unsigned row payload widths and malformed-width errors are covered; old datum varint conversion and tablecodec integration remain open.

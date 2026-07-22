@@ -1,3 +1,0 @@
-# Source-owned bounded integer window-value test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/aggfuncs/func_value_test.go	63	TestMemValue	PARTIAL	executor-window-value-int-wave	rust/crates/tidb-exec/tests/window_value_int_source.rs	Rust covers already-evaluated int FIRST_VALUE/LAST_VALUE/NTH_VALUE transitions and state sizes from the source memory/evaluator matrix; other value domains and allocator deltas remain external.

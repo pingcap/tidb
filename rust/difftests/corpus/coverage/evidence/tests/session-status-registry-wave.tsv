@@ -1,3 +1,0 @@
-# Source-owned status-registry test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/sessionctx/variable/statusvar_test.go	53	TestStatusVar	PARTIAL	session-status-registry-wave	rust/crates/tidb-exec/tests/status_registry_source.rs	Direct Rust provider vectors cover default versus session scope, value attachment, registration, and removal; live default status initialization and SessionVars-backed values remain external.

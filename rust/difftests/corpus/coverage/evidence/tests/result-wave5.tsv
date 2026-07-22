@@ -1,5 +1,0 @@
-# Source-owned test-evidence fragment for result-wave5.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_math_test.go	749	TestPi	PARTIAL	result-wave5	rust/difftests/corpus/expr/math_functions.txt	Exact TestPi constant is asserted by the shared math corpus; direct wrong-arity regression confirms Go verifyArgs outcome
-go_test	pkg/expression/builtin_string_test.go	1354	TestLTrim	PARTIAL	result-wave5	rust/difftests/corpus/expr/trim_sides.txt	All TestLTrim ASCII-space, NULL, and ETString coercion vectors
-go_test	pkg/expression/builtin_string_test.go	1396	TestRTrim	PARTIAL	result-wave5	rust/difftests/corpus/expr/trim_sides.txt	All TestRTrim ASCII-space, NULL, and ETString coercion vectors

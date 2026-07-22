@@ -1,3 +1,0 @@
-# Source-owned statement-context ID test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/sessionctx/stmtctx/stmtctx_test.go	505	TestStmtCtxID	PARTIAL	session-context-id-wave	rust/crates/tidb-exec/tests/context_id_source.rs	The TestStmtCtxID table continues through line 522; directly covers non-zero strict monotonic IDs across fresh and reset-equivalent allocations; live StatementContext construction/reset and timezone ownership remain external

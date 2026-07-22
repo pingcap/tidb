@@ -1,8 +1,0 @@
-schema = "1"
-campaign = "2026-07-read-path-16"
-status = "integrated"
-slices = [
-  "txnkv-region-cache-maintenance-runtime",
-  "txnkv-batchcommands-wire-inflight-core",
-  "txnkv-async-region-request-runtime",
-]

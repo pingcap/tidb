@@ -1,3 +1,0 @@
-# Source-owned SHOW PLACEMENT label aggregation test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/show_placement_labels_test.go	26	TestShowPlacementLabelsBuilder	PARTIAL	executor-placement-labels-wave	rust/crates/tidb-exec/tests/placement_labels_source.rs	Rust vectors cover nil stores, duplicate labels, sorted keys/values, and empty values; BinaryJSON marshal/unmarshal, malformed/non-array input, and SHOW PLACEMENT integration remain external.

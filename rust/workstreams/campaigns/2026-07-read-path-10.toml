@@ -1,7 +1,0 @@
-schema = "1"
-campaign = "2026-07-read-path-10"
-status = "integrated"
-slices = [
-  "distsql-pd-route-runtime",
-  "txnkv-pd-region-loader-runtime",
-]

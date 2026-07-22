@@ -1,3 +1,0 @@
-# Source-owned direct evidence for the FIELD signature-selection boundary.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/expression/builtin_string_test.go	0	builtin_string_test.go	PARTIAL	expression-field-signature-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	The direct regression extends TestField's source family with mixed string/integer rows: builtinFieldRealSig compares every argument numerically, so FIELD('1','01',1) and FIELD('1','1x',1) both return position 1; function-class construction, session collation/warnings, and vectorized execution remain outside the seed evaluator.

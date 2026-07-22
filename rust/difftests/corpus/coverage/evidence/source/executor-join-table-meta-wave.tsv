@@ -1,3 +1,0 @@
-# Source-owned hash-join row metadata evidence.
-# source_path status owner evidence_artifact note
-pkg/executor/join/join_table_meta.go	PARTIAL	executor-join-table-meta-wave	rust/crates/tidb-exec/src/join_table_meta.rs	The dependency-closed metadata decision family from lines 23-375 is ported: key mode/inlining/fixed width, serializer modes, saved-column order, null-map alignment, and null-map read safety. FieldType/collation registries, chunk/codec byte widths, unsafe row layout, atomic used flags, and hash-join execution remain external.

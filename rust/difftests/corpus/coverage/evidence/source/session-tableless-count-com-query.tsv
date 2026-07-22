@@ -1,3 +1,0 @@
-# Source-owned translation evidence for session-tableless-count-com-query.
-# source_path	status	owner	evidence_artifact	note
-pkg/expression/aggregation/count.go	PARTIAL	session-tableless-count-com-query	rust/crates/tidb-exec/src/cluster.rs	The existing canonical Database aggregate evaluator already preserves complete-mode COUNT non-NULL accumulation and NULL exclusion; this slice connects its dependency-closed table-less COUNT form through shared Session clone/retry admission and automatic framed COM_QUERY metadata without a second aggregate implementation. COUNT partial/final modes, broad multi-row input, DISTINCT accumulation, errors, reset, table-backed aggregate result typing, GROUP BY, HAVING, and windows remain outside this bounded connection.

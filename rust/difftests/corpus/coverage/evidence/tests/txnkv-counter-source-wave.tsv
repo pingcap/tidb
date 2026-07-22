@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for the bounded counter functions in pkg/kv/utils.go.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/kv/utils_test.go	29	TestIncInt64	COVERED	txnkv-counter-source-wave	rust/difftests/transaction-tests/tests/counter.rs	All original increment rows execute through the narrow CounterStorage contract, including missing-key initialization, repeated increments, parse failure without mutation, and the source overflow boundary.
-go_test	pkg/kv/utils_test.go	56	TestGetInt64	COVERED	txnkv-counter-source-wave	rust/difftests/transaction-tests/tests/counter.rs	The original missing-key zero and persisted increment rows execute through the production counter API with source-compatible parse/error behavior.

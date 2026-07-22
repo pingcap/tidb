@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-columnar-index-extra-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/columnar_index_utils.go	PARTIAL	planner-columnar-index-extra-wave	rust/crates/tidb-planner/src/columnar_index_extra.rs	Ports buildVectorIndexExtra's vector-index metadata construction: fixed vector index type, retained IndexInfo identity, ANN query type/metric/top-k/column name, derived index ID, copied reference-vector bytes, and copied column ID; protobuf/model metadata, TiFlash scan planning, and vector execution remain external.

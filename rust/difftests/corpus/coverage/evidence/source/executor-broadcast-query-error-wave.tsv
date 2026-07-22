@@ -1,3 +1,0 @@
-# Source-owned BroadcastQuery compatibility-error evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/analyze.go	PARTIAL	executor-broadcast-query-error-wave	rust/crates/tidb-exec/src/broadcast_query_error.rs	The nil-safe two-fragment classifier for an older peer's unsupported BroadcastQuery executor is ported; error wrapping, RPC broadcast, warning logging, and analyze fallback remain external.

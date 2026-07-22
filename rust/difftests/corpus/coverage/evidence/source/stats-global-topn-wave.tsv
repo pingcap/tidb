@@ -1,3 +1,0 @@
-# Source-owned histogram-free global TopN aggregation evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/globalstats/topn.go	PARTIAL	stats-global-topn-wave	rust/crates/tidb-stats/src/global_topn.rs	The Rust leaf ports the histogram-free portion of MergePartTopN2GlobalTopN from lines 145-209: skip empty partitions, sum equal encoded values with uint64 wrapping arithmetic, rank by count descending and encoded bytes ascending, then split the selected TopN from its remainder; histogram fallback/removal, Datum decoding, SQL-killer, concurrency, and storage remain external.

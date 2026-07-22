@@ -1,7 +1,0 @@
-# Source-owned statistics bootstrap SQL test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/bootstrap_test.go	23	TestGenInitStatsHistogramsSQLAllRecords	PARTIAL	stats-bootstrap-sql-wave	rust/crates/tidb-stats/tests/bootstrap_sql_source.rs	Rust mirrors the exact all-records histogram SQL and validates typed empty-table-ID options; query execution and bootstrap state remain external.
-go_test	pkg/statistics/handle/bootstrap_test.go	35	TestGenInitStatsHistogramsSQLPaging	PARTIAL	stats-bootstrap-sql-wave	rust/crates/tidb-stats/tests/bootstrap_sql_source.rs	Rust mirrors the exact closed-open table-ID paging SQL and source range contract; session/query execution remains external.
-go_test	pkg/statistics/handle/bootstrap_test.go	48	TestGenInitStatsHistogramsSQLTableIDs	PARTIAL	stats-bootstrap-sql-wave	rust/crates/tidb-stats/tests/bootstrap_sql_source.rs	Rust mirrors exact ordered IN-list histogram SQL; table metadata resolution and execution remain external.
-go_test	pkg/statistics/handle/bootstrap_test.go	63	TestGenInitStatsMetaSQLAllRecords	PARTIAL	stats-bootstrap-sql-wave	rust/crates/tidb-stats/tests/bootstrap_sql_source.rs	Rust mirrors the exact all-records stats_meta SQL; Handle/session lifecycle remains external.
-go_test	pkg/statistics/handle/bootstrap_test.go	69	TestGenInitStatsMetaSQLTableIDs	PARTIAL	stats-bootstrap-sql-wave	rust/crates/tidb-stats/tests/bootstrap_sql_source.rs	Rust mirrors exact ordered IN-list stats_meta SQL; query execution and cache initialization remain external.

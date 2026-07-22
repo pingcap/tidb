@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for codec-bytes-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/util/codec/bytes.go	COVERED	codec-bytes-source-wave	rust/crates/tidb-codec/src/bytes.rs	All observable routines execute including ascending descending raw compact length remainder prefix and malformed paths; Go unsafe inversion and slice allocation helpers are eliminated by safe Rust

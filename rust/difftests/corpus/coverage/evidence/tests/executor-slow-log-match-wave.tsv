@@ -1,3 +1,0 @@
-# Source-owned slow-log rule composition test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/adapter_test.go	206	TestShouldWriteSlowLog	PARTIAL	executor-slow-log-match-wave	rust/crates/tidb-exec/tests/slow_log_match_source.rs	Rust vectors cover no-rule false, AND/OR truth tables, empty-rule behavior, session precedence, specific connection fallback, global sentinel fallback, and all-miss false; Go field accessors, rule parsing, session/global state, and metric/log side effects remain external.

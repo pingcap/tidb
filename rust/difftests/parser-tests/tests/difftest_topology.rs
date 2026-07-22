@@ -68,12 +68,22 @@ fn assert_explicit_package_tests(package_root: &Path) {
         "{} must disable implicit integration-test discovery",
         manifest_path.display()
     );
-    assert_eq!(
-        cargo_test_paths(&manifest),
-        root_rust_files(package_root),
-        "every root test in {} must be one explicit Cargo target",
-        package_root.display()
-    );
+    let cargo_paths = cargo_test_paths(&manifest);
+    if manifest.contains("build = \"../../scripts/aggregate-tests.rs\"") {
+        assert_eq!(
+            cargo_paths,
+            BTreeSet::from(["tests/all.rs".to_owned()]),
+            "{} must expose exactly one aggregate test target",
+            package_root.display()
+        );
+    } else {
+        assert_eq!(
+            cargo_paths,
+            root_rust_files(package_root),
+            "every root test in {} must be one explicit Cargo target",
+            package_root.display()
+        );
+    }
 }
 
 fn cargo_test_paths(manifest: &str) -> BTreeSet<String> {
@@ -122,6 +132,7 @@ fn every_selector_is_owned_once_and_every_root_entrypoint_is_explicit() {
         .cloned()
         .collect();
     let expected_ring_roots = BTreeSet::from([
+        "tests/all.rs".to_owned(),
         "tests/difftest_topology.rs".to_owned(),
         "tests/integration_parser_diff.rs".to_owned(),
         "tests/integration_parser_inventory.rs".to_owned(),

@@ -1,7 +1,0 @@
-# Source-owned parser table/join restore tests.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/parser/ast/dml_test.go	77	TestTableNameRestore	COVERED	parser-dml-join-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_join_restore_source.rs	All six database/table quoting and punctuation rows restore through CREATE TABLE AST ownership.
-go_test	pkg/parser/ast/dml_test.go	92	TestTableNameIndexHintsRestore	COVERED	parser-dml-join-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_join_restore_source.rs	All index/key aliases, empty lists, scoped ORDER/GROUP clauses, ordering, and table aliases restore with canonical USE/IGNORE/FORCE INDEX output.
-go_test	pkg/parser/ast/dml_test.go	186	TestTableSourceRestore	COVERED	parser-dml-join-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_join_restore_source.rs	All base-table, alias, derived-table, and UNION-derived source rows restore with canonical quoting.
-go_test	pkg/parser/ast/dml_test.go	199	TestOnConditionRestore	COVERED	parser-dml-join-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_join_restore_source.rs	Both equality and conjunction ON predicates restore with qualified identifier quoting and canonical operators.
-go_test	pkg/parser/ast/dml_test.go	210	TestJoinRestore	COVERED	parser-dml-join-restore-source-wave	rust/crates/tidb-parser/src/tests/dml_join_restore_source.rs	All natural/straight/cross/inner/outer/USING/ON, comma nesting, derived sources, and precedence-change join rows restore through the production join AST.

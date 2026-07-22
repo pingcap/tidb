@@ -1,3 +1,0 @@
-# Source-owned test evidence for txnkv-scope-var-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/kv/txn_test.go	0	txn_test.go	PARTIAL	txnkv-scope-var-source-wave	rust/difftests/transaction-tests/tests/txn_scope.rs	No original test directly targets txn_scope_var.go; the focused Rust tests execute global/local constructors and exact configured-scope selection while txn_test.go remains partially owned by the retry/inner-transaction waves

@@ -1,4 +1,0 @@
-# Complete original-test evidence for executor-aggregate-distinct-checker.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/aggregation/util_test.go	26	TestDistinct	COVERED	executor-aggregate-distinct-checker	rust/crates/tidb-exec/tests/aggregate_distinct_source.rs	All six original ordered calls preserve first-seen and repeated results for integer pairs and a tuple containing NULL; supplemental assertions cover raw-byte collation independence, unambiguous tuple boundaries, and decimal value identity across trailing-zero scale, while the existing Database-run consumer is guarded separately by an executor tuple-before-render regression
-go_test_file	pkg/expression/aggregation/util_test.go	0	util_test.go	COVERED	executor-aggregate-distinct-checker	rust/crates/tidb-exec/tests/aggregate_distinct_source.rs	The only original test declaration in the source test file is directly translated without omission

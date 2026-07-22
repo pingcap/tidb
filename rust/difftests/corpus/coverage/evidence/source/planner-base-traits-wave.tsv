@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-base-traits-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/cascades/base/base.go	PARTIAL	planner-base-traits-wave	rust/crates/tidb-planner/src/base_traits.rs	Ports Hash64/Equals/HashEquals interface composition over the existing source-shaped Hasher and a dynamic Any equality boundary; concrete logical/memo object implementations and cascades dispatch remain external.

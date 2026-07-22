@@ -1,3 +1,0 @@
-# Source-owned planner row-count arithmetic evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/cardinality/row_count_column.go	PARTIAL	planner-row-count-column-wave	rust/crates/tidb-planner/src/cardinality/row_count_column.rs	Ports RowEstimate arithmetic, normalized interval boundary/null adjustments, primary-key point rule, increase-factor scaling, full-range clamping, and partial-index product/correlated selectivity over caller-owned estimates; Go histogram/TopN/equalRowCount/betweenRowCount, stats-v1 enumeration, session/catalog wiring, and error propagation remain open.

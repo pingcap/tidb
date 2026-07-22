@@ -1,3 +1,0 @@
-# Source-owned charset-variable grouping evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/sessionctx/vardef/sysvar.go	PARTIAL	session-charset-variable-groups-wave	rust/crates/tidb-exec/src/charset_variable_groups.rs	Ordered SetNamesVariables/SetCharsetVariables lists and exact membership are typed; SET parsing/execution, collation validation, SessionVars mutation, and charset conversion remain external.

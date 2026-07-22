@@ -1,3 +1,0 @@
-# Source-owned SET_VAR hint-updatable registry test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/sessionctx/variable/sysvar_test.go	138	TestTiDBMaxKeysRead	PARTIAL	session-hint-updatable-vars-wave	rust/crates/tidb-exec/tests/hint_updatable_vars_source.rs	Focused Rust vectors cover the complete source registry size, representative entries, commented-out read-staleness exclusion, exact case, and suffix boundaries; SysVar marker mutation, hint parsing/application, validation, and planner use remain external.

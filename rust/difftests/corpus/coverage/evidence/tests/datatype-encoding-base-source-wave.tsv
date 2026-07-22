@@ -1,3 +1,0 @@
-# Source-owned direct behavior tests for datatype-encoding-base-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/parser/charset/encoding_test.go	26	TestEncoding	PARTIAL	datatype-encoding-base-source-wave	rust/crates/tidb-datatype/src/encoding_base.rs	The direct policy ring proves bytes-plus-error replacement trim and collection precedence used by TestEncoding; GBK and GB18030 conversion vectors still require their source encoders and shared dispatcher

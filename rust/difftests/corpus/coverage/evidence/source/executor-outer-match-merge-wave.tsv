@@ -1,3 +1,0 @@
-# Source-owned executor cumulative outer-match status evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/join/index_lookup_hash_join.go	PARTIAL	executor-outer-match-merge-wave	rust/crates/tidb-exec/src/typed_condition_eval.rs	The Rust executor now exposes a pure cumulative merge over outer-row TRUE/UNKNOWN masks, matching the source priority where TRUE wins, UNKNOWN outranks unmatched, and FALSE never erases an earlier match; task/chunk ownership, row pointers, null-extension, and physical index-lookup execution remain open.

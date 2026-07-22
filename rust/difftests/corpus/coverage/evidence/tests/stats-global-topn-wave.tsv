@@ -1,3 +1,0 @@
-# Source-owned histogram-free global TopN aggregation test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/globalstats/global_stats_test.go	322	TestGlobalStatsData3	PARTIAL	stats-global-topn-wave	rust/crates/tidb-stats/tests/global_topn_source.rs	The original integration test asserts global TopN ranking and partition merge rows at lines 342-347; Rust mirrors the dependency-closed histogram-free aggregation fixture with the same count-50 selected result plus one remainder. Broader analyze/session/storage lifecycle remains external.

@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/casetest/dag/dag_test.go	274	TestDAGPlanBuilderUnionScan	PARTIAL	planner-physical-union-scan-wave	rust/difftests/planner-tests/tests/physical_union_scan.rs	Rust vectors preserve the UnionScan plan emission/rejection boundary and initialization metadata used by the DAG plan; full transaction-buffer setup, SQL planning, child property/task wiring, and plan output remain external.

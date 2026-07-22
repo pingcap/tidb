@@ -1,6 +1,0 @@
-schema = "2"
-campaign = "2026-07-package-frontier-02"
-status = "integrated"
-slices = [
-  "parser-mysql-package",
-]

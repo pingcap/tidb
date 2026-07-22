@@ -1,3 +1,0 @@
-# Source-owned SET_VAR hint restore test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/planner/core/stats_test.go	0	stats_test.go	PARTIAL	session-setvar-hint-restore-wave	rust/crates/tidb-exec/tests/setvar_hint_restore_source.rs	The helper at lines 284-291 applies SET_VAR hints and records the old value; Rust covers the first-write-wins restore registry, while hint parsing, sysvar mutation, warning publication, restore timing, and live planner/session integration remain external

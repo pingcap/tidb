@@ -1,3 +1,0 @@
-# Exact pinned pd-client test evidence for Campaign 15 PD bucket and batch-region wire.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	clients/router/client_test.go	122	TestRequestFinisherClearsUnrequestedBuckets	PARTIAL	txnkv-pd-bucket-batch-wire	rust/crates/tidb-pd-client/tests/pd_client_source.rs	The shared projection clears server-returned buckets for unrequested GetRegion, GetRegionByID, BatchScanRegions, and legacy ScanRegions while preserving requested buckets; the broader router streaming lifecycle remains external.

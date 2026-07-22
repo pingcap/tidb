@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for table-wave4.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-integration_fixture	tests/integrationtest/t/ddl/sequence.test	0	sequence.test	PARTIAL	table-wave4	rust/difftests/corpus/table/sequence_fixture.txt	TestAlterSequence source lines 313-318
-integration_fixture	tests/integrationtest/t/executor/window.test	0	window.test	PARTIAL	table-wave4	rust/difftests/corpus/table/window_fixture.txt	TestIssue24264 source lines 2-14

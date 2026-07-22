@@ -1,6 +1,0 @@
-# Consolidate isolated index evidence into one live planner consumer.
-# old_owner	new_owner	source_path	test_path	test_line	test_name	retired_artifacts	new_artifacts	note
-stats-index-query-wave	planner-cardinality-live-index-choice	pkg/statistics/index.go	-	-	-	-	rust/crates/tidb-planner/src/logical_data_source_task.rs	Point-count precedence enters the live datasource-to-index-task consumer.
-stats-index-query-wave	planner-cardinality-live-index-choice	-	pkg/statistics/histogram_test.go	537	TestIndexQueryBytes	-	rust/crates/tidb-planner/tests/cardinality_live_index_choice_source.rs	Point-count precedence now feeds a constructed index task.
-planner-cardinality-index-fast-path-wave	planner-cardinality-live-index-choice	pkg/planner/cardinality/row_count_index.go	-	-	-	-	rust/crates/tidb-planner/src/access_path.rs	The fast-path predicate now determines CountAfterAccess and constructed scan rows through one candidate.
-planner-cardinality-index-fast-path-wave	planner-cardinality-live-index-choice	-	pkg/planner/cardinality/selectivity_test.go	541	TestCanSkipIndexEstimation	-	rust/crates/tidb-planner/tests/cardinality_live_index_choice_source.rs	The fast path now determines constructed index scan rows.

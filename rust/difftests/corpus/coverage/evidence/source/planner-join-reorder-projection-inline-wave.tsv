@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-join-reorder-projection-inline-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/rule_join_reorder_projection_inline.go	PARTIAL	planner-join-reorder-projection-inline-wave	rust/crates/tidb-planner/src/join_reorder_projection_inline.rs	Ports isInlineableProjectionExpr and canInlineProjectionBasic from lines 104-157: recursive Column/ScalarFunction/Constant support, column-reference requirement, deferred-constant rejection, Proj4Expand rejection, unsupported-node rejection, and mutable/non-deterministic/correlated effect gates; join-group attribution, expression substitution, null-extension checks, and optimizer plan construction remain external.

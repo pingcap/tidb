@@ -1,3 +1,0 @@
-# Source-owned context-key metadata evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/sessionctx/context.go	PARTIAL	session-context-key-wave	rust/crates/tidb-exec/src/session_context_key.rs	ContextKey preserves the source integer domain, the three named key values, and String labels including unknown; the live session context, context storage, and snapshot validation remain external.

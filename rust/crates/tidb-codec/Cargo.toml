@@ -6,9 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TiDB mem-comparable scalar and datum-key codec."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
 
 [dependencies]
 tidb-datatype = { path = "../tidb-datatype" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

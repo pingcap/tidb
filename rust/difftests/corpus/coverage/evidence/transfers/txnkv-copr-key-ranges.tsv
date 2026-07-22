@@ -1,3 +1,0 @@
-# Checked transfer of the formerly blocked kvproto layout test into the safe KeyRanges conversion leaf.
-# old_owner	new_owner	source_path	test_path	test_line	test_name	retired_artifacts	new_artifacts	note
-txnkv-key-foundation-wave2	txnkv-copr-key-ranges	-	pkg/kv/key_test.go	369	TestKeyRangeDefinition	-	rust/crates/tidb-txnkv/src/key_ranges.rs,rust/crates/tidb-txnkv/tests/key_ranges_source.rs,rust/difftests/corpus/coverage/evidence/tests/txnkv-copr-key-ranges.tsv	Only the test anchor moves: safe protobuf value conversion is now executable, while Go unsafe layout aliasing and the architecture-specific memory-size assertion remain deliberately unported.

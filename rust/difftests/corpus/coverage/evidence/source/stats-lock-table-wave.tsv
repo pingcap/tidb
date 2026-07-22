@@ -1,3 +1,0 @@
-# Source-owned statistics lock-table payload evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/types/interfaces.go	PARTIAL	stats-lock-table-wave	rust/crates/tidb-stats/src/stats_lock_table.rs	The Rust leaf ports StatsLockTable at lines 274-278: fully qualified table name plus partition ID/name mapping, preserving nil versus explicitly empty partition maps. Lock SQL, session/storage state, skipped messages, and lock/unlock lifecycle remain external.

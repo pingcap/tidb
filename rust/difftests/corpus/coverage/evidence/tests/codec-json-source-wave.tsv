@@ -1,4 +1,0 @@
-# Source-owned BinaryJSON codec test fragment for codec-json-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/util/codec/codec_test.go	794	TestJSON	PARTIAL	codec-json-source-wave	rust/crates/tidb-codec/tests/json_source.rs	Primitive string, empty object, opaque, duration, temporal packed bits, exact remainder, and unknown/short physical boundary rows execute; full BinaryJSON decode, JSON semantics, warning/session policy, and typed Datum integration remain open
-go_test	pkg/types/json_binary_test.go	530	TestFunctions	PARTIAL	codec-json-source-wave	rust/crates/tidb-codec/tests/json_source.rs	PeekBytesAsJSON physical boundary and invalid/empty payload behavior are represented; source JSON parser and semantic operation coverage remain open

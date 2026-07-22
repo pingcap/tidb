@@ -1,3 +1,0 @@
-# Source-owned test evidence fragment for planner-plan-cache-constants-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/util/utilfuncp/func_pointer_misc_test.go	26	TestCloneConstantsForPlanCacheWithNilEntry	PARTIAL	planner-plan-cache-constants-wave	rust/difftests/planner-tests/tests/plan_cache_constants.rs	Rust vectors preserve the source nil-entry regression, unsafe clone ownership, safe sharing, all-safe fast path, and optional destination reuse; Go expression safety metadata and plan-cache context remain external.

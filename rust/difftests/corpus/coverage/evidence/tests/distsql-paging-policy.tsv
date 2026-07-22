@@ -1,5 +1,0 @@
-# Complete original-test evidence for the DistSQL row-paging policy.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/util/paging/paging_test.go	23	TestGrowPagingSize	COVERED	distsql-paging-policy	rust/crates/tidb-distsql/tests/paging_source.rs	All three original growth assertions execute through the public policy, including ordinary doubling, an already-maximal size, and doubling across the configured cap
-go_test	pkg/util/paging/paging_test.go	29	TestCalculateSeekCnt	COVERED	distsql-paging-policy	rust/crates/tidb-distsql/tests/paging_source.rs	All six original zero, one, minimum, geometric-sum, first-excess, and one-full-excess seek-count assertions preserve the source tolerance and expected values
-go_test_file	pkg/util/paging/paging_test.go	0	paging_test.go	COVERED	distsql-paging-policy	rust/crates/tidb-distsql/tests/paging_source.rs	The complete test file is represented by its two top-level tests and all nine original assertions; a consumer assertion additionally proves PagingConfig defaults use the policy authority

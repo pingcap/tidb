@@ -1,9 +1,0 @@
-schema = "1"
-campaign = "2026-07-read-path-14"
-status = "integrated"
-slices = [
-  "txnkv-route-policy-seams",
-  "txnkv-region-topology-runtime",
-  "txnkv-replica-health-scoring-runtime",
-  "distsql-unary-forwarding-runtime",
-]

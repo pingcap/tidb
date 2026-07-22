@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/planbuilder_test.go	63	TestShow	PARTIAL	planner-physical-show-wave	rust/difftests/planner-tests/tests/physical_show.rs	Rust vectors preserve the physical SHOW operator kinds, pseudo row-count metadata, DDL job-number, and property gates behind the source SHOW plan family; full SQL schema/catalog planning and SHOW execution remain external.

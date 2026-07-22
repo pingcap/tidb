@@ -1,3 +1,0 @@
-# Source-owned planner row-count arithmetic test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/cardinality/selectivity_test.go	853	TestNewIndexWithColumnStats	PARTIAL	planner-row-count-column-wave	rust/difftests/planner-tests/tests/row_count_column.rs	Covers primary-key and non-primary-key point estimates, exclusive interval boundary arithmetic, NULL endpoint inclusion, and partial-index product/correlated estimates; the original PlanContext/HistColl/Datum owners remain external.

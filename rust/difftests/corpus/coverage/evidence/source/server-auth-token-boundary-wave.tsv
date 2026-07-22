@@ -1,3 +1,0 @@
-# Source-owned JWT compact-token/retry/load boundary for server-auth-token-boundary-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/privilege/privileges/tidb_auth_token.go	PARTIAL	server-auth-token-boundary-wave	rust/crates/tidb-server/src/auth_token.rs	JwtCompactShape preserves the exact three-segment check; AuthTokenRetryState/AuthTokenCheck preserve initial-attempt plus retry ordering, reload-after-failure, and retry exhaustion; AuthTokenJwksState preserves missing-key and load-error outcomes without RSA/JWK verification, filesystem/network refresh, claims decoding, or authenticated-session publication.

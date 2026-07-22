@@ -1,4 +1,0 @@
-# Campaign 27 source evidence for server-live-prepared-point-read-proof.
-# source_path	status	owner	evidence_artifact	note
-cmd/tidb-server/main.go	PARTIAL	server-live-prepared-point-read-proof	rust/scripts/run-campaign27-prepared-point-read-sql-node.sh	One exact Rust executable serves authenticated raw and actual sysbench prepared traffic through real PD and TiKV, then completes bounded shutdown and tag-owned cleanup; TiDB's full executable startup, configuration, and service lifecycle remain open.
-tests/realtikvtest/testkit.go	PARTIAL	server-live-prepared-point-read-proof	rust/scripts/run-campaign27-prepared-point-read-sql-node.sh	The shared tag-owned lifecycle seeds sixteen exact rows through failpoint-enabled Go TiDB, proves prepared point reads against three real PD and three real TiKV nodes through A-to-B-to-C-to-B churn, and removes only owned state; the broader Go RealTiKV testkit and SQL behavior remain open.

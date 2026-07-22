@@ -1,3 +1,0 @@
-# Source-owned statistics histogram count-metric test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/storage/read_test.go	33	TestLoadStats	PARTIAL	stats-count-metrics-wave	rust/crates/tidb-stats/tests/count_metrics_source.rs	The TestLoadStats function continues through line 95 and anchors populated histogram total counts; Rust remains storage-free and does not claim read/TopN parity.

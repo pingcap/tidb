@@ -1,3 +1,0 @@
-# Source-owned predicate-column query mode evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/usage/predicate_column.go	PARTIAL	stats-predicate-column-query-mode-wave	rust/crates/tidb-stats/src/predicate_column_query_mode.rs	The Rust leaf ports the wrapper transaction boundary at lines 47-62: LoadColumnStatsUsage omits FlagWrapTxn while GetPredicateColumns applies it. Session pools, SQL execution, predicate-column storage, and analyze/session lifecycle remain external.

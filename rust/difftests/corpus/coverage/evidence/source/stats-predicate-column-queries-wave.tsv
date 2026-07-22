@@ -1,3 +1,0 @@
-# Source-owned predicate-column usage query evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/usage/predicatecolumn/predicate_column.go	PARTIAL	stats-predicate-column-queries-wave	rust/crates/tidb-stats/src/predicate_column_queries.rs	The Rust leaf ports the exact load/get/cleanup query strings from lines 66-104 and 106-130, plus cleanupDroppedColumnStatsUsage's source-ordered decimal column-ID argument formatting from lines 115-127. Session/schema access, row/time decoding, parameter execution, and persistence remain external.

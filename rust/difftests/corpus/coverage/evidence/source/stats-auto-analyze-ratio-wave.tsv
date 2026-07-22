@@ -1,3 +1,0 @@
-# Source-owned auto-analyze ratio-parser evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/autoanalyze/exec/exec.go	PARTIAL	stats-auto-analyze-ratio-wave	rust/crates/tidb-stats/src/auto_analyze_ratio.rs	The Rust leaf ports ParseAutoAnalyzeRatio from lines 133-140, including the 0.5 default, strconv.ParseFloat failure fallback, nonnegative clamp, and Go math.Max NaN behavior. Time-window parsing, SQL/global-variable access, execution metrics, and auto-analyze scheduling remain explicit future owners.

@@ -1,4 +1,0 @@
-# Source-owned source-port fragment for txnkv-keyflags-assertion-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/kv/assertion.go	COVERED	txnkv-keyflags-assertion-source-wave	rust/crates/tidb-txnkv/src/assertion.rs	All four typed assertion operations execute against every one of the 64 semantic KeyFlags states; AssertNone no-op and preservation of every nonassertion flag are exhaustive
-pkg/kv/keyflags.go	COVERED	txnkv-keyflags-assertion-source-wave	rust/crates/tidb-txnkv/src/key_flags.rs	All 64 meaningful flag states every public query all four monotonic FlagsOp transitions empty variadic repeated and reordered operation semantics execute; raw unused bit patterns are eliminated by the typed representation

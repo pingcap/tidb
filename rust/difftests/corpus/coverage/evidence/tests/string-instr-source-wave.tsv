@@ -1,3 +1,0 @@
-# Source-owned test evidence for INSTR.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_string_test.go	1968	TestInstr	PARTIAL	string-instr-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	All scalar source rows (numeric/string coercion, empty needles, Unicode positions, case-sensitive matches, and NULL propagation) are covered through public dispatch; invalid-byte binary signatures, session collation/charset, FieldType construction, and warning/vectorized paths remain outside the value-only evaluator.

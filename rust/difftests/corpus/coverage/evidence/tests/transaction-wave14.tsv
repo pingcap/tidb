@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for transaction-wave14.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/test/txn/txn_test.go	716	TestSavepointWithForeignKey	PARTIAL	transaction-wave14	rust/difftests/corpus/table/savepoint_foreign_key_source.txt	Single-session parent/child rollback-to-savepoint and FK visibility vectors; the source's cross-session pessimistic-lock retention check is outside the seed

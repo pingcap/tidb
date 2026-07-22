@@ -1,3 +1,0 @@
-# Source-owned packed temporal codec evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/types/time.go	PARTIAL	codec-temporal-source-wave	rust/crates/tidb-datatype/src/packed_time.rs	The source-defined Time.ToPackedUint and FromPackedUint calendar bit layout is losslessly represented with explicit field-width checks and parts decoding; SQL validation formatting FSP type metadata timezone conversion and Duration remain open

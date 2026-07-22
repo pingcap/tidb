@@ -1,3 +1,0 @@
-# Source-owned statistics bootstrap SQL evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/bootstrap.go	PARTIAL	stats-bootstrap-sql-wave	rust/crates/tidb-stats/src/bootstrap_sql.rs	The Rust leaf ports genInitStatsMetaSQL lines 97-105 and genInitStatsHistogramsSQL lines 311-383, preserving exact prefixes, ORDER_INDEX hint, table-ID order, and closed-open paging predicates; Handle/session execution, row decoding, cache population, and bootstrap lifecycle remain external owners.

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for the FROM_DAYS source wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_time_test.go	1864	TestFromDays	PARTIAL	time-from-days-source-wave	rust/crates/tidb-expr/src/time_fn/calendar.rs	All 15 integer rows and three ETInt string-prefix rows are covered, including leap/non-leap dates, lower/upper bounds, zero-date fallback, and the source-visible 3652425 NULL band; typed DATE output, warning state, and SQLMode handling remain outside the value-only Datum boundary

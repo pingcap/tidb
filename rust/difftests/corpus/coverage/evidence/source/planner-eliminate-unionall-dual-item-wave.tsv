@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-eliminate-unionall-dual-item-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/rule_eliminate_unionall_dual_item.go	PARTIAL	planner-eliminate-unionall-dual-item-wave	rust/crates/tidb-planner/src/eliminate_unionall_dual_item.rs	Ports direct zero-row TableDual and Projection-over-zero-row filtering, schema-preserving empty-union replacement, recursive child rewrites, exact changed aggregation, and the stable rule name over a structural adapter; real LogicalUnionAll/LogicalProjection construction, schema objects, SQL planning, and executor integration remain external.

@@ -1,2 +1,0 @@
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/expression_util.go	PARTIAL	planner-condition-to-dual-wave	rust/crates/tidb-planner/src/condition_to_dual.rs	Ports IsConstFalse and Conds2TableDual control flow over normalized truth tokens, including NULL precedence, list cardinality, and plan-cache suppression; expression coercion/statement context, LogicalTableDual construction/schema, and optimizer integration remain external.

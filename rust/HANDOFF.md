@@ -1,211 +1,71 @@
 # TiDB to Rust rewrite handoff
 
-This is the current operating handoff. Generated ownership state belongs in
-[`STATUS.md`](STATUS.md); implementation history belongs in Git. Do not append
-campaign diaries, dated completion narratives, or hand-maintained parity
-percentages here.
+## Goal
 
-## Goal and non-negotiable unit
-
-Rewrite TiDB's SQL layer as a standalone Rust SQL node without losing Go
-behavior or any original test/support obligation. The minimum transcreation
-unit is one complete upstream Go package or module, not a function, file,
-branch, SQL shape, or feature slice.
-
-A package claim includes:
-
-- every production Go file in the package, including platform variants and
-  generated sources together with their generator inputs;
-- every package test, subtest, benchmark, fuzz target, example, test-only
-  package, fixture, golden result, embedded file, testdata directory, failpoint,
-  helper program, and runner script;
-- package build metadata and directly owned support artifacts; and
-- the dependency contracts and Rust output paths needed to integrate the whole
-  package without a second implementation authority.
-
-No package is transcreated until that entire inventory is accounted for and
-its required differential and live gates pass. A useful partial port remains
-explicitly incomplete; it is not a template, a parity claim, or a reason to
-split the rest of the package by branch.
+Replace TiDB's Go SQL layer with a standalone Rust SQL node without losing Go
+behavior or any original test/support obligation. The minimum implementation
+and acceptance unit is one complete upstream Go package or module. A Go package
+may map to several Rust crates.
 
 ## Current architecture
 
-- `rust/` is one Cargo workspace producing a standalone SQL-server process. It
-  does not link Go through cgo, FFI, or an in-process compatibility backend.
-- The upper boundary is the MySQL wire protocol. The lower boundaries are PD,
-  kvproto/TiKV BatchCommands, tipb coprocessor DAGs, MPP, and etcd-compatible
-  cluster coordination.
-- One process authority owns PD access, RegionCache, TiKV transport, retry and
-  lock-resolution policy, background supervision, and shutdown ordering.
-  Reads and writes must converge on this authority instead of adding another
-  client or mock runtime.
-- Rust crate boundaries are implementation boundaries, not permission to split
-  an upstream package's acceptance. One Go package may map to several crates,
-  but one implementation owner remains responsible for the complete inventory,
-  integration, and package receipt; no crate sub-result is independently
-  promoted.
-- Shared crate roots, manifests, generated inventories, and cross-package
-  routing are serialized integration seams. The active package claim declares
-  every implementation, test, evidence, and integration path it may change.
+- `rust/` is one Cargo workspace; it does not link Go through cgo or FFI.
+- The upper boundary is MySQL protocol. Lower boundaries are PD, TiKV/kvproto,
+  tipb coprocessor DAGs, TiFlash MPP, and etcd-compatible coordination.
+- Existing parser, planner, executor, session, protocol, and storage code is a
+  connected seed. Partial feature code is not package completion.
+- Completed whole packages are exactly the valid proofs under [`ports/`](ports/).
+- [`scripts/package-port.py`](scripts/package-port.py) is the only package
+  acceptance tool.
+- Integration test source files are grouped into crate-level harnesses unless
+  they require crate-root topology. The workspace currently exposes 70 Cargo
+  integration targets instead of the previous 429 while retaining every test
+  source.
 
-## Verified live facts
+## Verified live boundary
 
-The repository contains bounded live proofs, not package or product parity:
+The repository has bounded live tests showing a Rust MySQL listener, text and
+prepared query execution, real PD/RegionCache/TiKV reads, and optimistic
+prewrite/commit/rollback. Those are useful runtime proofs, not overall parity or
+whole-package completion.
 
-- A Rust MySQL listener has authenticated clients and executed text and binary
-  prepared traffic through the Rust parser/planner/executor path.
-- The connected read path has reached real PD and TiKV through RegionCache and
-  BatchCommands and returned rows over MySQL.
-- The connected write path has performed real optimistic prewrite/commit and
-  rollback operations, and a prepared write has been read back independently
-  from real TiKV.
-- The live harnesses exercise stock MySQL/sysbench-shaped prepared traffic and
-  record protocol and storage events. They prove only the bounded statements
-  and topology scenarios encoded by those harnesses.
+## Completed whole packages
 
-The executable evidence is under [`scripts/`](scripts/), including the
-Campaign-28 real-TiKV and prepared-write proofs. Exact ownership counts and
-states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
-that any upstream Go package is completely transcreated unless a package
-receipt says so.
+`scripts/package-port.py check` is authoritative. At this handoff the proofs
+cover:
 
-Six leaf packages currently have schema-2 receipts under
-[`workstreams/package-receipts/`](workstreams/package-receipts/):
+- `pkg/parser/auth`
+- `pkg/parser/format`
+- `pkg/parser/mysql`
+- `pkg/parser/opcode`
+- `pkg/parser/terror`
+- `pkg/parser/util`
+- `pkg/server/internal/handshake`
 
-- `pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
-  that exact package inventory, not the server handshake
-  parser/authentication lifecycle or the `pkg/server` subsystem.
-- `pkg/parser/format`, implemented across `tidb-ast` and `tidb-datatype`. Its
-  current receipt covers Go simple-rune Unicode casing, arbitrary format bytes,
-  one-call writer semantics, the original package tests/support, and the
-  declared production consumer seam. It does not credit downstream AST-node
-  packages.
-- `pkg/parser/mysql`, implemented across `tidb-error` and `tidb-mysql`. Its
-  receipt covers all ten production files, all eleven original Go tests, build
-  metadata, exact error-code/name/SQLSTATE authorities, Unicode tables, and the
-  declared parser/protocol consumer seams.
-- `pkg/parser/util`, implemented across `tidb-hash`, `tidb-lexer`,
-  `tidb-parser`, and `tidb-planner`. Its receipt covers both production files,
-  every original test/build obligation, arbitrary-byte Go string hashing with
-  malformed UTF-8 rune iteration, MySQL escape behavior, and the declared
-  parser/planner consumer seams.
-- `pkg/parser/opcode`, implemented in `tidb-ast`. Its receipt covers the
-  machine-width Go `int` operator domain, all 32 operator definitions, literal
-  and keyword classification, one-call byte-writer behavior including short
-  writes and ignored errors, restore-flag precedence, and every original
-  package test/build obligation.
-- `pkg/parser/terror`, implemented in `tidb-error` with required consumer
-  changes in `tidb-datatype` and `tidb-txnkv`. Its receipt covers machine-width
-  classes/codes, registration and freeze semantics, RFC/MySQL identities,
-  compatible JSON, generation/comparison/logging/termination helpers,
-  Rust-native stack capture, and every original package test/build obligation.
+## Largest gaps
 
-## Whole-package gaps
+| Area | Remaining whole-package work |
+| --- | --- |
+| Parser and AST | Root parser, generated grammar/support, complete AST families, restore/error behavior, and all original parser tests |
+| Types and codec | Complete datums, conversions, temporal/JSON/vector/enum/set, charset/collation, row/key/value codecs, generators, and tests |
+| Session and server | Authentication/TLS/plugin lifecycle, commands, prepared/cursor/long-data behavior, variables, transactions, retries, privileges, bootstrap, and tests |
+| Planner and executor | Resolve/preprocess, logical/physical optimization, costs, hints, expressions, joins, windows, CTEs, spill, admin execution, testdata, and plan/result parity |
+| Storage and distributed query | Complete PD/client-go parity, region cache, snapshots, scans, locks, retries, transaction variants, coprocessor/MPP, faults, and real-cluster tests |
+| Domain, metadata, statistics, DDL | Schema loading/leases/MDL, system tables, statistics lifecycle, ownership, DDL/reorg/backfill/recovery, and all original tests |
 
-The current Rust workspace is a connected seed assembled from legacy partial
-feature evidence. The following upstream package families remain open as
-whole-package obligations:
+## Working loop
 
-| Package family | Connected seed that exists | Package-level gap |
-| --- | --- | --- |
-| `pkg/server` | MySQL handshake, command loop, result framing, bounded prepared execution | Full authentication/plugin/TLS, command, cursor, long-data, parameter, result-type, status, error, connection-lifecycle, and original server test/support inventory |
-| `pkg/session`, `pkg/sessionctx` | Bounded session and prepared-statement state | Full transaction lifecycle, autocommit/status semantics, variables, statement context, retry/replay, privileges, bootstrap interaction, and all original tests |
-| `pkg/parser` | Broad parser/AST seed and differential corpus | Complete package/module source, generated/support inputs, every grammar/restore/error obligation, and all parser tests |
-| `pkg/planner` | Bounded statement lowering, ranges, projections, DML, and selected relational operators | Full preprocess/resolve, logical and physical optimization, costs, hints, bindings, privileges, all statement families, testdata, and plan-diff closure |
-| `pkg/executor`, `pkg/expression` | Bounded row execution, selected expressions/aggregates, and prepared DML | Complete executor and builtin/vectorized semantics, joins, windows, CTEs, spill, admin paths, error/coercion behavior, and all original tests |
-| `pkg/kv`, `pkg/store`, `pkg/distsql` plus pinned client-go/PD modules | Real PD/RegionCache/TiKV read transport and normal optimistic-write seed | Full snapshots/scans/batching, mem-buffer and staging, locks, retries, pessimistic/async-commit/1PC, resource control, coprocessor/MPP behavior, faults, and all pinned tests |
-| `pkg/types`, codec/util dependencies | Selected Datum, decimal, row/key, collation, and binary encoders | Every type, conversion, collation/charset, temporal/JSON/enum/set/vector behavior, codec variant, generator/support file, and original test |
-| `pkg/infoschema`, `pkg/meta`, `pkg/domain` | Static configured catalog sufficient for bounded live proofs | Real schema/meta loading, leases, MDL, system tables, domain lifecycle, schema synchronization, and all original tests |
-| `pkg/statistics` | Isolated source-grounded statistics leaves | Full statistics data model, estimation, loading, feedback, analyze lifecycle, persistence, ownership, and testdata |
-| `pkg/ddl` and ownership/background packages | No package-complete implementation | Full DDL state machine, reorg/backfill, ownership, coordination, compatibility, recovery, and destructive-failure testing |
+1. Select a dependency-ready whole package with meaningful downstream value.
+2. Run `scripts/package-port.py inventory <go-package>` and audit every file.
+3. Transcreate all production behavior directly from Go and translate every
+   original test/support obligation.
+4. Run focused tests while editing.
+5. Run `scripts/package-port.py finish ...`; commit its generated proof with the
+   code.
+6. Before push or after shared-foundation changes, run
+   `scripts/package-port.py checkpoint`, repository Ready validation, and any
+   required differential/live suite.
 
-This table describes the shape of the remaining work. It does not replace the
-generated ledgers and must not be converted into percentage progress.
-
-## Package execution workflow
-
-1. Run `work-unit-queue.py frontier` to rank only dependency-ready whole
-   packages from the authoritative inventories and direct Go imports. Do not
-   select from the unfiltered package table.
-2. Run `work-unit-queue.py start-package` with the selected package and its
-   complete stable Rust paths and shared integration paths. This single-worker
-   command derives the exact source/test/support inventory, rings, targets,
-   and covered dependencies, writes the schema-2 manifest, validates it, and
-   creates the immutable claim before behavior changes.
-3. If the package is dependency-inseparable from another package, declare the
-   complete umbrella explicitly; never split a file/function subset or use an
-   unrelated batch to make work appear ready.
-4. Translate directly from the Go implementation and port the complete
-   package test/support inventory. Rust-specific redesign is limited to
-   runtime mechanisms that cannot be carried faithfully, such as GC pools,
-   goroutine ownership, or untyped registries.
-5. Run focused package checks during implementation. Close an ordinary package
-   with `work-unit-queue.py close-package --owner <owner>`. The command derives
-   the transaction from the exact claim, regenerates and validates only its
-   inventory, derives every touched Cargo crate from the declared Rust paths,
-   runs formatting plus strict all-target Clippy, one library test binary per
-   touched crate, and only explicitly touched integration-test targets with 12
-   jobs, then issues the receipt atomically. Create a tracked campaign only
-   when two or more packages are genuinely dependency-inseparable.
-6. Issue a package receipt only after inventory closure and required
-   differential/live evidence. Until then every carried ledger row stays
-   honestly untriaged, partial, or blocked.
-
-New package implementation is integrated only with its complete receipt. A
-package that cannot close remains on its package branch or is explicitly
-blocked; it is not split into smaller mergeable ports.
-
-The executable coordination contract is [`PARALLEL.md`](PARALLEL.md).
-The living migration plan is
-[`workstreams/plans/2026-07-whole-package-transcreation.md`](workstreams/plans/2026-07-whole-package-transcreation.md).
-Existing schema-1 records under [`workstreams/slices/`](workstreams/slices/)
-are frozen legacy evidence. They must not be copied, extended, or used as the
-dispatch template for new package work.
-
-## Immediate migration steps
-
-1. Select the next larger dependency-ready package with
-   `work-unit-queue.py frontier`. Prioritize packages that unblock the connected
-   SQL transaction path; do not optimize for easy package counts.
-2. Declare exclusive stable `rust_paths` and serialized shared
-   `integration_paths`, then use `work-unit-queue.py start-package` to scaffold,
-   validate, and claim the complete package in one operation. The claim's
-   `base_commit` must precede every implementation commit.
-3. A Go package may span several Rust crates under one umbrella claim and
-   receipt; crate-local intermediate results are not independently complete.
-4. Transcreate the package through one owner. Treat any crate-local intermediate
-   result as staging only; never promote it independently.
-5. Add exact source/test/support evidence only after the complete package
-   contract and all original tests are represented.
-6. Close one package with `work-unit-queue.py close-package --owner <owner>`.
-   For a
-   genuinely inseparable group only, close the tracked frontier with
-   `campaign_close.py --campaign <campaign> --gate`. Both paths issue receipts
-   atomically and regenerate status. Run `rewrite-gate.sh checkpoint` once for
-   a grouped integration/push checkpoint, followed by the repository Ready
-   profile before claiming the branch ready.
-
-The highest-value first frontier is the connected SQL transaction path:
-`pkg/kv`/`pkg/store` dependencies, `pkg/session`/`pkg/sessionctx`, and the
-required `pkg/server` prepared transaction lifecycle. The package DAG decides
-the exact grouping; the existing bounded `BEGIN`/`COMMIT`, prepared DML, and
-normal-2PC leaves are inputs, not completion evidence.
-
-## Operating rules
-
-- Read [`STATUS.md`](STATUS.md), the relevant package manifest, the owning Go
-  package docs/source/tests, [`PARALLEL.md`](PARALLEL.md), root `AGENTS.md`, and
-  `PLANS.md` before editing.
-- Use 12 jobs for builds. Run focused checks during implementation and the
-  shared Ready gate before a completion claim.
-- Keep unsupported behavior fail-closed before state mutation or PD/TiKV
-  publication, but do not treat fail-closed partial behavior as transcreation.
-- Do not add compatibility aliases, duplicate codecs, a second transaction
-  client, in-memory acceptance paths, or handwritten goldens when a Go oracle
-  exists.
-- Preserve unrelated files and local claims. Do not hand-edit generated
-  ledgers or status.
-- Read live claim count from `work-unit-queue.py check`; `STATUS.md` records
-  stable manifest/receipt state and deliberately excludes ignored lease files.
-- Record current architecture and blockers here; record changing counters in
-  generated status and let Git carry history.
+There is no start command, queue, claim, campaign, transfer ledger, mutable
+status, frozen workspace, or separate receipt. Git is the history and rollback
+mechanism.

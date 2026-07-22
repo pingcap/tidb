@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for transaction-wave16.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/session/test/txn/txn_test.go	40	TestAutocommit	PARTIAL	transaction-wave16	rust/difftests/corpus/table/autocommit_source.txt	Single-session SET autocommit transition commit boundaries, redundant SET behavior, and session readback; source wire-status, global-variable, and separate-session assertions are outside the seed

@@ -1,4 +1,0 @@
-# Source-owned scalar text formatting.
-# source_path	status	owner	evidence_artifact	note
-pkg/format/textrow/textrow.go	PARTIAL	protocol-textrow-format-source-wave	rust/crates/tidb-protocol/src/textrow.rs	The Rust leaf ports AppendFormatFloat, float precision selection, integer/year branches, dependency-closed decimal text, and already-encoded byte values; TiDB Datum temporal/JSON/enum/set conversion and charset encoding remain explicit owners outside this protocol crate.
-pkg/format/textrow/result_encoder.go	PARTIAL	protocol-textrow-format-source-wave	rust/crates/tidb-protocol/src/result_encoder.rs	The Rust leaf ports source result-charset precedence, column charset advertisement, registered binary/ASCII/Latin1/UTF-8/GBK paths, and explicit unsupported charset/collation state; the full session encoder buffer/lifecycle and broader charset registry remain open.

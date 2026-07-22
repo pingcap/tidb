@@ -1,3 +1,0 @@
-# client-go test evidence for the Campaign 13 shared read-runtime seam.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	tikvrpc/tikvrpc_test.go	124	TestAttachContextSetsRequestContext	PARTIAL	txnkv-read-runtime-seams	rust/crates/tidb-txnkv/tests/tikv_unary_command_source.rs	The typed unary adapters replace stale body context at the final send boundary and preserve exact request fields while sharing one channel generation. Get, LockWaitInfo, repeated generic mutation, keyspace fields, and the broader command family remain external.

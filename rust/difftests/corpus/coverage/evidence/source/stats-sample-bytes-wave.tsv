@@ -1,3 +1,0 @@
-# Source-owned statistics sample byte-boundary evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/sample.go	PARTIAL	stats-sample-bytes-wave	rust/crates/tidb-stats/src/sample_bytes.rs	The Rust leaf ports MaxSampleValueLength and SampleCollectorFromProto's inclusive byte-length filter from lines 130-151, plus CalcTotalSize's int64 accumulation from lines 192-198. It preserves Go's 65535/2 integer boundary and wrapping length conversion while leaving Datum/protobuf conversion, collector mutation, sketches, and histogram construction external.

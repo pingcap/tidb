@@ -1143,8 +1143,13 @@ dependencies = [
 name = "tidb-parser"
 version = "0.0.0"
 dependencies = [
+ "getrandom",
+ "sha1",
+ "sha2",
+ "subtle",
  "tidb-ast",
  "tidb-lexer",
+ "tidb-mysql",
 ]
 
 [[package]]

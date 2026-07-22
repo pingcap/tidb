@@ -1,6 +1,0 @@
-# Source-owned direct behavior tests for txnkv-iteration-source-wave.
-# The upstream pkg/kv package has no TestNextUntil or TestWalkMemBuffer anchor;
-# the dedicated Rust artifact therefore attaches to the source test file as a
-# partial file-level obligation rather than to an unrelated Go test function.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/kv/utils_test.go	0	utils_test.go	PARTIAL	txnkv-iteration-source-wave	rust/difftests/transaction-tests/tests/iteration.rs	The dedicated Rust artifact covers stop-on-match iterator creation and advance errors callback errors empty iteration all-entry walking and deferred close behavior for pkg/kv/{iter,utils}.go while the original four anchored tests remain owned by their existing waves.

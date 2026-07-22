@@ -1,9 +1,0 @@
-# Source-owned generic bounded min-heap test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/util/generic/bounded_min_heap_test.go	44	TestBoundedMinHeapBasic	PARTIAL	stats-bounded-min-heap-wave	rust/crates/tidb-stats/tests/bounded_min_heap_source.rs	Rust mirrors empty/within-capacity/over-capacity/duplicate retention; statistics TopN range payloads remain external.
-go_test	pkg/util/generic/bounded_min_heap_test.go	76	TestBoundedMinHeapEdgeCases	PARTIAL	stats-bounded-min-heap-wave	rust/crates/tidb-stats/tests/bounded_min_heap_source.rs	Rust mirrors capacity-one replacement and zero-capacity no-op behavior.
-go_test	pkg/util/generic/bounded_min_heap_test.go	94	TestBoundedMinHeapCustomStruct	PARTIAL	stats-bounded-min-heap-wave	rust/crates/tidb-stats/tests/bounded_min_heap_source.rs	Rust mirrors generic custom-item ordering and retained payloads.
-go_test	pkg/util/generic/bounded_min_heap_test.go	116	TestBoundedMinHeapReverseComparator	PARTIAL	stats-bounded-min-heap-wave	rust/crates/tidb-stats/tests/bounded_min_heap_source.rs	Rust mirrors comparator reversal that retains the smallest values.
-go_test	pkg/util/generic/bounded_min_heap_test.go	135	TestBoundedMinHeapItemReplacement	PARTIAL	stats-bounded-min-heap-wave	rust/crates/tidb-stats/tests/bounded_min_heap_source.rs	Rust mirrors strict-better replacement and equal-value tie rejection.
-go_test	pkg/util/generic/bounded_min_heap_test.go	164	TestBoundedMinHeap_LargeDataset	PARTIAL	stats-bounded-min-heap-wave	rust/crates/tidb-stats/tests/bounded_min_heap_source.rs	Rust mirrors bounded retention over 1,000 inputs and best-to-worst output.
-go_test	pkg/util/generic/bounded_min_heap_test.go	186	TestNewBoundedMinHeapSafetyChecks	PARTIAL	stats-bounded-min-heap-wave	rust/crates/tidb-stats/tests/bounded_min_heap_source.rs	Rust mirrors nil-comparator/negative-capacity rejection and valid zero-capacity construction.

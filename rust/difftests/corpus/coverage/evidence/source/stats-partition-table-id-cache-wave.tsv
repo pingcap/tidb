@@ -1,3 +1,0 @@
-# Source-owned InfoSchema-V1 partition parent cache evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/util/table_info.go	PARTIAL	stats-partition-table-id-cache-wave	rust/crates/tidb-stats/src/partition_table_id_cache.rs	The Rust leaf ports partitionID2TableIDForInitStats/buildPartitionID2TableID from lines 123-151: rebuild the partition-to-parent map only when schema version changes and resolve cached parent IDs; InfoSchema V1/V2 detection, table-item resolution, locking, and schema traversal remain external.

@@ -1,3 +1,0 @@
-# Source-owned test evidence fragment for planner-string-writer-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/cascades/rule/binder_test.go	69	TestBinderFail	PARTIAL	planner-string-writer-wave	rust/difftests/planner-tests/tests/string_writer.rs	Rust vectors cover the exact string-write/flush output assertions used by the source binder test; memo construction, pattern binding, failpoint state, and full binder traversal remain outside this writer leaf.

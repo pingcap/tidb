@@ -1,3 +1,0 @@
-# client-go source evidence for Campaign 15 RegionCache batch, bucket, and TTL core.
-# source_path	status	owner	evidence_artifact	note
-internal/locate/sorted_btree.go	PARTIAL	txnkv-region-cache-batch-bucket-core	rust/crates/tidb-txnkv/src/region/batch_locate.rs	The sole ordered region authority preserves half-open lookup, overlap replacement, range intersection, stable identity de-duplication, bounded batch progression, and explicit hole detection. Concurrent B-tree publication, reverse traversal, GC iteration, and benchmarks remain external.

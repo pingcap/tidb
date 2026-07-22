@@ -1,3 +1,0 @@
-# client-go source evidence for Campaign 17 txnkv-batchcommands-tonic-stream-runtime.
-# source_path	status	owner	evidence_artifact	note
-tikvrpc/tikvrpc.go	PARTIAL	txnkv-batchcommands-tonic-stream-runtime	rust/crates/tidb-txnkv/src/rpc/batch/wire.rs	Pinned request and response tags now flow through the real retained tonic duplex stream with generation-safe response-ID demultiplexing. The remaining command switch, concrete payload coverage, metrics, TLS, and live TiKV parity remain external.

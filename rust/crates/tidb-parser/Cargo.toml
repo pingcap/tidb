@@ -13,3 +13,8 @@ workspace = true
 [dependencies]
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-ast = { path = "../tidb-ast" }
+tidb-mysql = { path = "../tidb-mysql" }
+getrandom.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+subtle.workspace = true

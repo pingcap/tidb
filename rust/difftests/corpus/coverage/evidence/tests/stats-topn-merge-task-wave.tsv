@@ -1,3 +1,0 @@
-# Source-owned global-statistics TopN merge-task test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/globalstats/topn_bench_test.go	94	BenchmarkMergePartTopN2GlobalTopNWithHists	PARTIAL	stats-topn-merge-task-wave	rust/crates/tidb-stats/tests/topn_merge_task_source.rs	Rust pins the range descriptor used by the benchmark's merge scheduling path; benchmark-generated histograms/TopN values, worker execution, cancellation, and performance measurements remain external.

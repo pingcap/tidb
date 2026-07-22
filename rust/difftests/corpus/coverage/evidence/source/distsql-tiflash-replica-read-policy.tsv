@@ -1,3 +1,0 @@
-# Source-owned TiFlash replica-read policy evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/util/tiflash/tiflash_replica_read.go	COVERED	distsql-tiflash-replica-read-policy	rust/crates/tidb-distsql/src/tiflash_replica_read.rs	All three source discriminants, predicates, string conversions, unknown string and raw-integer fallbacks, and the closest-replicas remote-read limit are translated exhaustively and pass the shared integration gate through the existing DistSqlContext to ReadRequestMetadata to KvRequestMetadata production projection; this source has no original Go tests

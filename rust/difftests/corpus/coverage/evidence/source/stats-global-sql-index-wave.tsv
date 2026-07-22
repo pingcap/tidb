@@ -1,3 +1,0 @@
-# Source-owned global-statistics SQL index conversion evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/globalstats/global_stats_async.go	PARTIAL	stats-global-sql-index-wave	rust/crates/tidb-stats/src/global_stats_sql_index.rs	The Rust leaf ports toSQLIndex at lines 50-57, mapping false/true to the SQL is_index values 0/1. Async merge workers, storage reads, SQL execution, and schema lifecycle remain external.

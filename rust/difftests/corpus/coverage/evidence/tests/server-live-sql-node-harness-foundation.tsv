@@ -1,2 +1,0 @@
-# Campaign 24 harness foundation has no directly claimed Go test declarations; test-live-sql-node-harness.sh proves one lifecycle owner, scenario size caps, syntax, and all campaign-local self-tests without starting TiUP.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note

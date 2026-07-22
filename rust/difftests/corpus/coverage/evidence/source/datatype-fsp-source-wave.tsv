@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for datatype-fsp-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/types/fsp.go	COVERED	datatype-fsp-source-wave	rust/crates/tidb-datatype/src/fsp.rs	Complete CheckFsp ParseFrac and byte-indexed alignFrac behavior execute with typed errors; the Rust byte-slice API preserves the arbitrary-byte Go string boundary without UTF-8 slicing panics

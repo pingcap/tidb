@@ -1,3 +1,0 @@
-# Source-owned context-key test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/sessionctx/context_test.go	24	TestBasicCtxTypeToString	PARTIAL	session-context-key-wave	rust/crates/tidb-exec/tests/session_context_key_source.rs	Direct Rust vectors cover all three named keys and the unknown integer path from the Go table; live session context storage and use remain external.

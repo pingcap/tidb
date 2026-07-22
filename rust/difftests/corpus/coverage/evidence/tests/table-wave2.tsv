@@ -1,8 +1,0 @@
-# Source-owned test-evidence fragment for table-wave2.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-integration_fixture	tests/integrationtest/t/executor/aggregate.test	0	aggregate.test	PARTIAL	table-wave2	rust/difftests/corpus/table/aggregate_fixture.txt	TestAggEliminator source lines 101-110
-integration_fixture	tests/integrationtest/t/executor/cte.test	0	cte.test	PARTIAL	table-wave2	rust/difftests/corpus/table/cte_fixture.txt	TestUnionDistinct source lines 16-19
-integration_fixture	tests/integrationtest/t/ddl/column.test	0	column.test	PARTIAL	table-wave2	rust/difftests/corpus/table/ddl_column_fixture.txt	TestTooLongDefaultValueForBit successful source lines 55-61
-integration_fixture	tests/integrationtest/t/executor/delete.test	0	delete.test	PARTIAL	table-wave2	rust/difftests/corpus/table/delete_fixture.txt	TestQualifiedDelete source lines 57-69
-integration_fixture	tests/integrationtest/t/executor/insert.test	0	insert.test	PARTIAL	table-wave2	rust/difftests/corpus/table/insert_fixture.txt	TestInsertValueForCastDecimalField source lines 237-242
-integration_fixture	tests/integrationtest/t/executor/update.test	0	update.test	PARTIAL	table-wave2	rust/difftests/corpus/table/update_fixture.txt	TestUpdate source lines 295-310

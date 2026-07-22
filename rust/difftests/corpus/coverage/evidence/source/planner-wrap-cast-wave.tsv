@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-wrap-cast-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/util/coreusage/cast_misc.go	PARTIAL	planner-wrap-cast-wave	rust/crates/tidb-planner/src/wrap_cast.rs	Ports WrapCastForAggFuncs mode gating over opaque aggregate descriptors: Complete/Partial1/Dedup ask the delegated cast operation to update eligible argument types to the return type, while Final/Partial2 preserve partial arguments; caller-marked NULL/function-specific skips, expression BuildContext, AggFuncDesc type inference, and projection injection remain external.

@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for datatype-utf8-encoding-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/parser/charset/encoding_utf8.go	PARTIAL	datatype-utf8-encoding-source-wave	rust/crates/tidb-datatype/src/utf8_encoding.rs	Utf8Encoding and Utf8Mb3StrictEncoding preserve Go Peek MbLen IsValid Foreach grouping and bytes-plus-error Transform semantics; the shared charset registry encodingBase and other encoding families remain stewarded seams

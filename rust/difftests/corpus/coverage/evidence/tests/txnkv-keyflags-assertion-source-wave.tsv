@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for txnkv-keyflags-assertion-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/session/test/tidb_test.go	44	TestKeysNeedLock	PARTIAL	txnkv-keyflags-assertion-source-wave	rust/crates/tidb-txnkv/src/key_flags.rs	Direct presume-key-not-exists and zero-to-SetNeedLocked flag semantics execute exhaustively; KeyNeedToLock table and index classification temporary-index decoding and kernel mode remain unimplemented
-go_test	pkg/table/tables/assertion_test.go	29	TestSetAssertion	PARTIAL	txnkv-keyflags-assertion-source-wave	rust/crates/tidb-txnkv/src/assertion.rs	All four assertion operations and query states plus general flag preservation execute exhaustively; transaction buffer first-assertion-wins Set Delete LockKeys and rollback remain unimplemented

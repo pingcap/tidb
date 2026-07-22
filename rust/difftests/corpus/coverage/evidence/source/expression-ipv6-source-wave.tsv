@@ -1,3 +1,0 @@
-# Source-owned production evidence for the bounded INET6 scalar family.
-# source_path	status	owner	evidence_artifact	note
-pkg/expression/builtin_miscellaneous.go	PARTIAL	expression-ipv6-source-wave	rust/crates/tidb-expr/src/builtin_ext/compare2.rs	INET6_ATON preserves Go's four-byte plain-IPv4 versus sixteen-byte colon-containing representation and binary output; INET6_NTOA preserves four/sixteen-byte canonical formatting and NULL for other lengths. Function-class metadata, warning text, session charset, and vectorized execution remain explicit partial boundaries.

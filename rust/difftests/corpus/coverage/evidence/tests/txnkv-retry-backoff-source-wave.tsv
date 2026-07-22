@@ -1,4 +1,0 @@
-# Source-owned test evidence for txnkv-retry-backoff-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/kv/txn_test.go	28	TestBackOff	PARTIAL	txnkv-retry-backoff-source-wave	rust/difftests/transaction-tests/tests/retry.rs	All four source upper-bound rows execute through the typed capped arithmetic; random jitter sleep timing and TestRetryExceedCountError RunInNewTxn storage/session orchestration remain intentionally partial
-go_test	pkg/kv/txn_test.go	39	TestRetryExceedCountError	PARTIAL	txnkv-retry-backoff-source-wave	rust/difftests/transaction-tests/tests/retry.rs	The deterministic retry-count boundary executes: retryable failures continue until the final index of MaxRetryCnt and then return the last error, while non-retryable failures return immediately; storage Begin/Rollback/Commit, failpoint injection, logging, and session orchestration remain outside tidb-txnkv

@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for the TO_SECONDS/TO_DAYS source wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_time_test.go	2860	TestToSeconds	PARTIAL	time-calendar-source-wave	rust/crates/tidb-expr/src/time_fn/calendar.rs	All five valid numeric/string rows and six invalid rows plus NULL are covered with exact integer/NULL results; typed DATETIME conversion, IgnoreZeroInDate warning state, and function metadata remain outside the value-only Datum boundary
-go_test	pkg/expression/builtin_time_test.go	2903	TestToDays	PARTIAL	time-calendar-source-wave	rust/crates/tidb-expr/src/time_fn/calendar.rs	All six valid numeric/string rows and five invalid rows plus NULL are covered, including year-zero January 1 and invalid time suffixes; typed DATE/DATETIME conversion and StatementContext warning/SQL-mode state remain outside the value-only Datum boundary

@@ -1,4 +1,0 @@
-# Source-owned evidence for the typed TableOptionAffinity parser/restore slice.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/parser/parser_test.go	8434	TestTableAffinityOption	PARTIAL	parser-table-option	rust/crates/tidb-parser/src/tests/table_option_source.rs	All eight CREATE and three Go-rejected parser rows execute with literal-only and optional-equals boundaries; ALTER shares its existing typed action, and catalog affinity semantics remain explicitly unsupported before mutation
-integration_fixture	tests/integrationtest/t/ddl/affinity.test	0	affinity.test	PARTIAL	parser-table-option	rust/difftests/parser-tests/tests/selectors/create/create_table_affinity_selector.rs	Nine exact creation rows cover ordinary and special-comment input, case retention, empty and invalid deferred levels, and the creation/partition boundary; runtime placement semantics remain outside the seed catalog

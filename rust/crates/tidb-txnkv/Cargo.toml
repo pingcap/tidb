@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Source-backed transactional KV primitives for the TiDB Rust rewrite."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
@@ -22,3 +24,11 @@ tidb-pd-client = { path = "../tidb-pd-client" }
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "lock_resolver_source"
+path = "tests/lock_resolver_source.rs"

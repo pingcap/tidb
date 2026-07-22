@@ -1,3 +1,0 @@
-# Source-owned direct tests for the bounded INTERVAL scalar leaf.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/expression/builtin_compare_test.go	0	builtin_compare_test.go	PARTIAL	expression-interval-source-wave	rust/crates/tidb-expr/src/builtin_ext/compare2.rs	Direct Rust rows cover every TestIntervalFunc value vector, including all signed/unsigned precision cases, nullable boundaries, string numeric-prefix coercion, and the newly fixed overflowing real prefix; function-class, warning, session, and vectorized paths remain outside the seed evaluator.

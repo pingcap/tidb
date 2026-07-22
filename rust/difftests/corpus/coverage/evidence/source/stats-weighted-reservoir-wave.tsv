@@ -1,3 +1,0 @@
-# Source-owned weighted reservoir sampling evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/row_sampler.go	PARTIAL	stats-weighted-reservoir-wave	rust/crates/tidb-stats/src/weighted_reservoir.rs	The Rust leaf ports WeightedRowSampleHeap plus sampleRow/sampleZippedRow fill, min-heap, strict-larger replacement, and fixed-size selection; RNG generation, Datum rows, FM sketches, memory accounting, protobuf conversion, and collector merging remain external.

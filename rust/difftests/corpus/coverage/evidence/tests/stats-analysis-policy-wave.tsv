@@ -1,3 +1,0 @@
-# Source-owned statistics analysis-eligibility test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test_file	pkg/statistics/integration_test.go	0	integration_test.go	PARTIAL	stats-analysis-policy-wave	rust/crates/tidb-stats/tests/analysis_policy_source.rs	The TestOutdatedStatsCheck mutation is at lines 153-155; Rust directly pins positive analyze-version, nil/threshold, pseudo, and eligibility predicates while scheduler/global configuration remain open.

@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-logical-max-one-row-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/logical_max_one_row.go	PARTIAL	planner-logical-max-one-row-wave	rust/crates/tidb-planner/src/logical_max_one_row.rs	Ports generated LogicalMaxOneRow Hash64/Equals identity: MaxOneRow tag plus embedded BaseLogicalPlan ID; context, children, schema/statistics, predicate behavior, and runtime row limiting remain external.

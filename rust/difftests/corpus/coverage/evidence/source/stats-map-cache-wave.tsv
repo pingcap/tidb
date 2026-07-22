@@ -1,3 +1,0 @@
-# Source-owned statistics-cache map-cache evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/cache/internal/mapcache/map_cache.go	PARTIAL	stats-map-cache-wave	rust/crates/tidb-stats/src/map_cache.rs	The Rust leaf ports MapCache's caller-cost replacement, Get/Del/Cost/Keys/Values/Len/Copy state, signed cost arithmetic, and no-op capacity/close/eviction/async hooks from lines 22-139; statistics.Table memory measurement, StatsCacheInner integration, concurrency, and outer cache publication remain open.

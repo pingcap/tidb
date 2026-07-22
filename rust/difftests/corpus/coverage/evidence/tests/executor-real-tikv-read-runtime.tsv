@@ -1,4 +1,0 @@
-# Real PD timestamp to TiKV read execution test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/adapter_test.go	82	TestFormatSQL	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	Supported SELECT text is parsed and lowered without rewriting its SQL semantics; the original formatting and redaction matrix remains open.
-go_test	pkg/executor/adapter_test.go	806	TestMaxExecutionTimeIncludesTSOWaitTime	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	Each query obtains its snapshot from the real timestamp source before sending and the configured deadline bounds the operation; session max-execution-time behavior remains open.

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-pattern-engine-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/cascades/pattern/engine_test.go	23	TestEngineTypeSet	PARTIAL	planner-pattern-engine-wave	rust/difftests/planner-tests/tests/pattern_engine.rs	Direct Rust vectors cover all source engine-set membership combinations plus stable labels and bit values; cascades runtime integration remains open.

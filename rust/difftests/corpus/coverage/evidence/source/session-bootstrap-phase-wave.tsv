@@ -1,3 +1,0 @@
-# Source-owned bootstrap decision metadata and explicit external boundary.
-# source_path	status	owner	evidence_artifact	note
-pkg/session/bootstrap.go	PARTIAL	session-bootstrap-phase-wave	rust/crates/tidb-server/src/bootstrap.rs	BootstrapMode/start_mode, user-keyspace versus SYSTEM-keyspace version ordering, feature-gate outcomes (next-generation schema, grants, secure bootstrap, plugins, telemetry, TiFlash, bootstrap SQL, Etcd), and coarse phase order preserve dependency-free decisions from bootstrapSessionImpl/runInBootstrapSession; KV reads/writes, domain and DDL ownership, system-table schemas, privilege/user store, sysvar cache, plugin callbacks, secure-bootstrap OS-user lookup, SQL-file I/O, background workers, and all side effects remain external.

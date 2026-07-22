@@ -1,3 +1,0 @@
-# Source-owned advisory-lock reference-state test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/integration_test/integration_test.go	1441	TestGetLock	PARTIAL	session-advisory-locks-wave	rust/crates/tidb-exec/tests/advisory_lock_state_source.rs	Focused Rust vectors cover repeated GET_LOCK/RELEASE_LOCK reference semantics and owner identity; the original integration test's SQL execution, timeout, case/length validation, cross-session contention, and cleanup remain external.

@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for transaction-wave8.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/sessionctx/variable/sysvar_test.go	388	TestTiDBMultiStatementMode	PARTIAL	transaction-wave8	rust/difftests/corpus/table/multi_statement_mode.txt	OFF ON WARN TypeEnum normalization/default/readback and rollback persistence; invalid and global-write boundary asserted by tidb-exec session test

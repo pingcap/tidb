@@ -1,3 +1,0 @@
-# Source-owned direct tests for the bounded GROUPING scalar leaf.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_grouping_test.go	56	TestGrouping	PARTIAL	expression-grouping-source-wave	rust/crates/tidb-expr/src/grouping.rs	All 19 source scalar rows across BitAnd, NumericCmp, and NumericSet are asserted through GroupingFunction::eval; typed invalid-mode, invalid-mark-cardinality, and uninitialized metadata regressions cover checkMetadata/evalInt guards, while tipb/session/function-class and vectorized paths remain outside the seed.

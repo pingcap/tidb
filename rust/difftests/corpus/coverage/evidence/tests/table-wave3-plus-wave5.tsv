@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for table-wave3+wave5.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-integration_fixture	tests/integrationtest/t/executor/union_scan.test	0	union_scan.test	PARTIAL	table-wave3+wave5	rust/difftests/corpus/coverage/evidence/union_scan.test.md	Source slices: TestIssue36903 lines 187-194; TestForApplyAndUnionScan lines 198-206

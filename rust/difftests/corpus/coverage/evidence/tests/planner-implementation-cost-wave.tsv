@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-implementation-cost-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/implementation/base_test.go	28	TestBaseImplementation	PARTIAL	planner-implementation-cost-wave	rust/difftests/planner-tests/tests/implementation_cost.rs	Direct Rust vectors cover zero initialization, ordered child-cost reset/sum, explicit SetCost/GetCost, identity cost-limit scaling, and child-cost subtraction; physical-plan/memo attachment remains open.

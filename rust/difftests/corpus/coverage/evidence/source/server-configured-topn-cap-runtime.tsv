@@ -1,4 +1,0 @@
-# Campaign 26 source evidence for server-configured-topn-cap-runtime.
-# source_path	status	owner	evidence_artifact	note
-pkg/config/config.go	PARTIAL	server-configured-topn-cap-runtime	rust/crates/tidb-server/src/node_config.rs	The bounded Rust node owns one fail-closed startup cap for its first fixed-width signed-BIGINT ORDER BY LIMIT heap: default 1024 rows, explicit 65536-row ceiling, positive decimal parsing, duplicate rejection, and documented help. TiDB TOML/global/dynamic configuration, memory quotas, spilling, resource groups, and general statement semantics remain open.
-pkg/config/store.go	PARTIAL	server-configured-topn-cap-runtime	rust/crates/tidb-server/src/node_config.rs	The real-TiKV-only bounded startup store contract is retained while the one NodeConfig gains the TopN cap; TiDB's full store registry, security configuration, dynamic reload, and general configuration surface remain open.

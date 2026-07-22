@@ -1,3 +1,0 @@
-# Source-owned statistics index-usage sample evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/usage/indexusage/collector.go	PARTIAL	stats-index-usage-wave	rust/crates/tidb-stats/src/index_usage.rs	The Rust leaf ports the GlobalIndexID-independent sample boundary from lines 31-87 and value merge from lines 97-112: seven percentage-access buckets, exact boundary selection, zero-total-row fallback, one-hot NewSample construction, timestamp readback, and uint64 aggregation. Session/global collector workers, maps, persistence, and schema garbage collection remain explicit future owners.

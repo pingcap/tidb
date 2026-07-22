@@ -1,4 +1,0 @@
-# Source-owned duration codec test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/util/codec/codec_test.go	579	TestDuration	PARTIAL	codec-duration-source-wave	rust/crates/tidb-codec/tests/duration_source.rs	Signed zero/positive/negative and i64 boundary duration payloads execute through the exact eight-byte comparable integer with remainder preservation and DecodeOne MaxFsp metadata; full Duration parsing and SQL range/warning semantics remain open
-go_test	pkg/types/time_test.go	1033	TestDurationClock	PARTIAL	codec-duration-source-wave	rust/crates/tidb-codec/tests/duration_source.rs	Go splitDuration clock decomposition executes for the original 11:11:11.11, one-day-plus, and datetime-shaped source rows; parser fallback, SQL range, rounding, and warning/session semantics remain open

@@ -1,5 +1,0 @@
-# Source-owned test evidence for the deterministic affinity metadata slice.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/ddl/affinity_test.go	46	TestAffinityBuildGroupDefinitionsTable	PARTIAL	ddl-affinity-metadata	rust/crates/tidb-exec/src/tests/ddl_affinity.rs	Stable table group identity and one-group metadata are covered; TiKV table-prefix encoding and PD interaction remain outside the dependency-closed leaf.
-go_test	pkg/ddl/affinity_test.go	64	TestAffinityBuildGroupDefinitionsPartition	PARTIAL	ddl-affinity-metadata	rust/crates/tidb-exec/src/tests/ddl_affinity.rs	Partition group IDs, physical partition IDs, deterministic ordering, and duplicate collapse are covered; table metadata and codec/PD lifecycle remain open.
-go_test	pkg/ddl/affinity_test.go	91	TestAffinityBuildGroupDefinitionsPartitionMissing	PARTIAL	ddl-affinity-metadata	rust/crates/tidb-exec/src/tests/ddl_affinity.rs	Missing partition-definition validation is covered as a typed metadata error; source catalog-corruption context and DDL error plumbing remain open.

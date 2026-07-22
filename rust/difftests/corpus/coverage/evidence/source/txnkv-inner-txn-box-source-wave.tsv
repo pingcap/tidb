@@ -1,2 +1,0 @@
-# Source-owned production evidence for txnkv-inner-txn-box-source-wave.
-pkg/kv/txn.go	PARTIAL	txnkv-inner-txn-box-source-wave	rust/crates/tidb-txnkv/src/inner_txn.rs	Pure innerTxnStartTsBox store delete and getMinStartTS selection are typed with synchronized explicit state; deterministic BackOff upper-bound arithmetic is separately typed in retry.rs; PrintLongTimeInternalTxn oracle conversion global server registry RunInNewTxn random sleep MaxRetryCnt and retry/client/session behavior remain outside the dependency-closed txnkv boundary

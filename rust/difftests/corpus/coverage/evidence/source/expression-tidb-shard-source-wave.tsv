@@ -1,3 +1,0 @@
-# Source-owned production evidence for TiDB's deterministic shard hash helper.
-# source_path	status	owner	evidence_artifact	note
-pkg/util/vitess/vitess_hash.go	PARTIAL	expression-tidb-shard-source-wave	rust/crates/tidb-expr/src/builtin_ext/misc.rs	HashUint64 is ported as DES-ECB with the all-zero key and big-endian uint64 block; the RustCrypto dependency replaces Go crypto/des at the language boundary while preserving the exact algorithm and vector outputs.

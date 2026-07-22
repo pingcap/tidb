@@ -1,3 +1,0 @@
-# Source-owned global statistics layout evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/globalstats/global_stats.go	PARTIAL	stats-global-layout-wave	rust/crates/tidb-stats/src/global_stats_layout.rs	The Rust leaf ports newGlobalStats from lines 72-94: Num and four nil statistics-slot arrays use the requested histogram count, aggregate count/modify_count start at zero, and MissingPartitionStats stays nil-equivalent. Merge algorithms, statistics payloads, partition metadata, and storage/session lifecycle remain external.

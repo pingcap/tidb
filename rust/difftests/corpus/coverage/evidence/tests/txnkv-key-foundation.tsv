@@ -1,5 +1,0 @@
-# Source-owned test-evidence fragment for txnkv-key-foundation.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/kv/key_test.go	38	TestPartialNext	PARTIAL	txnkv-key-foundation	rust/difftests/transaction-tests/tests/key_version.rs	All three comparisons execute over exact Go-generated EncodeValue bytes; Key next and prefix-next are covered, while the compact value codec used by this source test remains unported
-go_test	pkg/kv/key_test.go	63	TestIsPoint	COVERED	txnkv-key-foundation	rust/difftests/transaction-tests/tests/key_version.rs	All seven source rows are translated in order against the source-equivalent allocation-free half-open KeyRange algorithm
-go_test	pkg/kv/version_test.go	25	TestVersion	COVERED	txnkv-key-foundation	rust/difftests/transaction-tests/tests/key_version.rs	All four source assertions cover ordering equality and the minimum and maximum version sentinels; sibling MPP and compression tests are separate ledger anchors

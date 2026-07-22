@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-schema-table-key-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/preprocess_test.go	422	TestPreprocessCTE	PARTIAL	planner-schema-table-key-wave	rust/difftests/planner-tests/tests/schema_table_key.rs	Direct Rust vectors cover case-insensitive schema/table identity and qualified versus bare aliases; the Go parser, CTE scope, view/lock maps, and duplicate-alias diagnostics remain open.

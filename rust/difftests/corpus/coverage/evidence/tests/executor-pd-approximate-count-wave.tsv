@@ -1,3 +1,0 @@
-# Source-owned approximate table-count cache test evidence.
-# kind source_path source_line test_name status owner evidence_artifact note
-go_test	pkg/executor/internal/pdhelper/pd_test.go	42	TestTTLCache	PARTIAL	executor-pd-approximate-count-wave	rust/crates/tidb-exec/tests/pd_approximate_count_source.rs	Rust covers the exact capacity=2, TTL=100ms miss/hit/eviction/expiry sequence and source underscore-key identity; PD/storage callbacks and background cleanup lifecycle remain external.

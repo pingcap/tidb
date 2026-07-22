@@ -1,5 +1,0 @@
-# Source-owned tagged pointer metadata test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/join/tagged_ptr_test.go	24	TestTaggedBits	PARTIAL	executor-tagged-ptr-wave	rust/crates/tidb-exec/tests/tagged_ptr_source.rs	Rust covers the source leading-zero width sequence, 64-bit guard/cap behavior, and MAX_TAGGED_BITS boundary; actual unsafe pointer allocation remains external.
-go_test	pkg/executor/join/tagged_ptr_test.go	33	TestTagHelperInit	PARTIAL	executor-tagged-ptr-wave	rust/crates/tidb-exec/tests/tagged_ptr_source.rs	Rust covers every source mask initialization width from 24 down to zero, including the top-bit mask progression.
-go_test	pkg/executor/join/tagged_ptr_test.go	43	TestTagHelper	PARTIAL	executor-tagged-ptr-wave	rust/crates/tidb-exec/tests/tagged_ptr_source.rs	Rust covers tag fitting, tag extraction, and raw-address roundtrip using deterministic usize addresses rather than an unsafe byte allocation.

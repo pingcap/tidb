@@ -1,3 +1,0 @@
-# Source-owned statistics order-correlation evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/builder.go	PARTIAL	stats-correlation-wave	rust/crates/tidb-stats/src/correlation.rs	The Rust leaf ports calcCorrelation from lines 336-354: the one-sample shortcut and closed-form Pearson sums over caller-owned ordinal cross-sums. Sample sorting, histogram construction, handle-column discovery, and persistence remain explicit future owners.

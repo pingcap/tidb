@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for the DATEDIFF/TIMEDIFF source wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_time_test.go	1932	TestDateDiff	PARTIAL	time-diff-source-wave	rust/crates/tidb-expr/src/time_fn/calendar.rs	All five valid and five invalid source pairs plus NULL are covered with exact scalar results; typed DATE conversion, warning state, and SQLMode handling remain outside the value-only Datum boundary
-go_test	pkg/expression/builtin_time_test.go	1985	TestTimeDiff	PARTIAL	time-diff-source-wave	rust/crates/tidb-expr/src/time_fn/mod.rs	All seven scalar source rows are covered, including microseconds, zero-day date arithmetic, durations, mixed-type NULL, and empty-input NULL; typed Time/Duration result FSP and StatementContext warning paths remain outside the value-only Datum boundary

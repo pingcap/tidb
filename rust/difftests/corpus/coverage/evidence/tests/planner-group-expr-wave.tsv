@@ -1,4 +1,0 @@
-# Source-owned test evidence fragment for planner-group-expr-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/memo/group_expr_test.go	27	TestNewGroupExpr	PARTIAL	planner-group-expr-wave	rust/difftests/planner-tests/tests/group_expr.rs	Rust vectors preserve source plan-hash ownership, empty-child initialization, and unexplored round state over an explicit byte adapter.
-go_test	pkg/planner/memo/group_expr_test.go	35	TestGroupExprFingerprint	PARTIAL	planner-group-expr-wave	rust/difftests/planner-tests/tests/group_expr.rs	Rust vectors preserve source big-endian child-count, child-identity, and plan-hash fingerprint bytes plus cache stability; Go pointer and LogicalPlan hash construction remain external.

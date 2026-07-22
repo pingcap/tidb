@@ -1,3 +1,0 @@
-# Source-owned JSON_ARRAYAGG partial-result evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/aggfuncs/func_json_arrayagg.go	PARTIAL	executor-json-arrayagg-wave	rust/crates/tidb-exec/src/json_arrayagg.rs	The dependency-closed ordered entry buffer, merge/reset lifecycle, empty-input NULL boundary, JSON array framing, and finite-number guard are ported; Go typed Eval/coercion, BinaryJSON validation, chunk/spill encoding, memory deltas, and aggregate scheduling remain external.

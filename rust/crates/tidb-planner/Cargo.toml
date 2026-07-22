@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Source-backed TiDB planner primitives (Rust)."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
@@ -15,3 +17,11 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-hash = { path = "../tidb-hash" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "configured_relation_tree_binding_source"
+path = "tests/configured_relation_tree_binding_source.rs"

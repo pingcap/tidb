@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for misc-wave3.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_miscellaneous_test.go	185	TestUUIDVersion	PARTIAL	misc-wave3	rust/difftests/corpus/expr/misc_uuid_version.txt	All six TestUUIDVersion UUID/version vectors are asserted; malformed-input error payloads and the broader UUID function family remain outside this source-test slice

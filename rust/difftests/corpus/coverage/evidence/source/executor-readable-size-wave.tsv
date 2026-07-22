@@ -1,3 +1,0 @@
-# Source-owned readable byte-size parser evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/inspection_result.go	PARTIAL	executor-readable-size-wave	rust/crates/tidb-exec/src/readable_size.rs	The decimal/B/KiB/MiB/GiB/TiB/PiB parsing and uint64 product boundary are ported; inspection retrieval, warning publication, and configuration diagnostics remain external.

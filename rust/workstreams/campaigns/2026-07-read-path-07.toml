@@ -1,8 +1,0 @@
-schema = "1"
-campaign = "2026-07-read-path-07"
-status = "integrated"
-slices = [
-  "planner-executor-tikv-scan-dag-lowering",
-  "executor-table-index-reader-runtime",
-  "distsql-tikv-unary-rpc-contract",
-]

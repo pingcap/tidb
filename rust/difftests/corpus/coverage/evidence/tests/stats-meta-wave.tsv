@@ -1,3 +1,0 @@
-# Source-owned stats-meta count metadata test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/ddl/ddl_test.go	1530	TestExchangePartition	PARTIAL	stats-meta-wave	rust/crates/tidb-stats/tests/stats_meta_source.rs	Rust directly covers the exact count/modify_count and missing-row contract asserted after concurrent DDL deltas; storage execution, transaction concurrency, and DDL event handling remain external.

@@ -1,3 +1,0 @@
-# Connected negotiated-compression command I/O source evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/server/internal/packetio.go	PARTIAL	server-compressed-command-io-runtime	rust/crates/tidb-server/src/compressed_command_io.rs	The existing production PacketIoReader and PacketIoWriter now have a server consumer: handshake-selected none/zlib/zstd mode and zstd level feed sequence-zero command reads, sequence-one response writes, and flush/reset semantics around Connection dispatch. BufferedReadConn/net.Conn ownership, dynamic config, deadlines, byte metrics, terror logging, mysql.ErrBadConn conversion, and mutable in-place buffers remain external.

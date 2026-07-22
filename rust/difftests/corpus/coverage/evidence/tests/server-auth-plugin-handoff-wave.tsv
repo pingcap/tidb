@@ -1,3 +1,0 @@
-# Source-owned auth-plugin metadata handoff fragment for server-auth-plugin-handoff-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/privilege/privileges/cache_test.go	33	TestLoadUserTable	PARTIAL	server-auth-plugin-handoff-wave	rust/crates/tidb-server/tests/auth_identity_source.rs	Covers default/custom plugin metadata handoff and stored-authentication presence without inspecting secrets; Go user-table loading, plugin registry validation, hash validation, and password verification remain external.

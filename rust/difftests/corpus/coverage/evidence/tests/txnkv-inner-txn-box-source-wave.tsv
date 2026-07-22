@@ -1,2 +1,0 @@
-# Source-owned test evidence for txnkv-inner-txn-box-source-wave.
-go_test	pkg/kv/txn_test.go	72	TestInnerTxnStartTsBox	PARTIAL	txnkv-inner-txn-box-source-wave	rust/difftests/transaction-tests/tests/key_version.rs	Store/delete and minimum-selection assertions execute on an explicit synchronized box; the original process-global registry and oracle-backed long-running logging are intentionally partial

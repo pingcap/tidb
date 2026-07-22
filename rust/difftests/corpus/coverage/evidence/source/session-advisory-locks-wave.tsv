@@ -1,3 +1,0 @@
-# Source-owned advisory-lock reference-state evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/session/advisory_locks.go	PARTIAL	session-advisory-locks-wave	rust/crates/tidb-exec/src/advisory_lock_state.rs	Owner identity and source reference-count increment/decrement/readback are typed; SQL-backed pessimistic transactions, lock-name validation/normalization, timeout behavior, rollback, and session cleanup remain external.

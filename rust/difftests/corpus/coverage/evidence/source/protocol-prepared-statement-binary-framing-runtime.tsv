@@ -1,3 +1,0 @@
-# Campaign 27 source evidence for bounded prepared-statement binary framing.
-# source_path	status	owner	evidence_artifact	note
-pkg/server/conn_stmt.go	PARTIAL	protocol-prepared-statement-binary-framing-runtime	rust/crates/tidb-protocol/src/prepared_statement.rs	The Rust protocol layer decodes one non-NULL signed MYSQL_TYPE_LONGLONG execute value with checked type-vector reuse, emits prepare metadata and signed-BIGINT binary rows, decodes silent close, and rejects every unsupported packet shape without fallback; statement registries, TCP dispatch, parser/planner binding, TiKV execution, cursor/fetch/reset/long-data, NULL, coercion, and wider MySQL types remain open. This framing evidence uses no mock server or data and is not runtime acceptance.

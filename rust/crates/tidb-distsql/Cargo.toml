@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Source-shaped read-only DistSQL request context primitives for the TiDB Rust rewrite."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 # The context is integrated once its session consumer exists; request routing
 # and RPC remain separate capabilities with their own future crates.
@@ -16,6 +18,10 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
 
 [lints]
 workspace = true

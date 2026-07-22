@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for result-wave11.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_string_test.go	1635	TestCharLength	PARTIAL	result-wave11	rust/crates/tidb-expr/src/tests/mod.rs	All default-charset scalar TestCharLength rows, plus the binary FieldType loop (including 33, multibyte, CAFÉ, empty, and NULL) through the typed builder; session AST/type metadata remains an explicit boundary

@@ -1,2 +1,0 @@
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/telemetry.go	PARTIAL	planner-telemetry-wave	rust/crates/tidb-planner/src/telemetry.rs	Ports IsTiFlashContained's Explain unwrapping, physical/nonphysical filtering, TableReader store classification, ExchangeSender detection, and ordered child traversal over an opaque plan tree; concrete physical plans, session process state, MPP execution, and telemetry consumers remain external.

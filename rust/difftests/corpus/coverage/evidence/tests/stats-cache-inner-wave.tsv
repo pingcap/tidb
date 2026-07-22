@@ -1,3 +1,0 @@
-# Source-owned statistics cache interface test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/cache/internal/lfu/lfu_cache_test.go	49	TestLFUFreshMemUsage	PARTIAL	stats-cache-inner-wave	rust/crates/tidb-stats/tests/stats_cache_inner_source.rs	Rust pins the cache interface lifecycle used by the LFU test's Put/Cost/WaitForAsyncUpdates path; LFU admission, table memory accounting, asynchronous residency, and metrics remain external.

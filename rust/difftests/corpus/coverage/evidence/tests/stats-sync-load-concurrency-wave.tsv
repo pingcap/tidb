@@ -1,3 +1,0 @@
-# Source-owned synchronous stats-load concurrency policy test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/syncload/stats_syncload_test.go	36	TestConcurrentLoadHist	PARTIAL	stats-sync-load-concurrency-wave	rust/crates/tidb-stats/tests/sync_load_concurrency_source.rs	The original concurrent histogram-load test exercises the worker-count policy in the load lifecycle; Rust isolates every threshold boundary (including 0, 8, 9, 16, 17, 32, 33, and 128 CPUs) while runtime/session/storage orchestration remains external.

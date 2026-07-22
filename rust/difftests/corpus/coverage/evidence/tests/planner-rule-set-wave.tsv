@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/cascades/old/optimize_test.go	212	TestAppliedRuleSet	PARTIAL	planner-rule-set-wave	rust/difftests/planner-tests/tests/rule_set.rs	Rust vectors cover source rule-ID membership, order preservation, duplicate retention, and intermediate-Apply special-set selection; concrete transformation rules, memo state, and optimizer execution remain external.

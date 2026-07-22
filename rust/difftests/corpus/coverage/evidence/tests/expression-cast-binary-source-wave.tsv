@@ -1,4 +1,0 @@
-# Source-owned direct tests for the byte-preserving BINARY cast leaf.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_cast_test.go	34	TestCastFunctions	PARTIAL	expression-cast-binary-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	The original multibyte str[:5] assertion executes through the production cast path and verifies the raw five-byte result; the remaining cast signatures, warning channels, and vectorized tests remain outside the seed evaluator
-go_test	pkg/expression/builtin_cast_test.go	1188	TestWrapWithCastAsTypesClasses	PARTIAL	expression-cast-binary-source-wave	rust/crates/tidb-datatype/src/eval_type_tests.rs	The shared EvalType IsStringKind classification used by cast result types executes exhaustively; cast construction, FieldType mapping, scalar evaluation, unsigned propagation, and value rows remain open.

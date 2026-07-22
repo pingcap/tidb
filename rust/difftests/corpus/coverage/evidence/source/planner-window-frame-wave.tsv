@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-window-frame-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/logical_window.go	PARTIAL	planner-window-frame-wave	rust/crates/tidb-planner/src/window_frame.rs	Ports handwritten FrameBound and WindowFrame Hash64/Equals field order plus FrameBound Clone nil-slice preservation; normalized column expressions and caller-supplied compare-function address tokens remain adapters, while arbitrary expression evaluation, function-pointer identity, session/type context, LogicalWindow planning, and runtime execution remain external.

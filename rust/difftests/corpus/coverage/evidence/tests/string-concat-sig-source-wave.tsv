@@ -1,4 +1,0 @@
-# Source-owned test evidence for CONCAT and CONCAT_WS signature rows.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_string_test.go	225	TestConcatSig	PARTIAL	string-concat-sig-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	Scalar ASCII/Unicode rows are covered through CONCAT's byte-preserving evaluator; chunk-column max_allowed_packet warnings, result FieldType metadata, and vectorized execution remain outside the value-only boundary.
-go_test	pkg/expression/builtin_string_test.go	345	TestConcatWSSig	PARTIAL	string-concat-sig-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	Scalar separator/Unicode rows are covered through CONCAT_WS with NULL-skipping semantics; chunk-column max_allowed_packet warnings, result FieldType metadata, and vectorized execution remain explicit partial boundaries.

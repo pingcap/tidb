@@ -1,4 +1,0 @@
-# Source-owned source-port fragment for session-sequence-state-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/sessionctx/variable/sequence_state.go	PARTIAL	session-sequence-state-wave	rust/crates/tidb-exec/src/sequence_state.rs	Numeric sequence-ID latest-value map, missing lookup, copied snapshot, update, and maps.Copy-style merge are typed; mutex ownership, NEXTVAL/LASTVAL expression execution, and sequence allocation remain external
-pkg/sessionctx/sessionstates/session_states.go	PARTIAL	session-sequence-state-wave	rust/crates/tidb-exec/src/sequence_state.rs	The SequenceLatestValues migration payload is represented as a copied numeric map boundary only; the full JSON session-state envelope and all other migrated fields remain external

@@ -1,3 +1,0 @@
-# Canonical physical-table integer-handle range test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/tablecodec/tablecodec_test.go	523	TestRange	PARTIAL	codec-table-key-range-runtime	rust/crates/tidb-codec/tests/table_key_source.rs	The exact minimum-to-maximum signed integer-handle table-record range and boundary ordering are translated through the canonical codec; the original index-range half remains open.

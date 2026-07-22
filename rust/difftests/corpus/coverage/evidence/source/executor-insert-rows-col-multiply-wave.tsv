@@ -1,3 +1,0 @@
-# Source-owned insert row/column work-accounting evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/executor/insert_common.go	PARTIAL	executor-insert-rows-col-multiply-wave	rust/crates/tidb-exec/src/insert_rows_col_multiply.rs	The zero-aware row-count/insert-column-count product and i64::MAX saturation are ported; InsertValues lifecycle, RUV2 metric publication, and executor state remain external.

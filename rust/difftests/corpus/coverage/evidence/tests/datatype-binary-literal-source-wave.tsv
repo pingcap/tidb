@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for datatype-binary-literal-source-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/kv/key_test.go	240	TestCommonHandlesFitIntHandleRange	PARTIAL	datatype-binary-literal-source-wave	rust/difftests/transaction-tests/tests/handle.rs	Six source rows execute through production Datum and codec encoding; the BinaryLiteral row is byte-exact only through the Go fixture and normalized UInt decoder until the shared Datum kind and codec dispatch land atomically
-go_test	pkg/types/binary_literal_test.go	24	TestBinaryLiteral	COVERED	datatype-binary-literal-source-wave	rust/crates/tidb-datatype/src/binary_literal_tests.rs	Every original trim bit parse hex parse render integer byte-size comparison and raw-string row executes including the duplicated empty bit parser assertion and typed replacement for the invalid byteSize panic

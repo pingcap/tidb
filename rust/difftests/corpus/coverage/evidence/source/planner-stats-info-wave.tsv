@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for planner-stats-info-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/property/stats_info.go	PARTIAL	planner-stats-info-wave	rust/crates/tidb-planner/src/stats_info.rs	Ports StatsInfo Count and DeriveLimitStats row-count/column-NDV caps over deterministic caller-owned maps; session ScaleNDVFunc, HistColl, GroupNDV expression lookup, and planner statistics propagation remain external.

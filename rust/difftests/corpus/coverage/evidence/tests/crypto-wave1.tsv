@@ -1,5 +1,0 @@
-# Source-owned test-evidence fragment for crypto-wave1.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/expression/builtin_encryption_test.go	349	TestSha1Hash	PARTIAL	crypto-wave1	rust/difftests/corpus/query/crypto.txt	Default-charset SHA1 vectors plus direct raw GBK-byte vectors; connection-charset state remains outside the value-only evaluator
-go_test	pkg/expression/builtin_encryption_test.go	387	TestSha2Hash	PARTIAL	crypto-wave1	rust/difftests/corpus/query/crypto.txt	Representable SHA2 vectors, ETInt coercion edges, and direct raw GBK-byte vectors; connection-charset state remains outside the value-only evaluator
-go_test	pkg/expression/builtin_encryption_test.go	457	TestMD5Hash	PARTIAL	crypto-wave1	rust/difftests/corpus/query/crypto.txt	Default-charset MD5 vectors plus direct raw GBK/binary-byte vectors; connection-charset conversion and invalid GBK input error policy remain outside the value-only evaluator

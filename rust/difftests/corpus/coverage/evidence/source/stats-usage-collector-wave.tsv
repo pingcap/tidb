@@ -1,3 +1,0 @@
-# Source-owned statistics usage collector evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/usage/collector/collector.go	PARTIAL	stats-usage-collector-wave	rust/crates/tidb-stats/src/usage_collector.rs	The Rust leaf ports the bounded normal/high-priority queues, non-blocking SendDelta, blocking SendDeltaSync, serial worker priority, close signaling, and accepted-item drain from lines 22-25 and 36-172; statistics-specific merge maps, persistence, and session lifecycle remain explicit external owners.

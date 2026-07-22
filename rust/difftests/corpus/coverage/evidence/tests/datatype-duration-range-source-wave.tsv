@@ -1,4 +1,0 @@
-# Source-owned SQL duration range evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/types/time_test.go	846	TestRoundFrac	PARTIAL	datatype-duration-range-source-wave	rust/crates/tidb-datatype/src/duration_tests.rs	Duration half-away-from-zero rounding, FSP clamping/error, carry into the next second, negative values, and same-FSP early return execute; full datetime parsing, SQL range handling, timezone/session warning policy remain open
-go_test	pkg/types/time_test.go	1173	TestTruncateOverflowMySQLTime	PARTIAL	datatype-duration-range-source-wave	rust/crates/tidb-datatype/src/duration_tests.rs	Exact MySQL TIME endpoint constants, positive/negative clamps, unchanged boundary values, and typed overflow direction/event execute; statement-level range warnings, ParseDuration fallback grammar, and timezone/session error construction remain open

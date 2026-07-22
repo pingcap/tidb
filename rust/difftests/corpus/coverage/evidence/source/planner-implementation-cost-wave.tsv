@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for planner-implementation-cost-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/implementation/base.go	PARTIAL	planner-implementation-cost-wave	rust/crates/tidb-planner/src/implementation_cost.rs	Ports baseImpl cost state, ordered child-cost accumulation/reset, explicit SetCost/GetCost, identity ScaleCostLimit, and child-cost subtraction in GetCostLimit; physical-plan attachment, memo Implementation interfaces, and concrete implementation cost models remain external.

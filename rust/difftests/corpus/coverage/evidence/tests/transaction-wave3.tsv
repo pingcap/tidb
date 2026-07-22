@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for transaction-wave3.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/set_test.go	45	TestSetVar	PARTIAL	transaction-wave3	rust/difftests/corpus/table/transaction_read_only_alias.txt	No-op read-only gate and mutual aliases from source lines 1568-1620

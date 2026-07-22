@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-logical-property-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/memo/group_test.go	38	TestNewGroup	PARTIAL	planner-logical-property-wave	rust/crates/tidb-planner/src/logical_property.rs	Inline Rust vectors cover the LogicalProperty zero-value shape used by NewGroupWithSchema, optional metadata retention, and nil-versus-empty PossibleProps framing; full memo group construction, expression schemas, FD/statistics derivation, and equivalent-expression lifecycle remain external.

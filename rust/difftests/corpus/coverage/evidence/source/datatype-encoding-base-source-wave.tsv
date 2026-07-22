@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for datatype-encoding-base-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/parser/charset/encoding_base.go	PARTIAL	datatype-encoding-base-source-wave	rust/crates/tidb-datatype/src/encoding_base.rs	TransformOp and TransformPolicy preserve Go operation bits first-error retention replacement truncation and source-over-converted collection precedence; charset-specific decoder wiring error hierarchy and shared registry remain outside this bounded leaf

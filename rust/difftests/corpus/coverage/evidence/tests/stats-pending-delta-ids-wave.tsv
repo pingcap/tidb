@@ -1,3 +1,0 @@
-# Source-owned pending stats-delta table-ID selection test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/statistics/handle/usage/session_stats_collect_test.go	274	TestDumpStatsDeltaPersistsInitTime	PARTIAL	stats-pending-delta-ids-wave	rust/crates/tidb-stats/tests/pending_delta_ids_source.rs	The original dump test exercises pending-delta selection in the stats-delta lifecycle; Rust isolates the deterministic all-target, missing-target, duplicate-target, and no-match behavior while leaving time/SQL/session persistence external.

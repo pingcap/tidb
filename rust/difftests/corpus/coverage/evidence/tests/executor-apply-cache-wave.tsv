@@ -1,3 +1,0 @@
-# Source-owned apply-cache test evidence.
-# kind source_path source_line test_name status owner evidence_artifact note
-go_test	pkg/executor/internal/applycache/apply_cache_test.go	30	TestApplyCache	PARTIAL	executor-apply-cache-wave	rust/crates/tidb-exec/tests/apply_cache_source.rs	Rust covers the exact quota=100 three-entry LRU eviction fixture plus the over-quota admission boundary; chunk.List construction, memory tracker accuracy, thread-safe lock behavior, and concurrent TestApplyCacheConcurrent remain external.

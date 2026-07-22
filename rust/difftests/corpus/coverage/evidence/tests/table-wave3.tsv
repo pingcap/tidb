@@ -1,4 +1,0 @@
-# Source-owned test-evidence fragment for table-wave3.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-integration_fixture	tests/integrationtest/t/table/index.test	0	index.test	PARTIAL	table-wave3	rust/difftests/corpus/table/ddl_index_fixture.txt	Issue47115 source lines 50-53
-integration_fixture	tests/integrationtest/t/executor/jointest/join.test	0	join.test	PARTIAL	table-wave3	rust/difftests/corpus/table/join_fixture.txt	TestIssue5278 source lines 167-171

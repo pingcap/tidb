@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Source-backed MySQL packet framing for the TiDB Rust rewrite."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 # GBK result encoding uses the audited WHATWG GBK tables. The conversion is
 # kept in this protocol leaf because the datatype registry deliberately only
@@ -17,6 +19,10 @@ flate2.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 zstd.workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
 
 [[bench]]
 name = "packetio_source"

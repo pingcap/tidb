@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Source-shaped TiDB SQL connection dispatch (Rust)."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
@@ -25,3 +27,15 @@ tidb-protocol = { path = "../tidb-protocol" }
 [dev-dependencies]
 prost.workspace = true
 tidb-proto = { path = "../tidb-proto" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "auth_session_source"
+path = "tests/auth_session_source.rs"
+
+[[test]]
+name = "configured_user_store_source"
+path = "tests/configured_user_store_source.rs"

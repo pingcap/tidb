@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go	568	TestMPPSharedCTEScan	PARTIAL	planner-telemetry-wave	rust/difftests/planner-tests/tests/telemetry.rs	Rust vectors preserve the TiFlash/ExchangeSender classification used by MPP shared-CTE plans, including Explain/child traversal and nonphysical/empty boundaries; full MPP SQL planning, session telemetry publication, and execution remain external.

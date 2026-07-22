@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for datatype-binary-literal-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/types/binary_literal.go	COVERED	datatype-binary-literal-source-wave	rust/crates/tidb-datatype/src/binary_literal.rs	Complete bit and hexadecimal literal parsing rendering raw bytes big-endian integer conversion comparison and typed byte-width contract execute; truncation remains a typed pre-statement-context outcome and the Go invalid-width panic state is eliminated

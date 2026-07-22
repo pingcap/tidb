@@ -1,3 +1,0 @@
-# Canonical physical-table integer-handle range source evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/tablecodec/tablecodec.go	PARTIAL	codec-table-key-range-runtime	rust/crates/tidb-codec/src/table_key.rs	The canonical codec now constructs the exact signed integer-handle record range for a physical table and preserves the previously translated table, record, index, and meta key authorities. Partition handles, API-V2 keyspace stripping, index ranges, and the broad row/index value, schema, checksum, collation, restored-data, and generated-column portions of the Go source remain open.

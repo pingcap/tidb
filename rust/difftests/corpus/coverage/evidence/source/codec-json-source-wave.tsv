@@ -1,3 +1,0 @@
-# Source-owned BinaryJSON boundary fragment for codec-json-source-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/types/json_binary.go	PARTIAL	codec-json-source-wave	rust/crates/tidb-codec/src/json.rs	The source-defined BinaryJSON type-code and value-size boundary is losslessly borrowed for primitive strings, large containers, opaque values, and duration payloads; JSON object semantics, path evaluation, validation, and typed Datum integration remain open

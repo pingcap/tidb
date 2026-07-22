@@ -1,4 +1,0 @@
-# Source-owned scalar text formatting evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/format/textrow/textrow_test.go	126	TestAppendFormatFloat	COVERED	protocol-textrow-format-source-wave	rust/crates/tidb-protocol/tests/textrow_source.rs	Exact Go exponent thresholds, float32 five-digit exponent precision, shortest precision, infinities, and mantissa-zero normalization execute against the Rust scalar formatter.
-go_test	pkg/format/textrow/textrow_test.go	119	TestFormatValueTextInvalidType	COVERED	protocol-textrow-format-source-wave	rust/crates/tidb-protocol/tests/textrow_source.rs	Unsupported GEOMETRY remains an explicit TextFormatError rather than being silently formatted.

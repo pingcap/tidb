@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-max-min-elimination-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/rule/rule_max_min_eliminate.go	PARTIAL	planner-max-min-elimination-wave	rust/crates/tidb-planner/src/max_min_elimination.rs	Ports eliminateMaxMin eligibility and branch classification from lines 225-255: grouped/empty rejection, all-Max/Min requirement, ENUM/SET ordering safety rejection, and single-versus-multi aggregate branch selection; index/ranger checks, Limit/Sort/Join construction, expression/schema handling, and recursive optimizer integration remain external.

@@ -1,3 +1,0 @@
-# client-go source evidence for Campaign 18 distsql-batchcommands-region-request-runtime.
-# source_path	status	owner	evidence_artifact	note
-internal/locate/accessmode.go	PARTIAL	distsql-batchcommands-region-request-runtime	rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs	Campaign 18 makes production DistSQL BatchCommands-first and returns failures to the existing selector, cache observation, backoff, synchronous fallback, and terminal response owner. The exhaustive async selector/error matrix, TiFlash, flashback, and production stress remain external.

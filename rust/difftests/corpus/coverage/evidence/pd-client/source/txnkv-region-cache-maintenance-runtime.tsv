@@ -1,3 +1,0 @@
-# pd-client source evidence for Campaign 16 request-shaped region queries.
-# source_path	status	owner	evidence_artifact	note
-opt/option.go	PARTIAL	txnkv-region-cache-maintenance-runtime	rust/crates/tidb-pd-client/src/client.rs	Explicit query routing distinguishes normal and PD-leader-only attempts without adding a second retry authority. The broader option surface, follower handles, forwarding, TSO, TLS, and dynamic options remain external.

@@ -1,3 +1,0 @@
-# Source-owned historical statistics version evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/history/history_stats.go	PARTIAL	stats-historical-version-wave	rust/crates/tidb-stats/src/historical_stats.rs	The Rust leaf ports RecordHistoricalStatsToStorage's version selection from lines 187-195: non-partitioned JSON uses its table version, while a non-empty partition list ignores that value and takes the maximum partition version from an initial zero. JSON block conversion, SQL, timestamps, storage/session execution, and error propagation remain external.

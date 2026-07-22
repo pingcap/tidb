@@ -282,6 +282,7 @@
 mod admin;
 mod analyze;
 pub mod arena;
+pub mod auth;
 mod binding;
 mod cast;
 mod ddl;

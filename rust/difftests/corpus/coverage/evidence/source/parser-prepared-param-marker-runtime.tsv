@@ -1,3 +1,0 @@
-# Campaign 27 source evidence for typed prepared parameter-marker admission.
-# source_path	status	owner	evidence_artifact	note
-pkg/parser/parser.go	PARTIAL	parser-prepared-param-marker-runtime	rust/crates/tidb-planner/tests/prepared_param_marker_source.rs	The Rust parser assigns typed parameter-marker positions left-to-right, resets numbering for every statement, and the configured planner binds exactly one signed BIGINT primary-key marker before ordinary ReadOnlyScanPlan lowering; the rest of TiDB's parser lifecycle, SQL modes, diagnostics, parser reuse contract, SQL PREPARE/EXECUTE semantics, and all non-point-read marker shapes remain open. This is parser/planner safety evidence only and does not claim a working COM_STMT runtime.

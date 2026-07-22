@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for transaction-wave20.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/session/test/txn/txn_test.go	438	TestMemBufferSnapshotRead	PARTIAL	transaction-wave20	rust/difftests/corpus/coverage/txn_membuffer_snapshot_source.md	Exact single-session 101-row buffered self-join INSERT SELECT with duplicate-key update plus pre/post-COMMIT invariant; TiKV scan/chunk/concurrency knobs are outside the seed executor

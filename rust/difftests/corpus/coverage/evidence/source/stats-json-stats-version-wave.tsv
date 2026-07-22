@@ -1,3 +1,0 @@
-# Source-owned statistics JSON version-fallback evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/storage/json.go	PARTIAL	stats-json-stats-version-wave	rust/crates/tidb-stats/src/json_stats_version.rs	The Rust leaf ports the StatsVer fallback at lines 149-155 and 199-205: explicit versions win, missing versions with positive NDV/null-count infer legacy version 1, and otherwise retain version 0. JSON decoding, histogram/sketch conversion, schema matching, SQL/storage, and session lifecycle remain external.

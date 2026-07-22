@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for parser-source-waves.
-# source_path	status	owner	evidence_artifact	note
-pkg/parser/ast/ddl.go	PARTIAL	parser-source-waves	rust/difftests/corpus/coverage/evidence/parser_ddl_source_waves.md	Typed resource-group placement-policy and masking-policy statements options states restrictions and restore contracts execute; the much broader DDL AST source remains open

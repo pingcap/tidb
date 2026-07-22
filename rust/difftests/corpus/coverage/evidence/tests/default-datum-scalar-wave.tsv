@@ -1,3 +1,0 @@
-# Source-owned default-row typed Datum test evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/util/codec/codec_test.go	1080	TestDecodeRange	PARTIAL	default-datum-scalar-wave	rust/crates/tidb-codec/src/tests/datum.rs	The final NilFlag, bare bytesFlag, maxFlag, and maxFlag+1 vectors execute through a distinct production decode_range API; a non-final bytesFlag remains an ordinary encoded byte payload. Schema-aware datetime/float decoding, temporal, JSON, vector, and enum/set rows remain open.

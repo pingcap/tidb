@@ -1,3 +1,0 @@
-# Source-owned special global-index classification evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/statistics/handle/util/util.go	PARTIAL	stats-special-global-index-wave	rust/crates/tidb-stats/src/special_global_index.rs	The Rust leaf ports IsSpecialGlobalIndex from lines 286-300: global indexes are special when any referenced column is virtual-generated or prefix-length; schema model lookup and index/column decoding remain explicit external owners.

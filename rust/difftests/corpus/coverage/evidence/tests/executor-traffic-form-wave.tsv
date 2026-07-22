@@ -1,3 +1,0 @@
-# Source-owned traffic form encoding test-port evidence.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/executor/traffic_test.go	51	TestTrafficForm	PARTIAL	executor-traffic-form-wave	rust/crates/tidb-exec/tests/traffic_form_source.rs	Rust preserves the capture/replay field maps, lexicographic key order, slash escaping, empty-form cases, reserved-byte/UTF-8 escaping, and duplicate-value order; Go SQL/HTTP/decoded-form/start-time assertions remain external.
