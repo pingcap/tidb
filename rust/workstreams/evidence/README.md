@@ -39,24 +39,25 @@ non-overlapping source units with:
 cargo run --locked -j 12 -p difftest --bin go_test_ledger -- --queue <ring>
 ```
 
-The normal fast path reads those checked inventories without invoking Cargo
-and presents paired source/test candidates before an agent creates an atomic
-local claim:
+The normal fast path reads the checked source, test, and package-support
+inventories without invoking Cargo. It presents complete Go packages; a
+steward records the package and its complete Rust crate/write set in a schema-2
+slice before claiming it:
 
 ```sh
 scripts/work-unit-queue.py queue --target <crate> --ring <ring> --limit 3
-scripts/work-unit-queue.py claim --owner <owner> --source <go-path> \
-  --test <go-test-path>:<line>:<name>
+scripts/work-unit-queue.py packages --target <crate>
+scripts/work-unit-queue.py claim-slice --owner <slice> --slice <slice>
 scripts/work-unit-queue.py check
 ```
 
-The queue's same-directory/stem relationship is candidate discovery only.
-Evidence and coverage still require direct inspection of the authoritative Go
-source, test declarations, hooks, generated subtests, fixtures, and support
-artifacts. Add a directly owned source or test discovered outside the original
-candidate to the active transaction with `work-unit-queue.py amend --owner
-<owner> --source <go-path> --test <path>:<line>:<name>` (using either addition
-independently when appropriate) before editing its Rust evidence.
+Expansion includes every direct production source, every original obligation
+assigned to the nearest package, and every path-plus-digest row in
+`go_package_support_inventory.tsv`. It is non-recursive across real nested Go
+packages but recursively owns `testdata`, fixtures, results, build metadata,
+embed/generator inputs, and other package support. Claims are exact immutable
+snapshots, so new inventory makes an active claim stale. `claim` and `amend`
+remain legacy evidence-repair tools and are not feature integration paths.
 
 Production ownership is a separate generated dimension. Select its exact
 target-crate queue from `difftests/corpus/coverage/go_source_inventory.tsv`
@@ -85,15 +86,12 @@ architecture decisions, not coverage statuses. Move a row only after reading
 the owning package/source and its consumers; never map mixed `pkg/util` paths
 to a generic crate merely to reduce the count.
 
-The default unit is one Go test file with all of its tests, lifecycle hooks,
-static `t.Run` children, dynamic `t.Run` generator obligations, and exact
-checked-in fixture references; one concrete Bazel or Make target
-identified as `<definition file>#<target>`; one shell test program; one SQL
-input with all of its result variants; or one exact `testdata`/test-suite
-support artifact. Extensionless and Python suite runners remain visible as
-suite artifacts rather than being inferred by filename. Use
-the optional `package` view only for a coarse backlog summary; packages such
-as `pkg/expression` and `pkg/util` are not valid single-agent ownership units.
+The minimum transcreation and feature-claim unit is one complete Go package.
+One Go package may map to several Rust crates when that produces a cleaner
+Rust-native structure; the package claim and integration receipt remain atomic.
+The `packages` view reports package source/line/obligation totals, aggregate
+status, complete declared Rust target set, and any active owner. Test-only
+packages remain explicit rather than disappearing behind a missing source row.
 
 For a genuinely shared Go test file, add exact top-level test anchors to
 `difftests/corpus/coverage/go_test_domain_manifest.tsv`; do not create a

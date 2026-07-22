@@ -1,47 +1,89 @@
-# Frozen legacy feature-slice evidence
+# Whole-package manifests and frozen legacy evidence
 
-This directory contains schema-1 records from the earlier feature-slice
-workflow. They are frozen legacy evidence, not the ownership, dispatch, or
-completion unit for new Go-to-Rust work.
+The minimum Go-to-Rust transcreation unit is one complete upstream Go package.
+A Go package may map to several Rust crates for native boundaries and faster
+parallel builds, but it retains one umbrella claim, staging integration,
+completion decision, and receipt.
 
-The minimum transcreation unit is now one complete upstream Go package or
-module together with its complete original package test/support inventory.
-Read [`../../PARALLEL.md`](../../PARALLEL.md) for the package-based protocol.
+Read [`../../PARALLEL.md`](../../PARALLEL.md) for the full execution protocol.
 
-## What these records still mean
+## Schema 2: package manifests
 
-Existing schema-1 records may be used to locate:
+A schema-2 manifest owns complete Go packages atomically. At load and claim
+time, `scripts/work-unit-queue.py` expands each package to every checked
+production source, original test obligation, and content-addressed support
+artifact. Test and support paths belong to the nearest ancestor Go package;
+recursive `testdata/**` stays with the package above `testdata`, while a nested
+directory with its own non-testdata Go files is a separate package. Test-only
+packages are valid. External module packages fail closed until an equivalent
+support inventory exists.
+
+```toml
+schema = "2"
+slice = "planner-example-consumer"
+status = "ready" # inventory | ready | active | blocked | covered
+targets = ["tidb-planner", "tidb-exec"]
+rings = ["plan"] # exact obligation rings, or ["unassigned"] when testless
+consumer = "planner output consumed by executor result path"
+test_target = "planner_example_source"
+go_packages = ["pkg/planner/example"]
+module_packages = []
+depends_on = ["shared-datum-authority"]
+rust_paths = [
+  "rust/crates/tidb-planner/src/example.rs",
+  "rust/crates/tidb-exec/src/example.rs",
+]
+```
+
+`targets` is the complete Rust crate set, not a one-to-one translation of Go
+files. Write-disjoint subteams may work inside the umbrella package claim, but
+their branches merge only into the package staging branch and are never
+independently promoted or receipted.
+
+Schema-2 claim owners must equal their checked manifest names. Expanded source,
+test, content-addressed support, and module sets are immutable claim snapshots;
+inventory drift makes the claim stale, and `amend` is rejected. Dependencies
+may reference only covered schema-2 package manifests. Schema-1 records and
+leaf evidence rows are not package-completion signals.
+
+After the shared gate, `release --owner <slice> --integrated` requires schema-2
+status `covered`, an immutable integration receipt, and unchanged implementation
+and test inputs. `release --owner <slice> --abandon` is the explicit recovery
+path and asserts no integration.
+
+## Schema 1: frozen legacy evidence
+
+All schema-1 records in this directory predate package-complete transcreation.
+They remain useful only to locate:
 
 - exact Go source and test anchors previously inspected;
-- Rust paths and focused targets that contain partial implementation evidence;
+- Rust paths and focused targets containing partial implementation evidence;
 - dependencies, claims, integration receipts, and transfer history; and
 - bounded live or differential proofs already performed.
 
 Their state describes only the recorded feature slice. It does not prove that
-the owning Go package, module, or TiDB behavior is transcreated.
+the owning Go package, module, Rust crate, or TiDB behavior is transcreated.
+The exact accepted set is frozen in `legacy-schema1-slices.tsv`; a new
+schema-1 name fails closed.
 
-## Freeze rules
+Do not create, copy, extend, reclassify, claim, or dispatch a schema-1 record
+for new implementation. Do not infer package coverage from a legacy slice
+marked `covered`. Migration preserves its exact evidence and associates that
+evidence with the complete owning-package inventory without promoting status.
 
-- Do not create new schema-1 feature slices.
-- Do not copy an existing record as a template.
-- Do not add functions, files, branches, SQL shapes, or new package work to an
-  existing schema-1 record.
-- Do not infer package coverage from a slice marked `covered`.
-- Do not rewrite slice state, generated ledgers, or status while associating
-  legacy evidence with a package manifest.
+## Dispatch preflight
 
-Package migration must preserve the record and its exact evidence, then map
-that evidence into the complete owning-package inventory. Any unrepresented
-source, test, fixture, support program, generated artifact, or build metadata
-keeps the package incomplete.
+Before a package frontier is planned, the package owner and root steward:
 
-## Transitional tooling
+- freeze the complete Go source/test/support inventory and dependency edges;
+- declare every Rust target and mutable Rust path for the umbrella claim;
+- freeze interfaces and write-disjoint Rust subteam ownership;
+- inspect each target crate's test registration and shared manifest/lockfile
+  seams;
+- trace validation to the last observable consumer; and
+- run `python3 scripts/work-unit-queue.py check` before claiming and creating
+  worktrees.
 
-`scripts/work-unit-queue.py` and `scripts/slice-worktree.py` may continue to
-read these records for archaeology, validation, or closure of an already
-active legacy claim. They must not dispatch new feature-slice implementation.
-
-New dispatch waits for the checked package-manifest and package-DAG format
-specified by [`../../PARALLEL.md`](../../PARALLEL.md). Until that tooling lands,
-audit and group obligations by whole package; do not work around the gate by
-opening another schema-1 slice.
+Package subteams run focused tests. The integration steward batches cross-crate
+compilation, differential/live proofs, and the one expensive 12-job integration
+gate only after the complete package frontier freezes.

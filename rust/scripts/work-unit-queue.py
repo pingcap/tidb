@@ -35,11 +35,13 @@ RUST_ROOT = Path(
 )
 SOURCE_LEDGER = Path("difftests/corpus/coverage/go_source_inventory.tsv")
 TEST_LEDGER = Path("difftests/corpus/coverage/go_test_inventory.tsv")
+SUPPORT_LEDGER = Path("difftests/corpus/coverage/go_package_support_inventory.tsv")
 MODULE_SOURCE_LEDGER = Path("difftests/corpus/coverage/external_go_source_inventory.tsv")
 MODULE_TEST_LEDGER = Path("difftests/corpus/coverage/external_go_test_inventory.tsv")
 CLAIMS_DIR = Path("workstreams/claims")
 TRANSFERS_DIR = Path("difftests/corpus/coverage/evidence/transfers")
 SLICES_DIR = Path("workstreams/slices")
+LEGACY_SCHEMA1_SLICES = SLICES_DIR / "legacy-schema1-slices.tsv"
 CAMPAIGNS_DIR = Path("workstreams/campaigns")
 INTEGRATED_CAMPAIGN_MEMBERS = CAMPAIGNS_DIR / "integrated-members.tsv"
 INTEGRATION_RECEIPT = Path("workstreams/integration-receipt.json")
@@ -47,6 +49,7 @@ INTEGRATION_ATTEMPT = Path("workstreams/integration-attempt.json")
 OWNER_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 OPEN_STATUSES = {"UNTRIAGED", "PARTIAL", "BLOCKED"}
 SLICE_STATUSES = {"ready", "active", "partial", "covered", "blocked", "retired"}
+PACKAGE_SLICE_STATUSES = {"inventory", "ready", "active", "blocked", "covered"}
 EVIDENCE_MINIMUM_STATUSES = {"PARTIAL", "COVERED"}
 EVIDENCE_STATUS_RANK = {"UNTRIAGED": 0, "PARTIAL": 1, "COVERED": 2}
 CAMPAIGN_STATUSES = {"planned", "active", "integrated"}
@@ -188,10 +191,203 @@ def require_promoted_module_evidence(root: Path, claim: dict[str, object], statu
                 )
 
 
-def source_test_stem(path: str) -> tuple[str, str]:
-    item = Path(path)
-    stem = item.name.removesuffix("_test.go").removesuffix(".go")
-    return item.parent.as_posix(), stem
+def _normalized_package(value: str, *, qualified: bool) -> tuple[str | None, str]:
+    """Validates one non-recursive Go package selector."""
+    universe = None
+    package = value
+    if qualified:
+        universe, separator, package = value.partition("::")
+        if not separator or not universe or not OWNER_RE.fullmatch(universe):
+            raise ValueError(
+                f"invalid module package {value!r}; use MODULE::path/to/package"
+            )
+    candidate = Path(package)
+    if (
+        not package
+        or package.startswith("/")
+        or package.endswith("/")
+        or candidate.as_posix() != package
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+        or "testdata" in candidate.parts
+    ):
+        label = "module package" if qualified else "Go package"
+        raise ValueError(f"invalid {label} {value!r}")
+    return universe, package
+
+
+def _nearest_package(path: str, packages: set[str]) -> str | None:
+    """Assigns a test/support path to its nearest ancestor Go package."""
+    parent = Path(path).parent
+    while parent.as_posix() not in {"", "."}:
+        candidate = parent.as_posix()
+        if candidate in packages:
+            return candidate
+        parent = parent.parent
+    return None
+
+
+def _go_package_directories(
+    source_rows: dict[str, dict[str, object]],
+    test_rows: dict[str, dict[str, object]],
+) -> set[str]:
+    """Returns production and test-only Go package directories."""
+    packages = {
+        Path(path).parent.as_posix()
+        for path in source_rows
+        if "testdata" not in Path(path).parts
+    }
+    packages.update(
+        Path(str(row["path"])).parent.as_posix()
+        for row in test_rows.values()
+        if str(row["path"]).endswith(".go")
+        and str(row["kind"]).startswith("go_test")
+        and "testdata" not in Path(str(row["path"])).parts
+    )
+    return packages
+
+
+def _module_package_directories(
+    universe: str,
+    source_rows: dict[str, dict[str, str]],
+    test_rows: dict[str, dict[str, str]],
+) -> set[str]:
+    prefix = f"{universe}::"
+    packages = {
+        Path(anchor.removeprefix(prefix)).parent.as_posix()
+        for anchor in source_rows
+        if anchor.startswith(prefix)
+        and "testdata" not in Path(anchor.removeprefix(prefix)).parts
+    }
+    packages.update(
+        Path(anchor.removeprefix(prefix).rsplit(":", 2)[0]).parent.as_posix()
+        for anchor in test_rows
+        if anchor.startswith(prefix)
+        and "testdata"
+        not in Path(anchor.removeprefix(prefix).rsplit(":", 2)[0]).parts
+    )
+    return packages
+
+
+def load_support_rows(root: Path) -> dict[str, dict[str, str]]:
+    """Loads content-addressed package support anchors."""
+    rows: dict[str, dict[str, str]] = {}
+    for package, support_path, sha256 in read_tsv(root / SUPPORT_LEDGER, 3):
+        _, normalized = _normalized_package(package, qualified=False)
+        candidate = Path(support_path)
+        if (
+            not support_path
+            or support_path.startswith("/")
+            or candidate.as_posix() != support_path
+            or any(part in {"", ".", ".."} for part in candidate.parts)
+            or not candidate.is_relative_to(Path(normalized))
+        ):
+            raise ValueError(
+                f"{root / SUPPORT_LEDGER}: invalid support path {support_path!r} "
+                f"for package {package!r}"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise ValueError(
+                f"{root / SUPPORT_LEDGER}: invalid sha256 for {support_path}"
+            )
+        anchor = f"{support_path}@{sha256}"
+        if support_path in {row["path"] for row in rows.values()}:
+            raise ValueError(
+                f"{root / SUPPORT_LEDGER}: duplicate support path {support_path}"
+            )
+        rows[anchor] = {
+            "package": normalized,
+            "path": support_path,
+            "sha256": sha256,
+        }
+    return rows
+
+
+def expand_go_packages(
+    packages: list[str],
+    source_rows: dict[str, dict[str, object]],
+    test_rows: dict[str, dict[str, object]],
+    support_rows: dict[str, dict[str, str]],
+) -> tuple[list[str], list[str], list[str]]:
+    """Expands checked TiDB inventories without recursing into subpackages."""
+    known_packages = _go_package_directories(source_rows, test_rows)
+    sources: set[str] = set()
+    tests: set[str] = set()
+    supports: set[str] = set()
+    for raw_package in packages:
+        _, package = _normalized_package(raw_package, qualified=False)
+        package_sources = {
+            path
+            for path in source_rows
+            if _nearest_package(path, known_packages) == package
+        }
+        package_tests = {
+            anchor
+            for anchor, row in test_rows.items()
+            if _nearest_package(str(row["path"]), known_packages) == package
+        }
+        if not package_sources and not package_tests:
+            raise ValueError(f"Go package {package!r} has no checked inventory")
+        sources.update(package_sources)
+        tests.update(package_tests)
+        supports.update(
+            anchor
+            for anchor, row in support_rows.items()
+            if row["package"] == package
+        )
+    return sorted(sources), sorted(tests), sorted(supports)
+
+
+def expand_module_packages(
+    packages: list[str],
+    source_rows: dict[str, dict[str, str]],
+    test_rows: dict[str, dict[str, str]],
+) -> tuple[list[str], list[str]]:
+    """Expands module-qualified packages from the pinned external inventories."""
+    sources: set[str] = set()
+    tests: set[str] = set()
+    for raw_package in packages:
+        universe, package = _normalized_package(raw_package, qualified=True)
+        assert universe is not None
+        prefix = f"{universe}::"
+        known_packages = _module_package_directories(
+            universe, source_rows, test_rows
+        )
+        package_sources = {
+            anchor
+            for anchor in source_rows
+            if anchor.startswith(prefix)
+            and _nearest_package(anchor.removeprefix(prefix), known_packages)
+            == package
+        }
+        package_tests = {
+            anchor
+            for anchor, row in test_rows.items()
+            if anchor.startswith(prefix)
+            and _nearest_package(
+                anchor.removeprefix(prefix).rsplit(":", 2)[0], known_packages
+            )
+            == package
+        }
+        if not package_sources and not package_tests:
+            raise ValueError(f"module package {raw_package!r} has no checked inventory")
+        sources.update(package_sources)
+        tests.update(package_tests)
+    return sorted(sources), sorted(tests)
+
+
+def load_legacy_schema1_slices(root: Path) -> set[str]:
+    """Returns the frozen pre-package manifest registry."""
+    path = root / LEGACY_SCHEMA1_SLICES
+    if not path.is_file():
+        return set()
+    names: set[str] = set()
+    for (name,) in read_tsv(path, 1):
+        if not OWNER_RE.fullmatch(name):
+            raise ValueError(f"{path}: invalid legacy slice {name!r}")
+        if name in names:
+            raise ValueError(f"{path}: duplicate legacy slice {name}")
+        names.add(name)
+    return names
 
 
 def load_claims(root: Path) -> list[dict[str, object]]:
@@ -212,6 +408,9 @@ def load_claims(root: Path) -> list[dict[str, object]]:
 def claim_sources(claim: dict[str, object]) -> list[str]:
     """Returns the normalized source set for legacy and vertical-slice claims."""
     if claim.get("schema") == 1:
+        sources = claim.get("sources")
+        if isinstance(sources, list) and all(isinstance(item, str) for item in sources):
+            return sorted(set(sources))
         source = claim.get("source")
         return [source] if isinstance(source, str) else []
     sources = claim.get("sources")
@@ -227,20 +426,50 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
         return {}
     source_rows = {str(row["path"]): row for row in load_source_rows(root)}
     test_rows = {test_key(row): row for row in load_test_rows(root)}
+    module_source_rows = load_module_source_rows(root)
+    module_test_rows = load_module_test_rows(root)
+    support_rows = load_support_rows(root)
     known_sources = set(source_rows)
     known_tests = set(test_rows)
+    legacy_path = root / LEGACY_SCHEMA1_SLICES
+    legacy_slices = load_legacy_schema1_slices(root)
+    if not legacy_path.is_file():
+        raise ValueError(
+            f"{legacy_path}: missing frozen schema-1 slice registry"
+        )
     records: dict[str, dict[str, object]] = {}
-    required_strings = ("slice", "status", "target", "ring", "consumer", "test_target")
-    required_lists = ("go_sources", "go_tests", "depends_on", "rust_paths")
+    required_strings = ("slice", "status", "consumer", "test_target")
+    common_lists = ("depends_on", "rust_paths")
     for path in sorted(directory.glob("*.toml")):
         with path.open("rb") as source:
             record = tomllib.load(source)
-        if record.get("schema") != "1":
-            raise ValueError(f"{path}: expected slice schema 1")
+        schema = record.get("schema")
+        if schema not in {"1", "2"}:
+            raise ValueError(f"{path}: expected slice schema 1 or 2")
+        common_fields = {
+            "schema",
+            "slice",
+            "status",
+            "consumer",
+            "test_target",
+            "depends_on",
+            "evidence_prerequisites",
+            "support_anchors",
+            "blocked_by",
+            "rust_paths",
+        }
+        schema_fields = (
+            {"target", "ring", "go_sources", "go_tests", "module_sources", "module_tests"}
+            if schema == "1"
+            else {"targets", "rings", "go_packages", "module_packages"}
+        )
+        unknown_fields = sorted(set(record) - common_fields - schema_fields)
+        if unknown_fields:
+            raise ValueError(f"{path}: unknown schema-{schema} field {unknown_fields[0]}")
         for field in required_strings:
             if not isinstance(record.get(field), str) or not record[field]:
                 raise ValueError(f"{path}: {field} must be a non-empty string")
-        for field in required_lists:
+        for field in common_lists:
             if not isinstance(record.get(field), list) or not all(
                 isinstance(item, str) and item for item in record[field]
             ):
@@ -250,47 +479,130 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
             raise ValueError(f"{path}: invalid slice name or filename")
         if name in records:
             raise ValueError(f"{path}: duplicate slice {name}")
-        if record["status"] not in SLICE_STATUSES:
+        allowed_statuses = SLICE_STATUSES if schema == "1" else PACKAGE_SLICE_STATUSES
+        if record["status"] not in allowed_statuses:
             raise ValueError(f"{path}: invalid status {record['status']!r}")
-        for field in ("module_sources", "module_tests"):
-            value = record.get(field, [])
-            if not isinstance(value, list) or not all(
-                isinstance(item, str) and item for item in value
+        if schema == "1":
+            if name not in legacy_slices:
+                raise ValueError(
+                    f"{path}: schema-1 slice is not in frozen legacy registry "
+                    f"{legacy_path}"
+                )
+            for field in ("go_sources", "go_tests"):
+                value = record.get(field)
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str) and item for item in value
+                ):
+                    raise ValueError(f"{path}: {field} must be a string array")
+            for field in ("module_sources", "module_tests"):
+                value = record.get(field, [])
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str) and item for item in value
+                ):
+                    raise ValueError(f"{path}: {field} must be a string array")
+                record[field] = sorted(set(value))
+            sources = sorted(set(record["go_sources"]))
+            tests = sorted({parse_test_anchor(item) for item in record["go_tests"]})
+            module_sources = list(record["module_sources"])
+            module_tests = sorted(
+                {parse_module_test_anchor(item) for item in record["module_tests"]}
+            )
+            record["go_packages"] = []
+            record["module_packages"] = []
+            if not isinstance(record.get("target"), str) or not record["target"]:
+                raise ValueError(f"{path}: target must be a non-empty string")
+            record["targets"] = [record["target"]]
+            record["rust_targets"] = [record["target"]]
+            record["source_targets"] = [record["target"]]
+            if not isinstance(record.get("ring"), str) or not record["ring"]:
+                raise ValueError(f"{path}: ring must be a non-empty string")
+            record["rings"] = [record["ring"]]
+        else:
+            forbidden = sorted(
+                field
+                for field in ("go_sources", "go_tests", "module_sources", "module_tests")
+                if field in record
+            )
+            if forbidden:
+                raise ValueError(
+                    f"{path}: schema-2 package slice cannot declare flattened "
+                    f"anchors: {forbidden[0]}"
+                )
+            for field in (
+                "targets",
+                "rings",
+                "go_packages",
+                "module_packages",
             ):
-                raise ValueError(f"{path}: {field} must be a string array")
-            record[field] = sorted(set(value))
-        sources = sorted(set(record["go_sources"]))
-        if not sources and not record["module_sources"]:
+                value = record.get(field, [])
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str) and item for item in value
+                ):
+                    raise ValueError(f"{path}: {field} must be a string array")
+                record[field] = sorted(set(value))
+            if not record["targets"] or not all(
+                OWNER_RE.fullmatch(item) for item in record["targets"]
+            ):
+                raise ValueError(
+                    f"{path}: targets must contain valid Rust crate targets"
+                )
+            if not record["go_packages"] and not record["module_packages"]:
+                raise ValueError(
+                    f"{path}: schema-2 slice must own at least one Go or module package"
+                )
+            if record["module_packages"]:
+                raise ValueError(
+                    f"{path}: external package support inventory is unavailable; "
+                    "schema-2 module_packages fail closed"
+                )
+            sources, tests, supports = expand_go_packages(
+                list(record["go_packages"]), source_rows, test_rows, support_rows
+            )
+            module_sources, module_tests = expand_module_packages(
+                list(record["module_packages"]), module_source_rows, module_test_rows
+            )
+            checked_targets = sorted(
+                {str(source_rows[source]["target"]) for source in sources}
+            )
+            record["source_targets"] = checked_targets
+            checked_rings = sorted({str(test_rows[test]["ring"]) for test in tests})
+            expected_rings = checked_rings or ["unassigned"]
+            if record["rings"] != expected_rings:
+                raise ValueError(
+                    f"{path}: schema-2 rings must exactly match the checked package "
+                    f"obligation rings; expected {expected_rings}, found "
+                    f"{record['rings']}"
+                )
+            record["rust_targets"] = list(record["targets"])
+            record["target"] = ",".join(record["targets"])
+            record["ring"] = ",".join(record["rings"])
+        if schema == "1":
+            supports = []
+        if not sources and not tests and not module_sources and not module_tests:
             raise ValueError(
-                f"{path}: vertical slice must own at least one Go or module source"
+                f"{path}: vertical slice must own checked Go or module inventory"
             )
         unknown_sources = sorted(set(sources) - known_sources)
         if unknown_sources:
             raise ValueError(f"{path}: unknown source anchor {unknown_sources[0]}")
-        tests = sorted({parse_test_anchor(item) for item in record["go_tests"]})
         unknown_tests = sorted(set(tests) - known_tests)
         if unknown_tests:
             raise ValueError(f"{path}: unknown test anchor {unknown_tests[0]}")
-        unknown_module_sources = sorted(
-            set(record["module_sources"]) - load_module_source_anchors(root)
-        )
+        unknown_module_sources = sorted(set(module_sources) - set(module_source_rows))
         if unknown_module_sources:
             raise ValueError(
                 f"{path}: unknown qualified module source anchor {unknown_module_sources[0]}"
             )
-        normalized_module_tests = sorted(
-            {parse_module_test_anchor(item) for item in record["module_tests"]}
-        )
-        unknown_module_tests = sorted(
-            set(normalized_module_tests) - load_module_test_anchors(root)
-        )
+        unknown_module_tests = sorted(set(module_tests) - set(module_test_rows))
         if unknown_module_tests:
             raise ValueError(
                 f"{path}: unknown qualified module test anchor {unknown_module_tests[0]}"
             )
         record["go_sources"] = sources
         record["go_tests"] = tests
-        record["module_tests"] = normalized_module_tests
+        record["go_supports"] = supports
+        record["module_sources"] = module_sources
+        record["module_tests"] = module_tests
         prerequisites = record.get("evidence_prerequisites", [])
         if not isinstance(prerequisites, list):
             raise ValueError(f"{path}: evidence_prerequisites must be an array of tables")
@@ -346,8 +658,27 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                 }
             )
         record["evidence_prerequisites"] = normalized_prerequisites
+        if schema == "2" and normalized_prerequisites:
+            raise ValueError(
+                f"{path}: schema-2 package slices cannot use legacy evidence_prerequisites"
+            )
         record["_path"] = path
         records[name] = record
+
+    if legacy_path.is_file():
+        stale_legacy = sorted(legacy_slices - set(records))
+        if stale_legacy:
+            raise ValueError(
+                f"{legacy_path}: frozen legacy slice has no manifest: {stale_legacy[0]}"
+            )
+        nonlegacy_schema = sorted(
+            name for name in legacy_slices if records[name]["schema"] != "1"
+        )
+        if nonlegacy_schema:
+            raise ValueError(
+                f"{legacy_path}: schema-2 slice cannot be in legacy registry: "
+                f"{nonlegacy_schema[0]}"
+            )
 
     for name, record in records.items():
         for dependency in record["depends_on"]:
@@ -355,6 +686,11 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                 raise ValueError(f"{record['_path']}: slice cannot depend on itself")
             if dependency not in records:
                 raise ValueError(f"{record['_path']}: unknown dependency {dependency}")
+            if record["schema"] == "2" and records[dependency]["schema"] != "2":
+                raise ValueError(
+                    f"{record['_path']}: schema-2 package slice dependency "
+                    f"{dependency} must also use schema 2"
+                )
 
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -445,6 +781,7 @@ def load_campaigns(
 
         seen_sources: dict[str, str] = {}
         seen_tests: dict[str, str] = {}
+        seen_supports: dict[str, str] = {}
         seen_module_sources: dict[str, str] = {}
         seen_module_tests: dict[str, str] = {}
         seen_rust_paths: dict[str, str] = {}
@@ -453,6 +790,7 @@ def load_campaigns(
             for label, values, seen in (
                 ("source", slice_record["go_sources"], seen_sources),
                 ("test", slice_record["go_tests"], seen_tests),
+                ("support", slice_record["go_supports"], seen_supports),
                 ("module source", slice_record["module_sources"], seen_module_sources),
                 ("module test", slice_record["module_tests"], seen_module_tests),
                 ("Rust path", slice_record["rust_paths"], seen_rust_paths),
@@ -468,22 +806,22 @@ def load_campaigns(
             unregistered_targets: dict[str, set[str]] = {}
             for member in members:
                 slice_record = slices[member]
-                target = str(slice_record["target"])
-                cargo_path = root / "crates" / target / "Cargo.toml"
-                if not cargo_path.is_file():
-                    continue
-                with cargo_path.open("rb") as cargo_source:
-                    cargo = tomllib.load(cargo_source)
-                if cargo.get("package", {}).get("autotests", True) is not False:
-                    continue
-                registered = {
-                    str(test["name"])
-                    for test in cargo.get("test", [])
-                    if isinstance(test, dict) and isinstance(test.get("name"), str)
-                }
-                test_target = str(slice_record["test_target"])
-                if test_target not in registered:
-                    unregistered_targets.setdefault(target, set()).add(test_target)
+                for target in slice_record["rust_targets"]:
+                    cargo_path = root / "crates" / target / "Cargo.toml"
+                    if not cargo_path.is_file():
+                        continue
+                    with cargo_path.open("rb") as cargo_source:
+                        cargo = tomllib.load(cargo_source)
+                    if cargo.get("package", {}).get("autotests", True) is not False:
+                        continue
+                    registered = {
+                        str(test["name"])
+                        for test in cargo.get("test", [])
+                        if isinstance(test, dict) and isinstance(test.get("name"), str)
+                    }
+                    test_target = str(slice_record["test_target"])
+                    if test_target not in registered:
+                        unregistered_targets.setdefault(str(target), set()).add(test_target)
             for target, test_targets in sorted(unregistered_targets.items()):
                 cargo_rust_path = f"rust/crates/{target}/Cargo.toml"
                 if cargo_rust_path not in seen_rust_paths:
@@ -700,6 +1038,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
     tests = {test_key(row) for row in load_test_rows(root)}
     seen_sources: dict[str, str] = {}
     seen_tests: dict[str, str] = {}
+    seen_supports: dict[str, str] = {}
     seen_module_sources: dict[str, str] = {}
     seen_module_tests: dict[str, str] = {}
     seen_rust_paths: dict[str, str] = {}
@@ -710,6 +1049,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         schema = claim.get("schema")
         claimed_sources = claim_sources(claim)
         claimed_tests = claim.get("tests")
+        claimed_supports = claim.get("supports", [])
         claimed_module_sources = claim.get("module_sources", [])
         claimed_module_tests = claim.get("module_tests", [])
         if schema not in {1, 2} or not isinstance(owner, str):
@@ -723,6 +1063,11 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
             isinstance(item, str) for item in claimed_tests
         ):
             raise ValueError(f"{path}: tests must be a string array")
+        if not isinstance(claimed_supports, list) or not all(
+            isinstance(item, str) for item in claimed_supports
+        ):
+            raise ValueError(f"{path}: supports must be a string array")
+        claimed_supports = sorted(set(claimed_supports))
         if not isinstance(claimed_module_sources, list) or not all(
             isinstance(item, str) for item in claimed_module_sources
         ):
@@ -739,17 +1084,32 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         unknown_module_tests = sorted(set(claimed_module_tests) - load_module_test_anchors(root))
         if unknown_module_tests:
             raise ValueError(f"{path}: stale qualified module test anchor {unknown_module_tests[0]!r}")
-        if not claimed_sources and not claimed_module_sources:
-            raise ValueError(f"{path}: claim must own at least one Go or module source")
-        slice_record = slices.get(owner) if schema == 2 else None
-        if slice_record is not None:
+        if (
+            not claimed_sources
+            and not claimed_tests
+            and not claimed_supports
+            and not claimed_module_sources
+            and not claimed_module_tests
+        ):
+            raise ValueError(f"{path}: claim must own checked Go or module inventory")
+        slice_record = slices.get(owner)
+        if schema == 2 and (
+            slice_record is None or slice_record["schema"] != "2"
+        ):
+            raise ValueError(
+                f"{path}: schema-2 claim requires a matching schema-2 package slice"
+            )
+        if schema == 2:
+            assert slice_record is not None
             expected_sources = list(slice_record["go_sources"])
             expected_tests = list(slice_record["go_tests"])
+            expected_supports = list(slice_record["go_supports"])
             expected_module_sources = list(slice_record["module_sources"])
             expected_module_tests = list(slice_record["module_tests"])
             if (
                 claimed_sources != expected_sources
                 or sorted(claimed_tests) != expected_tests
+                or claimed_supports != expected_supports
                 or claimed_module_sources != expected_module_sources
                 or claimed_module_tests != expected_module_tests
             ):
@@ -759,6 +1119,8 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     ("extra sources", sorted(set(claimed_sources) - set(expected_sources))),
                     ("missing tests", sorted(set(expected_tests) - set(claimed_tests))),
                     ("extra tests", sorted(set(claimed_tests) - set(expected_tests))),
+                    ("missing supports", sorted(set(expected_supports) - set(claimed_supports))),
+                    ("extra supports", sorted(set(claimed_supports) - set(expected_supports))),
                     ("missing module sources", sorted(set(expected_module_sources) - set(claimed_module_sources))),
                     ("extra module sources", sorted(set(claimed_module_sources) - set(expected_module_sources))),
                     ("missing module tests", sorted(set(expected_module_tests) - set(claimed_module_tests))),
@@ -778,9 +1140,19 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                         f"{seen_rust_paths[rust_path]} and {owner}"
                     )
                 seen_rust_paths[rust_path] = owner
+        elif slice_record is not None:
+            claim["_rust_paths"] = list(slice_record["rust_paths"])
+            for rust_path in claim["_rust_paths"]:
+                if rust_path in seen_rust_paths:
+                    raise ValueError(
+                        f"Rust path {rust_path} overlaps slice claims "
+                        f"{seen_rust_paths[rust_path]} and {owner}"
+                    )
+                seen_rust_paths[rust_path] = owner
         else:
             claim["_rust_paths"] = []
         claim["_sources"] = claimed_sources
+        claim["_supports"] = claimed_supports
         claim["_module_sources"] = claimed_module_sources
         claim["_module_tests"] = claimed_module_tests
         for source in claimed_sources:
@@ -797,6 +1169,12 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     f"test {item} overlaps claims {seen_tests[item]} and {owner}"
                 )
             seen_tests[item] = owner
+        for item in claimed_supports:
+            if item in seen_supports:
+                raise ValueError(
+                    f"support {item} overlaps claims {seen_supports[item]} and {owner}"
+                )
+            seen_supports[item] = owner
         for item in claimed_module_sources:
             if item in seen_module_sources:
                 raise ValueError(
@@ -1099,6 +1477,7 @@ def claim(
     tests: list[str],
     module_sources: list[str] | None = None,
     module_tests: list[str] | None = None,
+    supports: list[str] | None = None,
 ) -> None:
     if not OWNER_RE.fullmatch(owner):
         raise ValueError("owner must use lowercase letters, digits, '.', or '-'")
@@ -1108,11 +1487,32 @@ def claim(
     normalized_module_tests = sorted(
         {parse_module_test_anchor(item) for item in (module_tests or [])}
     )
-    if not normalized_sources and not normalized_module_sources:
-        raise ValueError("claim requires at least one Go or module source")
+    normalized_supports = sorted(set(supports or []))
+    if (
+        not normalized_sources
+        and not normalized_tests
+        and not normalized_supports
+        and not normalized_module_sources
+        and not normalized_module_tests
+    ):
+        raise ValueError("claim requires checked Go or module inventory")
     with claim_lock(root):
         claims = validate_claims(root)
         new_slice = load_slices(root).get(owner)
+        package_slice = (
+            new_slice if new_slice is not None and new_slice["schema"] == "2" else None
+        )
+        if package_slice is not None and (
+            normalized_sources != list(package_slice["go_sources"])
+            or normalized_tests != list(package_slice["go_tests"])
+            or normalized_supports != list(package_slice["go_supports"])
+            or normalized_module_sources != list(package_slice["module_sources"])
+            or normalized_module_tests != list(package_slice["module_tests"])
+        ):
+            raise ValueError(
+                f"schema-2 package claim for {owner} must exactly match its "
+                "expanded package inventory; use claim-slice"
+            )
         new_rust_paths = set(new_slice["rust_paths"]) if new_slice is not None else set()
         for active in claims:
             if active["owner"] == owner:
@@ -1125,6 +1525,13 @@ def claim(
             overlap = sorted(set(active["tests"]) & set(normalized_tests))
             if overlap:
                 raise ValueError(f"test {overlap[0]} is already claimed by {active['owner']}")
+            support_overlap = sorted(
+                set(active["_supports"]) & set(normalized_supports)
+            )
+            if support_overlap:
+                raise ValueError(
+                    f"support {support_overlap[0]} is already claimed by {active['owner']}"
+                )
             module_source_overlap = sorted(
                 set(active["_module_sources"]) & set(normalized_module_sources)
             )
@@ -1164,10 +1571,11 @@ def claim(
             raise ValueError(f"unknown qualified module test anchor {unknown_module_tests[0]}")
         destination = root / CLAIMS_DIR / f"{owner}.claim.json"
         payload = {
-            "schema": 2,
+            "schema": 2 if package_slice is not None else 1,
             "owner": owner,
             "sources": normalized_sources,
             "tests": normalized_tests,
+            "supports": normalized_supports,
             "module_sources": normalized_module_sources,
             "module_tests": normalized_module_tests,
         }
@@ -1195,9 +1603,14 @@ def release(root: Path, owner: str, integrated: bool, abandon: bool) -> None:
                 raise ValueError(
                     f"integrated release requires a checked slice named {owner}"
                 )
-            if record["status"] not in {"partial", "covered"}:
+            releasable_statuses = (
+                {"covered"} if record["schema"] == "2" else {"partial", "covered"}
+            )
+            if record["status"] not in releasable_statuses:
                 raise ValueError(
-                    f"integrated slice {owner} must be partial or covered before release; "
+                    f"integrated slice {owner} must be "
+                    f"{'covered' if record['schema'] == '2' else 'partial or covered'} "
+                    "before release; "
                     f"found {record['status']}"
                 )
             require_promoted_module_evidence(root, current, str(record["status"]))
@@ -1221,6 +1634,11 @@ def amend(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
         current = next((item for item in claims if item["owner"] == owner), None)
         if current is None:
             raise ValueError(f"owner {owner} has no active claim")
+        if current["schema"] == 2:
+            raise ValueError(
+                "schema-2 package claims are immutable expanded snapshots; "
+                "edit the package manifest and reclaim instead"
+            )
         known_sources = {str(row["path"]) for row in load_source_rows(root)}
         unknown_sources = sorted(source_additions - known_sources)
         if unknown_sources:
@@ -1243,10 +1661,11 @@ def amend(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
                     f"test {test_overlap[0]} is already claimed by {active['owner']}"
                 )
         payload = {
-            "schema": 2,
+            "schema": 1,
             "owner": owner,
             "sources": sorted(set(current["_sources"]) | source_additions),
             "tests": sorted(set(current["tests"]) | test_additions),
+            "supports": list(current["_supports"]),
             "module_sources": list(current["_module_sources"]),
             "module_tests": list(current["_module_tests"]),
         }
@@ -1266,47 +1685,247 @@ def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
     claims = validate_claims(root)
     claimed_sources = {source for item in claims for source in item["_sources"]}
     claimed_tests = {test for item in claims for test in item["tests"]}
-    test_rows = [
-        row
-        for row in load_test_rows(root)
-        if row["ring"] == ring
-        and row["status"] in OPEN_STATUSES
-        and test_key(row) not in claimed_tests
-    ]
+    claimed_supports = {support for item in claims for support in item["_supports"]}
+    source_rows = load_source_rows(root)
+    test_rows = load_test_rows(root)
+    support_rows = load_support_rows(root)
+    source_by_path = {str(row["path"]): row for row in source_rows}
+    test_by_anchor = {test_key(row): row for row in test_rows}
+    known_packages = _go_package_directories(source_by_path, test_by_anchor)
+    support_by_package = {
+        package: sorted(
+            anchor
+            for anchor, row in support_rows.items()
+            if row["package"] == package
+        )
+        for package in known_packages
+    }
+    packages = sorted(known_packages)
     candidates = []
-    for source in load_source_rows(root):
+    for package in packages:
+        package_sources = sorted(
+            str(source["path"])
+            for source in source_rows
+            if _nearest_package(str(source["path"]), known_packages) == package
+        )
+        package_tests = sorted(
+            test_key(row)
+            for row in test_rows
+            if _nearest_package(str(row["path"]), known_packages) == package
+        )
+        package_supports = support_by_package[package]
+        package_source_rows = [source_by_path[path] for path in package_sources]
+        package_targets = sorted(
+            {str(source["target"]) for source in package_source_rows}
+        )
+        # Test-only packages have no checked target mapping, so they stay
+        # visible as unassigned in every target-filtered queue. Hiding them
+        # would make their original obligations impossible to dispatch.
+        if package_targets and target not in package_targets:
+            continue
         if (
-            source["target"] != target
-            or source["status"] not in OPEN_STATUSES
-            or source["path"] in claimed_sources
+            set(package_sources) & claimed_sources
+            or set(package_tests) & claimed_tests
+            or set(package_supports) & claimed_supports
         ):
             continue
-        directory, stem = source_test_stem(str(source["path"]))
-        matches = [
+        open_sources = [
+            source
+            for source in package_source_rows
+            if source["status"] in OPEN_STATUSES
+        ]
+        open_ring_tests = [
             row
             for row in test_rows
-            if source_test_stem(str(row["path"])) == (directory, stem)
+            if test_key(row) in package_tests
+            and row["ring"] == ring
+            and row["status"] in OPEN_STATUSES
         ]
-        keys = sorted(test_key(row) for row in matches)
+        open_tests = [
+            row
+            for row in test_rows
+            if test_key(row) in package_tests and row["status"] in OPEN_STATUSES
+        ]
+        if not open_sources and not open_tests and not package_supports:
+            continue
         priority = (
-            (2 if source["status"] == "UNTRIAGED" else 1) * 1_000_000
-            + len(keys) * 10_000
-            + min(int(source["lines"]), 9_999)
+            sum(2 if source["status"] == "UNTRIAGED" else 1 for source in open_sources)
+            * 1_000_000
+            + len(open_ring_tests) * 10_000
+            + min(sum(int(source["lines"]) for source in open_sources), 9_999)
         )
         family_id = hashlib.sha256(
-            f"{target}\0{ring}\0{source['path']}".encode()
+            f"{target}\0{ring}\0{package}".encode()
         ).hexdigest()[:16]
-        candidates.append((priority, str(source["path"]), family_id, source, keys))
+        candidates.append(
+            (
+                priority,
+                package,
+                family_id,
+                package_sources,
+                package_tests,
+                package_supports,
+                len(open_sources),
+                len(open_tests),
+                len(open_ring_tests),
+                package_targets,
+            )
+        )
     candidates.sort(key=lambda item: (-item[0], item[1]))
     print(
-        "family_id\ttarget\tring\tsource_path\tsource_status\tsource_lines\t"
-        "match_kind\tcandidate_test_count\tcandidate_tests\tpriority"
+        "family_id\ttargets\tpriority_ring\tgo_package\tproduction_source_count\t"
+        "original_obligation_count\tsupport_artifact_count\topen_source_count\topen_obligation_count\t"
+        "open_priority_ring_obligation_count\tpriority"
     )
-    for priority, _, family_id, source, keys in candidates[:limit]:
+    for (
+        priority,
+        package,
+        family_id,
+        package_sources,
+        package_tests,
+        package_supports,
+        open_source_count,
+        open_test_count,
+        open_ring_test_count,
+        package_targets,
+    ) in candidates[:limit]:
         print(
-            f"{family_id}\t{target}\t{ring}\t{source['path']}\t{source['status']}\t"
-            f"{source['lines']}\tsame-directory-stem-candidate\t{len(keys)}\t"
-            f"{','.join(keys) if keys else '-'}\t{priority}"
+            f"{family_id}\t{','.join(package_targets) if package_targets else '-'}\t"
+            f"{ring}\t{package}\t{len(package_sources)}\t{len(package_tests)}\t"
+            f"{len(package_supports)}\t{open_source_count}\t{open_test_count}\t"
+            f"{open_ring_test_count}\t{priority}"
+        )
+
+
+def _aggregate_status(statuses: set[str]) -> str:
+    if "BLOCKED" in statuses:
+        return "BLOCKED"
+    if "UNTRIAGED" in statuses:
+        return "UNTRIAGED"
+    if "PARTIAL" in statuses:
+        return "PARTIAL"
+    return "COVERED"
+
+
+def package_inventory(root: Path, target: str | None, module: str | None) -> None:
+    """Prints exact package-sized dispatch units from checked inventories."""
+    claims = validate_claims(root)
+    slices = load_slices(root)
+    source_rows = load_source_rows(root)
+    test_rows = load_test_rows(root)
+    support_rows = load_support_rows(root)
+    print(
+        "package\ttarget\tproduction_source_count\tproduction_lines\t"
+        "original_obligation_count\taggregate_status\tactive_owner"
+    )
+    if module is None:
+        source_by_path = {str(row["path"]): row for row in source_rows}
+        test_by_anchor = {test_key(row): row for row in test_rows}
+        known_packages = _go_package_directories(source_by_path, test_by_anchor)
+        declared_targets: dict[str, set[str]] = {}
+        for record in slices.values():
+            if record["schema"] != "2":
+                continue
+            for package in record["go_packages"]:
+                declared_targets.setdefault(str(package), set()).update(
+                    str(item) for item in record["targets"]
+                )
+        support_by_package = {
+            package: sorted(
+                anchor
+                for anchor, row in support_rows.items()
+                if row["package"] == package
+            )
+            for package in known_packages
+        }
+        for package in sorted(known_packages):
+            package_sources = [
+                row
+                for row in source_rows
+                if _nearest_package(str(row["path"]), known_packages) == package
+            ]
+            source_targets = sorted(
+                {str(row["target"]) for row in package_sources}
+            )
+            package_targets = sorted(declared_targets.get(package, set()))
+            visible_targets = package_targets or source_targets
+            if target is not None and target not in visible_targets:
+                continue
+            package_tests = [
+                row
+                for row in test_rows
+                if _nearest_package(str(row["path"]), known_packages) == package
+            ]
+            package_supports = support_by_package[package]
+            source_anchors = {str(row["path"]) for row in package_sources}
+            test_anchors = {test_key(row) for row in package_tests}
+            owners = sorted(
+                str(claim["owner"])
+                for claim in claims
+                if source_anchors & set(claim["_sources"])
+                or test_anchors & set(claim["tests"])
+                or set(package_supports) & set(claim["_supports"])
+            )
+            statuses = {
+                str(row["status"]) for row in [*package_sources, *package_tests]
+            }
+            if package_supports:
+                statuses.add("UNTRIAGED")
+            print(
+                f"{package}\t{','.join(visible_targets) if visible_targets else '-'}\t"
+                f"{len(package_sources)}\t"
+                f"{sum(int(row['lines']) for row in package_sources)}\t"
+                f"{len(package_tests) + len(package_supports)}\t"
+                f"{_aggregate_status(statuses)}\t"
+                f"{','.join(owners) if owners else '-'}"
+            )
+        return
+
+    if not OWNER_RE.fullmatch(module):
+        raise ValueError("--module must name one checked external universe")
+    prefix = f"{module}::"
+    module_sources = load_module_source_rows(root)
+    module_tests = load_module_test_rows(root)
+    source_inventory = {
+        f"{universe}::{path}": {"lines": int(lines), "status": status}
+        for universe, path, lines, _sha, status, _owner, _artifact, _note in read_tsv(
+            root / MODULE_SOURCE_LEDGER, 8
+        )
+    }
+    known_packages = _module_package_directories(module, module_sources, module_tests)
+    if not known_packages:
+        raise ValueError(f"unknown external module {module}")
+    for package in sorted(known_packages):
+        package_sources = sorted(
+            anchor
+            for anchor in module_sources
+            if anchor.startswith(prefix)
+            and _nearest_package(anchor.removeprefix(prefix), known_packages)
+            == package
+        )
+        package_tests = sorted(
+            anchor
+            for anchor in module_tests
+            if anchor.startswith(prefix)
+            and _nearest_package(
+                anchor.removeprefix(prefix).rsplit(":", 2)[0], known_packages
+            )
+            == package
+        )
+        owners = sorted(
+            str(claim["owner"])
+            for claim in claims
+            if set(package_sources) & set(claim["_module_sources"])
+            or set(package_tests) & set(claim["_module_tests"])
+        )
+        statuses = {
+            module_sources[anchor]["status"] for anchor in package_sources
+        } | {module_tests[anchor]["status"] for anchor in package_tests}
+        print(
+            f"{module}::{package}\texternal:{module}\t{len(package_sources)}\t"
+            f"{sum(source_inventory[anchor]['lines'] for anchor in package_sources)}\t"
+            f"{len(package_tests)}\t{_aggregate_status(statuses)}\t"
+            f"{','.join(owners) if owners else '-'}"
         )
 
 
@@ -1317,28 +1936,41 @@ def ready_slices(root: Path, target: str | None, ring: str | None) -> None:
     claimed_module_sources = {
         source for item in claims for source in item["_module_sources"]
     }
+    claimed_tests = {test for item in claims for test in item["tests"]}
+    claimed_supports = {support for item in claims for support in item["_supports"]}
+    claimed_module_tests = {
+        test for item in claims for test in item["_module_tests"]
+    }
     claimed_rust_paths = {path for item in claims for path in item["_rust_paths"]}
     print(
-        "slice\tstatus\ttarget\tring\tconsumer\tsource_count\ttest_count\t"
+        "slice\tstatus\ttargets\tring\tconsumer\tsource_count\ttest_count\t"
+        "support_count\t"
         "test_target\tdepends_on"
     )
     for name, record in sorted(records.items()):
         if not slice_is_ready(record, records):
             continue
-        if target is not None and record["target"] != target:
+        if target is not None and target not in record["rust_targets"]:
             continue
-        if ring is not None and record["ring"] != ring:
+        if ring is not None and ring not in record["rings"]:
             continue
         if set(record["go_sources"]) & claimed_sources:
             continue
         if set(record["module_sources"]) & claimed_module_sources:
+            continue
+        if set(record["go_tests"]) & claimed_tests:
+            continue
+        if set(record["go_supports"]) & claimed_supports:
+            continue
+        if set(record["module_tests"]) & claimed_module_tests:
             continue
         if set(record["rust_paths"]) & claimed_rust_paths:
             continue
         print(
             f"{name}\t{record['status']}\t{record['target']}\t{record['ring']}\t"
             f"{record['consumer']}\t{len(record['go_sources']) + len(record['module_sources'])}\t"
-            f"{len(record['go_tests']) + len(record['module_tests'])}\t{record['test_target']}\t"
+            f"{len(record['go_tests']) + len(record['module_tests'])}\t"
+            f"{len(record['go_supports'])}\t{record['test_target']}\t"
             f"{','.join(record['depends_on']) if record['depends_on'] else '-'}"
         )
 
@@ -1348,6 +1980,10 @@ def claim_slice(root: Path, owner: str, slice_name: str) -> None:
     record = records.get(slice_name)
     if record is None:
         raise ValueError(f"unknown vertical slice {slice_name}")
+    if record["schema"] == "2" and owner != slice_name:
+        raise ValueError(
+            "schema-2 package slice claim owner must equal the checked slice name"
+        )
     if not slice_is_ready(record, records):
         unmet = unmet_slice_prerequisites(record, records)
         detail = f"; unmet prerequisites: {'; '.join(unmet)}" if unmet else ""
@@ -1359,6 +1995,7 @@ def claim_slice(root: Path, owner: str, slice_name: str) -> None:
         list(record["go_tests"]),
         list(record["module_sources"]),
         list(record["module_tests"]),
+        list(record["go_supports"]),
     )
 
 
@@ -1369,6 +2006,10 @@ def parser() -> argparse.ArgumentParser:
     queue_command.add_argument("--target", required=True)
     queue_command.add_argument("--ring", required=True)
     queue_command.add_argument("--limit", type=int)
+    packages_command = subcommands.add_parser("packages")
+    package_filter = packages_command.add_mutually_exclusive_group()
+    package_filter.add_argument("--target")
+    package_filter.add_argument("--module")
     ready_command = subcommands.add_parser("ready")
     ready_command.add_argument("--target")
     ready_command.add_argument("--ring")
@@ -1410,6 +2051,8 @@ def main() -> int:
             if arguments.limit is not None and arguments.limit < 1:
                 raise ValueError("--limit must be positive")
             queue(RUST_ROOT, arguments.target, arguments.ring, arguments.limit)
+        elif arguments.command == "packages":
+            package_inventory(RUST_ROOT, arguments.target, arguments.module)
         elif arguments.command == "ready":
             ready_slices(RUST_ROOT, arguments.target, arguments.ring)
         elif arguments.command == "claim-slice":
@@ -1441,6 +2084,16 @@ def main() -> int:
             campaigns = load_campaigns(RUST_ROOT, slices)
             claims = validate_claims(RUST_ROOT)
             claimed_sources = {source for item in claims for source in item["_sources"]}
+            claimed_tests = {test for item in claims for test in item["tests"]}
+            claimed_supports = {
+                support for item in claims for support in item["_supports"]
+            }
+            claimed_module_sources = {
+                source for item in claims for source in item["_module_sources"]
+            }
+            claimed_module_tests = {
+                test for item in claims for test in item["_module_tests"]
+            }
             claimed_rust_paths = {
                 path for item in claims for path in item["_rust_paths"]
             }
@@ -1449,10 +2102,10 @@ def main() -> int:
                 for record in slices.values()
                 if slice_is_ready(record, slices)
                 and not (set(record["go_sources"]) & claimed_sources)
-                and not (
-                    set(record["module_sources"])
-                    & {source for item in claims for source in item["_module_sources"]}
-                )
+                and not (set(record["go_tests"]) & claimed_tests)
+                and not (set(record["go_supports"]) & claimed_supports)
+                and not (set(record["module_sources"]) & claimed_module_sources)
+                and not (set(record["module_tests"]) & claimed_module_tests)
                 and not (set(record["rust_paths"]) & claimed_rust_paths)
             )
             print(f"active_claims\t{len(claims)}")

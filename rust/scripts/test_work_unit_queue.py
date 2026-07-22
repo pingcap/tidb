@@ -48,6 +48,10 @@ class WorkUnitQueueTest(unittest.TestCase):
             "go_test\tpkg/planner/other_test.go\t20\tTestOther\tplan\tUNTRIAGED\t-\t-\t-\n",
             encoding="utf-8",
         )
+        (coverage / "go_package_support_inventory.tsv").write_text(
+            "# package_path\tsupport_path\tsha256\n",
+            encoding="utf-8",
+        )
         (coverage / "external_go_source_inventory.tsv").write_text(
             "# external sources\n"
             + "".join(
@@ -154,7 +158,23 @@ class WorkUnitQueueTest(unittest.TestCase):
         result = self.run_tool("check", success=False)
         self.assertIn("duplicate qualified module test anchor", result.stderr)
 
-    def run_tool(self, *arguments: str, success: bool = True) -> subprocess.CompletedProcess[str]:
+    def run_tool(
+        self,
+        *arguments: str,
+        success: bool = True,
+        freeze_legacy: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        slices = self.root / "workstreams/slices"
+        if freeze_legacy and slices.is_dir():
+            legacy = []
+            for manifest in sorted(slices.glob("*.toml")):
+                if 'schema = "1"' in manifest.read_text(encoding="utf-8"):
+                    legacy.append(manifest.stem)
+            (slices / "legacy-schema1-slices.tsv").write_text(
+                "# test fixture legacy registry\n"
+                + "".join(f"{name}\n" for name in legacy),
+                encoding="utf-8",
+            )
         environment = os.environ.copy()
         environment["TIDB_REWRITE_RUST_ROOT"] = str(self.root)
         result = subprocess.run(
@@ -167,13 +187,42 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertEqual(result.returncode == 0, success, result.stderr)
         return result
 
-    def test_queue_pairs_only_same_directory_and_stem_as_candidate(self) -> None:
+    def write_package_slice(
+        self,
+        name: str,
+        *,
+        packages: list[str],
+        targets: list[str],
+        rings: list[str] | None = None,
+        status: str = "ready",
+        depends_on: list[str] | None = None,
+        module_packages: list[str] | None = None,
+    ) -> Path:
+        slices = self.root / "workstreams/slices"
+        slices.mkdir(parents=True, exist_ok=True)
+        path = slices / f"{name}.toml"
+        path.write_text(
+            'schema = "2"\n'
+            f'slice = "{name}"\n'
+            f'status = "{status}"\n'
+            f"targets = {json.dumps(targets)}\n"
+            f"rings = {json.dumps(rings or ['plan'])}\n"
+            f'consumer = "package {name}"\n'
+            f'test_target = "{name.replace("-", "_")}_source"\n'
+            f"go_packages = {json.dumps(packages)}\n"
+            f"module_packages = {json.dumps(module_packages or [])}\n"
+            f"depends_on = {json.dumps(depends_on or [])}\n"
+            f'rust_paths = ["rust/crates/tidb-planner/src/{name}.rs"]\n',
+            encoding="utf-8",
+        )
+        return path
+
+    def test_queue_emits_the_complete_go_package_as_candidate(self) -> None:
         result = self.run_tool(
             "queue", "--target", "tidb-planner", "--ring", "plan", "--limit", "1"
         )
-        self.assertIn("same-directory-stem-candidate", result.stdout)
-        self.assertIn("pkg/planner/foo_test.go:10:TestFoo", result.stdout)
-        self.assertNotIn("TestOther", result.stdout)
+        self.assertIn("go_package", result.stdout)
+        self.assertIn("pkg/planner\t2\t2\t0\t2\t2\t2", result.stdout)
 
     def test_claim_rejects_overlapping_source_and_release_unlocks_it(self) -> None:
         anchor = "pkg/planner/foo_test.go:10:TestFoo"
@@ -182,7 +231,7 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
         claim_path = self.root / "workstreams/claims/agent-a.claim.json"
         claim = json.loads(claim_path.read_text())
-        self.assertEqual(claim["schema"], 2)
+        self.assertEqual(claim["schema"], 1)
         self.assertEqual(claim["sources"], ["pkg/planner/foo.go"])
         self.assertEqual(claim["tests"], [anchor])
         failure = self.run_tool(
@@ -432,15 +481,15 @@ class WorkUnitQueueTest(unittest.TestCase):
         slices = self.root / "workstreams/slices"
         slices.mkdir(parents=True)
         (slices / "planner-consumer.toml").write_text(
-            'schema = "1"\n'
+            'schema = "2"\n'
             'slice = "planner-consumer"\n'
-            'status = "partial"\n'
-            'target = "tidb-planner"\n'
-            'ring = "plan"\n'
+            'status = "active"\n'
+            'targets = ["tidb-planner"]\n'
+            'rings = ["plan"]\n'
             'consumer = "frozen planner consumer"\n'
             'test_target = "planner_consumer_source"\n'
-            'go_sources = ["pkg/planner/foo.go"]\n'
-            'go_tests = ["pkg/planner/foo_test.go:10:TestFoo"]\n'
+            'go_packages = ["pkg/planner"]\n'
+            'module_packages = []\n'
             'depends_on = []\n'
             'rust_paths = ["rust/crates/tidb-planner/src/foo.rs"]\n',
             encoding="utf-8",
@@ -453,8 +502,14 @@ class WorkUnitQueueTest(unittest.TestCase):
                 {
                     "schema": 2,
                     "owner": "planner-consumer",
-                    "sources": ["pkg/planner/foo.go"],
-                    "tests": ["pkg/planner/foo_test.go:10:TestFoo"],
+                    "sources": ["pkg/planner/bar.go", "pkg/planner/foo.go"],
+                    "tests": [
+                        "pkg/planner/foo_test.go:10:TestFoo",
+                        "pkg/planner/other_test.go:20:TestOther",
+                    ],
+                    "supports": [],
+                    "module_sources": [],
+                    "module_tests": [],
                 }
             ),
             encoding="utf-8",
@@ -466,8 +521,11 @@ class WorkUnitQueueTest(unittest.TestCase):
                 {
                     "schema": 2,
                     "owner": "planner-consumer",
-                    "sources": ["pkg/planner/foo.go"],
+                    "sources": ["pkg/planner/bar.go", "pkg/planner/foo.go"],
                     "tests": [],
+                    "supports": [],
+                    "module_sources": [],
+                    "module_tests": [],
                 }
             ),
             encoding="utf-8",
@@ -1200,6 +1258,186 @@ class WorkUnitQueueTest(unittest.TestCase):
             "campaign Rust path rust/shared.rs overlaps slices planner-first and planner-second",
             result.stderr,
         )
+
+    def test_package_claim_expands_nearest_package_testdata_and_support(self) -> None:
+        sources = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        with sources.open("a", encoding="utf-8") as output:
+            output.write(
+                "pkg/planner/sub/child.go\t30\ttidb-planner\tfalse\tUNTRIAGED\t-\t-\t-\n"
+                "pkg/planner/testdata/fixture.go\t5\ttidb-planner\tfalse\tUNTRIAGED\t-\t-\t-\n"
+            )
+        tests = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+        with tests.open("a", encoding="utf-8") as output:
+            output.write(
+                "go_test\tpkg/planner/sub/child_test.go\t7\tTestChild\tplan\tUNTRIAGED\t-\t-\t-\n"
+                "go_test_file\tpkg/planner/testdata/deep/fixture_test.go\t0\tfixture_test.go\tplan\tUNTRIAGED\t-\t-\t-\n"
+            )
+        support = self.root / "difftests/corpus/coverage/go_package_support_inventory.tsv"
+        support.write_text(
+            "# package_path\tsupport_path\tsha256\n"
+            f"pkg/planner\tpkg/planner/BUILD.bazel\t{'a' * 64}\n"
+            f"pkg/planner\tpkg/planner/testdata/result.txt\t{'b' * 64}\n"
+            f"pkg/planner/sub\tpkg/planner/sub/BUILD.bazel\t{'c' * 64}\n",
+            encoding="utf-8",
+        )
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.run_tool("claim-slice", "--owner", "planner-package", "--slice", "planner-package")
+        claim = json.loads(
+            (self.root / "workstreams/claims/planner-package.claim.json").read_text()
+        )
+        self.assertIn("pkg/planner/testdata/fixture.go", claim["sources"])
+        self.assertIn(
+            "pkg/planner/testdata/deep/fixture_test.go:0:fixture_test.go", claim["tests"]
+        )
+        self.assertEqual(len(claim["supports"]), 2)
+        self.assertNotIn("pkg/planner/sub/child.go", claim["sources"])
+        self.assertFalse(any("pkg/planner/sub/BUILD" in item for item in claim["supports"]))
+
+    def test_package_claim_detects_support_digest_and_inventory_drift(self) -> None:
+        support = self.root / "difftests/corpus/coverage/go_package_support_inventory.tsv"
+        support.write_text(
+            "# package_path\tsupport_path\tsha256\n"
+            f"pkg/planner\tpkg/planner/BUILD.bazel\t{'a' * 64}\n",
+            encoding="utf-8",
+        )
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.run_tool("claim-slice", "--owner", "planner-package", "--slice", "planner-package")
+        support.write_text(
+            "# package_path\tsupport_path\tsha256\n"
+            f"pkg/planner\tpkg/planner/BUILD.bazel\t{'b' * 64}\n",
+            encoding="utf-8",
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("missing supports", failure.stderr)
+
+    def test_package_slice_requires_exact_multi_target_and_ring_sets(self) -> None:
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        source.write_text(
+            source.read_text().replace(
+                "pkg/planner/bar.go\t50\ttidb-planner",
+                "pkg/planner/bar.go\t50\ttidb-server",
+            ),
+            encoding="utf-8",
+        )
+        manifest = self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner", "tidb-server"],
+        )
+        self.run_tool("check")
+        listing = self.run_tool("packages")
+        self.assertIn("pkg/planner\ttidb-planner,tidb-server\t2\t250", listing.stdout)
+
+    def test_test_only_package_is_claimable_and_visible(self) -> None:
+        tests = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+        with tests.open("a", encoding="utf-8") as output:
+            output.write(
+                "go_test_file\tpkg/testonly/only_test.go\t0\tonly_test.go\tunassigned\tUNTRIAGED\t-\t-\t-\n"
+            )
+        self.write_package_slice(
+            "testonly-package",
+            packages=["pkg/testonly"],
+            targets=["tidb-planner"],
+            rings=["unassigned"],
+        )
+        self.run_tool("claim-slice", "--owner", "testonly-package", "--slice", "testonly-package")
+        claim = json.loads(
+            (self.root / "workstreams/claims/testonly-package.claim.json").read_text()
+        )
+        self.assertEqual(claim["sources"], [])
+        listing = self.run_tool("packages")
+        self.assertIn(
+            "pkg/testonly\ttidb-planner\t0\t0\t1\tUNTRIAGED\ttestonly-package",
+            listing.stdout,
+        )
+
+    def test_schema2_claim_requires_matching_manifest_and_is_not_amendable(self) -> None:
+        claims = self.root / "workstreams/claims"
+        claims.mkdir(parents=True)
+        path = claims / "orphan.claim.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": 2,
+                    "owner": "orphan",
+                    "sources": ["pkg/planner/foo.go"],
+                    "tests": [],
+                    "supports": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("matching schema-2 package slice", failure.stderr)
+        path.unlink()
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        mismatch = self.run_tool(
+            "claim-slice", "--owner", "another-owner", "--slice", "planner-package", success=False
+        )
+        self.assertIn("owner must equal", mismatch.stderr)
+        self.run_tool("claim-slice", "--owner", "planner-package", "--slice", "planner-package")
+        amend = self.run_tool(
+            "amend", "--owner", "planner-package", "--test",
+            "pkg/planner/foo_test.go:10:TestFoo", success=False,
+        )
+        self.assertIn("immutable expanded snapshots", amend.stderr)
+
+    def test_schema2_fails_closed_for_external_packages_and_legacy_dependencies(self) -> None:
+        manifest = self.write_package_slice(
+            "client-package",
+            packages=[],
+            targets=["tidb-kv"],
+            rings=["unassigned"],
+            module_packages=["client-go::internal/client"],
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("external package support inventory is unavailable", failure.stderr)
+        manifest.unlink()
+        legacy = self.root / "workstreams/slices/legacy.toml"
+        legacy.write_text(
+            'schema = "1"\nslice = "legacy"\nstatus = "covered"\n'
+            'target = "tidb-planner"\nring = "plan"\nconsumer = "legacy"\n'
+            'test_target = "legacy"\ngo_sources = ["pkg/planner/foo.go"]\n'
+            'go_tests = []\ndepends_on = []\nrust_paths = ["rust/legacy.rs"]\n',
+            encoding="utf-8",
+        )
+        self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner"],
+            depends_on=["legacy"],
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("must also use schema 2", failure.stderr)
+
+    def test_schema2_rejects_partial_state_and_missing_legacy_registry(self) -> None:
+        self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner"],
+            status="partial",
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("invalid status 'partial'", failure.stderr)
+        for path in (self.root / "workstreams/slices").glob("*.toml"):
+            path.unlink()
+        legacy = self.root / "workstreams/slices/legacy.toml"
+        legacy.write_text(
+            'schema = "1"\nslice = "legacy"\nstatus = "ready"\n'
+            'target = "tidb-planner"\nring = "plan"\nconsumer = "legacy"\n'
+            'test_target = "legacy"\ngo_sources = ["pkg/planner/foo.go"]\n'
+            'go_tests = []\ndepends_on = []\nrust_paths = ["rust/legacy.rs"]\n',
+            encoding="utf-8",
+        )
+        (self.root / "workstreams/slices/legacy-schema1-slices.tsv").unlink(missing_ok=True)
+        failure = self.run_tool("check", success=False, freeze_legacy=False)
+        self.assertIn("missing frozen schema-1 slice registry", failure.stderr)
 
 
 if __name__ == "__main__":
