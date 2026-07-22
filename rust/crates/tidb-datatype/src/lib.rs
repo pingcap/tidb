@@ -101,7 +101,9 @@ pub use field_type::{
     merge_field_type, set_type_flag, FieldType, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
     MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
 };
-pub use format::{output_format, FlatFormatter, Formatter, IndentFormatter};
+pub use format::{
+    output_format, FlatFormatter, FormatFragment, FormatWriteError, Formatter, IndentFormatter,
+};
 pub use fsp::{
     align_frac, check_fsp, parse_frac, FspError, DEFAULT_FSP, MAX_FSP, MIN_FSP, UNSPECIFIED_FSP,
 };

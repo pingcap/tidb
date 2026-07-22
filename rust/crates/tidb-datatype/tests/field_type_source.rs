@@ -177,7 +177,7 @@ fn parser_field_type() {
         FieldType::parser(C::Enum)
             .with_elems(["nul\0byte", r"raw\slash"])
             .to_string(),
-        r"enum('nul\0byte','raw\\slash')"
+        r"enum('nul\0byte','raw\slash')"
     );
     assert_eq!(
         FieldType::parser(C::String)

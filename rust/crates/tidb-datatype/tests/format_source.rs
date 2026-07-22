@@ -12,15 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Direct assertions from `pkg/util/format/format_test.go`.
+//! Direct assertions from `pkg/parser/format/format_test.go`.
 
-use tidb_datatype::{output_format, FlatFormatter, Formatter, IndentFormatter};
+use tidb_datatype::{
+    output_format, FlatFormatter, FormatFragment as F, Formatter, IndentFormatter,
+};
 
 #[test]
 fn test_format() {
     let mut indented = IndentFormatter::new(Vec::new(), "\t");
     let written = indented
-        .format("abc%d%%e%i\nx\ny\n%uz\n", &[&3])
+        .format(&[
+            F::text("abc"),
+            F::value(format_args!("{}", 3)),
+            F::text("%e"),
+            F::Indent,
+            F::text("\nx\ny\n"),
+            F::Unindent,
+            F::text("z\n"),
+        ])
         .expect("formatting should succeed");
     let output = indented.into_inner();
     assert_eq!(written, output.len());
@@ -28,7 +38,17 @@ fn test_format() {
 
     let mut flat = FlatFormatter::new(Vec::new());
     let written = flat
-        .format("abc%d%%e%i\nx\ny\n%uz\n%i\n", &[&3])
+        .format(&[
+            F::text("abc"),
+            F::value(format_args!("{}", 3)),
+            F::text("%e"),
+            F::Indent,
+            F::text("\nx\ny\n"),
+            F::Unindent,
+            F::text("z\n"),
+            F::Indent,
+            F::text("\n"),
+        ])
         .expect("formatting should succeed");
     let output = flat.into_inner();
     assert_eq!(written, output.len());
@@ -38,16 +58,22 @@ fn test_format() {
 }
 
 #[test]
-fn formatter_state_crosses_calls_and_retains_dangling_percent_state() {
+fn formatter_state_crosses_calls_and_values_remain_opaque() {
     let mut indented = IndentFormatter::new(Vec::new(), "  ");
-    indented.format("root%i\nchild\n", &[]).unwrap();
-    indented.format("next%", &[]).unwrap();
-    // fmt.Fprintf renders the dangling percent as NOVERB, while the formatter
-    // keeps stPERC. The next call's leading `u` is the pending unindent.
-    indented.format("u\ntail\n", &[]).unwrap();
+    indented
+        .format(&[F::text("root"), F::Indent, F::text("\nchild\n")])
+        .unwrap();
+    indented
+        .format(&[
+            F::text("next "),
+            F::value(format_args!("%i/%u/%%\n")),
+            F::Unindent,
+            F::text("tail\n"),
+        ])
+        .unwrap();
     assert_eq!(
         indented.into_inner(),
-        b"root\n  child\n  next%!(NOVERB)\ntail\n"
+        b"root\n  child\n  next %i/%u/%%\ntail\n"
     );
 }
 
@@ -55,6 +81,6 @@ fn formatter_state_crosses_calls_and_retains_dangling_percent_state() {
 fn output_format_escapes_the_complete_source_replacement_set() {
     assert_eq!(
         output_format("plain\\slash'quote\0nul\nline\rcarriage\t雪"),
-        "plain\\\\slash''quote\\0nul\\nline\\rcarriage\t雪"
+        "plain\\slash''quote\\0nul\\nline\\rcarriage\t雪"
     );
 }

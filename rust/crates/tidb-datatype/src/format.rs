@@ -12,27 +12,78 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stateful text formatting from `pkg/util/format/format.go`.
+//! Stateful text formatting from `pkg/parser/format/format.go`.
 
 use std::fmt;
 use std::io::{self, Write};
 
 const STATE_TEXT: u8 = 0;
 const STATE_BEGIN_LINE: u8 = 1;
-const STATE_PERCENT: u8 = 2;
-const STATE_BEGIN_LINE_PERCENT: u8 = 3;
 
-/// The source formatter contract: a writer with stateful `%i` and `%u`
-/// indentation commands.
+/// One typed part of a formatter template.
 ///
-/// Rust has no variadic equivalent of `fmt.Fprintf`, so arguments are passed as
-/// display trait objects. The source tests use `%d`; `%s` and `%v` share the
-/// same display substitution while `%%` emits a literal percent sign.
-pub trait Formatter: Write {
-    /// Rewrites indentation commands, substitutes the supplied display
-    /// arguments, writes the result, and returns the written byte count.
-    fn format(&mut self, format: &str, args: &[&dyn fmt::Display]) -> io::Result<usize>;
+/// Commands are structural rather than encoded into a fully rendered string,
+/// so formatted values can contain `%i`, `%u`, percent signs, or newlines
+/// without being reinterpreted by the indentation state machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FormatFragment<'a> {
+    /// Literal template text. Newlines participate in indentation state.
+    Text(&'a str),
+    /// Opaque, preformatted value text.
+    Value(String),
+    /// Increase the indentation level.
+    Indent,
+    /// Decrease the indentation level.
+    Unindent,
 }
+
+impl<'a> FormatFragment<'a> {
+    /// Creates literal template text.
+    pub const fn text(text: &'a str) -> Self {
+        Self::Text(text)
+    }
+
+    /// Formats a value with Rust's complete native formatting surface and
+    /// stores the result as opaque text.
+    pub fn value(arguments: fmt::Arguments<'_>) -> Self {
+        Self::Value(fmt::format(arguments))
+    }
+}
+
+/// The source formatter contract: a writer with stateful indent and unindent
+/// commands.
+///
+/// Go embeds `%i` and `%u` beside printf verbs in one runtime string. Rust uses
+/// [`FormatFragment`] to separate template text, formatted values, and the two
+/// commands. That preserves the full native formatting surface (width,
+/// precision, positional arguments, radix, and custom `Display`/`Debug`) and
+/// guarantees that command-looking bytes inside a value remain ordinary data.
+pub trait Formatter: Write {
+    /// Applies `fragments`, writes the result, and returns the written byte
+    /// count.
+    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> Result<usize, FormatWriteError>;
+}
+
+/// A formatter write failure retaining the exact successful byte count.
+#[derive(Debug)]
+pub struct FormatWriteError {
+    /// Bytes successfully written before `error`.
+    pub written: usize,
+    /// The underlying writer error.
+    pub error: io::Error,
+}
+
+impl fmt::Display for FormatWriteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "formatter write failed after {} bytes: {}",
+            self.written, self.error
+        )
+    }
+}
+
+impl std::error::Error for FormatWriteError {}
 
 /// Stateful formatter returned by Go's `IndentFormatter` constructor.
 pub struct IndentFormatter<W> {
@@ -61,79 +112,48 @@ impl<W: Write> IndentFormatter<W> {
     fn format_inner(
         &mut self,
         flat: bool,
-        format: &str,
-        args: &[&dyn fmt::Display],
-    ) -> io::Result<usize> {
-        let mut buffer = Vec::with_capacity(format.len());
-        for &byte in format.as_bytes() {
-            match self.state {
-                STATE_TEXT => match byte {
-                    b'\n' => {
-                        buffer.push(if flat && self.indent_level != 0 {
-                            b' '
-                        } else {
-                            byte
-                        });
-                        self.state = STATE_BEGIN_LINE;
-                    }
-                    b'%' => self.state = STATE_PERCENT,
-                    _ => buffer.push(byte),
-                },
-                STATE_BEGIN_LINE => match byte {
-                    b'\n' => buffer.push(if flat && self.indent_level != 0 {
-                        b' '
-                    } else {
-                        byte
-                    }),
-                    b'%' => self.state = STATE_BEGIN_LINE_PERCENT,
-                    _ => {
+        fragments: &[FormatFragment<'_>],
+    ) -> Result<usize, FormatWriteError> {
+        let mut buffer = Vec::new();
+        for fragment in fragments {
+            match fragment {
+                FormatFragment::Text(text) => {
+                    self.push_template_text(flat, text.as_bytes(), &mut buffer);
+                }
+                FormatFragment::Value(value) => {
+                    if self.state == STATE_BEGIN_LINE {
                         self.push_indent(flat, &mut buffer);
-                        buffer.push(byte);
-                        self.state = STATE_TEXT;
                     }
-                },
-                STATE_BEGIN_LINE_PERCENT => match byte {
-                    b'i' => {
-                        self.indent_level += 1;
-                        self.state = STATE_BEGIN_LINE;
-                    }
-                    b'u' => {
-                        self.indent_level -= 1;
-                        self.state = STATE_BEGIN_LINE;
-                    }
-                    _ => {
-                        self.push_indent(flat, &mut buffer);
-                        buffer.extend_from_slice(&[b'%', byte]);
-                        self.state = STATE_TEXT;
-                    }
-                },
-                STATE_PERCENT => match byte {
-                    b'i' => {
-                        self.indent_level += 1;
-                        self.state = STATE_TEXT;
-                    }
-                    b'u' => {
-                        self.indent_level -= 1;
-                        self.state = STATE_TEXT;
-                    }
-                    _ => {
-                        buffer.extend_from_slice(&[b'%', byte]);
-                        self.state = STATE_TEXT;
-                    }
-                },
-                _ => unreachable!("formatter state is private and always valid"),
+                    buffer.extend_from_slice(value.as_bytes());
+                    // A source printf verb moves the template state out of
+                    // beginning-of-line even when its formatted value is empty.
+                    // Newlines inside the value are opaque and do not alter it.
+                    self.state = STATE_TEXT;
+                }
+                FormatFragment::Indent => self.indent_level += 1,
+                FormatFragment::Unindent => self.indent_level -= 1,
             }
         }
+        write_counted(&mut self.writer, &buffer)
+    }
 
-        // This deliberately does not reset the state. Go appends the dangling
-        // percent to the fmt string while retaining stPERC/stBOLPERC for the
-        // next call; fmt.Fprintf renders that terminal percent as NOVERB.
-        if matches!(self.state, STATE_PERCENT | STATE_BEGIN_LINE_PERCENT) {
-            buffer.push(b'%');
+    fn push_template_text(&mut self, flat: bool, text: &[u8], buffer: &mut Vec<u8>) {
+        for &byte in text {
+            if byte == b'\n' {
+                buffer.push(if flat && self.indent_level != 0 {
+                    b' '
+                } else {
+                    byte
+                });
+                self.state = STATE_BEGIN_LINE;
+            } else {
+                if self.state == STATE_BEGIN_LINE {
+                    self.push_indent(flat, buffer);
+                }
+                buffer.push(byte);
+                self.state = STATE_TEXT;
+            }
         }
-
-        let substituted = substitute_display_arguments(&buffer, args)?;
-        write_counted(&mut self.writer, &substituted)
     }
 
     fn push_indent(&self, flat: bool, buffer: &mut Vec<u8>) {
@@ -157,8 +177,8 @@ impl<W: Write> Write for IndentFormatter<W> {
 }
 
 impl<W: Write> Formatter for IndentFormatter<W> {
-    fn format(&mut self, format: &str, args: &[&dyn fmt::Display]) -> io::Result<usize> {
-        self.format_inner(false, format, args)
+    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> Result<usize, FormatWriteError> {
+        self.format_inner(false, fragments)
     }
 }
 
@@ -188,13 +208,14 @@ impl<W: Write> Write for FlatFormatter<W> {
 }
 
 impl<W: Write> Formatter for FlatFormatter<W> {
-    fn format(&mut self, format: &str, args: &[&dyn fmt::Display]) -> io::Result<usize> {
-        self.0.format_inner(true, format, args)
+    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> Result<usize, FormatWriteError> {
+        self.0.format_inner(true, fragments)
     }
 }
 
-/// Applies TiDB's SQL display escaping exactly: NUL, quote, newline, carriage
-/// return, and backslash are replaced; all other Unicode scalar values remain.
+/// Applies TiDB's SQL display escaping exactly: NUL, single quote, newline, and
+/// carriage return are replaced. Backslashes and all other Unicode scalar
+/// values remain unchanged.
 pub fn output_format(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     for character in input.chars() {
@@ -203,65 +224,27 @@ pub fn output_format(input: &str) -> String {
             '\'' => output.push_str("''"),
             '\n' => output.push_str("\\n"),
             '\r' => output.push_str("\\r"),
-            '\\' => output.push_str("\\\\"),
             _ => output.push(character),
         }
     }
     output
 }
 
-fn substitute_display_arguments(format: &[u8], args: &[&dyn fmt::Display]) -> io::Result<Vec<u8>> {
-    let mut output = Vec::with_capacity(format.len());
-    let mut index = 0;
-    let mut argument = 0;
-    while index < format.len() {
-        if format[index] != b'%' {
-            output.push(format[index]);
-            index += 1;
-            continue;
-        }
-        if format.get(index + 1) == Some(&b'%') {
-            output.push(b'%');
-            index += 2;
-            continue;
-        }
-        let Some(&verb) = format.get(index + 1) else {
-            output.extend_from_slice(b"%!(NOVERB)");
-            index += 1;
-            continue;
-        };
-        if !matches!(verb, b'd' | b's' | b'v') {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("unsupported printf verb %{}", char::from(verb)),
-            ));
-        }
-        let value = args.get(argument).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "missing printf argument")
-        })?;
-        output.extend_from_slice(value.to_string().as_bytes());
-        argument += 1;
-        index += 2;
-    }
-    if argument != args.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "unused printf argument",
-        ));
-    }
-    Ok(output)
-}
-
-fn write_counted(writer: &mut impl Write, mut buffer: &[u8]) -> io::Result<usize> {
+fn write_counted(writer: &mut impl Write, mut buffer: &[u8]) -> Result<usize, FormatWriteError> {
     let total = buffer.len();
+    let mut written_total = 0;
     while !buffer.is_empty() {
-        let written = writer.write(buffer)?;
+        let written = writer.write(buffer).map_err(|error| FormatWriteError {
+            written: written_total,
+            error,
+        })?;
         if written == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "failed to write formatted output",
-            ));
+            return Err(FormatWriteError {
+                written: written_total,
+                error: io::Error::new(io::ErrorKind::WriteZero, "failed to write formatted output"),
+            });
         }
+        written_total += written;
         buffer = &buffer[written..];
     }
     Ok(total)

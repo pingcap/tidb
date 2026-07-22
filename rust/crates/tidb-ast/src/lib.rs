@@ -54,6 +54,7 @@ mod explain;
 mod expr;
 #[path = "stmt/flush.rs"]
 mod flush;
+mod format;
 #[path = "stmt/load_data.rs"]
 mod load_data;
 #[path = "stmt/masking.rs"]
@@ -108,6 +109,7 @@ pub use dml_stmt::{BatchDml, BatchDmlDryRun, BatchDmlStmt, DmlStmt};
 pub use explain::{DescribeTableStmt, ExplainStmt, StatsLockStmt, StatsLockTable};
 pub use expr::*;
 pub use flush::FlushStmt;
+pub use format::{CteRestorer, CteScope, RestoreContext, RestoreCtx, RestoreFlags, RestoreWriter};
 pub use load_data::{
     ColumnOrUserVar, LoadDataFields, LoadDataLines, LoadDataOnDuplicate, LoadDataOption,
     LoadDataStmt,
@@ -162,100 +164,6 @@ pub use user::{
 };
 pub use user_variable::{SetUserVarStmt, UserVariableAssignment};
 pub use util::restore_string_literal;
-
-/// Formatting switches that affect SQL AST restoration.
-///
-/// The Rust AST keeps Go's default spelling (uppercase keywords and
-/// back-quoted identifiers) as its ordinary restore behavior.  Flags are
-/// therefore additive switches for the source behaviors that cannot be
-/// represented by one canonical spelling.  New source flags belong here,
-/// rather than as statement-local booleans, so a caller can choose one
-/// restoration contract for an entire statement tree.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct RestoreFlags(u32);
-
-impl RestoreFlags {
-    /// The ordinary Go-compatible restore contract.
-    pub const DEFAULT: Self = Self(0);
-    /// Wrap TiDB-only syntax in `/*T![feature] ... */` comments, matching
-    /// Go's `format.RestoreTiDBSpecialComment` flag.
-    pub const TIDB_SPECIAL_COMMENT: Self = Self(1 << 0);
-    /// Omit schema qualifiers from column names, matching Go's
-    /// `format.RestoreWithoutSchemaName`.
-    pub const WITHOUT_SCHEMA_NAME: Self = Self(1 << 1);
-    /// Omit table qualifiers from column names, matching Go's
-    /// `format.RestoreWithoutTableName`.
-    pub const WITHOUT_TABLE_NAME: Self = Self(1 << 2);
-
-    /// Returns whether every bit in `flag` is enabled.
-    pub const fn contains(self, flag: Self) -> bool {
-        self.0 & flag.0 == flag.0
-    }
-}
-
-impl std::ops::BitOr for RestoreFlags {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl std::ops::BitOrAssign for RestoreFlags {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
-}
-
-/// Shared context for restoring an AST tree.
-///
-/// This is deliberately separate from AST nodes: TiDB's parser uses the same
-/// source tree to emit ordinary SQL or a compatibility form with TiDB-only
-/// fragments protected by versioned special comments.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct RestoreContext {
-    flags: RestoreFlags,
-}
-
-impl RestoreContext {
-    /// Creates a restore context with the supplied formatting flags.
-    pub const fn new(flags: RestoreFlags) -> Self {
-        Self { flags }
-    }
-
-    /// Returns the active formatting flags.
-    pub const fn flags(self) -> RestoreFlags {
-        self.flags
-    }
-
-    /// Writes `write` either plainly or inside Go's TiDB special-comment
-    /// envelope, according to [`RestoreFlags::TIDB_SPECIAL_COMMENT`].
-    ///
-    /// The feature identifier is intentionally supplied by the owning AST
-    /// leaf.  The context owns the envelope syntax, so every feature follows
-    /// the same contract and future source features do not grow their own
-    /// formatting flag or wrapper implementation.
-    pub fn write_with_tidb_special_comment(
-        self,
-        out: &mut String,
-        feature_id: &str,
-        write: impl FnOnce(&mut String),
-    ) {
-        if self.flags.contains(RestoreFlags::TIDB_SPECIAL_COMMENT) {
-            out.push_str("/*T!");
-            if !feature_id.is_empty() {
-                out.push('[');
-                out.push_str(feature_id);
-                out.push(']');
-            }
-            out.push(' ');
-            write(out);
-            out.push_str(" */");
-        } else {
-            write(out);
-        }
-    }
-}
 
 /// A parsed statement. Variants are boxed so the enum stays small regardless of
 /// the per-statement payload size.
