@@ -36,19 +36,24 @@ func TestFilterNeverAnalyzedColumns(t *testing.T) {
 	intFT := types.NewFieldType(mysql.TypeLong)
 	jsonFT := types.NewFieldType(mysql.TypeJSON)
 	vecFT := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
+	// blob is skipped only via the configured AnalyzeSkipColumnTypes lookup (not the
+	// unconditional vector/JSON handling), so it exercises that branch.
+	blobFT := types.NewFieldType(mysql.TypeBlob)
 	tbl := &model.TableInfo{
 		ID: 100,
 		Columns: []*model.ColumnInfo{
 			{ID: 1, State: model.StatePublic, FieldType: *intFT},
 			{ID: 2, State: model.StatePublic, FieldType: *jsonFT},
 			{ID: 3, State: model.StatePublic, FieldType: *vecFT},
+			{ID: 4, State: model.StatePublic, FieldType: *blobFT},
 		},
 	}
 	tblID2TblInfo := map[int64]*model.TableInfo{100: tbl}
 	items := []model.StatsLoadItem{
 		{TableItemID: model.TableItemID{TableID: 100, ID: 1}},                // int column - keep
-		{TableItemID: model.TableItemID{TableID: 100, ID: 2}},                // json column - drop
-		{TableItemID: model.TableItemID{TableID: 100, ID: 3}},                // vector column - drop
+		{TableItemID: model.TableItemID{TableID: 100, ID: 2}},                // json column - drop (unconditional)
+		{TableItemID: model.TableItemID{TableID: 100, ID: 3}},                // vector column - drop (unconditional)
+		{TableItemID: model.TableItemID{TableID: 100, ID: 4}},                // blob column - drop (configured skip-type)
 		{TableItemID: model.TableItemID{TableID: 100, ID: 9, IsIndex: true}}, // index over json - keep
 	}
 
