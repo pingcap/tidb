@@ -1137,6 +1137,7 @@ name = "tidb-mysql"
 version = "0.0.0"
 dependencies = [
  "semver",
+ "tidb-error",
 ]
 
 [[package]]

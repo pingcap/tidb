@@ -21,6 +21,7 @@ rust_paths = [
   "rust/crates/tidb-mysql/src/types.rs",
   "rust/crates/tidb-mysql/src/util.rs",
   "rust/crates/tidb-mysql/tests/parser_mysql_package_source.rs",
+  "rust/scripts/generate-parser-mysql-unicode.py",
 ]
 integration_paths = [
   "rust/crates/tidb-error/src/mysql/mod.rs",

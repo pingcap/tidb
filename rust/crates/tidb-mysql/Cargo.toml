@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 semver.workspace = true
+tidb-error = { path = "../tidb-error" }
