@@ -35,6 +35,10 @@ const (
 	memStateVer             = "v1"
 	memStateStoreNamePrefix = "mem-state."
 	memStateStoreNameSuffix = ".json"
+	memArbitratorDirName    = "mem_arbitrator"
+
+	// DefaultGlobalMemArbitratorModeName is the default work mode of the global memory arbitrator.
+	DefaultGlobalMemArbitratorModeName = ArbitratorModePriorityName
 )
 
 var (
@@ -51,11 +55,7 @@ var (
 			atomic.Pointer[MemArbitrator]
 			sync.Mutex
 		}
-		enable struct { // register callbacks after the global memory arbitrator is enabled
-			callbacks []func()
-			atomic.Bool
-			sync.Mutex
-		}
+		enable  atomic.Bool
 		metrics struct {
 			last struct {
 				updateUtimeSec atomic.Int64
@@ -369,6 +369,10 @@ func setGlobalMemArbitratorWorkModeText(str string) {
 
 // SetGlobalMemArbitratorWorkMode sets the work mode of the global memory arbitrator.
 func SetGlobalMemArbitratorWorkMode(str string) bool {
+	if intest.InTest && mockinitGlobalMemArbitrator == nil {
+		return false
+	}
+
 	if !globalArbitrator.metrics.init.Load() {
 		globalArbitrator.metrics.Lock()
 
@@ -439,9 +443,6 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 }
 
 func doSetGlobalMemArbitratorLimit() {
-	for _, callback := range globalArbitrator.enable.callbacks {
-		callback()
-	}
 	globalArbitrator.v.Load().SetLimit(ServerMemoryLimit.Load())
 }
 
@@ -459,15 +460,6 @@ func AjustGlobalMemArbitratorLimit() {
 	doSetGlobalMemArbitratorLimit()
 }
 
-// RegisterCallbackForGlobalMemArbitrator registers a callback to be called after the global memory arbitrator is enabled.
-func RegisterCallbackForGlobalMemArbitrator(f func()) {
-	globalArbitrator.enable.Lock()
-
-	globalArbitrator.enable.callbacks = append(globalArbitrator.enable.callbacks, f)
-
-	globalArbitrator.enable.Unlock()
-}
-
 func initGlobalMemArbitrator() (m *MemArbitrator) {
 	if intest.InTest {
 		return mockinitGlobalMemArbitrator()
@@ -480,8 +472,13 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		return
 	}
 
-	cfg := config.GetGlobalConfig()
-	baseDir := filepath.Join(cfg.TempDir, fmt.Sprintf("mem_arbitrator-%d", cfg.Port))
+	baseDir := ""
+	if logDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename); logDir != "" {
+		baseDir = filepath.Join(logDir, memArbitratorDirName)
+	} else {
+		cfg := config.GetGlobalConfig()
+		baseDir = filepath.Join(cfg.TempDir, fmt.Sprintf(memArbitratorDirName+"-%d", cfg.Port))
+	}
 
 	limit := ServerMemoryLimit.Load()
 	if limit == 0 {
@@ -527,10 +524,8 @@ func RemovePoolFromGlobalMemArbitrator(uid uint64) bool {
 }
 
 func init() {
-	workMode := ArbitratorModeDisable
-	setGlobalMemArbitratorWorkModeText(workMode.String())
+	setGlobalMemArbitratorWorkModeText(ArbitratorModeDisable.String())
 	globalArbitrator.softLimit.originText.Store(ArbitratorSoftLimitModDisableName)
-	globalArbitrator.enable.callbacks = make([]func(), 0, 1)
 }
 
 type runtimeMemStateRecorder struct {

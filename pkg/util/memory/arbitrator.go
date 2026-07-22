@@ -738,6 +738,10 @@ func (m *MemArbitrator) workMode() ArbitratorWorkMode {
 
 // GetDigestProfileCache returns the digest profile cache for a given digest-id and utime
 func (m *MemArbitrator) GetDigestProfileCache(digestID uint64, utimeSec int64) (int64, bool) {
+	if digestID == InvalidDigestID {
+		return 0, false
+	}
+
 	d := &m.digestProfileCache.shards[digestID&m.digestProfileCache.shardsMask]
 	e, ok := d.Load(digestID)
 	if !ok {
@@ -846,6 +850,10 @@ func (m *MemArbitrator) shrinkDigestProfile(utimeSec int64, limit, shrinkTo int6
 
 // UpdateDigestProfileCache updates the digest profile cache for a given digest-id
 func (m *MemArbitrator) UpdateDigestProfileCache(digestID uint64, memConsumed int64, utimeSec int64) {
+	if digestID == InvalidDigestID {
+		return
+	}
+
 	d := &m.digestProfileCache.shards[digestID&m.digestProfileCache.shardsMask]
 	var pf *digestProfile
 	if e, ok := d.Load(digestID); ok {
@@ -2055,6 +2063,7 @@ func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationCo
 	entry.pool.mu.Lock()
 	defer entry.pool.mu.Unlock()
 
+	entry.ctx.cancelCh = nil
 	if ctx != nil {
 		if ctx.waitAverse {
 			entry.ctx.preferPrivilege = false
@@ -2064,10 +2073,11 @@ func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationCo
 			entry.ctx.memPriority = ctx.memPriority
 		}
 
-		entry.ctx.cancelCh = ctx.cancelCh
+		if ctx.arbitrateHelper != nil {
+			entry.ctx.cancelCh = ctx.arbitrateHelper.Done()
+		}
 		entry.ctx.waitAverse = ctx.waitAverse
 	} else {
-		entry.ctx.cancelCh = nil
 		entry.ctx.waitAverse = false
 		entry.ctx.memPriority = ArbitrationPriorityMedium
 		entry.ctx.preferPrivilege = false
@@ -3082,12 +3092,12 @@ type ArbitrateHelper interface {
 	Stop(ArbitratorStopReason) bool // kill by arbitrator only when meeting oom risk; cancel by arbitrator;
 	HeapInuse() int64               // track heap usage
 	Finish()
+	Done() <-chan struct{}
 }
 
 // ArbitrationContext represents the context & properties of the root pool which is accessible for the global mem-arbitrator
 type ArbitrationContext struct {
 	arbitrateHelper ArbitrateHelper
-	cancelCh        <-chan struct{}
 	memPriority     ArbitrationPriority
 	stopped         atomic.Bool
 	waitAverse      bool
@@ -3110,14 +3120,12 @@ func (ctx *ArbitrationContext) stop(reason ArbitratorStopReason) {
 
 // NewArbitrationContext creates a new arbitration context
 func NewArbitrationContext(
-	cancelCh <-chan struct{},
 	arbitrateHelper ArbitrateHelper,
 	memPriority ArbitrationPriority,
 	waitAverse bool,
 	preferPrivilege bool,
 ) *ArbitrationContext {
 	return &ArbitrationContext{
-		cancelCh:        cancelCh,
 		arbitrateHelper: arbitrateHelper,
 		memPriority:     memPriority,
 		waitAverse:      waitAverse,
