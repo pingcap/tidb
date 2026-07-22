@@ -405,9 +405,9 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 
 func (sm *Manager) cleanupTaskLoop() {
 	sm.logger.Info("cleanup loop start")
+	sm.doCleanupTasks()
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
-	sm.doCleanupTasks()
 	for {
 		select {
 		case <-sm.ctx.Done():
