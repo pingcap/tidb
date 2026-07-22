@@ -578,7 +578,7 @@ type JSONTableHandler struct {
 // JSONTableHandlers is a struct for parser to hold both handlers
 type JSONTableHandlers struct {
 	OnEmpty *JSONTableHandler
-    OnError *JSONTableHandler
+	OnError *JSONTableHandler
 }
 
 // JSONTableColumn represents a column definition in JSON_TABLE
