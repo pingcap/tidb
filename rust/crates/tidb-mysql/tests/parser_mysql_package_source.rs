@@ -1,12 +1,32 @@
 // Copyright 2026 PingCAP, Inc.
 // Licensed under the Apache License, Version 2.0 (the "License");
 
-//! Exact translations of all ten test functions in `pkg/parser/mysql` and
+//! Exact translations of all eleven test functions in `pkg/parser/mysql` and
 //! focused assertions for the previously untested package production tables.
 
 #![allow(non_upper_case_globals)]
 
+use std::path::Path;
+use std::process::Command;
+
 use tidb_mysql::*;
+
+#[test]
+fn generated_source_authorities_match_the_go_oracle() {
+    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/generate-parser-mysql-unicode.py");
+    let output = Command::new("python3")
+        .arg(generator)
+        .arg("--check")
+        .output()
+        .expect("run parser-mysql source-authority generator check");
+    assert!(
+        output.status.success(),
+        "generator check failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
 
 #[test]
 fn test_sql_mode() {
