@@ -594,13 +594,14 @@ func TestStmtSendLongDataMaxAllowedPacket(t *testing.T) {
 	require.NoError(t, err)
 
 	c.Context().GetSessionVars().MaxAllowedPacket = 1024
-	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 512)))
-	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 1, bytes.Repeat([]byte{'b'}, 512)))
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 1024)))
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 1, bytes.Repeat([]byte{'b'}, 1024)))
+	require.NoError(t, stmt.CheckLongDataSize())
 
 	err = dispatchSendLongData(c, stmt.ID(), 0, []byte{'c'})
 	require.NoError(t, err)
-	require.Len(t, stmt.BoundParams()[0], 512)
-	require.Len(t, stmt.BoundParams()[1], 512)
+	require.Len(t, stmt.BoundParams()[0], 1024)
+	require.Len(t, stmt.BoundParams()[1], 1024)
 
 	err = c.Dispatch(context.Background(), append(
 		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),

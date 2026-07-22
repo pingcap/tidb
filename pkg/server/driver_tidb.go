@@ -69,8 +69,7 @@ type TiDBStatement struct {
 	id          uint32
 	numParams   int
 	boundParams [][]byte
-	// boundParamsBytes tracks the total bytes accumulated by COM_STMT_SEND_LONG_DATA for this statement.
-	boundParamsBytes    uint64
+	// boundParamsTooLarge tracks whether a single COM_STMT_SEND_LONG_DATA parameter has exceeded max_allowed_packet.
 	boundParamsTooLarge bool
 	paramsType          []byte
 	ctx                 *TiDBContext
@@ -111,25 +110,29 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	}
 	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
 	if len(data) == 0 {
-		ts.boundParamsBytes -= uint64(len(ts.boundParams[paramID]))
 		ts.boundParams[paramID] = []byte{}
 	} else {
-		if ts.boundParamsBytes+uint64(len(data)) > ts.ctx.GetSessionVars().MaxAllowedPacket {
+		if uint64(len(ts.boundParams[paramID]))+uint64(len(data)) > ts.ctx.GetSessionVars().MaxAllowedPacket {
 			// MySQL reports the packet-too-large error on the following EXECUTE, not on SEND_LONG_DATA.
 			// Stop appending more bytes once the limit is exceeded so the statement cannot grow unboundedly.
 			ts.boundParamsTooLarge = true
 			return nil
 		}
 		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
-		ts.boundParamsBytes += uint64(len(data))
 	}
 	return nil
 }
 
 // CheckLongDataSize implements PreparedStatement CheckLongDataSize method.
 func (ts *TiDBStatement) CheckLongDataSize() error {
-	if ts.boundParamsTooLarge || ts.boundParamsBytes > ts.ctx.GetSessionVars().MaxAllowedPacket {
+	if ts.boundParamsTooLarge {
 		return servererr.ErrNetPacketTooLarge
+	}
+	maxAllowedPacket := ts.ctx.GetSessionVars().MaxAllowedPacket
+	for _, boundParam := range ts.boundParams {
+		if uint64(len(boundParam)) > maxAllowedPacket {
+			return servererr.ErrNetPacketTooLarge
+		}
 	}
 	return nil
 }
@@ -171,7 +174,6 @@ func (ts *TiDBStatement) Reset() error {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
-	ts.boundParamsBytes = 0
 	ts.boundParamsTooLarge = false
 	ts.hasActiveCursor = false
 
