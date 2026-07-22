@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -34,16 +35,20 @@ type mockAutoIDClient struct {
 	rebaseCallCount          atomic.Int64
 	allocErr                 error
 	rebaseErr                error
+	allocReq                 *autoid.AutoIDRequest
+	rebaseReq                *autoid.RebaseRequest
 }
 
-func (m *mockAutoIDClient) AllocAutoID(_ context.Context, _ *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
+func (m *mockAutoIDClient) AllocAutoID(_ context.Context, req *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
 	m.allocCallCount.Add(1)
-	return nil, m.allocErr
+	m.allocReq = req
+	return &autoid.AutoIDResponse{}, m.allocErr
 }
 
-func (m *mockAutoIDClient) Rebase(_ context.Context, _ *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
+func (m *mockAutoIDClient) Rebase(_ context.Context, req *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
 	m.rebaseCallCount.Add(1)
-	return nil, m.rebaseErr
+	m.rebaseReq = req
+	return &autoid.RebaseResponse{}, m.rebaseErr
 }
 
 // newTestSinglePointAlloc creates a singlePointAlloc with a mock client.
@@ -111,6 +116,20 @@ func TestRebaseCanceledRPCReturnsQuickly(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Less(t, elapsed, time.Second, "rebase should return quickly when context is canceled")
 	require.Equal(t, int64(1), mockCli.rebaseCallCount.Load(), "rebase should not retry on canceled context")
+}
+
+func TestV3RequestsCarryKeyspaceIdentity(t *testing.T) {
+	mockCli := &mockAutoIDClient{}
+	sp := newTestSinglePointAlloc(mockCli)
+	identity := &apipb.KeyspaceIdentity{NamespaceId: 7, KeyspaceId: 42}
+	sp.keyspaceIdentity = identity
+
+	_, _, err := sp.Alloc(context.Background(), 1, 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, identity, mockCli.allocReq.GetKeyspaceIdentity())
+
+	require.NoError(t, sp.rebase(context.Background(), 100, false))
+	require.Equal(t, identity, mockCli.rebaseReq.GetKeyspaceIdentity())
 }
 
 // TestBackoffCtxAware verifies that backoffer.Backoff respects context cancellation.

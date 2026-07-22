@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -596,12 +597,18 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 var MockForTest func(kv.Storage) autoid.AutoIDAllocClient
 
 func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
-	keyspaceID := uint32(r.Store().GetCodec().GetKeyspaceID())
+	codec := r.Store().GetCodec()
+	keyspaceID := uint32(codec.GetKeyspaceID())
+	var keyspaceIdentity *apipb.KeyspaceIdentity
+	if keyspaceMeta := codec.GetKeyspaceMeta(); keyspaceMeta != nil {
+		keyspaceIdentity = keyspaceMeta.GetKeyspaceIdentity()
+	}
 	spa := &singlePointAlloc{
-		dbID:       dbID,
-		tblID:      tblID,
-		isUnsigned: isUnsigned,
-		keyspaceID: keyspaceID,
+		dbID:             dbID,
+		tblID:            tblID,
+		isUnsigned:       isUnsigned,
+		keyspaceID:       keyspaceID,
+		keyspaceIdentity: keyspaceIdentity,
 	}
 	if r.AutoIDClient() == nil {
 		// Only for test in mockstore
