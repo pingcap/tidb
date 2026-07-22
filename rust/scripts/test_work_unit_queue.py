@@ -494,6 +494,7 @@ class WorkUnitQueueTest(unittest.TestCase):
                         "pkg/planner/other_test.go:20:TestOther",
                     ],
                     "supports": [],
+                    "rust_paths": ["rust/crates/tidb-planner/src/foo.rs"],
                     "module_sources": [],
                     "module_tests": [],
                 }
@@ -510,6 +511,7 @@ class WorkUnitQueueTest(unittest.TestCase):
                     "sources": ["pkg/planner/bar.go", "pkg/planner/foo.go"],
                     "tests": [],
                     "supports": [],
+                    "rust_paths": ["rust/crates/tidb-planner/src/foo.rs"],
                     "module_sources": [],
                     "module_tests": [],
                 }
@@ -1286,6 +1288,9 @@ class WorkUnitQueueTest(unittest.TestCase):
             "pkg/planner/testdata/deep/fixture_test.go:0:fixture_test.go", claim["tests"]
         )
         self.assertEqual(len(claim["supports"]), 2)
+        self.assertEqual(
+            claim["rust_paths"], ["rust/crates/tidb-planner/src/planner-package.rs"]
+        )
         self.assertNotIn("pkg/planner/sub/child.go", claim["sources"])
         self.assertFalse(any("pkg/planner/sub/BUILD" in item for item in claim["supports"]))
 

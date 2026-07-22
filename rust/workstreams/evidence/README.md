@@ -12,24 +12,21 @@ promoted per full gate, not as wave count or Rust LOC. Ordinary batches should
 reach nine production files or fifty original obligations unless a named
 correctness/dependency boundary requires an earlier gate.
 
-A completed campaign root does not wait for the whole campaign before its
-exact evidence prerequisites become usable. Preflight and then atomically
-promote that member while retaining its active claim:
+A package is never promoted one member or evidence row at a time. Every
+expanded source and original-test row must already be owned by the package at
+`COVERED`, with exact checked evidence, before campaign close can start. The
+steward closes the complete schema-2 campaign through one command:
 
 ```sh
-scripts/campaign_close.py --campaign <campaign> --promote-member <slice>
-scripts/campaign_close.py --campaign <campaign> --promote-member <slice> --apply
+scripts/campaign_close.py --campaign <campaign> --gate
 ```
 
-The member transaction requires exact PARTIAL-or-better evidence for every
-frozen obligation, applies only checked ownership transfers for that member or
-members promoted earlier, regenerates the ledgers under the claim lock, and
-leaves campaign close and claim release untouched. When a promoted test belongs
-to a Go test file already opted into exact split ownership, the same transaction
-adds any missing exact domain row under the promoted member; existing domain
-labels remain stable, and unsplit files stay unsplit. The campaign still ends
-with one `campaign_close.py --campaign <campaign> --gate` shared gate and its
-exact-membership receipt.
+The integration gate runs while every campaign package claim remains active.
+Only its exact claim/workspace receipt authorizes the locked transaction that
+marks all package manifests covered, integrates the campaign, archives its
+membership, emits durable package receipts, and releases the claims. Any gate,
+receipt, validation, or dashboard failure restores the pre-gate bookkeeping.
+Schema-1 campaign history remains readable but cannot be closed again.
 
 Every upstream obligation remains generated in
 `difftests/corpus/coverage/go_test_inventory.tsv`. Dispatch exact,
@@ -59,6 +56,27 @@ embed/generator inputs, and other package support. Claims are exact immutable
 snapshots, so new inventory makes an active claim stale. `claim` and `amend`
 remain legacy evidence-repair tools and are not feature integration paths.
 
+Every expanded support anchor also has exactly one reviewed disposition in
+`workstreams/package-evidence/<owner>-support.tsv`:
+
+```text
+support_path<TAB>sha256<TAB>disposition<TAB>evidence_artifact<TAB>note
+```
+
+Accepted dispositions are `runtime-transcreated`, `test-transcreated`,
+`build-metadata-reviewed`, and `generated-input-reviewed`. Build-only files may
+use `build-metadata-reviewed`; they still require their frozen path and digest,
+an existing evidence artifact, and a concrete review note. Missing, duplicate,
+foreign, or stale dispositions fail package close and make a covered dependency
+invalid.
+
+Successful close writes one immutable
+`workstreams/package-receipts/<owner>.json`. It content-addresses the package
+manifest, every source/test/support evidence artifact, support dispositions,
+Rust targets and paths, and the exact gate claim/workspace result. A covered
+package and every downstream dependency must validate against this receipt;
+campaign close refuses to overwrite an existing receipt.
+
 Production ownership is a separate generated dimension. Select its exact
 target-crate queue from `difftests/corpus/coverage/go_source_inventory.tsv`
 before pairing it with original tests:
@@ -77,9 +95,10 @@ cargo run --locked -j 12 -p difftest --bin domain_queue -- --summary
 ```
 
 `workstreams/claims/<owner>.claim.json` is an ignored local lease for agents
-working concurrently. The fast checker reads it to reject live overlap and
-stale anchors, while the generated ledgers deliberately do not consume it: a
-local lease can coordinate work but cannot hide or discharge an obligation.
+working concurrently. Schema-2 claims freeze the expanded source, test,
+support, module, and Rust write-path sets. The fast checker rejects live overlap
+and stale anchors, while the generated ledgers deliberately do not consume the
+lease: coordination cannot hide or discharge an obligation.
 
 The source ledger's `unassigned` and `eliminated-go-runtime` routes are visible
 architecture decisions, not coverage statuses. Move a row only after reading

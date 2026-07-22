@@ -105,26 +105,26 @@ case ${1:-} in
         git -C .. diff --check -- rust
         ;;
     integrate)
-        # Behavior verification only. The claim/receipt digest ceremony that
-        # used to wrap this was removed: it forced full re-runs whenever any
-        # file changed while the gate was running, and it never found a defect.
-        # Ledger bookkeeping is still available through work-unit-queue.py and
-        # campaign_close.py for anyone who wants it; it no longer blocks a build.
         [ "$#" -eq 1 ] || usage
+        scripts/work-unit-queue.py gate-begin
+        trap 'scripts/work-unit-queue.py gate-abort >/dev/null 2>&1 || true' EXIT HUP INT TERM
         cargo fmt --all -- --check
         cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
         cargo test --offline --locked -j12 --workspace -q
-        python3 -m unittest scripts/test_status_dashboard.py
+        python3 -m unittest \
+            scripts/test_campaign_close.py \
+            scripts/test_work_unit_queue.py \
+            scripts/test_status_dashboard.py
         cargo fmt --all -- --check
-        build_evidence_tools
-        "$CARGO_TARGET_DIR/debug/integration_parser_golden" --check
-        "$CARGO_TARGET_DIR/debug/integration_parser_queue" --check
+        static_gates
         # POSIX grep, not rg: this script runs under /bin/sh, where a caller's
         # interactive-shell `rg` may not exist. A missing matcher made the
         # pipeline print nothing, so the isolation check passed unconditionally.
         parser_test_tree=$(cargo tree --offline --locked -p difftest-parser-tests)
         test -z "$(printf '%s\n' "$parser_test_tree" | grep -E 'tidb-(expr|exec)' || true)"
         git -C .. diff --check -- rust
+        scripts/work-unit-queue.py gate-finish
+        trap - EXIT HUP INT TERM
         ;;
     *)
         usage

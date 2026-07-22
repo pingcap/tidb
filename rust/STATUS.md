@@ -40,10 +40,10 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-22 | integrated | 6 |
 | 2026-07-read-path-23 | integrated | 6 |
 | 2026-07-read-path-24 | integrated | 6 |
-| 2026-07-read-path-25 | planned | 7 |
+| 2026-07-read-path-25 | frozen | 7 |
 | 2026-07-read-path-26 | integrated | 8 |
 | 2026-07-read-path-27 | integrated | 4 |
-| 2026-07-read-path-28 | planned | 5 |
+| 2026-07-read-path-28 | frozen | 5 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |

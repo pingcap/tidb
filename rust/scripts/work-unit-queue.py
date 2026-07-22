@@ -36,6 +36,8 @@ RUST_ROOT = Path(
 SOURCE_LEDGER = Path("difftests/corpus/coverage/go_source_inventory.tsv")
 TEST_LEDGER = Path("difftests/corpus/coverage/go_test_inventory.tsv")
 SUPPORT_LEDGER = Path("difftests/corpus/coverage/go_package_support_inventory.tsv")
+PACKAGE_EVIDENCE_DIR = Path("workstreams/package-evidence")
+PACKAGE_RECEIPTS_DIR = Path("workstreams/package-receipts")
 MODULE_SOURCE_LEDGER = Path("difftests/corpus/coverage/external_go_source_inventory.tsv")
 MODULE_TEST_LEDGER = Path("difftests/corpus/coverage/external_go_test_inventory.tsv")
 CLAIMS_DIR = Path("workstreams/claims")
@@ -55,6 +57,12 @@ EVIDENCE_STATUS_RANK = {"UNTRIAGED": 0, "PARTIAL": 1, "COVERED": 2}
 CAMPAIGN_STATUSES = {"planned", "active", "frozen", "integrated"}
 CAMPAIGN_MIN_SOURCE_COUNT = 9
 CAMPAIGN_MIN_TEST_COUNT = 50
+SUPPORT_DISPOSITIONS = {
+    "runtime-transcreated",
+    "test-transcreated",
+    "build-metadata-reviewed",
+    "generated-input-reviewed",
+}
 
 
 def read_tsv(path: Path, fields: int) -> list[list[str]]:
@@ -146,12 +154,18 @@ def load_module_source_rows(root: Path) -> dict[str, dict[str, str]]:
     if not path.exists():
         return {}
     rows = {}
-    for universe, source, _lines, _sha, status, owner, artifact, note in read_tsv(path, 8):
+    for universe, source, _lines, sha, status, owner, artifact, note in read_tsv(path, 8):
         anchor = f"{universe}::{source}"
         if anchor in rows:
             raise ValueError(f"{path}: duplicate qualified module source anchor {anchor}")
         validate_evidence_artifact(root, MODULE_SOURCE_LEDGER, anchor, artifact)
-        rows[anchor] = {"status": status, "owner": owner, "artifact": artifact, "note": note}
+        rows[anchor] = {
+            "status": status,
+            "owner": owner,
+            "artifact": artifact,
+            "note": note,
+            "upstream_sha256": sha,
+        }
     return rows
 
 
@@ -164,12 +178,18 @@ def load_module_test_rows(root: Path) -> dict[str, dict[str, str]]:
     if not path.exists():
         return {}
     rows = {}
-    for universe, _kind, source, line, name, _ring, _sha, status, owner, artifact, note in read_tsv(path, 11):
+    for universe, _kind, source, line, name, _ring, sha, status, owner, artifact, note in read_tsv(path, 11):
         anchor = f"{universe}::{source}:{int(line)}:{name}"
         if anchor in rows:
             raise ValueError(f"{path}: duplicate qualified module test anchor {anchor}")
         validate_evidence_artifact(root, MODULE_TEST_LEDGER, anchor, artifact)
-        rows[anchor] = {"status": status, "owner": owner, "artifact": artifact, "note": note}
+        rows[anchor] = {
+            "status": status,
+            "owner": owner,
+            "artifact": artifact,
+            "note": note,
+            "upstream_sha256": sha,
+        }
     return rows
 
 
@@ -300,6 +320,68 @@ def load_support_rows(root: Path) -> dict[str, dict[str, str]]:
             "sha256": sha256,
         }
     return rows
+
+
+def load_package_support_evidence(
+    root: Path, owner: str, expected_anchors: list[str]
+) -> list[dict[str, str]]:
+    """Loads one exact, owner-named disposition for each package support file."""
+    path = root / PACKAGE_EVIDENCE_DIR / f"{owner}-support.tsv"
+    if not expected_anchors:
+        if path.exists() and read_tsv(path, 5):
+            raise ValueError(f"{path}: package has no support inventory")
+        return []
+    if not path.is_file():
+        raise ValueError(f"{path}: missing package support evidence")
+    support_rows = load_support_rows(root)
+    expected = {anchor: support_rows[anchor] for anchor in expected_anchors}
+    for anchor, row in expected.items():
+        support_path = root.parent / row["path"]
+        if not support_path.is_file():
+            raise ValueError(f"{path}: package support is missing: {row['path']}")
+        current = hashlib.sha256(support_path.read_bytes()).hexdigest()
+        if current != row["sha256"]:
+            raise ValueError(
+                f"{path}: package support digest changed for {row['path']}; "
+                f"expected {row['sha256']}, found {current}"
+            )
+    found: dict[str, dict[str, str]] = {}
+    for support_path, sha256, disposition, evidence_artifact, note in read_tsv(path, 5):
+        anchor = f"{support_path}@{sha256}"
+        if anchor in found:
+            raise ValueError(f"{path}: duplicate support evidence {anchor}")
+        if anchor not in expected:
+            raise ValueError(f"{path}: stale or foreign support evidence {anchor}")
+        if disposition not in SUPPORT_DISPOSITIONS:
+            raise ValueError(
+                f"{path}: invalid support disposition {disposition!r} for {support_path}"
+            )
+        if not note or note == "-":
+            raise ValueError(f"{path}: support evidence {support_path} requires a note")
+        artifact_path = Path(evidence_artifact)
+        if (
+            evidence_artifact == "-"
+            or artifact_path.is_absolute()
+            or artifact_path.as_posix() != evidence_artifact
+            or any(part in {"", ".", ".."} for part in artifact_path.parts)
+            or not (root.parent / artifact_path).is_file()
+        ):
+            raise ValueError(
+                f"{path}: support evidence artifact is missing: {evidence_artifact}"
+            )
+        found[anchor] = {
+            "anchor": anchor,
+            "path": support_path,
+            "sha256": sha256,
+            "disposition": disposition,
+            "evidence_artifact": evidence_artifact,
+            "evidence_sha256": file_digest(root.parent / artifact_path),
+            "note": note,
+        }
+    missing = sorted(set(expected) - set(found))
+    if missing:
+        raise ValueError(f"{path}: missing support evidence {missing[0]}")
+    return [found[anchor] for anchor in sorted(found)]
 
 
 def expand_go_packages(
@@ -576,6 +658,17 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
             record["rust_targets"] = list(record["targets"])
             record["target"] = ",".join(record["targets"])
             record["ring"] = ",".join(record["rings"])
+            for rust_path in record["rust_paths"]:
+                candidate = Path(rust_path)
+                if (
+                    candidate.is_absolute()
+                    or candidate.as_posix() != rust_path
+                    or any(part in {"", ".", ".."} for part in candidate.parts)
+                    or not candidate.is_relative_to(Path("rust"))
+                ):
+                    raise ValueError(
+                        f"{path}: invalid schema-2 Rust write path {rust_path!r}"
+                    )
         if schema == "1":
             supports = []
         if not sources and not tests and not module_sources and not module_tests:
@@ -708,6 +801,9 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
 
     for name in records:
         visit(name)
+    for name, record in records.items():
+        if record["schema"] == "2" and record["status"] == "covered":
+            validate_package_receipt(root, name, record)
     return records
 
 
@@ -1064,6 +1160,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         claimed_sources = claim_sources(claim)
         claimed_tests = claim.get("tests")
         claimed_supports = claim.get("supports", [])
+        claimed_rust_paths = claim.get("rust_paths", [])
         claimed_module_sources = claim.get("module_sources", [])
         claimed_module_tests = claim.get("module_tests", [])
         if schema not in {1, 2} or not isinstance(owner, str):
@@ -1082,6 +1179,11 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         ):
             raise ValueError(f"{path}: supports must be a string array")
         claimed_supports = sorted(set(claimed_supports))
+        if not isinstance(claimed_rust_paths, list) or not all(
+            isinstance(item, str) for item in claimed_rust_paths
+        ):
+            raise ValueError(f"{path}: rust_paths must be a string array")
+        claimed_rust_paths = sorted(set(claimed_rust_paths))
         if not isinstance(claimed_module_sources, list) or not all(
             isinstance(item, str) for item in claimed_module_sources
         ):
@@ -1118,12 +1220,14 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
             expected_sources = list(slice_record["go_sources"])
             expected_tests = list(slice_record["go_tests"])
             expected_supports = list(slice_record["go_supports"])
+            expected_rust_paths = list(slice_record["rust_paths"])
             expected_module_sources = list(slice_record["module_sources"])
             expected_module_tests = list(slice_record["module_tests"])
             if (
                 claimed_sources != expected_sources
                 or sorted(claimed_tests) != expected_tests
                 or claimed_supports != expected_supports
+                or claimed_rust_paths != expected_rust_paths
                 or claimed_module_sources != expected_module_sources
                 or claimed_module_tests != expected_module_tests
             ):
@@ -1135,6 +1239,8 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     ("extra tests", sorted(set(claimed_tests) - set(expected_tests))),
                     ("missing supports", sorted(set(expected_supports) - set(claimed_supports))),
                     ("extra supports", sorted(set(claimed_supports) - set(expected_supports))),
+                    ("missing Rust paths", sorted(set(expected_rust_paths) - set(claimed_rust_paths))),
+                    ("extra Rust paths", sorted(set(claimed_rust_paths) - set(expected_rust_paths))),
                     ("missing module sources", sorted(set(expected_module_sources) - set(claimed_module_sources))),
                     ("extra module sources", sorted(set(claimed_module_sources) - set(expected_module_sources))),
                     ("missing module tests", sorted(set(expected_module_tests) - set(claimed_module_tests))),
@@ -1146,7 +1252,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     f"{path}: schema-2 claim for slice {owner} must exactly match "
                     f"its go_sources and go_tests; {'; '.join(differences)}"
                 )
-            claim["_rust_paths"] = list(slice_record["rust_paths"])
+            claim["_rust_paths"] = claimed_rust_paths
             for rust_path in claim["_rust_paths"]:
                 if rust_path in seen_rust_paths:
                     raise ValueError(
@@ -1237,6 +1343,148 @@ def file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _attested_ledger_rows(
+    root: Path, anchors: list[str], rows: dict[str, dict[str, object]]
+) -> list[dict[str, str]]:
+    attested = []
+    for anchor in anchors:
+        row = rows[anchor]
+        artifact = str(row["artifact"])
+        artifact_path = root.parent / artifact
+        if artifact == "-" or not artifact_path.is_file():
+            raise ValueError(f"package evidence artifact is missing: {artifact}")
+        if "upstream_sha256" in row:
+            upstream_sha256 = str(row["upstream_sha256"])
+        else:
+            source_path = anchor.rsplit(":", 2)[0] if ":" in anchor else anchor
+            upstream = root.parent / source_path
+            if not upstream.is_file():
+                raise ValueError(f"upstream package source is missing: {source_path}")
+            upstream_sha256 = file_digest(upstream)
+        attested.append(
+            {
+                "anchor": anchor,
+                "upstream_sha256": upstream_sha256,
+                "owner": str(row["owner"]),
+                "status": str(row["status"]),
+                "evidence_artifact": artifact,
+                "evidence_sha256": file_digest(artifact_path),
+            }
+        )
+    return attested
+
+
+def package_completion_snapshot(
+    root: Path, owner: str, record: dict[str, object]
+) -> dict[str, object]:
+    """Returns the complete content-addressed package result for its receipt."""
+    source_rows = {str(row["path"]): row for row in load_source_rows(root)}
+    test_rows = {test_key(row): row for row in load_test_rows(root)}
+    module_source_rows: dict[str, dict[str, object]] = dict(
+        load_module_source_rows(root)
+    )
+    module_test_rows: dict[str, dict[str, object]] = dict(load_module_test_rows(root))
+    rust_paths = []
+    for relative in record["rust_paths"]:
+        path = root.parent / str(relative)
+        if not path.is_file():
+            raise ValueError(f"package {owner} Rust path is missing: {relative}")
+        rust_paths.append(
+            {"path": str(relative), "sha256": file_digest(path)}
+        )
+    manifest_path = Path(record["_path"])
+    snapshot = {
+        "manifest": {
+            "path": manifest_path.relative_to(root.parent).as_posix(),
+            "sha256": file_digest(manifest_path),
+        },
+        "go_packages": list(record["go_packages"]),
+        "module_packages": list(record["module_packages"]),
+        "sources": _attested_ledger_rows(
+            root, list(record["go_sources"]), source_rows
+        ),
+        "tests": _attested_ledger_rows(root, list(record["go_tests"]), test_rows),
+        "module_sources": _attested_ledger_rows(
+            root, list(record["module_sources"]), module_source_rows
+        ),
+        "module_tests": _attested_ledger_rows(
+            root, list(record["module_tests"]), module_test_rows
+        ),
+        "supports": load_package_support_evidence(
+            root, owner, list(record["go_supports"])
+        ),
+        "rust_targets": list(record["rust_targets"]),
+        "rust_paths": rust_paths,
+    }
+    inventory = {key: value for key, value in snapshot.items() if key != "manifest"}
+    snapshot["inventory_sha256"] = hashlib.sha256(
+        json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return snapshot
+
+
+def package_receipt_payload(
+    root: Path,
+    owner: str,
+    campaign: str,
+    record: dict[str, object],
+    gate_receipt: dict[str, object],
+) -> dict[str, object]:
+    claim = gate_receipt.get("claims", {}).get(owner)
+    if not isinstance(claim, dict) or not isinstance(claim.get("claim_sha256"), str):
+        raise ValueError(f"gate receipt is missing exact package claim {owner}")
+    return {
+        "schema": 1,
+        "owner": owner,
+        "campaign": campaign,
+        "package": package_completion_snapshot(root, owner, record),
+        "gate": {
+            "command": ["scripts/rewrite-gate.sh", "integrate"],
+            "result": "passed",
+            "claim_sha256": claim["claim_sha256"],
+            "workspace_sha256": gate_receipt.get("workspace_sha256"),
+            "slice_manifests_sha256": gate_receipt.get("slice_manifests_sha256"),
+        },
+    }
+
+
+def validate_package_receipt(
+    root: Path, owner: str, record: dict[str, object]
+) -> dict[str, object]:
+    """Validates the immutable durable receipt required by covered packages."""
+    path = root / PACKAGE_RECEIPTS_DIR / f"{owner}.json"
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid package receipt {path}: {error}") from error
+    if (
+        receipt.get("schema") != 1
+        or receipt.get("owner") != owner
+        or not isinstance(receipt.get("campaign"), str)
+        or not OWNER_RE.fullmatch(str(receipt.get("campaign", "")))
+    ):
+        raise ValueError(f"{path}: invalid package receipt identity")
+    expected = package_completion_snapshot(root, owner, record)
+    if receipt.get("package") != expected:
+        raise ValueError(f"{path}: package inventory or artifact digest is stale")
+    gate = receipt.get("gate")
+    if (
+        not isinstance(gate, dict)
+        or gate.get("command") != ["scripts/rewrite-gate.sh", "integrate"]
+        or gate.get("result") != "passed"
+        or not all(
+            isinstance(gate.get(field), str) and gate[field]
+            for field in (
+                "claim_sha256",
+                "workspace_sha256",
+                "slice_manifests_sha256",
+            )
+        )
+    ):
+        raise ValueError(f"{path}: incomplete package gate attestation")
+    return receipt
+
+
 def release_workspace_digest(root: Path) -> str:
     """Hashes inputs that must remain immutable after a successful gate.
 
@@ -1246,12 +1494,14 @@ def release_workspace_digest(root: Path) -> str:
     """
     mutable_prefixes = (
         "workstreams/claims/",
+        "workstreams/package-receipts/",
         "difftests/corpus/coverage/evidence/",
         "target/",
     )
     mutable_paths = {
         INTEGRATION_ATTEMPT.as_posix(),
         INTEGRATION_RECEIPT.as_posix(),
+        INTEGRATED_CAMPAIGN_MEMBERS.as_posix(),
         "difftests/corpus/coverage/go_source_inventory.tsv",
         "difftests/corpus/coverage/go_test_inventory.tsv",
         "difftests/corpus/coverage/external_go_source_inventory.tsv",
@@ -1267,7 +1517,7 @@ def release_workspace_digest(root: Path) -> str:
         if (
             relative in mutable_paths
             or (
-                relative.startswith("workstreams/slices/")
+                relative.startswith(("workstreams/slices/", "workstreams/campaigns/"))
                 and relative.endswith(".toml")
             )
             or any(relative.startswith(prefix) for prefix in mutable_prefixes)
@@ -1591,6 +1841,7 @@ def claim(
             "sources": normalized_sources,
             "tests": normalized_tests,
             "supports": normalized_supports,
+            "rust_paths": sorted(new_rust_paths) if package_slice is not None else [],
             "module_sources": normalized_module_sources,
             "module_tests": normalized_module_tests,
         }
