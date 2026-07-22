@@ -2181,6 +2181,51 @@ def upstream_snapshot(
     }
 
 
+def _workspace_files(
+    root: Path,
+    *,
+    excluded_prefixes: tuple[str, ...],
+    excluded_paths: set[str],
+) -> list[tuple[str, Path]]:
+    """Lists digest inputs without descending into excluded build trees.
+
+    ``Path.rglob`` still traverses every entry below a directory whose files
+    are later excluded. A Rust ``target/`` can contain hundreds of thousands of
+    files, so pruning directories during the walk is both equivalent and much
+    cheaper.
+    """
+    excluded_directories = {prefix.rstrip("/") for prefix in excluded_prefixes}
+    files: list[tuple[str, Path]] = []
+    for directory, directory_names, file_names in os.walk(root):
+        directory_path = Path(directory)
+        relative_directory = directory_path.relative_to(root)
+        relative_prefix = (
+            "" if relative_directory == Path(".") else relative_directory.as_posix()
+        )
+        directory_names[:] = sorted(
+            name
+            for name in directory_names
+            if name != "__pycache__"
+            and (
+                f"{relative_prefix}/{name}" if relative_prefix else name
+            )
+            not in excluded_directories
+        )
+        for name in file_names:
+            path = directory_path / name
+            if not path.is_file():
+                continue
+            relative = (
+                f"{relative_prefix}/{name}" if relative_prefix else name
+            )
+            if relative in excluded_paths or relative.endswith((".pyc", ".DS_Store")):
+                continue
+            files.append((relative, path))
+    # Preserve the historical ``sorted(root.rglob("*"))`` component ordering
+    # so existing gate digests remain stable across this traversal optimization.
+    return sorted(files, key=lambda item: item[1])
+
+
 def release_workspace_digest(root: Path) -> str:
     """Hashes inputs that must remain immutable after a successful gate.
 
@@ -2206,19 +2251,14 @@ def release_workspace_digest(root: Path) -> str:
         "PARALLEL.md",
     }
     digest = hashlib.sha256()
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root).as_posix()
+    for relative, path in _workspace_files(
+        root,
+        excluded_prefixes=mutable_prefixes,
+        excluded_paths=mutable_paths,
+    ):
         if (
-            relative in mutable_paths
-            or (
-                relative.startswith(("workstreams/slices/", "workstreams/campaigns/"))
-                and relative.endswith(".toml")
-            )
-            or any(relative.startswith(prefix) for prefix in mutable_prefixes)
-            or "/__pycache__/" in f"/{relative}"
-            or relative.endswith((".pyc", ".DS_Store"))
+            relative.startswith(("workstreams/slices/", "workstreams/campaigns/"))
+            and relative.endswith(".toml")
         ):
             continue
         digest.update(relative.encode())
@@ -2239,17 +2279,11 @@ def gate_workspace_digest(root: Path) -> str:
         INTEGRATION_RECEIPT.as_posix(),
     }
     digest = hashlib.sha256()
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root).as_posix()
-        if (
-            relative in runtime_paths
-            or any(relative.startswith(prefix) for prefix in runtime_prefixes)
-            or "/__pycache__/" in f"/{relative}"
-            or relative.endswith((".pyc", ".DS_Store"))
-        ):
-            continue
+    for relative, path in _workspace_files(
+        root,
+        excluded_prefixes=runtime_prefixes,
+        excluded_paths=runtime_paths,
+    ):
         digest.update(relative.encode())
         digest.update(b"\0")
         digest.update(file_digest(path).encode())

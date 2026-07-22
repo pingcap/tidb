@@ -394,7 +394,9 @@ inseparable dependency frontier closes only after all member gates pass
 together. Cheap static/generated checks run first so stale bookkeeping cannot
 waste a workspace build. Independent read-only checks run concurrently, and a
 single successful pass remains valid through attestation only while the exact
-checked-input digest stays frozen. Completion and release candidates
+checked-input digest stays frozen. Digest traversal prunes excluded build and
+runtime trees before descent; excluded artifacts never affect the digest and
+must not consume close latency. Completion and release candidates
 additionally require the repository Ready verification profile, including
 repository lint when code changed. Expensive live suites run when the package
 or frontier touches their contract; they are never replaced by mocks when real

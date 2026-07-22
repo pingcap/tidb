@@ -131,7 +131,8 @@ generated ledgers and must not be converted into percentage progress.
    builds evidence tools once, runs independent read-only static checks
    concurrently, then runs full workspace tests, Clippy, and applicable live
    gates using 12 jobs. The final content digest replaces a duplicate post-test
-   static pass. Create a tracked campaign only when two or more packages are
+   static pass, and digest traversal prunes excluded Cargo build trees before
+   descent. Create a tracked campaign only when two or more packages are
    genuinely dependency-inseparable.
 6. Issue a package receipt only after inventory closure and required
    differential/live evidence. Until then every carried ledger row stays

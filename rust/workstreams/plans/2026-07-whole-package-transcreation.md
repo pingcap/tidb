@@ -80,6 +80,12 @@ package receipts before its Rust code reaches the shared branch.
   post-test static pass. On the same warm target, one static stage fell from
   20.58 seconds to 9.70 seconds; a close now avoids about 31 seconds of
   previously serialized or repeated static work.
+- [x] (2026-07-22) Removed excluded build-volume traversal from gate hashing.
+  The previous `Path.rglob` walked 541,184 files in the 33 GiB local
+  `rust/target` tree on every digest even though every target artifact was then
+  discarded. Directory pruning preserved byte-for-byte digest results while
+  reducing the gate digest from 12.363 to 0.272 seconds and the release digest
+  from 12.130 to 0.208 seconds.
 
 ## Surprises & Discoveries
 
@@ -163,6 +169,12 @@ package receipts before its Rust code reaches the shared branch.
   Go-test-ledger scan. Concurrent execution reduced it to 9.70 seconds, and
   removing the redundant second pass preserves the same frozen-input
   attestation while avoiding another full static stage.
+- Observation: excluding `target/` after recursive enumeration does not exclude
+  its cost.
+  Evidence: the local 33 GiB target contained 541,184 files. The old digest
+  spent over 12 seconds walking them per call and a one-package close invoked
+  workspace digests repeatedly; top-down pruning produces the identical digest
+  in under 0.3 seconds.
 
 ## Decision Log
 
@@ -250,6 +262,12 @@ package receipts before its Rust code reaches the shared branch.
   unchanged through workspace tests.
   Rationale: rerunning deterministic readers on byte-identical inputs adds
   latency but no evidence; the digest fails closed on any mutation.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: prune excluded workspace directories during digest enumeration,
+  while preserving the prior path ordering and exact digest algorithm.
+  Rationale: ignored Cargo artifacts are not attestation inputs, so traversing
+  them is pure scale-dependent overhead and can make the safety mechanism cost
+  more as the cache becomes more useful.
   Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective

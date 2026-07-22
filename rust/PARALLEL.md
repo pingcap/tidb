@@ -164,7 +164,8 @@ stable `rust_paths`; they record integration seam path names and the shared gate
 attestation without hashing seam bytes. This preserves proof of the package
 leaf while allowing later packages to reuse a serialized shared seam. Any change
 during the gate or committed Rust code outside the active write-set union
-invalidates the gate.
+invalidates the gate. Digest enumeration must prune excluded build/runtime
+directories before descending into them; ignored build volume is not evidence.
 
 ## Evidence rules
 

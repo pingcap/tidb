@@ -29,6 +29,10 @@ from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("work-unit-queue.py")
+SPEC = importlib.util.spec_from_file_location("work_unit_queue", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+work_unit_queue = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(work_unit_queue)
 
 
 class WorkUnitQueueTest(unittest.TestCase):
@@ -162,6 +166,25 @@ class WorkUnitQueueTest(unittest.TestCase):
             check=True,
         )
         return self.git_head()
+
+    def test_workspace_digest_prunes_the_build_tree(self) -> None:
+        target_file = self.root / "target/debug/deps/noise"
+        target_file.parent.mkdir(parents=True)
+        target_file.write_text("first build artifact", encoding="utf-8")
+        visited: list[Path] = []
+        real_walk = os.walk
+
+        def recording_walk(root: Path):
+            for directory, directory_names, file_names in real_walk(root):
+                visited.append(Path(directory).relative_to(self.root))
+                yield directory, directory_names, file_names
+
+        with mock.patch.object(work_unit_queue.os, "walk", recording_walk):
+            before = work_unit_queue.gate_workspace_digest(self.root)
+        self.assertNotIn(Path("target"), visited)
+
+        target_file.write_text("different build artifact", encoding="utf-8")
+        self.assertEqual(before, work_unit_queue.gate_workspace_digest(self.root))
 
     def test_check_rejects_comma_separated_source_evidence_artifacts(self) -> None:
         inventory = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
