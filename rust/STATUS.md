@@ -20,7 +20,7 @@ the source or obligation still has explicit unported behavior.
 | Campaign | Status | Packages |
 | --- | --- | --- |
 | 2026-07-package-frontier-01 | integrated | 2 |
-| 2026-07-package-frontier-02 | planned | 3 |
+| 2026-07-package-frontier-02 | planned | 1 |
 | 2026-07-package-frontier-03 | integrated | 1 |
 
 ## Legacy schema-1 evidence

@@ -3,6 +3,4 @@ campaign = "2026-07-package-frontier-02"
 status = "planned"
 slices = [
   "parser-mysql-package",
-  "parser-opcode-package",
-  "parser-util-package",
 ]
