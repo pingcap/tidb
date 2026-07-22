@@ -195,6 +195,14 @@ fn parser_remaining_field_type_surface_is_source_complete() {
         r#"{"Tp":247,"Flag":1,"Flen":3,"Decimal":0,"Charset":"utf8mb4","Collate":"utf8mb4_bin","Elems":["a","bb"],"ElemsIsBinaryLit":null,"Array":false}"#
     );
     assert_eq!(FieldType::from_json(&encoded).unwrap(), json_field);
+    assert!(std::str::from_utf8(
+        &FieldType::parser(C::Enum)
+            .with_elems(Vec::<String>::new())
+            .to_json()
+            .unwrap()
+    )
+    .unwrap()
+    .contains(r#""Elems":[]"#));
     assert!(json_field.memory_usage() >= std::mem::size_of::<FieldType>());
 }
 

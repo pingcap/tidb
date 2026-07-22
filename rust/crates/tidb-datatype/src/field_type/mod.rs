@@ -436,7 +436,9 @@ pub struct FieldType {
     charset_name: String,
     collation_name: String,
     elems: Vec<String>,
+    elems_present: bool,
     elems_is_binary_literal: Vec<bool>,
+    elems_is_binary_literal_present: bool,
     array: bool,
 }
 
@@ -495,7 +497,9 @@ impl FieldType {
             charset_name: collation.charset().name().to_owned(),
             collation_name: collation.name().to_owned(),
             elems: Vec::new(),
+            elems_present: false,
             elems_is_binary_literal: Vec::new(),
+            elems_is_binary_literal_present: false,
             array: false,
         }
     }
@@ -511,7 +515,9 @@ impl FieldType {
             charset_name: String::new(),
             collation_name: String::new(),
             elems: Vec::new(),
+            elems_present: false,
             elems_is_binary_literal: Vec::new(),
+            elems_is_binary_literal_present: false,
             array: false,
         }
     }
@@ -696,6 +702,7 @@ impl FieldType {
     /// independently owned, lazily allocated binary-literal marker slice.
     pub fn with_elems(mut self, elems: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.elems = elems.into_iter().map(Into::into).collect();
+        self.elems_present = true;
         self
     }
 
@@ -725,6 +732,7 @@ impl FieldType {
         if is_binary_literal {
             if self.elems_is_binary_literal.is_empty() {
                 self.elems_is_binary_literal.resize(self.elems.len(), false);
+                self.elems_is_binary_literal_present = true;
             }
             self.elems_is_binary_literal[index] = true;
         }
@@ -743,6 +751,7 @@ impl FieldType {
     /// Clears the lazily allocated element binary-literal flags.
     pub fn clean_elem_binary_literals(&mut self) {
         self.elems_is_binary_literal.clear();
+        self.elems_is_binary_literal_present = false;
     }
 
     /// Marks this metadata as an ARRAY type. `code()` then returns JSON, as Go does.
@@ -1238,8 +1247,9 @@ impl From<&FieldType> for JsonFieldType {
             Decimal: field.decimal,
             Charset: field.charset_name.clone(),
             Collate: field.collation_name.clone(),
-            Elems: (!field.elems.is_empty()).then(|| field.elems.clone()),
-            ElemsIsBinaryLit: (!field.elems_is_binary_literal.is_empty())
+            Elems: field.elems_present.then(|| field.elems.clone()),
+            ElemsIsBinaryLit: field
+                .elems_is_binary_literal_present
                 .then(|| field.elems_is_binary_literal.clone()),
             Array: field.array,
         }
@@ -1256,7 +1266,9 @@ impl From<JsonFieldType> for FieldType {
         result.collation_name = field.Collate;
         result.collation =
             Collation::from_name(&result.collation_name).unwrap_or(Collation::Binary);
+        result.elems_present = field.Elems.is_some();
         result.elems = field.Elems.unwrap_or_default();
+        result.elems_is_binary_literal_present = field.ElemsIsBinaryLit.is_some();
         result.elems_is_binary_literal = field.ElemsIsBinaryLit.unwrap_or_default();
         result.array = field.Array;
         result
