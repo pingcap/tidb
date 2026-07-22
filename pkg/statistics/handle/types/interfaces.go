@@ -226,6 +226,10 @@ type StatsCache interface {
 	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
+	// UpdateTableStatsMeta refreshes only the count and modify count for the requested tables.
+	// It preserves cached histograms and the pseudo state when ANALYZE did not persist new global stats.
+	UpdateTableStatsMeta(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error
+
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
 

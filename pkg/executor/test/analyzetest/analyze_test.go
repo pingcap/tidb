@@ -132,7 +132,8 @@ PARTITION BY RANGE ( a ) (
 // TestAnalyzeRefreshesOnlyPersistedStats verifies that partition ANALYZE only
 // refreshes physical or global stats IDs whose persistence path wrote data.
 // Each case caches a pseudo global entry behind a higher cache-wide version,
-// analyzes one partition, and checks the global entry against the merge result.
+// analyzes one partition, and checks both the global entry's merge state and
+// its logical-table row count.
 func TestAnalyzeRefreshesOnlyPersistedStats(t *testing.T) {
 	testCases := []struct {
 		name                     string
@@ -230,6 +231,7 @@ func TestAnalyzeRefreshesOnlyPersistedStats(t *testing.T) {
 			} else {
 				require.True(t, globalStats.Pseudo)
 			}
+			require.Equal(t, int64(4), globalStats.RealtimeCount)
 			require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
 		})
 	}
