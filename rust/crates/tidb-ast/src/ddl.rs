@@ -884,17 +884,32 @@ impl AlterTableAction {
                 out.push_str(" TO ");
                 out.push_str(&back_quote(&action.to));
             }
-            AlterTableAction::ModifyColumn { column, position } => {
+            AlterTableAction::ModifyColumn {
+                if_exists,
+                column,
+                position,
+            } => {
                 out.push_str("MODIFY COLUMN ");
+                if *if_exists {
+                    context.write_with_tidb_special_comment(out, "", |out| {
+                        out.push_str("IF EXISTS ");
+                    });
+                }
                 column.restore_into_with_context(out, context);
                 push_column_position(out, position);
             }
             AlterTableAction::ChangeColumn {
+                if_exists,
                 old_name,
                 column,
                 position,
             } => {
                 out.push_str("CHANGE COLUMN ");
+                if *if_exists {
+                    context.write_with_tidb_special_comment(out, "", |out| {
+                        out.push_str("IF EXISTS ");
+                    });
+                }
                 out.push_str(&back_quote(old_name));
                 out.push(' ');
                 column.restore_into_with_context(out, context);
@@ -1274,6 +1289,8 @@ pub enum AlterTableAction {
     /// column, never a rename); `MODIFY` alone restores identically to the
     /// `COLUMN`-qualified form.
     ModifyColumn {
+        /// Whether a missing source column is ignored.
+        if_exists: bool,
         /// The column's (unchanged) name and its new type/options.
         column: ColumnDef,
         /// Where to move it; `Default` leaves it at its current position.
@@ -1284,6 +1301,8 @@ pub enum AlterTableAction {
     /// `col`'s own name; `CHANGE` alone restores identically to the
     /// `COLUMN`-qualified form.
     ChangeColumn {
+        /// Whether a missing source column is ignored.
+        if_exists: bool,
         /// The column's current name.
         old_name: String,
         /// The new name (in `column.name`) and new type/options.
@@ -1917,17 +1936,23 @@ impl crate::Visitable for AlterTableAction {
                 }
                 let _ = field_0;
             }
-            Self::ModifyColumn { column, position } => {
+            Self::ModifyColumn {
+                if_exists,
+                column,
+                position,
+            } => {
                 if !crate::Visitable::accept(column, visitor) {
                     return false;
                 }
                 if !crate::Visitable::accept(position, visitor) {
                     return false;
                 }
+                let _ = if_exists;
                 let _ = column;
                 let _ = position;
             }
             Self::ChangeColumn {
+                if_exists,
                 old_name,
                 column,
                 position,
@@ -1938,6 +1963,7 @@ impl crate::Visitable for AlterTableAction {
                 if !crate::Visitable::accept(position, visitor) {
                     return false;
                 }
+                let _ = if_exists;
                 let _ = old_name;
                 let _ = column;
                 let _ = position;

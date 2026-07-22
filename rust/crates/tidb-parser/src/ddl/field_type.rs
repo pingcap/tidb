@@ -71,7 +71,11 @@ impl Parser {
                 ("BINARY", false, false, false)
             } else if self.is_kw("VARBINARY") {
                 ("VARBINARY", false, false, false)
-            } else if self.is_kw("DECIMAL") || self.is_kw("NUMERIC") || self.is_kw("FIXED") {
+            } else if self.is_kw("DEC")
+                || self.is_kw("DECIMAL")
+                || self.is_kw("NUMERIC")
+                || self.is_kw("FIXED")
+            {
                 ("DECIMAL", false, false, false)
             } else if self.is_kw("TEXT") {
                 ("TEXT", false, false, false)

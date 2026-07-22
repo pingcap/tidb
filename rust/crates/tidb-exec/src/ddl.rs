@@ -282,7 +282,9 @@ impl Database {
                     })
                     .collect();
             }
-            AlterTableAction::ModifyColumn { column, position } => {
+            AlterTableAction::ModifyColumn {
+                column, position, ..
+            } => {
                 let from = table
                     .cols
                     .iter()
@@ -302,6 +304,7 @@ impl Database {
                 old_name,
                 column,
                 position,
+                ..
             } => {
                 let from = table
                     .cols

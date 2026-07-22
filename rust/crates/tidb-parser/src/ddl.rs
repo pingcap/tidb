@@ -1290,18 +1290,25 @@ impl Parser {
             if self.is_kw("COLUMN") {
                 self.bump();
             }
+            let if_exists = self.parse_if_exists()?;
             let column = self.parse_column_def()?;
             let position = self.parse_column_position()?;
-            AlterTableAction::ModifyColumn { column, position }
+            AlterTableAction::ModifyColumn {
+                if_exists,
+                column,
+                position,
+            }
         } else if self.is_kw("CHANGE") {
             self.bump();
             if self.is_kw("COLUMN") {
                 self.bump();
             }
+            let if_exists = self.parse_if_exists()?;
             let old_name = self.parse_name()?;
             let column = self.parse_column_def()?;
             let position = self.parse_column_position()?;
             AlterTableAction::ChangeColumn {
+                if_exists,
                 old_name,
                 column,
                 position,

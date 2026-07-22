@@ -1,7 +1,5 @@
 # Active package: `pkg/parser/ast`
 
-This is the living ExecPlan required by `PLANS.md`.
-
 ## Done when
 
 - Every production, test, and support artifact under `pkg/parser/ast` has a
@@ -10,6 +8,7 @@ This is the living ExecPlan required by `PLANS.md`.
 ## Now
 
 - `base.go` and `base_test.go` are transcreated.
-- Continue `ddl.go` and `ddl_test.go` directly; then take the next Go files.
+- Finish `ddl.go`, then `ddl_test.go`; continue through the package in source
+  order.
 
 The package is open.

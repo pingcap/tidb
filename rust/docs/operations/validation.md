@@ -4,10 +4,10 @@ Run commands from `rust/`. Cargo always uses 12 jobs.
 
 ## Fast package loop
 
-Use the live Go package as the inventory and run the smallest relevant Cargo
-test directly during implementation. A green cohesive edit may be committed
-and pushed immediately; package completion is not a commit gate. Do not run a
-workspace sweep unless the edit changes a shared public API.
+Read the live Go package directly and run a focused Cargo test only when it
+shortens the current edit loop. Keep translating after it passes. Do not run a
+workspace sweep during package translation unless a shared public API change
+requires it.
 
 After the whole package and every original test/support obligation are
 translated, run:
@@ -17,9 +17,10 @@ cd .. && go test ./pkg/example
 cd rust && cargo test --offline --locked -j12 -p tidb-example --all-targets
 ```
 
-## Pre-push validation
+## Whole-package closure
 
-Use ordinary tools once before push:
+Use ordinary tools once after the complete Go package and its original
+test/support owners have Rust equivalents:
 
 ```sh
 cargo fmt --all -- --check

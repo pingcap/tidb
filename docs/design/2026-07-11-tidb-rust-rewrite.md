@@ -62,15 +62,16 @@ material, never evidence of package completion.
 
 ## Development loop
 
-Work on exactly one dependency-ready Go package. Read its production code and
-tests, transcreate them directly, run the affected Rust tests, and commit green
-code frequently. Fix shared-API consumers in place; do not add compatibility
+Work on exactly one dependency-ready Go package. Transcreate its production
+owners in source order, then transcreate the complete original test/support
+owners. Run a focused test only when it gives immediate feedback for the code
+being changed. Fix shared-API consumers in place; do not add compatibility
 layers.
 
-At package close, generate a source/test/support inventory from the Go tree and
-run the broad Go, Rust, differential, lint, and live checks once. Until that
-close succeeds, the package is simply open; files, commits, crates, and test
-subsets are not completion units.
+At package close, compare the live Go directory with its Rust owners and run
+the broad Go, Rust, differential, lint, and live checks once. Until that close
+succeeds, the package is simply open; files, commits, crates, and test subsets
+are not completion units.
 
 No campaigns, queues, claims, receipts, ledgers, freezes, integration branches,
 or manually maintained per-file status exist. Go is the specification, ordinary

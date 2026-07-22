@@ -165,7 +165,9 @@ pub(super) fn restore_alter_action(
         } => {
             out.push_str("ADD PARTITION");
             if *if_not_exists {
-                out.push_str(" IF NOT EXISTS");
+                context.write_with_tidb_special_comment(out, "", |out| {
+                    out.push_str(" IF NOT EXISTS");
+                });
             }
             if *no_write_to_binlog {
                 out.push_str(" NO_WRITE_TO_BINLOG");
@@ -204,7 +206,9 @@ pub(super) fn restore_alter_action(
         AlterPartitionAction::Drop { if_exists, names } => {
             out.push_str("DROP PARTITION ");
             if *if_exists {
-                out.push_str("IF EXISTS ");
+                context.write_with_tidb_special_comment(out, "", |out| {
+                    out.push_str("IF EXISTS ");
+                });
             }
             push_partition_names(out, names);
         }

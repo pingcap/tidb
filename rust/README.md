@@ -57,9 +57,9 @@ several Rust crates; all implementation and original tests still move together.
 ## Whole-package development loop
 
 Transcreate one complete Go package and all original tests. During translation,
-run focused Cargo checks directly. Commit and push each cohesive green
-checkpoint; this does not claim that a partially translated Go package is
-complete. At the package boundary, run the original Go tests and every target
+run only the focused owning test needed for immediate feedback and keep coding.
+Commit and push meaningful green changes when useful; neither is an acceptance
+operation. At the package boundary, run the original Go tests and every target
 in the owning Rust crates.
 
 Keep one primary Rust implementation/test module per original Go owner file.
@@ -67,7 +67,7 @@ Do not create files for individual syntax alternatives, bugs, waves, or test
 rows. A Rust-native split is justified only by a stable dependency boundary,
 not by partial completion.
 
-Before push, run the ordinary repository validation commands:
+At whole-package closure, run the ordinary repository validation commands:
 
 ```sh
 cargo fmt --all -- --check

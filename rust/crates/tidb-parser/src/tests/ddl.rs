@@ -2317,6 +2317,7 @@ fn alter_table_modify_change_column() {
     assert_eq!(
         only_alter_action(&alt),
         AlterTableAction::ChangeColumn {
+            if_exists: false,
             old_name: "b".to_string(),
             column: ColumnDef {
                 qualifier: vec![],
