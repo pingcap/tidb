@@ -33,6 +33,10 @@ rust_paths = [
   "rust/crates/tidb-planner/src/example.rs",
   "rust/crates/tidb-exec/src/example.rs",
 ]
+integration_paths = [
+  "rust/crates/tidb-planner/src/lib.rs",
+  "rust/crates/tidb-exec/src/lib.rs",
+]
 ```
 
 `targets` is the complete Rust crate set, not a one-to-one translation of Go
@@ -40,9 +44,30 @@ files. Write-disjoint subteams may work inside the umbrella package claim, but
 their branches merge only into the package staging branch and are never
 independently promoted or receipted.
 
+`rust_paths` is the stable, package-agent-owned write set. Those paths are
+exclusive across schema-2 manifests and their bytes are content-addressed in
+the durable package receipt. Optional `integration_paths` lists every existing
+shared crate seam that the package requires the integration steward to edit
+once, such as crate-root exports or shared dispatch. Each path must be
+canonical, repository-relative, and inside one of the declared `targets`; it
+must not overlap any schema-2 `rust_paths` by ancestry. Different packages may
+name the same integration path because the steward serializes that seam.
+
+Claims freeze both path lists exactly. Campaign close verifies both lists and
+their existence. The package receipt records `integration_paths` and the gate
+attestation, but intentionally does not hash or later revalidate seam bytes;
+future steward edits to a shared seam therefore do not stale completed leaf
+receipts. Package agents edit only `rust_paths`. The integration steward alone
+edits `integration_paths`.
+
 Schema-2 claim owners must equal their checked manifest names. Expanded source,
 test, content-addressed support, and module sets are immutable claim snapshots;
-inventory drift makes the claim stale, and `amend` is rejected. Dependencies
+inventory drift makes the claim stale, and `amend` is rejected. Each claim also
+freezes `base_commit`. All active package claims entering one gate share that
+base, and every committed change under `rust/crates/**` or a Rust Cargo
+manifest since that base must fall under their combined `rust_paths` or
+`integration_paths`. Gate begin additionally requires those Rust code and
+manifest paths to have no staged, unstaged, or untracked changes. Dependencies
 may reference only covered schema-2 package manifests. Schema-1 records and
 leaf evidence rows are not package-completion signals.
 
@@ -83,7 +108,7 @@ have no Rust write set, cannot enter a shared gate, and can only be abandoned.
 Before a package frontier is planned, the package owner and root steward:
 
 - freeze the complete Go source/test/support inventory and dependency edges;
-- declare every Rust target and mutable Rust path for the umbrella claim;
+- declare every Rust target, stable package path, and steward integration seam;
 - freeze interfaces and write-disjoint Rust subteam ownership;
 - inspect each target crate's test registration and shared manifest/lockfile
   seams;

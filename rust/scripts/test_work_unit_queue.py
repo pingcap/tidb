@@ -97,6 +97,20 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
         subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
         subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Queue Test",
+                "-c",
+                "user.email=queue@example.com",
+                "commit",
+                "-qm",
+                "fixture baseline",
+            ],
+            cwd=self.repo,
+            check=True,
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -119,6 +133,33 @@ class WorkUnitQueueTest(unittest.TestCase):
             relative: hashlib.sha256((self.repo / relative).read_bytes()).hexdigest()
             for relative in sorted(relative_paths)
         }
+
+    def git_head(self) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def commit_all(self, message: str) -> str:
+        subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Queue Test",
+                "-c",
+                "user.email=queue@example.com",
+                "commit",
+                "-qm",
+                message,
+            ],
+            cwd=self.repo,
+            check=True,
+        )
+        return self.git_head()
 
     def test_check_rejects_comma_separated_source_evidence_artifacts(self) -> None:
         inventory = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
@@ -245,6 +286,7 @@ class WorkUnitQueueTest(unittest.TestCase):
         depends_on: list[str] | None = None,
         module_packages: list[str] | None = None,
         rust_paths: list[str] | None = None,
+        integration_paths: list[str] | None = None,
     ) -> Path:
         slices = self.root / "workstreams/slices"
         slices.mkdir(parents=True, exist_ok=True)
@@ -263,6 +305,10 @@ class WorkUnitQueueTest(unittest.TestCase):
             f"rust_paths = {json.dumps(rust_paths or [f'rust/crates/{target}/src/{name}.rs' for target in targets])}\n",
             encoding="utf-8",
         )
+        with path.open("a", encoding="utf-8") as output:
+            output.write(
+                f"integration_paths = {json.dumps(integration_paths or [])}\n"
+            )
         return path
 
     def test_queue_emits_the_complete_go_package_as_candidate(self) -> None:
@@ -537,8 +583,10 @@ class WorkUnitQueueTest(unittest.TestCase):
                     ],
                     "supports": [],
                     "rust_paths": ["rust/crates/tidb-planner/src/foo.rs"],
+                    "integration_paths": [],
                     "module_sources": [],
                     "module_tests": [],
+                    "base_commit": self.git_head(),
                     "upstream_sha256": self.upstream_digests(
                         "pkg/planner/bar.go",
                         "pkg/planner/foo.go",
@@ -560,8 +608,10 @@ class WorkUnitQueueTest(unittest.TestCase):
                     "tests": [],
                     "supports": [],
                     "rust_paths": ["rust/crates/tidb-planner/src/foo.rs"],
+                    "integration_paths": [],
                     "module_sources": [],
                     "module_tests": [],
+                    "base_commit": self.git_head(),
                     "upstream_sha256": self.upstream_digests(
                         "pkg/planner/bar.go",
                         "pkg/planner/foo.go",
@@ -1420,6 +1470,8 @@ class WorkUnitQueueTest(unittest.TestCase):
                     "sources": ["pkg/planner/foo.go"],
                     "tests": [],
                     "supports": [],
+                    "integration_paths": [],
+                    "base_commit": self.git_head(),
                 }
             ),
             encoding="utf-8",
@@ -1719,6 +1771,151 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
         overlap = self.run_tool("check", success=False)
         self.assertIn("Rust ownership overlaps manifests", overlap.stderr)
+
+    def test_schema2_integration_paths_are_checked_shared_seams(self) -> None:
+        seam = "rust/crates/tidb-planner/src/lib.rs"
+        self.write_tracked(seam, "pub mod shared;\n")
+        self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner"],
+            integration_paths=[seam],
+        )
+        self.run_tool("check")
+
+        manifest = self.root / "workstreams/slices/planner-package.toml"
+        for invalid in (
+            "/tmp/lib.rs",
+            "rust/crates/tidb-planner/../tidb-server/src/lib.rs",
+        ):
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    f'integration_paths = ["{seam}"]',
+                    f'integration_paths = ["{invalid}"]',
+                ),
+                encoding="utf-8",
+            )
+            failure = self.run_tool("check", success=False)
+            self.assertIn("invalid integration path", failure.stderr)
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    f'integration_paths = ["{invalid}"]',
+                    f'integration_paths = ["{seam}"]',
+                ),
+                encoding="utf-8",
+            )
+
+        missing = "rust/crates/tidb-planner/src/missing.rs"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(seam, missing),
+            encoding="utf-8",
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("integration path is missing", failure.stderr)
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(missing, seam),
+            encoding="utf-8",
+        )
+
+        outside = "rust/crates/tidb-server/src/lib.rs"
+        self.write_tracked(outside, "pub mod server;\n")
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(seam, outside),
+            encoding="utf-8",
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("outside the declared target workspace crates", failure.stderr)
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(outside, seam),
+            encoding="utf-8",
+        )
+
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                "rust/crates/tidb-planner/src/planner-package.rs", seam
+            ),
+            encoding="utf-8",
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("integration path overlaps stable Rust ownership", failure.stderr)
+
+    def test_integration_seams_may_overlap_across_package_manifests(self) -> None:
+        seam = "rust/crates/tidb-planner/src/lib.rs"
+        self.write_tracked(seam, "pub mod shared;\n")
+        self.write_tracked("pkg/other/other.go", "package other\n")
+        with (self.root / "difftests/corpus/coverage/go_source_inventory.tsv").open(
+            "a", encoding="utf-8"
+        ) as output:
+            output.write(
+                "pkg/other/other.go\t1\ttidb-planner\tfalse\tUNTRIAGED\t-\t-\t-\n"
+            )
+        self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner"],
+            integration_paths=[seam],
+        )
+        self.write_package_slice(
+            "other-package",
+            packages=["pkg/other"],
+            targets=["tidb-planner"],
+            rings=["unassigned"],
+            integration_paths=[seam],
+        )
+        self.run_tool("check")
+
+    def test_claim_freezes_integration_paths_and_git_base(self) -> None:
+        seam = "rust/crates/tidb-planner/src/lib.rs"
+        self.write_tracked(seam, "pub mod shared;\n")
+        self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner"],
+            integration_paths=[seam],
+        )
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+        claim_path = self.root / "workstreams/claims/planner-package.claim.json"
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        self.assertEqual(claim["integration_paths"], [seam])
+        self.assertEqual(claim["base_commit"], self.git_head())
+        claim["integration_paths"] = []
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+        failure = self.run_tool("check", success=False)
+        self.assertIn("missing integration paths", failure.stderr)
+
+    def test_committed_rust_change_must_be_inside_active_claim_union(self) -> None:
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+        unrelated = "rust/crates/tidb-server/src/unclaimed.rs"
+        self.write_tracked(unrelated, "pub struct Unclaimed;\n")
+        self.commit_all("unclaimed Rust change")
+        for command in (("check",), ("gate-begin",)):
+            failure = self.run_tool(*command, success=False)
+            self.assertIn(
+                f"committed Rust change is outside active package claims: {unrelated}",
+                failure.stderr,
+            )
+
+    def test_gate_begin_requires_clean_rust_code_tree(self) -> None:
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+        unrelated = self.root / "crates/tidb-server/src/untracked.rs"
+        unrelated.parent.mkdir(parents=True, exist_ok=True)
+        unrelated.write_text("pub struct Untracked;\n", encoding="utf-8")
+        self.run_tool("check")
+        failure = self.run_tool("gate-begin", success=False)
+        self.assertIn("requires a clean Rust code tree", failure.stderr)
+        self.assertIn("rust/crates/tidb-server/src/untracked.rs", failure.stderr)
 
     def test_ready_package_requires_internal_source_and_test_dependencies(self) -> None:
         self.write_tracked("pkg/types/types.go", "package types\n")

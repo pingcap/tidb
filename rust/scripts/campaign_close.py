@@ -221,6 +221,7 @@ def _expected_claim(record: dict[str, object]) -> dict[str, list[str]]:
         "tests": list(record["go_tests"]),
         "supports": list(record["go_supports"]),
         "rust_paths": list(record["rust_paths"]),
+        "integration_paths": list(record["integration_paths"]),
         "module_sources": list(record["module_sources"]),
         "module_tests": list(record["module_tests"]),
     }
@@ -278,6 +279,11 @@ def _validate_member(
     for rust_path in record["rust_paths"]:
         if not _repository_path(root, str(rust_path)).is_file():
             raise ValueError(f"package {member} Rust path is missing: {rust_path}")
+    for integration_path in record["integration_paths"]:
+        if not _repository_path(root, str(integration_path)).is_file():
+            raise ValueError(
+                f"package {member} integration path is missing: {integration_path}"
+            )
 
 
 def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:

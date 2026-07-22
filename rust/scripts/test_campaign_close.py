@@ -69,6 +69,8 @@ class CampaignCloseTest(unittest.TestCase):
         (slices / "legacy-schema1-slices.tsv").write_text(
             "# frozen legacy slices\n", encoding="utf-8"
         )
+        integration_seam = self.root / "integration.rs"
+        integration_seam.write_text("shared integration seam\n", encoding="utf-8")
 
         source_rows = ["# source inventory\n"]
         test_rows = ["# test inventory\n"]
@@ -136,6 +138,8 @@ class CampaignCloseTest(unittest.TestCase):
                 f'rust_paths = ["rust/impl-{suffix}.rs"]\n',
                 encoding="utf-8",
             )
+            with (slices / f"{member}.toml").open("a", encoding="utf-8") as output:
+                output.write('integration_paths = ["rust/integration.rs"]\n')
             (claims / f"{member}.claim.json").write_text(
                 json.dumps(
                     {
@@ -145,6 +149,7 @@ class CampaignCloseTest(unittest.TestCase):
                         "tests": [test],
                         "supports": [support_anchor],
                         "rust_paths": [f"rust/impl-{suffix}.rs"],
+                        "integration_paths": ["rust/integration.rs"],
                         "module_sources": [],
                         "module_tests": [],
                         "upstream_sha256": {
@@ -181,6 +186,35 @@ class CampaignCloseTest(unittest.TestCase):
         self.archive_path = campaigns / "integrated-members.tsv"
         subprocess.run(["git", "init", "-q"], cwd=self.repository, check=True)
         subprocess.run(["git", "add", "."], cwd=self.repository, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Campaign Test",
+                "-c",
+                "user.email=campaign@example.com",
+                "commit",
+                "-qm",
+                "fixture baseline",
+            ],
+            cwd=self.repository,
+            check=True,
+        )
+        base_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        for member in self.members:
+            claim_path = claims / f"{member}.claim.json"
+            claim = json.loads(claim_path.read_text(encoding="utf-8"))
+            claim["base_commit"] = base_commit
+            claim_path.write_text(
+                json.dumps(claim, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -245,6 +279,19 @@ class CampaignCloseTest(unittest.TestCase):
         claim["rust_paths"] = []
         claim_path.write_text(json.dumps(claim), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "must exactly match"):
+            campaign_close.build_close_plan(self.root, "campaign-x")
+
+    def test_rejects_claim_integration_path_mismatch_and_missing_seam(self) -> None:
+        claim_path = self.root / "workstreams/claims/package-a.claim.json"
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["integration_paths"] = []
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "integration paths"):
+            campaign_close.build_close_plan(self.root, "campaign-x")
+        claim["integration_paths"] = ["rust/integration.rs"]
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+        (self.root / "integration.rs").unlink()
+        with self.assertRaisesRegex(ValueError, "integration path is missing"):
             campaign_close.build_close_plan(self.root, "campaign-x")
 
     def test_rejects_missing_or_stale_support_and_disposition(self) -> None:
@@ -355,7 +402,24 @@ class CampaignCloseTest(unittest.TestCase):
             )
             self.assertEqual(receipt["gate"]["result"], "passed")
             self.assertEqual(len(receipt["package"]["supports"]), 1)
+            self.assertEqual(
+                receipt["package"]["integration_paths"], ["rust/integration.rs"]
+            )
             self.assertEqual(len(receipt["package"]["inventory_sha256"]), 64)
+        (self.root / "integration.rs").write_text(
+            "later steward edit\n", encoding="utf-8"
+        )
+        for member in self.members:
+            record = campaign_close.queue.load_slices(self.root)[member]
+            campaign_close.queue.validate_package_receipt(self.root, member, record)
+        package_a_record = campaign_close.queue.load_slices(self.root)["package-a"]
+        (self.root / "impl-a.rs").write_text(
+            "stale stable leaf\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "artifact digest is stale"):
+            campaign_close.queue.validate_package_receipt(
+                self.root, "package-a", package_a_record
+            )
         (self.root / "workstreams/package-receipts/package-a.json").unlink()
         with self.assertRaisesRegex(ValueError, "invalid package receipt"):
             campaign_close.queue.load_slices(self.root)

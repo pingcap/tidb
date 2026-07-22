@@ -52,7 +52,7 @@ package or pinned external module package. The manifest must record:
 
 - upstream module/version and package import path;
 - every production, test, fixture, support, generated, and build artifact;
-- target Rust crates and the complete mutable Rust write set;
+- target Rust crates, stable package-owned paths, and steward-owned seams;
 - package dependencies and the exact contracts consumed from them;
 - focused Rust targets, Go-oracle selectors, differential rings, and live gates;
 - the shared seams that require a named steward; and
@@ -90,7 +90,11 @@ Order the ready frontier by:
 
 The dispatcher acquires the complete package claim before creating a worktree.
 Claims must reject overlap in upstream source, original test/support artifacts,
-and mutable Rust paths.
+and stable package-owned Rust paths. `rust_paths` are exclusive package-agent
+leaves. `integration_paths` are existing shared crate seams edited only by the
+integration steward; they may overlap across package manifests but must not
+overlap any schema-2 stable path by ancestry. The claim freezes both exact
+lists.
 
 Use one `codex/<package-owner>` branch and one writable in-repo worktree per
 package claim. Local lease files remain ignored coordination state. Feature
@@ -118,6 +122,13 @@ Shared edits are serialized through named stewards:
 When two packages require the same mutable seam, freeze the leaf APIs first
 and give the seam to one steward. Do not hide the collision behind different
 owner names.
+
+Every schema-2 claim freezes the current Git `base_commit`. Claims entering a
+shared gate must have the same base. From that base through `HEAD`, every
+committed path under `rust/crates/**`, plus Rust `Cargo.toml` and `Cargo.lock`
+paths, must be inside the active claims' combined stable or integration write
+sets. Gate begin requires that same Rust code/manifests scope to be clean of
+staged, unstaged, and untracked changes.
 
 ## Translation rule
 
@@ -152,9 +163,12 @@ binaries embed their checkout through `CARGO_MANIFEST_DIR`. Only the integration
 steward runs the full gate; package teams stay in focused loops.
 
 An integration receipt hashes the frozen package claims and immutable Rust
-workspace before and after the gate. Any implementation, test, script,
-manifest input, or undeclared-path change invalidates the receipt and requires
-the gate again.
+workspace before and after the gate. Durable leaf receipts content-address
+stable `rust_paths`; they record integration seam path names and the shared gate
+attestation without hashing seam bytes. This preserves proof of the package
+leaf while allowing later packages to reuse a steward-owned seam. Any change
+during the gate or committed Rust code outside the active write-set union
+invalidates the gate.
 
 ## Evidence rules
 
@@ -199,7 +213,8 @@ the whole package satisfies its receipt.
 For each parallel frontier:
 
 1. Generate and audit complete package inventories.
-2. Freeze dependency contracts and mutable Rust paths.
+2. Freeze dependency contracts, stable Rust paths, integration seams, and the
+   shared Git base.
 3. Atomically claim every package and create worktrees.
 4. Translate and test packages independently; keep shared seams unchanged.
 5. Have stewards land seam changes and generated artifacts in dependency order.

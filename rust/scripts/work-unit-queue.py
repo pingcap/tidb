@@ -715,7 +715,13 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
         schema_fields = (
             {"target", "ring", "go_sources", "go_tests", "module_sources", "module_tests"}
             if schema == "1"
-            else {"targets", "rings", "go_packages", "module_packages"}
+            else {
+                "targets",
+                "rings",
+                "go_packages",
+                "module_packages",
+                "integration_paths",
+            }
         )
         unknown_fields = sorted(set(record) - common_fields - schema_fields)
         if unknown_fields:
@@ -777,6 +783,7 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
             )
             record["go_packages"] = []
             record["module_packages"] = []
+            record["integration_paths"] = []
             if not isinstance(record.get("target"), str) or not record["target"]:
                 raise ValueError(f"{path}: target must be a non-empty string")
             record["targets"] = [record["target"]]
@@ -851,6 +858,36 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                     f"{path}: schema-2 target is not a Rust workspace crate: "
                     f"{missing_targets[0]}"
                 )
+            integration_paths = record.get("integration_paths", [])
+            if not isinstance(integration_paths, list) or not all(
+                isinstance(item, str) and item for item in integration_paths
+            ):
+                raise ValueError(f"{path}: integration_paths must be a string array")
+            record["integration_paths"] = sorted(
+                {
+                    _normalized_repo_path(item, label="integration path")
+                    for item in integration_paths
+                }
+            )
+            for integration_path in record["integration_paths"]:
+                candidate = Path(integration_path)
+                if not candidate.is_relative_to(Path("rust")):
+                    raise ValueError(
+                        f"{path}: invalid schema-2 integration path "
+                        f"{integration_path!r}"
+                    )
+                if not any(
+                    candidate.is_relative_to(Path(workspace_crates[target]))
+                    for target in record["targets"]
+                ):
+                    raise ValueError(
+                        f"{path}: integration path {integration_path} is outside "
+                        "the declared target workspace crates"
+                    )
+                if not (root.parent / integration_path).is_file():
+                    raise ValueError(
+                        f"{path}: integration path is missing: {integration_path}"
+                    )
             uncovered_targets = [
                 target
                 for target in record["targets"]
@@ -1006,6 +1043,7 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
 
     package_owners: dict[tuple[str, str], str] = {}
     schema2_rust_paths: list[tuple[str, str]] = []
+    schema2_integration_paths: list[tuple[str, str]] = []
     for name, record in sorted(records.items()):
         if record["schema"] != "2":
             continue
@@ -1024,6 +1062,10 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                 package_owners[key] = name
         schema2_rust_paths.extend(
             (rust_path, name) for rust_path in record["rust_paths"]
+        )
+        schema2_integration_paths.extend(
+            (integration_path, name)
+            for integration_path in record["integration_paths"]
         )
     for name, record in sorted(records.items()):
         if record["schema"] != "2" or record["status"] not in {
@@ -1063,6 +1105,26 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
         raise ValueError(
             f"schema-2 Rust ownership overlaps manifests {first_owner} ({first}) "
             f"and {second_owner} ({second})"
+        )
+    stable_seam_overlap = next(
+        (
+            (rust_path, rust_owner, integration_path, integration_owner)
+            for rust_path, rust_owner in sorted(schema2_rust_paths)
+            for integration_path, integration_owner in sorted(
+                schema2_integration_paths
+            )
+            if _paths_overlap(rust_path, integration_path)
+        ),
+        None,
+    )
+    if stable_seam_overlap is not None:
+        rust_path, rust_owner, integration_path, integration_owner = (
+            stable_seam_overlap
+        )
+        raise ValueError(
+            "schema-2 integration path overlaps stable Rust ownership: "
+            f"{integration_owner} ({integration_path}) and "
+            f"{rust_owner} ({rust_path})"
         )
 
     for name, record in records.items():
@@ -1468,6 +1530,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         claimed_tests = claim.get("tests")
         claimed_supports = claim.get("supports", [])
         claimed_rust_paths = claim.get("rust_paths", [])
+        claimed_integration_paths = claim.get("integration_paths")
         claimed_module_sources = claim.get("module_sources", [])
         claimed_module_tests = claim.get("module_tests", [])
         if schema not in {1, 2} or not isinstance(owner, str):
@@ -1491,6 +1554,14 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         ):
             raise ValueError(f"{path}: rust_paths must be a string array")
         claimed_rust_paths = sorted(set(claimed_rust_paths))
+        if schema == 2 and (
+            not isinstance(claimed_integration_paths, list)
+            or not all(isinstance(item, str) for item in claimed_integration_paths)
+        ):
+            raise ValueError(f"{path}: integration_paths must be a string array")
+        claimed_integration_paths = (
+            sorted(set(claimed_integration_paths)) if schema == 2 else []
+        )
         if not isinstance(claimed_module_sources, list) or not all(
             isinstance(item, str) for item in claimed_module_sources
         ):
@@ -1528,6 +1599,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
             expected_tests = list(slice_record["go_tests"])
             expected_supports = list(slice_record["go_supports"])
             expected_rust_paths = list(slice_record["rust_paths"])
+            expected_integration_paths = list(slice_record["integration_paths"])
             expected_module_sources = list(slice_record["module_sources"])
             expected_module_tests = list(slice_record["module_tests"])
             if (
@@ -1535,6 +1607,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                 or sorted(claimed_tests) != expected_tests
                 or claimed_supports != expected_supports
                 or claimed_rust_paths != expected_rust_paths
+                or claimed_integration_paths != expected_integration_paths
                 or claimed_module_sources != expected_module_sources
                 or claimed_module_tests != expected_module_tests
             ):
@@ -1548,6 +1621,8 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     ("extra supports", sorted(set(claimed_supports) - set(expected_supports))),
                     ("missing Rust paths", sorted(set(expected_rust_paths) - set(claimed_rust_paths))),
                     ("extra Rust paths", sorted(set(claimed_rust_paths) - set(expected_rust_paths))),
+                    ("missing integration paths", sorted(set(expected_integration_paths) - set(claimed_integration_paths))),
+                    ("extra integration paths", sorted(set(claimed_integration_paths) - set(expected_integration_paths))),
                     ("missing module sources", sorted(set(expected_module_sources) - set(claimed_module_sources))),
                     ("extra module sources", sorted(set(claimed_module_sources) - set(expected_module_sources))),
                     ("missing module tests", sorted(set(expected_module_tests) - set(claimed_module_tests))),
@@ -1582,7 +1657,16 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     f"{path}: upstream package snapshot is stale at {changed[0]}"
                 )
             claim["_upstream_sha256"] = expected_upstream_sha256
+            base_commit = claim.get("base_commit")
+            if not isinstance(base_commit, str) or not re.fullmatch(
+                r"[0-9a-f]{40,64}", base_commit
+            ):
+                raise ValueError(
+                    f"{path}: schema-2 claim requires an exact Git base_commit"
+                )
+            claim["_base_commit"] = base_commit
             claim["_rust_paths"] = claimed_rust_paths
+            claim["_integration_paths"] = claimed_integration_paths
             for rust_path in claim["_rust_paths"]:
                 if rust_path in seen_rust_paths:
                     raise ValueError(
@@ -1593,7 +1677,9 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                 active_rust_paths.append((rust_path, owner))
         else:
             claim["_rust_paths"] = []
+            claim["_integration_paths"] = []
             claim["_upstream_sha256"] = {}
+            claim["_base_commit"] = ""
         claim["_sources"] = claimed_sources
         claim["_supports"] = claimed_supports
         claim["_module_sources"] = claimed_module_sources
@@ -1639,6 +1725,7 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
             f"Rust path ownership overlaps claims {first_owner} ({first}) and "
             f"{second_owner} ({second})"
         )
+    validate_claimed_rust_changes(root, claims)
     return claims
 
 
@@ -1756,6 +1843,10 @@ def package_completion_snapshot(
         ),
         "rust_targets": list(record["rust_targets"]),
         "rust_paths": rust_paths,
+        # Shared seams are frozen by path and by the gate attestation, but are
+        # intentionally not content-addressed by a leaf package receipt. A
+        # later steward edit to the same seam must not stale completed leaves.
+        "integration_paths": list(record["integration_paths"]),
     }
     inventory = {key: value for key, value in snapshot.items() if key != "manifest"}
     snapshot["inventory_sha256"] = hashlib.sha256(
@@ -1853,6 +1944,140 @@ def _tracked_entries(repo_root: Path) -> dict[str, tuple[str, str]]:
         path = raw_path.decode("utf-8", errors="surrogateescape")
         entries[path] = (mode, object_id)
     return entries
+
+
+def git_head(repo_root: Path) -> str:
+    """Returns the exact commit from which a package claim starts."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    commit = result.stdout.strip()
+    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        message = result.stderr.strip() or "repository has no valid HEAD commit"
+        raise ValueError(f"cannot freeze package claim base commit: {message}")
+    return commit
+
+
+def _changed_paths_since(repo_root: Path, base_commit: str) -> list[str]:
+    """Returns canonical committed paths whose tree differs from the claim base."""
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_commit, "HEAD"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if ancestor.returncode != 0:
+        raise ValueError(
+            f"package claim base commit {base_commit} is not an ancestor of HEAD"
+        )
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "-z", f"{base_commit}..HEAD", "--"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        message = result.stderr.decode(errors="replace").strip()
+        raise ValueError(
+            f"cannot inspect committed changes since {base_commit}: {message}"
+        )
+    return sorted(
+        _normalized_repo_path(
+            raw.decode("utf-8", errors="surrogateescape"),
+            label="committed path",
+        )
+        for raw in result.stdout.split(b"\0")
+        if raw
+    )
+
+
+def _requires_package_rust_ownership(relative: str) -> bool:
+    path = Path(relative)
+    return path.is_relative_to(Path("rust/crates")) or (
+        path.is_relative_to(Path("rust"))
+        and (path.name == "Cargo.toml" or relative == "rust/Cargo.lock")
+    )
+
+
+def validate_claimed_rust_changes(
+    root: Path, claims: list[dict[str, object]]
+) -> None:
+    """Rejects committed Rust implementation changes outside active claims."""
+    package_claims = [claim for claim in claims if claim["schema"] == 2]
+    if not package_claims:
+        return
+    bases = {str(claim["_base_commit"]) for claim in package_claims}
+    if len(bases) != 1:
+        owners = ", ".join(
+            f"{claim['owner']}={claim['_base_commit']}"
+            for claim in sorted(package_claims, key=lambda item: str(item["owner"]))
+        )
+        raise ValueError(
+            "active schema-2 package claims must share one base_commit before "
+            f"integration: {owners}"
+        )
+    base_commit = next(iter(bases))
+    owned_paths = sorted(
+        {
+            path
+            for claim in package_claims
+            for path in [*claim["_rust_paths"], *claim["_integration_paths"]]
+        }
+    )
+    for changed_path in _changed_paths_since(root.parent, base_commit):
+        if not _requires_package_rust_ownership(changed_path):
+            continue
+        if not any(
+            Path(changed_path).is_relative_to(Path(owned_path))
+            for owned_path in owned_paths
+        ):
+            raise ValueError(
+                "committed Rust change is outside active package claims: "
+                f"{changed_path} (base_commit {base_commit})"
+            )
+
+
+def uncommitted_rust_paths(repo_root: Path) -> list[str]:
+    """Returns staged, unstaged, or untracked Rust implementation paths."""
+    pathspecs = ("rust/crates", "rust/Cargo.toml", "rust/Cargo.lock")
+    commands = (
+        ["git", "diff", "--name-only", "-z", "--", *pathspecs],
+        ["git", "diff", "--cached", "--name-only", "-z", "--", *pathspecs],
+        [
+            "git",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            *pathspecs,
+        ],
+    )
+    paths: set[str] = set()
+    for command in commands:
+        result = subprocess.run(
+            command,
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            message = result.stderr.decode(errors="replace").strip()
+            raise ValueError(f"cannot inspect uncommitted Rust changes: {message}")
+        paths.update(
+            _normalized_repo_path(
+                raw.decode("utf-8", errors="surrogateescape"),
+                label="uncommitted Rust path",
+            )
+            for raw in result.stdout.split(b"\0")
+            if raw
+        )
+    return sorted(paths)
 
 
 def tracked_path_digest(
@@ -2065,6 +2290,12 @@ def begin_integration(root: Path) -> None:
             raise ValueError(
                 "integration gate accepts only schema-2 package claims"
             )
+        dirty_rust_paths = uncommitted_rust_paths(root.parent)
+        if dirty_rust_paths:
+            raise ValueError(
+                "integration gate requires a clean Rust code tree; uncommitted path: "
+                f"{dirty_rust_paths[0]}"
+            )
         snapshot = gate_snapshot(root, claims)
         # A new integration window invalidates every older release receipt;
         # no claim may leave while the workspace is under test.
@@ -2214,6 +2445,7 @@ def claim_package(
                 "expanded package inventory; use claim-slice"
             )
         new_rust_paths = set(package_slice["rust_paths"])
+        integration_paths = list(package_slice["integration_paths"])
         for active in claims:
             if active["owner"] == owner:
                 raise ValueError(f"owner {owner} already has an active claim")
@@ -2275,13 +2507,23 @@ def claim_package(
         if unknown_module_tests:
             raise ValueError(f"unknown qualified module test anchor {unknown_module_tests[0]}")
         destination = root / CLAIMS_DIR / f"{owner}.claim.json"
+        active_package_claim = next(
+            (claim for claim in claims if claim["schema"] == 2), None
+        )
+        base_commit = (
+            str(active_package_claim["_base_commit"])
+            if active_package_claim is not None
+            else git_head(root.parent)
+        )
         payload = {
             "schema": 2,
             "owner": owner,
+            "base_commit": base_commit,
             "sources": normalized_sources,
             "tests": normalized_tests,
             "supports": normalized_supports,
             "rust_paths": sorted(new_rust_paths) if package_slice is not None else [],
+            "integration_paths": integration_paths,
             "module_sources": normalized_module_sources,
             "module_tests": normalized_module_tests,
             "upstream_sha256": upstream_snapshot(
