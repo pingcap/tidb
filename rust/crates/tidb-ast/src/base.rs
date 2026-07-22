@@ -13,9 +13,16 @@
 // limitations under the License.
 
 //! Shared node state transcreated from `pkg/parser/ast/base.go`.
+//!
+//! Go's `stmtNode`, `ddlNode`, `dmlNode`, and `funcNode` are marker embeddings;
+//! Rust represents the same closed categories directly with `Stmt`, `DdlStmt`,
+//! `DmlStmt`, and function-expression enum variants. Go's mutable expression
+//! flag is derived by `Expr::flags`, so cloned or rewritten trees cannot carry
+//! stale bits. Its mutable `FieldType` annotation belongs to the Rust semantic
+//! expression-building boundary in `tidb-expr`, rather than the syntax tree.
 
-use std::cell::OnceCell;
 use std::ops::{Deref, DerefMut};
+use std::sync::OnceLock;
 
 use tidb_datatype::{Encoding, TransformOp};
 use tidb_lexer::unescape_char;
@@ -25,11 +32,11 @@ const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 /// Source text, decoded text, SQL mode, and source position shared by AST nodes.
 ///
 /// Go uses an atomic state and a package mutex because its interface exposes a
-/// lazy cache through shared pointers. A Rust AST node is mutated exclusively,
-/// so `OnceCell` preserves the same lazy result without a global lock.
+/// lazy cache through shared pointers. `OnceLock` preserves concurrent reads
+/// without Go's package-wide lock; mutation still requires exclusive access.
 #[derive(Debug, Clone, Default)]
 pub struct NodeText {
-    utf8_text: OnceCell<Vec<u8>>,
+    utf8_text: OnceLock<Vec<u8>>,
     encoding: Option<Encoding>,
     no_backslash_escapes: bool,
     original: Vec<u8>,
@@ -414,6 +421,8 @@ fn advance_original_to(source: &[u8], index: &mut usize, byte: u8) -> Option<usi
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{Encoding, NodeText};
 
     fn check(encoding: Encoding, cases: &[(&str, &[u8], &[u8])]) {
@@ -436,6 +445,22 @@ mod tests {
         assert_eq!(node.text(), "列".as_bytes());
         node.set_origin_text_position(17);
         assert_eq!(node.origin_text_position(), 17);
+    }
+
+    #[test]
+    fn text_transform_is_safe_for_concurrent_readers() {
+        let mut node = NodeText::default();
+        node.set_text(Some(Encoding::Utf8), b"SELECT '\xd2\xe4'".to_vec());
+        let node = Arc::new(node);
+        let readers = (0..12)
+            .map(|_| {
+                let node = Arc::clone(&node);
+                std::thread::spawn(move || assert_eq!(node.text(), b"SELECT 0xd2e4"))
+            })
+            .collect::<Vec<_>>();
+        for reader in readers {
+            reader.join().expect("reader must not panic");
+        }
     }
 
     #[test]

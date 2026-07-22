@@ -13,13 +13,16 @@ This is the living ExecPlan required by `PLANS.md`.
 
 ## Now
 
-- Go owner: `pkg/parser/ast/base.go` and `base_test.go`.
-- Rust owner: `crates/tidb-ast/src/base.rs` plus parser call sites.
-- Current edit: source text/offset behavior, including ALTER interval rewrite
-  text, is implemented and its owning Rust tests pass.
-- Next: finish the remaining symbols in `base.go` and `base_test.go`, commit,
-  then move directly to the next Go file. Do not start a new ledger or status
-  artifact.
+- Completed owner: `pkg/parser/ast/base.go` and `base_test.go`. Rust preserves
+  source text, offsets, binary-literal conversion, concurrent lazy reads,
+  expression flags, marker-node categories, and all original test/benchmark
+  shapes.
+- Current Go owner: `pkg/parser/ast/ddl.go` and `ddl_test.go`.
+- Rust owners: `crates/tidb-ast/src/ddl.rs`, `src/ddl/**`, and their parser call
+  sites.
+- Next: audit `ddl.go` in source order, fill every missing production type and
+  restore/visitor behavior together with the complete original `ddl_test.go`.
+  Do not start a new ledger or status artifact.
 
 The package is open. Go is the inventory, tests are the proof, and Git is the
 checkpoint.
