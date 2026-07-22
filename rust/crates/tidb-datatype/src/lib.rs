@@ -110,9 +110,10 @@ pub use field_name::{
 };
 pub use field_type::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
-    enum_set_display_length_from_lengths, field_type_has_charset, merge_field_type, set_type_flag,
-    str_to_type, type_str, type_to_str, FieldType, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
-    MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
+    enum_set_display_length_from_lengths, field_type_has_charset, merge_field_type,
+    parser_default_field_type_for_value, set_type_flag, str_to_type, type_str, type_to_str,
+    FieldType, FieldTypeCode, FieldTypeFlags, FieldTypeValue, MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH,
+    UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
 pub use format::{
     output_format, FlatFormatter, FormatFragment, FormatWriteError, Formatter, IndentFormatter,

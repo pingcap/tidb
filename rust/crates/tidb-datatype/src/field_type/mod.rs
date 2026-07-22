@@ -21,7 +21,9 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 pub use aggregate::{agg_field_type, aggregate_eval_type, merge_field_type, set_type_flag};
-pub use value::{default_field_type_for_value, FieldTypeValue};
+pub use value::{
+    default_field_type_for_value, parser_default_field_type_for_value, FieldTypeValue,
+};
 
 /// Parser normalization used for ENUM/SET display length.
 pub fn enum_set_display_length(code: FieldTypeCode, elems: &[impl AsRef<str>]) -> i64 {

@@ -542,7 +542,12 @@ fn a_marker_numbered_out_of_source_order_is_rejected() {
     let DmlStmt::Insert(insert) = dml.as_mut() else {
         panic!("expected an INSERT statement");
     };
-    insert.rows[0][1] = Expr::ParamMarker { position: 7 };
+    insert.rows[0][1] = Expr::ParamMarker {
+        offset: 0,
+        order: 7,
+        in_execute: false,
+        projection_offset: 0,
+    };
 
     assert_eq!(
         lower_prepared_write(&statement, &catalog()).expect_err("a misnumbered marker is rejected"),

@@ -56,21 +56,53 @@ fn template(sql: &str) -> ConfiguredPreparedPointReadTemplate {
 
 #[test]
 fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
-    let statement = select("SELECT ?, ? FROM accounts WHERE id = ?");
+    let sql = "SELECT ?, ? FROM accounts WHERE id = ?";
+    let offsets = sql.match_indices('?').map(|(offset, _)| offset).collect::<Vec<_>>();
+    let statement = select(sql);
     let [SelectField::Expr {
-        expr: Expr::ParamMarker { position: 0 },
+        expr:
+            Expr::ParamMarker {
+                offset: first_offset,
+                order: 0,
+                in_execute: false,
+                projection_offset: 0,
+            },
         ..
     }, SelectField::Expr {
-        expr: Expr::ParamMarker { position: 1 },
+        expr:
+            Expr::ParamMarker {
+                offset: second_offset,
+                order: 1,
+                in_execute: false,
+                projection_offset: 0,
+            },
         ..
     }] = &statement.fields[..]
     else {
         panic!("projection markers must retain source order");
     };
+    assert_eq!([*first_offset, *second_offset], offsets[..2]);
     let Some(Expr::Binary(_, _, right)) = statement.where_clause.as_ref() else {
         panic!("WHERE must retain the third marker");
     };
-    assert!(matches!(right.as_ref(), Expr::ParamMarker { position: 2 }));
+    assert!(matches!(
+        right.as_ref(),
+        Expr::ParamMarker {
+            offset,
+            order: 2,
+            in_execute: false,
+            projection_offset: 0,
+        } if *offset == offsets[2]
+    ));
+
+    let unicode = select("SELECT '世界', ?");
+    assert!(matches!(
+        &unicode.fields[1],
+        SelectField::Expr {
+            expr: Expr::ParamMarker { offset: 17, .. },
+            ..
+        }
+    ));
 
     let statements = tidb_parser::parse_multi("SELECT ?; SELECT ?").expect("statements parse");
     for statement in statements {
@@ -83,7 +115,7 @@ fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
         assert!(matches!(
             &select.fields[..],
             [SelectField::Expr {
-                expr: Expr::ParamMarker { position: 0 },
+                expr: Expr::ParamMarker { order: 0, .. },
                 ..
             }]
         ));
@@ -191,7 +223,12 @@ fn prepared_range_read_binds_one_marker_per_handle_bound() {
 
 #[test]
 fn unbound_markers_are_rejected_by_generic_residual_planning() {
-    let marker = Expr::ParamMarker { position: 3 };
+    let marker = Expr::ParamMarker {
+        offset: 0,
+        order: 3,
+        in_execute: false,
+        projection_offset: 0,
+    };
     assert_eq!(
         bind_residual(&marker, &JoinSchema::new([], [])),
         Err(ConditionBindingError::UnboundParameterMarker { position: 3 })

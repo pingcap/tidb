@@ -325,7 +325,10 @@ impl Parser {
             TokenKind::Op if t.text == "?" => {
                 self.bump();
                 Ok(Expr::ParamMarker {
-                    position: self.next_param_marker_position(),
+                    offset: t.offset,
+                    order: self.next_param_marker_position(),
+                    in_execute: false,
+                    projection_offset: 0,
                 })
             }
             TokenKind::IntLit => {

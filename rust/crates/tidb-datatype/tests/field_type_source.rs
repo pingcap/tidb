@@ -15,9 +15,10 @@
 
 use tidb_datatype::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
-    merge_field_type, str_to_type, type_str, type_to_str, EvalType, FieldType, FieldTypeCode as C,
-    FieldTypeFlags as F, FieldTypeValue as V, ERR_DATA_OUT_OF_RANGE, ERR_ILLEGAL_VALUE_FOR_TYPE,
-    ERR_INVALID_DEFAULT, ERR_TRUNCATED_WRONG_VALUE, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
+    merge_field_type, parser_default_field_type_for_value, str_to_type, type_str, type_to_str,
+    EvalType, FieldType, FieldTypeCode as C, FieldTypeFlags as F, FieldTypeValue as V,
+    ERR_DATA_OUT_OF_RANGE, ERR_ILLEGAL_VALUE_FOR_TYPE, ERR_INVALID_DEFAULT,
+    ERR_TRUNCATED_WRONG_VALUE, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
 use tidb_error::mysql::{errcode, errname};
 use tidb_error::terror::TerrorClass;
@@ -883,6 +884,114 @@ fn runtime_default_type_for_value() {
     for (value, code, flen, decimal, charset, collate, flags) in rows {
         assert_field(
             &default_field_type_for_value(value, "utf8mb4", "utf8mb4_bin"),
+            code,
+            flen,
+            decimal,
+            charset,
+            collate,
+            flags,
+        );
+    }
+}
+
+/// Go: pkg/parser/test_driver/test_driver_datum.go DefaultTypeForValue.
+#[test]
+fn parser_test_driver_default_type_for_value() {
+    let binary = F::BINARY;
+    let rows = [
+        (V::Null, C::Null, 0, 0, "binary", "binary", binary),
+        (
+            V::Bool(true),
+            C::LongLong,
+            1,
+            0,
+            "binary",
+            "binary",
+            binary | F::IS_BOOLEAN,
+        ),
+        (
+            V::Signed(i64::MIN),
+            C::LongLong,
+            20,
+            0,
+            "binary",
+            "binary",
+            binary,
+        ),
+        (
+            V::Unsigned(u64::MAX),
+            C::LongLong,
+            20,
+            0,
+            "binary",
+            "binary",
+            binary | F::UNSIGNED,
+        ),
+        (
+            V::String("世界"),
+            C::VarString,
+            6,
+            -1,
+            "utf8mb4",
+            "utf8mb4_bin",
+            0,
+        ),
+        (V::Float32(1.1), C::Float, 3, -1, "binary", "binary", binary),
+        (
+            V::Float64(-0.125),
+            C::Double,
+            6,
+            -1,
+            "binary",
+            "binary",
+            binary,
+        ),
+        (V::Bytes(b"abc"), C::Blob, 3, -1, "binary", "binary", binary),
+        (
+            V::BitLiteral(b"\x01\x02"),
+            C::VarString,
+            2,
+            0,
+            "binary",
+            "binary",
+            binary,
+        ),
+        (
+            V::HexLiteral(b"\x01\x02"),
+            C::VarString,
+            6,
+            0,
+            "binary",
+            "binary",
+            binary | F::UNSIGNED,
+        ),
+        (
+            V::BinaryLiteral(b"\x01\x02"),
+            C::Bit,
+            16,
+            0,
+            "binary",
+            "binary",
+            F::UNSIGNED,
+        ),
+        (
+            V::Decimal {
+                display_len: 82,
+                fraction_digits: 31,
+            },
+            C::NewDecimal,
+            82,
+            31,
+            "binary",
+            "binary",
+            binary,
+        ),
+        (V::Json, C::Unspecified, -1, -1, "", "", 0),
+    ];
+
+    for (value, code, flen, decimal, charset, collate, flags) in rows {
+        assert_field(
+            &parser_default_field_type_for_value(value, "utf8mb4", "utf8mb4_bin"),
             code,
             flen,
             decimal,

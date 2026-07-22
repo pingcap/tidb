@@ -221,6 +221,135 @@ pub fn default_field_type_for_value(
     }
 }
 
+/// Mirrors `pkg/parser/test_driver.DefaultTypeForValue`.
+///
+/// This is intentionally separate from [`default_field_type_for_value`]: the
+/// parser's lightweight driver and TiDB's runtime `types` package assign
+/// different flags and widths to the same literal shapes.
+pub fn parser_default_field_type_for_value(
+    value: FieldTypeValue<'_>,
+    charset: &str,
+    collation: &str,
+) -> FieldType {
+    let field_type = FieldType::parser(FieldTypeCode::Unspecified);
+    let binary = |field_type: FieldType| {
+        field_type
+            .with_charset_name("binary")
+            .with_collation_name("binary")
+            .with_added_flags(FieldTypeFlags::BINARY)
+    };
+    match value {
+        FieldTypeValue::Null => binary(
+            field_type
+                .with_code(FieldTypeCode::Null)
+                .with_flen(0)
+                .with_decimal(0),
+        ),
+        FieldTypeValue::Bool(_) => binary(
+            field_type
+                .with_code(FieldTypeCode::LongLong)
+                .with_flen(1)
+                .with_decimal(0)
+                .with_added_flags(FieldTypeFlags::IS_BOOLEAN),
+        ),
+        FieldTypeValue::Signed(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::LongLong)
+                .with_flen(signed_display_len(value))
+                .with_decimal(0),
+        ),
+        FieldTypeValue::Unsigned(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::LongLong)
+                .with_flen(unsigned_display_len(value))
+                .with_decimal(0)
+                .with_added_flags(FieldTypeFlags::UNSIGNED),
+        ),
+        FieldTypeValue::String(value) => field_type
+            .with_code(FieldTypeCode::VarString)
+            .with_flen(value.len() as i64)
+            .with_decimal(UNSPECIFIED_LENGTH)
+            .with_charset_name(charset)
+            .with_collation_name(collation),
+        FieldTypeValue::Float32(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::Float)
+                .with_flen(go_fixed_shortest_f32(value).len() as i64)
+                .with_decimal(UNSPECIFIED_LENGTH),
+        ),
+        FieldTypeValue::Float64(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::Double)
+                .with_flen(go_fixed_shortest_f64(value).len() as i64)
+                .with_decimal(UNSPECIFIED_LENGTH),
+        ),
+        FieldTypeValue::Bytes(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::Blob)
+                .with_flen(value.len() as i64)
+                .with_decimal(UNSPECIFIED_LENGTH),
+        ),
+        FieldTypeValue::BitLiteral(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::VarString)
+                .with_flen(value.len() as i64)
+                .with_decimal(0),
+        ),
+        FieldTypeValue::HexLiteral(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::VarString)
+                .with_flen((value.len() * 3) as i64)
+                .with_decimal(0)
+                .with_added_flags(FieldTypeFlags::UNSIGNED),
+        ),
+        FieldTypeValue::BinaryLiteral(value) => binary(
+            field_type
+                .with_code(FieldTypeCode::Bit)
+                .with_flen((value.len() * 8) as i64)
+                .with_decimal(0)
+                .with_added_flags(FieldTypeFlags::UNSIGNED),
+        )
+        .with_removed_flags(FieldTypeFlags::BINARY),
+        FieldTypeValue::Decimal {
+            display_len,
+            fraction_digits,
+        } => binary(
+            field_type
+                .with_code(FieldTypeCode::NewDecimal)
+                .with_flen(display_len)
+                .with_decimal(fraction_digits),
+        ),
+        _ => field_type
+            .with_code(FieldTypeCode::Unspecified)
+            .with_flen(UNSPECIFIED_LENGTH)
+            .with_decimal(UNSPECIFIED_LENGTH),
+    }
+}
+
+fn go_fixed_shortest_f32(value: f32) -> String {
+    if value.is_nan() {
+        "NaN".to_owned()
+    } else if value == f32::INFINITY {
+        "+Inf".to_owned()
+    } else if value == f32::NEG_INFINITY {
+        "-Inf".to_owned()
+    } else {
+        value.to_string()
+    }
+}
+
+fn go_fixed_shortest_f64(value: f64) -> String {
+    if value.is_nan() {
+        "NaN".to_owned()
+    } else if value == f64::INFINITY {
+        "+Inf".to_owned()
+    } else if value == f64::NEG_INFINITY {
+        "-Inf".to_owned()
+    } else {
+        value.to_string()
+    }
+}
+
 const fn signed_display_len(value: i64) -> i64 {
     if value == 0 {
         return 1;

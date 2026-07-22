@@ -174,10 +174,8 @@ fn collect_known_columns(
     opaque_shapes: &mut Vec<OpaqueConditionShape>,
 ) -> Result<(), ConditionBindingError> {
     match expr {
-        Expr::ParamMarker { position } => {
-            return Err(ConditionBindingError::UnboundParameterMarker {
-                position: *position,
-            });
+        Expr::ParamMarker { order, .. } => {
+            return Err(ConditionBindingError::UnboundParameterMarker { position: *order });
         }
         Expr::Column(path) => {
             let column = schema

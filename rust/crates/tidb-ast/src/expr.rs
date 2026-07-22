@@ -63,8 +63,15 @@ pub enum Expr {
     /// value: a prepared-statement owner must bind its typed execute value
     /// before lowering the expression into an executable plan.
     ParamMarker {
-        /// Zero-based, statement-local marker position.
-        position: usize,
+        /// Byte offset in the original SQL text.
+        offset: usize,
+        /// Zero-based, statement-local marker order.
+        order: usize,
+        /// Whether an execute-time value has been installed.
+        in_execute: bool,
+        /// Projection offset used by positional-expression lowering.
+        /// The Go driver's embedded zero-value `ValueExpr` initializes this to 0.
+        projection_offset: isize,
     },
     /// An integer literal (original digits).
     Int(String),
@@ -2311,8 +2318,13 @@ impl crate::Visitable for Expr {
             Self::Column(field_0) => {
                 let _ = field_0;
             }
-            Self::ParamMarker { position } => {
-                let _ = position;
+            Self::ParamMarker {
+                offset,
+                order,
+                in_execute,
+                projection_offset,
+            } => {
+                let _ = (offset, order, in_execute, projection_offset);
             }
             Self::Int(field_0) => {
                 let _ = field_0;

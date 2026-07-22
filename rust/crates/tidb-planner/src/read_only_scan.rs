@@ -1797,7 +1797,7 @@ fn bind_unbound_operand(
             let (column_index, _) = resolve_column_path(path, table_ref, table)?;
             Ok(UnboundComparisonOperand::Column(column_index))
         }
-        Expr::ParamMarker { position } => Ok(UnboundComparisonOperand::ParamMarker(*position)),
+        Expr::ParamMarker { order, .. } => Ok(UnboundComparisonOperand::ParamMarker(*order)),
         literal if is_integer_literal_shape(literal) => parse_signed_integer(literal)
             .map(UnboundComparisonOperand::Int)
             .ok_or(ReadOnlyScanError::UnsupportedPredicate(

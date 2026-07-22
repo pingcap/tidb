@@ -685,8 +685,8 @@ pub fn lower_prepared_update(
     }
 
     let shape = match &assignment.value {
-        Expr::ParamMarker { position } => {
-            expect_position(*position, 0)?;
+        Expr::ParamMarker { order, .. } => {
+            expect_position(*order, 0)?;
             // The set value's type follows the target column: an integer column
             // binds a signed integer, a CHAR column raw string bytes.
             if column.scalar_type().integer_range().is_some() {
@@ -891,13 +891,13 @@ fn configured_column_index(
 }
 
 fn expect_marker(expr: &Expr, expected: usize) -> Result<(), PreparedWritePlanError> {
-    let Expr::ParamMarker { position } = expr else {
+    let Expr::ParamMarker { order, .. } = expr else {
         return Err(PreparedWritePlanError::MarkerPosition {
             expected,
             found: None,
         });
     };
-    expect_position(*position, expected)
+    expect_position(*order, expected)
 }
 
 fn expect_position(position: usize, expected: usize) -> Result<(), PreparedWritePlanError> {
