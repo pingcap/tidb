@@ -110,10 +110,10 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 			},
 		}
 
-		dialInfo, err := ResolveEtcdDialInfo(context.Background(), pdCli, keyspaceMeta)
+		dialInfo, err := resolveEtcdDialInfo(context.Background(), pdCli, keyspaceMeta, nil)
 		require.NoError(t, err)
-		require.Equal(t, []string{"meta-service:2379"}, dialInfo.Endpoints)
-		require.NotEmpty(t, dialInfo.Namespace)
+		require.Equal(t, []string{"meta-service:2379"}, dialInfo.endpoints)
+		require.NotEmpty(t, dialInfo.namespace)
 	})
 
 	t.Run("global meta service group uses caller provided endpoints", func(t *testing.T) {
@@ -132,8 +132,8 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 			context.Background(), pdCli, keyspaceMeta, []string{"pd-proxy:2379"},
 		)
 		require.NoError(t, err)
-		require.Equal(t, []string{"pd-proxy:2379"}, dialInfo.Endpoints)
-		require.NotEmpty(t, dialInfo.Namespace)
+		require.Equal(t, []string{"pd-proxy:2379"}, dialInfo.endpoints)
+		require.NotEmpty(t, dialInfo.namespace)
 	})
 
 	t.Run("NewEtcdClientFromPDClient keeps caller provided endpoints for global group", func(t *testing.T) {

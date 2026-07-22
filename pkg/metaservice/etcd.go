@@ -49,15 +49,9 @@ func NewEtcdMetaServiceClient(etcdCli *clientv3.Client, pdCli pd.Client) Service
 	return newClient(etcdCli, pdCli)
 }
 
-// EtcdDialInfo describes how a direct etcd client should connect for a keyspace.
-type EtcdDialInfo struct {
-	Endpoints []string
-	Namespace string
-}
-
-// ResolveEtcdDialInfo resolves the etcd endpoints and namespace for a keyspace.
-func ResolveEtcdDialInfo(ctx context.Context, pdCli pd.Client, keyspaceMeta *keyspacepb.KeyspaceMeta) (EtcdDialInfo, error) {
-	return resolveEtcdDialInfo(ctx, pdCli, keyspaceMeta, nil)
+type etcdDialInfo struct {
+	endpoints []string
+	namespace string
 }
 
 func resolveEtcdDialInfo(
@@ -65,28 +59,28 @@ func resolveEtcdDialInfo(
 	pdCli pd.Client,
 	keyspaceMeta *keyspacepb.KeyspaceMeta,
 	callerPDAddrs []string,
-) (EtcdDialInfo, error) {
+) (etcdDialInfo, error) {
 	pdAddrs := filterEmptyAddrs(callerPDAddrs)
 	if len(pdAddrs) == 0 && usesGlobalMetaServiceGroup(keyspaceMeta) {
 		var err error
 		pdAddrs, err = GetPDAddrs(ctx, pdCli, false)
 		if err != nil {
-			return EtcdDialInfo{}, err
+			return etcdDialInfo{}, err
 		}
 	}
 
 	info, err := GetInfo(keyspaceMeta, pdAddrs)
 	if err != nil {
-		return EtcdDialInfo{}, err
+		return etcdDialInfo{}, err
 	}
 
-	dialInfo := EtcdDialInfo{Endpoints: info.GroupAddrs()}
+	dialInfo := etcdDialInfo{endpoints: info.GroupAddrs()}
 	if keyspaceMeta != nil {
 		codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
 		if err != nil {
-			return EtcdDialInfo{}, err
+			return etcdDialInfo{}, err
 		}
-		dialInfo.Namespace = keyspace.MakeKeyspaceEtcdNamespace(codec)
+		dialInfo.namespace = keyspace.MakeKeyspaceEtcdNamespace(codec)
 	}
 	return dialInfo, nil
 }
@@ -175,13 +169,13 @@ func newEtcdClientFromPDClient(
 	}
 
 	etcdCfg.Context = ctx
-	etcdCfg.Endpoints = dialInfo.Endpoints
+	etcdCfg.Endpoints = dialInfo.endpoints
 	etcdCli, err := clientv3.New(etcdCfg)
 	if err != nil {
 		return nil, err
 	}
-	if dialInfo.Namespace != "" {
-		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.Namespace)
+	if dialInfo.namespace != "" {
+		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.namespace)
 	}
 	return etcdCli, nil
 }
