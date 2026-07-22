@@ -16,6 +16,14 @@ This file provides guidance to agents working in this repository.
 3. Keep diffs minimal. Avoid unrelated refactors, broad renames, or formatting-only churn unless explicitly requested.
 4. Leave verifiable evidence. Run targeted checks and report exact commands.
 5. Respect generated code artifacts. Do not hand-edit generated code outputs; regenerate from source inputs.
+6. TiDB Go-to-Rust transcreation MUST use one complete upstream Go package or
+   pinned external-module package as the minimum implementation and completion
+   unit. A claim MUST include every production source,
+   build/platform/generated variant and input, original test/support artifact,
+   fixture, build artifact, and required validation gate for that package.
+   Partial file/function/branch/feature ports MAY remain explicit seed
+   evidence, but MUST NOT be dispatched, integrated, or reported as a
+   transcreated package.
 
 ## Agent Interaction Overrides (Repo-Local)
 
