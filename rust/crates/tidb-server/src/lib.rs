@@ -40,8 +40,12 @@ mod mysql_connection;
 mod native_password;
 mod node_config;
 mod real_tikv_multi_node;
+mod aggregate_result_set;
+mod distinct_result_set;
 mod real_tikv_node;
 pub mod resultset_source;
+mod session_transaction;
+mod sorting_result_set;
 pub mod resultset_writer;
 mod secure_transport;
 mod sql_node;
@@ -103,7 +107,10 @@ pub use native_password::{
     generate_handshake_salt, verify_candidate, HandshakeSaltError, NativePasswordHash,
     NativePasswordHashError, HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
 };
-pub use node_config::{ConfiguredReadTable, NodeConfig, NodeConfigError};
+pub use node_config::{
+    ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig,
+    NodeConfigError,
+};
 pub use real_tikv_multi_node::{
     run_configured_multi_node, RealTiKvMultiServerSession, RealTiKvMultiSessionFactory,
 };
@@ -111,14 +118,19 @@ pub use real_tikv_node::{
     run_configured_node as run_single_configured_node, run_with_process_shutdown,
     ProcessReadAuthority, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
 };
+pub use aggregate_result_set::AggregateResultSetSource;
+pub use distinct_result_set::DistinctResultSetSource;
 pub use resultset_source::ResultSetSource;
+pub use session_transaction::SessionTransaction;
+pub use sorting_result_set::SortingResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
 };
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
-    ConnectionTracker, PreparedPointRead, QueryCancellationLease, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError,
+    ConnectionTracker, PreparedPointRead, PreparedStatement, PreparedWrite, QueryCancellationLease,
+    QueryResult, QuerySession, QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError,
+    SqlQueryError, WriteOutcome,
 };
 
 /// Starts the one configured SQL-node authority for its admitted table shape.

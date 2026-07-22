@@ -45,7 +45,7 @@ use tidb_planner::read_only_scan::{
     ConfiguredPreparedPointReadTemplate, ConfiguredTable, PreparedPlanError, ReadOnlyScanError,
     ReadOnlyScanPlan,
 };
-use tidb_protocol::{ColumnInfo, BINARY_DEFAULT_COLLATION_ID};
+use tidb_protocol::ColumnInfo;
 use tidb_txnkv::{
     rpc::TonicCoprocessorClient, DirectUnaryClient, PdRegionLoader, SharedReadAuthority,
     SharedReadOpener,
@@ -116,6 +116,10 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
         .map_err(|error| error.to_string())
     }
 }
+
+/// Write capability re-exported so the server never depends on `tidb-txnkv`
+/// directly; the dependency direction stays server -> exec -> txnkv.
+pub use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 /// Backward-compatible name for the unique production process authority.
 pub type ProductionReadAuthority = ProductionReadProcessAuthority;
@@ -450,6 +454,15 @@ where
 /// Unique lifecycle owner for production PD, RegionCache, and TiKV transport.
 pub struct ProductionReadProcessAuthority {
     opener: ProductionOpener,
+    /// Write capability over the same already-running PD, RegionCache, and
+    /// TiKV transport this authority owns. It holds only cloneable handles, so
+    /// retaining it starts no second worker and creates no second client.
+    ///
+    /// It is `None` after shutdown for the same reason `opener` becomes
+    /// `Closed`: those clones each hold a PD/RegionCache/transport reference,
+    /// and the PD stage refuses to stop while any clone is still alive. It must
+    /// be dropped before `shutdown_read_process`, exactly like the read opener.
+    transaction_opener: Option<RealOptimisticTransactionOpener>,
     admission: ReadSessionAdmissionOwner,
     lifecycle: ProductionReadLifecycle,
 }
@@ -641,6 +654,15 @@ impl ProductionReadProcessAuthority {
             default_timeout: timeout,
             lock_timestamp_source: timestamp_source.clone(),
         };
+        // Derived from the authority that is already running: the same shared
+        // read opener and the same PD worker. This is a capability, not a
+        // second process authority.
+        let transaction_opener = RealOptimisticTransactionOpener::from_process_capabilities(
+            read_authority.opener(),
+            pd.clone(),
+            timeout,
+        )
+        .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
         let (opener, admission) = RealTiKvReadSessionOpener::new_with_admission_owner(
             table,
             factory,
@@ -649,6 +671,7 @@ impl ProductionReadProcessAuthority {
         );
         Ok(Self {
             opener: ProductionOpener::Open(opener),
+            transaction_opener: Some(transaction_opener),
             admission,
             lifecycle: ProductionReadLifecycle {
                 region_cache: ProductionRegionLifecycle::Running(read_authority),
@@ -664,6 +687,19 @@ impl ProductionReadProcessAuthority {
         &self,
     ) -> RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource> {
         self.opener_ref().clone()
+    }
+
+    /// Cloneable write capability over this same authority.
+    ///
+    /// Reads and writes therefore share one PD worker, one RegionCache, one
+    /// TiKV BatchCommands transport, and one shutdown order; the returned
+    /// opener reconnects nothing.
+    #[must_use]
+    pub fn transaction_opener(&self) -> RealOptimisticTransactionOpener {
+        self.transaction_opener
+            .as_ref()
+            .expect("production read/write authority is closed")
+            .clone()
     }
 
     /// Opens one connection-local production session.
@@ -709,6 +745,11 @@ impl ProductionReadProcessAuthority {
         self.admission.close_admission()?;
         let opener = std::mem::replace(&mut self.opener, ProductionOpener::Closed);
         drop(opener);
+        // The write capability holds the same PD/RegionCache/transport clones
+        // as the read opener, so it must be released before the PD stage checks
+        // for unique ownership. Without this, any authority that ever handed out
+        // a transaction opener could never shut PD down.
+        drop(self.transaction_opener.take());
         shutdown_read_process(0, &mut self.lifecycle)
     }
 
@@ -1105,6 +1146,18 @@ where
         self.execute_lowered_plan_with_cancellation(plan, cancellation)
     }
 
+    /// Acquires one PD snapshot timestamp without opening any request.
+    ///
+    /// A session pins this once for an explicit transaction so every read in the
+    /// transaction runs at one consistent snapshot via
+    /// [`Self::execute_plan_at_snapshot`], instead of the fresh per-statement
+    /// timestamp [`Self::execute_lowered_plan_with_cancellation`] takes.
+    pub fn acquire_snapshot_ts(&self) -> Result<u64, RealTiKvReadError> {
+        self.timestamp_source
+            .current_ts()
+            .map_err(RealTiKvReadError::Query)
+    }
+
     /// Starts one already-lowered configured scan with the connection's
     /// cancellation authority.
     ///
@@ -1269,21 +1322,29 @@ where
 fn protocol_columns(table: &ConfiguredTable, plan: &ReadOnlyScanPlan) -> Vec<ColumnInfo> {
     plan.projected_columns()
         .iter()
-        .map(|column| ColumnInfo {
-            schema: table.schema().to_owned(),
-            table: table.table().to_owned(),
-            org_table: table.table().to_owned(),
-            name: column.output_name().to_owned(),
-            org_name: column.source_name().to_owned(),
-            column_length: 20,
-            charset: BINARY_DEFAULT_COLLATION_ID,
-            flag: match column.kind() {
-                ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
-                ConfiguredColumnKind::StoredNotNull => 0x0001,
-            },
-            decimal: 0,
-            type_code: FieldTypeCode::LongLong.mysql_type(),
-            default_value: None,
+        .map(|column| {
+            // Result metadata is derived from the column type, per Go
+            // `column.ConvertColumnInfo`: the charset id is positive
+            // (`CharsetNameToID`), a string length is scaled by the charset's
+            // max byte width, and the type/charset are the column's own — not
+            // the negated coprocessor scan collation.
+            let scalar = column.scalar_type();
+            ColumnInfo {
+                schema: table.schema().to_owned(),
+                table: table.table().to_owned(),
+                org_table: table.table().to_owned(),
+                name: column.output_name().to_owned(),
+                org_name: column.source_name().to_owned(),
+                column_length: scalar.result_column_length() as u32,
+                charset: scalar.result_charset_id() as u16,
+                flag: match column.kind() {
+                    ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
+                    ConfiguredColumnKind::StoredNotNull => 0x0001,
+                },
+                decimal: 0,
+                type_code: scalar.result_type_code() as u8,
+                default_value: None,
+            }
         })
         .collect()
 }

@@ -19,9 +19,10 @@
 use std::{cmp::Ordering, error::Error, fmt};
 
 use tidb_ast::{CastExpr, Expr, Limit, OrderItem, SelectField};
-use tidb_datatype::{Datum, DatumKind};
+use tidb_datatype::{Collation, Datum, DatumKind};
 use tidb_expr::eval;
 use tidb_planner::configured_order_limit_contract::ConfiguredOrderKey;
+use tidb_planner::read_only_scan::{ConfiguredScalarType, PreparedOrderColumn};
 
 use crate::{ExecError, Row};
 
@@ -522,6 +523,165 @@ pub fn compare_configured_rows(left: &Row, right: &Row, keys: &[ConfiguredOrderK
     }))
 }
 
+/// A checked prepared-read ordering failure.
+///
+/// Unlike [`ConfiguredOrderError`], whose keys are always signed BIGINT, a
+/// prepared read's keys carry the projected column's scalar type. Keeping a
+/// mistyped physical row distinct from an ordinary tie prevents the executor
+/// from inventing a fallback order for data the column's type does not admit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedOrderError {
+    /// A resolved key offset does not fit the projected output row width.
+    OutputOffset {
+        /// The invalid planner-resolved output offset.
+        offset: usize,
+        /// The projected output row width.
+        width: usize,
+    },
+    /// A materialized row is not the projected output width.
+    RowWidth {
+        /// Zero-based position of the malformed materialized row.
+        row_index: usize,
+        /// Planner-promised projected output width.
+        expected: usize,
+        /// Actual number of decoded datum slots.
+        actual: usize,
+    },
+    /// A key datum's kind does not match the projected column's scalar type.
+    KeyDatum {
+        /// Zero-based position of the malformed materialized row.
+        row_index: usize,
+        /// Planner-resolved output key offset.
+        offset: usize,
+        /// Actual datum kind decoded at that offset.
+        kind: DatumKind,
+    },
+}
+
+impl fmt::Display for PreparedOrderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OutputOffset { offset, width } => write!(
+                formatter,
+                "prepared ORDER BY offset {offset} exceeds output width {width}"
+            ),
+            Self::RowWidth {
+                row_index,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "prepared ORDER BY row {row_index} has width {actual}, expected {expected}"
+            ),
+            Self::KeyDatum {
+                row_index,
+                offset,
+                kind,
+            } => write!(
+                formatter,
+                "prepared ORDER BY row {row_index} key at offset {offset} decoded as {kind:?}"
+            ),
+        }
+    }
+}
+
+impl Error for PreparedOrderError {}
+
+/// The datum kind a projected column's scalar type stores in an output row.
+///
+/// A signed integer column decodes to [`Datum::Int`]; a `CHAR` column decodes
+/// to [`Datum::Bytes`] (its `utf8mb4` bytes). Any other pairing is a decode
+/// contract violation the ordering must not silently reorder.
+const fn scalar_type_admits(scalar_type: ConfiguredScalarType, datum: &Datum) -> bool {
+    match scalar_type {
+        ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => matches!(datum, Datum::Int(_)),
+        ConfiguredScalarType::Char { .. } => matches!(datum, Datum::Bytes(_)),
+    }
+}
+
+/// Validates materialized prepared-read rows before ordering indexes them.
+///
+/// Mirrors [`validate_configured_order_rows`] but admits each projected
+/// column's own scalar type instead of a single signed-BIGINT domain, so the
+/// comparator can stay allocation-free and infallible in the sort's hot path.
+pub fn validate_prepared_order_rows(
+    rows: &[Row],
+    output_width: usize,
+    keys: &[PreparedOrderColumn],
+) -> Result<(), PreparedOrderError> {
+    for key in keys {
+        if key.output_offset() >= output_width {
+            return Err(PreparedOrderError::OutputOffset {
+                offset: key.output_offset(),
+                width: output_width,
+            });
+        }
+    }
+
+    for (row_index, row) in rows.iter().enumerate() {
+        if row.len() != output_width {
+            return Err(PreparedOrderError::RowWidth {
+                row_index,
+                expected: output_width,
+                actual: row.len(),
+            });
+        }
+        for key in keys {
+            let datum = &row[key.output_offset()];
+            if !scalar_type_admits(key.scalar_type(), datum) {
+                return Err(PreparedOrderError::KeyDatum {
+                    row_index,
+                    offset: key.output_offset(),
+                    kind: datum.kind(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Compares two already validated prepared-read rows by their resolved keys.
+///
+/// Signed integers compare numerically; `CHAR` columns compare under their
+/// `utf8mb4_bin` collation through the crate-shared [`Collation`] authority,
+/// which trims trailing spaces exactly as TiDB's Go collator does. Callers must
+/// first run [`validate_prepared_order_rows`], so the final unreachable arm
+/// never fabricates an order for mistyped data.
+fn compare_prepared_rows(left: &Row, right: &Row, keys: &[PreparedOrderColumn]) -> Ordering {
+    for key in keys {
+        let offset = key.output_offset();
+        let ordering = match (&left[offset], &right[offset]) {
+            (Datum::Int(a), Datum::Int(b)) => a.cmp(b),
+            (Datum::Bytes(a), Datum::Bytes(b)) => Collation::Utf8Mb4Bin.compare(a, b),
+            _ => Ordering::Equal,
+        };
+        if ordering != Ordering::Equal {
+            return if key.direction().is_descending() {
+                ordering.reverse()
+            } else {
+                ordering
+            };
+        }
+    }
+    Ordering::Equal
+}
+
+/// Stably orders materialized prepared-read rows by planner-resolved keys.
+///
+/// The prepared point/range read has no `LIMIT`, so its `ORDER BY` is a
+/// SQL-layer sort over the fully projected output rows rather than a bounded
+/// coprocessor TopN. The full input is validated before mutation, then Rust's
+/// stable sort keeps source order for rows whose complete key tuple ties.
+pub fn stable_order_prepared_rows(
+    rows: &mut [Row],
+    output_width: usize,
+    keys: &[PreparedOrderColumn],
+) -> Result<(), PreparedOrderError> {
+    validate_prepared_order_rows(rows, output_width, keys)?;
+    rows.sort_by(|left, right| compare_prepared_rows(left, right, keys));
+    Ok(())
+}
+
 /// A total order for `ORDER BY`: `NULL`s sort first (MySQL ascending default),
 /// integers/floats numerically, strings by byte order (`utf8mb4_bin`). Signed
 /// and unsigned integers retain MySQL's mixed-domain ordering: every negative
@@ -577,7 +737,10 @@ mod tests {
         ConfiguredOrderDirection, ConfiguredOrderKey,
     };
 
-    use super::{stable_order_configured_rows, ConfiguredOrderError, Datum, DatumKind, Row};
+    use super::{
+        stable_order_configured_rows, stable_order_prepared_rows, ConfiguredOrderError,
+        ConfiguredScalarType, Datum, DatumKind, PreparedOrderColumn, PreparedOrderError, Row,
+    };
 
     #[test]
     fn configured_order_uses_fullschema_offsets_directions_and_stable_ties() {
@@ -641,6 +804,115 @@ mod tests {
             Err(ConfiguredOrderError::FullSchemaOffset {
                 offset: 2,
                 width: 2,
+            })
+        );
+    }
+
+    fn bytes_row(value: &str) -> Row {
+        vec![Datum::new_bytes(value.as_bytes().to_vec())]
+    }
+
+    #[test]
+    fn prepared_order_sorts_utf8mb4_bin_char_column_by_bytes() {
+        // sysbench read 4: `SELECT c ... ORDER BY c`, one projected CHAR column.
+        let key = PreparedOrderColumn::new(
+            0,
+            ConfiguredOrderDirection::Ascending,
+            ConfiguredScalarType::Char { max_length: 120 },
+        );
+        let mut rows = vec![bytes_row("banana"), bytes_row("apple"), bytes_row("cherry")];
+        stable_order_prepared_rows(&mut rows, 1, &[key]).expect("utf8mb4_bin char rows");
+        assert_eq!(
+            rows,
+            vec![bytes_row("apple"), bytes_row("banana"), bytes_row("cherry")]
+        );
+    }
+
+    #[test]
+    fn prepared_order_char_descending_and_trailing_space_ties_stably() {
+        let descending = PreparedOrderColumn::new(
+            0,
+            ConfiguredOrderDirection::Descending,
+            ConfiguredScalarType::Char { max_length: 8 },
+        );
+        let mut rows = vec![bytes_row("a"), bytes_row("c"), bytes_row("b")];
+        stable_order_prepared_rows(&mut rows, 1, &[descending]).expect("descending char rows");
+        assert_eq!(rows, vec![bytes_row("c"), bytes_row("b"), bytes_row("a")]);
+
+        // utf8mb4_bin is PAD SPACE: "a " and "a" tie, so the stable sort keeps
+        // the source order of the tied rows (the shared Collation authority
+        // trims the trailing space exactly as TiDB's Go collator does).
+        let ascending = PreparedOrderColumn::new(
+            0,
+            ConfiguredOrderDirection::Ascending,
+            ConfiguredScalarType::Char { max_length: 8 },
+        );
+        let mut padded = vec![bytes_row("a "), bytes_row("a"), bytes_row("a  ")];
+        stable_order_prepared_rows(&mut padded, 1, &[ascending]).expect("padded char rows");
+        assert_eq!(
+            padded,
+            vec![bytes_row("a "), bytes_row("a"), bytes_row("a  ")],
+            "PAD SPACE ties retain source order"
+        );
+    }
+
+    #[test]
+    fn prepared_order_signed_int_column_compares_numerically() {
+        let key = PreparedOrderColumn::new(
+            0,
+            ConfiguredOrderDirection::Ascending,
+            ConfiguredScalarType::BigInt,
+        );
+        let mut rows = vec![vec![Datum::Int(30)], vec![Datum::Int(-5)], vec![Datum::Int(2)]];
+        stable_order_prepared_rows(&mut rows, 1, &[key]).expect("signed int rows");
+        assert_eq!(
+            rows,
+            vec![vec![Datum::Int(-5)], vec![Datum::Int(2)], vec![Datum::Int(30)]]
+        );
+    }
+
+    #[test]
+    fn prepared_order_rejects_mistyped_and_out_of_range_rows_before_sorting() {
+        // A CHAR key over an integer datum is a decode contract violation.
+        let char_key = PreparedOrderColumn::new(
+            0,
+            ConfiguredOrderDirection::Ascending,
+            ConfiguredScalarType::Char { max_length: 4 },
+        );
+        let mut mistyped = vec![bytes_row("b"), vec![Datum::Int(1)]];
+        assert_eq!(
+            stable_order_prepared_rows(&mut mistyped, 1, &[char_key]),
+            Err(PreparedOrderError::KeyDatum {
+                row_index: 1,
+                offset: 0,
+                kind: DatumKind::Int,
+            })
+        );
+        assert_eq!(mistyped[0], bytes_row("b"), "validation precedes mutation");
+
+        let int_key = PreparedOrderColumn::new(
+            1,
+            ConfiguredOrderDirection::Ascending,
+            ConfiguredScalarType::BigInt,
+        );
+        let mut rows = vec![vec![Datum::Int(1)]];
+        assert_eq!(
+            stable_order_prepared_rows(&mut rows, 1, &[int_key]),
+            Err(PreparedOrderError::OutputOffset { offset: 1, width: 1 })
+        );
+
+        let mut narrow = vec![vec![Datum::Int(1), Datum::Int(2)], vec![Datum::Int(3)]];
+        let offset_zero = PreparedOrderColumn::new(
+            0,
+            ConfiguredOrderDirection::Ascending,
+            ConfiguredScalarType::BigInt,
+        );
+        assert_eq!(
+            stable_order_prepared_rows(&mut narrow, 2, &[offset_zero]),
+            Err(PreparedOrderError::RowWidth {
+                row_index: 1,
+                expected: 2,
+                actual: 1,
             })
         );
     }

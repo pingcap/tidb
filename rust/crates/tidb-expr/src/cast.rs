@@ -120,10 +120,12 @@ pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
 
 /// `UNSIGNED`'s own coercion. Integer and integer-string sources preserve
 /// the low 64 bits, so `CAST(-5 AS UNSIGNED)` is the genuine
-/// `18446744073709551611` UInt64 value. Decimal/float sources retain their
-/// established rounded-negative-to-zero behavior. The result is
-/// [`Datum::UInt`], so downstream comparisons and arithmetic retain the
-/// domain instead of silently reinterpreting it as signed display text.
+/// `18446744073709551611` UInt64 value. A decimal source rounds half-up then
+/// converts across the full `u64` range (Go `MyDecimal.ToUint`: negative -> 0);
+/// a float source rounds half-to-even then converts across the same full `u64`
+/// range (Go `ConvertFloatToUint`: negative -> 0). The result is
+/// [`Datum::UInt`], so downstream comparisons and arithmetic retain the domain
+/// instead of silently reinterpreting it as signed display text.
 fn to_u64_unsigned(v: &Datum) -> u64 {
     match v {
         // TiDB's integer cast reuses the low 64 bits for an ETInt source.
@@ -131,10 +133,36 @@ fn to_u64_unsigned(v: &Datum) -> u64 {
         // 18446744073709551611 rather than an error or a display-only wrap.
         Datum::Int(_) | Datum::String(_) | Datum::Bytes(_) => to_i64_signed(v) as u64,
         Datum::UInt(i) => *i,
-        // Preserve the established decimal/real conversion contract: these
-        // source signatures clamp ordinary negative rounded values to zero.
-        Datum::Decimal(_) | Datum::Real(_) => to_i64_signed(v).max(0) as u64,
+        // A decimal rounds half-up then converts through the full u64 range
+        // (Go `MyDecimal.ToUint`): a negative value becomes 0, and a magnitude in
+        // `(i64::MAX, u64::MAX]` — the upper half of `UNSIGNED BIGINT` — is kept
+        // rather than saturated at `i64::MAX` by the signed path.
+        Datum::Decimal(d) => d.round_to_u64_saturating(),
+        // A real rounds half-to-even then converts across the full u64 range
+        // (Go `ConvertFloatToUint`), so its own upper half is kept too.
+        Datum::Real(f) => real_to_u64_saturating(*f),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
+    }
+}
+
+/// `CAST(real AS UNSIGNED)`: round half to even (Go `RoundFloat` =
+/// `math.RoundToEven`, the same rounding the signed real path uses), then Go
+/// `ConvertFloatToUint` across the full `u64` range. A negative value is `0`
+/// under the default flags, and a magnitude past `u64::MAX` saturates to
+/// `u64::MAX` (`ConvertFloatToUint`'s `upperBound` clamp). Routing through the
+/// signed path instead would lose the upper half of `UNSIGNED BIGINT` at
+/// `i64::MAX`.
+fn real_to_u64_saturating(f: f64) -> u64 {
+    let rounded = f.round_ties_even();
+    if rounded < 0.0 {
+        // A negative rounded value clamps to zero (goeval-confirmed for the
+        // real source, unlike an integer source's low-64-bit reinterpretation).
+        0
+    } else {
+        // Rust's float-to-int cast saturates: an in-range integral float is
+        // exact, a magnitude past `u64::MAX` clamps to `u64::MAX`, and `NaN`
+        // maps to 0 (already excluded by the caller's NULL guard).
+        rounded as u64
     }
 }
 
@@ -369,4 +397,63 @@ fn cast_to_year(v: &Datum) -> Result<Datum, EvalError> {
         }
     }
     Ok(Datum::Int(to_i64_signed(v)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cast_decimal_as_unsigned_keeps_the_upper_half_of_unsigned_bigint() {
+        // The wired bug: routing a decimal through the signed path saturated the
+        // upper half of UNSIGNED BIGINT at i64::MAX (9223372036854775807). Go
+        // rounds half-up then MyDecimal.ToUint, keeping the full u64 range.
+        assert_eq!(
+            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal(
+                "10000000000000000000"
+            ))),
+            10_000_000_000_000_000_000,
+            "one past i64::MAX is kept, not saturated"
+        );
+        assert_eq!(
+            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal(
+                "18446744073709551615"
+            ))),
+            u64::MAX
+        );
+        // Half-up rounding and the negative-to-zero rule are unchanged.
+        assert_eq!(
+            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal("5.6"))),
+            6
+        );
+        assert_eq!(
+            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal("5.6").negate())),
+            0
+        );
+        // A signed-integer source still reinterprets its low 64 bits:
+        // CAST(-5 AS UNSIGNED) stays 18446744073709551611, unaffected by the fix.
+        assert_eq!(to_u64_unsigned(&Datum::Int(-5)), 18_446_744_073_709_551_611);
+    }
+
+    #[test]
+    fn cast_real_as_unsigned_keeps_the_upper_half_of_unsigned_bigint() {
+        // The sibling wired bug: a real routed through the signed path saturated
+        // the upper half of UNSIGNED BIGINT at i64::MAX (9223372036854775807).
+        // Go rounds half-to-even (RoundFloat) then ConvertFloatToUint across the
+        // full u64 range. 1e19 is exactly representable in f64.
+        assert_eq!(
+            to_u64_unsigned(&Datum::Real(1.0e19)),
+            10_000_000_000_000_000_000,
+            "a real past i64::MAX is kept, not saturated at i64::MAX"
+        );
+        // A magnitude past u64::MAX saturates to MaxUint64 (upperBound clamp).
+        assert_eq!(to_u64_unsigned(&Datum::Real(1.0e30)), u64::MAX);
+        // Half-to-even rounding (Go RoundFloat = math.RoundToEven), the same rule
+        // the signed real path uses: 2.5 -> 2, 3.5 -> 4.
+        assert_eq!(to_u64_unsigned(&Datum::Real(2.5)), 2);
+        assert_eq!(to_u64_unsigned(&Datum::Real(3.5)), 4);
+        // A negative real clamps to zero under the default flags.
+        assert_eq!(to_u64_unsigned(&Datum::Real(-5.6)), 0);
+        assert_eq!(to_u64_unsigned(&Datum::Real(-0.4)), 0);
+    }
 }

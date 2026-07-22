@@ -625,6 +625,7 @@ pub mod privilege_set;
 pub mod process_info;
 pub mod read_consistency;
 pub mod readable_size;
+pub mod real_tikv_dml;
 pub mod real_tikv_multi_read;
 pub mod real_tikv_read;
 pub mod recordset_lifecycle;

@@ -50,14 +50,18 @@ support_anchors = [
   "The existing txnkv-mutable-transaction-runtime, MemBufferDriver, and any in-memory transaction or Cluster type are not prerequisites and must not be called, wrapped, or cited as acceptance for this concrete 2PC path",
   "The production transaction opener is derived from an already-running concrete SharedReadOpener plus that lifecycle's cloneable PdClient handle; construction reconnects nothing and starts no worker, and the real proof must assert that the read opener and transaction opener report the same nonzero authority_id. A transaction-only process authority is forbidden because the dependent SQL path must not own a second PD, RegionCache, or TiKV transport runtime",
   "Use real PD timestamps, real RegionCache routes, the retained real lock resolver, and real TiKV for focused acceptance; injected backends and in-memory transaction traits are forbidden",
+  "The coordinator names its client, region-loader, and timestamp capabilities as type parameters, exactly as the retained lock resolver already names LockRecoveryClient. TransactionCommandClient has one production implementation on the sole TonicCoprocessorClient, ProductionOptimisticTransaction is the one production instantiation, and RealOptimisticTransactionOpener::begin remains the only production construction path. This is not a second transaction client and not a mockable transaction abstraction",
+  "optimistic_2pc_failure_branch_source is a focused regression for decoded-response branches a live cluster cannot produce on demand: a secondary Commit or BatchRollback region error whose recovery is followed by a region that can no longer be routed. It uses the real transport, real BatchCommands publication identity, and real region recovery, and scripts only the TiKV responses and the region topology. It is never acceptance; optimistic_2pc_realtikv_source remains the sole real-cluster acceptance target",
 ]
 rust_paths = [
   "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/src/transaction/command_client.rs",
   "rust/crates/tidb-txnkv/src/transaction/coordinator.rs",
   "rust/crates/tidb-txnkv/src/transaction/mod.rs",
   "rust/crates/tidb-txnkv/src/transaction/mutation.rs",
   "rust/crates/tidb-txnkv/src/transaction/region_batches.rs",
   "rust/crates/tidb-txnkv/src/transaction/state.rs",
+  "rust/crates/tidb-txnkv/tests/optimistic_2pc_failure_branch_source.rs",
   "rust/crates/tidb-txnkv/tests/optimistic_2pc_realtikv_source.rs",
   "rust/scripts/run-campaign28-optimistic-2pc-realtikv.sh",
   "rust/difftests/corpus/coverage/evidence/client-go/source/txnkv-real-optimistic-2pc-runtime.tsv",

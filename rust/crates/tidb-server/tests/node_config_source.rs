@@ -8,7 +8,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
-use tidb_server::{NodeConfig, NodeConfigError};
+use tidb_server::{ConfiguredReadColumnKind, NodeConfig, NodeConfigError};
 
 fn required() -> Vec<&'static str> {
     vec![
@@ -52,6 +52,70 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
     assert_eq!(config.max_connections, 8);
     assert_eq!(config.connection_timeout, Duration::from_secs(30));
     assert_eq!(config.max_topn_rows, 1_024);
+}
+
+/// A `--read-table` for the sysbench `sbtest1` shape with a trailing non-unique
+/// index on `k`, followed by the required auth file.
+fn indexed_table_args() -> Vec<&'static str> {
+    vec![
+        "tidb-server",
+        "--path",
+        "127.0.0.1:2379",
+        "--read-table",
+        "sbtest",
+        "sbtest1",
+        "900",
+        "4",
+        "id:1:clustered-pk",
+        "k:2:stored-int-not-null",
+        "c:3:stored-char-not-null:120",
+        "pad:4:stored-char-not-null:60",
+        "1",         // index count
+        "k_idx:5:2", // non-unique index k_idx (id 5) over column id 2
+        "--auth-file",
+        "/tmp/campaign21-users.tsv",
+    ]
+}
+
+#[test]
+fn a_trailing_index_section_declares_a_non_unique_secondary_index() {
+    let config = NodeConfig::parse(indexed_table_args()).unwrap();
+    let table = &config.read_tables[0];
+    assert_eq!(table.columns.len(), 4);
+    assert_eq!(table.indexes.len(), 1);
+    assert_eq!(table.indexes[0].name, "k_idx");
+    assert_eq!(table.indexes[0].index_id, 5);
+    assert_eq!(table.indexes[0].column_id, 2);
+}
+
+#[test]
+fn a_table_without_an_index_section_has_no_indexes() {
+    // `required()` stops at its columns; the next argument is another option, so
+    // no index section is parsed — the pre-index descriptor grammar still holds.
+    let config = NodeConfig::parse(required()).unwrap();
+    assert!(config.read_tables[0].indexes.is_empty());
+}
+
+#[test]
+fn an_index_over_an_unknown_column_is_rejected() {
+    let mut args = indexed_table_args();
+    let position = args.iter().position(|arg| *arg == "k_idx:5:2").unwrap();
+    args[position] = "k_idx:5:99"; // column id 99 is not declared
+    assert!(matches!(
+        NodeConfig::parse(args),
+        Err(NodeConfigError::InvalidValue { .. })
+    ));
+}
+
+#[test]
+fn a_malformed_index_descriptor_is_rejected() {
+    let mut args = indexed_table_args();
+    let position = args.iter().position(|arg| *arg == "k_idx:5:2").unwrap();
+    args[position] = "k_idx:5"; // missing the column id field
+    assert!(matches!(
+        NodeConfig::parse(args),
+        Err(NodeConfigError::InvalidValue { .. })
+    ));
 }
 
 #[test]
@@ -410,4 +474,80 @@ fn configured_read_tables_are_atomic_ordered_and_globally_unique() {
         NodeConfig::parse(legacy),
         Err(NodeConfigError::UnknownOption(option)) if option == "--database"
     ));
+}
+
+/// The deployable node accepts the sysbench `sbtest` column shape: a BIGINT
+/// clustered PK, an INT column, and two CHAR(N) columns. This is the
+/// configuration surface that unlocks string-column workloads through
+/// `run_configured_node`.
+fn sbtest_shaped() -> Vec<&'static str> {
+    vec![
+        "tidb-server",
+        "--path",
+        "127.0.0.1:2379",
+        "--read-table",
+        "sbtest",
+        "sbtest1",
+        "108",
+        "4",
+        "id:1:clustered-pk",
+        "k:2:stored-int-not-null",
+        "c:3:stored-char-not-null:120",
+        "pad:4:stored-char-not-null:60",
+        "--auth-file",
+        "/tmp/sbtest-users.tsv",
+    ]
+}
+
+#[test]
+fn typed_stored_columns_admit_bigint_int_and_char() {
+    let config = NodeConfig::parse(sbtest_shaped()).unwrap();
+    let columns = &config.read_tables[0].columns;
+    assert_eq!(columns.len(), 4);
+    assert_eq!(columns[0].name, "id");
+    assert_eq!(columns[0].kind, ConfiguredReadColumnKind::ClusteredPrimaryKey);
+    assert_eq!(columns[1].name, "k");
+    assert_eq!(columns[1].kind, ConfiguredReadColumnKind::StoredIntNotNull);
+    assert_eq!(columns[2].name, "c");
+    assert_eq!(
+        columns[2].kind,
+        ConfiguredReadColumnKind::StoredCharNotNull { max_length: 120 }
+    );
+    assert_eq!(columns[3].name, "pad");
+    assert_eq!(
+        columns[3].kind,
+        ConfiguredReadColumnKind::StoredCharNotNull { max_length: 60 }
+    );
+}
+
+#[test]
+fn char_column_length_is_required_and_range_checked() {
+    // Replaces the CHAR `c` descriptor (index 10 in `sbtest_shaped`).
+    let with_char = |descriptor: &'static str| {
+        let mut args = sbtest_shaped();
+        args[10] = descriptor;
+        NodeConfig::parse(args)
+    };
+
+    // Baseline parses.
+    assert!(with_char("c:3:stored-char-not-null:120").is_ok());
+
+    for bad in [
+        "c:3:stored-char-not-null",     // missing length
+        "c:3:stored-char-not-null:0",   // below range
+        "c:3:stored-char-not-null:256", // above MySQL CHAR max
+        "c:3:stored-char-not-null:xyz", // non-numeric length
+        "c:3:clustered-pk:120",         // length on a non-char kind
+        "c:3:stored-not-null:120",      // length on a non-char kind
+        "c:3:unknown-kind",             // unknown kind
+        "c:3:stored-char-not-null:1:2", // too many fields
+    ] {
+        assert!(
+            matches!(
+                with_char(bad),
+                Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
+            ),
+            "descriptor {bad:?} must be rejected"
+        );
+    }
 }

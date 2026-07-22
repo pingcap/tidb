@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-27"
-status = "planned"
+status = "integrated"
 slices = [
   "parser-prepared-param-marker-runtime",
   "protocol-prepared-statement-binary-framing-runtime",

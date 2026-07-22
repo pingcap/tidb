@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::CodecError;
-use tidb_datatype::Decimal;
+use tidb_datatype::{Decimal, DecimalCodecWarning};
 
 const DIGITS_PER_WORD: usize = 9;
 const DIGITS_TO_BYTES: [usize; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
@@ -99,65 +99,21 @@ pub fn encode_decimal_fixed(
     scale: usize,
 ) -> Result<(), CodecError> {
     let (precision, scale) = decimal_shape(decimal, precision, scale)?;
-    let coefficient = decimal.coefficient_digits();
-    let source_scale = decimal.storage_scale() as usize;
-    let integer_end = coefficient.len() - source_scale;
-    let source_integer = coefficient[..integer_end].trim_start_matches('0');
-    let source_fraction = &coefficient[integer_end..];
-    let target_integer_digits = precision - scale;
-
-    let overflow = source_integer.len() > target_integer_digits;
-    let integer = if overflow {
-        source_integer[source_integer.len() - target_integer_digits..].to_string()
-    } else {
-        format!(
-            "{}{}",
-            "0".repeat(target_integer_digits - source_integer.len()),
-            source_integer
-        )
-    };
-    let retained_fraction = source_fraction.len().min(scale);
-    let fraction = format!(
-        "{}{}",
-        &source_fraction[..retained_fraction],
-        "0".repeat(scale - retained_fraction)
-    );
-
+    // The mem-comparable payload is exactly Go `MyDecimal.WriteBin`, ported and
+    // byte-verified once in `tidb-datatype`; this codec only frames it with the
+    // precision/scale header and maps the soft truncation/overflow signal to a
+    // typed error for the caller's statement context.
+    let (payload, warning) = decimal
+        .to_bin(precision as i32, scale as i32)
+        .map_err(|_| CodecError::DecimalOutOfRange)?;
     buffer.push(precision as u8);
     buffer.push(scale as u8);
-    let start = buffer.len();
-    encode_digit_groups(buffer, &integer, target_integer_digits, true)?;
-    encode_digit_groups(buffer, &fraction, scale, false)?;
-
-    if decimal.is_negative() {
-        for byte in &mut buffer[start..] {
-            *byte = !*byte;
-        }
+    buffer.extend_from_slice(&payload);
+    match warning {
+        None => Ok(()),
+        Some(DecimalCodecWarning::Truncated) => Err(CodecError::DecimalTruncated),
+        Some(DecimalCodecWarning::Overflow) => Err(CodecError::DecimalOverflow),
     }
-    buffer[start] ^= 0x80;
-
-    // `MyDecimal.WriteBin` assigns the fractional error after the integer
-    // branch, so truncation wins when both conditions are present.
-    if fraction_was_truncated(source_scale, scale) {
-        Err(CodecError::DecimalTruncated)
-    } else if overflow {
-        Err(CodecError::DecimalOverflow)
-    } else {
-        Ok(())
-    }
-}
-
-fn fraction_was_truncated(source_scale: usize, target_scale: usize) -> bool {
-    let source_words = source_scale / DIGITS_PER_WORD;
-    let source_trailing = source_scale % DIGITS_PER_WORD;
-    let source_size = source_words * 4 + DIGITS_TO_BYTES[source_trailing];
-    let target_words = target_scale / DIGITS_PER_WORD;
-    let target_trailing = target_scale % DIGITS_PER_WORD;
-    let target_size = target_words * 4 + DIGITS_TO_BYTES[target_trailing];
-
-    target_size < source_size
-        || (target_size == source_size
-            && (target_trailing < source_trailing || target_words < source_words))
 }
 
 /// Returns the fixed decimal encoding length, including precision/scale bytes.
@@ -182,33 +138,12 @@ pub fn decode_decimal(input: &[u8]) -> Result<(&[u8], Decimal, u8, u8), CodecErr
     let binary = input
         .get(2..2 + binary_len)
         .ok_or(CodecError::InsufficientBytes)?;
-    let negative = binary[0] & 0x80 == 0;
-    let mut normalized = binary.to_vec();
-    normalized[0] ^= 0x80;
-    if negative {
-        for byte in &mut normalized {
-            *byte = !*byte;
-        }
-    }
-
-    let integer_digits = usize::from(precision - scale);
-    let mut offset = 0;
-    let integer = decode_digit_groups(&normalized, &mut offset, integer_digits, true)?;
-    let fraction = decode_digit_groups(&normalized, &mut offset, usize::from(scale), false)?;
-    if offset != normalized.len() {
-        return Err(CodecError::InvalidEncoding("decimal length mismatch"));
-    }
-    let literal = if scale == 0 {
-        integer
-    } else {
-        format!("{integer}.{fraction}")
-    };
-    let value = Decimal::from_literal(&literal);
-    let value = if negative && !value.is_zero() {
-        value.negate()
-    } else {
-        value
-    };
+    // The payload is Go `MyDecimal.FromBin`, ported and round-trip-verified in
+    // `tidb-datatype`. A soft truncation warning is not an error here, matching
+    // Go `FromBin` returning the value alongside it.
+    let (value, _consumed, _warning) =
+        Decimal::from_bin(binary, i32::from(precision), i32::from(scale))
+            .map_err(|_| CodecError::InvalidEncoding("invalid decimal payload"))?;
     Ok((&input[2 + binary_len..], value, precision, scale))
 }
 
@@ -260,110 +195,7 @@ fn validate_decimal_shape(precision: usize, scale: usize) -> Result<(), CodecErr
     Ok(())
 }
 
-fn encode_digit_groups(
-    output: &mut Vec<u8>,
-    digits: &str,
-    declared_digits: usize,
-    leading_partial: bool,
-) -> Result<(), CodecError> {
-    if declared_digits == 0 {
-        return Ok(());
-    }
-    let partial_digits = declared_digits % DIGITS_PER_WORD;
-    let mut offset = 0;
-    if leading_partial && partial_digits != 0 {
-        let group = if digits.len() >= partial_digits {
-            &digits[..partial_digits]
-        } else {
-            digits
-        };
-        write_group(output, parse_group(group)?, DIGITS_TO_BYTES[partial_digits]);
-        offset = partial_digits.min(digits.len());
-    }
-    let full_groups = declared_digits / DIGITS_PER_WORD;
-    for _ in 0..full_groups {
-        let end = offset + DIGITS_PER_WORD;
-        let group = digits.get(offset..end).ok_or(CodecError::InvalidEncoding(
-            "decimal coefficient does not match scale",
-        ))?;
-        write_group(output, parse_group(group)?, 4);
-        offset = end;
-    }
-    if !leading_partial && partial_digits != 0 {
-        let end = offset + partial_digits;
-        let group = digits.get(offset..end).ok_or(CodecError::InvalidEncoding(
-            "decimal coefficient does not match scale",
-        ))?;
-        write_group(output, parse_group(group)?, DIGITS_TO_BYTES[partial_digits]);
-    }
-    Ok(())
-}
-
-fn decode_digit_groups(
-    input: &[u8],
-    offset: &mut usize,
-    declared_digits: usize,
-    leading_partial: bool,
-) -> Result<String, CodecError> {
-    if declared_digits == 0 {
-        return Ok(if leading_partial {
-            "0".to_string()
-        } else {
-            String::new()
-        });
-    }
-    let partial_digits = declared_digits % DIGITS_PER_WORD;
-    let mut digits = String::with_capacity(declared_digits.max(1));
-    if leading_partial && partial_digits != 0 {
-        let value = read_group(input, offset, DIGITS_TO_BYTES[partial_digits])?;
-        if value >= 10_u32.pow(partial_digits as u32) {
-            return Err(CodecError::InvalidEncoding(
-                "decimal leading group overflow",
-            ));
-        }
-        digits.push_str(&format!("{value:0partial_digits$}"));
-    }
-    for _ in 0..declared_digits / DIGITS_PER_WORD {
-        let value = read_group(input, offset, 4)?;
-        if value >= 1_000_000_000 {
-            return Err(CodecError::InvalidEncoding("decimal word overflow"));
-        }
-        digits.push_str(&format!("{value:09}"));
-    }
-    if !leading_partial && partial_digits != 0 {
-        let value = read_group(input, offset, DIGITS_TO_BYTES[partial_digits])?;
-        if value >= 10_u32.pow(partial_digits as u32) {
-            return Err(CodecError::InvalidEncoding(
-                "decimal trailing group overflow",
-            ));
-        }
-        digits.push_str(&format!("{value:0partial_digits$}"));
-    }
-    if leading_partial {
-        let trimmed = digits.trim_start_matches('0');
-        Ok(if trimmed.is_empty() { "0" } else { trimmed }.to_string())
-    } else {
-        Ok(digits)
-    }
-}
-
-fn parse_group(group: &str) -> Result<u32, CodecError> {
-    group
-        .parse()
-        .map_err(|_| CodecError::InvalidEncoding("non-decimal coefficient digit"))
-}
-
-fn write_group(output: &mut Vec<u8>, value: u32, bytes: usize) {
-    let encoded = value.to_be_bytes();
-    output.extend_from_slice(&encoded[4 - bytes..]);
-}
-
-fn read_group(input: &[u8], offset: &mut usize, bytes: usize) -> Result<u32, CodecError> {
-    let group = input
-        .get(*offset..*offset + bytes)
-        .ok_or(CodecError::InsufficientBytes)?;
-    *offset += bytes;
-    Ok(group
-        .iter()
-        .fold(0_u32, |value, byte| (value << 8) | u32::from(*byte)))
-}
+// The mem-comparable decimal PAYLOAD codec (Go `MyDecimal.WriteBin`/`FromBin`)
+// lives once, faithfully ported and byte/round-trip verified, in
+// `tidb-datatype` (`Decimal::to_bin`/`from_bin`); `encode_decimal_fixed` /
+// `decode_decimal` above delegate to it rather than re-deriving the packing.

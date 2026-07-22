@@ -21,6 +21,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 
@@ -220,6 +221,74 @@ impl PreparedPointRead {
     }
 }
 
+/// One connection-owned, typed prepared write definition.
+///
+/// Like a prepared read it holds no storage state and no interpolated SQL: the
+/// immutable planner template is bound afresh for each execute.
+#[derive(Clone, Debug)]
+pub struct PreparedWrite {
+    template: ConfiguredPreparedWriteTemplate,
+}
+
+impl PreparedWrite {
+    /// Creates a concrete prepared write after parser/catalog admission.
+    #[must_use]
+    pub const fn new(template: ConfiguredPreparedWriteTemplate) -> Self {
+        Self { template }
+    }
+
+    /// Returns the immutable typed template retained by this connection.
+    #[must_use]
+    pub const fn template(&self) -> &ConfiguredPreparedWriteTemplate {
+        &self.template
+    }
+
+    /// Positional markers this statement's execute packet must supply.
+    #[must_use]
+    pub fn parameter_count(&self) -> usize {
+        self.template.parameter_count()
+    }
+}
+
+/// One connection-owned prepared statement of either admitted kind.
+///
+/// A write returns an OK packet and never a result set, so the two kinds carry
+/// different response shapes and must stay distinguishable at execute time.
+#[derive(Clone, Debug)]
+pub enum PreparedStatement {
+    /// A bounded configured point read returning binary rows.
+    PointRead(PreparedPointRead),
+    /// A bounded configured INSERT or point UPDATE returning affected rows.
+    Write(PreparedWrite),
+}
+
+impl PreparedStatement {
+    /// Positional markers the execute packet must supply.
+    #[must_use]
+    pub fn parameter_count(&self) -> usize {
+        match self {
+            Self::PointRead(_) => 1,
+            Self::Write(write) => write.parameter_count(),
+        }
+    }
+
+    /// Result metadata sent at prepare time; a write has no result columns.
+    #[must_use]
+    pub fn result_columns(&self) -> &[ColumnInfo] {
+        match self {
+            Self::PointRead(read) => read.result_columns(),
+            Self::Write(_) => &[],
+        }
+    }
+}
+
+/// What one prepared write reported after a determinate commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WriteOutcome {
+    /// Rows to report in the MySQL OK packet.
+    pub affected_rows: u64,
+}
+
 impl<'a> QueryResult<'a> {
     /// Transfers one session-owned result source to the connection writer.
     #[must_use]
@@ -232,6 +301,16 @@ impl<'a> QueryResult<'a> {
     /// Returns the sole mutable result-set owner.
     pub fn source(&mut self) -> &mut BoxedResultSetSource<'a> {
         &mut self.source
+    }
+
+    /// Consumes this result, returning its boxed source for re-wrapping.
+    ///
+    /// A prepared read with an `ORDER BY` buffers and sorts the observed scan
+    /// stream by wrapping this source in a `SortingResultSetSource`; taking the
+    /// box back out keeps that transform outside the storage-facing observer.
+    #[must_use]
+    pub fn into_source(self) -> Box<dyn ResultSetSource + 'a> {
+        self.source.inner
     }
 }
 
@@ -295,6 +374,40 @@ pub trait QuerySession {
         Err(SqlQueryError::unknown(
             "prepared point reads require a configured real-TiKV session",
         ))
+    }
+
+    /// Parses and types one bounded prepared write without storage I/O.
+    /// Sessions that have no real configured catalog fail closed.
+    fn prepare_write(&mut self, _sql: &str) -> Result<PreparedWrite, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "prepared writes require a configured real-TiKV session",
+        ))
+    }
+
+    /// Binds and commits one prepared write through this session's shared
+    /// real transaction authority. Sessions without that authority fail closed
+    /// and never report affected rows they did not persist.
+    fn execute_prepared_write(
+        &mut self,
+        _statement: &PreparedWrite,
+        _parameters: &[PreparedBindValue],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "prepared writes require a configured real-TiKV session",
+        ))
+    }
+
+    /// Applies a `BEGIN`/`START TRANSACTION`, `COMMIT`, or `ROLLBACK` statement.
+    ///
+    /// Returns `Some(in_transaction)` when the SQL is one of those
+    /// transaction-control statements — the session updates its own transaction
+    /// state and the caller answers with an OK packet whose status advertises
+    /// `SERVER_STATUS_IN_TRANS` per the returned flag. Returns `None` when the
+    /// SQL is not transaction control, so the caller runs it as an ordinary
+    /// query. Sessions without transaction support keep the default and treat
+    /// every statement as an ordinary query.
+    fn control_transaction(&mut self, _sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        Ok(None)
     }
 }
 
@@ -1093,6 +1206,7 @@ mod tests {
                     id: 1,
                     kind: ConfiguredReadColumnKind::ClusteredPrimaryKey,
                 }],
+                indexes: Vec::new(),
             }],
             max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
             auth_file: PathBuf::from("unused"),

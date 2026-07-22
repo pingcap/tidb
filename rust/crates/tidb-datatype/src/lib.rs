@@ -23,6 +23,7 @@
 
 pub mod ascii_encoding;
 mod binary_literal;
+pub mod char_length;
 mod charset;
 mod collation;
 pub mod conversion_context;
@@ -38,6 +39,7 @@ mod format;
 mod fsp;
 mod overflow;
 mod packed_time;
+mod time_parse;
 mod truncate;
 pub mod utf8_encoding;
 
@@ -66,13 +68,14 @@ pub use binary_literal::{
     parse_bit_str, parse_hex_str, BinaryLiteral, BinaryLiteralIntOutcome, BinaryLiteralParseError,
     BinaryLiteralWidth, BitLiteral, HexLiteral, InvalidBinaryLiteralWidth,
 };
+pub use char_length::{produce_char_value, DataTooLongError};
 pub use charset::{Charset, Collation};
 pub use conversion_context::{
     ConversionContext, ConversionFlags, ConversionLocation, ConversionWarningAppender,
     IgnoreConversionWarnings, DEFAULT_STATEMENT_FLAGS, IGNORE_CONVERSION_WARNINGS, STRICT_FLAGS,
 };
 pub use datum::{Datum, DatumKind, DatumStringError, StringDatum};
-pub use decimal::Decimal;
+pub use decimal::{decimal_bin_size, Decimal, DecimalCodecError, DecimalCodecWarning};
 pub use duration::{
     can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
     round_duration_fsp, truncate_overflow_mysql_time, DurationDateTimeFallbackKind,
@@ -108,6 +111,7 @@ pub use overflow::{
     sub_int_with_uint, sub_uint64, sub_uint_with_int, OverflowError,
 };
 pub use packed_time::{PackedTime, PackedTimeError, PackedTimeParts};
+pub use time_parse::parse_date_format;
 pub use truncate::{is_truncation_error_code, TruncationPolicy};
 pub use utf8_encoding::{
     Utf8Encoding, Utf8Mb3StrictEncoding, Utf8Op, Utf8TransformError, Utf8TransformResult,

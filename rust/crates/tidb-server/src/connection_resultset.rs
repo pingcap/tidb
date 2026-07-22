@@ -15,7 +15,59 @@
 //! Connection routing for incremental result-set responses.
 
 use tidb_datatype::Datum;
-use tidb_protocol::{BinarySignedLongLongResultSetStream, ResultSetOptions};
+use tidb_protocol::{
+    is_binary_decimal_result_type, is_binary_string_result_type, BinaryResultCell,
+    BinaryResultSetStream, ResultSetOptions, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT24, TYPE_LONG,
+    TYPE_LONGLONG, TYPE_SHORT, TYPE_TINY, TYPE_YEAR,
+};
+
+/// Maps one decoded `Datum` to the binary cell its column type dumps, following
+/// TiDB's `DumpBinaryRow` switch on `columns[i].Type`. Returns `None` when the
+/// datum and column type disagree (a caller-surfaced error, never silent).
+fn datum_to_binary_cell(datum: Datum, type_code: u8) -> Option<BinaryResultCell> {
+    match datum {
+        // NULL is type-agnostic: it writes no value bytes and only sets the
+        // row's null-bitmap bit, so any result column admits it (a nullable
+        // aggregate such as SUM over an empty group yields one).
+        Datum::Null => Some(BinaryResultCell::Null),
+        // GetInt64 feeds the fixed-width integer cases; the cell width matches
+        // the `dump.Uint*` the column type selects.
+        Datum::Int(value) => integer_cell(value, type_code),
+        // TypeLonglong reads GetUint64; an unsigned value reuses the same
+        // little-endian widths by bit reinterpretation.
+        Datum::UInt(value) => integer_cell(value as i64, type_code),
+        // TypeFloat dumps Float32bits(GetFloat32); TypeDouble dumps
+        // Float64bits(GetFloat64). The real datum is f64; a float column
+        // narrows to f32 exactly as `GetFloat32` does.
+        Datum::Real(value) => match type_code {
+            TYPE_FLOAT => Some(BinaryResultCell::Float(value as f32)),
+            TYPE_DOUBLE => Some(BinaryResultCell::Double(value)),
+            _ => None,
+        },
+        // TypeNewDecimal dumps LengthEncodedString(GetMyDecimal(i).String()); the
+        // encoder stringifies the decimal, so the cell carries the value itself.
+        Datum::Decimal(value) if is_binary_decimal_result_type(type_code) => {
+            Some(BinaryResultCell::NewDecimal(value))
+        }
+        Datum::String(value) if is_binary_string_result_type(type_code) => {
+            Some(BinaryResultCell::String(value.into_bytes()))
+        }
+        Datum::Bytes(value) if is_binary_string_result_type(type_code) => {
+            Some(BinaryResultCell::String(value))
+        }
+        _ => None,
+    }
+}
+
+fn integer_cell(value: i64, type_code: u8) -> Option<BinaryResultCell> {
+    match type_code {
+        TYPE_TINY => Some(BinaryResultCell::Tiny(value)),
+        TYPE_SHORT | TYPE_YEAR => Some(BinaryResultCell::Short(value)),
+        TYPE_INT24 | TYPE_LONG => Some(BinaryResultCell::Long(value)),
+        TYPE_LONGLONG => Some(BinaryResultCell::LongLong(value)),
+        _ => None,
+    }
+}
 
 use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::{
@@ -121,7 +173,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     let columns = source
         .columns()
         .map_err(|message| binary_failure(message, sink, false))?;
-    let mut stream = BinarySignedLongLongResultSetStream::new(columns, options)
+    let mut stream = BinaryResultSetStream::new(columns.clone(), options)
         .map_err(|error| binary_failure(error.to_string(), sink, false))?;
     for payload in stream
         .metadata_packets()
@@ -136,19 +188,26 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
             break;
         }
         for row in batch {
-            let values = row
+            // One Datum -> one binary cell, dispatched by the column type exactly
+            // as Go's DumpBinaryRow switches on `columns[i].Type`: an integer
+            // column picks the matching fixed width, a string column takes its
+            // raw bytes.
+            let cells = row
                 .into_iter()
+                .zip(&columns)
                 .enumerate()
-                .map(|(column, datum)| match datum {
-                    Datum::Int(value) => Ok(value),
-                    other => Err(format!(
-                        "prepared binary result column {column} is not signed BIGINT: {other:?}"
-                    )),
+                .map(|(column, (datum, metadata))| {
+                    datum_to_binary_cell(datum, metadata.type_code).ok_or_else(|| {
+                        format!(
+                            "prepared binary result column {column} datum does not match type {}",
+                            metadata.type_code
+                        )
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|message| binary_failure(message, sink, false))?;
             let payload = stream
-                .row_packet(&values)
+                .row_packet(&cells)
                 .map_err(|error| binary_failure(error.to_string(), sink, false))?;
             write_binary_payload(sink, &payload, false)?;
             rows_written += 1;

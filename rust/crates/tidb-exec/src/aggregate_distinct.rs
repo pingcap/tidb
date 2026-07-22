@@ -27,18 +27,20 @@ use tidb_datatype::Datum;
 /// per key. String and bytes datums deliberately share one raw-byte tag, as
 /// Go `EncodeValue` does; collation metadata must not change DISTINCT identity.
 #[derive(Debug, Default)]
-pub(crate) struct DistinctChecker {
+pub struct DistinctChecker {
     existing_keys: HashSet<Vec<u8>>,
     key: Vec<u8>,
 }
 
 impl DistinctChecker {
-    pub(crate) fn new() -> Self {
+    /// Creates an empty checker that has seen no tuples yet.
+    #[must_use]
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns `true` only for the tuple's first occurrence.
-    pub(crate) fn check(&mut self, values: &[Datum]) -> bool {
+    pub fn check(&mut self, values: &[Datum]) -> bool {
         self.key.clear();
         for value in values {
             encode_value(&mut self.key, value);

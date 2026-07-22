@@ -7,8 +7,8 @@ use tidb_planner::{
     access_path::ResolvedTableScanKind,
     physical_selection::{ComparisonOp, ComparisonOperand},
     read_only_scan::{
-        BoundBigIntComparison, ConfiguredColumn, ConfiguredColumnKind, ConfiguredTable,
-        ReadOnlyScanError, ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
+        BoundBigIntComparison, ConfiguredColumn, ConfiguredColumnKind, ConfiguredScalarType,
+        ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
     },
 };
 
@@ -76,6 +76,36 @@ fn direct_projection_preserves_alias_source_identity_and_scan_order() {
         assert_eq!(column.scan_column().decimal, 0);
         assert!(!column.scan_column().array);
     }
+}
+
+#[test]
+fn a_char_column_reports_string_scan_metadata() {
+    // A CHAR(120) column projects with the string type code (TypeString = 254),
+    // its declared length, and the negated utf8mb4_bin collation id that TiDB's
+    // new-collation coprocessor convention uses (RewriteNewCollationIDIfNeeded).
+    // The sign follows the Go source; it is not yet exercised against real TiKV
+    // because the string read path that would send it is not wired.
+    let table = ConfiguredTable::new(
+        "test",
+        "accounts",
+        42,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 7),
+            ConfiguredColumn::stored_char_not_null("c", 9, 120),
+        ],
+    );
+    let plan = ReadOnlyScanPlan::lower("SELECT c FROM test.accounts", &table)
+        .expect("a CHAR projection lowers");
+    let [c] = plan.projected_columns() else {
+        panic!("one projected column");
+    };
+    assert_eq!(c.source_name(), "c");
+    assert_eq!(c.scan_column().column_id, 9);
+    assert_eq!(c.scan_column().tp, 254);
+    assert_eq!(c.scan_column().collation, -46);
+    assert_eq!(c.scan_column().column_len, 120);
+    assert_eq!(c.scan_column().flag, 1);
+    assert!(!c.scan_column().pk_handle);
 }
 
 #[test]
@@ -183,6 +213,12 @@ fn unsupported_plan_shapes_fail_before_physical_lowering() {
         "SELECT COUNT(id) FROM accounts",
         UnsupportedReadOnlyFeature::Aggregate,
     );
+    // A supported SUM shape still fails closed on the literal COM_QUERY path,
+    // which folds no aggregate — only the prepared read executor does.
+    unsupported(
+        "SELECT SUM(id) FROM accounts",
+        UnsupportedReadOnlyFeature::Aggregate,
+    );
     unsupported(
         "SELECT (SELECT id FROM accounts) FROM accounts",
         UnsupportedReadOnlyFeature::Subquery,
@@ -194,6 +230,13 @@ fn unsupported_plan_shapes_fail_before_physical_lowering() {
     unsupported(
         "SELECT id FROM accounts ORDER BY id",
         UnsupportedReadOnlyFeature::Ordering,
+    );
+    // DISTINCT is a SQL-layer dedup the literal COM_QUERY path does not run, so
+    // it fails closed here just like ORDER BY (both are applied only by the
+    // prepared read executor).
+    unsupported(
+        "SELECT DISTINCT id FROM accounts",
+        UnsupportedReadOnlyFeature::SelectModifier,
     );
     unsupported(
         "SELECT id FROM accounts LIMIT 1",
@@ -308,5 +351,27 @@ fn invalid_column_catalogs_fail_before_sql_lowering() {
             ReadOnlyScanPlan::lower("SELECT id FROM accounts", &table),
             Err(ReadOnlyScanError::InvalidConfiguration(reason))
         );
+    }
+}
+
+#[test]
+fn result_column_metadata_follows_go_convert_column_info() {
+    // Client-facing result metadata, per Go column.ConvertColumnInfo /
+    // mysql.CharsetNameToID: the charset id is POSITIVE (distinct from the
+    // negated coprocessor scan collation), and a string length is scaled by the
+    // charset max byte width (utf8mb4 = 4).
+    let char120 = ConfiguredScalarType::Char { max_length: 120 };
+    assert_eq!(char120.result_type_code(), 254); // TypeString
+    assert_eq!(char120.result_charset_id(), 46); // utf8mb4 default collation, positive
+    assert_eq!(char120.result_column_length(), 480); // 120 * 4
+
+    // Integer columns carry the binary charset (63). BIGINT is LONGLONG, INT is
+    // LONG — each type-faithful, with a matching binary result cell.
+    assert_eq!(ConfiguredScalarType::BigInt.result_type_code(), 8); // TypeLonglong
+    assert_eq!(ConfiguredScalarType::BigInt.result_column_length(), 20);
+    assert_eq!(ConfiguredScalarType::Int.result_type_code(), 3); // TypeLong
+    assert_eq!(ConfiguredScalarType::Int.result_column_length(), 11);
+    for integer in [ConfiguredScalarType::BigInt, ConfiguredScalarType::Int] {
+        assert_eq!(integer.result_charset_id(), 63); // binary
     }
 }

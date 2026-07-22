@@ -702,7 +702,7 @@ pkg/executor/importer/sampler.go	411	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/importer/table_import.go	1096	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/index_merge_reader.go	2109	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/infoschema_reader.go	4282	tidb-exec	false	UNTRIAGED	-	-	-
-pkg/executor/insert.go	587	tidb-exec	false	UNTRIAGED	-	-	-
+pkg/executor/insert.go	587	tidb-exec	false	PARTIAL	executor-prepared-dml-rowcodec-runtime	rust/crates/tidb-exec/src/real_tikv_dml.rs	One prepared positional VALUES INSERT over a configured clustered signed-BIGINT table lowers to typed Insert/NotExist mutations and reports one affected row per added record, matching insert_common.go's AddAffectedRows(1)-after-AddRecord ordering; a duplicate handle inside one statement fails before publication. INSERT SELECT, IGNORE, ON DUPLICATE KEY UPDATE, SET syntax, REPLACE, defaults, auto-increment, generated/virtual columns, NULL and unsigned values, non-integer types, secondary/unique indexes, partitions, foreign keys, the Records/Duplicates/Warnings info message, plan cache, and statistics deltas remain open.
 pkg/executor/insert_common.go	1630	tidb-exec	false	PARTIAL	executor-insert-rows-col-multiply-wave	rust/crates/tidb-exec/src/insert_rows_col_multiply.rs	The zero-aware row-count/insert-column-count product and i64::MAX saturation are ported; InsertValues lifecycle, RUV2 metric publication, and executor state remain external.
 pkg/executor/inspection_common.go	76	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/inspection_profile.go	813	tidb-exec	false	UNTRIAGED	-	-	-
@@ -812,7 +812,7 @@ pkg/executor/trace.go	295	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/traffic.go	428	tidb-exec	false	PARTIAL	executor-traffic-form-wave	rust/crates/tidb-exec/src/traffic_form.rs	The dependency-closed getForm URL-encoding boundary is ported with sorted keys and query-component escaping; SQL parsing, TiProxy discovery/HTTP, start-time injection, object-store paths, and session warnings remain external.
 pkg/executor/union_scan.go	332	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/unionexec/union.go	248	tidb-exec	false	UNTRIAGED	-	-	-
-pkg/executor/update.go	745	tidb-exec	false	UNTRIAGED	-	-	-
+pkg/executor/update.go	745	tidb-exec	false	PARTIAL	executor-prepared-dml-rowcodec-runtime	rust/crates/tidb-exec/src/real_tikv_dml.rs	One prepared point UPDATE assigning a stored signed-BIGINT column by direct value or checked addition reads its own row at the transaction start timestamp and reports one affected row only when the value actually changes; a missing row and an unchanged row both publish nothing, matching write.go's changed/AddTouchedRows split under a session that never negotiates ClientFoundRows. Signed addition fails closed exactly where builtin_arithmetic.go's signed PLUS overflows. Multi-table update, ORDER BY/LIMIT, UPDATE IGNORE, general SET expressions, clustered-handle reassignment, matched-row bookkeeping and the Rows matched/Changed message, ClientFoundRows, indexes, partitions, and plan cache remain open.
 pkg/executor/utils.go	274	tidb-exec	false	PARTIAL	executor-privilege-set-wave	rust/crates/tidb-exec/src/privilege_set.rs	The comma-set split/join/add/delete helpers preserve empty-value nil semantics, exact matching, order, duplicate suppression, and first-match deletion; GRANT/REVOKE SQL, privilege-table persistence, parser, and collation behavior remain external.
 pkg/executor/windows/builder.go	150	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/windows/pipelined_window.go	467	tidb-exec	false	UNTRIAGED	-	-	-

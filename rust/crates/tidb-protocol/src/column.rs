@@ -77,7 +77,7 @@ pub enum ColumnDefault {
 }
 
 /// The serialization-relevant fields of a text-protocol column definition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ColumnInfo {
     /// Database/schema name.
     pub schema: String,

@@ -79,7 +79,7 @@ fn trim_trailing_spaces(mut value: &[u8]) -> &[u8] {
     value
 }
 
-fn decode_rune(value: &[u8]) -> Result<(u32, usize), ()> {
+pub(crate) fn decode_rune(value: &[u8]) -> Result<(u32, usize), ()> {
     let first = *value.first().ok_or(())?;
     if first < 0x80 {
         return Ok((u32::from(first), 1));
@@ -99,7 +99,7 @@ fn decode_rune(value: &[u8]) -> Result<(u32, usize), ()> {
     Ok((character as u32, width))
 }
 
-fn go_rune_count(value: &[u8]) -> usize {
+pub(crate) fn go_rune_count(value: &[u8]) -> usize {
     let mut index = 0;
     let mut count = 0;
     while index < value.len() {

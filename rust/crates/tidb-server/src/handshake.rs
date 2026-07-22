@@ -46,6 +46,9 @@ pub const AUTH_NATIVE_PASSWORD: &str = "mysql_native_password";
 
 /// TiDB's default metadata collation (`utf8mb4_bin`).
 pub const DEFAULT_COLLATION_ID: u8 = 46;
+/// `SERVER_STATUS_IN_TRANS`: an explicit transaction is open, set on the OK
+/// packet for `BEGIN`/`START TRANSACTION` and cleared on `COMMIT`/`ROLLBACK`.
+pub const SERVER_STATUS_IN_TRANS: u16 = 0x0001;
 /// The status flag set in the initial TiDB handshake.
 pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
 /// The protocol version emitted by TiDB's initial handshake.

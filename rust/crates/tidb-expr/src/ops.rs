@@ -215,9 +215,37 @@ fn integer_binary(op: BinaryOp, a: Integer, b: Integer) -> Result<Datum, EvalErr
     let bits_a = integer_bits(a);
     let bits_b = integer_bits(b);
     Ok(match op {
-        Plus => integer_result(unsigned, bits_a.wrapping_add(bits_b)),
-        Minus => integer_result(unsigned, bits_a.wrapping_sub(bits_b)),
-        Mul => integer_result(unsigned, bits_a.wrapping_mul(bits_b)),
+        Plus => return integer_add(a, b),
+        // `-` reports `ErrOverflow` exactly where Go `builtinArithmeticMinusIntSig`
+        // does — via [`minus_overflows`], a line-for-line port of Go's
+        // `overflowCheck` (verified against goeval across every branch). A
+        // non-overflowing result keeps its wrapped two's-complement value, typed
+        // by `unsigned`.
+        Minus => {
+            if minus_overflows(lhs_unsigned, rhs_unsigned, bits_a as i64, bits_b as i64) {
+                return Err(EvalError::IntOverflow);
+            }
+            integer_result(unsigned, bits_a.wrapping_sub(bits_b))
+        }
+        // `*` matches Go's two sigs, selected by whether either operand is
+        // unsigned (`getFunction`: `HasUnsignedFlag(lhs) || HasUnsignedFlag(rhs)`
+        // == this `unsigned`). `builtinArithmeticMultiplyIntUnsignedSig` multiplies
+        // the u64 bit patterns and errors when the product wraps
+        // (`unsignedA != 0 && result/unsignedA != unsignedB`); `...MultiplyIntSig`
+        // multiplies as i64 (`a != 0 && result/a != b`, plus the `MinInt64 * -1`
+        // case). Both are exactly `checked_mul` on the respective type.
+        Mul => {
+            if unsigned {
+                return bits_a
+                    .checked_mul(bits_b)
+                    .map(Datum::UInt)
+                    .ok_or(EvalError::IntOverflow);
+            }
+            return (bits_a as i64)
+                .checked_mul(bits_b as i64)
+                .map(Datum::Int)
+                .ok_or(EvalError::IntOverflow);
+        }
         // `DIV`/`MOD` by zero yield NULL in MySQL. `DIV` truncates toward zero.
         IntDiv => {
             if bits_b == 0 {
@@ -292,6 +320,78 @@ fn integer_result(unsigned: bool, bits: u64) -> Datum {
     } else {
         Datum::Int(bits as i64)
     }
+}
+
+/// Integer `+` with TiDB's overflow rule (`builtinArithmeticPlusIntSig`): the
+/// result is `UNSIGNED` when either operand is, and any result past that type's
+/// range is `ErrOverflow`, never a silent wrap. Go errors in every signedness
+/// case rather than adding the raw two's-complement bits, so each case maps to a
+/// checked operation: a mixed sum underflows past `0` when a negative addend
+/// exceeds the unsigned operand, or overflows past `u64::MAX`.
+fn integer_add(a: Integer, b: Integer) -> Result<Datum, EvalError> {
+    match (a, b) {
+        (Integer::Signed(x), Integer::Signed(y)) => {
+            x.checked_add(y).map(Datum::Int).ok_or(EvalError::IntOverflow)
+        }
+        (Integer::Unsigned(x), Integer::Unsigned(y)) => x
+            .checked_add(y)
+            .map(Datum::UInt)
+            .ok_or(EvalError::IntOverflow),
+        (Integer::Unsigned(x), Integer::Signed(y))
+        | (Integer::Signed(y), Integer::Unsigned(x)) => {
+            let sum = if y < 0 {
+                x.checked_sub(y.unsigned_abs())
+            } else {
+                x.checked_add(y.unsigned_abs())
+            };
+            sum.map(Datum::UInt).ok_or(EvalError::IntOverflow)
+        }
+    }
+}
+
+/// A line-for-line port of Go `builtinArithmeticMinusIntSig.overflowCheck`:
+/// `true` when `a - b` overflows the result type. `a`/`b` are the operands
+/// reinterpreted as `i64` (Go passes the raw `int64` bits). `signed` is
+/// `!lhs_unsigned && !rhs_unsigned` — Go's `forceToSigned` is the
+/// `NO_UNSIGNED_SUBTRACTION` sql_mode, which this context-free layer does not
+/// model, so this is the default (mode off). The branch structure and the final
+/// condition mirror Go exactly; verified against goeval across every branch.
+fn minus_overflows(lhs_unsigned: bool, rhs_unsigned: bool, a: i64, b: i64) -> bool {
+    let signed = !lhs_unsigned && !rhs_unsigned;
+    let res = a.wrapping_sub(b);
+    let (ua, ub) = (a as u64, b as u64);
+    let mut res_unsigned = false;
+    if lhs_unsigned {
+        if rhs_unsigned {
+            if ua < ub {
+                if res >= 0 {
+                    return true;
+                }
+            } else {
+                res_unsigned = true;
+            }
+        } else if b >= 0 {
+            if ua > ub {
+                res_unsigned = true;
+            }
+        } else if ua > u64::MAX - b.unsigned_abs() {
+            // Go `testIfSumOverflowsUll(ua, uint64(-b))`.
+            return true;
+        } else {
+            res_unsigned = true;
+        }
+    } else if rhs_unsigned {
+        // Go `uint64(a - math.MinInt64) < ub`.
+        if (a.wrapping_sub(i64::MIN) as u64) < ub {
+            return true;
+        }
+    } else if a > 0 && b < 0 {
+        res_unsigned = true;
+    } else if a < 0 && b > 0 && res >= 0 {
+        return true;
+    }
+    (!signed && !res_unsigned && res < 0)
+        || (signed && res_unsigned && (res as u64) > i64::MAX as u64)
 }
 
 /// Evaluates a context-free binary operation with TiDB's default
@@ -736,7 +836,7 @@ fn null_safe_eq(l: Datum, r: Datum) -> Datum {
 #[cfg(test)]
 mod tests {
     use super::{eval_binary, mysql_real_prefix};
-    use crate::{Datum, EvalError};
+    use crate::{Datum, Decimal, EvalError};
     use tidb_ast::BinaryOp;
 
     #[test]
@@ -779,6 +879,72 @@ mod tests {
                 Err(EvalError::Unsupported("range sentinel expression operand"))
             );
         }
+    }
+
+    /// Int-vs-Decimal comparison is EXACT — both promote to Decimal (MySQL's
+    /// implicit rule), never lossily through `f64`. Two integers 1 apart that
+    /// share a single `f64` must still compare unequal. An explicit REAL operand,
+    /// by contrast, forces the lossy `f64` comparison (Real dominates Decimal in
+    /// the promotion hierarchy). goeval-verified: `... = ...806.0` -> 0 (decimal),
+    /// `... = ...806e0` -> 1 (real).
+    #[test]
+    fn int_vs_decimal_comparison_is_exact_not_lossy_through_f64() {
+        let big_int = Datum::Int(9223372036854775807);
+        let near_decimal = Datum::Decimal(Decimal::from_literal("9223372036854775806.0"));
+        assert_eq!(
+            eval_binary(BinaryOp::Eq, big_int.clone(), near_decimal.clone()),
+            Ok(Datum::Int(0)),
+            "differ by 1 -> not equal, despite sharing one f64"
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::Gt, big_int, near_decimal),
+            Ok(Datum::Int(1))
+        );
+        // 2^53 + 1 vs 2^53 (the f64 integer-precision boundary) is also exact.
+        assert_eq!(
+            eval_binary(
+                BinaryOp::Eq,
+                Datum::Int(9007199254740993),
+                Datum::Decimal(Decimal::from_literal("9007199254740992.0")),
+            ),
+            Ok(Datum::Int(0))
+        );
+        // Contrast: an explicit REAL operand IS lossy — both round to the same
+        // f64 and compare equal, matching MySQL's Real-dominates hierarchy.
+        assert_eq!(
+            eval_binary(
+                BinaryOp::Eq,
+                Datum::Int(9223372036854775807),
+                Datum::Real(9223372036854775806.0),
+            ),
+            Ok(Datum::Int(1)),
+        );
+    }
+
+    /// Decimal `/` result scale = left-operand scale + `div_precision_increment`
+    /// (default 4), with the last digit ROUNDED (not truncated), trailing zeros
+    /// kept, and `/0` -> NULL. Authoritative goeval values, rendered through
+    /// `to_string` so the scale is checked, not just the value.
+    #[test]
+    fn decimal_division_scale_and_rounding_match_go() {
+        fn div(l: Datum, r: Datum) -> String {
+            match eval_binary(BinaryOp::Div, l, r) {
+                Ok(Datum::Decimal(d)) => d.to_string(),
+                Ok(Datum::Null) => "NULL".to_owned(),
+                other => panic!("unexpected division result: {other:?}"),
+            }
+        }
+        let dec = |t: &str| Datum::Decimal(Decimal::from_literal(t));
+        assert_eq!(div(Datum::Int(1), Datum::Int(3)), "0.3333");
+        assert_eq!(div(Datum::Int(2), Datum::Int(3)), "0.6667"); // last digit rounds up
+        assert_eq!(div(dec("1.0"), Datum::Int(3)), "0.33333"); // scale 1 + 4
+        assert_eq!(div(Datum::Int(10), Datum::Int(3)), "3.3333");
+        assert_eq!(div(Datum::Int(7), Datum::Int(2)), "3.5000"); // trailing zeros kept
+        assert_eq!(div(Datum::Int(1), Datum::Int(30000)), "0.0000");
+        assert_eq!(div(Datum::Int(22), Datum::Int(7)), "3.1429"); // rounds up
+        assert_eq!(div(dec("0.1"), dec("0.3")), "0.33333");
+        assert_eq!(div(Datum::Int(5), Datum::Int(3)), "1.6667");
+        assert_eq!(div(Datum::Int(1), Datum::Int(0)), "NULL".to_owned());
     }
 
     #[test]
@@ -834,6 +1000,190 @@ mod tests {
             (Datum::Int(13), Datum::Int(0), Datum::Null),
         ] {
             assert_eq!(eval_binary(BinaryOp::Mod, lhs, rhs), Ok(expected));
+        }
+    }
+
+    /// `builtinArithmeticPlusIntSig`: integer `+` reports `ErrOverflow` in every
+    /// signedness case rather than silently adding the raw two's-complement bits.
+    /// (`-`/`*` overflow is tracked separately, behind Go-vector verification.)
+    #[test]
+    fn integer_plus_reports_overflow_like_go_instead_of_wrapping() {
+        for (lhs, rhs, expected) in [
+            // signed + signed
+            (Datum::Int(i64::MAX), Datum::Int(1), Err(EvalError::IntOverflow)),
+            (
+                Datum::Int(i64::MIN),
+                Datum::Int(-1),
+                Err(EvalError::IntOverflow),
+            ),
+            (
+                Datum::Int(i64::MAX),
+                Datum::Int(-1),
+                Ok(Datum::Int(i64::MAX - 1)),
+            ),
+            // unsigned + unsigned
+            (
+                Datum::UInt(u64::MAX),
+                Datum::UInt(1),
+                Err(EvalError::IntOverflow),
+            ),
+            (Datum::UInt(u64::MAX), Datum::UInt(0), Ok(Datum::UInt(u64::MAX))),
+            // mixed -> unsigned result: a negative addend can underflow past 0,
+            // and a positive addend can overflow past u64::MAX.
+            (Datum::UInt(1), Datum::Int(-2), Err(EvalError::IntOverflow)),
+            (Datum::UInt(5), Datum::Int(-2), Ok(Datum::UInt(3))),
+            (
+                Datum::UInt(u64::MAX),
+                Datum::Int(1),
+                Err(EvalError::IntOverflow),
+            ),
+            // commutative: signed + unsigned matches unsigned + signed.
+            (Datum::Int(-2), Datum::UInt(5), Ok(Datum::UInt(3))),
+            (Datum::Int(-2), Datum::UInt(1), Err(EvalError::IntOverflow)),
+        ] {
+            assert_eq!(eval_binary(BinaryOp::Plus, lhs, rhs), expected);
+        }
+    }
+
+    /// Signed-signed `-`/`*` overflow is `ErrOverflow` (goeval-confirmed for the
+    /// signed domain: `-9223372036854775808 - 1` and `9223372036854775807 * 2`
+    /// both ERR); a non-overflowing signed result, including a negative, passes.
+    /// The unsigned/mixed cases have their own dedicated vector tests.
+    #[test]
+    fn signed_minus_and_mul_report_overflow_like_go() {
+        for (op, lhs, rhs, expected) in [
+            (
+                BinaryOp::Minus,
+                Datum::Int(i64::MIN),
+                Datum::Int(1),
+                Err(EvalError::IntOverflow),
+            ),
+            (
+                BinaryOp::Minus,
+                Datum::Int(i64::MAX),
+                Datum::Int(-1),
+                Err(EvalError::IntOverflow),
+            ),
+            (
+                BinaryOp::Minus,
+                Datum::Int(2),
+                Datum::Int(5),
+                Ok(Datum::Int(-3)),
+            ),
+            (
+                BinaryOp::Mul,
+                Datum::Int(i64::MAX),
+                Datum::Int(2),
+                Err(EvalError::IntOverflow),
+            ),
+            (
+                BinaryOp::Mul,
+                Datum::Int(i64::MIN),
+                Datum::Int(-1),
+                Err(EvalError::IntOverflow),
+            ),
+            (
+                BinaryOp::Mul,
+                Datum::Int(-2),
+                Datum::Int(3),
+                Ok(Datum::Int(-6)),
+            ),
+        ] {
+            assert_eq!(eval_binary(op, lhs, rhs), expected);
+        }
+    }
+
+    /// Unsigned/mixed `-` overflow, the literal `minus_overflows` port. Expected
+    /// values are the authoritative goeval results (goeval errors exactly when
+    /// TiDB does, and prints an unsigned result as its signed-bit form — so e.g.
+    /// `INT:9223372036854775807` is the unsigned value here). A non-overflowing
+    /// mixed/unsigned difference is UNSIGNED (result type lhs||rhs).
+    #[test]
+    fn unsigned_and_mixed_minus_match_go_overflow_check() {
+        for (lhs, rhs, expected) in [
+            // unsigned - unsigned
+            (Datum::UInt(5), Datum::UInt(2), Ok(Datum::UInt(3))),
+            (Datum::UInt(2), Datum::UInt(5), Err(EvalError::IntOverflow)),
+            (
+                Datum::UInt(9223372036854775808),
+                Datum::UInt(1),
+                Ok(Datum::UInt(9223372036854775807)),
+            ),
+            // unsigned - signed
+            (Datum::UInt(5), Datum::Int(2), Ok(Datum::UInt(3))),
+            (Datum::UInt(2), Datum::Int(5), Err(EvalError::IntOverflow)),
+            (Datum::UInt(2), Datum::Int(-5), Ok(Datum::UInt(7))),
+            (
+                Datum::UInt(u64::MAX),
+                Datum::Int(-1),
+                Err(EvalError::IntOverflow),
+            ),
+            // signed - unsigned
+            (Datum::Int(5), Datum::UInt(2), Ok(Datum::UInt(3))),
+            (Datum::Int(2), Datum::UInt(5), Err(EvalError::IntOverflow)),
+            (Datum::Int(-5), Datum::UInt(2), Err(EvalError::IntOverflow)),
+            // corner: ua < ub yet the two's-complement res >= 0 (b's bits are a
+            // huge unsigned), Go's inner `if res >= 0 { return true }`.
+            (
+                Datum::UInt(0),
+                Datum::UInt(9223372036854775809),
+                Err(EvalError::IntOverflow),
+            ),
+            // s-u boundary: `uint64(a - MinInt64) == ub` does not overflow, but the
+            // resulting difference is negative -> overflow.
+            (
+                Datum::Int(-1),
+                Datum::UInt(9223372036854775807),
+                Err(EvalError::IntOverflow),
+            ),
+            // s-u that stays in range -> unsigned 0.
+            (
+                Datum::Int(9223372036854775807),
+                Datum::UInt(9223372036854775807),
+                Ok(Datum::UInt(0)),
+            ),
+            // uu equal -> 0 (resUnsigned, no overflow).
+            (Datum::UInt(u64::MAX), Datum::UInt(u64::MAX), Ok(Datum::UInt(0))),
+        ] {
+            assert_eq!(eval_binary(BinaryOp::Minus, lhs, rhs), expected);
+        }
+    }
+
+    /// Unsigned/mixed `*` matches Go `builtinArithmeticMultiplyIntUnsignedSig`
+    /// (either operand unsigned -> unsigned result, multiplied as u64 bit
+    /// patterns, overflow when the product wraps). Authoritative goeval values;
+    /// an unsigned result prints as its signed-bit form (`u64::MAX` -> `INT:-1`).
+    #[test]
+    fn unsigned_and_mixed_mul_match_go_overflow_check() {
+        for (lhs, rhs, expected) in [
+            // unsigned * unsigned
+            (Datum::UInt(3), Datum::UInt(4), Ok(Datum::UInt(12))),
+            (Datum::UInt(u64::MAX), Datum::UInt(1), Ok(Datum::UInt(u64::MAX))),
+            (Datum::UInt(0), Datum::UInt(5), Ok(Datum::UInt(0))),
+            (
+                Datum::UInt(4294967296),
+                Datum::UInt(4294967296),
+                Err(EvalError::IntOverflow),
+            ),
+            // 2^32 * (2^32 - 1) = 2^64 - 2^32, still within u64 (goeval INT:-4294967296).
+            (
+                Datum::UInt(4294967296),
+                Datum::UInt(4294967295),
+                Ok(Datum::UInt(18446744069414584320)),
+            ),
+            // mixed (either operand unsigned -> unsigned result): a negative
+            // operand's bits become a huge unsigned factor and overflow.
+            (Datum::Int(3), Datum::UInt(4), Ok(Datum::UInt(12))),
+            (Datum::UInt(4), Datum::Int(3), Ok(Datum::UInt(12))),
+            (Datum::Int(-3), Datum::UInt(4), Err(EvalError::IntOverflow)),
+            (Datum::UInt(4), Datum::Int(-3), Err(EvalError::IntOverflow)),
+            (
+                Datum::Int(-1),
+                Datum::UInt(9223372036854775808),
+                Err(EvalError::IntOverflow),
+            ),
+        ] {
+            assert_eq!(eval_binary(BinaryOp::Mul, lhs, rhs), expected);
         }
     }
 }

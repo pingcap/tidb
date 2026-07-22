@@ -34,7 +34,9 @@ use tidb_expr::{
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
 use crate::catalog::Column;
-mod aggregate_distinct {
+/// Tuple DISTINCT identity shared by the aggregate functions and the prepared
+/// read's `SELECT DISTINCT` dedup.
+pub mod aggregate_distinct {
     include!("aggregate_distinct.rs");
 }
 pub mod runtime;

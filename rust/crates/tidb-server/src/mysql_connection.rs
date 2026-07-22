@@ -36,14 +36,41 @@ use crate::connection_resultset::{
 use crate::handshake::{
     negotiate_capabilities, parse_response, InitialHandshake, AUTH_NATIVE_PASSWORD,
     CLIENT_CONNECT_ATTRS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
-    DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
+    DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS,
 };
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::{
-    ConnectionCancellation, ConnectionTracker, PreparedPointRead, QuerySession,
+    ConnectionCancellation, ConnectionTracker, PreparedStatement, QuerySession,
     QuerySessionFactory, SessionContext, SqlQueryError,
 };
+use tidb_planner::prepared_dml::PreparedBindValue;
+
+/// Extracts the signed-integer parameters a point read requires, rejecting a
+/// string parameter (a point read binds only a clustered integer handle).
+fn point_read_integer_parameters(values: Vec<PreparedValue>) -> Result<Vec<i64>, String> {
+    values
+        .into_iter()
+        .map(|value| match value {
+            PreparedValue::SignedLongLong(value) => Ok(value),
+            PreparedValue::String(_) => {
+                Err("prepared point read parameter must be an integer".to_owned())
+            }
+        })
+        .collect()
+}
+
+/// Converts decoded execute values into the planner's storage-neutral bind
+/// currency: an integer stays an integer, a string becomes raw bytes.
+fn write_bind_parameters(values: Vec<PreparedValue>) -> Vec<PreparedBindValue> {
+    values
+        .into_iter()
+        .map(|value| match value {
+            PreparedValue::SignedLongLong(value) => PreparedBindValue::Int(value),
+            PreparedValue::String(bytes) => PreparedBindValue::Bytes(bytes),
+        })
+        .collect()
+}
 
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
@@ -61,7 +88,7 @@ const RESULT_BATCH_SIZE: usize = 128;
 
 #[derive(Clone, Debug)]
 struct ConnectionPreparedStatement {
-    point_read: PreparedPointRead,
+    statement: PreparedStatement,
     parameter_types: Option<Vec<PreparedParameterType>>,
 }
 
@@ -81,7 +108,7 @@ impl Default for PreparedStatementRegistry {
 }
 
 impl PreparedStatementRegistry {
-    fn insert(&mut self, point_read: PreparedPointRead) -> Result<u32, &'static str> {
+    fn insert(&mut self, statement: PreparedStatement) -> Result<u32, &'static str> {
         let statement_id = self
             .next_id
             .ok_or("prepared statement ID space exhausted")?;
@@ -89,7 +116,7 @@ impl PreparedStatementRegistry {
         self.statements.insert(
             statement_id,
             ConnectionPreparedStatement {
-                point_read,
+                statement,
                 parameter_types: None,
             },
         );
@@ -474,6 +501,21 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
+                // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
+                // answer with an OK packet carrying the transaction status, not a
+                // result set; every other statement runs as an ordinary query.
+                match engine.control_transaction(sql) {
+                    Ok(Some(in_transaction)) => {
+                        write_transaction_control_ok(&mut output, 1, in_transaction, protocol_41)?;
+                        queries += 1;
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        write_query_error(&mut output, &error, protocol_41)?;
+                        continue;
+                    }
+                }
                 let mut result = match engine.execute(sql) {
                     Ok(result) => result,
                     Err(error) => {
@@ -521,15 +563,22 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
-                let point_read = match engine.prepare_point_read(sql) {
-                    Ok(point_read) => point_read,
-                    Err(error) => {
-                        write_query_error(&mut output, &error, protocol_41)?;
-                        continue;
-                    }
+                // A read is admitted first so an existing prepared SELECT
+                // keeps its exact error text; only a statement the read path
+                // rejects is offered to the write planner.
+                let statement = match engine.prepare_point_read(sql) {
+                    Ok(point_read) => PreparedStatement::PointRead(point_read),
+                    Err(read_error) => match engine.prepare_write(sql) {
+                        Ok(write) => PreparedStatement::Write(write),
+                        Err(_) => {
+                            write_query_error(&mut output, &read_error, protocol_41)?;
+                            continue;
+                        }
+                    },
                 };
-                let result_columns = point_read.result_columns().to_vec();
-                let statement_id = match prepared.insert(point_read) {
+                let result_columns = statement.result_columns().to_vec();
+                let parameter_count = statement.parameter_count();
+                let statement_id = match prepared.insert(statement) {
                     Ok(statement_id) => statement_id,
                     Err(message) => {
                         write_error(
@@ -543,7 +592,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
-                let parameter_columns = [prepared_parameter_column()];
+                let parameter_columns = vec![prepared_parameter_column(); parameter_count];
                 let packets = match encode_prepared_statement_prepare_response(
                     statement_id,
                     &parameter_columns,
@@ -591,23 +640,29 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     write_unknown_statement(&mut output, statement_id, protocol_41)?;
                     continue;
                 };
-                let point_read = statement.point_read.clone();
+                let prepared_statement = statement.statement.clone();
                 let previous_types = statement.parameter_types.clone();
-                let execute =
-                    match decode_prepared_statement_execute(&bytes, 1, previous_types.as_deref()) {
-                        Ok(execute) => execute,
-                        Err(error) => {
-                            write_error(
-                                &mut output,
-                                1,
-                                ER_WRONG_ARGUMENTS,
-                                *b"HY000",
-                                error.to_string(),
-                                protocol_41,
-                            )?;
-                            continue;
-                        }
-                    };
+                // The marker count is per statement: a point read owns one, a
+                // write owns one per bound column plus its handle.
+                let parameter_count = prepared_statement.parameter_count();
+                let execute = match decode_prepared_statement_execute(
+                    &bytes,
+                    parameter_count,
+                    previous_types.as_deref(),
+                ) {
+                    Ok(execute) => execute,
+                    Err(error) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_WRONG_ARGUMENTS,
+                            *b"HY000",
+                            error.to_string(),
+                            protocol_41,
+                        )?;
+                        continue;
+                    }
+                };
                 if execute.statement_id != statement_id {
                     write_error(
                         &mut output,
@@ -622,46 +677,84 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 if let PreparedParameterTypes::New(types) = &execute.parameter_types {
                     prepared.remember_parameter_types(statement_id, types);
                 }
-                let parameters = execute
-                    .values
-                    .into_iter()
-                    .map(|value| match value {
-                        PreparedValue::SignedLongLong(value) => value,
-                    })
-                    .collect::<Vec<_>>();
-                let mut result = match engine.execute_prepared_point_read(&point_read, &parameters)
-                {
-                    Ok(result) => result,
-                    Err(error) => {
-                        write_query_error(&mut output, &error, protocol_41)?;
-                        continue;
+                let values = execute.values;
+                match prepared_statement {
+                    PreparedStatement::PointRead(point_read) => {
+                        // A point read binds a signed-integer clustered handle; a
+                        // string parameter has no place there.
+                        let parameters = match point_read_integer_parameters(values) {
+                            Ok(parameters) => parameters,
+                            Err(message) => {
+                                write_error(
+                                    &mut output,
+                                    1,
+                                    ER_UNKNOWN_ERROR,
+                                    *b"HY000",
+                                    message,
+                                    protocol_41,
+                                )?;
+                                continue;
+                            }
+                        };
+                        let mut result =
+                            match engine.execute_prepared_point_read(&point_read, &parameters) {
+                                Ok(result) => result,
+                                Err(error) => {
+                                    write_query_error(&mut output, &error, protocol_41)?;
+                                    continue;
+                                }
+                            };
+                        let write_result = {
+                            let mut sink = TcpResultSetSink::new(&mut output, 1);
+                            write_connection_binary_result_set_to_sink(
+                                result.source(),
+                                &mut sink,
+                                options,
+                                RESULT_BATCH_SIZE,
+                            )
+                        };
+                        match write_result {
+                            Ok(_) => {
+                                queries += 1;
+                                commands.stmt_execute_successes += 1;
+                            }
+                            Err(error) if !error.bytes_escaped => {
+                                write_error(
+                                    &mut output,
+                                    1,
+                                    ER_UNKNOWN_ERROR,
+                                    *b"HY000",
+                                    error.message,
+                                    protocol_41,
+                                )?;
+                            }
+                            Err(error) => {
+                                return Err(MysqlConnectionError::PartialResult(error.message))
+                            }
+                        }
                     }
-                };
-                let write_result = {
-                    let mut sink = TcpResultSetSink::new(&mut output, 1);
-                    write_connection_binary_result_set_to_sink(
-                        result.source(),
-                        &mut sink,
-                        options,
-                        RESULT_BATCH_SIZE,
-                    )
-                };
-                match write_result {
-                    Ok(_) => {
-                        queries += 1;
-                        commands.stmt_execute_successes += 1;
+                    PreparedStatement::Write(write) => {
+                        // A write answers with one OK packet and never a result
+                        // set. Affected rows reach the client only after the
+                        // transaction committed determinately; every other
+                        // terminal state arrived here as an error.
+                        match engine.execute_prepared_write(&write, &write_bind_parameters(values))
+                        {
+                            Ok(outcome) => {
+                                write_affected_rows_ok(
+                                    &mut output,
+                                    1,
+                                    outcome.affected_rows,
+                                    protocol_41,
+                                )?;
+                                queries += 1;
+                                commands.stmt_execute_successes += 1;
+                            }
+                            Err(error) => {
+                                write_query_error(&mut output, &error, protocol_41)?;
+                            }
+                        }
                     }
-                    Err(error) if !error.bytes_escaped => {
-                        write_error(
-                            &mut output,
-                            1,
-                            ER_UNKNOWN_ERROR,
-                            *b"HY000",
-                            error.message,
-                            protocol_41,
-                        )?;
-                    }
-                    Err(error) => return Err(MysqlConnectionError::PartialResult(error.message)),
                 }
             }
             Command::StmtClose(bytes) => {
@@ -686,6 +779,43 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             )?,
         }
     }
+}
+
+/// Writes the OK packet that answers a successful prepared write.
+fn write_affected_rows_ok(
+    output: &mut TcpStream,
+    sequence: u8,
+    affected_rows: u64,
+    protocol_41: bool,
+) -> Result<(), MysqlConnectionError> {
+    let payload = encode_ok_packet(&OkPacket {
+        affected_rows,
+        status_flags: SERVER_STATUS_AUTOCOMMIT,
+        protocol_41,
+        ..OkPacket::default()
+    });
+    write_payload(output, sequence, &payload)
+}
+
+/// Writes the OK packet answering a `BEGIN`/`COMMIT`/`ROLLBACK`, advertising the
+/// resulting transaction status so the client tracks whether one is open.
+fn write_transaction_control_ok(
+    output: &mut TcpStream,
+    sequence: u8,
+    in_transaction: bool,
+    protocol_41: bool,
+) -> Result<(), MysqlConnectionError> {
+    let mut status_flags = SERVER_STATUS_AUTOCOMMIT;
+    if in_transaction {
+        status_flags |= SERVER_STATUS_IN_TRANS;
+    }
+    let payload = encode_ok_packet(&OkPacket {
+        affected_rows: 0,
+        status_flags,
+        protocol_41,
+        ..OkPacket::default()
+    });
+    write_payload(output, sequence, &payload)
 }
 
 fn prepared_statement_id(payload: &[u8]) -> Result<u32, &'static str> {

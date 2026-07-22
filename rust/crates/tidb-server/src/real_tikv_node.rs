@@ -20,24 +20,66 @@ use std::time::Duration;
 
 use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
+use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
     ProductionReadSessionFactory, ProductionReadTransport, ReadProcessShutdownError,
-    ReadProcessShutdownStage, RealTiKvQuery, RealTiKvReadSession, RealTiKvReadSessionOpener,
+    ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadError,
+    RealTiKvReadSession, RealTiKvReadSessionOpener,
 };
+use tidb_planner::aggregation_descriptor::AggregateKind;
+use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::read_only_scan::{
-    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
+    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredIndex, ConfiguredTable,
+    PreparedAggregate, PreparedAggregateKind, ReadOnlyScanPlan,
 };
+use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
+use tidb_protocol::ColumnInfo;
 
+use crate::aggregate_result_set::AggregateResultSetSource;
 use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
+use crate::distinct_result_set::DistinctResultSetSource;
 use crate::node_config::{ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig};
 use crate::resultset_source::ResultSetSource;
+use crate::session_transaction::SessionTransaction;
+use crate::sorting_result_set::SortingResultSetSource;
 use crate::sql_node::{
-    ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead, QueryCancellationLease,
-    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError,
+    ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead, PreparedWrite,
+    QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
+    SqlNodeError, SqlQueryError, WriteOutcome,
 };
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `MYSQL_TYPE_NEWDECIMAL`, the result type of `SUM` over an integer column.
+const MYSQL_TYPE_NEWDECIMAL: u8 = 246;
+/// The binary charset/collation id (`mysql.CharsetNameToID("binary")`), applied
+/// to a numeric aggregate result by Go `SetBinChsClnFlag`.
+const BINARY_CHARSET_ID: u16 = 63;
+/// `mysql.BinaryFlag`, set on a numeric aggregate's result column.
+const BINARY_FLAG: u16 = 128;
+
+/// Builds the result column metadata for a prepared aggregate.
+///
+/// A `SUM` collapses the scan to one row whose type is the aggregate's own, not
+/// the summed column's: a `DECIMAL` on the binary charset, nullable (an empty
+/// group is `NULL`), with the flen Go `typeInfer4Sum` assigns. The metadata is
+/// used both for the prepare response and, because the binary row encoder
+/// dispatches each cell on its column type, for the execute-time cell encoding.
+fn aggregate_result_columns(aggregate: &PreparedAggregate) -> Vec<ColumnInfo> {
+    let type_code = match aggregate.kind() {
+        PreparedAggregateKind::Sum => MYSQL_TYPE_NEWDECIMAL,
+    };
+    vec![ColumnInfo {
+        name: aggregate.output_name().to_owned(),
+        column_length: aggregate.result_column_length(),
+        charset: BINARY_CHARSET_ID,
+        flag: BINARY_FLAG,
+        decimal: aggregate.result_decimals(),
+        type_code,
+        ..ColumnInfo::default()
+    }]
+}
 
 impl ActiveQueryCancellation for CancelHandle {
     fn cancel(&self) {
@@ -48,6 +90,7 @@ impl ActiveQueryCancellation for CancelHandle {
 /// Cloneable session opener shared by the fixed connection workers.
 pub struct RealTiKvSessionFactory {
     opener: RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource>,
+    transaction_opener: RealOptimisticTransactionOpener,
     query_activity: Arc<QueryActivity>,
     read_authority_id: u64,
 }
@@ -71,6 +114,7 @@ impl RealTiKvSessionFactory {
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let factory = Self {
             opener: authority.opener(),
+            transaction_opener: authority.transaction_opener(),
             query_activity: Arc::new(QueryActivity::default()),
             read_authority_id: authority.read_authority_id(),
         };
@@ -106,9 +150,11 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         Ok(RealTiKvServerSession {
             inner,
+            transaction_opener: self.transaction_opener.clone(),
             context,
             query_activity: Arc::clone(&self.query_activity),
             next_query_id: 1,
+            transaction: SessionTransaction::new(),
         })
     }
 }
@@ -116,9 +162,13 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
 /// Worker-local server session around the executor session.
 pub struct RealTiKvServerSession {
     inner: RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>,
+    transaction_opener: RealOptimisticTransactionOpener,
     context: SessionContext,
     query_activity: Arc<QueryActivity>,
     next_query_id: u64,
+    /// The session's explicit-transaction state, pinning one read snapshot for
+    /// the duration of a `BEGIN`/`COMMIT` transaction.
+    transaction: SessionTransaction,
 }
 
 #[derive(Default)]
@@ -173,8 +223,50 @@ impl Drop for QueryActivityLease {
     }
 }
 
+impl RealTiKvServerSession {
+    /// Starts one read at the snapshot its session transaction requires.
+    ///
+    /// Inside an explicit transaction every read runs at the one pinned
+    /// transaction snapshot, so the transaction is snapshot-consistent; a
+    /// contradiction plan is empty at any snapshot and keeps the plain path.
+    /// Outside a transaction each read takes its own fresh snapshot exactly as
+    /// before.
+    fn read_at_transaction_snapshot(
+        &mut self,
+        plan: ReadOnlyScanPlan,
+        cancellation: Arc<CancelHandle>,
+    ) -> Result<RealTiKvQuery, RealTiKvReadError> {
+        if plan.is_contradiction() {
+            return self
+                .inner
+                .execute_lowered_plan_with_cancellation(plan, cancellation);
+        }
+        let snapshot = {
+            let inner = &self.inner;
+            self.transaction.read_snapshot(|| inner.acquire_snapshot_ts())?
+        };
+        match snapshot {
+            Some(pinned) => self
+                .inner
+                .execute_plan_at_snapshot(plan, pinned, cancellation),
+            None => self
+                .inner
+                .execute_lowered_plan_with_cancellation(plan, cancellation),
+        }
+    }
+}
+
 impl QuerySession for RealTiKvServerSession {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        // Text statements inside an explicit transaction are a later slice: the
+        // read-only transaction path pins snapshots for the prepared statements
+        // sysbench uses, and a text data statement here fails closed rather than
+        // silently running at a fresh, non-transactional snapshot.
+        if self.transaction.is_active() {
+            return Err(SqlQueryError::unknown(
+                "COM_QUERY statements inside an explicit transaction are not yet supported",
+            ));
+        }
         let query_id = self.next_query_id;
         self.next_query_id = self
             .next_query_id
@@ -207,13 +299,20 @@ impl QuerySession for RealTiKvServerSession {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_configured_point_read(sql, &catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let metadata_plan = template
-            .bind(&[0])
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let result_columns = self
-            .inner
-            .protocol_columns_for_plan(&metadata_plan)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        // An aggregate's result column is its own type (a DECIMAL for SUM), not
+        // the summed scan column's, so it bypasses the scan-derived metadata.
+        let result_columns = if let Some(aggregate) = template.aggregate() {
+            aggregate_result_columns(aggregate)
+        } else {
+            // Bind placeholder handles only to resolve the result-column
+            // metadata; a range template needs one placeholder per marker.
+            let metadata_plan = template
+                .bind(&vec![0; template.parameter_count()])
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            self.inner
+                .protocol_columns_for_plan(&metadata_plan)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+        };
         Ok(PreparedPointRead::new(template, result_columns))
     }
 
@@ -239,10 +338,9 @@ impl QuerySession for RealTiKvServerSession {
         let cluster_id = self.inner.cluster_id();
         let evidence = self.inner.transport_evidence_handle();
         let query = self
-            .inner
-            .execute_lowered_plan_with_cancellation(plan, cancellation)
+            .read_at_transaction_snapshot(plan, cancellation)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        observe_real_tikv_query(
+        let result = observe_real_tikv_query(
             &self.context,
             query,
             query_id,
@@ -250,7 +348,101 @@ impl QuerySession for RealTiKvServerSession {
             query_activity,
             cluster_id,
             evidence,
+        )?;
+        // A SUM has no GROUP BY, so it collapses the whole scan to one row; wrap
+        // the observed scan so the fold runs outside the storage-facing observer.
+        // It is mutually exclusive with ORDER BY / DISTINCT (the planner rejects
+        // those combinations), so it is handled before them.
+        let template = statement.template();
+        if let Some(aggregate) = template.aggregate() {
+            let columns = statement.result_columns().to_vec();
+            let kind = match aggregate.kind() {
+                PreparedAggregateKind::Sum => AggregateKind::Sum,
+            };
+            return Ok(QueryResult::new(Box::new(AggregateResultSetSource::new(
+                result.into_source(),
+                kind,
+                aggregate.source_offset(),
+                columns,
+            ))));
+        }
+        // ORDER BY (a SQL-layer sort over the projected output rows) and DISTINCT
+        // (a whole-tuple dedup) are executor stages layered over the observed
+        // scan stream. Compose sort inside dedup so `DISTINCT ... ORDER BY`
+        // returns distinct rows already in sorted order; an unordered,
+        // non-distinct read keeps the observed source untouched.
+        let order_by = template.order_by();
+        let distinct = template.is_distinct();
+        if order_by.is_empty() && !distinct {
+            return Ok(result);
+        }
+        let output_width = statement.result_columns().len();
+        let mut source = result.into_source();
+        if !order_by.is_empty() {
+            source = Box::new(SortingResultSetSource::new(
+                source,
+                order_by.to_vec(),
+                output_width,
+            ));
+        }
+        if distinct {
+            source = Box::new(DistinctResultSetSource::new(source));
+        }
+        Ok(QueryResult::new(source))
+    }
+
+    fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
+        let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let template = prepare_configured_write(sql, &catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(PreparedWrite::new(template))
+    }
+
+    fn execute_prepared_write(
+        &mut self,
+        statement: &PreparedWrite,
+        parameters: &[PreparedBindValue],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        // A write commits its own single-statement transaction. Buffering writes
+        // into the session's open transaction and committing them together at
+        // COMMIT is a later slice, so a write inside an explicit transaction
+        // fails closed rather than auto-committing behind the transaction's back.
+        if self.transaction.is_active() {
+            return Err(SqlQueryError::unknown(
+                "writes inside an explicit transaction are not yet supported",
+            ));
+        }
+        let bound = statement
+            .template()
+            .bind(parameters)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let report = commit_configured_write(
+            &self.transaction_opener,
+            &bound,
+            PRODUCTION_CONTROL_PLANE_TIMEOUT,
         )
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(WriteOutcome {
+            affected_rows: report.affected_rows,
+        })
+    }
+
+    fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        match classify_transaction_control(sql) {
+            None => Ok(None),
+            Some(TransactionControl::Begin) => {
+                self.transaction.begin();
+                Ok(Some(true))
+            }
+            Some(TransactionControl::End) => {
+                self.transaction.end();
+                Ok(Some(false))
+            }
+            Some(TransactionControl::Unsupported(feature)) => Err(SqlQueryError::unknown(format!(
+                "{feature} is not supported by the read-only Rust SQL node"
+            ))),
+        }
     }
 }
 
@@ -444,9 +636,21 @@ pub(crate) fn configured_table(table: &ConfiguredReadTable) -> ConfiguredTable {
             ConfiguredReadColumnKind::StoredNotNull => {
                 ConfiguredColumn::stored_not_null(&column.name, column.id)
             }
+            ConfiguredReadColumnKind::StoredIntNotNull => {
+                ConfiguredColumn::stored_int_not_null(&column.name, column.id)
+            }
+            ConfiguredReadColumnKind::StoredCharNotNull { max_length } => {
+                ConfiguredColumn::stored_char_not_null(&column.name, column.id, max_length)
+            }
         })
         .collect();
-    ConfiguredTable::new(&table.database, &table.table, table.table_id, columns)
+    // Every declared index is a non-unique single-column index; the write path
+    // maintains its entries and fails closed on any shape it does not model.
+    let indexes = table
+        .indexes
+        .iter()
+        .map(|index| ConfiguredIndex::non_unique(index.index_id, index.column_id));
+    ConfiguredTable::new(&table.database, &table.table, table.table_id, columns).with_indexes(indexes)
 }
 
 /// Converts the one canonical startup list into the planner's immutable
@@ -749,6 +953,33 @@ mod tests {
             error.message,
             "multiple configured tables require the multi-relation dispatcher"
         );
+    }
+
+    #[test]
+    fn a_declared_index_maps_into_the_planner_catalog_table() {
+        let config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--read-table",
+            "sbtest",
+            "sbtest1",
+            "900",
+            "2",
+            "id:1:clustered-pk",
+            "k:2:stored-int-not-null",
+            "1",
+            "k_idx:5:2",
+            "--auth-file",
+            "/tmp/campaign30-users.tsv",
+        ])
+        .unwrap();
+        let catalog = configured_catalog(&config).unwrap();
+        let indexes = catalog.tables()[0].indexes();
+        assert_eq!(indexes.len(), 1);
+        assert_eq!(indexes[0].index_id(), 5);
+        assert_eq!(indexes[0].column_id(), 2);
+        assert!(!indexes[0].is_unique(), "declared indexes are non-unique");
     }
 
     #[test]

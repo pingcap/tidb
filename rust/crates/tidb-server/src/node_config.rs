@@ -38,21 +38,35 @@ const DEFAULT_MAX_TOPN_ROWS: usize = 1_024;
 const MAX_CONFIGURED_TOPN_ROWS: usize = 65_536;
 const MAX_CONFIGURED_READ_TABLES: usize = 2;
 const MAX_CONFIGURED_READ_COLUMNS: usize = 4096;
+const MAX_CONFIGURED_READ_INDEXES: usize = 64;
 
-/// Storage shape of one configured signed-BIGINT column.
+/// Storage shape of one configured column.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfiguredReadColumnKind {
     /// The table's sole signed integer clustered primary key.
     ClusteredPrimaryKey,
-    /// A signed stored non-null column decoded from the TiKV row payload.
+    /// A signed `BIGINT` stored non-null column decoded from the TiKV row payload.
     StoredNotNull,
+    /// A signed `INT` (int32-domain) stored non-null column.
+    StoredIntNotNull,
+    /// A `CHAR(max_length)` stored non-null column (utf8mb4 bytes).
+    StoredCharNotNull {
+        /// Declared character length, per the SQL `CHAR(N)` width.
+        max_length: u32,
+    },
 }
 
 impl ConfiguredReadColumnKind {
-    pub(crate) const fn descriptor_name(self) -> &'static str {
+    /// Reconstructs the command-line descriptor field for this kind. A
+    /// `CHAR(N)` column round-trips its length as a fourth `:N` field.
+    pub(crate) fn descriptor_name(self) -> String {
         match self {
-            Self::ClusteredPrimaryKey => "clustered-pk",
-            Self::StoredNotNull => "stored-not-null",
+            Self::ClusteredPrimaryKey => "clustered-pk".to_owned(),
+            Self::StoredNotNull => "stored-not-null".to_owned(),
+            Self::StoredIntNotNull => "stored-int-not-null".to_owned(),
+            Self::StoredCharNotNull { max_length } => {
+                format!("stored-char-not-null:{max_length}")
+            }
         }
     }
 }
@@ -68,6 +82,17 @@ pub struct ConfiguredReadColumn {
     pub kind: ConfiguredReadColumnKind,
 }
 
+/// One non-unique secondary index descriptor over a single stored column.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfiguredReadIndex {
+    /// Index-visible name, retained for diagnostics.
+    pub name: String,
+    /// Stable index identifier from TiDB schema metadata.
+    pub index_id: i64,
+    /// Stable identifier of the single indexed column.
+    pub column_id: i64,
+}
+
 /// One table shape admitted by the deployable read-only node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredReadTable {
@@ -79,6 +104,9 @@ pub struct ConfiguredReadTable {
     pub table_id: i64,
     /// Checked columns in configured order.
     pub columns: Vec<ConfiguredReadColumn>,
+    /// Non-unique secondary indexes maintained by the write path, in configured
+    /// order. Empty for a table without any declared index.
+    pub indexes: Vec<ConfiguredReadIndex>,
 }
 
 /// Complete startup input consumed by the concurrent SQL node.
@@ -317,11 +345,75 @@ where
         )?);
     }
     validate_columns("--read-table", &columns)?;
+    let indexes = parse_optional_indexes("--read-table", arguments, &columns)?;
     Ok(ConfiguredReadTable {
         database,
         table,
         table_id,
         columns,
+        indexes,
+    })
+}
+
+/// Parses the optional trailing secondary-index section of a `--read-table`.
+///
+/// The section is backward compatible: a table with no index simply omits it,
+/// so parsing stops as soon as the next token is another option or the end of
+/// the arguments. When present, one count precedes that many
+/// `name:index_id:column_id` descriptors, each over an existing column.
+fn parse_optional_indexes<I>(
+    option: &str,
+    arguments: &mut std::iter::Peekable<I>,
+    columns: &[ConfiguredReadColumn],
+) -> Result<Vec<ConfiguredReadIndex>, NodeConfigError>
+where
+    I: Iterator<Item = String>,
+{
+    let has_index_section = matches!(arguments.peek(), Some(value) if !value.starts_with('-'));
+    if !has_index_section {
+        return Ok(Vec::new());
+    }
+    let index_count: usize = parse_number(option, &next_read_table_value(arguments)?)?;
+    if index_count > MAX_CONFIGURED_READ_INDEXES {
+        return Err(invalid(option, "index count must not exceed 64"));
+    }
+    let mut indexes = Vec::with_capacity(index_count);
+    for _ in 0..index_count {
+        indexes.push(parse_index_descriptor(
+            option,
+            next_read_table_value(arguments)?,
+            columns,
+        )?);
+    }
+    Ok(indexes)
+}
+
+/// Parses one `name:index_id:column_id` non-unique index descriptor.
+fn parse_index_descriptor(
+    option: &str,
+    value: String,
+    columns: &[ConfiguredReadColumn],
+) -> Result<ConfiguredReadIndex, NodeConfigError> {
+    let fields: Vec<&str> = value.split(':').collect();
+    let [name, index_id, column_id] = fields.as_slice() else {
+        return Err(invalid(
+            option,
+            "index descriptor must be name:index_id:column_id",
+        ));
+    };
+    let name = parse_identifier(option, (*name).to_owned())?;
+    let index_id = parse_positive_id(option, (*index_id).to_owned())?;
+    let column_id = parse_positive_id(option, (*column_id).to_owned())?;
+    if !columns.iter().any(|column| column.id == column_id) {
+        return Err(invalid(
+            option,
+            "index column id does not match any configured column",
+        ));
+    }
+    Ok(ConfiguredReadIndex {
+        name,
+        index_id,
+        column_id,
     })
 }
 
@@ -412,27 +504,61 @@ fn parse_column_descriptor(
     value: String,
 ) -> Result<ConfiguredReadColumn, NodeConfigError> {
     let mut fields = value.split(':');
-    let (Some(name), Some(id), Some(kind), None) =
-        (fields.next(), fields.next(), fields.next(), fields.next())
-    else {
+    let (Some(name), Some(id), Some(kind)) = (fields.next(), fields.next(), fields.next()) else {
         return Err(invalid(
             option,
-            "expected <name>:<id>:<clustered-pk|stored-not-null>",
+            "expected <name>:<id>:<kind>[:<char-length>]",
         ));
     };
+    // Only `stored-char-not-null` carries a fourth `:<char-length>` field.
+    let extra = fields.next();
+    if fields.next().is_some() {
+        return Err(invalid(
+            option,
+            "too many ':'-separated fields in column descriptor",
+        ));
+    }
     let name = parse_identifier(option, name.to_owned())?;
     let id = parse_positive_id(option, id.to_owned())?;
-    let kind = match kind {
-        "clustered-pk" => ConfiguredReadColumnKind::ClusteredPrimaryKey,
-        "stored-not-null" => ConfiguredReadColumnKind::StoredNotNull,
+    let kind = match (kind, extra) {
+        ("clustered-pk", None) => ConfiguredReadColumnKind::ClusteredPrimaryKey,
+        ("stored-not-null", None) => ConfiguredReadColumnKind::StoredNotNull,
+        ("stored-int-not-null", None) => ConfiguredReadColumnKind::StoredIntNotNull,
+        ("stored-char-not-null", Some(length)) => ConfiguredReadColumnKind::StoredCharNotNull {
+            max_length: parse_char_length(option, length)?,
+        },
+        ("stored-char-not-null", None) => {
+            return Err(invalid(
+                option,
+                "stored-char-not-null requires a :<char-length> field",
+            ));
+        }
+        (_, Some(_)) => {
+            return Err(invalid(
+                option,
+                "only stored-char-not-null takes a :<char-length> field",
+            ));
+        }
         _ => {
             return Err(invalid(
                 option,
-                "column kind must be clustered-pk or stored-not-null",
+                "column kind must be clustered-pk, stored-not-null, stored-int-not-null, or stored-char-not-null:<N>",
             ));
         }
     };
     Ok(ConfiguredReadColumn { name, id, kind })
+}
+
+/// Parses and range-checks a `CHAR(N)` length: a positive integer in MySQL's
+/// `1..=255` character-count range.
+fn parse_char_length(option: &str, value: &str) -> Result<u32, NodeConfigError> {
+    let length: u32 = value
+        .parse()
+        .map_err(|_| invalid(option, "char length must be a positive integer"))?;
+    if !(1..=255).contains(&length) {
+        return Err(invalid(option, "char length must be between 1 and 255"));
+    }
+    Ok(length)
 }
 
 fn validate_columns(option: &str, columns: &[ConfiguredReadColumn]) -> Result<(), NodeConfigError> {
@@ -516,5 +642,32 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
     NodeConfigError::InvalidValue {
         option: option.to_owned(),
         reason: reason.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_column_descriptor, ConfiguredReadColumnKind};
+
+    /// The status-publication descriptor (`descriptor_name`) must round-trip
+    /// back through `parse_column_descriptor` — including the CHAR length —
+    /// so a published node's shape re-parses to the same columns.
+    #[test]
+    fn descriptor_name_round_trips_through_parse() {
+        let kinds = [
+            ConfiguredReadColumnKind::ClusteredPrimaryKey,
+            ConfiguredReadColumnKind::StoredNotNull,
+            ConfiguredReadColumnKind::StoredIntNotNull,
+            ConfiguredReadColumnKind::StoredCharNotNull { max_length: 120 },
+            ConfiguredReadColumnKind::StoredCharNotNull { max_length: 1 },
+            ConfiguredReadColumnKind::StoredCharNotNull { max_length: 255 },
+        ];
+        for kind in kinds {
+            let descriptor = format!("c:3:{}", kind.descriptor_name());
+            let parsed = parse_column_descriptor("--read-table", descriptor).unwrap();
+            assert_eq!(parsed.name, "c");
+            assert_eq!(parsed.id, 3);
+            assert_eq!(parsed.kind, kind, "round-trip of {kind:?}");
+        }
     }
 }

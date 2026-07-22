@@ -1349,3 +1349,34 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
     }
     Ok(Datum::new_string(out))
 }
+
+#[cfg(test)]
+mod week_tests {
+    use super::week_of_year;
+
+    /// `week_of_year(y, m, d, mode, with_year) -> (week_year, week)` ports TiDB
+    /// `core_time.go` calcWeek/weekMode, driving DATE_FORMAT's %U/%u/%V/%v/%X/%x.
+    /// Vectors are authoritative goeval `DATE_FORMAT(d,'%U %u %V %v %X %x')` on
+    /// boundary dates that stress week 0/52/53 and the week-year transition.
+    #[test]
+    fn week_of_year_matches_go_for_boundary_dates() {
+        // y, m, d, %U, %u, %V, %v, %X, %x
+        for &(y, m, d, uu, ul, vu, vl, xu, xl) in &[
+            (2000i64, 1u32, 1u32, 0i64, 0i64, 52i64, 52i64, 1999i64, 1999i64),
+            (2001, 1, 1, 0, 1, 53, 1, 2000, 2001),
+            (1999, 12, 31, 52, 52, 52, 52, 1999, 1999),
+            (2000, 12, 31, 53, 52, 53, 52, 2000, 2000),
+            (2004, 1, 1, 0, 1, 52, 1, 2003, 2004),
+            (2005, 1, 1, 0, 0, 52, 53, 2004, 2004),
+            (2015, 12, 31, 52, 53, 52, 53, 2015, 2015),
+            (2016, 1, 1, 0, 0, 52, 53, 2015, 2015),
+        ] {
+            assert_eq!(week_of_year(y, m, d, 0, false).1, uu, "%U {y}-{m}-{d}");
+            assert_eq!(week_of_year(y, m, d, 1, false).1, ul, "%u {y}-{m}-{d}");
+            assert_eq!(week_of_year(y, m, d, 2, false).1, vu, "%V {y}-{m}-{d}");
+            assert_eq!(week_of_year(y, m, d, 3, false).1, vl, "%v {y}-{m}-{d}");
+            assert_eq!(week_of_year(y, m, d, 2, true).0, xu, "%X {y}-{m}-{d}");
+            assert_eq!(week_of_year(y, m, d, 3, true).0, xl, "%x {y}-{m}-{d}");
+        }
+    }
+}

@@ -68,8 +68,11 @@ fn prepare_and_execute_use_typed_real_session_and_binary_rows() {
     let execute_branch = connection
         .find("Command::StmtExecute(bytes) => {")
         .expect("execute dispatch branch");
+    // Matched without its argument list: the call spans several lines once the
+    // marker count became per statement, but the ordering this asserts —
+    // typed decode, then execution, then binary rows — is the actual contract.
     let decode = connection[execute_branch..]
-        .find("match decode_prepared_statement_execute(&bytes")
+        .find("decode_prepared_statement_execute(")
         .map(|offset| execute_branch + offset)
         .expect("execute packet is typed before execution");
     let execute = connection[execute_branch..]
@@ -114,7 +117,12 @@ fn close_is_silent_and_binary_writer_rejects_non_signed_bigint_rows() {
     assert!(!close_branch.contains("write_"));
 
     let writer = include_str!("../src/connection_resultset.rs");
-    assert!(writer.contains("Datum::Int(value) => Ok(value)"));
-    assert!(writer.contains("is not signed BIGINT"));
-    assert!(writer.contains("BinarySignedLongLongResultSetStream"));
+    // The binary writer maps each typed Datum to a binary cell dispatched by the
+    // column type, exactly as Go's DumpBinaryRow switches on `columns[i].Type`,
+    // and frames rows through the shared stream.
+    assert!(writer.contains("fn datum_to_binary_cell"));
+    assert!(writer.contains("BinaryResultCell::LongLong(value)"));
+    assert!(writer.contains("BinaryResultCell::NewDecimal(value)"));
+    assert!(writer.contains("BinaryResultCell::String("));
+    assert!(writer.contains("BinaryResultSetStream"));
 }

@@ -95,6 +95,34 @@ fn ordered_and_intersection_and_not_equal_remain_disjoint() {
 }
 
 #[test]
+fn between_desugars_to_the_same_closed_range_as_ge_and_le() {
+    // `id BETWEEN low AND high` unfolds to `id >= low AND id <= high` and
+    // detaches to the same closed handle range.
+    let plan = ReadOnlyScanPlan::lower(
+        "SELECT id FROM accounts WHERE id BETWEEN -7 AND 77",
+        &table(),
+    )
+    .unwrap();
+    assert_eq!(plan.handle_ranges(), [range(-7, 77)]);
+    assert!(plan.selection().is_none());
+
+    // A reversed BETWEEN is an empty range (low > high), just like `>= AND <=`.
+    let empty = ReadOnlyScanPlan::lower(
+        "SELECT id FROM accounts WHERE id BETWEEN 77 AND -7",
+        &table(),
+    )
+    .unwrap();
+    assert!(empty.handle_ranges().is_empty());
+
+    // `NOT BETWEEN` unfolds to `< low OR > high`; `OR` is unsupported.
+    assert!(ReadOnlyScanPlan::lower(
+        "SELECT id FROM accounts WHERE id NOT BETWEEN -7 AND 77",
+        &table(),
+    )
+    .is_err());
+}
+
+#[test]
 fn signed_extremes_eliminate_impossible_halves_without_overflow() {
     let cases = [
         ("id < -9223372036854775808", vec![]),

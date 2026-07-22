@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
@@ -99,6 +100,14 @@ path = "tests/tikv_selection_dag_lowering_source.rs"
 [[test]]
 name = "direct_unary_cancellation_source"
 path = "tests/direct_unary_cancellation_source.rs"
+
+[[test]]
+name = "prepared_dml_lowering_source"
+path = "tests/prepared_dml_lowering_source.rs"
+
+[[test]]
+name = "prepared_write_persists_realtikv_source"
+path = "tests/prepared_write_persists_realtikv_source.rs"
 
 [[test]]
 name = "real_tikv_read_source"

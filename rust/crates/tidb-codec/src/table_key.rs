@@ -16,9 +16,12 @@
 
 use std::fmt;
 
+use tidb_datatype::Datum;
+
 use crate::bytes::decode_bytes;
-use crate::datum::decode_one;
+use crate::datum::{decode_one, encode_key, INT_FLAG};
 use crate::number::{decode_int, decode_uint, encode_int};
+use crate::CodecError;
 
 // Preserve the already-connected DistSQL/resource-group authority as the
 // implementation of the three table-row primitives instead of cloning it.
@@ -178,6 +181,41 @@ pub fn encode_index_seek_key(table_id: i64, index_id: i64, encoded_values: &[u8]
     let mut key = encode_table_index_prefix(table_id, index_id);
     key.extend_from_slice(encoded_values);
     key
+}
+
+/// Encodes one entry key of a non-unique secondary index over an integer handle.
+///
+/// Ported from Go `tablecodec.GenIndexKey`: the index prefix and id, then the
+/// memcomparable key encoding of the indexed column values, then — because a
+/// non-unique index must keep colliding values distinct — the row handle. Go
+/// appends `codec.IntHandleFlag` (which is exactly the memcomparable int key
+/// flag, [`INT_FLAG`]) followed by the memcomparable handle, so the suffix is
+/// the key encoding of the handle datum. A unique index (whose handle lives in
+/// the value, not the key) and a non-integer clustered handle are deliberately
+/// not represented here.
+pub fn encode_non_unique_index_key(
+    table_id: i64,
+    index_id: i64,
+    indexed_values: &[Datum],
+    handle: i64,
+) -> Result<Vec<u8>, CodecError> {
+    let mut encoded = encode_key(indexed_values)?;
+    encoded.push(INT_FLAG);
+    encode_int(&mut encoded, handle);
+    Ok(encode_index_seek_key(table_id, index_id, &encoded))
+}
+
+/// The value byte of a non-unique secondary index entry over an integer handle.
+///
+/// Ported from Go `tablecodec.genIndexValueVersion0`: for a non-unique index
+/// (`distinct == false`) over an integer handle, with no restored collation
+/// data, no global-index partition id, and a touched write, every branch that
+/// would grow the value is skipped, so it falls to the legacy encoding and emits
+/// a single `'0'` byte — the handle lives in the key, not the value. Confirmed
+/// byte-exact against real `GenIndexValuePortal`.
+#[must_use]
+pub fn non_unique_index_value() -> Vec<u8> {
+    vec![b'0']
 }
 
 /// Decodes whether a key addresses a table record or index and returns its IDs.

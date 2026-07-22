@@ -39,6 +39,7 @@ use tidb_planner::{
     configured_join_plan::ConfiguredJoinPlan,
     configured_order_limit::{ConfiguredOrderLimit, ConfiguredOrderedJoinPlan},
     configured_order_limit_contract::ConfiguredLimitWindow,
+    prepared_dml::PreparedBindValue,
 };
 
 use crate::configured_user_store::ConfiguredUserStore;
@@ -50,15 +51,18 @@ use crate::real_tikv_node::{
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlQueryError,
+    ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead, PreparedWrite, QueryResult,
+    QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
+use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
+use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Cloneable worker-session opener for the exactly-two-table SQL-node path.
 pub struct RealTiKvMultiSessionFactory {
     opener: RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource>,
+    transaction_opener: RealOptimisticTransactionOpener,
     tables: [tidb_planner::read_only_scan::ConfiguredTable; 2],
     activity: Arc<QueryActivity>,
     read_authority_id: u64,
@@ -86,6 +90,7 @@ impl RealTiKvMultiSessionFactory {
         Ok((
             Self {
                 opener: authority.opener(),
+                transaction_opener: authority.transaction_opener(),
                 tables: [left.clone(), right.clone()],
                 activity: Arc::new(QueryActivity::default()),
                 read_authority_id: authority.read_authority_id(),
@@ -130,6 +135,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         Ok(RealTiKvMultiServerSession {
             reader,
+            transaction_opener: self.transaction_opener.clone(),
             context,
             activity: Arc::clone(&self.activity),
             next_query_id: 1,
@@ -141,6 +147,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
 /// One authenticated worker session over the shared two-table read authority.
 pub struct RealTiKvMultiServerSession {
     reader: RealTiKvMultiReadSession<ProductionReadTransport, PdTimestampSource>,
+    transaction_opener: RealOptimisticTransactionOpener,
     context: SessionContext,
     activity: Arc<QueryActivity>,
     next_query_id: u64,
@@ -267,8 +274,10 @@ impl QuerySession for RealTiKvMultiServerSession {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_point_read(sql, &catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        // Bind placeholder handles only to resolve the result-column metadata;
+        // a range template needs one placeholder per marker.
         let metadata_plan = template
-            .bind(&[0])
+            .bind(&vec![0; template.parameter_count()])
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let result_columns = self
             .reader
@@ -320,6 +329,30 @@ impl QuerySession for RealTiKvMultiServerSession {
             cluster_id,
             evidence,
         )
+    }
+
+    fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
+        let catalog = configured_catalog_from_tables(&self.reader)?;
+        let template = prepare_configured_write(sql, &catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(PreparedWrite::new(template))
+    }
+
+    fn execute_prepared_write(
+        &mut self,
+        statement: &PreparedWrite,
+        parameters: &[PreparedBindValue],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let bound = statement
+            .template()
+            .bind(parameters)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let report =
+            commit_configured_write(&self.transaction_opener, &bound, CONTROL_PLANE_TIMEOUT)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(WriteOutcome {
+            affected_rows: report.affected_rows,
+        })
     }
 }
 

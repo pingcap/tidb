@@ -113,3 +113,7 @@
 2026-07-read-path-26	server-configured-topn-cap-runtime
 2026-07-read-path-26	server-configured-ordered-query-routing-runtime
 2026-07-read-path-26	server-live-ordered-join-proof
+2026-07-read-path-27	parser-prepared-param-marker-runtime
+2026-07-read-path-27	protocol-prepared-statement-binary-framing-runtime
+2026-07-read-path-27	server-prepared-point-read-tcp-runtime
+2026-07-read-path-27	server-live-prepared-point-read-proof

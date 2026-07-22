@@ -24,14 +24,16 @@ use tidb_proto::{
 };
 
 use crate::lock::{
-    decode_lock_observation, resolve_optimistic_locks, LockRecoveryResult, TimestampSource,
+    decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, LockRecoveryResult,
+    TimestampSource,
 };
-use crate::region::{RegionBackoffBudget, RegionErrorDisposition};
+use crate::region::{RegionBackoffBudget, RegionErrorDisposition, RegionRecoveryLoader};
 use crate::rpc::{
     TonicCoprocessorClient, TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext,
 };
 use crate::{PdRegionLoader, SharedReadOpener, SharedReadRuntime};
 
+use super::command_client::{PublishedCommand, TransactionCommandClient};
 use super::mutation::{validate_and_sort, validate_plan, MutationSetError, OptimisticMutation};
 use super::region_batches::{
     group_keys, group_mutations, point_route, RegionKeyBatch, RegionMutationBatch,
@@ -151,7 +153,9 @@ impl RealOptimisticTransactionOpener {
         &self,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
-    ) -> Result<RealOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+        // Reject an invalid plan before opening a session or consuming a real
+        // TSO; `new_injected` revalidates for callers that already hold one.
         validate_plan(planned_mutation_count, planned_aggregate_bytes)
             .map_err(OptimisticCoordinatorError::Mutations)?;
         let opened_at = Instant::now();
@@ -174,28 +178,33 @@ impl RealOptimisticTransactionOpener {
                 "PD returned zero start timestamp".to_owned(),
             ));
         }
-        Ok(RealOptimisticTransaction {
+        RealOptimisticTransaction::new_injected(
             runtime,
-            pd: self.pd.clone(),
-            timeout: self.timeout,
+            PdLockTimestampSource(self.pd.clone()),
+            self.timeout,
             start_ts,
+            opened_at,
             planned_mutation_count,
             planned_aggregate_bytes,
-            state: CoordinatorState::New,
-            snapshot_reads: Vec::new(),
-            opened_at,
-            authority_id: self.opener.authority_id(),
-            forward_backoff: RegionBackoffBudget::campaign_default(),
-            secondary_backoff: RegionBackoffBudget::campaign_default(),
-            cleanup_backoff: RegionBackoffBudget::campaign_default(),
-        })
+        )
     }
 }
 
+/// The one production transaction: real TiKV transport, real PD-backed region
+/// topology, and real PD timestamps.
+pub type ProductionOptimisticTransaction =
+    RealOptimisticTransaction<TonicCoprocessorClient, PdRegionLoader, PdLockTimestampSource>;
+
 /// One concrete normal optimistic transaction fixed to a real PD `start_ts`.
-pub struct RealOptimisticTransaction {
-    runtime: SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>,
-    pd: PdClient,
+///
+/// The type parameters name the capabilities this coordinator consumes — the
+/// shared TiKV client, the region topology authority, and the timestamp
+/// authority. They do not admit a second transaction implementation: the only
+/// production instantiation is [`ProductionOptimisticTransaction`], built by
+/// [`RealOptimisticTransactionOpener::begin`].
+pub struct RealOptimisticTransaction<C, L, T> {
+    runtime: SharedReadRuntime<C, L>,
+    timestamps: T,
     timeout: Duration,
     start_ts: u64,
     planned_mutation_count: usize,
@@ -209,7 +218,56 @@ pub struct RealOptimisticTransaction {
     cleanup_backoff: RegionBackoffBudget,
 }
 
-impl RealOptimisticTransaction {
+impl<C, L, T> RealOptimisticTransaction<C, L, T>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    /// Builds one transaction over already-owned authorities and an already
+    /// allocated `start_ts`.
+    ///
+    /// This is the single construction path;
+    /// [`RealOptimisticTransactionOpener::begin`] is the production caller and
+    /// supplies the real PD timestamp plus the instant it began opening, so
+    /// the lock TTL keeps charging for session-open and TSO time. Focused
+    /// tests use it to reach decoded-response branches that a live cluster
+    /// cannot produce on demand; it creates no PD, RegionCache, or transport
+    /// worker of its own.
+    pub fn new_injected(
+        runtime: SharedReadRuntime<C, L>,
+        timestamps: T,
+        timeout: Duration,
+        start_ts: u64,
+        opened_at: Instant,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        validate_plan(planned_mutation_count, planned_aggregate_bytes)
+            .map_err(OptimisticCoordinatorError::Mutations)?;
+        if start_ts == 0 {
+            return Err(OptimisticCoordinatorError::Timestamp(
+                "a transaction requires a real nonzero start timestamp".to_owned(),
+            ));
+        }
+        let authority_id = runtime.authority_id();
+        Ok(Self {
+            runtime,
+            timestamps,
+            timeout,
+            start_ts,
+            planned_mutation_count,
+            planned_aggregate_bytes,
+            state: CoordinatorState::New,
+            snapshot_reads: Vec::new(),
+            opened_at,
+            authority_id,
+            forward_backoff: RegionBackoffBudget::campaign_default(),
+            secondary_backoff: RegionBackoffBudget::campaign_default(),
+            cleanup_backoff: RegionBackoffBudget::campaign_default(),
+        })
+    }
+
     /// Snapshot timestamp allocated before any read or write.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
@@ -262,14 +320,13 @@ impl RealOptimisticTransaction {
                     let locks = decode_lock_observation(lock_info).map_err(|error| {
                         OptimisticCoordinatorError::SnapshotGet(error.to_string())
                     })?;
-                    let timestamps = PdLockTimestampSource(self.pd.clone());
                     match resolve_optimistic_locks(
                         &self.runtime,
                         &locks,
                         self.start_ts,
                         route.context(),
                         call,
-                        &timestamps,
+                        &self.timestamps,
                     )
                     .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?
                     {
@@ -660,7 +717,7 @@ impl RealOptimisticTransaction {
         request: &KvrpcGetRequest,
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchResponse<KvrpcGetResponse>, OptimisticCoordinatorError> {
-        let mut pending = self
+        let published = self
             .runtime
             .client()
             .try_borrow_mut()
@@ -669,12 +726,14 @@ impl RealOptimisticTransaction {
                     "TiKV client is already borrowed".to_owned(),
                 )
             })?
-            .begin_transaction_get(route.address(), None, request, route.context(), call)
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        pending
-            .complete(call)
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))
+            .publish_transaction_get(route.address(), request, route.context(), call);
+        match published {
+            PublishedCommand::Response(response) => Ok(response),
+            PublishedCommand::BeforePublication(error)
+            | PublishedCommand::AfterPublication { error, .. } => {
+                Err(OptimisticCoordinatorError::SnapshotGet(error))
+            }
+        }
     }
 
     fn prewrite_batch(
@@ -704,17 +763,12 @@ impl RealOptimisticTransaction {
         request.context = None;
         let mut context = batch.context().clone();
         context.is_retry_request = is_retry;
-        let pending = self
-            .runtime
-            .client()
-            .try_borrow_mut()
-            .map_err(|_| "TiKV client is already borrowed while publishing Prewrite".to_owned())
-            .and_then(|mut client| {
-                client
-                    .begin_transaction_prewrite(batch.address(), None, &request, &context, call)
-                    .map_err(|error| error.to_string())
-            });
-        complete_published(pending, call)
+        match self.runtime.client().try_borrow_mut() {
+            Ok(mut client) => client.publish_prewrite(batch.address(), &request, &context, call),
+            Err(_) => PublishedCommand::BeforePublication(
+                "TiKV client is already borrowed while publishing Prewrite".to_owned(),
+            ),
+        }
     }
 
     fn handle_prewrite_key_errors(
@@ -750,14 +804,13 @@ impl RealOptimisticTransaction {
                 detail: "Prewrite returned an empty KeyError set".to_owned(),
             });
         }
-        let timestamps = PdLockTimestampSource(self.pd.clone());
         match resolve_optimistic_locks(
             &self.runtime,
             &eligible_locks,
             self.start_ts,
             context,
             call,
-            &timestamps,
+            &self.timestamps,
         )
         .map_err(|error| TransactionCause::Lock {
             key: eligible_locks[0].key.clone(),
@@ -829,8 +882,8 @@ impl RealOptimisticTransaction {
                 });
             }
             let timestamp =
-                self.pd
-                    .get_timestamp()
+                self.timestamps
+                    .current_ts()
                     .map_err(|error| TransactionCause::Timestamp {
                         detail: format!("cannot allocate commit timestamp: {error}"),
                     })?;
@@ -889,19 +942,13 @@ impl RealOptimisticTransaction {
             };
             let mut context = route.context().clone();
             context.is_retry_request = attempt > 0;
-            let pending = self
-                .runtime
-                .client()
-                .try_borrow_mut()
-                .map_err(|_| {
-                    "TiKV client is already borrowed while publishing primary Commit".to_owned()
-                })
-                .and_then(|mut client| {
-                    client
-                        .begin_transaction_commit(route.address(), None, &request, &context, call)
-                        .map_err(|error| error.to_string())
-                });
-            match complete_published(pending, call) {
+            let published = match self.runtime.client().try_borrow_mut() {
+                Ok(mut client) => client.publish_commit(route.address(), &request, &context, call),
+                Err(_) => PublishedCommand::BeforePublication(
+                    "TiKV client is already borrowed while publishing primary Commit".to_owned(),
+                ),
+            };
+            match published {
                 PublishedCommand::BeforePublication(error) => {
                     let cause = TransactionCause::Transport {
                         detail: format!("primary Commit failed before publication: {error}"),
@@ -1089,25 +1136,15 @@ impl RealOptimisticTransaction {
                 use_async_commit: false,
                 ..KvrpcCommitRequest::default()
             };
-            let pending = self
-                .runtime
-                .client()
-                .try_borrow_mut()
-                .map_err(|_| {
-                    "TiKV client is already borrowed while publishing secondary Commit".to_owned()
-                })
-                .and_then(|mut client| {
-                    client
-                        .begin_transaction_commit(
-                            batch.address(),
-                            None,
-                            &request,
-                            batch.context(),
-                            &cleanup_call,
-                        )
-                        .map_err(|error| error.to_string())
-                });
-            match complete_published(pending, &cleanup_call) {
+            let published = match self.runtime.client().try_borrow_mut() {
+                Ok(mut client) => {
+                    client.publish_commit(batch.address(), &request, batch.context(), &cleanup_call)
+                }
+                Err(_) => PublishedCommand::BeforePublication(
+                    "TiKV client is already borrowed while publishing secondary Commit".to_owned(),
+                ),
+            };
+            match published {
                 PublishedCommand::BeforePublication(error) => {
                     let cause = TransactionCause::Transport {
                         detail: format!("secondary Commit failed before publication: {error}"),
@@ -1332,25 +1369,18 @@ impl RealOptimisticTransaction {
                 keys: batch.keys().to_vec(),
                 ..KvrpcBatchRollbackRequest::default()
             };
-            let pending = self
-                .runtime
-                .client()
-                .try_borrow_mut()
-                .map_err(|_| {
-                    "TiKV client is already borrowed while publishing BatchRollback".to_owned()
-                })
-                .and_then(|mut client| {
-                    client
-                        .begin_transaction_batch_rollback(
-                            batch.address(),
-                            None,
-                            &request,
-                            batch.context(),
-                            &cleanup_call,
-                        )
-                        .map_err(|error| error.to_string())
-                });
-            match complete_published(pending, &cleanup_call) {
+            let published = match self.runtime.client().try_borrow_mut() {
+                Ok(mut client) => client.publish_batch_rollback(
+                    batch.address(),
+                    &request,
+                    batch.context(),
+                    &cleanup_call,
+                ),
+                Err(_) => PublishedCommand::BeforePublication(
+                    "TiKV client is already borrowed while publishing BatchRollback".to_owned(),
+                ),
+            };
+            match published {
                 PublishedCommand::BeforePublication(error) => {
                     let cause = TransactionCause::Transport {
                         detail: format!("BatchRollback failed before publication: {error}"),
@@ -1500,7 +1530,8 @@ impl RealOptimisticTransaction {
     }
 }
 
-struct PdLockTimestampSource(PdClient);
+/// Real PD timestamp authority used by the one production transaction.
+pub struct PdLockTimestampSource(PdClient);
 
 impl fmt::Debug for PdLockTimestampSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1513,43 +1544,6 @@ impl fmt::Debug for PdLockTimestampSource {
 impl TimestampSource for PdLockTimestampSource {
     fn current_ts(&self) -> Result<u64, String> {
         self.0.get_timestamp().map_err(|error| error.to_string())
-    }
-}
-
-enum PublishedCommand<R> {
-    BeforePublication(String),
-    AfterPublication {
-        publication: TransactionBatchPublication,
-        error: String,
-    },
-    Response(TransactionBatchResponse<R>),
-}
-
-fn complete_published<R>(
-    pending: Result<crate::rpc::TransactionBatchPending<R>, String>,
-    call: &UnaryCallContext,
-) -> PublishedCommand<R>
-where
-    R: prost::Message + Default,
-{
-    let mut pending = match pending {
-        Ok(pending) => pending,
-        Err(error) => return PublishedCommand::BeforePublication(error),
-    };
-    let publication = pending
-        .publication()
-        .expect("Stage A binds a nonzero publication before pending escapes")
-        .clone();
-    match pending.complete(call) {
-        Ok(Ok(response)) => PublishedCommand::Response(response),
-        Ok(Err(error)) => PublishedCommand::AfterPublication {
-            publication,
-            error: error.to_string(),
-        },
-        Err(error) => PublishedCommand::AfterPublication {
-            publication,
-            error: error.to_string(),
-        },
     }
 }
 

@@ -306,6 +306,18 @@ class MysqlConnection:
             rows.append(int.from_bytes(packet[2:], "little", signed=True))
         return rows, None
 
+    def execute_write(self, payload: bytes) -> tuple[int, MysqlError | None]:
+        self.write_packet(bytes([COM_STMT_EXECUTE]) + payload, 0)
+        first = self.read_packet(1)
+        if first and first[0] == 0xFF:
+            return 0, parse_error(first)
+        if not first or first[0] != 0x00:
+            raise ProtocolError(f"prepared write expected an OK packet, got {first.hex()}")
+        affected, _ = read_lenenc(first, 1)
+        if affected is None:
+            raise ProtocolError(f"prepared write OK packet omitted affected rows: {first.hex()}")
+        return affected, None
+
     def close_statement(self, statement_id: int) -> None:
         self.write_packet(bytes([COM_STMT_CLOSE]) + statement_id.to_bytes(4, "little"), 0)
 
@@ -349,6 +361,23 @@ def execute_payload(
     if new_types:
         payload.extend((type_code, type_flags))
     payload.extend(value.to_bytes(8, "little", signed=True))
+    return bytes(payload)
+
+
+def execute_write_payload(
+    statement_id: int, values: list[int], *, new_types: bool = True
+) -> bytes:
+    """A COM_STMT_EXECUTE payload binding N signed-BIGINT parameters."""
+    payload = bytearray(statement_id.to_bytes(4, "little"))
+    payload.append(0)  # no cursor
+    payload.extend((1).to_bytes(4, "little"))  # iteration count
+    payload.extend(bytes((len(values) + 7) // 8))  # null bitmap, no NULLs
+    payload.append(int(new_types))
+    if new_types:
+        for _ in values:
+            payload.extend((MYSQL_TYPE_LONGLONG, 0))
+    for value in values:
+        payload.extend(value.to_bytes(8, "little", signed=True))
     return bytes(payload)
 
 
@@ -527,6 +556,139 @@ def negative(args: argparse.Namespace) -> None:
     )
 
 
+def write(args: argparse.Namespace) -> None:
+    """Drives `count` prepared point read + prepared arithmetic UPDATE pairs
+    through the Rust endpoint, exactly the C28 read+write mix."""
+    read_sql = f"SELECT balance FROM {args.database}.accounts WHERE id = ?"
+    write_sql = f"UPDATE {args.database}.accounts SET balance = balance + ? WHERE id = ?"
+    with MysqlConnection(args.host, args.port, args.user, args.password) as connection:
+        read_stmt = connection.prepare(read_sql)
+        if isinstance(read_stmt, MysqlError):
+            raise ProtocolError(f"read prepare failed: {read_stmt.code} {read_stmt.message}")
+        if len(read_stmt.parameters) != 1 or len(read_stmt.columns) != 1:
+            raise ProtocolError("read prepare did not advertise one parameter and one column")
+        write_stmt = connection.prepare(write_sql)
+        if isinstance(write_stmt, MysqlError):
+            raise ProtocolError(f"write prepare failed: {write_stmt.code} {write_stmt.message}")
+        if len(write_stmt.parameters) != 2 or len(write_stmt.columns) != 0:
+            raise ProtocolError(
+                f"write prepare advertised {len(write_stmt.parameters)} params /"
+                f" {len(write_stmt.columns)} columns; expected 2/0"
+            )
+        reads = 0
+        affected_rows = 0
+        for index in range(args.count):
+            handle = (index % args.table_size) + 1
+            first = index == 0
+            rows, read_error = connection.execute(
+                execute_payload(read_stmt.statement_id, handle, new_types=first)
+            )
+            if read_error is not None or len(rows) != 1:
+                raise ProtocolError(f"read {index} failed: rows={rows} error={read_error}")
+            reads += 1
+            affected, write_error = connection.execute_write(
+                execute_write_payload(write_stmt.statement_id, [1, handle], new_types=first)
+            )
+            if write_error is not None or affected != 1:
+                raise ProtocolError(
+                    f"write {index} failed: affected={affected} error={write_error}"
+                )
+            affected_rows += affected
+        connection.close_statement(read_stmt.statement_id)
+        connection.close_statement(write_stmt.statement_id)
+        emit(
+            "prepared_read_write",
+            count=args.count,
+            reads=reads,
+            affected_rows=affected_rows,
+            connection_id=connection.connection_id,
+        )
+
+
+def matrix(args: argparse.Namespace) -> None:
+    """Drives the full C28 prepared write matrix through the Rust endpoint once:
+    one-row INSERT, two-row INSERT, direct SET update, arithmetic update, and a
+    point read. Uses ids outside the seeded range so it never collides."""
+    table = f"{args.database}.accounts"
+    with MysqlConnection(args.host, args.port, args.user, args.password) as connection:
+
+        def prepare_write_stmt(sql: str, params: int) -> Any:
+            prepared = connection.prepare(sql)
+            if isinstance(prepared, MysqlError):
+                raise ProtocolError(f"prepare failed: {prepared.code} {prepared.message} ({sql})")
+            if len(prepared.parameters) != params or len(prepared.columns) != 0:
+                raise ProtocolError(
+                    f"write prepare advertised {len(prepared.parameters)} params /"
+                    f" {len(prepared.columns)} columns; expected {params}/0 ({sql})"
+                )
+            return prepared
+
+        def commit(prepared: Any, values: list[int], expected: int) -> None:
+            affected, error = connection.execute_write(
+                execute_write_payload(prepared.statement_id, values)
+            )
+            if error is not None or affected != expected:
+                raise ProtocolError(f"execute affected={affected} expected={expected} error={error}")
+
+        one_row = prepare_write_stmt(f"INSERT INTO {table} (id, balance) VALUES (?, ?)", 2)
+        commit(one_row, [101, 1000], 1)
+        two_row = prepare_write_stmt(
+            f"INSERT INTO {table} (id, balance) VALUES (?, ?), (?, ?)", 4
+        )
+        commit(two_row, [102, 2000, 103, 3000], 2)
+        set_update = prepare_write_stmt(f"UPDATE {table} SET balance = ? WHERE id = ?", 2)
+        commit(set_update, [1500, 101], 1)
+        arith_update = prepare_write_stmt(
+            f"UPDATE {table} SET balance = balance + ? WHERE id = ?", 2
+        )
+        commit(arith_update, [5, 102], 1)
+
+        read = connection.prepare(f"SELECT balance FROM {table} WHERE id = ?")
+        if isinstance(read, MysqlError):
+            raise ProtocolError(f"read prepare failed: {read.code} {read.message}")
+        rows, read_error = connection.execute(execute_payload(read.statement_id, 103))
+        if read_error is not None or rows != [3000]:
+            raise ProtocolError(f"point read mismatch: rows={rows} error={read_error}")
+
+        # A duplicate-key INSERT of an existing handle must be rejected and must
+        # NOT overwrite the stored row (id=101 stays 1500 from the SET above; the
+        # harness re-checks it through Go TiDB).
+        dup_affected, dup_error = connection.execute_write(
+            execute_write_payload(one_row.statement_id, [101, 9999])
+        )
+        if dup_error is None:
+            raise ProtocolError(
+                f"duplicate INSERT of id=101 unexpectedly succeeded (affected={dup_affected})"
+            )
+
+        # Value overflow: a stored balance at i64::MAX plus a positive addend must
+        # be rejected with a range error and must NOT change the stored value
+        # (id=104 stays i64::MAX; the harness re-checks it through Go TiDB).
+        i64_max = (1 << 63) - 1
+        commit(one_row, [104, i64_max], 1)
+        ov_affected, ov_error = connection.execute_write(
+            execute_write_payload(arith_update.statement_id, [1, 104])
+        )
+        if ov_error is None:
+            raise ProtocolError(
+                f"overflow UPDATE of id=104 unexpectedly succeeded (affected={ov_affected})"
+            )
+
+        for prepared in (one_row, two_row, set_update, arith_update, read):
+            connection.close_statement(prepared.statement_id)
+        emit(
+            "prepared_matrix",
+            connection_id=connection.connection_id,
+            one_row_insert=1,
+            two_row_insert=2,
+            set_update=1,
+            arithmetic_update=1,
+            point_read=rows[0],
+            duplicate_rejected_code=dup_error.code,
+            overflow_rejected_code=ov_error.code,
+        )
+
+
 def self_test() -> None:
     payload = execute_payload(7, -42)
     if payload != b"\x07\0\0\0\0\x01\0\0\0\0\x01\x08\0\xd6\xff\xff\xff\xff\xff\xff\xff":
@@ -545,7 +707,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     subcommands = result.add_subparsers(dest="command", required=True)
     subcommands.add_parser("self-test")
-    for name in ("positive", "negative"):
+    for name in ("positive", "negative", "write", "matrix"):
         command = subcommands.add_parser(name)
         command.add_argument("--host", default="127.0.0.1")
         command.add_argument("--port", type=int, required=True)
@@ -557,6 +719,9 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--first-balance", type=int, required=True)
             command.add_argument("--second-id", type=int, required=True)
             command.add_argument("--second-balance", type=int, required=True)
+        if name == "write":
+            command.add_argument("--count", type=int, required=True)
+            command.add_argument("--table-size", type=int, required=True)
     return result
 
 
@@ -567,6 +732,10 @@ def main() -> int:
             self_test()
         elif args.command == "positive":
             positive(args)
+        elif args.command == "write":
+            write(args)
+        elif args.command == "matrix":
+            matrix(args)
         else:
             negative(args)
     except (OSError, ProtocolError, UnicodeError, ValueError) as error:

@@ -100,6 +100,61 @@ fn test_cut_prefix() {
 }
 
 #[test]
+fn non_unique_int_index_key_matches_go_gen_index_key() {
+    // Byte fixtures from Go `tablecodec.GenIndexKey`'s non-unique int-handle
+    // composition (`EncodeIndexSeekKey(tableID, idxID, EncodeKey(values...) +
+    // IntHandleFlag + EncodeInt(handle))`): t + memcomp(tableID) + _i +
+    // memcomp(idxID) + INT_FLAG + memcomp(k) + INT_FLAG + memcomp(handle).
+    let cases: &[(i64, i64, i64, i64, &str)] = &[
+        (
+            100,
+            1,
+            42,
+            7,
+            "7480000000000000645f69800000000000000103800000000000002a038000000000000007",
+        ),
+        (
+            100,
+            1,
+            -5,
+            1,
+            "7480000000000000645f698000000000000001037ffffffffffffffb038000000000000001",
+        ),
+        (
+            256,
+            2,
+            0,
+            9_223_372_036_854_775_807,
+            "7480000000000001005f69800000000000000203800000000000000003ffffffffffffffff",
+        ),
+        (
+            100,
+            1,
+            42,
+            -3,
+            "7480000000000000645f69800000000000000103800000000000002a037ffffffffffffffd",
+        ),
+    ];
+    for &(table_id, index_id, k, handle, expected) in cases {
+        let key = encode_non_unique_index_key(table_id, index_id, &[Datum::new_int(k)], handle)
+            .expect("integer index key encodes");
+        assert_eq!(
+            hex(&key),
+            expected,
+            "table={table_id} idx={index_id} k={k} handle={handle}",
+        );
+    }
+}
+
+#[test]
+fn non_unique_index_value_is_the_single_zero_byte() {
+    // Go `genIndexValueVersion0` emits a single '0' (0x30) for a non-unique
+    // integer-handle index with no restored data — confirmed against real
+    // GenIndexValuePortal for several (k, handle) pairs, all yielding 0x30.
+    assert_eq!(non_unique_index_value(), vec![0x30]);
+}
+
+#[test]
 fn test_range() {
     // pkg/tablecodec/tablecodec_test.go:523 TestRange
     let (start_22, end_22) = get_table_handle_key_range(22);

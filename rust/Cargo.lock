@@ -1087,6 +1087,7 @@ dependencies = [
  "prost",
  "serde_json",
  "tidb-ast",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",
  "tidb-error",

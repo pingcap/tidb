@@ -47,3 +47,27 @@ GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_number
 ```bash
 GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_decimal_keys.go
 ```
+
+## Configured clustered signed-`BIGINT` row fixture
+
+`configured_rows.hex` is the exact pair of bytes TiDB persists for the
+campaign-28 table shape (`id BIGINT PRIMARY KEY CLUSTERED, balance BIGINT NOT
+NULL`), produced by `tablecodec.EncodeRowKeyWithHandle` and
+`rowcodec.Encoder.Encode`. It covers the signed handle domain, every compact
+rowcodec integer width transition, Go's own not-null column-ID sort, and the
+large-row format that a column ID above one byte forces.
+
+No vector contains the handle column: `pkg/table/tables/tables.go` `CanSkip`
+skips `col.IsPKHandleColumn`, so a clustered signed handle exists only in the
+record key.
+
+The `value_char_*` vectors are `CHAR` column values stored the way TiDB
+persists a default-collation (`utf8mb4_bin`) string: raw value bytes addressed
+by the offset table, with no restored-collation data (`NeedRestoredData` is
+false for that case), no length prefix, and no trailing-space trimming. A
+`VARCHAR` or a non-binary collation would instead append restored data and is
+not covered by these vectors.
+
+```bash
+GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_configured_rows.go
+```

@@ -23,6 +23,20 @@ pub enum OptimisticMutationKind {
     Insert,
     /// Replace a value and fail if the key does not exist at `start_ts`.
     PutExisting,
+    /// Delete a value and assert the key exists at `start_ts`, matching Go
+    /// `TableCommon.removeRecord`, which sets `kv.AssertExist` before
+    /// `txn.Delete(key)`.
+    Delete,
+    /// Write a non-unique secondary index entry. Go `tables.index.create` does a
+    /// plain `MemBuffer.Set` (`Op_Put`) — not the row key's `Op_Insert` — and,
+    /// on the default optimistic lazy-check path, leaves the assertion
+    /// unresolved (`kv.AssertUnknown` -> proto `None`): the index key already
+    /// carries the row handle, so a new row's entry cannot collide.
+    IndexPut,
+    /// Delete a non-unique secondary index entry. Go `tables.index.Delete` does a
+    /// plain `MemBuffer.Delete` (`Op_Del`) with an unresolved assertion
+    /// (`None`), unlike the row delete's `Exist`.
+    IndexDelete,
 }
 
 /// One immutable encoded-key mutation.
@@ -52,6 +66,26 @@ impl OptimisticMutation {
             key.into(),
             value.into(),
         )
+    }
+
+    /// Creates an optimistic DELETE with TiKV's exists assertion. A delete
+    /// carries no value.
+    pub fn delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
+        Self::new(OptimisticMutationKind::Delete, key.into(), Vec::new())
+    }
+
+    /// Creates a non-unique secondary index entry write (`Op_Put`, no assertion).
+    pub fn index_put(
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<Self, MutationSetError> {
+        Self::new(OptimisticMutationKind::IndexPut, key.into(), value.into())
+    }
+
+    /// Creates a non-unique secondary index entry delete (`Op_Del`, no
+    /// assertion). A delete carries no value.
+    pub fn index_delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
+        Self::new(OptimisticMutationKind::IndexDelete, key.into(), Vec::new())
     }
 
     fn new(
@@ -85,6 +119,9 @@ impl OptimisticMutation {
         let (op, assertion) = match self.kind {
             OptimisticMutationKind::Insert => (KvrpcOp::Insert, KvrpcAssertion::NotExist),
             OptimisticMutationKind::PutExisting => (KvrpcOp::Put, KvrpcAssertion::Exist),
+            OptimisticMutationKind::Delete => (KvrpcOp::Del, KvrpcAssertion::Exist),
+            OptimisticMutationKind::IndexPut => (KvrpcOp::Put, KvrpcAssertion::None),
+            OptimisticMutationKind::IndexDelete => (KvrpcOp::Del, KvrpcAssertion::None),
         };
         KvrpcMutation {
             op: op as i32,
@@ -327,5 +364,37 @@ mod tests {
             .to_proto();
         assert_eq!(mutation.op, KvrpcOp::Put as i32);
         assert_eq!(mutation.assertion, KvrpcAssertion::Exist as i32);
+    }
+
+    #[test]
+    fn delete_is_an_exists_asserted_del_with_no_value() {
+        // Go `TableCommon.removeRecord`: `setAssertion(key, kv.AssertExist)`
+        // then `txn.Delete(key)`.
+        let mutation = OptimisticMutation::delete(b"k".to_vec()).unwrap();
+        assert!(mutation.value().is_empty());
+        let proto = mutation.to_proto();
+        assert_eq!(proto.op, KvrpcOp::Del as i32);
+        assert_eq!(proto.assertion, KvrpcAssertion::Exist as i32);
+        assert!(proto.value.is_empty());
+    }
+
+    #[test]
+    fn index_entries_are_unasserted_puts_and_deletes() {
+        // Go `tables.index.create` uses `MemBuffer.Set` (Op_Put) and
+        // `tables.index.Delete` uses `MemBuffer.Delete` (Op_Del), both leaving
+        // the assertion unresolved on the optimistic lazy path -> proto `None`,
+        // unlike the row key's `Op_Insert`/`Exist`.
+        let put = OptimisticMutation::index_put(b"idx".to_vec(), b"0".to_vec())
+            .unwrap()
+            .to_proto();
+        assert_eq!(put.op, KvrpcOp::Put as i32);
+        assert_eq!(put.assertion, KvrpcAssertion::None as i32);
+        assert_eq!(put.value, b"0");
+
+        let delete = OptimisticMutation::index_delete(b"idx".to_vec()).unwrap();
+        assert!(delete.value().is_empty());
+        let delete = delete.to_proto();
+        assert_eq!(delete.op, KvrpcOp::Del as i32);
+        assert_eq!(delete.assertion, KvrpcAssertion::None as i32);
     }
 }

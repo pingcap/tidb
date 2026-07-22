@@ -14,19 +14,23 @@
 
 //! Concrete real-PD/TiKV normal optimistic two-phase commit.
 
+mod command_client;
 mod coordinator;
 mod mutation;
+mod mutation_buffer;
 mod region_batches;
 mod state;
 
+pub use command_client::{PublishedCommand, TransactionCommandClient};
 pub use coordinator::{
-    OptimisticCoordinatorError, RealOptimisticTransaction, RealOptimisticTransactionOpener,
-    SnapshotGetResult,
+    OptimisticCoordinatorError, PdLockTimestampSource, ProductionOptimisticTransaction,
+    RealOptimisticTransaction, RealOptimisticTransactionOpener, SnapshotGetResult,
 };
 pub use mutation::{
     MutationSetError, OptimisticMutation, OptimisticMutationKind, MAX_OPTIMISTIC_KEY_BYTES,
     MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES, MAX_OPTIMISTIC_VALUE_BYTES,
 };
+pub use mutation_buffer::{MutationBufferError, TransactionMutationBuffer};
 pub use region_batches::RegionMutationBatch;
 pub use state::{
     CleanupBatchFailure, CleanupFailedTransaction, CommittedTransaction, OptimisticCommitOutcome,

@@ -133,27 +133,57 @@ fn marker_admission_is_exact_and_text_query_lowering_remains_fail_closed() {
         template("SELECT balance FROM accounts WHERE id = ?").bind(&[1, 2]),
         Err(PreparedBindError::ParameterCount(2))
     );
+    // A non-primary-key comparison is rejected: the prepared read filters only
+    // on the clustered handle, alone or mixed with a valid handle comparison.
     assert_eq!(
         lower_prepared_point_read(
             &select("SELECT balance FROM accounts WHERE balance = ?"),
             &catalog(),
         ),
-        Err(PreparedPlanError::PrimaryKeyEquality)
+        Err(PreparedPlanError::PrimaryKeyComparison)
     );
     assert_eq!(
         lower_prepared_point_read(
             &select("SELECT balance FROM accounts WHERE id = ? AND balance = ?"),
             &catalog(),
         ),
-        Err(PreparedPlanError::ComparisonCount(2))
+        Err(PreparedPlanError::PrimaryKeyComparison)
     );
+}
+
+#[test]
+fn prepared_range_read_binds_one_marker_per_handle_bound() {
+    use tidb_planner::signed_bigint_ranger::SignedBigIntRange;
+
+    // `id >= ? AND id <= ?` binds two handles into one closed range.
+    let plan = template("SELECT balance FROM accounts WHERE id >= ? AND id <= ?")
+        .bind(&[5, 10])
+        .expect("range binds through the scan authority");
+    assert_eq!(plan.handle_ranges(), [SignedBigIntRange::new(5, 10).unwrap()]);
+    assert!(plan.selection().is_none());
+
+    // `id BETWEEN ? AND ?` desugars to the same two-marker range.
+    let between = template("SELECT balance FROM accounts WHERE id BETWEEN ? AND ?");
+    assert_eq!(between.parameter_count(), 2);
     assert_eq!(
-        lower_prepared_point_read(
-            &select("SELECT balance FROM accounts WHERE id > ?"),
-            &catalog(),
-        ),
-        Err(PreparedPlanError::PrimaryKeyEquality)
+        between.bind(&[5, 10]).unwrap().handle_ranges(),
+        [SignedBigIntRange::new(5, 10).unwrap()]
     );
+
+    // A single strict inequality is now a valid half-open range read.
+    let half_open = template("SELECT balance FROM accounts WHERE id > ?");
+    assert_eq!(half_open.parameter_count(), 1);
+    assert_eq!(
+        half_open.bind(&[5]).unwrap().handle_ranges(),
+        [SignedBigIntRange::new(6, i64::MAX).unwrap()]
+    );
+
+    // The point read stays a special case: one equality, one parameter.
+    let point = template("SELECT balance FROM accounts WHERE id = ?");
+    assert_eq!(point.parameter_count(), 1);
+    let range = point.bind(&[7]).unwrap();
+    assert_eq!(range.handle_ranges()[0].start(), 7);
+    assert_eq!(range.handle_ranges()[0].end(), 7);
 }
 
 #[test]

@@ -1073,7 +1073,7 @@ class WorkUnitQueueTest(unittest.TestCase):
         result = self.run_tool("check", success=False)
         self.assertIn("must provide path, line, and name", result.stderr)
 
-    def test_check_rejects_campaign_below_batch_floor(self) -> None:
+    def test_check_warns_about_campaign_below_batch_floor(self) -> None:
         slices = self.root / "workstreams/slices"
         slices.mkdir(parents=True)
         for name, source in (
@@ -1112,10 +1112,12 @@ class WorkUnitQueueTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.subTest(status=status):
-                result = self.run_tool("check", success=False)
-                self.assertIn(
-                    "campaign has 2 production sources; minimum is 9", result.stderr
-                )
+                # The batch floor is advisory: a small batch is a note, not a
+                # failure. Blocking on it rewarded padding a member with test
+                # anchors it could not discharge just to clear the count.
+                result = self.run_tool("check", success=True)
+                self.assertIn("small batch", result.stderr)
+                self.assertIn("2 production sources", result.stderr)
 
     def test_check_accepts_integrated_campaign_after_ownership_shrinks(self) -> None:
         slices = self.root / "workstreams/slices"

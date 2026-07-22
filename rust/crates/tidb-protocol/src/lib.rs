@@ -19,6 +19,7 @@
 //! TLS, authentication, socket deadlines, metrics, and server dispatch remain
 //! explicit server obligations.
 
+mod binary_params;
 mod column;
 mod command;
 mod compression;
@@ -33,6 +34,10 @@ mod resultset;
 pub mod resultset_stream;
 mod textrow;
 
+pub use binary_params::{
+    parse_binary_params, parse_length_encoded_int, BinaryParam, BinaryParamError, TYPE_NULL,
+    TYPE_UNSPECIFIED,
+};
 pub use column::{
     dump_column, dump_column_with_default, dump_flag, dump_type, ColumnDefault, ColumnInfo,
     BINARY_DEFAULT_COLLATION_ID, BINARY_FLAG, DEFAULT_COLLATION_ID, ENUM_FLAG,
@@ -62,11 +67,13 @@ pub use packet::{
     DEFAULT_MAX_ALLOWED_PACKET, MAX_PAYLOAD_LEN,
 };
 pub use prepared_statement::{
-    decode_prepared_statement_close, decode_prepared_statement_execute,
-    encode_binary_signed_longlong_row, encode_prepared_statement_prepare_response,
-    BinarySignedLongLongResultSetStream, PreparedParameterType, PreparedParameterTypes,
-    PreparedStatementError, PreparedStatementExecute, PreparedValue, MYSQL_TYPE_LONGLONG,
-    MYSQL_UNSIGNED_FLAG,
+    decode_prepared_statement_close, decode_prepared_statement_execute, encode_binary_datetime,
+    encode_binary_result_row, encode_binary_signed_longlong_row, encode_binary_time,
+    encode_prepared_statement_prepare_response, is_binary_decimal_result_type,
+    is_binary_float_result_type, is_binary_integer_result_type, is_binary_string_result_type,
+    BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, PreparedParameterType,
+    PreparedParameterTypes, PreparedStatementError, PreparedStatementExecute, PreparedValue,
+    MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{
     append_length_encoded_bytes, append_length_encoded_int, encode_text_row, is_string_column_type,

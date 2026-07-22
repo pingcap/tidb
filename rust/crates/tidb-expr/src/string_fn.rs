@@ -1784,3 +1784,73 @@ mod concat_source_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod to_base64_tests {
+    use super::to_base64;
+    use crate::Datum;
+
+    /// Length and newline count of `TO_BASE64` over `byte_count` `'a'` bytes.
+    fn shape(byte_count: usize) -> (usize, usize) {
+        match to_base64(&[Datum::new_bytes(vec![b'a'; byte_count])]).unwrap() {
+            Datum::String(text) => {
+                let bytes = text.bytes();
+                (bytes.len(), bytes.iter().filter(|&&b| b == b'\n').count())
+            }
+            other => panic!("expected a string, got {other:?}"),
+        }
+    }
+
+    /// Go `builtinToBase64Sig` joins the encoded output into 76-char lines with
+    /// `\n` (`splitToSubN` + `strings.Join`) ONLY when the length EXCEEDS 76, so
+    /// exactly 76 gets no newline and there is never a trailing newline.
+    /// goeval-verified `LENGTH(TO_BASE64(REPEAT('a', n)))`: 57 -> 76, 58 -> 81,
+    /// 114 -> 153.
+    #[test]
+    fn to_base64_wraps_at_76_chars_like_go() {
+        // 57 bytes -> exactly 76 base64 chars: no wrap, no newline.
+        assert_eq!(shape(57), (76, 0));
+        // 58 bytes -> 80 base64 chars -> "76\n4": one newline.
+        assert_eq!(shape(58), (81, 1));
+        // 114 bytes -> 152 base64 chars -> "76\n76": one newline, no trailing.
+        assert_eq!(shape(114), (153, 1));
+    }
+
+    #[test]
+    fn to_base64_null_is_null() {
+        assert_eq!(to_base64(&[Datum::Null]).unwrap(), Datum::Null);
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::format_num;
+    use crate::{Datum, Decimal};
+
+    fn fmt(number: &str, precision: i64) -> String {
+        let n = Datum::Decimal(if let Some(mag) = number.strip_prefix('-') {
+            Decimal::from_literal(mag).negate()
+        } else {
+            Decimal::from_literal(number)
+        });
+        match format_num(&[n, Datum::Int(precision)]).unwrap() {
+            Datum::String(s) => String::from_utf8(s.bytes().to_vec()).unwrap(),
+            other => panic!("expected a string, got {other:?}"),
+        }
+    }
+
+    /// FORMAT rounds HALF AWAY FROM ZERO (2.5 -> 3, -2.5 -> -3), groups the
+    /// integer part with `,` every three digits, pads to `precision` decimals,
+    /// and clamps a negative precision to 0. Authoritative goeval values.
+    #[test]
+    fn format_rounds_half_away_from_zero_and_groups_thousands() {
+        assert_eq!(fmt("2.5", 0), "3");
+        assert_eq!(fmt("2.4", 0), "2");
+        assert_eq!(fmt("-2.5", 0), "-3");
+        assert_eq!(fmt("1234567.891", 2), "1,234,567.89");
+        assert_eq!(fmt("1234.5678", 2), "1,234.57");
+        assert_eq!(fmt("-1234.5", 0), "-1,235");
+        assert_eq!(fmt("1.9999", 2), "2.00");
+        assert_eq!(fmt("123.456", -1), "123");
+    }
+}

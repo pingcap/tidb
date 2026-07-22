@@ -14,15 +14,20 @@
 
 //! Bounded MySQL binary prepared-statement packet framing.
 //!
-//! This module deliberately owns only the one Campaign 27 wire shape: one
-//! non-NULL, signed `MYSQL_TYPE_LONGLONG` parameter and signed-BIGINT result
-//! cells. Statement IDs, SQL parsing/binding, execution, and per-connection
-//! type-vector storage remain server responsibilities.
+//! This module owns the bounded execute/result wire shapes: non-NULL signed
+//! integer parameters of any fixed width (`TYPE_TINY`/`SHORT`/`YEAR`/`INT24`/
+//! `LONG`/`LONGLONG`, each sign-extended to `i64` as Go `ExecBinaryParam` does)
+//! and the numeric/decimal/string result cells. Unsigned integers, the
+//! string/decimal/temporal parameter families, statement IDs, SQL
+//! parsing/binding, execution, and per-connection type-vector storage remain
+//! server responsibilities or later slices of the wired param path.
 
 use crate::{
-    append_length_encoded_int, encode_eof_packet, ColumnInfo, EofPacket, ResultSetOptions,
-    TYPE_LONGLONG,
+    append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, ColumnInfo,
+    EofPacket, ResultSetOptions, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG,
+    TYPE_NEW_DECIMAL, TYPE_SHORT, TYPE_STRING, TYPE_TINY, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
 };
+use tidb_datatype::{Decimal, PackedTime};
 
 /// MySQL binary-protocol type tag for a signed or unsigned 64-bit integer.
 pub const MYSQL_TYPE_LONGLONG: u8 = 0x08;
@@ -30,18 +35,40 @@ pub const MYSQL_TYPE_LONGLONG: u8 = 0x08;
 /// MySQL binary-protocol parameter flag bit that marks an integer unsigned.
 pub const MYSQL_UNSIGNED_FLAG: u8 = 0x80;
 
-/// The only parameter type admitted by the bounded prepared-read protocol.
+/// A signed integer parameter type admitted by the bounded prepared protocol.
+///
+/// The width mirrors Go `ExecBinaryParam`'s signed integer arms
+/// (`pkg/expression/util.go`): each fixed-width MySQL integer type sign-extends
+/// to `int64`. Unsigned integers and every non-integer type stay fail closed
+/// (see the HANDOFF risk register); the string/decimal/temporal families are
+/// the next slice of the wired param path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PreparedParameterType {
-    /// A signed `MYSQL_TYPE_LONGLONG` parameter.
+    /// A signed `MYSQL_TYPE_TINY` parameter (one byte, sign-extended).
+    SignedTiny,
+    /// A signed `MYSQL_TYPE_SHORT`/`YEAR` parameter (two little-endian bytes).
+    SignedShort,
+    /// A signed `MYSQL_TYPE_INT24`/`LONG` parameter (four little-endian bytes).
+    SignedLong,
+    /// A signed `MYSQL_TYPE_LONGLONG` parameter (eight little-endian bytes).
     SignedLongLong,
+    /// A `MYSQL_TYPE_VARCHAR`/`VAR_STRING`/`STRING` parameter carried as a
+    /// length-encoded string (`ExecBinaryParam`'s string arm; utf8 for this
+    /// node).
+    String,
 }
 
-/// The only decoded prepared-statement value admitted by this protocol leaf.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A decoded prepared-statement value admitted by this protocol leaf.
+///
+/// A signed integer width interprets to one `i64` (Go `ExecBinaryParam`
+/// sign-extends `int8`/`int16`/`int32`/`int64`); a string parameter carries its
+/// raw length-encoded bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreparedValue {
-    /// A signed 64-bit integer encoded little-endian in the execute packet.
+    /// A signed integer parameter, sign-extended to 64 bits from its wire width.
     SignedLongLong(i64),
+    /// A string parameter's raw bytes (utf8 for the configured node).
+    String(Vec<u8>),
 }
 
 /// Whether an execute packet supplied a new parameter type vector.
@@ -144,11 +171,18 @@ pub enum PreparedStatementError {
         /// Values supplied by the caller.
         actual: usize,
     },
-    /// A binary signed-BIGINT row was requested for non-BIGINT metadata.
+    /// A binary result column type is outside the bounded LONGLONG-or-string set.
     UnsupportedBinaryResultColumn {
         /// Zero-based metadata column index.
         column: usize,
         /// Advertised MySQL type code.
+        type_code: u8,
+    },
+    /// A supplied cell's kind did not match its column's advertised type.
+    MismatchedBinaryResultCell {
+        /// Zero-based column index.
+        column: usize,
+        /// Advertised MySQL type code the cell did not fit.
         type_code: u8,
     },
 }
@@ -170,7 +204,7 @@ impl std::fmt::Display for PreparedStatementError {
             Self::ZeroStatementId => formatter.write_str("prepared statement ID must be nonzero"),
             Self::UnsupportedParameterCount { count } => write!(
                 formatter,
-                "unsupported prepared-statement parameter count: {count}; expected one"
+                "unsupported prepared-statement parameter count: {count}; expected at least one"
             ),
             Self::UnsupportedCursorFlag(flag) => {
                 write!(
@@ -225,7 +259,11 @@ impl std::fmt::Display for PreparedStatementError {
             ),
             Self::UnsupportedBinaryResultColumn { column, type_code } => write!(
                 formatter,
-                "binary signed-BIGINT row column {column} has unsupported type {type_code}"
+                "binary result column {column} has unsupported type {type_code}"
+            ),
+            Self::MismatchedBinaryResultCell { column, type_code } => write!(
+                formatter,
+                "binary result cell {column} does not match column type {type_code}"
             ),
         }
     }
@@ -244,7 +282,11 @@ pub fn decode_prepared_statement_execute(
     parameter_count: usize,
     previous_types: Option<&[PreparedParameterType]>,
 ) -> Result<PreparedStatementExecute, PreparedStatementError> {
-    if parameter_count != 1 {
+    // The body below is already count-generic: the null bitmap, the type
+    // vector, and the value loop are all driven by `parameter_count`. Only a
+    // zero-marker execute is rejected, because every admitted template binds at
+    // least one value.
+    if parameter_count == 0 {
         return Err(PreparedStatementError::UnsupportedParameterCount {
             count: parameter_count,
         });
@@ -314,13 +356,27 @@ pub fn decode_prepared_statement_execute(
 
     let mut values = Vec::with_capacity(types.len());
     for parameter_type in &types {
-        match parameter_type {
-            PreparedParameterType::SignedLongLong => {
-                values.push(PreparedValue::SignedLongLong(
-                    cursor.read_i64("signed BIGINT value")?,
-                ));
+        // Each integer width sign-extends to one i64, exactly as Go
+        // `ExecBinaryParam` widens int8/int16/int32/int64 with `int64(intN(...))`;
+        // a string carries its length-encoded bytes.
+        let value = match parameter_type {
+            PreparedParameterType::SignedTiny => {
+                PreparedValue::SignedLongLong(i64::from(cursor.read_i8("signed TINYINT value")?))
             }
-        }
+            PreparedParameterType::SignedShort => {
+                PreparedValue::SignedLongLong(i64::from(cursor.read_i16("signed SMALLINT value")?))
+            }
+            PreparedParameterType::SignedLong => {
+                PreparedValue::SignedLongLong(i64::from(cursor.read_i32("signed INT value")?))
+            }
+            PreparedParameterType::SignedLongLong => {
+                PreparedValue::SignedLongLong(cursor.read_i64("signed BIGINT value")?)
+            }
+            PreparedParameterType::String => {
+                PreparedValue::String(cursor.read_length_encoded_string("string value")?)
+            }
+        };
+        values.push(value);
     }
     if cursor.remaining() != 0 {
         return Err(PreparedStatementError::TrailingBytes {
@@ -411,9 +467,283 @@ pub fn encode_binary_signed_longlong_row(values: &[i64]) -> Vec<u8> {
     encoded
 }
 
-/// Incremental binary result-set framing for signed-BIGINT rows.
+/// Encodes a `TIME`/`Duration` value as the MySQL binary wire form.
+///
+/// Ported whole from TiDB's `dump.BinaryTime`
+/// (`pkg/server/internal/dump/dump.go`), which takes a signed nanosecond
+/// duration: zero is a single `0` length byte; otherwise a 12- or 8-byte body
+/// with a sign flag, whole days/hours/minutes/seconds, and a little-endian u32
+/// of the sub-second microseconds (dropped, with the length shortened to 8,
+/// when there is no fractional part).
+#[must_use]
+pub fn encode_binary_time(nanoseconds: i64) -> Vec<u8> {
+    const NS_PER_MICRO: i64 = 1_000;
+    const NS_PER_SECOND: i64 = 1_000_000_000;
+    const NS_PER_MINUTE: i64 = 60 * NS_PER_SECOND;
+    const NS_PER_HOUR: i64 = 60 * NS_PER_MINUTE;
+    const NS_PER_DAY: i64 = 24 * NS_PER_HOUR;
+
+    if nanoseconds == 0 {
+        return vec![0];
+    }
+    let mut data = vec![0u8; 13];
+    data[0] = 12;
+    let mut remaining = nanoseconds;
+    if remaining < 0 {
+        data[1] = 1;
+        remaining = -remaining;
+    }
+    let days = remaining / NS_PER_DAY;
+    remaining -= days * NS_PER_DAY;
+    data[2] = days as u8;
+    let hours = remaining / NS_PER_HOUR;
+    remaining -= hours * NS_PER_HOUR;
+    data[6] = hours as u8;
+    let minutes = remaining / NS_PER_MINUTE;
+    remaining -= minutes * NS_PER_MINUTE;
+    data[7] = minutes as u8;
+    let seconds = remaining / NS_PER_SECOND;
+    remaining -= seconds * NS_PER_SECOND;
+    data[8] = seconds as u8;
+    if remaining == 0 {
+        data[0] = 8;
+        data.truncate(9);
+        return data;
+    }
+    let micros = (remaining / NS_PER_MICRO) as u32;
+    data[9..13].copy_from_slice(&micros.to_le_bytes());
+    data
+}
+
+/// The temporal field type that selects `dump.BinaryDateTime`'s output shape.
+///
+/// Go switches on `t.Type()`: `DATETIME` and `TIMESTAMP` render the time and
+/// microsecond components, while `DATE` renders only the calendar date and
+/// discards any time bits. The value's calendar fields and precision travel in
+/// [`PackedTime`]; only this field-type discriminant is missing from the packed
+/// payload (exactly as Go keeps it in the column schema, not the value).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BinaryDateTimeType {
+    /// `MYSQL_TYPE_DATE`: only `YYYY-MM-DD` is emitted; time bits are ignored.
+    Date,
+    /// `MYSQL_TYPE_DATETIME`: full date, time, and microseconds.
+    Datetime,
+    /// `MYSQL_TYPE_TIMESTAMP`: byte-identical to `Datetime` on the wire.
+    Timestamp,
+}
+
+/// Encodes a `DATE`/`DATETIME`/`TIMESTAMP` value as the MySQL binary wire form.
+///
+/// Ported whole from TiDB's `dump.BinaryDateTime`
+/// (`pkg/server/internal/dump/dump.go`). A `DATETIME`/`TIMESTAMP` emits the
+/// shortest faithful body: a single `0` length byte when zero; an 11-byte body
+/// (little-endian `u16` year, then month/day/hour/minute/second, then a
+/// little-endian `u32` of microseconds) when microseconds are present; a 7-byte
+/// body through the seconds when any of hour/minute/second is set; otherwise a
+/// 4-byte date-only body. A `DATE` emits `0` when zero and the 4-byte date-only
+/// body otherwise, ignoring every time field exactly as Go does.
+///
+/// This is the encoder alone; like [`encode_binary_time`] it is not yet wired
+/// into [`BinaryResultCell`] (no temporal result cell / `Datum` time variant
+/// exists), and that gap is tracked as partial-transcreation debt in HANDOFF.
+#[must_use]
+pub fn encode_binary_datetime(time: PackedTime, kind: BinaryDateTimeType) -> Vec<u8> {
+    // Date renders date-only regardless of any time bits, so the two field-type
+    // groups collapse to "may the time be emitted?" — the zero and date-only
+    // shapes are shared, matching Go's two switch arms.
+    let parts = time.parts();
+    if time.is_zero() {
+        return vec![0];
+    }
+    let date_only = |length: u8| {
+        let mut data = Vec::with_capacity(5);
+        data.push(length);
+        data.extend_from_slice(&parts.year.to_le_bytes());
+        data.extend_from_slice(&[parts.month, parts.day]);
+        data
+    };
+    match kind {
+        BinaryDateTimeType::Date => date_only(4),
+        BinaryDateTimeType::Datetime | BinaryDateTimeType::Timestamp => {
+            if parts.microsecond != 0 {
+                let mut data = Vec::with_capacity(12);
+                data.push(11);
+                data.extend_from_slice(&parts.year.to_le_bytes());
+                data.extend_from_slice(&[
+                    parts.month,
+                    parts.day,
+                    parts.hour,
+                    parts.minute,
+                    parts.second,
+                ]);
+                data.extend_from_slice(&parts.microsecond.to_le_bytes());
+                data
+            } else if parts.hour != 0 || parts.minute != 0 || parts.second != 0 {
+                let mut data = Vec::with_capacity(8);
+                data.push(7);
+                data.extend_from_slice(&parts.year.to_le_bytes());
+                data.extend_from_slice(&[
+                    parts.month,
+                    parts.day,
+                    parts.hour,
+                    parts.minute,
+                    parts.second,
+                ]);
+                data
+            } else {
+                date_only(4)
+            }
+        }
+    }
+}
+
+/// One non-null cell of a binary result row.
+///
+/// The variants mirror TiDB's `DumpBinaryRow` numeric and string cases
+/// (`pkg/server/internal/column/column.go`): each integer width matches the
+/// `dump.Uint*` the matching column type uses, a `Float`/`Double` matches the
+/// IEEE-754 bit dump, and a `String` is a length-encoded byte string. SQL `NULL`
+/// is [`Self::Null`], which writes no value bytes and instead sets its column's
+/// null-bitmap bit — the case a nullable aggregate such as `SUM` over an empty
+/// group produces.
+///
+/// Not yet represented (fail closed in the stream, see the risk register in
+/// HANDOFF): temporal (`Date`/`Datetime`/`Timestamp` via `dump.BinaryDateTime`),
+/// `Duration` (`dump.BinaryTime`), `Enum`/`Set`/`JSON`/`TiDBVectorFloat32`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BinaryResultCell {
+    /// SQL `NULL` → no value bytes; the row's null bitmap marks this column.
+    Null,
+    /// `TypeTiny` → one byte (`byte(GetInt64)`).
+    Tiny(i64),
+    /// `TypeShort`/`TypeYear` → two little-endian bytes (`dump.Uint16`).
+    Short(i64),
+    /// `TypeInt24`/`TypeLong` → four little-endian bytes (`dump.Uint32`).
+    Long(i64),
+    /// `TypeLonglong` → eight little-endian bytes (`dump.Uint64`).
+    LongLong(i64),
+    /// `TypeFloat` → four little-endian bytes of the float32 bit pattern.
+    Float(f32),
+    /// `TypeDouble` → eight little-endian bytes of the float64 bit pattern.
+    Double(f64),
+    /// `TypeNewDecimal` → the length-encoded string of `MyDecimal.String()`.
+    /// Unlike the string group, Go dumps this without `EncodeData` (a decimal is
+    /// ASCII), so the canonical string is length-encoded directly.
+    NewDecimal(Decimal),
+    /// A string/blob cell carrying its raw stored bytes.
+    String(Vec<u8>),
+}
+
+/// Encodes one binary result row from typed cells.
+///
+/// Ported from TiDB's `DumpBinaryRow`
+/// (`pkg/server/internal/column/column.go`): the `mysql.OKHeader` byte, then a
+/// null bitmap of `(len + 7 + 2) / 8` bytes whose first two bits are reserved
+/// (so a value at column `i` occupies bit `i + 2`), then each cell in column
+/// order — a `TypeLonglong` as `dump.Uint64` (eight little-endian bytes) and a
+/// string type as `dump.LengthEncodedString`.
+///
+/// Scope note from the Go source: `DumpBinaryRow` writes the string case as
+/// `dump.LengthEncodedString(d.EncodeData(row.GetBytes(i)))`, re-encoding the
+/// value into the *result* charset. This encoder passes the raw bytes through,
+/// which equals `EncodeData` only when the result charset matches the column
+/// charset — the configured node's fixed `utf8mb4` case. A differing client
+/// charset is out of scope here and must re-encode before calling this.
+#[must_use]
+pub fn encode_binary_result_row(cells: &[BinaryResultCell]) -> Vec<u8> {
+    let null_bitmap_len = (cells.len() + 7 + 2) / 8;
+    let mut encoded = Vec::with_capacity(1 + null_bitmap_len + cells.len() * 8);
+    encoded.push(0);
+    encoded.resize(1 + null_bitmap_len, 0);
+    for (index, cell) in cells.iter().enumerate() {
+        match cell {
+            // A NULL writes no value bytes; instead its column's bit is set in
+            // the null bitmap. Go `DumpBinaryRow` reserves the first two bits, so
+            // column `index` occupies bit `index + 2` (byte `(index + 2) / 8`).
+            BinaryResultCell::Null => {
+                let bit = index + 2;
+                encoded[1 + bit / 8] |= 1 << (bit % 8);
+            }
+            // Each width reinterprets the value's low bytes exactly as the
+            // matching `dump.Uint*` does over `GetInt64`/`GetUint64`.
+            BinaryResultCell::Tiny(value) => encoded.push(*value as u8),
+            BinaryResultCell::Short(value) => {
+                encoded.extend_from_slice(&(*value as u16).to_le_bytes());
+            }
+            BinaryResultCell::Long(value) => {
+                encoded.extend_from_slice(&(*value as u32).to_le_bytes());
+            }
+            BinaryResultCell::LongLong(value) => {
+                encoded.extend_from_slice(&(*value as u64).to_le_bytes());
+            }
+            BinaryResultCell::Float(value) => {
+                encoded.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            BinaryResultCell::Double(value) => {
+                encoded.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            // `dump.LengthEncodedString(hack.Slice(row.GetMyDecimal(i).String()))`:
+            // stringify at dump time exactly as Go does, then length-encode.
+            BinaryResultCell::NewDecimal(value) => {
+                append_length_encoded_bytes(&mut encoded, Some(value.to_string().as_bytes()));
+            }
+            BinaryResultCell::String(bytes) => {
+                append_length_encoded_bytes(&mut encoded, Some(bytes));
+            }
+        }
+    }
+    encoded
+}
+
+/// Whether a result column type is dumped as a length-encoded string by TiDB's
+/// `DumpBinaryRow` string group (the `CHAR`/`VARCHAR` subset this node projects;
+/// the blob/bit members of that group are not produced here).
+#[must_use]
+pub const fn is_binary_string_result_type(type_code: u8) -> bool {
+    matches!(type_code, TYPE_STRING | TYPE_VAR_STRING | TYPE_VARCHAR)
+}
+
+/// Whether a result column type is one of `DumpBinaryRow`'s fixed-width signed
+/// integer cases.
+#[must_use]
+pub const fn is_binary_integer_result_type(type_code: u8) -> bool {
+    matches!(
+        type_code,
+        TYPE_TINY | TYPE_SHORT | TYPE_YEAR | TYPE_INT24 | TYPE_LONG | TYPE_LONGLONG
+    )
+}
+
+/// Whether a result column type is a `DumpBinaryRow` IEEE-754 float case.
+#[must_use]
+pub const fn is_binary_float_result_type(type_code: u8) -> bool {
+    matches!(type_code, TYPE_FLOAT | TYPE_DOUBLE)
+}
+
+/// Whether a result column type is `DumpBinaryRow`'s `TypeNewDecimal` case,
+/// dumped as the length-encoded `MyDecimal.String()`.
+#[must_use]
+pub const fn is_binary_decimal_result_type(type_code: u8) -> bool {
+    type_code == TYPE_NEW_DECIMAL
+}
+
+const fn cell_matches_result_type(cell: &BinaryResultCell, type_code: u8) -> bool {
+    match cell {
+        // A NULL carries no value bytes, so it is valid against any column type.
+        BinaryResultCell::Null => true,
+        BinaryResultCell::Tiny(_) => type_code == TYPE_TINY,
+        BinaryResultCell::Short(_) => matches!(type_code, TYPE_SHORT | TYPE_YEAR),
+        BinaryResultCell::Long(_) => matches!(type_code, TYPE_INT24 | TYPE_LONG),
+        BinaryResultCell::LongLong(_) => type_code == TYPE_LONGLONG,
+        BinaryResultCell::Float(_) => type_code == TYPE_FLOAT,
+        BinaryResultCell::Double(_) => type_code == TYPE_DOUBLE,
+        BinaryResultCell::NewDecimal(_) => is_binary_decimal_result_type(type_code),
+        BinaryResultCell::String(_) => is_binary_string_result_type(type_code),
+    }
+}
+
+/// Incremental binary result-set framing for the bounded column types.
 #[derive(Debug)]
-pub struct BinarySignedLongLongResultSetStream {
+pub struct BinaryResultSetStream {
     columns: Vec<ColumnInfo>,
     options: ResultSetOptions,
     state: BinaryResultSetState,
@@ -426,15 +756,23 @@ enum BinaryResultSetState {
     Finished,
 }
 
-impl BinarySignedLongLongResultSetStream {
-    /// Creates a binary stream after verifying every advertised result column
-    /// is a signed-BIGINT column owned by this bounded protocol path.
+impl BinaryResultSetStream {
+    /// Creates a binary stream after verifying every advertised result column is
+    /// one this path can dump: a `DumpBinaryRow` fixed-width integer, IEEE-754
+    /// float, `NewDecimal`, or string type. Temporal and enum/set/json/vector
+    /// are fail closed here — see the HANDOFF risk register — because their cell
+    /// source (a temporal codec, an `EncodeData` charset re-encode) is not
+    /// ported yet.
     pub fn new(
         columns: Vec<ColumnInfo>,
         options: ResultSetOptions,
     ) -> Result<Self, PreparedStatementError> {
         for (column, metadata) in columns.iter().enumerate() {
-            if metadata.type_code != TYPE_LONGLONG {
+            if !is_binary_integer_result_type(metadata.type_code)
+                && !is_binary_float_result_type(metadata.type_code)
+                && !is_binary_decimal_result_type(metadata.type_code)
+                && !is_binary_string_result_type(metadata.type_code)
+            {
                 return Err(PreparedStatementError::UnsupportedBinaryResultColumn {
                     column,
                     type_code: metadata.type_code,
@@ -472,21 +810,32 @@ impl BinarySignedLongLongResultSetStream {
         Ok(packets)
     }
 
-    /// Emits one signed-BIGINT binary row.
-    pub fn row_packet(&self, values: &[i64]) -> Result<Vec<u8>, PreparedStatementError> {
+    /// Emits one binary row after checking each cell matches its column type.
+    pub fn row_packet(
+        &self,
+        cells: &[BinaryResultCell],
+    ) -> Result<Vec<u8>, PreparedStatementError> {
         if self.state != BinaryResultSetState::Rows {
             return Err(PreparedStatementError::InvalidField {
                 field: "binary result-set state",
                 value: self.state as u8,
             });
         }
-        if values.len() != self.columns.len() {
+        if cells.len() != self.columns.len() {
             return Err(PreparedStatementError::RowColumnCount {
                 expected: self.columns.len(),
-                actual: values.len(),
+                actual: cells.len(),
             });
         }
-        Ok(encode_binary_signed_longlong_row(values))
+        for (column, (cell, metadata)) in cells.iter().zip(&self.columns).enumerate() {
+            if !cell_matches_result_type(cell, metadata.type_code) {
+                return Err(PreparedStatementError::MismatchedBinaryResultCell {
+                    column,
+                    type_code: metadata.type_code,
+                });
+            }
+        }
+        Ok(encode_binary_result_row(cells))
     }
 
     /// Emits the terminal EOF exactly once.
@@ -517,12 +866,8 @@ fn decode_parameter_type(
     type_code: u8,
     type_flags: u8,
 ) -> Result<PreparedParameterType, PreparedStatementError> {
-    if type_code != MYSQL_TYPE_LONGLONG {
-        return Err(PreparedStatementError::UnsupportedParameterType {
-            parameter,
-            type_code,
-        });
-    }
+    // The unsigned bit is rejected first (Go reads only this flag bit); any
+    // other nonzero flag byte is an unmodelled encoding for this bounded path.
     if type_flags & MYSQL_UNSIGNED_FLAG != 0 {
         return Err(PreparedStatementError::UnsignedParameter { parameter });
     }
@@ -532,7 +877,17 @@ fn decode_parameter_type(
             value: type_flags,
         });
     }
-    Ok(PreparedParameterType::SignedLongLong)
+    match type_code {
+        TYPE_TINY => Ok(PreparedParameterType::SignedTiny),
+        TYPE_SHORT | TYPE_YEAR => Ok(PreparedParameterType::SignedShort),
+        TYPE_INT24 | TYPE_LONG => Ok(PreparedParameterType::SignedLong),
+        TYPE_LONGLONG => Ok(PreparedParameterType::SignedLongLong),
+        TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING => Ok(PreparedParameterType::String),
+        _ => Err(PreparedStatementError::UnsupportedParameterType {
+            parameter,
+            type_code,
+        }),
+    }
 }
 
 fn prepare_ok_payload(statement_id: u32, result_count: u16, parameter_count: u16) -> Vec<u8> {
@@ -590,11 +945,53 @@ impl<'a> PacketCursor<'a> {
         ))
     }
 
+    fn read_i8(&mut self, field: &'static str) -> Result<i8, PreparedStatementError> {
+        Ok(self.read_exact(1, field)?[0] as i8)
+    }
+
+    fn read_i16(&mut self, field: &'static str) -> Result<i16, PreparedStatementError> {
+        let bytes = self.read_exact(2, field)?;
+        Ok(i16::from_le_bytes(
+            bytes.try_into().expect("two-byte slice"),
+        ))
+    }
+
+    fn read_i32(&mut self, field: &'static str) -> Result<i32, PreparedStatementError> {
+        let bytes = self.read_exact(4, field)?;
+        Ok(i32::from_le_bytes(
+            bytes.try_into().expect("four-byte slice"),
+        ))
+    }
+
     fn read_i64(&mut self, field: &'static str) -> Result<i64, PreparedStatementError> {
         let bytes = self.read_exact(8, field)?;
         Ok(i64::from_le_bytes(
             bytes.try_into().expect("eight-byte slice"),
         ))
+    }
+
+    /// Reads a MySQL length-encoded string: a length-encoded integer header
+    /// followed by that many bytes. A NULL marker (`0xfb`) cannot occur for a
+    /// bitmap-non-null parameter, so it decodes as a zero-length string.
+    fn read_length_encoded_string(
+        &mut self,
+        field: &'static str,
+    ) -> Result<Vec<u8>, PreparedStatementError> {
+        let (length, _is_null, consumed) = crate::parse_length_encoded_int(self.remaining).ok_or(
+            PreparedStatementError::Truncated {
+                field,
+                required: 1,
+                available: self.remaining.len(),
+            },
+        )?;
+        // Advance past the length header, then take the payload bytes.
+        self.read_exact(consumed, field)?;
+        let length = usize::try_from(length).map_err(|_| PreparedStatementError::Truncated {
+            field,
+            required: usize::MAX,
+            available: self.remaining.len(),
+        })?;
+        Ok(self.read_exact(length, field)?.to_vec())
     }
 
     fn read_exact(

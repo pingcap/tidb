@@ -9,10 +9,10 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 2
+- Active claims: 1
 - Active slices: 0
-- Declared ready slices: 3
-- Partial slices: 123
+- Declared ready slices: 2
+- Partial slices: 124
 - Covered slices: 7
 - Blocked slices: 1
 
@@ -42,7 +42,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-24 | integrated | 6 |
 | 2026-07-read-path-25 | planned | 7 |
 | 2026-07-read-path-26 | integrated | 8 |
-| 2026-07-read-path-27 | planned | 4 |
+| 2026-07-read-path-27 | integrated | 4 |
 | 2026-07-read-path-28 | planned | 5 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
@@ -73,8 +73,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 1875 |
-| PARTIAL | 479 |
+| UNTRIAGED | 1873 |
+| PARTIAL | 481 |
 | COVERED | 36 |
 | BLOCKED | 0 |
 
@@ -85,7 +85,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | deferred-external | 390 | 0 | 0 | 0 |
 | tidb-planner | 199 | 114 | 1 | 0 |
 | tidb-server | 249 | 4 | 0 | 0 |
-| tidb-exec | 169 | 72 | 0 | 0 |
+| tidb-exec | 167 | 74 | 0 | 0 |
 | tidb-txnkv | 123 | 26 | 9 | 0 |
 | tidb-catalog | 123 | 4 | 0 | 0 |
 | tidb-expr | 95 | 27 | 0 | 0 |
@@ -109,8 +109,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15190 |
-| PARTIAL | 1228 |
+| UNTRIAGED | 15185 |
+| PARTIAL | 1233 |
 | COVERED | 288 |
 | BLOCKED | 14 |
 
@@ -119,10 +119,10 @@ External module counts are pinned porting obligations and are not included in Ti
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
 | unassigned | 4781 | 394 | 124 | 0 |
-| result | 4214 | 518 | 29 | 3 |
+| result | 4211 | 521 | 29 | 3 |
 | deferred-external | 3042 | 0 | 0 | 0 |
 | plan | 1730 | 177 | 5 | 0 |
-| transaction | 1115 | 101 | 54 | 6 |
+| transaction | 1113 | 103 | 54 | 6 |
 | parser | 308 | 38 | 76 | 5 |
 
 ## Blocked slices
