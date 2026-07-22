@@ -36,6 +36,7 @@ support_anchors = [
   "The listed prepared-count tests are PARTIAL only for handle accounting, execute reuse, close isolation, and admitted DML; their broader SQL/protocol/session behavior remains open",
 ]
 rust_paths = [
+  "rust/crates/tidb-exec/src/real_tikv_dml.rs",
   "rust/crates/tidb-exec/src/real_tikv_read.rs",
   "rust/crates/tidb-protocol/src/lib.rs",
   "rust/crates/tidb-protocol/src/prepared_statement.rs",
@@ -45,7 +46,9 @@ rust_paths = [
   "rust/crates/tidb-server/src/real_tikv_multi_node.rs",
   "rust/crates/tidb-server/src/real_tikv_node.rs",
   "rust/crates/tidb-server/src/sql_node.rs",
+  "rust/crates/tidb-server/tests/mysql_client_lifecycle_source.rs",
   "rust/crates/tidb-server/tests/prepared_dml_tcp_realtikv_source.rs",
+  "rust/crates/tidb-exec/tests/prepared_write_persists_realtikv_source.rs",
   "rust/scripts/run-campaign28-prepared-dml-tcp-realtikv.sh",
   "rust/difftests/corpus/coverage/evidence/source/server-prepared-dml-tcp-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/tests/server-prepared-dml-tcp-runtime.tsv",

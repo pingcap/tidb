@@ -45,7 +45,6 @@ rust_paths = [
   "rust/crates/tidb-codec/tests/configured_bigint_row_write_source.rs",
   "rust/crates/tidb-exec/Cargo.toml",
   "rust/crates/tidb-exec/src/lib.rs",
-  "rust/crates/tidb-exec/src/real_tikv_dml.rs",
   "rust/crates/tidb-exec/tests/prepared_dml_lowering_source.rs",
   "rust/crates/tidb-planner/src/lib.rs",
   "rust/crates/tidb-planner/src/prepared_dml.rs",
