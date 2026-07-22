@@ -12,5 +12,6 @@ workspace = true
 
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
+tidb-hash = { path = "../tidb-hash" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }

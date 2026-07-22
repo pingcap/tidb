@@ -9,3 +9,6 @@ description = "Shared MySQL constants and value contracts for the TiDB Rust rewr
 
 [lints]
 workspace = true
+
+[dependencies]
+semver.workspace = true
