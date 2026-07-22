@@ -113,7 +113,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 33,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

@@ -138,8 +138,8 @@ func TestSendMeterOnCleanUpInParallelLimitsConcurrency(t *testing.T) {
 			close(overflow)
 		}
 		for {
-			max := atomic.LoadInt32(&maxActive)
-			if current <= max || atomic.CompareAndSwapInt32(&maxActive, max, current) {
+			maxSeen := atomic.LoadInt32(&maxActive)
+			if current <= maxSeen || atomic.CompareAndSwapInt32(&maxActive, maxSeen, current) {
 				break
 			}
 		}

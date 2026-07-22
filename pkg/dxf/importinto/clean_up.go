@@ -129,17 +129,13 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 		}
 	}
 
-	if err := sendMeterOnCleanUpInParallel(ctx, meterTasks, sendMeterOnCleanUp); err != nil {
-		return err
-	}
-	return nil
+	return sendMeterOnCleanUpInParallel(ctx, meterTasks, sendMeterOnCleanUp)
 }
 
 func sendMeterOnCleanUpInParallel(ctx context.Context, tasks []*proto.Task, sendFn sendMeterOnCleanUpFunc) error {
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	eg.SetLimit(cleanUpMeteringConcurrency)
 	for _, task := range tasks {
-		task := task
 		eg.Go(func() error {
 			logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
 			if err := sendFn(egCtx, task, logger); err != nil {
