@@ -12,27 +12,40 @@ The core strategic insight is that **TiDB SQL nodes are stateless**. Multiple Ti
 
 ## Source-transit contract
 
-The rewrite transits behavior from Go before it redesigns implementation. For
-each leaf, the owning Go file and symbol are the contract: preserve branch
-ordering, constants, error text, hash/equality framing, wire/SQL text, and
-edge-case arithmetic first; then expose a Rust API that is dependency-closed
-and easy to compose. Every leaf carries an exact original-test anchor and
-source/test evidence row. The generated ledgers keep one owner per Go source
-file and per test obligation, so fixture coverage cannot be mistaken for test
-parity and parallel agents cannot silently claim the same behavior.
+The rewrite transits behavior from Go before it redesigns implementation. The
+minimum transcreation unit is one complete upstream Go package or module. No
+file, function, method, branch, SQL shape, or feature subset is a valid unit of
+ownership or completion.
 
-Pure policy, metadata, codec, and formatting leaves are migrated first. Live
-session, transaction, catalog, storage, RPC, DDL, and cluster behavior is
-attached only after its source contract is covered by a focused Rust test and
-the corresponding integration seam exists. This is a staged source transit,
-not a second implementation invented from the design document; the Go suite
-remains the behavioral oracle until the Rust suite and runtime replace it.
+A package transcreation includes every production source file, generated file
+and generator input, build-tag/platform variant, test and nested case,
+external test package, benchmark, fuzz target, example, fixture, golden result,
+embedded asset, testdata directory, failpoint, helper program, runner script,
+and package build artifact. It preserves control-flow ordering, constants,
+error identity and text, hash/equality framing, wire and SQL output, edge-case
+arithmetic, cancellation, and state transitions before exposing Rust APIs.
+
+The generated source/test ledgers remain the atomic evidence inventory, while
+a checked package manifest groups every row and support artifact needed for a
+single package receipt. A package cannot be called transcreated until that
+inventory is closed and its focused, differential, fault, and live gates pass.
+Existing partial ports remain frozen seed evidence, but they are explicitly
+incomplete and cannot authorize new partial package work or stand in for
+unported package branches and tests.
+
+This is direct Go-to-Rust transcreation, not a second implementation invented
+from this design document. The Go source and suite remain the behavioral oracle
+until the complete Rust package and runtime replace them. Rust-specific
+redesign is restricted to implementation mechanisms the language cannot carry
+faithfully, such as GC pools, goroutine ownership, pointer identity, untyped
+registries, and init-time globals; observable TiDB behavior does not change.
 
 ## Implementation status
 
 Live implementation status is generated in [`rust/STATUS.md`](../../rust/STATUS.md).
-Current execution work, dependencies, and validation criteria are maintained in
-the [active ExecPlan](../../rust/workstreams/plans/2026-07-read-path-25.md).
+Current architecture, package-level gaps, and migration steps are maintained in
+[`rust/HANDOFF.md`](../../rust/HANDOFF.md). ExecPlans carry the validation
+criteria for active work; this design does not duplicate their changing state.
 
 ## Motivation
 
@@ -121,53 +134,61 @@ Replace one Go package at a time with a Rust implementation behind cgo. Rejected
 
 ### Chosen implementation method: source-first structural transition
 
-The unit of work is a bounded Go source domain plus its existing tests, not a
-new Rust interpretation of SQL behavior. For each domain, port the normal Go
-control flow, data representation, error surface, and test vectors directly;
-the Go implementation is the specification and its tests are obligations.
-Automated/agent-assisted translation is encouraged for this mechanical work,
-especially parser branches, AST restore methods, builtin dispatch, and test
-tables. Every translated leaf must then pass the relevant Go-oracle
-differential ring before it is considered covered.
+The unit of work is a whole Go package or module plus its complete original
+test/support inventory, not a new Rust interpretation of SQL behavior. For
+each package, port the Go control flow, data representation, error surface, and
+test vectors directly. Automated and agent-assisted translation is encouraged
+for the mechanical work, but it must traverse the complete package inventory;
+it may not stop after the branches needed by the current connected feature.
 
-Two generated ledgers make that rule executable: one inventories every
-production Go source owner and routes it to a target crate; the other
-inventories every original test entry point, fixture, runner, and expected
-result. Parallel work is dispatched only from the intersection of those
-queues, so neither an implementation file nor a test obligation can disappear
-behind package-level progress estimates.
+Generated ledgers inventory every production source and every original test,
+fixture, runner, and expected result. Checked package manifests add the missing
+acceptance boundary: they group all ledger rows, generated inputs/outputs,
+testdata, helper programs, and build metadata for one upstream package. The
+manifest is invalid if any package artifact is unowned or multiply owned.
 
-Agents do not pay a workspace build for each translated leaf. They claim a
-complete source/test envelope, declare every Rust output path, inspect and
-translate against Go, and run only zero-build/static checks. Exact Go anchors,
-test anchors, dependency capabilities, and Rust output paths are atomic claim
-dimensions. A single integration steward then batches the accepted envelopes
-through one reused 12-job Cargo target and runs workspace tests, strict
-all-target Clippy, formatting, and the generated-ledger/differential gates
-once. This makes build frequency proportional to accepted parallel waves, not
-agent count or file count.
+Parallel work follows the package dependency DAG. A team claims one package or
+a dependency-closed package group, declares the entire Rust write set, and
+owns the complete package receipt. Independent teams must be disjoint across
+Go source, original test/support artifacts, and mutable Rust paths. A large
+package still has one implementation claim, one integration owner, and one
+completion decision. Read-only inventory and review work may be delegated, but
+the package cannot be split into independently mergeable implementation claims.
+New partial package implementations are not integrated into the shared branch.
 
-The physical workspace follows the same ownership unit. A source-domain
-envelope owns its typed AST/data shape, implementation, mirrored original
-tests, differential selector or corpus, and sparse ledger fragment together.
-Crate roots contain contracts, dispatch, and public re-exports only; they do
-not retain feature behavior or private compatibility aliases after an
-extraction. Shared routing is serialized through four narrow steward seams:
-AST/parser routing, executor state/dispatch, datatype/evaluation context, and
-workspace/evidence generation. Parser-only, result, and transaction evidence
-are separate Cargo packages so an agent can compile its source family while a
-different behavior crate is temporarily changing. This is the directory
-structure that turns source translation into real parallelism instead of
-several agents contending on the same roots.
+Agents do not pay a workspace build for every translated file. Package teams
+run focused checks against a reused checkout-specific target. One integration
+steward batches a frozen dependency frontier through a reused 12-job Cargo
+target and runs workspace tests, strict all-target Clippy, formatting,
+generated-inventory checks, differential rings, and required live gates. This
+makes build frequency proportional to accepted package frontiers rather than
+agent or file count.
+
+The physical workspace separates package-owned leaves from shared routing
+seams. Crate roots contain contracts, dispatch, and public re-exports only;
+they do not retain feature behavior or private compatibility aliases after an
+owner transition. Stewards serialize AST/parser routing, datatype/evaluation
+context, planner/executor/session dispatch, server connection lifecycle,
+transaction/storage authority, and workspace/evidence generation. Rust crates
+may split a Go package for compile-time or ownership reasons, but crate layout
+never weakens package-level acceptance.
 
 Translation stops at a real language/runtime boundary. GC-coupled pools,
 goroutine/channel lifecycle, pointer-identity tricks, and untyped `any`
 registries must be expressed using Rust ownership, typed state, and explicit
 task supervision; carrying those shapes over verbatim would preserve the Go
 runtime's costs and create unsafe or unmaintainable Rust. The rule is therefore
-**translate contracts directly; redesign only the implementation mechanism
-that Rust cannot faithfully carry**. Redesigning SQL, optimizer, transaction,
-or wire behavior during a transition is prohibited.
+**translate the complete package contract directly; redesign only the runtime
+mechanism Rust cannot faithfully carry**. Redesigning SQL, optimizer,
+transaction, storage, or wire behavior during transcreation is prohibited.
+
+The existing `schema = "1"` records under `rust/workstreams/slices/` are
+frozen legacy evidence from the earlier feature-slice process. They remain
+readable for exact anchors, paths, claims, and receipts, but they are not valid
+templates, dispatch units, dependency-completion signals, or package-coverage
+evidence. No new schema-1 feature slice may be created or extended. Migration
+associates its preserved evidence with the owning package manifest without
+changing the original record or promoting ledger/status state.
 
 The migration ladder for a `tidb-rs` node inside a mixed cluster:
 
@@ -258,13 +279,13 @@ An audit of Go-specific idioms in the tree sorts into three buckets:
 ## Verification: differential everything
 
 Correctness is the whole ballgame; the strategy is to never trust a port, only
-a comparison. The four rings below are the target acceptance system, but they
-are staged: the current workspace has source-owned leaf and static-corpus
-gates, while cluster shadowing, full plan parity, and real-TiKV transaction
-testing remain future gates.
+a comparison. The four rings below are the target acceptance system. Existing
+static-corpus checks are preserved as evidence, while package receipts require
+the complete package inventory and every applicable ring; cluster shadowing,
+full plan parity, and real-TiKV transaction testing remain future gates.
 
 1. **Parser ring**: replay every statement in `tests/integrationtest/t/**`, the parser unit corpus, and a grammar-aware fuzzer through Go-hparser and tidb-parser; compare restored SQL text, AST digests, error code + message + position. The current checked oracle has zero Rust parse failures, restore mismatches, or false accepts; its one remaining actionable row is the pinned Go restore failure for `json_memberof()`, and the 99 dual rejections are explicit rejection parity.
-2. **Plan ring**: same corpus + stats fixtures; compare `EXPLAIN` output and plan digests statement-by-statement. The zero-diff gate remains mandatory before traffic, but the current implementation only covers narrow planner source leaves; the full optimizer ring is not yet open.
+2. **Plan ring**: same corpus + stats fixtures; compare `EXPLAIN` output and plan digests statement-by-statement. The zero-diff gate remains mandatory before traffic; existing planner seed evidence does not complete the `pkg/planner` package inventory or open the full optimizer ring.
 3. **Result ring**: begin with static Go-backed query/expression/table corpora, then add shadow traffic in real clusters (step 1 of the ladder) and `copr-test`-style randomized differential (random schema + random queries, TiDB-Go vs tidb-rs vs MySQL as the 3-way oracle).
 4. **Transaction ring**: begin with source-owned storage primitives and fault/error boundaries, then run the txnkv crate's Jepsen and client-go integration suite against real TiKV before any write path opens; error-injection (fail-rs) tests are ported from client-go's.
 
@@ -280,31 +301,21 @@ The bounded plaintext read node and one normal optimistic 2PC path are stepping 
 
 Phase 3 includes the complete concrete TiDB/client-go transaction and batch-KV behavior required by the original source/test inventory, not only the currently admitted autocommit optimistic 2PC subset. This includes region-aware BatchGet/scan/write batching, explicit transaction state and statement staging, optimistic retries and cleanup, lock resolution and TTL heartbeats, pessimistic locks/rollback, primary and secondary recovery, 1PC and async commit eligibility/fallback, savepoint/option semantics used by TiDB, cancellation and undetermined-result boundaries, and the relevant failpoint/fault cases. All modes reuse one PD, RegionCache, lock resolver, BatchCommands transport, retry authority, and shutdown lifecycle. A second transaction client, an in-memory backend, or a mock transport cannot satisfy implementation or acceptance. Real-TiKV differential, fault-injection, Jepsen, sysbench, and TPC-C gates remain mandatory before the write phase is complete.
 
-| Phase | Deliverable | Reuses | New Rust LOC (est.) | Gate | Current status (2026-07-19) |
-|---|---|---|---|---|---|
-| 0 | `tidb-parser` + `tidb-ast` + `tidb-datatype` extraction | hparser design 1:1; TiKV datatype crate | 60-80k | Zero Rust regressions on accepted inputs, explicit rejection parity, and documented oracle failures | In progress: parser ring is clean except the pinned Go `json_memberof()` failure; source/test obligations remain |
-| 1 | `tidb-txnkv` + `tidb-codec` + `tidb-catalog` (read) | client-rust skeleton; client-go as spec | 50-70k | Transaction ring (read path); Jepsen for reads/stale reads | A production bounded read client now owns real PD TSO/region/store discovery, RegionCache routing/recovery, BatchCommands-first TiKV Coprocessor dispatch, and table-key/row decoding. Dynamic catalog discovery plus broad read/stale-read and Jepsen parity remain open. |
-| 2 | Read-only compute node: protocol + session (read subset) + planner + exec + distsql | tidb_query_executors patterns; tipb | 250-350k | Plan ring zero-diff; shadow → read traffic in staging; perf ≥ Go on sysbench read + TPC-H | The first topology-resilient bounded vertical slice is live: authenticated stock MySQL clients → Rust COM_QUERY → parser/planner/clustered signed-BIGINT range detachment/tipb `[TableScan, Selection]` → real PD TSO/RegionCache → BatchCommands-first real TiKV → exact clustered-key and stored-column rows. Direct projections, all six comparisons, reversed operands, conjunctions, signed extremes, split `!=`, contradictions, and access-plus-residual predicates are proven; zero ranges avoid TSO/transport. Eight sessions overlap through a fixed worker pool and one process authority; persistent sessions survive A→B→C→same-address-restarted-B leader churn, exact channel/stream identity is observable, and blocked-query SIGTERM shuts connections→RegionCache→TiKV→PD down fallibly. Phase 2 remains incomplete: the executable is loopback/plaintext and static-catalog with only bounded signed-BIGINT predicates; temporal SQL/Duration, decimal/enum/set/vector/native CHBlock, typed expression/nested FullSchema mappings, NULL/coercion/unsigned semantics, `OR`/functions/arithmetic, index/common-handle/partition ranges, joins/aggregation/order/limit, grants/TLS/prepared statements, plan-ring zero-diff, shadow traffic, and performance gates remain open. Campaigns 23 and 24 are Ready-integrated; Campaign 25 has two disjoint roots ready for parallel implementation. |
-| 3 | Read-write: full txn lifecycle, DML, `tidb-stats` write path | Phase 1 client | 80-120k | Jepsen full; TPC-C parity; shadow-write comparison | Not started |
-| 4 | Full peer: `tidb-ddl`, background ownership, bootstrap | — | 80-120k | Mixed-cluster DDL suite; ownership handover drills; long-run canary | Not started |
+| Phase | Deliverable | Reuses | New Rust LOC (est.) | Gate |
+|---|---|---|---|---|
+| 0 | Complete parser/AST/datatype package frontier | hparser design; TiKV datatype crate | 60-80k | Complete package receipts; parser zero-diff on accepted inputs; explicit rejection parity; documented oracle failures |
+| 1 | Complete KV/codec/catalog read package frontier | client-rust skeleton; client-go as spec | 50-70k | Complete package receipts; transaction read ring; Jepsen for reads and stale reads |
+| 2 | Read-only SQL-node package frontier: protocol, session, planner, executor, expression, and DistSQL | tidb_query_executors patterns; tipb | 250-350k | Complete package receipts; plan ring zero-diff; shadow traffic; sysbench-read and TPC-H performance at least Go |
+| 3 | Read-write package frontier: full transaction lifecycle, DML, and statistics writes | Phase 1 client | 80-120k | Complete package receipts; Jepsen full; TPC-C parity; shadow-write comparison |
+| 4 | Full-peer package frontier: DDL, metadata, domain, ownership, and bootstrap | — | 80-120k | Complete package receipts; mixed-cluster DDL suite; ownership handover drills; long-run canary |
 
-Estimated total: 500-700k Rust LOC (Rust runs denser than Go for this code; enum-based AST/plan nodes and macro-generated variable/function registries remove much of Go's repetition). The staffing and calendar numbers are planning estimates, not commitments; they must be re-estimated after the first connected read-only vertical slice. A calendar-parallel Go tree means the corpus-sync CI (above) is not optional at any point.
-
-Campaign 24 is Ready-integrated: the shared gate and repository lint passed,
-all six receipt-backed members were released, and generated status is current.
-Campaign 25 should now dispatch its two ready roots in parallel, then unlock
-relation binding, FullSchema join planning, join execution, and the live
-two-relation proof through exact evidence prerequisites.
-
-After that boundary, carry the bounded multi-relation catalog binding into
-general typed expressions, FullSchema redundant-column mappings, typed
-ON/USING semantics, and the broader uncompressed COM_QUERY → server dispatch
-→ session → DistSQL → metadata/row/EOF statement flow. Attach response events
-and status snapshots to the real session/error-context and wire writers;
-complete typed default/columnar/CHBlock codecs, temporal/JSON/enum/set/vector
-Datum, full charset/session formatting, and intermediate-output routing. Do
-not treat another collection of isolated leaf ports as a substitute for the
-end-to-end gate.
+Estimated total: 500-700k Rust LOC (Rust runs denser than Go for this code;
+enum-based AST/plan nodes and macro-generated variable/function registries
+remove much of Go's repetition). The staffing and calendar numbers are
+planning estimates, not commitments. A calendar-parallel Go tree means the
+corpus-sync CI above is not optional at any point. Current implementation and
+ledger state live only in `rust/STATUS.md`, `rust/HANDOFF.md`, package
+manifests, and active ExecPlans.
 
 DDL is deliberately last: it is the only subsystem where a bug destroys user data through a background process (reorg backfill), it has the deepest coupling to cluster-wide invariants (schema lease, MDL), and it benefits most from the longest shadow period.
 
@@ -324,7 +335,7 @@ DDL is deliberately last: it is the only subsystem where a bug destroys user dat
 
 - **Big-bang and in-process FFI**: rejected above (Strategy).
 - **Build on Apache DataFusion** instead of porting the planner/executor: DataFusion is an excellent engine but its SQL semantics are not MySQL's, its optimizer is not TiDB's, and bending it to bug-for-bug MySQL compatibility plus TiKV pushdown plus TiDB's plan-stability surface (hints, bindings, plan digests) is a larger delta than porting. Selectively borrowing (Arrow memory layout for `tidb-chunk`, spill machinery) is in scope; adopting the framework is not.
-- **Blind whole-package transpilation without contract gates**: rejected. It copies GC-shaped ownership graphs, goroutine lifecycle, and untyped registries into Rust without proving behavior. This is distinct from the chosen source-first structural transition: agentic/mechanical translation of a bounded Go domain plus its tests is the default implementation accelerator, provided each leaf is differentially verified and runtime-only mechanisms are translated into their idiomatic Rust equivalent.
+- **Blind mechanical transpilation without contract gates or runtime adaptation**: rejected. It copies GC-shaped ownership graphs, goroutine lifecycle, and untyped registries into Rust without proving behavior. This does not weaken the required whole-package boundary. The chosen method is source-grounded complete-package transcreation: mechanically translate the entire package and original test/support inventory, adapt only Go-runtime mechanisms to idiomatic Rust, and require package inventory closure plus differential and live gates.
 - **Rewrite only the hot subsystems, keep Go for the rest, permanently**: permanent FFI seams in-process (rejected above), or a permanent two-binary architecture whose operational complexity outlives the migration's benefits. Acceptable only as a fallback if Phase 3+ stalls: the Phase-2 read-only node is designed to be a stable stopping point.
 
 ## Appendix: the query path being ported
@@ -366,56 +377,43 @@ The `exec.Executor` interface (`Open/Next/Close` over `*chunk.Chunk`) and `kv.Cl
   differential corpora, ledgers, and evidence alongside the crates. A future
   repository split must preserve that source/test ownership history and exact
   corpus snapshots.
-- The migration unit is a source-domain envelope; the deployment unit remains
-  a standalone SQL node. These are complementary decisions: source-shaped
-  translation enables parallel work, while the serialized cluster boundary
-  avoids an in-process FFI seam.
+- The migration unit is one complete upstream Go package or module plus its
+  complete original test/support inventory; the deployment unit remains a
+  standalone SQL node. Package-shaped translation enables dependency-DAG
+  parallelism, while the serialized cluster boundary avoids an in-process FFI
+  seam.
+- Existing schema-1 feature slices are frozen legacy evidence. They are not
+  templates, dispatch units, dependency-completion signals, or evidence of
+  package coverage.
 
 ### Parallel execution contract
 
-Parallelism is organized around dependency-ready vertical slices, not isolated
-helper methods, horizontal file types, or whichever Go file has the highest
-raw queue score. One checked slice joins one or more authoritative Go source
-owners, every directly owned original test/support obligation, the Rust leaf
-and test destination, a focused target, its immediate consumer, and explicit
-prerequisites. A whole-slice dependency must be `covered`; a capability inside
-a broader partial family instead names one exact source/test ledger anchor,
-its evidence owner, and the required `PARTIAL` or `COVERED` minimum. Readiness
-must never be inferred from another row owned by the same agent. Only a
-`ready` slice whose prerequisites are satisfied may be dispatched. Its
-multi-source claim is atomic, must exactly match the checked slice, and must
-reject every overlapping source or test anchor before either agent edits code.
+Parallelism is organized around the whole-package dependency DAG. One checked
+package manifest joins every authoritative production source, every original
+test/support artifact, all generated and build inputs, the complete Rust write
+set, focused targets, differential/live gates, and explicit package
+dependencies. Only an inventory-complete, dependency-ready package or
+dependency-closed package group may be dispatched. Claims are atomic and reject
+overlap across Go sources, test/support artifacts, and mutable Rust paths.
 
-Feature agents own only their domain leaves, focused tests, and owner-named
-evidence fragments. Crate routing, test registration, generated inventories,
-and current progress snapshots are deterministic integration products rather
-than recurring feature-agent edits. The checked ledgers remain authoritative;
-claims coordinate active work but cannot hide, waive, or mark an obligation
-covered.
+A package team owns all Rust implementation paths, mirrored package tests, and
+owner-named evidence declared by its package manifest. Read-only inventory and
+review audits may run in parallel, but implementation is not divided into
+independently mergeable file/function/branch claims. Crate routing, test
+registration, manifests, generated inventories, and current status are
+steward-owned integration products. Claims coordinate work but cannot hide,
+waive, or promote a ledger obligation.
 
-Validation has three scopes: a focused leaf gate, a static merged-evidence
-gate, and one full workspace test/Clippy gate after a substantial multi-domain
-batch freezes. A numbered wave, successful compilation, or a differential
-sample is not progress by itself. Progress is the exact reduction of
-untriaged/partial source and original-test obligations, with `COVERED` reserved
-for a completely audited source family and its required differential ring.
-The executable protocol and commands live in `rust/PARALLEL.md` and
-`rust/docs/operations/validation.md`; checked dispatch records live under
-`rust/workstreams/slices/` and are validated by
-`rust/scripts/work-unit-queue.py check`.
+Validation has three scopes: focused package gates, a static merged-inventory
+gate, and one full workspace test/Clippy/differential/live gate after a
+dependency frontier freezes. A successful compilation, bounded query, or
+differential sample is not package progress by itself. Progress is an exact
+package inventory closed by an immutable receipt, with explicit remaining
+package gaps. The executable protocol lives in `rust/PARALLEL.md` and
+`rust/docs/operations/validation.md`.
 
-The normal integration batch is a checked campaign: one or more three-agent
-implementation/review rotations covering at least nine authoritative production
-files or fifty original test/support obligations before the expensive shared
-gate. The dispatcher keeps two rotations (six disjoint ready slices) prepared
-ahead when dependencies permit, but a coherent three-slice campaign may freeze
-once it meets the obligation floor. Agents translate directly from the owned Go
-code and tests and run static/focused checks; the integrator alone runs the
-persistent 12-job workspace gate after freeze.
-
-Each claimed feature slice uses a `codex/<slice>` branch in a writable in-repo
-worktree. The primary dispatcher acquires claims before worktree creation;
-checked source, test, and Rust write sets remain the semantic isolation boundary.
-Worktrees share dependency and build caches, shared runtime seams stay frozen
-during each rotation, and claims are released only from an immutable successful
-integration receipt.
+Each package claim uses a `codex/<package-owner>` branch in a writable in-repo
+worktree. The dispatcher acquires the complete claim before worktree creation;
+package source, test/support, and Rust write sets are the isolation boundary.
+The integrator alone runs the persistent 12-job shared gate and releases claims
+only from an immutable successful package receipt.
