@@ -23,7 +23,7 @@ fn append_parser_owned_values(hasher: &mut dyn IHasher) {
     hasher.hash_string("TiDB");
 }
 
-fn append_through_planner_alias(hasher: &mut dyn Hasher) {
+fn append_through_planner_facade(hasher: &mut dyn Hasher) {
     hasher.hash_bool(false);
     hasher.hash_int(9);
     hasher.hash_int64(-10);
@@ -45,11 +45,11 @@ fn exercise_planner_cache_contract(hasher: &mut dyn Hasher) {
 fn planner_hasher_implements_the_parser_owned_interface() {
     let mut hasher = new_hash_equaler();
     append_parser_owned_values(&mut hasher);
-    append_through_planner_alias(&mut hasher);
+    append_through_planner_facade(&mut hasher);
     let first = IHasher::sum64(&hasher);
     exercise_planner_cache_contract(&mut hasher);
     IHasher::reset(&mut hasher);
     append_parser_owned_values(&mut hasher);
-    append_through_planner_alias(&mut hasher);
+    append_through_planner_facade(&mut hasher);
     assert_eq!(IHasher::sum64(&hasher), first);
 }
