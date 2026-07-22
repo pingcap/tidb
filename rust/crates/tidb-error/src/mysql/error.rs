@@ -296,6 +296,9 @@ fn escaped_character(character: char, quote: char, ascii_only: bool) -> String {
         '\\' => "\\\\".to_owned(),
         '\'' if quote == '\'' => "\\'".to_owned(),
         '"' if quote == '"' => "\\\"".to_owned(),
+        value if u32::from(value) <= 0xff && value.is_control() => {
+            format!("\\x{:02x}", u32::from(value))
+        }
         value if value.is_control() => format!("\\u{:04x}", u32::from(value)),
         value => value.to_string(),
     };
@@ -314,7 +317,7 @@ fn quoted_string(value: &str, alternate: bool, ascii_only: bool) -> String {
     if alternate
         && value
             .chars()
-            .all(|character| character != '`' && !character.is_control())
+            .all(|character| character != '`' && (!character.is_control() || character == '\t'))
     {
         return format!("`{value}`");
     }
@@ -430,8 +433,8 @@ fn decimal_integer(argument: &FormatArg, spec: FormatSpec) -> String {
 }
 
 fn binary_float_hex(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String {
-    if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-        return pad_width(argument.display.clone(), spec, true);
+    if let Some(value) = special_float(argument, spec) {
+        return value;
     }
     let (negative, exponent_bits, fraction, stored_fraction_bits, bias, subnormal_exponent) =
         if argument.type_name == "float32" {
@@ -593,9 +596,29 @@ fn apply_float_sign(value: String, spec: FormatSpec) -> String {
     }
 }
 
+fn special_float(argument: &FormatArg, spec: FormatSpec) -> Option<String> {
+    let value = match argument.display.as_str() {
+        "+Inf" if spec.space && !spec.plus => " Inf".to_owned(),
+        "+Inf" => "+Inf".to_owned(),
+        "-Inf" => "-Inf".to_owned(),
+        "NaN" if spec.plus => "+NaN".to_owned(),
+        "NaN" if spec.space => " NaN".to_owned(),
+        "NaN" => "NaN".to_owned(),
+        _ => return None,
+    };
+    Some(pad_width(
+        value,
+        FormatSpec {
+            zero: false,
+            ..spec
+        },
+        true,
+    ))
+}
+
 fn scientific_float(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String {
-    if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-        return pad_width(apply_float_sign(argument.display.clone(), spec), spec, true);
+    if let Some(value) = special_float(argument, spec) {
+        return value;
     }
     let precision = spec.precision.unwrap_or(6);
     let raw = if argument.type_name == "float32" {
@@ -627,8 +650,8 @@ fn scientific_float(argument: &FormatArg, upper: bool, spec: FormatSpec) -> Stri
 }
 
 fn general_float(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String {
-    if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-        return pad_width(apply_float_sign(argument.display.clone(), spec), spec, true);
+    if let Some(value) = special_float(argument, spec) {
+        return value;
     }
     let value = argument
         .display
@@ -691,8 +714,8 @@ fn general_float(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String 
 }
 
 fn binary_float_decimal(argument: &FormatArg, spec: FormatSpec) -> String {
-    if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-        return pad_width(apply_float_sign(argument.display.clone(), spec), spec, true);
+    if let Some(value) = special_float(argument, spec) {
+        return value;
     }
     let (negative, mantissa, exponent) = if argument.type_name == "float32" {
         let bits = argument
@@ -774,11 +797,15 @@ fn radix_integer(argument: &FormatArg, verb: u8, spec: FormatSpec) -> String {
     } else if let Some(precision) = spec.precision {
         digits.insert_str(0, &"0".repeat(precision.saturating_sub(digits.len())));
     }
+    if verb == b'o' && spec.alternate && !digits.starts_with('0') {
+        digits.insert(0, '0');
+    }
+    if verb == b'O' && spec.alternate && magnitude != 0 && !digits.starts_with('0') {
+        digits.insert(0, '0');
+    }
     let prefix = match verb {
         b'b' if spec.alternate => "0b",
-        b'o' if spec.alternate => "0",
-        b'O' if spec.alternate => "0o0",
-        b'O' => "0o",
+        b'O' if !digits.is_empty() => "0o",
         b'x' if spec.alternate => "0x",
         b'X' if spec.alternate => "0X",
         _ => "",
@@ -803,28 +830,44 @@ fn radix_integer(argument: &FormatArg, verb: u8, spec: FormatSpec) -> String {
 }
 
 fn unicode_integer(argument: &FormatArg, spec: FormatSpec) -> String {
-    let character = integer_character(argument);
     let value = match argument.kind {
-        FormatKind::Signed => argument
+        FormatKind::Signed => {
+            let value = argument
+                .display
+                .parse::<i128>()
+                .expect("stored signed integer");
+            if value < 0 {
+                u128::from(value as u64)
+            } else {
+                u128::try_from(value).expect("nonnegative signed integer")
+            }
+        }
+        FormatKind::Unsigned => argument
             .display
-            .parse::<i128>()
-            .expect("stored signed integer"),
-        _ => i128::from(u32::from(character)),
+            .parse::<u128>()
+            .expect("stored unsigned integer"),
+        FormatKind::Char => u128::from(u32::from(argument.character.expect("char argument"))),
+        _ => unreachable!("Unicode integer kind"),
     };
-    let rendered = if value < 0 {
-        format!("U+-{:04X}", value.unsigned_abs())
-    } else {
+    let digits = spec.precision.unwrap_or(4).max(4);
+    let rendered = format!("U+{value:0digits$X}");
+    let character = u32::try_from(value).ok().and_then(char::from_u32);
+    let rendered = if spec.alternate && character.is_some_and(|character| !character.is_control()) {
         format!(
-            "U+{:04X}",
-            u128::try_from(value).expect("nonnegative integer")
+            "{rendered} {}",
+            quoted_character(character.expect("checked printable character"))
         )
-    };
-    let rendered = if spec.alternate && !character.is_control() {
-        format!("{rendered} {}", quoted_character(character))
     } else {
         rendered
     };
-    pad_width(rendered, spec, false)
+    pad_width(
+        rendered,
+        FormatSpec {
+            zero: false,
+            ..spec
+        },
+        false,
+    )
 }
 
 fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
@@ -870,6 +913,17 @@ fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
                 spec,
                 false,
             ),
+            FormatKind::Float => special_float(
+                argument,
+                FormatSpec {
+                    plus: false,
+                    ..spec
+                },
+            )
+            .unwrap_or_else(|| pad_width(argument.debug.clone(), spec, true)),
+            FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => {
+                pad_width(argument.debug.clone(), spec, true)
+            }
             _ => pad_width(argument.debug.clone(), spec, false),
         },
         b'v' => match argument.kind {
@@ -883,15 +937,23 @@ fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
                     ..spec
                 },
             ),
+            FormatKind::Float => special_float(
+                argument,
+                FormatSpec {
+                    plus: false,
+                    ..spec
+                },
+            )
+            .unwrap_or_else(|| pad_width(argument.display.clone(), spec, true)),
             _ => pad_width(argument.display.clone(), spec, false),
         },
-        b'T' => pad_width(argument.type_name.clone(), spec, false),
+        b'T' => pad_width(truncate(&argument.type_name, spec.precision), spec, false),
         b't' if argument.kind == FormatKind::Bool => {
             pad_width(argument.display.clone(), spec, false)
         }
         b'f' | b'F' if argument.kind == FormatKind::Float => {
-            if matches!(argument.display.as_str(), "+Inf" | "-Inf" | "NaN") {
-                pad_width(apply_float_sign(argument.display.clone(), spec), spec, true)
+            if let Some(value) = special_float(argument, spec) {
+                value
             } else {
                 let precision = spec.precision.unwrap_or(6);
                 let mut rendered = if argument.type_name == "float32" {
@@ -957,7 +1019,7 @@ fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join(if spec.space { " " } else { "" });
-            if spec.alternate && !spec.space {
+            if spec.alternate && !spec.space && !bytes.is_empty() {
                 rendered.insert_str(0, prefix);
             }
             pad_width(rendered, spec, false)

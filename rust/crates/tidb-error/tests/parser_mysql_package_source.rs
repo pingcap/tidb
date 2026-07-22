@@ -268,3 +268,40 @@ fn generic_formatter_shared_width_and_remaining_primitive_verbs_match_go() {
     assert_eq!(render("% v", FormatArg::from(7_i64)), " 7");
     assert_eq!(render("%05v", FormatArg::from(7_i64)), "00007");
 }
+
+#[test]
+fn generic_formatter_edge_values_preserve_original_go_domains() {
+    assert_eq!(render("%q", FormatArg::from('\0')), "'\\x00'");
+    assert_eq!(render("%#q", FormatArg::from("a\tb")), "`a\tb`");
+
+    assert_eq!(render("%U", FormatArg::from(-1_i64)), "U+FFFFFFFFFFFFFFFF");
+    assert_eq!(
+        render("%U", FormatArg::from(u64::MAX)),
+        "U+FFFFFFFFFFFFFFFF"
+    );
+    assert_eq!(render("%U", FormatArg::from(0x11_0000_u64)), "U+110000");
+    assert_eq!(render("%.6U", FormatArg::from('⌘')), "U+002318");
+    assert_eq!(render("%#U", FormatArg::from(0x11_0000_u64)), "U+110000");
+    assert_eq!(render("%#U", FormatArg::from('A')), "U+0041 'A'");
+    assert_eq!(render("%010U", FormatArg::from('A')), "    U+0041");
+
+    assert_eq!(render("%#o", FormatArg::from(0_i64)), "0");
+    assert_eq!(render("%#O", FormatArg::from(0_i64)), "0o0");
+    assert_eq!(render("%.0O", FormatArg::from(0_i64)), "");
+    assert_eq!(render("%#.3O", FormatArg::from(7_i64)), "0o007");
+
+    assert_eq!(render("%#x", FormatArg::from("")), "");
+    assert_eq!(render("%#5x", FormatArg::from("")), "     ");
+    assert_eq!(render("%.3T", FormatArg::from(0_i64)), "int");
+
+    assert_eq!(render("% b", FormatArg::from(f64::INFINITY)), " Inf");
+    assert_eq!(render("%+b", FormatArg::from(f64::NAN)), "+NaN");
+    assert_eq!(render("%08b", FormatArg::from(f64::INFINITY)), "    +Inf");
+    assert_eq!(render("% F", FormatArg::from(f64::INFINITY)), " Inf");
+    assert_eq!(render("%+F", FormatArg::from(f64::NAN)), "+NaN");
+    assert_eq!(
+        render("%08F", FormatArg::from(f64::NEG_INFINITY)),
+        "    -Inf"
+    );
+    assert_eq!(render("%08v", FormatArg::from(-1.5_f64)), "-00001.5");
+}
