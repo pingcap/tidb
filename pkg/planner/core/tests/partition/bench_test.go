@@ -83,7 +83,7 @@ func prepareBenchSession() (sessiontypes.Session, *domain.Domain, kv.Storage) {
 		logutil.BgLogger().Fatal(err.Error())
 	}
 	// TODO: use environment variable "log_level" if set?
-	log.SetLevel(zapcore.ErrorLevel)
+	log.SetLevel(zapcore.FatalLevel)
 	se, err := session.CreateSession4Test(store)
 	if err != nil {
 		logutil.BgLogger().Fatal(err.Error())

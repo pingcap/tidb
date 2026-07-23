@@ -202,6 +202,18 @@ func NewChunkDecoder(columns []ColInfo, handleColIDs []int64, defDatum func(i in
 	}
 }
 
+// Reset resets a ChunkDecoder with new column metadata.
+func (d *ChunkDecoder) Reset(columns []ColInfo, handleColIDs []int64, defDatum func(i int, chk *chunk.Chunk) error, loc *time.Location) {
+	*d = ChunkDecoder{
+		decoder: decoder{
+			columns:      columns,
+			handleColIDs: handleColIDs,
+			loc:          loc,
+		},
+		defDatum: defDatum,
+	}
+}
+
 // DecodeToChunk decodes a row to chunk.
 func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk *chunk.Chunk) error {
 	err := decoder.fromBytes(rowData)
