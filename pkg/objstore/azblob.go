@@ -902,10 +902,8 @@ type azblobUploader struct {
 	cpkScope *blob.CPKScopeInfo
 	cpkInfo  *blob.CPKInfo
 
-	// eg is set only when concurrent upload is requested through WriterOption.
-	// When it is nil, Write stages blocks synchronously, which stays the default
-	// path for callers that pass no option. egCtx cancels the in-flight stagers
-	// as soon as one of them fails.
+	// eg/egCtx are non-nil only for concurrent upload; otherwise Write stages
+	// blocks synchronously. egCtx cancels in-flight stagers on the first failure.
 	eg    *errgroup.Group
 	egCtx context.Context
 }
@@ -915,8 +913,6 @@ func newBlockID() (string, error) {
 	if err != nil {
 		return "", errors.Annotate(err, "Fail to generate uuid")
 	}
-	// A block ID must be a fixed-length string within a single commit; the
-	// canonical UUID is always 36 chars, so its base64 form is always 48.
 	return base64.StdEncoding.EncodeToString([]byte(generatedUUID.String())), nil
 }
 
