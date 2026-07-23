@@ -434,7 +434,7 @@ func (sm *Manager) drainCleanupTaskBatches() {
 	}
 }
 
-// processCleanupTaskBatch processes one bounded batch of cleanup routines.
+// processCleanupTaskBatch processes one bounded batch of cleanup tasks.
 // It returns the number of tasks transferred to history.
 // For example:
 //

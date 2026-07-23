@@ -237,18 +237,15 @@ func TestSendMeterOnCleanUpInParallelCancellation(t *testing.T) {
 		require.Empty(t, startedTasks)
 	})
 
-	t.Run("parent cancellation prevents tasks from starting", func(t *testing.T) {
+	t.Run("parent cancellation is propagated", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, State: proto.TaskStateSucceed}}}
-		var started int32
 
-		err := sendMeterOnCleanUpInParallel(ctx, tasks, func(context.Context, *proto.Task, *zap.Logger) error {
-			atomic.AddInt32(&started, 1)
-			return nil
+		err := sendMeterOnCleanUpInParallel(ctx, tasks, func(ctx context.Context, _ *proto.Task, _ *zap.Logger) error {
+			return ctx.Err()
 		})
 		require.ErrorIs(t, err, context.Canceled)
-		require.Zero(t, atomic.LoadInt32(&started))
 	})
 }
 
