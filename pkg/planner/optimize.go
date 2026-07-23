@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
@@ -626,6 +627,29 @@ func shouldTrySemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
 		!sessVars.EnableSemiJoinRewrite
 }
 
+// shouldTryEngineRestrictedRounds holds the gates shared by the tikv-only and
+// tiflash-only rounds. They fire only when round 1's plan actually mixes TiKV
+// and TiFlash reads (a homogeneous plan was never costed as a whole), never
+// when a READ_FROM_STORAGE hint pins an engine (the cost comparison must not
+// override an explicit user choice), and never under enforced MPP (its cost
+// discount would make the cross-round comparison meaningless).
+func shouldTryEngineRestrictedRounds(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanMixedStorageEngines &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanHasStoreTypeHint &&
+		!sessVars.IsMPPEnforced()
+}
+
+func shouldTryTiKVOnlyRound(sessVars *variable.SessionVars) bool {
+	return shouldTryEngineRestrictedRounds(sessVars)
+}
+
+func shouldTryTiFlashOnlyRound(sessVars *variable.SessionVars) bool {
+	return shouldTryEngineRestrictedRounds(sessVars) &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanMissingTiFlashPath &&
+		sessVars.IsMPPAllowed()
+}
+
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
@@ -648,6 +672,11 @@ var savedEnableCorrelateSubquery bool
 // setup/cleanup can restore it after running with the flag forced on. Safe
 // because optimize is single-threaded per session.
 var savedFTSLikeFallback bool
+
+// savedIsolationReadEngines holds the pre-round isolation read engines so the
+// engine-restricted rounds (tikv-only / tiflash-only) can restore them. Safe
+// because optimize is single-threaded per session.
+var savedIsolationReadEngines map[kv.StoreType]struct{}
 
 var alternativeRounds = [...]alternativeRound{
 	{
@@ -709,6 +738,38 @@ var alternativeRounds = [...]alternativeRound{
 		},
 		cleanup: func(sv *variable.SessionVars) {
 			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
+		},
+	},
+	{
+		// tikv-only: rebuild the plan with TiFlash removed from the isolation
+		// read engines so every table is read from TiKV. Round 1's bottom-up
+		// search picks a storage engine per DataSource through local cost
+		// comparisons, so when it produces a plan mixing TiKV and TiFlash
+		// reads, neither fully homogeneous plan was ever costed as a whole.
+		// This round (and tiflash-only below) builds that missing global
+		// alternative and lets the strict-`<` cost comparison decide.
+		name:    "tikv-only",
+		enabled: shouldTryTiKVOnlyRound,
+		setup: func(sv *variable.SessionVars) {
+			savedIsolationReadEngines = sv.IsolationReadEngines
+			sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiDB: {}}
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.IsolationReadEngines = savedIsolationReadEngines
+		},
+	},
+	{
+		// tiflash-only: mirror of tikv-only with only TiFlash readable. Skipped
+		// when any DataSource lacks a TiFlash access path (the round could not
+		// produce a complete plan) or when MPP execution is not allowed.
+		name:    "tiflash-only",
+		enabled: shouldTryTiFlashOnlyRound,
+		setup: func(sv *variable.SessionVars) {
+			savedIsolationReadEngines = sv.IsolationReadEngines
+			sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiFlash: {}, kv.TiDB: {}}
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.IsolationReadEngines = savedIsolationReadEngines
 		},
 	},
 }
@@ -792,6 +853,16 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if nonLogical {
 		// keep compatible with the old.
 		return p, names, 0, nil
+	}
+
+	// The engine-restricted rounds (tikv-only / tiflash-only) arm on the shape
+	// of round 1's chosen plan rather than on a build-time signal: only a plan
+	// that actually mixes TiKV and TiFlash reads leaves a homogeneous
+	// alternative uncosted.
+	if needRestoreLogicalPlanCtx && bestPlan != nil {
+		if hasTiKV, hasTiFlash := physicalop.StorageEngineUsage(bestPlan); hasTiKV && hasTiFlash {
+			sessVars.StmtCtx.MarkAlternativeLogicalPlanMixedStorageEngines()
+		}
 	}
 
 	// Pre-compute which rounds are enabled based on the signals from the first
