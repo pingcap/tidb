@@ -147,7 +147,7 @@ func TestBuildStatusEndpointClaim(t *testing.T) {
 		{name: "status reporting disabled", host: "127.0.0.1", statusPort: 10080},
 		{name: "assumed keyspace", host: "127.0.0.1", statusPort: 10080, reportStatus: true, assumedKeyspace: "ks1"},
 		{name: "empty host", statusPort: 10080, reportStatus: true},
-		{name: "zero status port", host: "127.0.0.1", reportStatus: true},
+		{name: "zero status port uses production default", host: "127.0.0.1", reportStatus: true, expectedEndpoint: "127.0.0.1:10080"},
 	}
 
 	keys := make(map[string]string)
@@ -501,7 +501,7 @@ func TestStatusEndpointClaim(t *testing.T) {
 		requireEtcdKeyAbsent(ctx, t, client, statusEndpointClaimTestKey("127.0.0.20:10100"))
 	})
 
-	t.Run("invalid status services skip the claim but keep registration", func(t *testing.T) {
+	t.Run("status services without a claim keep registration", func(t *testing.T) {
 		tests := []struct {
 			name         string
 			host         string
@@ -511,7 +511,6 @@ func TestStatusEndpointClaim(t *testing.T) {
 		}{
 			{name: "report status disabled", host: "127.0.0.12", statusPort: 10092, reportStatus: false, sqlPort: 4110},
 			{name: "empty advertised host", statusPort: 10093, reportStatus: true, sqlPort: 4111},
-			{name: "zero status port", host: "127.0.0.13", reportStatus: true, sqlPort: 4112},
 		}
 		for i, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
@@ -527,7 +526,23 @@ func TestStatusEndpointClaim(t *testing.T) {
 		}
 	})
 
-	t.Run("nil etcd client keeps the existing no-op behavior", func(t *testing.T) {
+	t.Run("zero status port claims the production default endpoint", func(t *testing.T) {
+		syncer, recorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "zero-status-port", "127.0.0.13", 4112, 0, true,
+		)
+
+		claimKey := statusEndpointClaimTestKey("127.0.0.13:10080")
+		result := recorder.requireSingle(t, statusEndpointClaimAcquired)
+		require.Equal(t, "127.0.0.13:10080", result.endpoint)
+		require.Equal(t, claimKey, result.claimKey)
+		value, lease := requireStatusEndpointKV(ctx, t, client, claimKey)
+		require.Equal(t, "zero-status-port", value)
+		require.Equal(t, syncer.session.Lease(), lease)
+		require.Equal(t, uint(0), syncer.GetLocalServerInfo().StatusPort)
+		requireServerInfoKey(ctx, t, client, syncer.serverInfoPath)
+	})
+
+	t.Run("nil etcd client returns before the claim attempt", func(t *testing.T) {
 		syncer, recorder := newStatusEndpointTestSyncer(
 			t, nil, "nil-etcd-client", "127.0.0.14", 4120, 10094, true,
 		)

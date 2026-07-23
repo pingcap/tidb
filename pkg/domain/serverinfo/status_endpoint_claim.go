@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -83,7 +84,7 @@ func newStatusEndpointClaim(etcdClient *clientv3.Client, info *ServerInfo, claim
 }
 
 func buildStatusEndpointClaim(info *ServerInfo, claimEnabled bool) (endpoint, claimKey string) {
-	if !claimEnabled || info.IsAssumed() || info.StatusPort == 0 {
+	if !claimEnabled || info.IsAssumed() {
 		return "", ""
 	}
 
@@ -100,7 +101,12 @@ func buildStatusEndpointClaim(info *ServerInfo, claimEnabled bool) (endpoint, cl
 		return "", ""
 	}
 
-	endpoint = net.JoinHostPort(host, strconv.Itoa(int(info.StatusPort)))
+	statusPort := info.StatusPort
+	if statusPort == 0 {
+		// A zero production status port falls back to TiDB's default when the listener starts.
+		statusPort = config.DefStatusPort
+	}
+	endpoint = net.JoinHostPort(host, strconv.Itoa(int(statusPort)))
 	segment := base64.RawURLEncoding.EncodeToString([]byte(endpoint))
 	claimKey = fmt.Sprintf("%s/%s", serverStatusAddressPath, segment)
 	return endpoint, claimKey
@@ -121,7 +127,7 @@ func (c *statusEndpointClaim) acquire(ctx context.Context, lease clientv3.LeaseI
 		claimKey: c.key,
 		localID:  c.localID,
 	}
-	if c.etcdClient == nil || c.key == "" {
+	if c.key == "" {
 		return result
 	}
 
