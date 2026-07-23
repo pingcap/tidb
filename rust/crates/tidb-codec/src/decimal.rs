@@ -131,6 +131,20 @@ pub fn decimal_encoded_len(
 
 /// Decodes one TiDB/MySQL decimal, returning its precision and scale metadata.
 pub fn decode_decimal(input: &[u8]) -> Result<(&[u8], Decimal, u8, u8), CodecError> {
+    decode_decimal_with_fault(input, false)
+}
+
+/// Source `errorInDecodeDecimal` failpoint seam.
+///
+/// Rust tests pass `true` explicitly rather than mutating process-global
+/// failpoint state. Production callers use [`decode_decimal`].
+pub fn decode_decimal_with_fault(
+    input: &[u8],
+    inject_error: bool,
+) -> Result<(&[u8], Decimal, u8, u8), CodecError> {
+    if inject_error {
+        return Err(CodecError::InjectedFailure("errorInDecodeDecimal"));
+    }
     let precision = *input.first().ok_or(CodecError::InsufficientBytes)?;
     let scale = *input.get(1).ok_or(CodecError::InsufficientBytes)?;
     validate_decimal_shape(usize::from(precision), usize::from(scale))?;

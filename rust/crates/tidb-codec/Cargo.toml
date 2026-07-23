@@ -13,8 +13,13 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+chrono.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 
 [[test]]
 name = "all"
 path = "tests/all.rs"
+
+[[bench]]
+name = "codec"
+harness = false

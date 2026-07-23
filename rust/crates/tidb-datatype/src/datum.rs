@@ -644,21 +644,21 @@ impl Datum {
     }
 
     /// Mirrors the byte-level behavior shared by Go `GetString` and
-    /// `GetBytes`: both string kinds expose the stored payload without
-    /// validating, replacing, or truncating it.
+    /// `GetBytes`: string, bytes, and internal raw datums expose the stored
+    /// payload without validating, replacing, or truncating it.
     pub fn as_raw_bytes(&self) -> Option<&[u8]> {
         match self {
             Self::String(value) => Some(value.bytes()),
-            Self::Bytes(value) => Some(value),
+            Self::Bytes(value) | Self::Raw(value) => Some(value),
             _ => None,
         }
     }
 
-    /// Consumes a string or bytes datum and returns its unchanged payload.
+    /// Consumes a string, bytes, or raw datum and returns its unchanged payload.
     pub fn into_raw_bytes(self) -> Option<Vec<u8>> {
         match self {
             Self::String(value) => Some(value.into_bytes()),
-            Self::Bytes(value) => Some(value),
+            Self::Bytes(value) | Self::Raw(value) => Some(value),
             _ => None,
         }
     }

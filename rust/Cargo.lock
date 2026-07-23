@@ -1186,6 +1186,7 @@ dependencies = [
 name = "tidb-codec"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "tidb-datatype",
 ]
 
