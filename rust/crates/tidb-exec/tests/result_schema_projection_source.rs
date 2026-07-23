@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// aggregate-test: standalone
+
 //! Source-shaped tests for projection metadata over resolved JOIN schemas.
 //!
 //! Bare projections consume the visible coalesced schema, while qualified

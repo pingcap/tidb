@@ -23,8 +23,8 @@ use tidb_distsql::{
 };
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan};
 
-use crate::real_tikv_multi_read::RealTiKvMultiReadError;
-use crate::real_tikv_read::{RealTiKvReadSessionOpener, RealTiKvSessionTransportFactory};
+use tidb_exec::real_tikv_multi_read::RealTiKvMultiReadError;
+use tidb_exec::real_tikv_read::{RealTiKvReadSessionOpener, RealTiKvSessionTransportFactory};
 
 #[derive(Clone, Debug)]
 struct CountingTimestampSource {

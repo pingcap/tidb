@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "Minimal query executor (projection + selection) — the Phase-1 executor seed."
 autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
@@ -30,28 +31,8 @@ serde_json = { workspace = true }
 [dev-dependencies]
 
 [[test]]
-name = "source_shard_a"
-path = "tests/source_shard_a.rs"
-
-[[test]]
-name = "source_shard_b"
-path = "tests/source_shard_b.rs"
-
-[[test]]
-name = "source_shard_c"
-path = "tests/source_shard_c.rs"
-
-[[test]]
-name = "source_shard_d"
-path = "tests/source_shard_d.rs"
-
-[[test]]
-name = "configured_inner_join_source"
-path = "tests/configured_inner_join_source.rs"
-
-[[test]]
-name = "configured_ordered_query_source"
-path = "tests/configured_ordered_query_source.rs"
+name = "all"
+path = "tests/all.rs"
 
 # These schema tests intentionally stay standalone: their source-backed test
 # modules compile several implementation files at the integration crate root,
@@ -80,51 +61,3 @@ path = "tests/result_schema_projection_source.rs"
 [[test]]
 name = "result_schema_source"
 path = "tests/result_schema_source.rs"
-
-[[test]]
-name = "explain_source"
-path = "tests/explain_source.rs"
-
-[[test]]
-name = "table_index_reader_runtime_source"
-path = "tests/table_index_reader_runtime_source.rs"
-
-[[test]]
-name = "tikv_scan_dag_lowering_source"
-path = "tests/tikv_scan_dag_lowering_source.rs"
-
-[[test]]
-name = "tikv_selection_dag_lowering_source"
-path = "tests/tikv_selection_dag_lowering_source.rs"
-
-[[test]]
-name = "direct_unary_cancellation_source"
-path = "tests/direct_unary_cancellation_source.rs"
-
-[[test]]
-name = "prepared_dml_lowering_source"
-path = "tests/prepared_dml_lowering_source.rs"
-
-[[test]]
-name = "prepared_write_persists_realtikv_source"
-path = "tests/prepared_write_persists_realtikv_source.rs"
-
-[[test]]
-name = "real_tikv_read_source"
-path = "tests/real_tikv_read_source.rs"
-
-[[test]]
-name = "real_tikv_bigint_selection_source"
-path = "tests/real_tikv_bigint_selection_source.rs"
-
-[[test]]
-name = "real_tikv_clustered_pk_range_source"
-path = "tests/real_tikv_clustered_pk_range_source.rs"
-
-[[test]]
-name = "real_tikv_session_authority_source"
-path = "tests/real_tikv_session_authority_source.rs"
-
-[[test]]
-name = "real_tikv_authority_shutdown_source"
-path = "tests/real_tikv_authority_shutdown_source.rs"
