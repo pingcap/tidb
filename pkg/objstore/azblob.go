@@ -946,7 +946,7 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 func (u *azblobUploader) Close(ctx context.Context) error {
 	if u.eg != nil {
 		if err := u.eg.Wait(); err != nil {
-			// Staged but uncommitted blocks are garbage-collected by Azure, so
+			// Uncommitted blocks are garbage-collected by Azure after a week, so
 			// skip CommitBlockList and surface the failure instead.
 			return err
 		}
