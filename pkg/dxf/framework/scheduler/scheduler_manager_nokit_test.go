@@ -193,9 +193,9 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 
-		transferredTaskCount := mgr.processCleanupTaskBatch()
+		batchFinished := mgr.processCleanupTaskBatch()
 
-		require.Equal(t, len(tasks), transferredTaskCount)
+		require.True(t, batchFinished)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -217,7 +217,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("continues draining after partial history transfer progress", func(t *testing.T) {
+	t.Run("stops draining after partial batch cleanup", func(t *testing.T) {
 		ClearSchedulerCleanUpFactory()
 		t.Cleanup(ClearSchedulerCleanUpFactory)
 		ctrl := gomock.NewController(t)
@@ -235,7 +235,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		}
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks[:1]).Return(nil)
-		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(nil, nil)
 
 		mgr.drainCleanupTaskBatches()
 

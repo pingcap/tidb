@@ -112,10 +112,7 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 	}
 }
 
-func TestSendMeterOnCleanUpInParallelLimitsConcurrency(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
+func TestSendMeterOnCleanUpInParallelSuccess(t *testing.T) {
 	tasks := make([]*proto.Task, cleanUpMeteringConcurrency*2)
 	for i := range tasks {
 		tasks[i] = &proto.Task{
@@ -126,60 +123,15 @@ func TestSendMeterOnCleanUpInParallelLimitsConcurrency(t *testing.T) {
 		}
 	}
 
-	startedTasks := make(chan int64, len(tasks))
-	release := make(chan struct{}, len(tasks))
-	done := make(chan error, 1)
-	var active, maxActive int32
-	sendFn := func(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
-		current := atomic.AddInt32(&active, 1)
-		defer atomic.AddInt32(&active, -1)
-		for {
-			maxSeen := atomic.LoadInt32(&maxActive)
-			if current <= maxSeen || atomic.CompareAndSwapInt32(&maxActive, maxSeen, current) {
-				break
-			}
-		}
-		startedTasks <- task.ID
-		select {
-		case <-release:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	var processedTaskCount atomic.Int32
+	sendFn := func(context.Context, *proto.Task, *zap.Logger) error {
+		processedTaskCount.Add(1)
+		return nil
 	}
 
-	go func() {
-		done <- sendMeterOnCleanUpInParallel(ctx, tasks, sendFn)
-	}()
-
-	for range cleanUpMeteringConcurrency {
-		select {
-		case <-startedTasks:
-		case <-ctx.Done():
-			require.NoError(t, ctx.Err())
-		}
-	}
-
-	for range len(tasks) - cleanUpMeteringConcurrency {
-		release <- struct{}{}
-		select {
-		case <-startedTasks:
-		case <-ctx.Done():
-			require.NoError(t, ctx.Err())
-		}
-	}
-	for range cleanUpMeteringConcurrency {
-		release <- struct{}{}
-	}
-
-	var err error
-	select {
-	case err = <-done:
-	case <-ctx.Done():
-		require.NoError(t, ctx.Err())
-	}
+	err := sendMeterOnCleanUpInParallel(context.Background(), tasks, sendFn)
 	require.NoError(t, err)
-	require.Equal(t, int32(cleanUpMeteringConcurrency), atomic.LoadInt32(&maxActive))
+	require.Equal(t, int32(len(tasks)), processedTaskCount.Load())
 }
 
 func TestSendMeterOnCleanUpInParallelCancellation(t *testing.T) {

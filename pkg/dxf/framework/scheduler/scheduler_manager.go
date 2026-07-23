@@ -421,43 +421,46 @@ func (sm *Manager) cleanupTaskLoop() {
 	}
 }
 
-// drainCleanupTaskBatches processes bounded batches until one transfers no task to history.
+// drainCleanupTaskBatches processes bounded batches until one is not fully handled.
 func (sm *Manager) drainCleanupTaskBatches() {
-	// keep cleaning as long as we made any progress in each cycle. and since
-	// we do clean using single routine, it's fine to keep running without a
-	// overall bound.
+	// Since cleanup runs in a single routine, it is safe to keep draining
+	// without an overall bound while every batch is fully handled.
 	for {
-		count := sm.processCleanupTaskBatch()
-		if count <= 0 {
+		batchFullyHandled := sm.processCleanupTaskBatch()
+		if !batchFullyHandled {
 			break
 		}
 	}
 }
 
 // processCleanupTaskBatch processes one bounded batch of cleanup tasks.
-// It returns the number of tasks transferred to history.
+// It returns whether every task in the batch was transferred to history.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) processCleanupTaskBatch() int {
+func (sm *Manager) processCleanupTaskBatch() bool {
 	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
 		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
-		return 0
+		return false
 	}
 	if len(tasks) == 0 {
-		return 0
+		return false
 	}
 	failpoint.InjectCall("processCleanupTaskBatch")
 	sm.logger.Info("cleanup routine start")
 	transferredTaskCount, err := sm.cleanupFinishedTasks(tasks)
 	if err != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
-		return 0
+		return false
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
-	sm.logger.Info("cleanup routine success", zap.Int("count", transferredTaskCount))
-	return transferredTaskCount
+	batchFullyHandled := transferredTaskCount == len(tasks)
+	sm.logger.Info("cleanup routine finished",
+		zap.Int("transferred-task-count", transferredTaskCount),
+		zap.Int("total-task-count", len(tasks)),
+		zap.Bool("batch-fully-handled", batchFullyHandled))
+	return batchFullyHandled
 }
 
 // cleanupFinishedTasks runs cleanup and transfers the successfully cleaned tasks to history.
