@@ -62,19 +62,26 @@ material, never evidence of package completion.
 
 ## Development loop
 
-Pick one dependency-ready Go package and transcreate the whole package as one
-compiler-driven batch: production code first, then every original test and
-support artifact. Do not close files or features individually, and do not stop
-for per-file audits. Preserve Go control flow until the package compiles; let
-Rust modules follow stable ownership boundaries rather than historical Go file
+Select the largest dependency-closed batch that fits one coherent Rust change.
+Every Go package included in the batch must move completely: production code,
+all original tests, generated inputs and outputs, fixtures, and support tools.
+The whole-package rule is a completeness boundary, not a serialization rule;
+several complete packages should move together when they compile in the same
+Rust ownership domain.
+
+Transcreate production code first and use compiler errors as the immediate work
+list. Then transcreate all source tests and support artifacts for every package
+in the batch. Do not stop for per-file audits or rerun broad checks after each
+small package. Preserve Go control flow until the batch compiles; let Rust
+modules follow stable ownership boundaries rather than historical Go file
 boundaries.
 
-The inner loop is only `edit -> compile the owning crates`. Once production
-code compiles, run the complete transcreated test suite and differential suite,
-fix failures in batches, then run the complete Go package and direct Rust
-reverse dependencies. Format and commit once when the package closes. Lint and
-live-cluster checks belong to integration or deployable milestones unless the
-package itself owns that external contract.
+The inner loop is only `edit -> compile affected crates -> run affected tests`.
+After the entire batch is green, run each source Go package test suite, the
+combined differential suite, direct Rust reverse dependencies, formatting, and
+one final lint pass. Commit and push the batch once. Live-cluster checks belong
+to integration or deployable milestones unless a package in the batch owns an
+external contract.
 
 The Go package tree is the input, compiler errors are the work list, tests are
 the progress report, and Git is recovery. There are no campaigns, queues,
@@ -84,7 +91,8 @@ direct Rust tests exist only for state or diagnostics the differential cannot
 observe.
 
 One Go package may map to several Rust modules or crates when that is a stable
-Rust boundary. It may not be split into partial completion units.
+Rust boundary. It may not be split into partial completion units. A batch may
+contain many complete Go packages; it may not contain fragments of any of them.
 
 ## Target architecture
 

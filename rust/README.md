@@ -50,8 +50,10 @@ with a locally convenient rule just to make a golden pass.
 
 ## Unit of work
 
-One complete Go package or module is the minimum unit. A package may map to
-several Rust crates; all implementation and original tests still move together.
+A dependency-closed batch is the unit of work. It should contain as many related
+Go packages as can move coherently. Every included package is still indivisible:
+all implementation, original tests, and support artifacts move together, even
+when the package maps to several Rust crates.
 
 ## Development loop
 

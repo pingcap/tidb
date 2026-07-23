@@ -20,16 +20,18 @@ The parser package uses one unit harness and one integration harness:
 cargo test --offline --locked -j12 -p tidb-parser --lib --test all
 ```
 
-At package completion run:
+During a batch, run only affected source and Rust tests:
 
 ```sh
-cd .. && go test ./pkg/example
-cd rust && cargo test --offline --locked -j12 -p tidb-example --all-targets
+cd ../<go-module> && go test -p 12 ./package-one ./package-two
+cd <repo>/rust && cargo test --offline --locked -j12 -p tidb-one -p tidb-two --all-targets
 ```
+
+At batch completion run broad checks once, not once per package:
 
 ```sh
 cargo fmt --all -- --check
-cargo test --offline --locked -j12 -p <owning-crate> --all-targets
-python3 <package-generator-or-differential-check> --check
+cargo test --offline --locked -j12 -p <affected-crate-one> -p <affected-crate-two> --all-targets
+python3 <batch-generator-or-differential-check> --check
 git -C .. diff --check -- rust
 ```
