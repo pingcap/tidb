@@ -62,6 +62,7 @@ func TestIsRetryableError(t *testing.T) {
 
 	// tidb error
 	require.True(t, IsRetryableError(drivererr.ErrRegionUnavailable))
+	require.True(t, IsRetryableError(drivererr.ErrPDServerTimeout))
 	require.True(t, IsRetryableError(drivererr.ErrTiKVStaleCommand))
 	require.True(t, IsRetryableError(drivererr.ErrTiKVServerTimeout))
 	require.True(t, IsRetryableError(drivererr.ErrTiKVServerBusy))
@@ -117,6 +118,7 @@ func TestIsRetryableError(t *testing.T) {
 	// multierr
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)))
 	require.True(t, IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})))
+	require.True(t, IsRetryableError(multierr.Combine(drivererr.ErrPDServerTimeout, nil)))
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
 
 	require.True(t, IsRetryableError(errors.New("other error: Coprocessor task terminated due to exceeding the deadline")))
