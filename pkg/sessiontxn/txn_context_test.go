@@ -102,6 +102,15 @@ func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
 	require.True(t, ok, fmt.Sprintf("'%s' not in record", name))
 }
 
+func checkAssertRecordAbsent(t *testing.T, se sessionctx.Context, name string) {
+	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]any)
+	if !ok {
+		return
+	}
+	_, found := records[name]
+	require.False(t, found, fmt.Sprintf("'%s' should not be in record", name))
+}
+
 func doWithCheckPath(t *testing.T, se sessionctx.Context, names []string, do func()) {
 	se.SetValue(sessiontxn.AssertRecordsKey, nil)
 	do()
@@ -577,14 +586,26 @@ func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 	se := tk.Session()
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
 
+	// The two paths are mutually exclusive, so each check asserts both that
+	// the expected path's records exist and that the other path's marker is
+	// absent (doWithCheckPath alone tolerates extra records).
+	mustRunStmtPath := func(do func()) {
+		doWithCheckPath(t, se, normalPathRecords, do)
+		checkAssertRecordAbsent(t, se, "assertTxnManagerInShortPointGetPlan")
+	}
+	mustShortcutPath := func(do func()) {
+		doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, do)
+		checkAssertRecordAbsent(t, se, "assertTxnManagerInRunStmt")
+	}
+
 	// Default off — point-get still routes through runStmt.
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	mustRunStmtPath(func() {
 		tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	})
 
 	// Opt-in — shortcut fires, runStmt is skipped.
 	tk.MustExec("set @@tidb_enable_point_get_exec_shortcut = ON")
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
+	mustShortcutPath(func() {
 		tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	})
 
@@ -592,12 +613,12 @@ func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 	// the shortcut when the flag is on — handled by the same code path.
 	tk.MustExec("insert into t1 values (2, 20)")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
+	mustShortcutPath(func() {
 		tk.MustQuery("select * from t1 where id in (1, 2)").Sort().Check(testkit.Rows("1 10", "2 20"))
 	})
 
 	// Non-point-get queries are unaffected even with the flag on (t2 has no PK).
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	mustRunStmtPath(func() {
 		tk.MustQuery("select * from t2 where id=1").Check(testkit.Rows("1"))
 	})
 
@@ -608,7 +629,7 @@ func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 	// the flag on.
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values (3, 30)")
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	mustRunStmtPath(func() {
 		tk.MustQuery("select * from t1 where id=3").Check(testkit.Rows("3 30"))
 	})
 	tk.MustExec("commit")
@@ -617,7 +638,7 @@ func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 	// A point-get SELECT FOR UPDATE in a pessimistic transaction acquires its
 	// lock through the session txn during Next; the shortcut must not fire.
 	tk.MustExec("begin pessimistic")
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	mustRunStmtPath(func() {
 		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 10"))
 	})
 	tk.MustExec("update t1 set v=11 where id=1")
@@ -633,7 +654,7 @@ func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 	tk.MustExec("set @a=now(6)")
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("update t1 set v=12 where id=1")
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	mustRunStmtPath(func() {
 		tk.MustQuery("select * from t1 as of timestamp @a where id=1").Check(testkit.Rows("1 10"))
 	})
 	tk.MustExec("update t1 set v=10 where id=1")
@@ -641,7 +662,7 @@ func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 
 	// Turning the flag off restores the legacy path for the point-get.
 	tk.MustExec("set @@tidb_enable_point_get_exec_shortcut = OFF")
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	mustRunStmtPath(func() {
 		tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	})
 }
