@@ -318,7 +318,6 @@ func showCommentsFromJob(job *model.Job) string {
 		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
-		labels = append(labels, formatAutoPresplitResults(m.AutoPresplitResults)...)
 		return strings.Join(labels, ", ")
 	}
 	if isAddingIndex {
@@ -357,45 +356,26 @@ func showCommentsFromJob(job *model.Job) string {
 			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
 		}
 	}
-	labels = append(labels, formatAutoPresplitResults(m.AutoPresplitResults)...)
 	return strings.Join(labels, ", ")
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
-	autoPresplitLabels := formatAutoPresplitResults(sub.AutoPresplitResults)
-	if kerneltype.IsNextGen() || sub.ReorgTp == model.ReorgTypeNone {
-		return strings.Join(autoPresplitLabels, ", ")
+	if kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return ""
 	}
-	labels := []string{sub.ReorgTp.String()}
+	var labels []string
+	if sub.ReorgTp == model.ReorgTypeNone {
+		return ""
+	}
+	labels = append(labels, sub.ReorgTp.String())
 	if useDXF {
 		labels = append(labels, "DXF")
 	}
 	if useDXF && useCloud {
 		labels = append(labels, "cloud")
 	}
-	labels = append(labels, autoPresplitLabels...)
 	return strings.Join(labels, ", ")
-}
-
-func formatAutoPresplitResults(results []model.AutoPresplitResult) []string {
-	labels := make([]string, 0, len(results))
-	for _, result := range results {
-		parts := []string{string(result.Status)}
-		if result.SplitKeyCount > 0 {
-			parts = append(parts, fmt.Sprintf("split_keys=%d", result.SplitKeyCount))
-		}
-		if result.SplitRegionCount > 0 {
-			parts = append(parts, fmt.Sprintf("split_regions=%d", result.SplitRegionCount))
-		}
-		if result.ScatteredRegionCount > 0 {
-			parts = append(parts, fmt.Sprintf("scattered_regions=%d", result.ScatteredRegionCount))
-		}
-		if result.Reason != "" {
-			parts = append(parts, fmt.Sprintf("reason=%q", result.Reason))
-		}
-		labels = append(labels, fmt.Sprintf("auto_presplit_index_region=%s(%s)", result.IndexName, strings.Join(parts, ", ")))
-	}
-	return labels
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {

@@ -55,7 +55,6 @@ func preSplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reorgMeta.AutoPresplitResults = nil
 	// Preserve the target keyspace used by explicit PRE_SPLIT_REGIONS: txn reorg
 	// splits normal index keys, while ingest and txn-merge split temporary index
 	// keys used by concurrent DML. Fast reorg does not additionally split the
@@ -64,6 +63,13 @@ func preSplitIndexRegions(
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
+		if idxArg.AutoPresplit {
+			if err := autoPresplitIndexRegion(
+				ctx, sctx, store, tblInfo, idxInfo, statsProvider, splitOnTempIdx); err != nil {
+				return err
+			}
+			continue
+		}
 		splitArgs, err := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
 		if err != nil {
 			return errors.Trace(err)
@@ -93,16 +99,6 @@ func preSplitIndexRegions(
 					zap.Int("splitRegions", splitResult.splitRegions),
 					zap.Int("scatterRegions", splitResult.scatterRegions))
 			}
-		} else if statsProvider != nil {
-			result, err := autoPresplitIndexRegion(
-				ctx, sctx, store, tblInfo, idxInfo, statsProvider, splitOnTempIdx)
-			if err != nil {
-				return err
-			}
-			result.IndexName = idxInfo.Name.L
-			reorgMeta.AutoPresplitResults = append(reorgMeta.AutoPresplitResults, result)
-		} else {
-			continue
 		}
 	}
 	return context.Cause(ctx)
@@ -116,52 +112,41 @@ func autoPresplitIndexRegion(
 	idxInfo *model.IndexInfo,
 	statsProvider autoPresplitStatsProvider,
 	splitOnTempIdx bool,
-) (model.AutoPresplitResult, error) {
+) error {
 	splitKeys, reason, err := planAutoPresplitIndexRegions(
 		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPresplitConfig())
 	if ctxErr := context.Cause(ctx); ctxErr != nil {
-		return model.AutoPresplitResult{}, ctxErr
+		return ctxErr
 	}
 	if err != nil {
 		logutil.DDLLogger().Warn("auto presplit index region planning failed, continue add-index",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
 			zap.Error(err))
-		return model.AutoPresplitResult{
-			Status: model.AutoPresplitStatusFailed,
-			Reason: err.Error(),
-		}, nil
+		return nil
 	}
 	if len(splitKeys) == 0 {
 		logutil.DDLLogger().Info("skip auto presplit index region",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
 			zap.String("reason", reason))
-		return model.AutoPresplitResult{
-			Status: model.AutoPresplitStatusSkipped,
-			Reason: reason,
-		}, nil
+		return nil
 	}
 
 	convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
 	failpoint.InjectCall("beforePresplitIndex", splitKeys)
 	splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 	if ctxErr := context.Cause(ctx); ctxErr != nil {
-		return model.AutoPresplitResult{}, ctxErr
-	}
-	result := model.AutoPresplitResult{
-		SplitKeyCount:        len(splitKeys),
-		SplitRegionCount:     splitResult.splitRegions,
-		ScatteredRegionCount: splitResult.scatterRegions,
+		return ctxErr
 	}
 	if splitResult.unsupported {
-		result.Status = model.AutoPresplitStatusUnsupported
-		result.Reason = "storage does not support split regions"
-		return result, nil
+		logutil.DDLLogger().Info("skip auto presplit index region, unsupported storage",
+			zap.String("table", tblInfo.Name.L),
+			zap.String("index", idxInfo.Name.L),
+			zap.Int("splitKeys", len(splitKeys)))
+		return nil
 	}
 	if err != nil {
-		result.Status = model.AutoPresplitStatusFailed
-		result.Reason = err.Error()
 		logutil.DDLLogger().Warn("auto presplit index region failed, continue add-index",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
@@ -169,17 +154,16 @@ func autoPresplitIndexRegion(
 			zap.Int("splitRegions", splitResult.splitRegions),
 			zap.Int("scatterRegions", splitResult.scatterRegions),
 			zap.Error(err))
-		return result, nil
+		return nil
 	}
 
-	result.Status = model.AutoPresplitStatusSplit
 	logutil.DDLLogger().Info("auto presplit index region finished",
 		zap.String("table", tblInfo.Name.L),
 		zap.String("index", idxInfo.Name.L),
 		zap.Int("splitKeys", len(splitKeys)),
 		zap.Int("splitRegions", splitResult.splitRegions),
 		zap.Int("scatterRegions", splitResult.scatterRegions))
-	return result, nil
+	return nil
 }
 
 func convertIndexSplitKeysForReorg(splitKeys [][]byte, splitOnTempIdx bool) {
