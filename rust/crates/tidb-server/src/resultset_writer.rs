@@ -211,18 +211,15 @@ fn format_row(row: Vec<Datum>) -> Result<Vec<Option<Vec<u8>>>, String> {
 }
 
 fn format_datum(datum: Datum) -> Result<Option<Vec<u8>>, String> {
-    let bytes = match datum {
+    match datum {
         Datum::Null => return Ok(None),
-        Datum::Int(value) => value.to_string().into_bytes(),
-        Datum::UInt(value) => value.to_string().into_bytes(),
-        Datum::Decimal(value) => value.to_string().into_bytes(),
-        Datum::Real(value) => value.to_string().into_bytes(),
-        Datum::String(value) => value.bytes().to_vec(),
-        Datum::Bytes(value) => value,
         Datum::MinNotNull => return Err("cannot render MinNotNull as a SQL row".to_owned()),
         Datum::MaxValue => return Err("cannot render MaxValue as a SQL row".to_owned()),
-    };
-    Ok(Some(bytes))
+        value => value
+            .to_bytes()
+            .map(Some)
+            .map_err(|error| error.to_string()),
+    }
 }
 
 fn write_payload<W: ResultSetSink>(

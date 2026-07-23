@@ -99,7 +99,10 @@ fn extremum(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
     // differential corpus, not assumed correct on the first attempt:
     // `LEAST(1.5e2, 3.14, 2)` is `FLOAT:2`, not `INT:2`, even though the
     // winning argument `2` was written as a bare Int literal).
-    if vals.iter().any(|v| matches!(v, Datum::Real(_))) {
+    if vals
+        .iter()
+        .any(|v| matches!(v, Datum::Real(_) | Datum::Float32(_)))
+    {
         return Ok(Datum::Real(to_f64(best)));
     }
     if vals.iter().any(|v| matches!(v, Datum::Decimal(_))) {
@@ -128,6 +131,9 @@ fn extremum_string_value(value: &Datum) -> Result<Vec<u8>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel string operand"));
         }
+        other => other
+            .to_bytes()
+            .map_err(|_| EvalError::Unsupported("datum string conversion"))?,
     })
 }
 
@@ -209,6 +215,7 @@ fn interval_real(value: &Datum) -> f64 {
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
             unreachable!("non-scalar boundaries are rejected before conversion")
         }
+        other => other.to_f64().map_or(0.0, |converted| converted.value),
     }
 }
 

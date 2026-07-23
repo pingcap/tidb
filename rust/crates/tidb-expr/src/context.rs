@@ -29,6 +29,8 @@ pub enum EvalError {
     IntOverflow,
     /// A floating-point arithmetic result overflowed to infinity.
     FloatOverflow,
+    /// A fixed-point decimal operation exceeded MyDecimal's source buffer.
+    DecimalOverflow,
     /// A sequence operation failed at runtime.
     Sequence(&'static str),
 }

@@ -37,7 +37,8 @@ pub(crate) fn value_to_literal(value: Datum) -> Expr {
             Ok(text) => Expr::String(text),
             Err(error) => Expr::Hex(hex_bytes(error.as_bytes())),
         },
-        Datum::Bytes(bytes) => Expr::Hex(hex_bytes(&bytes)),
+        Datum::Bytes(bytes) | Datum::Raw(bytes) => Expr::Hex(hex_bytes(&bytes)),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Expr::Hex(hex_bytes(value.as_bytes())),
         // Decimal magnitude is sign-free in the AST; negation is a separate
         // node, matching parser construction.
         Datum::Decimal(value) => {
@@ -50,7 +51,13 @@ pub(crate) fn value_to_literal(value: Datum) -> Expr {
                 None => Expr::Decimal(rendered),
             }
         }
-        Datum::Real(value) => Expr::Float(value),
+        Datum::Real(value) | Datum::Float32(value) => Expr::Float(value),
+        Datum::Duration(value) => Expr::String(value.to_string()),
+        Datum::Enum(value, _) => Expr::String(value.to_string()),
+        Datum::Set(value, _) => Expr::String(value.to_string()),
+        Datum::Time(value) => Expr::String(value.to_string()),
+        Datum::Json(value) => Expr::String(value.to_string()),
+        Datum::VectorFloat32(value) => Expr::String(value.to_string()),
         Datum::Null => Expr::Null,
         Datum::MinNotNull | Datum::MaxValue => {
             unreachable!("range sentinels never enter the SQL row-value domain")

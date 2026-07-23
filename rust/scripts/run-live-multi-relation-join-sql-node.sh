@@ -9,17 +9,17 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RUST_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
-TAG="campaign25-multi-relation-${$}-$(date +%s)"
-PORT_OFFSET=${C25_PORT_OFFSET:-44000}
+TAG="live-multi-relation-${$}-$(date +%s)"
+PORT_OFFSET=${MULTI_RELATION_SQL_PORT_OFFSET:-44000}
 PD_PORT=$((2379 + PORT_OFFSET))
 GO_PORT=$((4000 + PORT_OFFSET))
 GO_STATUS_PORT=$((10080 + PORT_OFFSET))
 RUST_PORT=$((12000 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
-GO_SERVER=${C25_GO_TIDB_SERVER:-}
-GO_SERVER_WRAPPER="${SCRIPT_DIR}/launch-campaign25-failpoint-tidb.sh"
-RUST_SERVER=${C25_RUST_SERVER:-"${RUST_ROOT}/target/debug/tidb-server"}
-MYSQL_CLIENT=${C25_MYSQL_CLIENT:-mysql}
+GO_SERVER=${MULTI_RELATION_SQL_GO_TIDB_SERVER:-}
+GO_SERVER_WRAPPER="${SCRIPT_DIR}/launch-failpoint-tidb.sh"
+RUST_SERVER=${MULTI_RELATION_SQL_RUST_SERVER:-"${RUST_ROOT}/target/debug/tidb-server"}
+MYSQL_CLIENT=${MULTI_RELATION_SQL_MYSQL_CLIENT:-mysql}
 MYSQL_PLUGIN_ARGS=()
 RUNTIME_DIR=
 PLAYGROUND_PID=
@@ -28,7 +28,7 @@ RUST_PID_AT_START=
 AUTH_FILE=
 RUST_LOG=
 PLAYGROUND_LOG=
-SERVER_READY_ATTEMPTS=${C25_SERVER_READY_ATTEMPTS:-600}
+SERVER_READY_ATTEMPTS=${MULTI_RELATION_SQL_SERVER_READY_ATTEMPTS:-600}
 PERSISTENT_CLIENT_PID=
 PERSISTENT_CLIENT_FIFO=
 PERSISTENT_CLIENT_OUTPUT=
@@ -44,7 +44,7 @@ HELPER_ID=
 
 require() {
   command -v "$1" >/dev/null 2>&1 || {
-    echo "Campaign 25 missing prerequisite: $1" >&2
+    echo "multi-relation SQL-node missing prerequisite: $1" >&2
     exit 1
   }
 }
@@ -91,17 +91,17 @@ cleanup() {
   fi
   owned=$(pgrep -f "${TAG}" || true)
   if [[ -n "${owned}" ]]; then
-    echo "Campaign 25 cleanup could not stop tag-owned processes: ${owned}" >&2
+    echo "multi-relation SQL-node cleanup could not stop tag-owned processes: ${owned}" >&2
     status=1
   fi
   tiup clean "${TAG}" --all >/dev/null 2>&1 || true
   if tiup status 2>/dev/null | grep -F "${TAG}" >/dev/null; then
-    echo "Campaign 25 cleanup left a TiUP deployment for ${TAG}" >&2
+    echo "multi-relation SQL-node cleanup left a TiUP deployment for ${TAG}" >&2
     status=1
   fi
   for port in "${PD_PORT}" "${GO_PORT}" "${GO_STATUS_PORT}" "${RUST_PORT}"; do
     if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-      echo "Campaign 25 cleanup left listener port ${port} occupied" >&2
+      echo "multi-relation SQL-node cleanup left listener port ${port} occupied" >&2
       status=1
     fi
   done
@@ -109,7 +109,7 @@ cleanup() {
     if [[ "${status}" -eq 0 ]]; then
       rm -rf -- "${RUNTIME_DIR}"
     else
-      echo "Campaign 25 retained diagnostics: ${RUNTIME_DIR}" >&2
+      echo "multi-relation SQL-node retained diagnostics: ${RUNTIME_DIR}" >&2
     fi
   fi
   exit "${status}"
@@ -139,7 +139,7 @@ transfer_pd_leader() {
     done
     sleep 0.25
   done
-  echo "Campaign 25 region ${region_id} did not transfer leadership to store ${target_store}" >&2
+  echo "multi-relation SQL-node region ${region_id} did not transfer leadership to store ${target_store}" >&2
   return 1
 }
 
@@ -148,7 +148,7 @@ region_leader_address() {
   local store_id
   store_id=$(printf '%s\n' "${region_json}" | jq -r '.leader.store_id // 0')
   [[ "${store_id}" =~ ^[1-9][0-9]*$ ]] || {
-    echo "Campaign 25 region did not name a leader store" >&2
+    echo "multi-relation SQL-node region did not name a leader store" >&2
     return 1
   }
   curl -sf --max-time 2 "http://${PD_ADDR}/pd/api/v1/stores" \
@@ -198,7 +198,7 @@ ensure_region_placement() {
   local leader_store=$2
   shift 2
   [[ $# -eq 3 && "$1" == "${leader_store}" ]] || {
-    echo "Campaign 25 placement requires the leader plus exactly two voter stores" >&2
+    echo "multi-relation SQL-node placement requires the leader plus exactly two voter stores" >&2
     return 1
   }
   local region_json
@@ -213,7 +213,7 @@ ensure_region_placement() {
       "$2" voter "$3" voter >/dev/null 2>&1 || true
     sleep 1
   done
-  echo "Campaign 25 region ${region_id} did not reach voter placement [$*] with leader ${leader_store}" >&2
+  echo "multi-relation SQL-node region ${region_id} did not reach voter placement [$*] with leader ${leader_store}" >&2
   printf '%s\n' "${region_json:-<no PD region response>}" >&2
   return 1
 }
@@ -245,7 +245,7 @@ freeze_tag_owned_store() {
   pid=$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t | head -1 || true)
   [[ -n "${pid}" ]] && ps -ww -p "${pid}" -o command= | grep -F "${TAG}" >/dev/null \
     && ps -ww -p "${pid}" -o command= | grep -F tikv-server >/dev/null || {
-      echo "Campaign 25 refuses to freeze a non-tag-owned TiKV store ${store_id}" >&2
+      echo "multi-relation SQL-node refuses to freeze a non-tag-owned TiKV store ${store_id}" >&2
       return 1
     }
   kill -STOP "${pid}"
@@ -282,7 +282,7 @@ start_persistent_rust_client() {
     fi
     sleep 0.1
   done
-  echo "Campaign 25 persistent authenticated stock client was not admitted" >&2
+  echo "multi-relation SQL-node persistent authenticated stock client was not admitted" >&2
   sed -n '1,160p' "${PERSISTENT_CLIENT_ERROR}" >&2
   return 1
 }
@@ -298,7 +298,7 @@ run_persistent_query() {
   before_transports=$(grep -c -F '"event":"query_multi_transport"' "${RUST_LOG}" || true)
   expected_lines=$(printf '%s\n' "${expected}" | sed '/^[[:space:]]*$/d' | awk 'END { print NR + 0 }')
   kill -0 "${PERSISTENT_CLIENT_PID}" 2>/dev/null || {
-    echo "Campaign 25 persistent stock client exited before ${phase}" >&2
+    echo "multi-relation SQL-node persistent stock client exited before ${phase}" >&2
     return 1
   }
   printf '%s\n' "${query}" >&9
@@ -328,7 +328,7 @@ run_persistent_query() {
     || "${current_errors}" -ne "${before_errors}" \
     || "${current_snapshots}" -lt $((before_snapshots + 1)) \
     || "${current_transports}" -lt $((before_transports + 2)) ]]; then
-    echo "Campaign 25 ${phase} persistent stock-client query did not complete" >&2
+    echo "multi-relation SQL-node ${phase} persistent stock-client query did not complete" >&2
     tail -40 "${PERSISTENT_CLIENT_OUTPUT}" >&2
     sed -n '1,160p' "${PERSISTENT_CLIENT_ERROR}" >&2
     return 1
@@ -339,7 +339,7 @@ run_persistent_query() {
     actual_output=$(sed -n "$((before_output + 1)),$((before_output + expected_lines))p" "${PERSISTENT_CLIENT_OUTPUT}")
   fi
   [[ "${actual_output}" == "${expected}" ]] || {
-    echo "Campaign 25 ${phase} output mismatch: ${actual_output@Q}" >&2
+    echo "multi-relation SQL-node ${phase} output mismatch: ${actual_output@Q}" >&2
     return 1
   }
   PHASE_RESULT=${actual_output}
@@ -348,7 +348,7 @@ run_persistent_query() {
   connection_id=$(printf '%s\n' "${PHASE_SNAPSHOT}" | jq -r '.connection_id // 0')
   session_id=$(printf '%s\n' "${PHASE_SNAPSHOT}" | jq -r '.session_id // 0')
   [[ "${connection_id}" =~ ^[1-9][0-9]*$ && "${session_id}" =~ ^[1-9][0-9]*$ ]] || {
-    echo "Campaign 25 ${phase} omitted persistent connection identity" >&2
+    echo "multi-relation SQL-node ${phase} omitted persistent connection identity" >&2
     return 1
   }
   if [[ -z "${PERSISTENT_CONNECTION_ID}" ]]; then
@@ -356,7 +356,7 @@ run_persistent_query() {
     PERSISTENT_SESSION_ID=${session_id}
   elif [[ "${connection_id}" != "${PERSISTENT_CONNECTION_ID}" \
     || "${session_id}" != "${PERSISTENT_SESSION_ID}" ]]; then
-    echo "Campaign 25 ${phase} did not remain on the authenticated session" >&2
+    echo "multi-relation SQL-node ${phase} did not remain on the authenticated session" >&2
     return 1
   fi
 }
@@ -371,7 +371,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ $((4000 + 44000)) == 48000 ]]
   [[ $((12000 + 44000)) == 56000 ]]
   [[ $(hash_native_password password) =~ ^[0-9A-F]{40}$ ]]
-  echo "Campaign 25 multi-relation smoke harness self-test passed"
+  echo "multi-relation SQL-node multi-relation smoke harness self-test passed"
   exit 0
 fi
 
@@ -379,7 +379,7 @@ for tool in tiup cargo curl jq nc openssl awk grep mktemp lsof perl; do
   require "${tool}"
 done
 require "${MYSQL_CLIENT}"
-plugin_dir=${C25_MYSQL_PLUGIN_DIR:-}
+plugin_dir=${MULTI_RELATION_SQL_MYSQL_PLUGIN_DIR:-}
 if [[ -z "${plugin_dir}" ]]; then
   for candidate in /opt/homebrew/opt/mysql-client/lib/plugin /usr/local/opt/mysql-client/lib/plugin; do
     if [[ -f "${candidate}/mysql_native_password.so" ]]; then
@@ -389,26 +389,26 @@ if [[ -z "${plugin_dir}" ]]; then
   done
 fi
 [[ -f "${plugin_dir}/mysql_native_password.so" ]] || {
-  echo "C25_MYSQL_PLUGIN_DIR must contain mysql_native_password.so" >&2
+  echo "MULTI_RELATION_SQL_MYSQL_PLUGIN_DIR must contain mysql_native_password.so" >&2
   exit 1
 }
 MYSQL_PLUGIN_ARGS=(--plugin-dir="${plugin_dir}")
 [[ "${PORT_OFFSET}" =~ ^[0-9]+$ && "${PORT_OFFSET}" -le 44375 ]] || {
-  echo "C25_PORT_OFFSET must be an integer no greater than 44375" >&2
+  echo "MULTI_RELATION_SQL_PORT_OFFSET must be an integer no greater than 44375" >&2
   exit 1
 }
 [[ "${SERVER_READY_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || {
-  echo "C25_SERVER_READY_ATTEMPTS must be a positive integer" >&2
+  echo "MULTI_RELATION_SQL_SERVER_READY_ATTEMPTS must be a positive integer" >&2
   exit 1
 }
 [[ -n "${GO_SERVER}" && -x "${GO_SERVER}" ]] || {
-  echo "C25_GO_TIDB_SERVER must name a TiDB v8.5.6 fixture binary" >&2
+  echo "MULTI_RELATION_SQL_GO_TIDB_SERVER must name a TiDB v8.5.6 fixture binary" >&2
   exit 1
 }
-if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
+if [[ "${MULTI_RELATION_SQL_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   for marker in enableTestAPI beforeCommitSecondaries prewriteSecondary; do
     LC_ALL=C grep -a -q "${marker}" "${GO_SERVER}" || {
-      echo "C25_GO_TIDB_SERVER is missing required ${marker} failpoint marker" >&2
+      echo "MULTI_RELATION_SQL_GO_TIDB_SERVER is missing required ${marker} failpoint marker" >&2
       exit 1
     }
   done
@@ -418,7 +418,7 @@ else
 fi
 for port in "${PD_PORT}" "${GO_PORT}" "${RUST_PORT}"; do
   ! nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1 || {
-    echo "Campaign 25 refuses occupied port ${port}" >&2
+    echo "multi-relation SQL-node refuses occupied port ${port}" >&2
     exit 1
   }
 done
@@ -429,7 +429,7 @@ AUTH_FILE="${RUNTIME_DIR}/auth.tsv"
 RUST_LOG="${RUNTIME_DIR}/rust.log"
 PLAYGROUND_LOG="${RUNTIME_DIR}/playground.log"
 AUTH_USER=campaign25
-AUTH_PASSWORD=${C25_AUTH_PASSWORD:-campaign25-native-password}
+AUTH_PASSWORD=${MULTI_RELATION_SQL_AUTH_PASSWORD:-campaign25-native-password}
 AUTH_HASH=$(hash_native_password "${AUTH_PASSWORD}")
 (umask 077; printf '%s\t127.0.0.1\tmysql_native_password\t*%s\n' \
   "${AUTH_USER}" "${AUTH_HASH}" >"${AUTH_FILE}")
@@ -459,7 +459,7 @@ for _ in $(seq 1 240); do
   sleep 1
 done
 [[ "${ready}" == true ]] || {
-  echo "Campaign 25 three-PD quorum did not become ready" >&2
+  echo "multi-relation SQL-node three-PD quorum did not become ready" >&2
   exit 1
 }
 tiup playground scale-out --tag "${TAG}" --kv "${TIKV_COUNT}" >>"${PLAYGROUND_LOG}" 2>&1
@@ -478,11 +478,11 @@ for _ in $(seq 1 240); do
   sleep 1
 done
 [[ "${ready}" == true ]] || {
-  echo "Campaign 25 ${TIKV_COUNT} TiKV nodes did not become ready" >&2
+  echo "multi-relation SQL-node ${TIKV_COUNT} TiKV nodes did not become ready" >&2
   exit 1
 }
 GO_SERVER_BINPATH="${GO_SERVER}"
-if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
+if [[ "${MULTI_RELATION_SQL_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   GO_SERVER_BINPATH="${GO_SERVER_WRAPPER}"
 fi
 tiup playground scale-out --tag "${TAG}" --db 1 --db.binpath "${GO_SERVER_BINPATH}" \
@@ -500,13 +500,13 @@ for _ in $(seq 1 240); do
   sleep 1
 done
 [[ "${ready}" == true ]] || {
-  echo "Campaign 25 Go TiDB fixture did not become ready" >&2
+  echo "multi-relation SQL-node Go TiDB fixture did not become ready" >&2
   exit 1
 }
-if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
+if [[ "${MULTI_RELATION_SQL_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   active_failpoints=$(curl -sf --max-time 2 "http://127.0.0.1:${GO_STATUS_PORT}/fail/" || true)
   [[ "${active_failpoints}" == *'github.com/pingcap/tidb/pkg/server/enableTestAPI=return'* ]] || {
-    echo "Campaign 25 Go TiDB fixture did not activate the failpoint test API" >&2
+    echo "multi-relation SQL-node Go TiDB fixture did not activate the failpoint test API" >&2
     exit 1
   }
 fi
@@ -514,7 +514,7 @@ mysql_go <<'SQL'
 DROP DATABASE IF EXISTS campaign25;
 CREATE DATABASE campaign25;
 SQL
-if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
+if [[ "${MULTI_RELATION_SQL_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   # client-go chooses the first encoded mutation key as the pessimistic
   # transaction primary.  Create this helper before the read tables so its
   # record key sorts first and the left-row mutation is a real secondary.
@@ -540,7 +540,7 @@ CREATE TABLE campaign25.right_rows (
 INSERT INTO campaign25.left_rows VALUES (-7, 10, 700), (0, 20, 800), (42, 30, 900);
 INSERT INTO campaign25.right_rows VALUES (1, 10, 1000), (2, 30, 3000), (3, 40, 4000);
 SQL
-if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
+if [[ "${MULTI_RELATION_SQL_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   mysql_go <<'SQL'
 SET SESSION tidb_wait_split_region_finish = 1;
 SPLIT TABLE campaign25.left_rows BY (-7);
@@ -550,13 +550,13 @@ fi
 LEFT_ID=$(mysql_go -Nse "select tidb_table_id from information_schema.tables where table_schema='campaign25' and table_name='left_rows'")
 RIGHT_ID=$(mysql_go -Nse "select tidb_table_id from information_schema.tables where table_schema='campaign25' and table_name='right_rows'")
 [[ "${LEFT_ID}" =~ ^[1-9][0-9]*$ && "${RIGHT_ID}" =~ ^[1-9][0-9]*$ && "${LEFT_ID}" != "${RIGHT_ID}" ]] || {
-  echo "Campaign 25 fixture did not expose two physical table IDs" >&2
+  echo "multi-relation SQL-node fixture did not expose two physical table IDs" >&2
   exit 1
 }
-if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
+if [[ "${MULTI_RELATION_SQL_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   HELPER_ID=$(mysql_go -Nse "select tidb_table_id from information_schema.tables where table_schema='campaign25' and table_name='lock_secondary'")
   [[ "${HELPER_ID}" =~ ^[1-9][0-9]*$ && "${HELPER_ID}" -lt "${LEFT_ID}" ]] || {
-    echo "Campaign 25 helper key cannot be the pessimistic transaction primary" >&2
+    echo "multi-relation SQL-node helper key cannot be the pessimistic transaction primary" >&2
     exit 1
   }
 fi
@@ -590,7 +590,7 @@ printf '%s\n' "${ready_json}" | jq -e \
   '.tables | length == 2 and .[0].table_id == $left and .[1].table_id == $right' >/dev/null
 shutdown_grace_ms=$(printf '%s\n' "${ready_json}" | jq -r '.shutdown_grace_ms // -1')
 [[ "${shutdown_grace_ms}" =~ ^[0-9]+$ ]] || {
-  echo "Campaign 25 Rust node omitted shutdown grace" >&2
+  echo "multi-relation SQL-node Rust node omitted shutdown grace" >&2
   exit 1
 }
 
@@ -602,7 +602,7 @@ printf '%s\n' "${PHASE_SNAPSHOT}" | jq -e \
   '.join_equality == {"left_full_offset": 1, "right_full_offset": 4}
    and .relations[0].predicate_count == 0
    and .relations[1].predicate_count == 1' >/dev/null || {
-  echo "Campaign 25 ON query omitted the bound FullSchema join keys or residual Selection" >&2
+  echo "multi-relation SQL-node ON query omitted the bound FullSchema join keys or residual Selection" >&2
   printf '%s\n' "${PHASE_SNAPSHOT}" >&2
   exit 1
 }
@@ -614,12 +614,12 @@ left_region_id=$(printf '%s\n' "${left_publication}" | jq -r '.region_id // 0')
 right_publication=$(publication_for_query_table "${on_query_id}" "${RIGHT_ID}")
 right_region_id=$(printf '%s\n' "${right_publication}" | jq -r '.region_id // 0')
 [[ "${left_region_id}" =~ ^[1-9][0-9]*$ ]] || {
-  echo "Campaign 25 on-query did not publish a left-table TiKV region" >&2
+  echo "multi-relation SQL-node on-query did not publish a left-table TiKV region" >&2
   printf '%s\n' "${left_publication}" >&2
   exit 1
 }
 [[ "${right_region_id}" =~ ^[1-9][0-9]*$ ]] || {
-  echo "Campaign 25 ON query did not publish a right-table TiKV region" >&2
+  echo "multi-relation SQL-node ON query did not publish a right-table TiKV region" >&2
   printf '%s\n' "${right_publication}" >&2
   exit 1
 }
@@ -627,7 +627,7 @@ left_region=$(curl -sf --max-time 2 "http://${PD_ADDR}/pd/api/v1/region/id/${lef
 leader_address=$(region_leader_address "${left_region}")
 [[ -n "${leader_address}" \
   && $(printf '%s\n' "${left_publication}" | jq -r '.physical_address // empty') == "${leader_address}" ]] || {
-  echo "Campaign 25 initial left-table dispatch did not reach PD's leader" >&2
+  echo "multi-relation SQL-node initial left-table dispatch did not reach PD's leader" >&2
   printf '%s\n%s\n' "${left_region}" "${left_publication}" >&2
   exit 1
 }
@@ -635,12 +635,12 @@ leader_store=$(printf '%s\n' "${left_region}" | jq -r '.leader.store_id // 0')
 next_store=$(printf '%s\n' "${left_region}" | jq -r --argjson leader "${leader_store}" \
   '.peers[] | select(.store_id != $leader and .role_name == "Voter") | .store_id' | head -1)
 [[ "${left_region_id}" =~ ^[1-9][0-9]*$ && "${next_store}" =~ ^[1-9][0-9]*$ ]] || {
-  echo "Campaign 25 left table did not expose a transferable voter region" >&2
+  echo "multi-relation SQL-node left table did not expose a transferable voter region" >&2
   exit 1
 }
 transfer_pd_leader "${left_region_id}" "${next_store}"
 [[ -n "${RUST_PID_BEFORE_CHURN}" ]] && kill -0 "${RUST_PID_BEFORE_CHURN}" 2>/dev/null || {
-  echo "Campaign 25 PD leader transfer did not retain the Rust SQL node" >&2
+  echo "multi-relation SQL-node PD leader transfer did not retain the Rust SQL node" >&2
   exit 1
 }
 run_persistent_query post_churn \
@@ -648,7 +648,7 @@ run_persistent_query post_churn \
   "${result}"
 post_churn_result=${PHASE_RESULT}
 [[ "${post_churn_result}" == "${result}" ]] || {
-  echo "Campaign 25 post-churn join output mismatch: ${post_churn_result@Q}" >&2
+  echo "multi-relation SQL-node post-churn join output mismatch: ${post_churn_result@Q}" >&2
   exit 1
 }
 post_churn_query_id=$(printf '%s\n' "${PHASE_SNAPSHOT}" | jq -r '.query_id // 0')
@@ -660,7 +660,7 @@ post_churn_leader_address=$(region_leader_address "${post_churn_leader}")
 [[ "${post_churn_region_id}" == "${left_region_id}" \
   && $(printf '%s\n' "${post_churn_leader}" | jq -r '.leader.store_id // 0') == "${next_store}" \
   && $(printf '%s\n' "${post_churn_transport}" | jq -r '.unary_attempts // 0') -ge 1 ]] || {
-  echo "Campaign 25 post-transfer read did not recover from the stale leader" >&2
+  echo "multi-relation SQL-node post-transfer read did not recover from the stale leader" >&2
   printf '%s\n%s\n%s\n' "${post_churn_leader}" "${post_churn_publication}" "${post_churn_transport}" >&2
   exit 1
 }
@@ -671,7 +671,7 @@ post_churn_revalidated_query_id=$(printf '%s\n' "${PHASE_SNAPSHOT}" | jq -r '.qu
 post_churn_revalidated_publication=$(publication_for_query_table "${post_churn_revalidated_query_id}" "${LEFT_ID}")
 [[ $(printf '%s\n' "${post_churn_revalidated_publication}" | jq -r '.region_id // 0') == "${left_region_id}" \
   && $(printf '%s\n' "${post_churn_revalidated_publication}" | jq -r '.physical_address // empty') == "${post_churn_leader_address}" ]] || {
-  echo "Campaign 25 revalidated dispatch did not publish to PD's new leader" >&2
+  echo "multi-relation SQL-node revalidated dispatch did not publish to PD's new leader" >&2
   printf '%s\n%s\n' "${post_churn_leader}" "${post_churn_revalidated_publication}" >&2
   exit 1
 }
@@ -688,12 +688,12 @@ run_persistent_query no_match \
   'SELECT l.id, r.id FROM campaign25.left_rows AS l INNER JOIN campaign25.right_rows AS r ON l.join_key = r.join_key WHERE r.id = 3;' \
   ''
 
-if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
+if [[ "${MULTI_RELATION_SQL_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   store_ids=($(curl -sf --max-time 2 "http://${PD_ADDR}/pd/api/v1/stores" \
     | jq -r '.stores[] | select(.store.state_name == "Up" and ((.store.node_state_name // "Serving") == "Serving")) | .store.id' \
     | sort -n))
   [[ ${#store_ids[@]} -eq 5 ]] || {
-    echo "Campaign 25 blocked-shutdown proof requires exactly five serving TiKV stores" >&2
+    echo "multi-relation SQL-node blocked-shutdown proof requires exactly five serving TiKV stores" >&2
     exit 1
   }
   helper_a=${store_ids[0]}
@@ -705,14 +705,14 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   tiup ctl:v8.5.6 pd -u "http://${PD_ADDR}" config set region-schedule-limit 0 >/dev/null
   [[ $(curl -sf --max-time 2 "http://${PD_ADDR}/pd/api/v1/config/schedule" \
     | jq -r '."leader-schedule-limit" // -1') == 0 ]] || {
-    echo "Campaign 25 could not disable background leader scheduling" >&2
+    echo "multi-relation SQL-node could not disable background leader scheduling" >&2
     exit 1
   }
   helper_region_id=$(table_record_region_id lock_secondary "${HELPER_ID}" 1)
   [[ "${helper_region_id}" =~ ^[1-9][0-9]*$ \
     && "${helper_region_id}" != "${left_region_id}" \
     && "${helper_region_id}" != "${right_region_id}" ]] || {
-    echo "Campaign 25 fixture did not expose a distinct helper-primary region" >&2
+    echo "multi-relation SQL-node fixture did not expose a distinct helper-primary region" >&2
     mysql_go -Nse "SHOW TABLE campaign25.lock_secondary REGIONS" >&2 || true
     exit 1
   }
@@ -732,7 +732,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   # transport-cache timeout rather than a lock-resolution proof.
   shared_b_address=$(store_address "${shared_b}")
   [[ -n "${shared_b_address}" ]] || {
-    echo "Campaign 25 placement preflight could not resolve the shared read-store address" >&2
+    echo "multi-relation SQL-node placement preflight could not resolve the shared read-store address" >&2
     exit 1
   }
   placement_preflight_ready=false
@@ -743,7 +743,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
     AUTHENTICATED_QUERY_COUNT=$((AUTHENTICATED_QUERY_COUNT + 1))
     placement_preflight_query_id=$(printf '%s\n' "${PHASE_SNAPSHOT}" | jq -r '.query_id // 0')
     [[ "${placement_preflight_query_id}" =~ ^[1-9][0-9]*$ ]] || {
-      echo "Campaign 25 placement preflight did not expose a query identity" >&2
+      echo "multi-relation SQL-node placement preflight did not expose a query identity" >&2
       exit 1
     }
     placement_preflight_ready=true
@@ -766,7 +766,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
     [[ "${placement_preflight_ready}" == true ]] && break
   done
   [[ "${placement_preflight_ready}" == true ]] || {
-    echo "Campaign 25 placement preflight did not refresh both relation routes to the surviving shared read store" >&2
+    echo "multi-relation SQL-node placement preflight did not refresh both relation routes to the surviving shared read store" >&2
     printf '%s\n' "${placement_publication:-<missing publication>}" >&2
     printf '%s\n' "${placement_transport:-<missing transport>}" >&2
     exit 1
@@ -786,7 +786,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
     sleep 0.1
   done
   grep -Fx "${lock_marker}" "${lock_output}" >/dev/null || {
-    echo "Campaign 25 Go lock holder did not publish its prewrite marker" >&2
+    echo "multi-relation SQL-node Go lock holder did not publish its prewrite marker" >&2
     sed -n '1,160p' "${lock_error}" >&2
     exit 1
   }
@@ -800,7 +800,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
     sleep 0.1
   done
   [[ "${fixture_logged}" == true ]] || {
-    echo "Campaign 25 Go fixture did not execute beforeCommitSecondaries=skip" >&2
+    echo "multi-relation SQL-node Go fixture did not execute beforeCommitSecondaries=skip" >&2
     tail -160 "${PLAYGROUND_LOG}" >&2
     exit 1
   }
@@ -822,7 +822,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   sleep 1
   kill -0 "${lock_probe_pid}" 2>/dev/null \
     && [[ ! -s "${probe_output}" ]] || {
-      echo "Campaign 25 stock Go control read did not block on the isolated secondary lock" >&2
+      echo "multi-relation SQL-node stock Go control read did not block on the isolated secondary lock" >&2
       sed -n '1,160p' "${probe_output}" >&2
       sed -n '1,160p' "${probe_error}" >&2
       exit 1
@@ -847,7 +847,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   [[ "${block_query_id}" =~ ^[1-9][0-9]*$ \
     && $(printf '%s\n' "${block_snapshot}" | jq -r '.connection_id') == "${PERSISTENT_CONNECTION_ID}" \
     && $(printf '%s\n' "${block_snapshot}" | jq -r '.session_id') == "${PERSISTENT_SESSION_ID}" ]] || {
-      echo "Campaign 25 blocked join did not preserve the persistent identity" >&2
+      echo "multi-relation SQL-node blocked join did not preserve the persistent identity" >&2
       exit 1
   }
   block_publications=$(grep -F '"event":"query_multi_transport_published"' "${RUST_LOG}" \
@@ -855,7 +855,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   printf '%s\n' "${block_publications}" | jq -e \
     --argjson query "${block_query_id}" --argjson left "${LEFT_ID}" \
     'any(.[]; .query_id == $query and .relation == 0 and .table_id == $left)' >/dev/null || {
-      echo "Campaign 25 blocked join did not dispatch its locked left relation" >&2
+      echo "multi-relation SQL-node blocked join did not dispatch its locked left relation" >&2
       exit 1
     }
   sleep 1
@@ -865,7 +865,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
     || $(line_count "${PERSISTENT_CLIENT_ERROR}") != "${block_before_errors}" ]] \
     || ! printf '%s\n' "${block_transports}" | jq -e --argjson query "${block_query_id}" \
       'all(.[]; .query_id != $query)' >/dev/null; then
-    echo "Campaign 25 Rust join was not blocked on the isolated real TiKV lock" >&2
+    echo "multi-relation SQL-node Rust join was not blocked on the isolated real TiKV lock" >&2
     exit 1
   fi
   shutdown_started_ms=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time() * 1000')
@@ -876,7 +876,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
     sleep 1
   done
   kill -0 "${RUST_PID}" 2>/dev/null && {
-    echo "Campaign 25 Rust SQL node exceeded its advertised shutdown grace" >&2
+    echo "multi-relation SQL-node Rust SQL node exceeded its advertised shutdown grace" >&2
     exit 1
   }
   set +e
@@ -892,7 +892,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   kill -TERM "${lock_probe_pid}" 2>/dev/null || true
   wait "${lock_probe_pid}" 2>/dev/null || true
   [[ "${rust_status}" == 0 && "${shutdown_elapsed_ms}" -le $((shutdown_grace_ms + 2000)) ]] || {
-    echo "Campaign 25 blocked-query shutdown did not complete cleanly" >&2
+    echo "multi-relation SQL-node blocked-query shutdown did not complete cleanly" >&2
     tail -240 "${RUST_LOG}" >&2
     exit 1
   }
@@ -905,7 +905,7 @@ if [[ "${C25_ENABLE_BLOCKED_SHUTDOWN:-false}" == true ]]; then
   blocked_client_status=$?
   set -e
   [[ "${blocked_client_status}" -ne 0 && $(line_count "${PERSISTENT_CLIENT_OUTPUT}") == "${block_before_output}" ]] || {
-    echo "Campaign 25 blocked stock client completed instead of observing cancellation" >&2
+    echo "multi-relation SQL-node blocked stock client completed instead of observing cancellation" >&2
     exit 1
   }
   PERSISTENT_CLIENT_PID=
@@ -920,7 +920,7 @@ printf '%s\n' "${snapshot}" | jq -e --argjson left "${LEFT_ID}" --argjson right 
    and (.relations[] | .handle_range_count > 0)' >/dev/null
 publication_count=$(grep -F '"event":"query_multi_transport_published"' "${RUST_LOG}" | wc -l | tr -d ' ')
 [[ "${publication_count}" -ge 2 ]] || {
-  echo "Campaign 25 did not publish one real TiKV dispatch per relation" >&2
+  echo "multi-relation SQL-node did not publish one real TiKV dispatch per relation" >&2
   tail -160 "${RUST_LOG}" >&2
   exit 1
 }
@@ -929,4 +929,4 @@ grep -F '"event":"query_multi_transport"' "${RUST_LOG}" | tail -2 | jq -s \
   'length == 2 and ([.[].table_id] | sort) == ([$left, $right] | sort)
    and all(.[]; .batch_attempts >= 1 and .unary_attempts == 0)' >/dev/null
 
-echo "Campaign 25 live multi-relation smoke proof passed: rust_pid=${RUST_PID_AT_START}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; snapshot=$(printf '%s' "${snapshot}" | jq -r '.snapshot_ts'); tables=${LEFT_ID},${RIGHT_ID}; rows=3; authenticated_queries=${AUTHENTICATED_QUERY_COUNT}; join_shapes=on,using,cross,comma,no-match; left_region=${left_region_id}; leader_transfer=${leader_store}->${next_store}"
+echo "multi-relation SQL-node live multi-relation smoke proof passed: rust_pid=${RUST_PID_AT_START}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; snapshot=$(printf '%s' "${snapshot}" | jq -r '.snapshot_ts'); tables=${LEFT_ID},${RIGHT_ID}; rows=3; authenticated_queries=${AUTHENTICATED_QUERY_COUNT}; join_shapes=on,using,cross,comma,no-match; left_region=${left_region_id}; leader_transfer=${leader_store}->${next_store}"

@@ -62,7 +62,7 @@ fn encode_value(out: &mut Vec<u8>, value: &Datum) {
             out.push(9);
             out.extend_from_slice(&value.to_le_bytes());
         }
-        Datum::Real(value) => {
+        Datum::Real(value) | Datum::Float32(value) => {
             out.push(5);
             let bits = value.to_bits();
             let comparable = if *value >= 0.0 {
@@ -98,6 +98,39 @@ fn encode_value(out: &mut Vec<u8>, value: &Datum) {
         Datum::Bytes(value) => {
             out.push(2);
             encode_bytes(out, value);
+        }
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+            out.push(9);
+            out.extend_from_slice(&value.to_int().value().to_le_bytes());
+        }
+        Datum::Duration(value) => {
+            out.push(7);
+            out.extend_from_slice(&value.nanoseconds().to_be_bytes());
+        }
+        Datum::Enum(value, _) => {
+            out.push(9);
+            out.extend_from_slice(&value.value().to_le_bytes());
+        }
+        Datum::Set(value, _) => {
+            out.push(9);
+            out.extend_from_slice(&value.value().to_le_bytes());
+        }
+        Datum::Time(value) => {
+            out.push(9);
+            out.extend_from_slice(&value.go_raw().to_le_bytes());
+        }
+        Datum::Json(value) => {
+            out.push(10);
+            out.push(value.type_code());
+            encode_bytes(out, value.value());
+        }
+        Datum::Raw(value) => {
+            out.push(11);
+            encode_bytes(out, value);
+        }
+        Datum::VectorFloat32(value) => {
+            out.push(12);
+            value.serialize_to(out);
         }
     }
 }

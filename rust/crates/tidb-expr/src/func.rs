@@ -307,6 +307,12 @@ fn last_insert_id_arg(value: &Datum) -> Result<u64, EvalError> {
                 "range sentinel LAST_INSERT_ID argument",
             ));
         }
+        other => {
+            other
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("LAST_INSERT_ID conversion"))?
+                .value
+        }
     };
     Ok(signed as u64)
 }

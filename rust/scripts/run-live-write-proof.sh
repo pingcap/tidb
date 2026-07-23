@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Campaign 28 Stage E write proof (focused, self-contained).
+# Live write proof (focused, self-contained).
 #
 # Proves that prepared writes committed through the Rust SQL node persist to a
 # real PD/TiKV cluster and are observed independently by a separate Go TiDB.
@@ -21,7 +21,7 @@ set -euo pipefail
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT_DIR="${RUST_ROOT}/scripts"
 TAG="campaign28-stage-e-write-${$}"
-PORT_OFFSET=${C28_STAGE_E_WRITE_PORT_OFFSET:-46000}
+PORT_OFFSET=${WRITE_PROOF_PORT_OFFSET:-46000}
 PD_PORT=$((2379 + PORT_OFFSET))
 TIDB_PORT=$((4000 + PORT_OFFSET))
 RUST_PORT=$((3390 + PORT_OFFSET))
@@ -35,7 +35,7 @@ AUTH_USER=campaign28
 AUTH_PASSWORD=campaign28-native-password
 DATABASE=campaign28
 TABLE_SIZE=16
-MYSQL_PLUGIN_DIR=${C28_MYSQL_PLUGIN_DIR:-/opt/homebrew/Cellar/mysql-client/9.5.0/lib/plugin}
+MYSQL_PLUGIN_DIR=${WRITE_PROOF_MYSQL_PLUGIN_DIR:-/opt/homebrew/Cellar/mysql-client/9.5.0/lib/plugin}
 # The prepared read+write matrix is driven by the raw-socket Python client rather
 # than sysbench: on this host the Homebrew sysbench links mariadb-connector-c,
 # which refuses a plaintext connection ("SSL is required") even with
@@ -45,7 +45,7 @@ MYSQL_PLUGIN_DIR=${C28_MYSQL_PLUGIN_DIR:-/opt/homebrew/Cellar/mysql-client/9.5.0
 # with a libmysqlclient-linked sysbench.
 RAW_CLIENT="${SCRIPT_DIR}/mysql-prepared-client.py"
 WRITE_COUNT=16
-SYSBENCH_BIN=${C28_SYSBENCH:-/opt/homebrew/bin/sysbench}
+SYSBENCH_BIN=${WRITE_PROOF_SYSBENCH:-/opt/homebrew/bin/sysbench}
 SYSBENCH_SCRIPT="${SCRIPT_DIR}/sysbench-prepared-read-write.lua"
 RUST_SERVER="${RUST_ROOT}/target/release/tidb-server"
 PLAYGROUND_PID=

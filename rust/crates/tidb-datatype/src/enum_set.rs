@@ -26,6 +26,14 @@ pub struct MysqlEnum {
 }
 
 impl MysqlEnum {
+    /// Creates the exact source name/value pair.
+    pub fn new(name: impl Into<String>, value: u64) -> Self {
+        Self {
+            name: name.into(),
+            value,
+        }
+    }
+
     /// Returns the canonical element spelling.
     pub fn name(&self) -> &str {
         &self.name
@@ -161,6 +169,14 @@ pub struct MysqlSet {
 }
 
 impl MysqlSet {
+    /// Creates the exact source name/value pair.
+    pub fn new(name: impl Into<String>, value: u64) -> Self {
+        Self {
+            name: name.into(),
+            value,
+        }
+    }
+
     /// Returns the canonical comma-separated name.
     pub fn name(&self) -> &str {
         &self.name

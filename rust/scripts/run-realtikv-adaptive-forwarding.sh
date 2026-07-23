@@ -3,8 +3,8 @@
 set -euo pipefail
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TAG="campaign14-adaptive-forwarding-${$}"
-PORT_OFFSET=${C14_PORT_OFFSET:-29000}
+TAG="realtikv-adaptive-forwarding-${$}"
+PORT_OFFSET=${ADAPTIVE_FORWARDING_PORT_OFFSET:-29000}
 PD_PORT=$((2379 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
@@ -32,7 +32,7 @@ cleanup() {
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
   if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-    echo "Campaign 14 cleanup failed: tiup clean failed for ${TAG}" >&2
+    echo "adaptive-forwarding cleanup failed: tiup clean failed for ${TAG}" >&2
     cleanup_failed=true
   fi
 
@@ -55,7 +55,7 @@ cleanup() {
     sleep 1
   done
   if [[ "${cleaned}" != true ]]; then
-    echo "Campaign 14 cleanup failed: owned process or registry row remains" >&2
+    echo "adaptive-forwarding cleanup failed: owned process or registry row remains" >&2
     cleanup_failed=true
   fi
 
@@ -63,12 +63,12 @@ cleanup() {
   for address in ${STORE_ADDRESSES}; do
     local port=${address##*:}
     if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-      echo "Campaign 14 cleanup failed: TiKV ${address} remains reachable" >&2
+      echo "adaptive-forwarding cleanup failed: TiKV ${address} remains reachable" >&2
       cleanup_failed=true
     fi
   done
   if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-    echo "Campaign 14 cleanup failed: PD ${PD_ADDR} remains reachable" >&2
+    echo "adaptive-forwarding cleanup failed: PD ${PD_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
   if [[ "${cleanup_failed}" == false ]]; then
@@ -76,9 +76,9 @@ cleanup() {
   fi
   if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
     rm -f "${PLAYGROUND_LOG}" "${RUST_LOG}"
-    echo "Campaign 14 cleanup passed: tag=${TAG} cleanup=true"
+    echo "adaptive-forwarding cleanup passed: tag=${TAG} cleanup=true"
   else
-    echo "Campaign 14 retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
+    echo "adaptive-forwarding retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
   fi
   if [[ "${cleanup_failed}" == true ]]; then
     exit 1
@@ -88,7 +88,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-  echo "refusing occupied PD endpoint ${PD_ADDR}; set C14_PORT_OFFSET" >&2
+  echo "refusing occupied PD endpoint ${PD_ADDR}; set ADAPTIVE_FORWARDING_PORT_OFFSET" >&2
   exit 1
 fi
 
@@ -122,13 +122,13 @@ if [[ -z "$(tag_owned_pids)" ]]; then
   exit 1
 fi
 
-export C14_PD_ADDR="${PD_ADDR}"
+export ADAPTIVE_FORWARDING_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
   --test realtikv_replica_read \
   adaptive_forwarding_reuses_proxy_then_recovers_direct \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
-  echo "Campaign 14 Rust adaptive-forwarding proof failed" >&2
+  echo "adaptive-forwarding Rust adaptive-forwarding proof failed" >&2
   tail -200 "${RUST_LOG}" >&2
   exit 1
 }
@@ -142,7 +142,7 @@ if [[ -z "${MARKER}" ]] \
   || [[ "${MARKER}" != *"busy_sequence=500,800,150"* ]] \
   || [[ "${MARKER}" != *"direct_usable_response=true"* ]] \
   || [[ "${MARKER}" != *"preference_cleared=true"* ]]; then
-  echo "Campaign 14 marker did not prove the complete adaptive-forwarding loop" >&2
+  echo "adaptive-forwarding marker did not prove the complete adaptive-forwarding loop" >&2
   tail -200 "${RUST_LOG}" >&2
   exit 1
 fi
@@ -163,9 +163,9 @@ if [[ -z "${TARGET_ADDRESS}" ]] \
   || [[ "${TARGET_ADDRESS}" == "${PROXY_ADDRESS}" ]] \
   || [[ "${TARGET_ADDRESS}" != "${FORWARDED_HOST}" ]] \
   || [[ "${TARGET_ADDRESS}" != "${DIRECT_RECOVERY_ADDRESS}" ]]; then
-  echo "Campaign 14 marker did not preserve logical target across proxy and recovery" >&2
+  echo "adaptive-forwarding marker did not preserve logical target across proxy and recovery" >&2
   tail -200 "${RUST_LOG}" >&2
   exit 1
 fi
 
-echo "Campaign 14 adaptive forwarding passed: ${MARKER}"
+echo "adaptive-forwarding adaptive forwarding passed: ${MARKER}"

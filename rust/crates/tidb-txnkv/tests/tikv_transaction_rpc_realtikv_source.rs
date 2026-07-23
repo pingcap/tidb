@@ -103,10 +103,10 @@ fn assert_publication(
 }
 
 #[test]
-#[ignore = "requires run-campaign28-transaction-rpc-realtikv.sh"]
+#[ignore = "requires run-realtikv-transaction-rpc.sh"]
 fn typed_transaction_commands_reach_real_tikv_and_leave_no_lock() {
     let pd_address =
-        std::env::var("C28_STAGE_A_PD_ADDR").expect("runner must provide C28_STAGE_A_PD_ADDR");
+        std::env::var("TXN_RPC_PD_ADDR").expect("runner must provide TXN_RPC_PD_ADDR");
     let pd = PdClient::connect(pd_address, Duration::from_secs(10))
         .expect("connect sole process-owned PD worker");
     let cluster_id = pd.cluster_id();

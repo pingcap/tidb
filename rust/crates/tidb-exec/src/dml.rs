@@ -1277,15 +1277,23 @@ fn coerce_integer_column(
         Datum::Decimal(value) => {
             rounded_decimal_integer(&value.to_string()).ok_or_else(out_of_range)?
         }
-        Datum::Real(value) => rounded_float_integer(value).ok_or_else(out_of_range)?,
+        Datum::Real(value) | Datum::Float32(value) => {
+            rounded_float_integer(value).ok_or_else(out_of_range)?
+        }
         Datum::String(value) => rounded_string_integer(
             value
                 .as_utf8()
                 .map_err(|_| ExecError::OutOfRange(col_name.to_string()))?,
         )
         .ok_or_else(out_of_range)?,
-        Datum::Bytes(_) => return Err(out_of_range()),
+        Datum::Bytes(_) | Datum::Raw(_) | Datum::VectorFloat32(_) => {
+            return Err(out_of_range());
+        }
         Datum::MinNotNull | Datum::MaxValue => return Err(out_of_range()),
+        other => {
+            let converted = other.to_decimal().map_err(|_| out_of_range())?;
+            rounded_decimal_integer(&converted.value.to_string()).ok_or_else(out_of_range)?
+        }
     };
     match (kind, rounded) {
         (IntegerColumnKind::Unsigned { upper }, RoundedInteger::Nonnegative(value))

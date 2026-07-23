@@ -17,7 +17,7 @@ use crate::decimal::{decode_decimal, encode_decimal, peek_decimal_len};
 use crate::float::{decode_float, encode_float};
 use crate::number::{decode_int, decode_uint, encode_int, encode_uint};
 use crate::CodecError;
-use tidb_datatype::{Collation, Datum, StringDatum};
+use tidb_datatype::{BinaryLiteralIntOutcome, Collation, Datum, StringDatum};
 
 /// TiDB's SQL NULL tag.
 pub const NIL_FLAG: u8 = 0;
@@ -31,6 +31,12 @@ pub const UINT_FLAG: u8 = 4;
 pub const FLOAT_FLAG: u8 = 5;
 /// TiDB's packed mem-comparable decimal tag.
 pub const DECIMAL_FLAG: u8 = 6;
+/// TiDB's signed duration tag.
+pub const DURATION_FLAG: u8 = 7;
+/// TiDB's binary JSON tag.
+pub const JSON_FLAG: u8 = 10;
+/// TiDB's vector-float32 tag.
+pub const VECTOR_FLOAT32_FLAG: u8 = 20;
 /// TiDB's maximum range-bound sentinel tag.
 pub const MAX_FLAG: u8 = 250;
 /// `PrefixNext(MAX_FLAG)`, accepted by Go `DecodeRange` as `MaxValue`.
@@ -81,6 +87,10 @@ impl Encoder {
                     output.push(FLOAT_FLAG);
                     encode_float(&mut output, *value);
                 }
+                Datum::Float32(value) => {
+                    output.push(FLOAT_FLAG);
+                    encode_float(&mut output, *value);
+                }
                 Datum::String(value) => {
                     output.push(BYTES_FLAG);
                     encode_bytes(&mut output, self.string_key(value));
@@ -88,6 +98,42 @@ impl Encoder {
                 Datum::Bytes(value) => {
                     output.push(BYTES_FLAG);
                     encode_bytes(&mut output, value);
+                }
+                Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+                    output.push(UINT_FLAG);
+                    encode_uint(&mut output, binary_literal_uint(value)?);
+                }
+                Datum::Duration(value) => {
+                    output.push(DURATION_FLAG);
+                    encode_int(&mut output, value.nanoseconds());
+                }
+                Datum::Enum(value, _) => {
+                    output.push(UINT_FLAG);
+                    encode_uint(&mut output, value.value());
+                }
+                Datum::Set(value, _) => {
+                    output.push(UINT_FLAG);
+                    encode_uint(&mut output, value.value());
+                }
+                Datum::Time(value) => {
+                    output.push(UINT_FLAG);
+                    encode_uint(
+                        &mut output,
+                        value
+                            .to_packed_uint()
+                            .map_err(|_| CodecError::InvalidEncoding("invalid MySQL time"))?,
+                    );
+                }
+                Datum::Json(value) => {
+                    output.push(JSON_FLAG);
+                    output.extend_from_slice(&value.encoded());
+                }
+                Datum::VectorFloat32(value) => {
+                    output.push(VECTOR_FLOAT32_FLAG);
+                    value.serialize_to(&mut output);
+                }
+                Datum::Raw(_) => {
+                    return Err(CodecError::InvalidEncoding("unsupported raw datum"));
                 }
             }
         }
@@ -104,6 +150,15 @@ impl Encoder {
             &bytes[..end]
         } else {
             bytes
+        }
+    }
+}
+
+fn binary_literal_uint(literal: &tidb_datatype::BinaryLiteral) -> Result<u64, CodecError> {
+    match literal.to_int() {
+        BinaryLiteralIntOutcome::Exact(value) => Ok(value),
+        BinaryLiteralIntOutcome::Truncated { .. } => {
+            Err(CodecError::InvalidEncoding("binary literal exceeds uint64"))
         }
     }
 }

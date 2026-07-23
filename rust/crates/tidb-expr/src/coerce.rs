@@ -19,7 +19,7 @@
 
 use std::cmp::Ordering;
 
-use tidb_datatype::{Datum, Decimal, StringDatum};
+use tidb_datatype::{BinaryLiteralIntOutcome, Datum, Decimal, StringDatum};
 
 use crate::context::EvalError;
 
@@ -34,9 +34,22 @@ pub(crate) fn integer_of(value: &Datum) -> Result<Option<Integer>, EvalError> {
     Ok(match value {
         Datum::Int(value) => Some(Integer::Signed(*value)),
         Datum::UInt(value) => Some(Integer::Unsigned(*value)),
-        Datum::String(_) | Datum::Bytes(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Null => {
-            None
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+            Some(Integer::Unsigned(binary_literal_value(value)))
         }
+        Datum::Enum(value, _) => Some(Integer::Unsigned(value.value())),
+        Datum::Set(value, _) => Some(Integer::Unsigned(value.value())),
+        Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::Decimal(_)
+        | Datum::Real(_)
+        | Datum::Float32(_)
+        | Datum::Duration(_)
+        | Datum::Time(_)
+        | Datum::Json(_)
+        | Datum::Raw(_)
+        | Datum::VectorFloat32(_)
+        | Datum::Null => None,
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel integer coercion"));
         }
@@ -86,7 +99,18 @@ pub fn truthy_of(value: &Datum) -> Result<Option<bool>, EvalError> {
         Datum::UInt(value) => Some(*value != 0),
         Datum::Decimal(value) => Some(!value.is_zero()),
         Datum::Real(value) => Some(*value != 0.0),
-        Datum::Null | Datum::String(_) | Datum::Bytes(_) => None,
+        Datum::Float32(value) => Some((*value as f32) != 0.0),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Some(binary_literal_value(value) != 0),
+        Datum::Enum(value, _) => Some(value.value() != 0),
+        Datum::Set(value, _) => Some(value.value() != 0),
+        Datum::Duration(value) => Some(value.nanoseconds() != 0),
+        Datum::Time(value) => Some(!value.is_zero()),
+        Datum::Null
+        | Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::Json(_)
+        | Datum::Raw(_)
+        | Datum::VectorFloat32(_) => None,
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel truth coercion"));
         }
@@ -111,6 +135,19 @@ pub(crate) fn coerce_str(value: &Datum) -> Result<Option<String>, EvalError> {
         Datum::UInt(value) => Ok(Some(value.to_string())),
         Datum::Decimal(value) => Ok(Some(value.to_string())),
         Datum::Real(value) => Ok(Some(value.to_string())),
+        Datum::Float32(value) => Ok(Some((*value as f32).to_string())),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => std::str::from_utf8(value.as_bytes())
+            .map(|text| Some(text.to_owned()))
+            .map_err(|_| EvalError::Unsupported("invalid UTF-8 binary literal")),
+        Datum::Duration(value) => Ok(Some(value.to_string())),
+        Datum::Enum(value, _) => Ok(Some(value.to_string())),
+        Datum::Set(value, _) => Ok(Some(value.to_string())),
+        Datum::Time(value) => Ok(Some(value.to_string())),
+        Datum::Json(value) => Ok(Some(value.to_string())),
+        Datum::Raw(value) => std::str::from_utf8(value)
+            .map(|text| Some(text.to_owned()))
+            .map_err(|_| EvalError::Unsupported("invalid UTF-8 raw datum")),
+        Datum::VectorFloat32(value) => Ok(Some(value.to_string())),
         Datum::Null => Ok(None),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel string coercion"))
@@ -134,9 +171,26 @@ pub(crate) fn coerce_str_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalErr
         Datum::UInt(value) => Some(value.to_string().into_bytes()),
         Datum::Decimal(value) => Some(value.to_string().into_bytes()),
         Datum::Real(value) => Some(value.to_string().into_bytes()),
+        Datum::Float32(value) => Some((*value as f32).to_string().into_bytes()),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Some(value.as_bytes().to_vec()),
+        Datum::Duration(value) => Some(value.to_string().into_bytes()),
+        Datum::Enum(value, _) => Some(value.to_string().into_bytes()),
+        Datum::Set(value, _) => Some(value.to_string().into_bytes()),
+        Datum::Time(value) => Some(value.to_string().into_bytes()),
+        Datum::Json(value) => Some(value.to_string().into_bytes()),
+        Datum::Raw(value) => Some(value.clone()),
+        Datum::VectorFloat32(value) => Some(value.to_string().into_bytes()),
         Datum::Null => None,
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel byte coercion"));
         }
     })
+}
+
+fn binary_literal_value(value: &tidb_datatype::BinaryLiteral) -> u64 {
+    match value.to_int() {
+        BinaryLiteralIntOutcome::Exact(value) | BinaryLiteralIntOutcome::Truncated { value } => {
+            value
+        }
+    }
 }

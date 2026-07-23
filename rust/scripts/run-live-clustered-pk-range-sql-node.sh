@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-CAMPAIGN_LABEL="Campaign 24"
+CAMPAIGN_LABEL="clustered-PK range SQL node"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"
 
@@ -52,17 +52,17 @@ if [[ "${1:-}" == --self-test-empty-result-framing \
   live_sql_node_harness_self_test
   campaign24_range_contract_self_test
   if [[ "${1:-}" == --self-test-empty-result-framing ]]; then
-    echo "Campaign 24 empty-result framing self-test passed"
+    echo "clustered-PK range SQL-node empty-result framing self-test passed"
   elif [[ "${1:-}" == --self-test-live-harness ]]; then
-    echo "Campaign 24 shared live-harness self-test passed"
+    echo "clustered-PK range SQL-node shared live-harness self-test passed"
   else
-    echo "Campaign 24 clustered-PK range-contract self-test passed"
+    echo "clustered-PK range SQL-node clustered-PK range-contract self-test passed"
   fi
   exit 0
 fi
 
 
-SCENARIO_ENV_PREFIX=C24
+SCENARIO_ENV_PREFIX=CLUSTERED_PK_SQL
 SCENARIO_TAG_SLUG=campaign24-clustered-pk-range-sql-node
 SCENARIO_DATABASE=campaign24
 SCENARIO_AUTH_USER=campaign24
@@ -116,11 +116,11 @@ run_exact_query_phase() {
   local expected_executor_kinds=$9
   local mode=${10:-strict}
   if [[ ! "${expected_predicate_count}" =~ ^[0-9]+$ ]]; then
-    echo "Campaign 24 ${phase} has invalid predicate count ${expected_predicate_count}" >&2
+    echo "clustered-PK range SQL-node ${phase} has invalid predicate count ${expected_predicate_count}" >&2
     return 1
   fi
   if [[ "${mode}" != strict && "${mode}" != converge ]]; then
-    echo "Campaign 24 ${phase} has invalid query phase mode ${mode}" >&2
+    echo "clustered-PK range SQL-node ${phase} has invalid query phase mode ${mode}" >&2
     return 1
   fi
   local output="${RUNTIME_DIR}/${phase}.out"
@@ -137,7 +137,7 @@ run_exact_query_phase() {
   before_output_lines=$(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_OUTPUT}")
   before_error_lines=$(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_ERROR}")
   if ! pid_is_running "${PERSISTENT_CLIENT_PID}"; then
-    echo "Campaign 24 persistent stock client exited before ${phase}" >&2
+    echo "clustered-PK range SQL-node persistent stock client exited before ${phase}" >&2
     return 1
   fi
   local expected_row_count
@@ -177,7 +177,7 @@ run_exact_query_phase() {
     sleep 0.05
   done
   if [[ "${output_ready}" != true ]]; then
-    echo "Campaign 24 ${phase} persistent stock-client output did not complete" >&2
+    echo "clustered-PK range SQL-node ${phase} persistent stock-client output did not complete" >&2
     tail -40 "${PERSISTENT_CLIENT_OUTPUT}" >&2
     sed -n '1,160p' "${PERSISTENT_CLIENT_ERROR}" >&2
     return 1
@@ -189,7 +189,7 @@ run_exact_query_phase() {
       "${PERSISTENT_CLIENT_OUTPUT}" >"${output}"
   fi
   if ! query_output_is_exact "${output}" "${expected_header}" "${expected_rows}"; then
-    echo "Campaign 24 ${phase} did not return the exact filtered rows" >&2
+    echo "clustered-PK range SQL-node ${phase} did not return the exact filtered rows" >&2
     sed -n '1,40p' "${output}" >&2
     return 1
   fi
@@ -213,7 +213,7 @@ run_exact_query_phase() {
      and (.query_id | type) == "number" and .query_id > 0
      and (.session_id | type) == "number" and .session_id > 0
      and ($region == "" or (.region_id | tostring) == $region)' >/dev/null; then
-    echo "Campaign 24 ${phase} last physical publication did not match ${expected_address}" >&2
+    echo "clustered-PK range SQL-node ${phase} last physical publication did not match ${expected_address}" >&2
     printf '%s\n' "${publications}" >&2
     return 1
   fi
@@ -225,7 +225,7 @@ run_exact_query_phase() {
     PERSISTENT_SESSION_ID=${PHASE_SESSION_ID}
   elif [[ "${PHASE_CONNECTION_ID}" != "${PERSISTENT_CONNECTION_ID}" \
     || "${PHASE_SESSION_ID}" != "${PERSISTENT_SESSION_ID}" ]]; then
-    echo "Campaign 24 ${phase} did not remain on the persistent authenticated session" >&2
+    echo "clustered-PK range SQL-node ${phase} did not remain on the persistent authenticated session" >&2
     return 1
   fi
   local snapshot
@@ -241,7 +241,7 @@ run_exact_query_phase() {
        and (.session_id | tostring) == $session' >/dev/null \
     || ! range_snapshot_matches "${snapshot}" "${expected_executor_kinds}" \
       "${expected_ranges}" "${expected_predicate_count}" "${expected_output_offsets}"; then
-    echo "Campaign 24 ${phase} did not publish the exact narrowed handle-range plan" >&2
+    echo "clustered-PK range SQL-node ${phase} did not publish the exact narrowed handle-range plan" >&2
     printf '%s\n' "${snapshot}" >&2
     return 1
   fi
@@ -263,7 +263,7 @@ run_exact_query_phase() {
        else .batch_attempts >= 1 and .unary_attempts == 0 end))
      and (.located_region_ids | length) > 0
      and (.dispatched_region_ids | length) > 0' >/dev/null; then
-    echo "Campaign 24 ${phase} did not finish through BatchCommands-only transport" >&2
+    echo "clustered-PK range SQL-node ${phase} did not finish through BatchCommands-only transport" >&2
     printf '%s\n' "${transport}" >&2
     return 1
   fi
@@ -284,11 +284,11 @@ run_exact_query_phase() {
     sleep 0.05
   done
   if [[ "${activity_ready}" != true ]]; then
-    echo "Campaign 24 ${phase} activity did not correlate with publication/transport identity" >&2
+    echo "clustered-PK range SQL-node ${phase} activity did not correlate with publication/transport identity" >&2
     return 1
   fi
   if ! pid_is_running "${RUST_PID}"; then
-    echo "Campaign 24 ${phase} did not retain the original Rust process" >&2
+    echo "clustered-PK range SQL-node ${phase} did not retain the original Rust process" >&2
     return 1
   fi
 }
@@ -326,7 +326,7 @@ run_empty_range_phase() {
       '(.authority_id | tostring) == $authority' >/dev/null \
     || ! range_snapshot_matches "${snapshot}" '["TableScan"]' '[]' 0 \
       "${expected_output_offsets}" local-empty; then
-    echo "Campaign 24 ${phase} did not publish the exact local zero-range plan" >&2
+    echo "clustered-PK range SQL-node ${phase} did not publish the exact local zero-range plan" >&2
     printf '%s\n' "${snapshot}" >&2
     return 1
   fi
@@ -358,7 +358,7 @@ run_empty_range_phase() {
       -ne "${before_output_lines}" \
     || $(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_ERROR}") \
       -ne "${before_error_lines}" ]]; then
-    echo "Campaign 24 ${phase} acquired a physical transport publication or emitted client data for a contradiction" >&2
+    echo "clustered-PK range SQL-node ${phase} acquired a physical transport publication or emitted client data for a contradiction" >&2
     return 1
   fi
 }
@@ -432,7 +432,7 @@ scenario_validate_block_snapshot() {
 }
 
 scenario_emit_success_receipt() {
-  echo "Campaign 24 live clustered-PK range proof passed: same_rust_pid=${ORIGINAL_RUST_PID}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; region_id=${REGION_ID}; leader_stores=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; range_matrix=eq,ne,lt,le,gt,ge,reversed,bounded,min,max,contradiction,residual; exact_point_range=${RANGE_ID_EQ}; split_not_equal_range_count=2; contradiction_ranges=[]; contradiction_snapshot_ts=null; contradiction_transport_publications=0; residual_plan=TableScan,Selection; residual_ranges=${RANGE_RESIDUAL}; residual_output_offsets=[0,1]; physical_addresses=${ADDRESS_A}->${ADDRESS_B}->${ADDRESS_C}->${ADDRESS_B}; b_channel_versions=${B_VERSION_BEFORE}->${B_VERSION_AFTER}; b_stream_generations=${B_GENERATION_BEFORE}->${B_GENERATION_AFTER}; blocked_id_eq_publication=$(printf '%s' "${BLOCK_PUBLICATION}" | jq -c '{connection_id,query_id,authority_id,session_id,region_id,physical_address,physical_channel_version,stream_generation}'); shutdown_order=connections,region_cache,tikv_transport,pd,sql_node_stopped; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; rust_exit=0; ${FINAL_CONNECTIONS}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; pd_cluster_id=${PD_CLUSTER_ID}"
+  echo "clustered-PK range SQL-node live clustered-PK range proof passed: same_rust_pid=${ORIGINAL_RUST_PID}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; region_id=${REGION_ID}; leader_stores=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; range_matrix=eq,ne,lt,le,gt,ge,reversed,bounded,min,max,contradiction,residual; exact_point_range=${RANGE_ID_EQ}; split_not_equal_range_count=2; contradiction_ranges=[]; contradiction_snapshot_ts=null; contradiction_transport_publications=0; residual_plan=TableScan,Selection; residual_ranges=${RANGE_RESIDUAL}; residual_output_offsets=[0,1]; physical_addresses=${ADDRESS_A}->${ADDRESS_B}->${ADDRESS_C}->${ADDRESS_B}; b_channel_versions=${B_VERSION_BEFORE}->${B_VERSION_AFTER}; b_stream_generations=${B_GENERATION_BEFORE}->${B_GENERATION_AFTER}; blocked_id_eq_publication=$(printf '%s' "${BLOCK_PUBLICATION}" | jq -c '{connection_id,query_id,authority_id,session_id,region_id,physical_address,physical_channel_version,stream_generation}'); shutdown_order=connections,region_cache,tikv_transport,pd,sql_node_stopped; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; rust_exit=0; ${FINAL_CONNECTIONS}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; pd_cluster_id=${PD_CLUSTER_ID}"
 }
 
 run_live_sql_node_topology_scenario

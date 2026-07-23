@@ -481,7 +481,15 @@ fn pad_bytes(source: &[u8], len: usize, pad: &[u8], left: bool) -> Datum {
 pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
     match &vals[0] {
         Datum::Null => Ok(Datum::Null),
-        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => {
+        Datum::Int(_)
+        | Datum::UInt(_)
+        | Datum::Decimal(_)
+        | Datum::Real(_)
+        | Datum::Float32(_)
+        | Datum::Duration(_)
+        | Datum::Enum(_, _)
+        | Datum::Set(_, _)
+        | Datum::Time(_) => {
             let bits = radix_integer_bits(&vals[0])?.expect("non-NULL numeric HEX input");
             Ok(Datum::new_string(format!("{bits:X}")))
         }
@@ -498,8 +506,32 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
                 .map(|byte| format!("{byte:02X}"))
                 .collect::<String>(),
         )),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(Datum::new_string(
+            value
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<String>(),
+        )),
+        Datum::Raw(value) => Ok(Datum::new_string(
+            value
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<String>(),
+        )),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel HEX argument"))
+        }
+        other => {
+            let bytes = other
+                .to_bytes()
+                .map_err(|_| EvalError::Unsupported("HEX argument conversion"))?;
+            Ok(Datum::new_string(
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02X}"))
+                    .collect::<String>(),
+            ))
         }
     }
 }
@@ -661,6 +693,10 @@ fn radix_integer_bits(value: &Datum) -> Result<Option<u64>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel integer argument"))
         }
+        other => other
+            .to_i64()
+            .map(|converted| Some(converted.value as u64))
+            .map_err(|_| EvalError::Unsupported("integer argument conversion")),
     }
 }
 
@@ -775,6 +811,12 @@ pub(crate) fn elt(vals: &[Datum]) -> Result<Datum, EvalError> {
             .unwrap_or(0),
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel ELT index"));
+        }
+        other => {
+            other
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("ELT index conversion"))?
+                .value
         }
     };
     if index < 1 || index as usize >= vals.len() {
@@ -1173,6 +1215,12 @@ pub(crate) fn bit_count(vals: &[Datum]) -> Result<Datum, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel BIT_COUNT argument"));
         }
+        other => {
+            other
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("BIT_COUNT argument conversion"))?
+                .value as u64
+        }
     };
     Ok(Datum::Int(i64::from(bits.count_ones())))
 }
@@ -1293,6 +1341,11 @@ fn format_number_text(value: &Datum) -> Result<Option<String>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel FORMAT argument"));
         }
+        other => Some(
+            other
+                .sql_string()
+                .map_err(|_| EvalError::Unsupported("FORMAT argument conversion"))?,
+        ),
     })
 }
 
@@ -1312,6 +1365,12 @@ fn format_precision(value: &Datum) -> Result<Option<i64>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel FORMAT precision"));
         }
+        other => Some(
+            other
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("FORMAT precision conversion"))?
+                .value,
+        ),
     })
 }
 

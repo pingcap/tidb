@@ -257,15 +257,12 @@ impl Database {
                     // below rejects values this seed cannot model as an
                     // epoch before they can change the clock.
                     Datum::UInt(i) => i as f64,
-                    Datum::Real(f) => f,
+                    Datum::Real(f) | Datum::Float32(f) => f,
                     Datum::Decimal(d) => d.to_f64(),
                     Datum::String(s) => string_text(&s, "SET timestamp value")?
                         .parse::<f64>()
                         .map_err(|_| ExecError::Unsupported("SET timestamp value"))?,
-                    Datum::Bytes(_) => {
-                        return Err(ExecError::Unsupported("SET timestamp value"));
-                    }
-                    Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
+                    _ => {
                         return Err(ExecError::Unsupported("SET timestamp value"));
                     }
                 };
@@ -664,14 +661,7 @@ fn parse_default_week_format(value: &Expr) -> Result<u8, ExecError> {
                 i64::try_from(value.parse::<u64>().map_err(|_| invalid())?).unwrap_or(i64::MAX)
             }
         }
-        Datum::Bytes(_)
-        | Datum::Decimal(_)
-        | Datum::Real(_)
-        | Datum::Null
-        | Datum::MinNotNull
-        | Datum::MaxValue => {
-            return Err(invalid());
-        }
+        _ => return Err(invalid()),
     };
     Ok(normalized.clamp(0, 7) as u8)
 }
@@ -696,12 +686,7 @@ fn parse_sql_select_limit(value: &Expr) -> Result<u64, ExecError> {
                 value.parse::<u64>().map_err(|_| invalid())
             }
         }
-        Datum::Bytes(_)
-        | Datum::Decimal(_)
-        | Datum::Real(_)
-        | Datum::Null
-        | Datum::MinNotNull
-        | Datum::MaxValue => Err(invalid()),
+        _ => Err(invalid()),
     }
 }
 
@@ -718,12 +703,7 @@ fn parse_tidb_retry_limit(value: &Expr) -> Result<i64, ExecError> {
         Datum::String(value) => string_text(&value, "SET tidb_retry_limit value")?
             .parse::<i64>()
             .map_err(|_| invalid()),
-        Datum::Bytes(_)
-        | Datum::Decimal(_)
-        | Datum::Real(_)
-        | Datum::Null
-        | Datum::MinNotNull
-        | Datum::MaxValue => Err(invalid()),
+        _ => Err(invalid()),
     }
 }
 
@@ -750,14 +730,7 @@ fn parse_div_precision_increment(value: &Expr) -> Result<DivPrecisionIncrement, 
                 i64::try_from(value.parse::<u64>().map_err(|_| invalid())?).unwrap_or(i64::MAX)
             }
         }
-        Datum::Bytes(_)
-        | Datum::Decimal(_)
-        | Datum::Real(_)
-        | Datum::Null
-        | Datum::MinNotNull
-        | Datum::MaxValue => {
-            return Err(invalid());
-        }
+        _ => return Err(invalid()),
     };
     Ok(DivPrecisionIncrement::new(normalized.clamp(0, 30) as u8))
 }
@@ -778,14 +751,7 @@ fn parse_rand_seed(value: &Expr) -> Result<u32, ExecError> {
         Datum::String(value) => string_text(&value, "SET rand_seed value")?
             .parse::<i64>()
             .map_err(|_| invalid())?,
-        Datum::Bytes(_)
-        | Datum::Decimal(_)
-        | Datum::Real(_)
-        | Datum::Null
-        | Datum::MinNotNull
-        | Datum::MaxValue => {
-            return Err(invalid());
-        }
+        _ => return Err(invalid()),
     }
     .clamp(0, i64::from(i32::MAX));
     Ok(normalized as u32)
@@ -862,12 +828,6 @@ fn parse_multi_statement_mode(value: &Expr) -> Result<MultiStatementMode, ExecEr
             "warn" | "2" => Ok(MultiStatementMode::Warn),
             _ => Err(invalid()),
         },
-        Datum::Bytes(_)
-        | Datum::Decimal(_)
-        | Datum::Real(_)
-        | Datum::Null
-        | Datum::MinNotNull
-        | Datum::MaxValue => Err(invalid()),
-        Datum::Int(_) | Datum::UInt(_) => Err(invalid()),
+        _ => Err(invalid()),
     }
 }

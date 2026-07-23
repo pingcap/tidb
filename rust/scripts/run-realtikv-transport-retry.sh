@@ -3,8 +3,8 @@
 set -euo pipefail
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TAG="campaign12-realtikv-${$}"
-PORT_OFFSET=${C12_PORT_OFFSET:-26000}
+TAG="realtikv-transport-retry-${$}"
+PORT_OFFSET=${TRANSPORT_RETRY_PORT_OFFSET:-26000}
 PD_SEED_PORT=$((2379 + PORT_OFFSET))
 PD_SEED="127.0.0.1:${PD_SEED_PORT}"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
@@ -62,7 +62,7 @@ cleanup() {
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
   if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-    echo "Campaign 12 cleanup failed: tiup clean failed for ${TAG}" >&2
+    echo "transport-retry cleanup failed: tiup clean failed for ${TAG}" >&2
     cleanup_failed=true
   fi
 
@@ -85,7 +85,7 @@ cleanup() {
     sleep 1
   done
   if [[ "${cleaned}" != true ]]; then
-    echo "Campaign 12 cleanup failed: owned process or registry row remains" >&2
+    echo "transport-retry cleanup failed: owned process or registry row remains" >&2
     cleanup_failed=true
   fi
 
@@ -94,13 +94,13 @@ cleanup() {
     while IFS= read -r endpoint; do
       local port=${endpoint##*:}
       if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-        echo "Campaign 12 cleanup failed: TiKV ${endpoint} remains reachable" >&2
+        echo "transport-retry cleanup failed: TiKV ${endpoint} remains reachable" >&2
         cleanup_failed=true
       fi
     done < <(phase_values "${PHASE_DIR}/route-ready" store_address)
   fi
   if curl -sf --max-time 1 "http://${PD_SEED}/pd/api/v1/version" >/dev/null; then
-    echo "Campaign 12 cleanup failed: PD ${PD_SEED} remains reachable" >&2
+    echo "transport-retry cleanup failed: PD ${PD_SEED} remains reachable" >&2
     cleanup_failed=true
   fi
   if [[ "${cleanup_failed}" == false ]]; then
@@ -109,7 +109,7 @@ cleanup() {
   if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
     rm -f "${PLAYGROUND_LOG}" "${RUST_LOG}"
   else
-    echo "Campaign 12 retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
+    echo "transport-retry retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
   fi
   if [[ "${cleanup_failed}" == true ]]; then
     exit 1
@@ -119,7 +119,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if curl -sf --max-time 1 "http://${PD_SEED}/pd/api/v1/version" >/dev/null; then
-  echo "refusing occupied PD seed ${PD_SEED}; set C12_PORT_OFFSET" >&2
+  echo "refusing occupied PD seed ${PD_SEED}; set TRANSPORT_RETRY_PORT_OFFSET" >&2
   exit 1
 fi
 mkdir -m 700 "${PHASE_DIR}"
@@ -156,8 +156,8 @@ if [[ -z "$(tag_owned_pids)" ]]; then
   exit 1
 fi
 
-export C12_PD_SEED="${PD_SEED}"
-export C12_PHASE_DIR="${PHASE_DIR}"
+export TRANSPORT_RETRY_PD_SEED="${PD_SEED}"
+export TRANSPORT_RETRY_PHASE_DIR="${PHASE_DIR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
   --test realtikv_transport_retry \
@@ -273,7 +273,7 @@ fi
 : >"${PHASE_DIR}/leader-stopped"
 
 wait "${RUST_PID}" || {
-  echo "Campaign 12 Rust transport-retry proof failed" >&2
+  echo "transport-retry Rust transport-retry proof failed" >&2
   tail -160 "${RUST_LOG}" >&2
   exit 1
 }
@@ -297,8 +297,8 @@ if [[ "${FAILED_ADDRESS}" != "${OLD_ADDRESS}" ]] \
   || [[ "${STALE_FUTURE}" != 0 ]] \
   || [[ "${LIVENESS}" == Reachable ]] \
   || [[ "${STRUCTURED_RESULTS}" != 2 ]]; then
-  echo "Campaign 12 marker did not prove exact-generation alternate-peer recovery" >&2
+  echo "transport-retry marker did not prove exact-generation alternate-peer recovery" >&2
   cat "${COMPLETED}" >&2
   exit 1
 fi
-echo "Campaign 12 transport retry passed: region=${FAILED_REGION} ${FAILED_ADDRESS}#${FAILED_GENERATION} -> ${SURVIVOR_ADDRESS}; successful_survivor_responses=${SURVIVOR_RESPONSES}; liveness=${LIVENESS}"
+echo "transport-retry transport retry passed: region=${FAILED_REGION} ${FAILED_ADDRESS}#${FAILED_GENERATION} -> ${SURVIVOR_ADDRESS}; successful_survivor_responses=${SURVIVOR_RESPONSES}; liveness=${LIVENESS}"

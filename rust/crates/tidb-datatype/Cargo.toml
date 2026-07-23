@@ -13,6 +13,8 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
 encoding_rs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,3 +30,25 @@ path = "tests/all.rs"
 [[bench]]
 name = "collate"
 harness = false
+
+[[bench]]
+name = "json"
+harness = false
+
+[[bench]]
+name = "time"
+harness = false
+
+[[bench]]
+name = "decimal"
+harness = false
+
+[[bench]]
+name = "datum"
+harness = false
+
+[[bin]]
+name = "fuzz-json-extract"
+path = "fuzz/json_extract.rs"
+test = false
+bench = false

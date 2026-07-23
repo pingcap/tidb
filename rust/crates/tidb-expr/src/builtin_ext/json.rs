@@ -80,6 +80,16 @@ fn json_valid(v: &Datum) -> Result<Datum, EvalError> {
         Datum::Bytes(_) | Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => {
             Ok(Datum::Int(0))
         }
+        Datum::Float32(_)
+        | Datum::BinaryLiteral(_)
+        | Datum::Duration(_)
+        | Datum::Enum(_, _)
+        | Datum::Bit(_)
+        | Datum::Set(_, _)
+        | Datum::Time(_)
+        | Datum::Raw(_)
+        | Datum::VectorFloat32(_) => Ok(Datum::Int(0)),
+        Datum::Json(_) => Ok(Datum::Int(1)),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON_VALID argument"))
         }
@@ -617,6 +627,7 @@ fn parse_json_merge_argument(
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON value"))
         }
+        other => datum_json_scalar(other).map(Some),
     }
 }
 
@@ -1258,6 +1269,7 @@ fn json_mutation_value_argument(value: &Datum) -> Result<Json, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON mutation value"))
         }
+        other => datum_json_scalar(other),
     }
 }
 
@@ -1409,6 +1421,7 @@ fn parse_json_value_argument(value: &Datum) -> Result<Json, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON value"))
         }
+        other => datum_json_scalar(other),
     }
 }
 
@@ -1432,6 +1445,7 @@ fn json_value_argument(value: &Datum) -> Result<Json, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON value"))
         }
+        other => datum_json_scalar(other),
     }
 }
 
@@ -1553,7 +1567,26 @@ pub(crate) fn parse_json_document_argument(v: &Datum) -> Result<Option<Json>, Ev
         | Datum::Real(_)
         | Datum::MinNotNull
         | Datum::MaxValue => Err(EvalError::Unsupported("JSON document requires string")),
+        Datum::Json(value) => parse_json(&value.to_string()).map(Some),
+        Datum::Float32(_)
+        | Datum::BinaryLiteral(_)
+        | Datum::Duration(_)
+        | Datum::Enum(_, _)
+        | Datum::Bit(_)
+        | Datum::Set(_, _)
+        | Datum::Time(_)
+        | Datum::Raw(_)
+        | Datum::VectorFloat32(_) => Err(EvalError::Unsupported(
+            "JSON document requires JSON or string",
+        )),
     }
+}
+
+fn datum_json_scalar(value: &Datum) -> Result<Json, EvalError> {
+    let binary = value
+        .to_mysql_json()
+        .map_err(|_| EvalError::Unsupported("datum JSON conversion"))?;
+    parse_json(&binary.to_string())
 }
 
 fn parse_json(s: &str) -> Result<Json, EvalError> {

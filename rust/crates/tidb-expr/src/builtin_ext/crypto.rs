@@ -161,6 +161,11 @@ fn sql_string_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel string argument"));
         }
+        other => Some(
+            other
+                .to_bytes()
+                .map_err(|_| EvalError::Unsupported("datum string argument"))?,
+        ),
     })
 }
 
@@ -288,6 +293,11 @@ fn hash_input(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel hash argument"));
         }
+        other => Some(
+            other
+                .to_bytes()
+                .map_err(|_| EvalError::Unsupported("datum hash argument"))?,
+        ),
     })
 }
 
@@ -343,6 +353,12 @@ fn sha2_length(value: &Datum) -> Result<Option<i64>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel SHA2 length"));
         }
+        other => Some(
+            other
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("SHA2 length conversion"))?
+                .value,
+        ),
     })
 }
 

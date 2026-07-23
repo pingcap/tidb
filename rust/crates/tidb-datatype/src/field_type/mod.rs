@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod aggregate;
+mod builder;
 mod value;
 
 use crate::{output_format, Charset, Collation, EvalType};
@@ -21,6 +22,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 pub use aggregate::{agg_field_type, aggregate_eval_type, merge_field_type, set_type_flag};
+pub use builder::FieldTypeBuilder;
 pub use value::{
     default_field_type_for_value, parser_default_field_type_for_value, FieldTypeValue,
 };

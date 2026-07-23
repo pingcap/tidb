@@ -5,11 +5,11 @@
 
 set -euo pipefail
 
-CAMPAIGN_LABEL="Campaign 27"
+CAMPAIGN_LABEL="prepared point-read SQL node"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"
 
-SCENARIO_ENV_PREFIX=C27
+SCENARIO_ENV_PREFIX=PREPARED_READ_SQL
 SCENARIO_TAG_SLUG=campaign27-prepared-point-read-sql-node
 SCENARIO_DATABASE=campaign27
 SCENARIO_AUTH_USER=campaign27
@@ -58,7 +58,7 @@ sysbench_command_receipt_is_exact() {
 if [[ "${1:-}" == --self-test-live-harness ]]; then
   live_sql_node_harness_self_test
   "${RAW_CLIENT}" self-test
-  SYSBENCH_BIN=${C27_SYSBENCH:-sysbench}
+  SYSBENCH_BIN=${PREPARED_READ_SQL_SYSBENCH:-sysbench}
   command -v "${SYSBENCH_BIN}" >/dev/null
   "${SYSBENCH_BIN}" "${SYSBENCH_SCRIPT}" --db-driver=mysql \
     --db-ps-mode=auto --mysql-db= help >/dev/null
@@ -80,7 +80,7 @@ if [[ "${1:-}" == --self-test-live-harness ]]; then
     | sysbench_command_receipt_is_exact
   ! printf '%s\n' '{"text_query_commands":8,"stmt_prepare_commands":0,"stmt_prepare_successes":0,"stmt_execute_commands":0,"stmt_execute_successes":0,"stmt_close_commands":0}' \
     | sysbench_command_receipt_is_exact
-  echo "Campaign 27 prepared live-harness self-test passed"
+  echo "prepared point-read SQL-node prepared live-harness self-test passed"
   exit 0
 fi
 
@@ -439,7 +439,7 @@ scenario_validate_block_snapshot() {
 }
 
 scenario_emit_success_receipt() {
-  echo "Campaign 27 live prepared point-read proof passed: go_release=${GO_RELEASE_VERSION}; go_commit=${GO_COMMIT_HASH}; go_test_api=active; rust_binary=${RUST_SERVER_BINARY}; rust_sha256=${RUST_SERVER_SHA256}; rust_pid=${ORIGINAL_RUST_PID}; raw_connection_id=${RAW_CONNECTION_ID}; raw_session_id=${RAW_SESSION_ID}; raw_executes=2; raw_type_reuse=true; raw_close=silent; negative_cases=16; sysbench_binary=${SYSBENCH_BINARY}; sysbench_version=${SYSBENCH_VERSION}; sysbench_client_library=${SYSBENCH_CLIENT_LIBRARY}; sysbench_threads=1; sysbench_events=8; sysbench_time_cap_seconds=30; sysbench_connection_id=${SYSBENCH_CONNECTION_ID}; sysbench_session_id=${SYSBENCH_SESSION_ID}; sysbench_text_query_commands=${SYSBENCH_TEXT_QUERY_COMMANDS}; sysbench_stmt_prepare_commands=${SYSBENCH_STMT_PREPARE_COMMANDS}; sysbench_stmt_prepare_successes=${SYSBENCH_STMT_PREPARE_SUCCESSES}; sysbench_stmt_execute_commands=${SYSBENCH_STMT_EXECUTE_COMMANDS}; sysbench_stmt_execute_successes=${SYSBENCH_STMT_EXECUTE_SUCCESSES}; sysbench_stmt_close_commands=${SYSBENCH_STMT_CLOSE_COMMANDS}; table_id=${TABLE_ID}; region_id=${REGION_ID}; topology=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; physical_address=${ADDRESS_B}; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; ${FINAL_CONNECTIONS}; cleanup=tag-owned"
+  echo "prepared point-read SQL-node live prepared point-read proof passed: go_release=${GO_RELEASE_VERSION}; go_commit=${GO_COMMIT_HASH}; go_test_api=active; rust_binary=${RUST_SERVER_BINARY}; rust_sha256=${RUST_SERVER_SHA256}; rust_pid=${ORIGINAL_RUST_PID}; raw_connection_id=${RAW_CONNECTION_ID}; raw_session_id=${RAW_SESSION_ID}; raw_executes=2; raw_type_reuse=true; raw_close=silent; negative_cases=16; sysbench_binary=${SYSBENCH_BINARY}; sysbench_version=${SYSBENCH_VERSION}; sysbench_client_library=${SYSBENCH_CLIENT_LIBRARY}; sysbench_threads=1; sysbench_events=8; sysbench_time_cap_seconds=30; sysbench_connection_id=${SYSBENCH_CONNECTION_ID}; sysbench_session_id=${SYSBENCH_SESSION_ID}; sysbench_text_query_commands=${SYSBENCH_TEXT_QUERY_COMMANDS}; sysbench_stmt_prepare_commands=${SYSBENCH_STMT_PREPARE_COMMANDS}; sysbench_stmt_prepare_successes=${SYSBENCH_STMT_PREPARE_SUCCESSES}; sysbench_stmt_execute_commands=${SYSBENCH_STMT_EXECUTE_COMMANDS}; sysbench_stmt_execute_successes=${SYSBENCH_STMT_EXECUTE_SUCCESSES}; sysbench_stmt_close_commands=${SYSBENCH_STMT_CLOSE_COMMANDS}; table_id=${TABLE_ID}; region_id=${REGION_ID}; topology=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; physical_address=${ADDRESS_B}; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; ${FINAL_CONNECTIONS}; cleanup=tag-owned"
 }
 
 run_live_sql_node_topology_scenario

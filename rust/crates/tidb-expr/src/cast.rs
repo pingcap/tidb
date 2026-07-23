@@ -115,6 +115,7 @@ pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
         Datum::String(s) => s.as_utf8().map(str_int_prefix).unwrap_or(0),
         Datum::Bytes(s) => std::str::from_utf8(s).map(str_int_prefix).unwrap_or(0),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
+        other => other.to_i64().map_or(0, |converted| converted.value),
     }
 }
 
@@ -142,6 +143,9 @@ fn to_u64_unsigned(v: &Datum) -> u64 {
         // (Go `ConvertFloatToUint`), so its own upper half is kept too.
         Datum::Real(f) => real_to_u64_saturating(*f),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
+        other => other
+            .to_decimal()
+            .map_or(0, |converted| converted.value.round_to_u64_saturating()),
     }
 }
 
@@ -242,6 +246,9 @@ fn to_decimal_for_cast(v: &Datum) -> Decimal {
             .map(decimal_prefix)
             .unwrap_or_else(|_| Decimal::from_int(0)),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
+        other => other
+            .to_decimal()
+            .map_or_else(|_| Decimal::from_int(0), |converted| converted.value),
     }
 }
 
@@ -341,6 +348,7 @@ fn to_f64_for_cast(v: &Datum) -> f64 {
             .map(decimal_prefix)
             .map_or(0.0, |d| d.to_f64()),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
+        other => other.to_f64().map_or(0.0, |converted| converted.value),
     }
 }
 

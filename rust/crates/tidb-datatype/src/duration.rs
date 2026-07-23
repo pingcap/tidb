@@ -14,9 +14,14 @@
 
 //! MySQL `TIME` duration range policy from `pkg/types/time.go`.
 
-use std::{error::Error, fmt};
+use std::{cmp::Ordering, error::Error, fmt};
 
-use crate::{check_fsp, parse_frac, FspError};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, TimeZone};
+
+use crate::{
+    adjust_year, check_fsp, core_time_from_datetime, parse_frac, Decimal, FspError, Time,
+    TimeError, TimeType,
+};
 
 /// The maximum SQL `TIME` hour component accepted by TiDB.
 pub const TIME_MAX_HOUR: i64 = 838;
@@ -29,6 +34,285 @@ pub const MAX_TIME_NANOS: i64 =
     (TIME_MAX_HOUR * 60 * 60 + TIME_MAX_MINUTE * 60 + TIME_MAX_SECOND) * 1_000_000_000;
 /// The smallest representable MySQL duration in nanoseconds.
 pub const MIN_TIME_NANOS: i64 = -MAX_TIME_NANOS;
+
+/// MySQL `TIME` value with signed nanoseconds and fractional precision.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct MySqlDuration {
+    nanoseconds: i64,
+    fsp: u8,
+}
+
+impl MySqlDuration {
+    /// Returns the maximum representable MySQL TIME value at `fsp`.
+    pub fn maximum(fsp: i64) -> Result<Self, FspError> {
+        Self::new(TIME_MAX_HOUR, TIME_MAX_MINUTE, TIME_MAX_SECOND, 0, fsp)
+    }
+
+    /// Constructs a duration from source clock fields.
+    pub fn new(
+        hour: i64,
+        minute: i64,
+        second: i64,
+        microsecond: i64,
+        fsp: i64,
+    ) -> Result<Self, FspError> {
+        let fsp = check_fsp(fsp)? as u8;
+        Ok(Self {
+            nanoseconds: (hour * 3_600 + minute * 60 + second) * 1_000_000_000
+                + microsecond * 1_000,
+            fsp,
+        })
+    }
+
+    /// Constructs from an existing signed nanosecond count.
+    pub fn from_nanoseconds(nanoseconds: i64, fsp: i64) -> Result<Self, FspError> {
+        Ok(Self {
+            nanoseconds,
+            fsp: check_fsp(fsp)? as u8,
+        })
+    }
+
+    /// Returns the signed nanosecond count.
+    pub const fn nanoseconds(self) -> i64 {
+        self.nanoseconds
+    }
+
+    /// Returns fractional-seconds precision.
+    pub const fn fsp(self) -> u8 {
+        self.fsp
+    }
+
+    /// Returns the negated duration.
+    pub const fn negated(self) -> Self {
+        Self {
+            nanoseconds: -self.nanoseconds,
+            fsp: self.fsp,
+        }
+    }
+
+    /// Returns the absolute hour component, including values beyond 24.
+    pub const fn hour(self) -> i64 {
+        (self.nanoseconds.unsigned_abs() / 3_600_000_000_000) as i64
+    }
+
+    /// Returns the absolute minute component.
+    pub const fn minute(self) -> i64 {
+        (self.nanoseconds.unsigned_abs() / 60_000_000_000 % 60) as i64
+    }
+
+    /// Returns the absolute second component.
+    pub const fn second(self) -> i64 {
+        (self.nanoseconds.unsigned_abs() / 1_000_000_000 % 60) as i64
+    }
+
+    /// Returns the absolute microsecond component.
+    pub const fn microsecond(self) -> i64 {
+        (self.nanoseconds.unsigned_abs() / 1_000 % 1_000_000) as i64
+    }
+
+    /// Adds two durations while preserving the larger FSP.
+    pub fn checked_add(self, other: Self) -> Result<Self, DurationRoundError> {
+        let nanoseconds = self
+            .nanoseconds
+            .checked_add(other.nanoseconds)
+            .ok_or(DurationRoundError::Overflow)?;
+        Ok(Self {
+            nanoseconds,
+            fsp: self.fsp.max(other.fsp),
+        })
+    }
+
+    /// Subtracts two durations while preserving the larger FSP.
+    pub fn checked_sub(self, other: Self) -> Result<Self, DurationRoundError> {
+        let nanoseconds = self
+            .nanoseconds
+            .checked_sub(other.nanoseconds)
+            .ok_or(DurationRoundError::Overflow)?;
+        Ok(Self {
+            nanoseconds,
+            fsp: self.fsp.max(other.fsp),
+        })
+    }
+
+    /// Formats this duration with MySQL's `TIME_FORMAT` conversion rules.
+    pub fn duration_format(self, layout: &str) -> String {
+        let mut output = String::with_capacity(layout.len());
+        let mut pattern = false;
+        for character in layout.chars() {
+            if pattern {
+                self.push_duration_format(character, &mut output);
+                pattern = false;
+            } else if character == '%' {
+                pattern = true;
+            } else {
+                output.push(character);
+            }
+        }
+        output
+    }
+
+    fn push_duration_format(self, conversion: char, output: &mut String) {
+        let hour = self.hour();
+        let minute = self.minute();
+        let second = self.second();
+        match conversion {
+            'H' => output.push_str(&format!("{hour:02}")),
+            'k' => output.push_str(&hour.to_string()),
+            'h' | 'I' => {
+                let twelve_hour = hour % 12;
+                output.push_str(&format!(
+                    "{:02}",
+                    if twelve_hour == 0 { 12 } else { twelve_hour }
+                ));
+            }
+            'l' => {
+                let twelve_hour = hour % 12;
+                output.push_str(&(if twelve_hour == 0 { 12 } else { twelve_hour }).to_string());
+            }
+            'i' => output.push_str(&format!("{minute:02}")),
+            'p' => output.push_str(if hour / 12 % 2 == 0 { "AM" } else { "PM" }),
+            'r' => {
+                let normalized = hour % 24;
+                let twelve_hour = match normalized {
+                    0 | 12 => 12,
+                    1..=11 => normalized,
+                    _ => normalized - 12,
+                };
+                output.push_str(&format!(
+                    "{twelve_hour:02}:{minute:02}:{second:02} {}",
+                    if normalized < 12 { "AM" } else { "PM" }
+                ));
+            }
+            'T' => output.push_str(&format!("{hour:02}:{minute:02}:{second:02}")),
+            'S' | 's' => output.push_str(&format!("{second:02}")),
+            'f' => output.push_str(&format!("{:06}", self.microsecond())),
+            _ => output.push(conversion),
+        }
+    }
+
+    /// Returns TiDB's numeric TIME representation.
+    pub fn to_number(self) -> Decimal {
+        let literal = if self.fsp == 0 {
+            format!("{:02}{:02}{:02}", self.hour(), self.minute(), self.second())
+        } else {
+            let fraction = format!("{:06}", self.microsecond());
+            format!(
+                "{:02}{:02}{:02}.{}",
+                self.hour(),
+                self.minute(),
+                self.second(),
+                &fraction[..usize::from(self.fsp)]
+            )
+        };
+        let value = Decimal::from_literal(&literal);
+        if self.nanoseconds < 0 {
+            value.negate()
+        } else {
+            value
+        }
+    }
+
+    /// Rounds fractional seconds with TiDB's half-up rule.
+    pub fn round_frac(self, fsp: i64) -> Result<Self, DurationRoundError> {
+        let rounded = round_duration_fsp(self.nanoseconds, i64::from(self.fsp), fsp)?;
+        Ok(Self {
+            nanoseconds: rounded.nanoseconds(),
+            fsp: rounded.fsp() as u8,
+        })
+    }
+
+    /// Compares signed duration values.
+    pub const fn compare(self, other: Self) -> Ordering {
+        if self.nanoseconds < other.nanoseconds {
+            Ordering::Less
+        } else if self.nanoseconds > other.nanoseconds {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+
+    /// Parses and compares a duration string at maximum FSP.
+    pub fn compare_string(self, input: &str) -> Result<Ordering, DurationParseError> {
+        let parsed = parse_duration(input.as_bytes(), 6)?;
+        Ok(self.nanoseconds.cmp(&parsed.nanoseconds()))
+    }
+
+    /// Adds this duration to the calendar date containing `timestamp`.
+    pub fn convert_to_time<TZ: TimeZone>(
+        self,
+        timestamp: DateTime<TZ>,
+        kind: TimeType,
+        allow_zero_in_date: bool,
+        allow_invalid_date: bool,
+    ) -> Result<Time, TimeError> {
+        let timezone = timestamp.timezone();
+        let midnight = timezone
+            .with_ymd_and_hms(
+                timestamp.year(),
+                timestamp.month(),
+                timestamp.day(),
+                0,
+                0,
+                0,
+            )
+            .single()
+            .ok_or(TimeError::InvalidDate)?;
+        let value = midnight
+            .checked_add_signed(ChronoDuration::nanoseconds(self.nanoseconds))
+            .ok_or(TimeError::OutOfRange("time"))?;
+        let datetime = Time::new(
+            core_time_from_datetime(value),
+            TimeType::DateTime,
+            i64::from(self.fsp),
+        )?;
+        datetime
+            .convert_kind(kind, allow_zero_in_date, allow_invalid_date, &timezone)
+            .map(|result| result.0)
+    }
+
+    /// Converts a TIME value to YEAR using TiDB's two source modes.
+    pub fn convert_to_year<TZ: TimeZone>(
+        self,
+        now: DateTime<TZ>,
+        through_concat: bool,
+    ) -> Result<i64, TimeError> {
+        if through_concat {
+            let rounded = self
+                .round_frac(0)
+                .map_err(|_| TimeError::OutOfRange("year"))?;
+            let numeric = rounded.hour() * 10_000 + rounded.minute() * 100 + rounded.second();
+            let numeric = if rounded.nanoseconds < 0 {
+                -numeric
+            } else {
+                numeric
+            };
+            return adjust_year(numeric, false);
+        }
+        let value = self.convert_to_time(now, TimeType::DateTime, false, false)?;
+        adjust_year(i64::from(value.core_time().year()), false)
+    }
+}
+
+impl fmt::Display for MySqlDuration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.nanoseconds < 0 {
+            formatter.write_str("-")?;
+        }
+        write!(
+            formatter,
+            "{:02}:{:02}:{:02}",
+            self.hour(),
+            self.minute(),
+            self.second()
+        )?;
+        if self.fsp > 0 {
+            let fraction = format!("{:06}", self.microsecond());
+            write!(formatter, ".{}", &fraction[..usize::from(self.fsp)])?;
+        }
+        Ok(())
+    }
+}
 
 /// A duration value after source `RoundFrac` normalization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +327,7 @@ pub struct ParsedDuration {
     nanoseconds: i64,
     fsp: i64,
     overflow: Option<DurationOverflow>,
+    truncated: bool,
 }
 
 impl ParsedDuration {
@@ -61,10 +346,16 @@ impl ParsedDuration {
         self.overflow
     }
 
+    /// Returns whether the source reported `ErrTruncatedWrongVal`.
+    pub const fn truncated(self) -> bool {
+        self.truncated
+    }
+
     /// Returns the pure source-side event for this parsed duration.
     pub const fn event(self) -> Option<DurationParseEvent> {
         match self.overflow {
             Some(direction) => Some(DurationParseEvent::Overflow(direction)),
+            None if self.truncated => Some(DurationParseEvent::Truncated),
             None => None,
         }
     }
@@ -127,6 +418,26 @@ pub enum DurationParseError {
     /// The fractional byte parser rejected its input.
     Fraction(FspError),
 }
+
+/// Error from complete duration parsing, including datetime fallback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DurationValueError {
+    /// The duration grammar failed.
+    Duration(DurationParseError),
+    /// The datetime fallback failed.
+    Time(TimeError),
+}
+
+impl fmt::Display for DurationValueError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Duration(error) => error.fmt(formatter),
+            Self::Time(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for DurationValueError {}
 
 impl fmt::Display for DurationParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -348,6 +659,68 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
     parsed_duration_from_parts(negative, hours, minutes, seconds, microseconds, fsp)
 }
 
+/// Parses the complete Go `ParseDuration` surface, including datetime fallback.
+pub fn parse_mysql_duration<TZ: TimeZone>(
+    input: &str,
+    target_fsp: i64,
+    timezone: &TZ,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
+) -> Result<ParsedDuration, DurationValueError> {
+    match parse_duration(input.as_bytes(), target_fsp) {
+        Ok(parsed) => Ok(parsed),
+        Err(DurationParseError::DateTimeFallback(_)) => {
+            let time = crate::parse_time(
+                input,
+                TimeType::DateTime,
+                target_fsp,
+                false,
+                allow_zero_in_date,
+                allow_invalid_date,
+                timezone,
+            )
+            .map_err(DurationValueError::Time)?
+            .time;
+            let duration = time.to_duration().map_err(DurationValueError::Time)?;
+            Ok(ParsedDuration {
+                nanoseconds: duration.nanoseconds(),
+                fsp: i64::from(duration.fsp()),
+                overflow: None,
+                truncated: false,
+            })
+        }
+        Err(DurationParseError::InvalidFormat) => {
+            let trimmed = input.trim();
+            let negative = trimmed.starts_with('-');
+            let mut end = usize::from(negative);
+            while trimmed.as_bytes().get(end).is_some_and(u8::is_ascii_digit) {
+                end += 1;
+            }
+            let fsp = check_fsp(target_fsp)
+                .map_err(DurationParseError::InvalidFsp)
+                .map_err(DurationValueError::Duration)?;
+            let mut parsed = if end > usize::from(negative) {
+                parse_duration(&trimmed.as_bytes()[..end], target_fsp).unwrap_or(ParsedDuration {
+                    nanoseconds: 0,
+                    fsp,
+                    overflow: None,
+                    truncated: false,
+                })
+            } else {
+                ParsedDuration {
+                    nanoseconds: 0,
+                    fsp,
+                    overflow: None,
+                    truncated: false,
+                }
+            };
+            parsed.truncated = true;
+            Ok(parsed)
+        }
+        Err(error) => Err(DurationValueError::Duration(error)),
+    }
+}
+
 /// Classifies the exact shape accepted by Go `canFallbackToDateTime`.
 ///
 /// The input must already have the outer whitespace removed, as it is at the
@@ -478,6 +851,7 @@ fn parsed_duration_from_parts(
         nanoseconds: range.value,
         fsp,
         overflow: range.overflow,
+        truncated: false,
     })
 }
 

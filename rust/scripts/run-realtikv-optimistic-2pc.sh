@@ -3,8 +3,8 @@
 set -euo pipefail
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TAG="campaign28-optimistic-2pc-${$}"
-PORT_OFFSET=${C28_STAGE_B_PORT_OFFSET:-43000}
+TAG="realtikv-optimistic-2pc-${$}"
+PORT_OFFSET=${OPTIMISTIC_2PC_PORT_OFFSET:-43000}
 PD_PORT=$((2379 + PORT_OFFSET))
 KV_PORT=$((20160 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
@@ -56,7 +56,7 @@ cleanup_resources() {
   fi
   if [[ "${TIUP_CLEAN_REQUIRED}" == true ]] \
     && ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-    echo "Campaign 28 Stage B cleanup failed: tiup clean failed for ${TAG}" >&2
+    echo "optimistic-2PC cleanup failed: tiup clean failed for ${TAG}" >&2
     cleanup_failed=true
   fi
   local cleaned=false
@@ -72,22 +72,22 @@ cleanup_resources() {
     sleep 1
   done
   if [[ "${cleaned}" != true ]]; then
-    echo "Campaign 28 Stage B cleanup left an owned process or TiUP row" >&2
+    echo "optimistic-2PC cleanup left an owned process or TiUP row" >&2
     cleanup_failed=true
   fi
   local address
   for address in ${STORE_ADDRESSES}; do
     if endpoint_reachable "${address}"; then
-      echo "Campaign 28 Stage B cleanup left TiKV ${address} reachable" >&2
+      echo "optimistic-2PC cleanup left TiKV ${address} reachable" >&2
       cleanup_failed=true
     fi
   done
   if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-    echo "Campaign 28 Stage B cleanup left PD ${PD_ADDR} reachable" >&2
+    echo "optimistic-2PC cleanup left PD ${PD_ADDR} reachable" >&2
     cleanup_failed=true
   fi
   if ! validate_owned_paths; then
-    echo "Campaign 28 Stage B cleanup refused unsafe paths" >&2
+    echo "optimistic-2PC cleanup refused unsafe paths" >&2
     cleanup_failed=true
   elif [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}" "${PHASE_DIR}"
@@ -103,7 +103,7 @@ cleanup() {
   if [[ "${cleanup_status}" -eq 0 ]] && [[ "${original_status}" -eq 0 ]]; then
     rm -f -- "${PLAYGROUND_LOG}" "${RUST_LOG}"
   else
-    echo "Campaign 28 Stage B retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
+    echo "optimistic-2PC retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
   fi
   if [[ "${cleanup_status}" -ne 0 ]]; then
     exit "${cleanup_status}"
@@ -144,7 +144,7 @@ self_test_cleanup() {
     return 1
   fi
   rmdir "${SELF_TEST_ROOT}"
-  echo "Campaign 28 Stage B cleanup self-test passed"
+  echo "optimistic-2PC cleanup self-test passed"
 }
 
 wait_for_phase() {
@@ -180,17 +180,17 @@ if [[ $# -ne 0 ]]; then
 fi
 if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] \
   || (( PORT_OFFSET < 1000 || PD_PORT > 65535 || KV_PORT > 65535 )); then
-  echo "C28_STAGE_B_PORT_OFFSET must be numeric, at least 1000, and keep ports valid" >&2
+  echo "OPTIMISTIC_2PC_PORT_OFFSET must be numeric, at least 1000, and keep ports valid" >&2
   exit 2
 fi
 for command in tiup curl jq nc pgrep cargo awk; do
   if ! command -v "${command}" >/dev/null 2>&1; then
-    echo "Campaign 28 Stage B requires ${command}" >&2
+    echo "optimistic-2PC requires ${command}" >&2
     exit 1
   fi
 done
 if endpoint_reachable "${PD_ADDR}" || endpoint_reachable "127.0.0.1:${KV_PORT}"; then
-  echo "refusing occupied Stage B endpoints; set C28_STAGE_B_PORT_OFFSET" >&2
+  echo "refusing occupied Stage B endpoints; set OPTIMISTIC_2PC_PORT_OFFSET" >&2
   exit 1
 fi
 
@@ -225,7 +225,7 @@ if [[ "${ready}" != true ]] || [[ -z "$(tag_owned_pids)" ]]; then
 fi
 
 cd "${RUST_ROOT}"
-C28_STAGE_B_PD_ADDR="${PD_ADDR}" C28_STAGE_B_PHASE_DIR="${PHASE_DIR}" \
+OPTIMISTIC_2PC_PD_ADDR="${PD_ADDR}" OPTIMISTIC_2PC_PHASE_DIR="${PHASE_DIR}" \
   CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-txnkv \
     --test optimistic_2pc_realtikv_source \
     normal_optimistic_2pc_commits_two_regions_and_cleans_conflict \
@@ -316,7 +316,7 @@ printf 'region_id=%s\nold_leader_store=%s\nnew_leader_store=%s\n' \
 
 wait "${RUST_PID}" || {
   RUST_PID=
-  echo "Campaign 28 Stage B real optimistic 2PC proof failed" >&2
+  echo "optimistic-2PC real optimistic 2PC proof failed" >&2
   tail -220 "${RUST_LOG}" >&2
   exit 1
 }
@@ -355,4 +355,4 @@ if [[ "${PRIMARY_REGION}" == "${SECONDARY_REGION}" ]]; then
   exit 1
 fi
 
-echo "Campaign 28 Stage B optimistic 2PC passed: ${MARKER}"
+echo "optimistic-2PC optimistic 2PC passed: ${MARKER}"

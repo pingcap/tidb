@@ -241,6 +241,10 @@ fn numeric_arg(v: &Datum) -> Result<Option<f64>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel numeric argument"))
         }
+        other => other
+            .to_f64()
+            .map(|converted| Some(converted.value))
+            .map_err(|_| EvalError::Unsupported("numeric argument conversion")),
     }
 }
 
@@ -488,6 +492,10 @@ fn rand_seed(value: &Datum) -> Result<i64, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel RAND seed"))
         }
+        other => other
+            .to_i64()
+            .map(|converted| converted.value)
+            .map_err(|_| EvalError::Unsupported("RAND seed conversion")),
     }
 }
 
@@ -551,6 +559,7 @@ fn ceil_floor(vals: &[Datum], ceiling: bool) -> Result<Datum, EvalError> {
             }
         }
         Datum::Real(f) => Datum::Real(if ceiling { f.ceil() } else { f.floor() }),
+        Datum::Float32(f) => Datum::Float32(if ceiling { f.ceil() } else { f.floor() }),
         // `ceilFunctionClass`/`floorFunctionClass` choose their real
         // signatures for strings. Preserve the resulting FLOAT type in
         // addition to the numeric-prefix coercion: CEIL('1.23') is 2.0,
@@ -561,6 +570,13 @@ fn ceil_floor(vals: &[Datum], ceiling: bool) -> Result<Datum, EvalError> {
         }
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel numeric argument"));
+        }
+        other => {
+            let f = other
+                .to_f64()
+                .map_err(|_| EvalError::Unsupported("numeric argument conversion"))?
+                .value;
+            Datum::Real(if ceiling { f.ceil() } else { f.floor() })
         }
     })
 }
@@ -667,10 +683,26 @@ fn round_or_truncate(vals: &[Datum], round: bool) -> Result<Datum, EvalError> {
         } else {
             go_truncate_float(*f, d)
         }),
+        Datum::Float32(f) => Datum::Float32(if round {
+            go_round_float(*f, d)
+        } else {
+            go_truncate_float(*f, d)
+        }),
         Datum::String(_) | Datum::Bytes(_) => {
             return Err(EvalError::Unsupported("string operand"));
         }
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded above"),
+        other => {
+            let f = other
+                .to_f64()
+                .map_err(|_| EvalError::Unsupported("numeric operand conversion"))?
+                .value;
+            Datum::Real(if round {
+                go_round_float(f, d)
+            } else {
+                go_truncate_float(f, d)
+            })
+        }
     })
 }
 

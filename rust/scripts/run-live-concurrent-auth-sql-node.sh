@@ -4,23 +4,23 @@ set -euo pipefail
 
 for prerequisite in tiup cargo curl jq nc pgrep ps awk sed seq grep sort tail mktemp mkfifo openssl chmod date kill; do
   if ! command -v "${prerequisite}" >/dev/null 2>&1; then
-    echo "missing Campaign 21 prerequisite: ${prerequisite}" >&2
+    echo "missing concurrent-auth SQL-node prerequisite: ${prerequisite}" >&2
     exit 1
   fi
 done
 
-MYSQL_CLIENT=${C21_MYSQL_CLIENT:-mysql}
+MYSQL_CLIENT=${CONCURRENT_AUTH_SQL_MYSQL_CLIENT:-mysql}
 if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
-  echo "C21_MYSQL_CLIENT must name an executable stock MySQL or MariaDB client" >&2
+  echo "CONCURRENT_AUTH_SQL_MYSQL_CLIENT must name an executable stock MySQL or MariaDB client" >&2
   exit 1
 fi
 MYSQL_PLUGIN_ARGS=()
-if [[ -n "${C21_MYSQL_PLUGIN_DIR:-}" ]]; then
-  if [[ ! -f "${C21_MYSQL_PLUGIN_DIR}/mysql_native_password.so" ]]; then
-    echo "C21_MYSQL_PLUGIN_DIR does not contain mysql_native_password.so" >&2
+if [[ -n "${CONCURRENT_AUTH_SQL_MYSQL_PLUGIN_DIR:-}" ]]; then
+  if [[ ! -f "${CONCURRENT_AUTH_SQL_MYSQL_PLUGIN_DIR}/mysql_native_password.so" ]]; then
+    echo "CONCURRENT_AUTH_SQL_MYSQL_PLUGIN_DIR does not contain mysql_native_password.so" >&2
     exit 1
   fi
-  MYSQL_PLUGIN_ARGS=(--plugin-dir="${C21_MYSQL_PLUGIN_DIR}")
+  MYSQL_PLUGIN_ARGS=(--plugin-dir="${CONCURRENT_AUTH_SQL_MYSQL_PLUGIN_DIR}")
 else
   MYSQL_BIN_DIR=$(cd "$(dirname "$(command -v "${MYSQL_CLIENT}")")" && pwd)
   for candidate in \
@@ -36,9 +36,9 @@ fi
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TAG="campaign21-concurrent-auth-sql-node-${$}-$(date +%s)"
-PORT_OFFSET=${C21_PORT_OFFSET:-41000}
+PORT_OFFSET=${CONCURRENT_AUTH_SQL_PORT_OFFSET:-41000}
 if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || [[ "${PORT_OFFSET}" -gt 44375 ]]; then
-  echo "C21_PORT_OFFSET must be an unsigned integer no greater than 44375" >&2
+  echo "CONCURRENT_AUTH_SQL_PORT_OFFSET must be an unsigned integer no greater than 44375" >&2
   exit 1
 fi
 PD_PORT=$((2379 + PORT_OFFSET))
@@ -56,15 +56,15 @@ MYSQL_LOG="${TMPDIR:-/tmp}/${TAG}-mysql.log"
 RUNTIME_DIR=
 AUTH_FILE=
 AUTH_USER=campaign21
-AUTH_PASSWORD=${C21_AUTH_PASSWORD:-campaign21-native-password}
+AUTH_PASSWORD=${CONCURRENT_AUTH_SQL_AUTH_PASSWORD:-campaign21-native-password}
 PLAYGROUND_PID=
 RUST_PID=
 OWNED_PIDS=
 STORE_ADDRESSES=
 CLIENT_PIDS=()
 CLIENT_LOGS_ARCHIVED=false
-CLIENT_COMPLETION_TIMEOUT=${C21_CLIENT_COMPLETION_TIMEOUT:-60}
-PROCESS_STOP_TIMEOUT=${C21_PROCESS_STOP_TIMEOUT:-15}
+CLIENT_COMPLETION_TIMEOUT=${CONCURRENT_AUTH_SQL_CLIENT_COMPLETION_TIMEOUT:-60}
+PROCESS_STOP_TIMEOUT=${CONCURRENT_AUTH_SQL_PROCESS_STOP_TIMEOUT:-15}
 
 for timeout_name in CLIENT_COMPLETION_TIMEOUT PROCESS_STOP_TIMEOUT; do
   timeout_value=${!timeout_name}
@@ -141,7 +141,7 @@ open_hold_fd() {
     6) exec 16<>"${fifo}" ;;
     7) exec 17<>"${fifo}" ;;
     8) exec 18<>"${fifo}" ;;
-    *) echo "invalid Campaign 21 client index ${index}" >&2; return 1 ;;
+    *) echo "invalid concurrent-auth SQL-node client index ${index}" >&2; return 1 ;;
   esac
 }
 
@@ -157,7 +157,7 @@ release_client_query() {
     5) printf '%s\n' "${query}" >&15; exec 15>&- ;;
     6) printf '%s\n' "${query}" >&16; exec 16>&- ;;
     7) printf '%s\n' "${query}" >&17; exec 17>&- ;;
-    *) echo "invalid successful Campaign 21 client index ${index}" >&2; return 1 ;;
+    *) echo "invalid successful concurrent-auth SQL-node client index ${index}" >&2; return 1 ;;
   esac
 }
 
@@ -228,7 +228,7 @@ terminate_pid_group() {
     done
     deadline=$(( $(date +%s) + PROCESS_STOP_TIMEOUT ))
     if ! wait_for_pids_until "${deadline}" "${running_pids[@]}"; then
-      echo "Campaign 21 cleanup failed: ${label} remained alive after SIGKILL" >&2
+      echo "concurrent-auth SQL-node cleanup failed: ${label} remained alive after SIGKILL" >&2
       return 1
     fi
   fi
@@ -238,7 +238,7 @@ terminate_pid_group() {
     fi
   done
   if [[ "${forced}" == true ]]; then
-    echo "Campaign 21 cleanup failed: ${label} required SIGKILL after ${PROCESS_STOP_TIMEOUT}s" >&2
+    echo "concurrent-auth SQL-node cleanup failed: ${label} required SIGKILL after ${PROCESS_STOP_TIMEOUT}s" >&2
     return 1
   fi
   return 0
@@ -284,7 +284,7 @@ cleanup() {
     cleanup_failed=true
   fi
   if nc -z -w 1 127.0.0.1 "${RUST_SQL_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 21 cleanup failed: Rust SQL node ${RUST_SQL_ADDR} remains reachable" >&2
+    echo "concurrent-auth SQL-node cleanup failed: Rust SQL node ${RUST_SQL_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
 
@@ -297,7 +297,7 @@ cleanup() {
   registered_rows=$(tag_status_rows 2>/dev/null || true)
   if [[ -n "${registered_rows}" ]] || [[ -d "${TAG_DIR}" ]]; then
     if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-      echo "Campaign 21 cleanup failed: tiup clean failed for ${TAG}" >&2
+      echo "concurrent-auth SQL-node cleanup failed: tiup clean failed for ${TAG}" >&2
       cleanup_failed=true
     fi
   fi
@@ -322,7 +322,7 @@ cleanup() {
     sleep 1
   done
   if [[ "${processes_cleaned}" != true ]]; then
-    echo "Campaign 21 cleanup failed: owned process or TiUP registry row remains" >&2
+    echo "concurrent-auth SQL-node cleanup failed: owned process or TiUP registry row remains" >&2
     cleanup_failed=true
   fi
 
@@ -330,31 +330,31 @@ cleanup() {
   for address in ${STORE_ADDRESSES}; do
     local port=${address##*:}
     if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-      echo "Campaign 21 cleanup failed: TiKV ${address} remains reachable" >&2
+      echo "concurrent-auth SQL-node cleanup failed: TiKV ${address} remains reachable" >&2
       cleanup_failed=true
     fi
   done
   if nc -z -w 1 127.0.0.1 "${TIKV_SEED_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 21 cleanup failed: TiKV seed 127.0.0.1:${TIKV_SEED_PORT} remains reachable" >&2
+    echo "concurrent-auth SQL-node cleanup failed: TiKV seed 127.0.0.1:${TIKV_SEED_PORT} remains reachable" >&2
     cleanup_failed=true
   fi
   if nc -z -w 1 127.0.0.1 "${GO_SQL_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 21 cleanup failed: Go TiDB ${GO_SQL_ADDR} remains reachable" >&2
+    echo "concurrent-auth SQL-node cleanup failed: Go TiDB ${GO_SQL_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
   if nc -z -w 1 127.0.0.1 "${GO_STATUS_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 21 cleanup failed: Go TiDB status port remains reachable" >&2
+    echo "concurrent-auth SQL-node cleanup failed: Go TiDB status port remains reachable" >&2
     cleanup_failed=true
   fi
   if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-    echo "Campaign 21 cleanup failed: PD ${PD_ADDR} remains reachable" >&2
+    echo "concurrent-auth SQL-node cleanup failed: PD ${PD_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
 
   if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}"
     if [[ -e "${TAG_DIR}" ]]; then
-      echo "Campaign 21 cleanup failed: owned data directory remains" >&2
+      echo "concurrent-auth SQL-node cleanup failed: owned data directory remains" >&2
       cleanup_failed=true
     fi
   fi
@@ -362,16 +362,16 @@ cleanup() {
   if [[ -n "${RUNTIME_DIR}" ]]; then
     rm -rf -- "${RUNTIME_DIR}"
     if [[ -e "${AUTH_FILE}" ]] || [[ -e "${RUNTIME_DIR}" ]]; then
-      echo "Campaign 21 cleanup failed: authentication runtime files remain" >&2
+      echo "concurrent-auth SQL-node cleanup failed: authentication runtime files remain" >&2
       cleanup_failed=true
     fi
   fi
 
   if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
     rm -f -- "${PLAYGROUND_LOG}" "${RUST_LOG}" "${MYSQL_LOG}"
-    echo "Campaign 21 cleanup proof passed: tag processes stopped, data removed, auth_file_removed=true"
+    echo "concurrent-auth SQL-node cleanup proof passed: tag processes stopped, data removed, auth_file_removed=true"
   else
-    echo "Campaign 21 retained logs: ${PLAYGROUND_LOG} ${RUST_LOG} ${MYSQL_LOG}" >&2
+    echo "concurrent-auth SQL-node retained logs: ${PLAYGROUND_LOG} ${RUST_LOG} ${MYSQL_LOG}" >&2
   fi
   if [[ "${cleanup_failed}" == true ]]; then
     exit 1
@@ -380,21 +380,21 @@ cleanup() {
 }
 
 cd "${RUST_ROOT}"
-if [[ -z "${C21_RUST_SERVER:-}" ]]; then
+if [[ -z "${CONCURRENT_AUTH_SQL_RUST_SERVER:-}" ]]; then
   CARGO_BUILD_JOBS=12 cargo build -j12 -p tidb-server --bin tidb-server
   RUST_SERVER="${RUST_ROOT}/target/debug/tidb-server"
 else
-  RUST_SERVER=${C21_RUST_SERVER}
+  RUST_SERVER=${CONCURRENT_AUTH_SQL_RUST_SERVER}
 fi
 if [[ ! -x "${RUST_SERVER}" ]]; then
-  echo "Campaign 21 Rust server is not executable: ${RUST_SERVER}" >&2
+  echo "concurrent-auth SQL-node Rust server is not executable: ${RUST_SERVER}" >&2
   exit 1
 fi
 
 for port in "${PD_PORT}" "${GO_SQL_PORT}" "${TIKV_SEED_PORT}" \
   "${GO_STATUS_PORT}" "${RUST_SQL_PORT}"; do
   if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-    echo "refusing occupied Campaign 21 port ${port}; set C21_PORT_OFFSET" >&2
+    echo "refusing occupied concurrent-auth SQL-node port ${port}; set CONCURRENT_AUTH_SQL_PORT_OFFSET" >&2
     exit 1
   fi
 done
@@ -408,7 +408,7 @@ AUTH_HASH_HEX=$(printf '%s' "${AUTH_PASSWORD}" \
   | openssl dgst -sha1 -hex \
   | awk '{ print toupper($NF) }')
 if [[ ! "${AUTH_HASH_HEX}" =~ ^[0-9A-F]{40}$ ]]; then
-  echo "could not derive the Campaign 21 native-password stage-two hash" >&2
+  echo "could not derive the concurrent-auth SQL-node native-password stage-two hash" >&2
   exit 1
 fi
 (umask 077; printf '%s\t%s\t%s\t*%s\n' \
@@ -476,7 +476,7 @@ TABLE_ID=$("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
   -uroot --connect-timeout=5 "${MYSQL_PLUGIN_ARGS[@]}" -Nse \
   "select tidb_table_id from information_schema.tables where table_schema='campaign20' and table_name='rows'")
 if [[ ! "${TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${TABLE_ID}" =~ ^0+$ ]]; then
-  echo "Go TiDB did not resolve the Campaign 21 physical table ID" >&2
+  echo "Go TiDB did not resolve the concurrent-auth SQL-node physical table ID" >&2
   exit 1
 fi
 
@@ -516,7 +516,7 @@ if ! printf '%s\n' "${READY_JSON}" | jq -e \
    and (.authority_id | type) == "number" and .authority_id > 0
    and (.read_authority_id | type) == "number" and .read_authority_id > 0' \
   >/dev/null; then
-  echo "Rust readiness did not retain the Campaign 21 auth/concurrency/read authorities" >&2
+  echo "Rust readiness did not retain the concurrent-auth SQL-node auth/concurrency/read authorities" >&2
   printf '%s\n' "${READY_JSON}" >&2
   exit 1
 fi
@@ -561,7 +561,7 @@ for _ in $(seq 1 300); do
   sleep 0.1
 done
 if [[ "${ACTIVE_EIGHT}" != true ]]; then
-  echo "Campaign 21 clients did not remain concurrently authenticated at active=8" >&2
+  echo "concurrent-auth SQL-node clients did not remain concurrently authenticated at active=8" >&2
   tail -240 "${RUST_LOG}" >&2
   exit 1
 fi
@@ -572,14 +572,14 @@ done
 
 CLIENT_DEADLINE=$(( $(date +%s) + CLIENT_COMPLETION_TIMEOUT ))
 if ! wait_for_pids_until "${CLIENT_DEADLINE}" "${CLIENT_PIDS[@]}"; then
-  echo "Campaign 21 eight-client query phase exceeded ${CLIENT_COMPLETION_TIMEOUT}s" >&2
+  echo "concurrent-auth SQL-node eight-client query phase exceeded ${CLIENT_COMPLETION_TIMEOUT}s" >&2
   tail -260 "${RUST_LOG}" >&2
   exit 1
 fi
 for index in $(seq 0 7); do
   if ! wait "${CLIENT_PIDS[${index}]}"; then
     CLIENT_PIDS[${index}]=
-    echo "Campaign 21 successful client ${index} exited unsuccessfully" >&2
+    echo "concurrent-auth SQL-node successful client ${index} exited unsuccessfully" >&2
     sed -n '1,200p' "${RUNTIME_DIR}/client-${index}.err" >&2
     exit 1
   fi
@@ -590,13 +590,13 @@ for index in $(seq 0 7); do
   QUERY_OUTPUT=$(sed -n '1,20p' "${RUNTIME_DIR}/client-${index}.out")
   QUERY_HEADER=$(printf '%s\n' "${QUERY_OUTPUT}" | sed -n '1p')
   if [[ "${QUERY_HEADER}" != $'amount\tid' ]]; then
-    echo "Campaign 21 client ${index} did not preserve the requested header order" >&2
+    echo "concurrent-auth SQL-node client ${index} did not preserve the requested header order" >&2
     exit 1
   fi
   NORMALIZED_ROWS=$(printf '%s\n' "${QUERY_OUTPUT}" | tail -n +2 \
     | sed '/^[[:space:]]*$/d' | sort -t $'\t' -k2,2n)
   if [[ "${NORMALIZED_ROWS}" != $'913\t-7\n-2048\t0\n77\t42' ]]; then
-    echo "Campaign 21 client ${index} did not return the exact real-TiKV pairs" >&2
+    echo "concurrent-auth SQL-node client ${index} did not return the exact real-TiKV pairs" >&2
     printf 'actual:\n%s\n' "${NORMALIZED_ROWS}" >&2
     exit 1
   fi
@@ -622,7 +622,7 @@ for _ in $(seq 1 300); do
   sleep 0.1
 done
 if [[ "${EVIDENCE_READY}" != true ]]; then
-  echo "Campaign 21 query/transport/connection evidence did not converge" >&2
+  echo "concurrent-auth SQL-node query/transport/connection evidence did not converge" >&2
   tail -260 "${RUST_LOG}" >&2
   exit 1
 fi
@@ -642,7 +642,7 @@ if ! printf '%s\n' "${SNAPSHOTS_JSON}" | jq -e \
      and .user == $user and .host == "127.0.0.1")
    and ([.[].connection_id] | unique | length) == 8
    and ([.[].session_id] | unique | length) == 8' >/dev/null; then
-  echo "Campaign 21 snapshots did not share one nonzero cluster/authority with distinct sessions" >&2
+  echo "concurrent-auth SQL-node snapshots did not share one nonzero cluster/authority with distinct sessions" >&2
   printf '%s\n' "${SNAPSHOTS_JSON}" >&2
   exit 1
 fi
@@ -656,7 +656,7 @@ if ! printf '%s\n' "${TRANSPORTS_JSON}" | jq -e \
      and .batch_attempts >= 1 and .unary_attempts == 0)
    and ([.[].connection_id] | unique | length) == 8
    and ([.[].session_id] | unique | length) == 8' >/dev/null; then
-  echo "Campaign 21 queries did not each prove BatchCommands-only real-TiKV dispatch" >&2
+  echo "concurrent-auth SQL-node queries did not each prove BatchCommands-only real-TiKV dispatch" >&2
   printf '%s\n' "${TRANSPORTS_JSON}" >&2
   exit 1
 fi
@@ -665,7 +665,7 @@ SNAPSHOT_CONNECTION_IDS=$(printf '%s\n' "${SNAPSHOTS_JSON}" \
 TRANSPORT_CONNECTION_IDS=$(printf '%s\n' "${TRANSPORTS_JSON}" \
   | jq -r '.[] | "\(.connection_id):\(.query_id)"' | sort | tr '\n' ',')
 if [[ "${SNAPSHOT_CONNECTION_IDS}" != "${TRANSPORT_CONNECTION_IDS}" ]]; then
-  echo "Campaign 21 snapshot and transport evidence came from different connections" >&2
+  echo "concurrent-auth SQL-node snapshot and transport evidence came from different connections" >&2
   exit 1
 fi
 if ! printf '%s\n' "${QUERY_ACTIVITY_JSON}" | jq -e \
@@ -686,7 +686,7 @@ if ! printf '%s\n' "${QUERY_ACTIVITY_JSON}" | jq -e \
      and ($real_begins | length) == 8
      and (([$real_begins[].active] | max) >= 2)
      and ($ends[-1].active == 0)' >/dev/null; then
-  echo "Campaign 21 did not prove overlapping queries with balanced begin/end activity" >&2
+  echo "concurrent-auth SQL-node did not prove overlapping queries with balanced begin/end activity" >&2
   printf '%s\n' "${QUERY_ACTIVITY_JSON}" >&2
   exit 1
 fi
@@ -698,7 +698,7 @@ QUERY_ACTIVITY_CONNECTION_IDS=$(printf '%s\n' "${QUERY_ACTIVITY_JSON}" \
      | select($keys | index($key)) | $key' \
   | sort | tr '\n' ',')
 if [[ "${SNAPSHOT_CONNECTION_IDS}" != "${QUERY_ACTIVITY_CONNECTION_IDS}" ]]; then
-  echo "Campaign 21 query activity and real-TiKV evidence came from different connections" >&2
+  echo "concurrent-auth SQL-node query activity and real-TiKV evidence came from different connections" >&2
   exit 1
 fi
 MAX_QUERY_ACTIVE=$(printf '%s\n' "${QUERY_ACTIVITY_JSON}" \
@@ -711,13 +711,13 @@ MAX_QUERY_ACTIVE=$(printf '%s\n' "${QUERY_ACTIVITY_JSON}" \
 MAX_ACTIVE=$(grep -F '"event":"connection_begin"' "${RUST_LOG}" \
   | jq -r '.active' | sort -n | tail -1)
 if [[ "${MAX_ACTIVE}" != 8 ]]; then
-  echo "Campaign 21 did not prove eight simultaneous connections that subsequently authenticated" >&2
+  echo "concurrent-auth SQL-node did not prove eight simultaneous connections that subsequently authenticated" >&2
   exit 1
 fi
 if ! printf '%s\n' "${FINAL_CONNECTION_JSON}" | jq -e \
   '.active == 0 and .accepted == .completed and .accepted == 8 and .failed == 0' \
   >/dev/null; then
-  echo "Campaign 21 connection accounting did not close exactly once" >&2
+  echo "concurrent-auth SQL-node connection accounting did not close exactly once" >&2
   printf '%s\n' "${FINAL_CONNECTION_JSON}" >&2
   exit 1
 fi
@@ -752,7 +752,7 @@ while [[ $(date +%s) -lt "${NINTH_ADMISSION_DEADLINE}" ]]; do
   sleep 0.1
 done
 if [[ "${NINTH_ADMITTED}" != true ]]; then
-  echo "Campaign 21 ninth lifecycle client was not admitted after the eight-query proof" >&2
+  echo "concurrent-auth SQL-node ninth lifecycle client was not admitted after the eight-query proof" >&2
   tail -260 "${RUST_LOG}" >&2
   exit 1
 fi
@@ -762,7 +762,7 @@ kill -TERM "${EARLY_PID}" 2>/dev/null || true
 close_early_client_fd
 EARLY_DEADLINE=$(( $(date +%s) + CLIENT_COMPLETION_TIMEOUT ))
 if ! wait_for_pids_until "${EARLY_DEADLINE}" "${EARLY_PID}"; then
-  echo "Campaign 21 ninth lifecycle client did not terminate within ${CLIENT_COMPLETION_TIMEOUT}s" >&2
+  echo "concurrent-auth SQL-node ninth lifecycle client did not terminate within ${CLIENT_COMPLETION_TIMEOUT}s" >&2
   exit 1
 fi
 wait "${EARLY_PID}" 2>/dev/null || true
@@ -790,4 +790,4 @@ archive_client_logs
 
 SNAPSHOT_TSOS=$(printf '%s\n' "${SNAPSHOTS_JSON}" \
   | jq -r 'map(.snapshot_ts | tostring) | join(",")')
-echo "Campaign 21 live concurrent authenticated SQL-node proof passed: eight concurrently connected stock clients authenticated and read exact (amount,id) pairs [(913,-7),(-2048,0),(77,42)] from real TiKV with max_query_active=${MAX_QUERY_ACTIVE}; a separate ninth lifecycle client was deliberately terminated and released exactly once; table_id=${TABLE_ID}; pd_cluster_id=${PD_CLUSTER_ID}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; snapshot_tsos=${SNAPSHOT_TSOS}; max_connection_active=${MAX_ACTIVE}; accepted=9; completed=9; active=0"
+echo "concurrent-auth SQL-node live concurrent authenticated SQL-node proof passed: eight concurrently connected stock clients authenticated and read exact (amount,id) pairs [(913,-7),(-2048,0),(77,42)] from real TiKV with max_query_active=${MAX_QUERY_ACTIVE}; a separate ninth lifecycle client was deliberately terminated and released exactly once; table_id=${TABLE_ID}; pd_cluster_id=${PD_CLUSTER_ID}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; snapshot_tsos=${SNAPSHOT_TSOS}; max_connection_active=${MAX_ACTIVE}; accepted=9; completed=9; active=0"

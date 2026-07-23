@@ -85,6 +85,11 @@ des = "=0.9.0"
 # defaults), verified via gorun.
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
+# MySQL temporal values require proleptic calendar arithmetic and IANA timezone
+# transitions. These replace Go's time.Time and time.Location without embedding
+# a partial hand-maintained timezone table.
+chrono = "0.4"
+chrono-tz = "0.10"
 # MySQL compressed protocol uses the same two standardized wire codecs as
 # TiDB's Go packetio owner. Keep codec choice separate from packet framing.
 flate2 = "1"

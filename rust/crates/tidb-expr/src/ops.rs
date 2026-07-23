@@ -70,6 +70,14 @@ pub(crate) fn eval_unary(op: UnaryOp, v: Datum) -> Result<Datum, EvalError> {
                 .ok_or(EvalError::IntOverflow),
             Not | NotKeyword => unreachable!("handled above"),
         },
+        Datum::Float32(f) => match op {
+            Plus => Ok(Datum::Float32(f)),
+            Minus => Ok(Datum::Float32(-f)),
+            BitNeg => f64_to_i64(f.round_ties_even())
+                .map(|i| Datum::UInt(!(i as u64)))
+                .ok_or(EvalError::IntOverflow),
+            Not | NotKeyword => unreachable!("handled above"),
+        },
         Datum::Int(i) => Ok(match op {
             Plus => Datum::Int(i),
             // Negating the one signed magnitude without an i64 counterpart
@@ -95,6 +103,21 @@ pub(crate) fn eval_unary(op: UnaryOp, v: Datum) -> Result<Datum, EvalError> {
         }),
         Datum::Null => unreachable!("handled above"),
         Datum::MinNotNull | Datum::MaxValue => unreachable!("rejected above"),
+        other => {
+            let decimal = other
+                .to_decimal()
+                .map_err(|_| EvalError::Unsupported("numeric unary operand"))?
+                .value;
+            match op {
+                Plus => Ok(Datum::Decimal(decimal)),
+                Minus => Ok(Datum::Decimal(decimal.negate())),
+                BitNeg => decimal
+                    .round_to_i64()
+                    .map(|i| Datum::UInt(!(i as u64)))
+                    .ok_or(EvalError::IntOverflow),
+                Not | NotKeyword => unreachable!("handled above"),
+            }
+        }
     }
 }
 
@@ -436,9 +459,27 @@ fn decimal_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> 
     let a = to_decimal(l);
     let b = to_decimal(r);
     Ok(match op {
-        Plus => Datum::Decimal(a.add(&b)),
-        Minus => Datum::Decimal(a.add(&b.negate())),
-        Mul => Datum::Decimal(a.mul(&b)),
+        Plus => {
+            let (sum, warning) = a.add_mysql(&b);
+            if warning == Some(tidb_datatype::DecimalCodecWarning::Overflow) {
+                return Err(EvalError::DecimalOverflow);
+            }
+            Datum::Decimal(sum)
+        }
+        Minus => {
+            let (difference, warning) = a.sub_mysql(&b);
+            if warning == Some(tidb_datatype::DecimalCodecWarning::Overflow) {
+                return Err(EvalError::DecimalOverflow);
+            }
+            Datum::Decimal(difference)
+        }
+        Mul => {
+            let (product, warning) = a.mul_mysql(&b);
+            if warning == Some(tidb_datatype::DecimalCodecWarning::Overflow) {
+                return Err(EvalError::DecimalOverflow);
+            }
+            Datum::Decimal(product)
+        }
         Eq => bool_int(a == b),
         Ge => bool_int(a >= b),
         Gt => bool_int(a > b),
@@ -450,8 +491,8 @@ fn decimal_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> 
             Some((q, _)) => Datum::Int(q),
             None => Datum::Null,
         },
-        Mod => match a.div_rem(&b) {
-            Some((_, r)) => Datum::Decimal(r),
+        Mod => match a.rem_mysql(&b) {
+            Some(r) => Datum::Decimal(r),
             None => Datum::Null,
         },
         // Bitwise/shift operators work on integers in MySQL, so a decimal
@@ -493,6 +534,12 @@ pub(crate) fn to_decimal(v: Datum) -> Decimal {
         | Datum::MinNotNull
         | Datum::MaxValue => {
             unreachable!("guarded by caller")
+        }
+        other => {
+            other
+                .to_decimal()
+                .expect("numeric caller must supply a decimal-convertible datum")
+                .value
         }
     }
 }
@@ -593,6 +640,12 @@ pub(crate) fn to_f64(v: Datum) -> f64 {
         Datum::String(_) | Datum::Bytes(_) | Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
             unreachable!("guarded by caller")
         }
+        other => {
+            other
+                .to_f64()
+                .expect("numeric caller must supply a real-convertible datum")
+                .value
+        }
     }
 }
 
@@ -608,10 +661,13 @@ pub(crate) fn to_f64_with_mysql_string(v: &Datum) -> f64 {
     match v {
         Datum::String(s) => s.as_utf8().map(mysql_real_prefix).unwrap_or(0.0),
         Datum::Bytes(s) => std::str::from_utf8(s).map(mysql_real_prefix).unwrap_or(0.0),
-        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => to_f64(v.clone()),
+        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_) => {
+            to_f64(v.clone())
+        }
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
             unreachable!("non-scalar values are handled before numeric coercion")
         }
+        other => other.to_f64().map_or(0.0, |converted| converted.value),
     }
 }
 
@@ -1201,5 +1257,30 @@ mod tests {
         ] {
             assert_eq!(eval_binary(BinaryOp::Mul, lhs, rhs), expected);
         }
+    }
+
+    #[test]
+    fn decimal_mul_uses_bounded_mydecimal_semantics() {
+        let huge = Datum::Decimal(Decimal::from_signed_literal(&format!(
+            "1{}",
+            "0".repeat(60)
+        )));
+        assert_eq!(
+            eval_binary(BinaryOp::Mul, huge.clone(), huge),
+            Err(EvalError::DecimalOverflow)
+        );
+
+        let left = Datum::Decimal(Decimal::from_signed_literal(
+            "-0.0000000000000000000000000000000000000000000000000017382578996420603",
+        ));
+        let right = Datum::Decimal(Decimal::from_signed_literal(
+            "-13890436710184412000000000000000000000000000000000000000000000000000000000000",
+        ));
+        assert_eq!(
+            eval_binary(BinaryOp::Mul, left, right),
+            Ok(Datum::Decimal(Decimal::from_signed_literal(
+                "0.000000000000000000000000000000"
+            )))
+        );
     }
 }

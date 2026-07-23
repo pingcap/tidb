@@ -5,9 +5,9 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HARNESS="${SCRIPT_DIR}/lib/live-sql-node-harness.sh"
 RUNNERS=(
-  "${SCRIPT_DIR}/run-campaign22-topology-churn-sql-node.sh"
-  "${SCRIPT_DIR}/run-campaign23-bigint-selection-sql-node.sh"
-  "${SCRIPT_DIR}/run-campaign24-clustered-pk-range-sql-node.sh"
+  "${SCRIPT_DIR}/run-live-topology-churn-sql-node.sh"
+  "${SCRIPT_DIR}/run-live-bigint-selection-sql-node.sh"
+  "${SCRIPT_DIR}/run-live-clustered-pk-range-sql-node.sh"
 )
 MAX_LINES=(220 320 470)
 
@@ -142,35 +142,35 @@ for index in "${!RUNNERS[@]}"; do
   fi
 done
 
-# Campaign 26 is intentionally optional while its live scenario is being
+# ordered-join SQL-node is intentionally optional while its live scenario is being
 # assembled. Once present, it must use the paired-receipt runner rather than
 # reopening any TiUP/process/topology lifecycle ownership.
-MULTI_RELATION_RUNNER="${SCRIPT_DIR}/run-campaign26-ordered-join-sql-node.sh"
+MULTI_RELATION_RUNNER="${SCRIPT_DIR}/run-live-ordered-join-sql-node.sh"
 if [[ -f "${MULTI_RELATION_RUNNER}" ]]; then
   bash -n "${MULTI_RELATION_RUNNER}"
   multi_line_count=$(awk 'END { print NR + 0 }' "${MULTI_RELATION_RUNNER}")
   if [[ "${multi_line_count}" -gt 430 ]]; then
-    echo "Campaign 26 ordered scenario grew past its 430-line boundary: ${MULTI_RELATION_RUNNER} (${multi_line_count})" >&2
+    echo "ordered-join SQL-node ordered scenario grew past its 430-line boundary: ${MULTI_RELATION_RUNNER} (${multi_line_count})" >&2
     exit 1
   fi
   if ! grep -F 'source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"' \
     "${MULTI_RELATION_RUNNER}" >/dev/null \
     || ! grep -F 'run_live_sql_node_multi_relation_scenario' \
       "${MULTI_RELATION_RUNNER}" >/dev/null; then
-    echo "Campaign 26 ordered scenario bypasses the shared multi-relation topology engine" >&2
+    echo "ordered-join SQL-node ordered scenario bypasses the shared multi-relation topology engine" >&2
     exit 1
   fi
   if rg -n \
     'tiup playground|TIKV_B_COMMAND|process_shutdown_stage|beforeCommitSecondaries|LOCK_SECONDARY_KEY|transfer_leader|SHUTDOWN_STARTED_MS' \
     "${MULTI_RELATION_RUNNER}" >/dev/null; then
-    echo "Campaign 26 lifecycle leaked back into scenario-owned code" >&2
+    echo "ordered-join SQL-node lifecycle leaked back into scenario-owned code" >&2
     exit 1
   fi
 fi
 
-# Campaign 27 owns a bounded prepared client/benchmark proof, but the shared
+# prepared point-read SQL-node owns a bounded prepared client/benchmark proof, but the shared
 # harness must remain the sole process/topology authority.
-PREPARED_RUNNER="${SCRIPT_DIR}/run-campaign27-prepared-point-read-sql-node.sh"
+PREPARED_RUNNER="${SCRIPT_DIR}/run-live-prepared-point-read-sql-node.sh"
 if [[ -f "${PREPARED_RUNNER}" ]]; then
   bash -n "${PREPARED_RUNNER}"
   if ! grep -F 'source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"' \
@@ -178,13 +178,13 @@ if [[ -f "${PREPARED_RUNNER}" ]]; then
     || ! grep -F 'run_live_sql_node_topology_scenario' \
       "${PREPARED_RUNNER}" >/dev/null \
     || ! grep -F 'scenario_pre_shutdown_proof()' "${PREPARED_RUNNER}" >/dev/null; then
-    echo "Campaign 27 prepared scenario bypasses the shared healthy-topology hook" >&2
+    echo "prepared point-read SQL-node prepared scenario bypasses the shared healthy-topology hook" >&2
     exit 1
   fi
   if rg -n \
     'tiup playground|TIKV_B_COMMAND|process_shutdown_stage|beforeCommitSecondaries|LOCK_SECONDARY_KEY|transfer_leader|SHUTDOWN_STARTED_MS' \
     "${PREPARED_RUNNER}" >/dev/null; then
-    echo "Campaign 27 lifecycle leaked back into scenario-owned code" >&2
+    echo "prepared point-read SQL-node lifecycle leaked back into scenario-owned code" >&2
     exit 1
   fi
 fi

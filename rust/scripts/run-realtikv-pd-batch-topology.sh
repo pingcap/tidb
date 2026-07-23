@@ -4,14 +4,14 @@ set -euo pipefail
 
 for prerequisite in tiup cargo curl jq nc lsof pgrep ps awk sed seq; do
   if ! command -v "${prerequisite}" >/dev/null 2>&1; then
-    echo "missing Campaign 18 prerequisite: ${prerequisite}" >&2
+    echo "missing PD-batch-topology prerequisite: ${prerequisite}" >&2
     exit 1
   fi
 done
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TAG="campaign18-pd-batch-${$}-$(date +%s)"
-PORT_OFFSET=${C18_PORT_OFFSET:-38000}
+TAG="realtikv-pd-batch-${$}-$(date +%s)"
+PORT_OFFSET=${PD_BATCH_PORT_OFFSET:-38000}
 PD_SEED_PORT=$((2379 + PORT_OFFSET))
 PD_SEED="127.0.0.1:${PD_SEED_PORT}"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
@@ -123,7 +123,7 @@ cleanup() {
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
   if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-    echo "Campaign 18 cleanup failed: tiup clean failed for ${TAG}" >&2
+    echo "PD-batch-topology cleanup failed: tiup clean failed for ${TAG}" >&2
     cleanup_failed=true
   fi
 
@@ -147,7 +147,7 @@ cleanup() {
     sleep 1
   done
   if [[ "${processes_cleaned}" != true ]]; then
-    echo "Campaign 18 cleanup failed: owned process or TiUP registry row remains" >&2
+    echo "PD-batch-topology cleanup failed: owned process or TiUP registry row remains" >&2
     cleanup_failed=true
   fi
 
@@ -155,7 +155,7 @@ cleanup() {
   if [[ -f "${PHASE_DIR}/topology-ready" ]]; then
     while IFS= read -r endpoint; do
       if curl -sf --max-time 1 "${endpoint}/pd/api/v1/version" >/dev/null; then
-        echo "Campaign 18 cleanup failed: PD endpoint ${endpoint} remains reachable" >&2
+        echo "PD-batch-topology cleanup failed: PD endpoint ${endpoint} remains reachable" >&2
         cleanup_failed=true
       fi
     done < <(phase_values "${PHASE_DIR}/topology-ready" member_url)
@@ -165,7 +165,7 @@ cleanup() {
       local port
       port=$(address_port "${endpoint}")
       if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-        echo "Campaign 18 cleanup failed: TiKV endpoint ${endpoint} remains reachable" >&2
+        echo "PD-batch-topology cleanup failed: TiKV endpoint ${endpoint} remains reachable" >&2
         cleanup_failed=true
       fi
     done < <(phase_values "${PHASE_DIR}/route-ready" store_address)
@@ -174,14 +174,14 @@ cleanup() {
   if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}" "${PHASE_DIR}"
     if [[ -e "${TAG_DIR}" || -e "${PHASE_DIR}" ]]; then
-      echo "Campaign 18 cleanup failed: owned data or phase directory remains" >&2
+      echo "PD-batch-topology cleanup failed: owned data or phase directory remains" >&2
       cleanup_failed=true
     fi
   fi
   if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
     rm -f -- "${PLAYGROUND_LOG}" "${RUST_LOG}" "${RESTART_LOG}"
   else
-    echo "Campaign 18 retained logs: ${PLAYGROUND_LOG} ${RUST_LOG} ${RESTART_LOG}" >&2
+    echo "PD-batch-topology retained logs: ${PLAYGROUND_LOG} ${RUST_LOG} ${RESTART_LOG}" >&2
   fi
   if [[ "${cleanup_failed}" == true ]]; then
     exit 1
@@ -191,7 +191,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if curl -sf --max-time 1 "http://${PD_SEED}/pd/api/v1/version" >/dev/null; then
-  echo "refusing occupied PD seed ${PD_SEED}; set C18_PORT_OFFSET" >&2
+  echo "refusing occupied PD seed ${PD_SEED}; set PD_BATCH_PORT_OFFSET" >&2
   exit 1
 fi
 mkdir -m 700 "${PHASE_DIR}"
@@ -236,8 +236,8 @@ done < <(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/members" \
   | jq -r '.members[].client_urls[]')
 printf '%s' "${TOPOLOGY_PHASE}" >"${PHASE_DIR}/topology-ready"
 
-export C18_PD_SEED="${PD_SEED}"
-export C18_PHASE_DIR="${PHASE_DIR}"
+export PD_BATCH_PD_SEED="${PD_SEED}"
+export PD_BATCH_PHASE_DIR="${PHASE_DIR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
   --test realtikv_replica_read \
@@ -283,7 +283,7 @@ LEADER_SCHEDULE_LIMIT=$(curl -sf --max-time 2 \
   "http://${PD_SEED}/pd/api/v1/config/schedule" \
   | jq -r '."leader-schedule-limit" // -1' 2>/dev/null) || true
 if [[ "${LEADER_SCHEDULE_LIMIT}" != 0 ]]; then
-  echo "failed to disable PD leader scheduling for Campaign 18" >&2
+  echo "failed to disable PD leader scheduling for PD-batch-topology" >&2
   exit 1
 fi
 : >"${PHASE_DIR}/split-complete"
@@ -449,7 +449,7 @@ printf 'restart_pid=%s\naddress=%s\nleader_store_id=%s\n' \
   >"${PHASE_DIR}/tikv-restarted"
 
 wait "${RUST_PID}" || {
-  echo "Campaign 18 Rust live proof failed" >&2
+  echo "PD-batch-topology Rust live proof failed" >&2
   tail -200 "${RUST_LOG}" >&2
   exit 1
 }
@@ -485,8 +485,8 @@ if [[ "${ADJACENT}" != true || "${RETRY_USABLE}" != true \
   || "${INITIAL_CHANNEL_VERSION}" != "${FORWARDED_CHANNEL_VERSION}" \
   || "${COMPLETED_FAILED_CHANNEL_VERSION}" != "${FORWARDED_CHANNEL_VERSION}" \
   || "${RETRY_CHANNEL_VERSION}" != "${FORWARDED_CHANNEL_VERSION}" ]]; then
-  echo "Campaign 18 completion marker is incomplete" >&2
+  echo "PD-batch-topology completion marker is incomplete" >&2
   cat "${COMPLETED}" >&2
   exit 1
 fi
-echo "Campaign 18 live proof passed: GetPrevRegion adjacency; forwarded ${PHYSICAL_ADDRESS} -> follower ${LOGICAL_ADDRESS} under unchanged leader store ${BASELINE_LEADER_STORE_ID}; route generation ${INITIAL_ROUTE_GENERATION} failed once on channel ${INITIAL_CHANNEL_VERSION}; caller retry route generation ${RETRY_ROUTE_GENERATION} succeeded"
+echo "PD-batch-topology live proof passed: GetPrevRegion adjacency; forwarded ${PHYSICAL_ADDRESS} -> follower ${LOGICAL_ADDRESS} under unchanged leader store ${BASELINE_LEADER_STORE_ID}; route generation ${INITIAL_ROUTE_GENERATION} failed once on channel ${INITIAL_CHANNEL_VERSION}; caller retry route generation ${RETRY_ROUTE_GENERATION} succeeded"

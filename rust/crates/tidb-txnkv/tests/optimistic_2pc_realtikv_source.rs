@@ -148,9 +148,9 @@ fn commit_real_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, commit_ts:
 }
 
 fn phase_dir() -> PathBuf {
-    std::env::var("C28_STAGE_B_PHASE_DIR")
+    std::env::var("OPTIMISTIC_2PC_PHASE_DIR")
         .map(PathBuf::from)
-        .expect("runner must provide C28_STAGE_B_PHASE_DIR")
+        .expect("runner must provide OPTIMISTIC_2PC_PHASE_DIR")
 }
 
 fn publish_phase(directory: &Path, name: &str, body: &str) {
@@ -186,10 +186,10 @@ fn print_publication(
 }
 
 #[test]
-#[ignore = "requires run-campaign28-optimistic-2pc-realtikv.sh"]
+#[ignore = "requires run-realtikv-optimistic-2pc.sh"]
 fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let pd_address =
-        std::env::var("C28_STAGE_B_PD_ADDR").expect("runner must provide C28_STAGE_B_PD_ADDR");
+        std::env::var("OPTIMISTIC_2PC_PD_ADDR").expect("runner must provide OPTIMISTIC_2PC_PD_ADDR");
     let phase_dir = phase_dir();
     let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
         .expect("start sole real PD authority");

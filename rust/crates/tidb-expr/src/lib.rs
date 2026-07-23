@@ -431,11 +431,18 @@ pub fn avg_of_with_div_precision(
 ) -> Result<Datum, EvalError> {
     let d = match sum {
         Datum::Real(f) => return Ok(Datum::Real(f / count as f64)),
+        Datum::Float32(f) => return Ok(Datum::Float32(f / count as f64)),
         Datum::Decimal(d) => d,
         Datum::Int(i) => Decimal::from_int(i),
         Datum::UInt(i) => Decimal::from_uint(i),
         Datum::String(_) | Datum::Bytes(_) | Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("AVG of non-numeric"));
+        }
+        other => {
+            other
+                .to_decimal()
+                .map_err(|_| EvalError::Unsupported("AVG of non-numeric"))?
+                .value
         }
     };
     let target_scale = d.scale() + effective_div_precision_increment(div_precision_increment);

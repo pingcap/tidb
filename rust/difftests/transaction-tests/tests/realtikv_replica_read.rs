@@ -226,8 +226,8 @@ fn execute_live_empty_query(
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 13 three-TiKV runner"]
 fn follower_policy_reaches_a_live_nonleader_voter() {
-    let pd_address = std::env::var("C13_PD_ADDR")
-        .expect("C13_PD_ADDR must be supplied by run-campaign13-replica-read.sh");
+    let pd_address = std::env::var("REPLICA_READ_PD_ADDR")
+        .expect("REPLICA_READ_PD_ADDR must be supplied by run-realtikv-replica-read.sh");
     let loader = PdRegionLoader::connect(pd_address, Duration::from_secs(5))
         .expect("bootstrap live PD region loader");
     let mut cache = RegionCache::new(loader);
@@ -380,8 +380,8 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 14 three-TiKV runner"]
 fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
-    let pd_address = std::env::var("C14_PD_ADDR")
-        .expect("C14_PD_ADDR must be supplied by run-campaign14-adaptive-forwarding.sh");
+    let pd_address = std::env::var("ADAPTIVE_FORWARDING_PD_ADDR")
+        .expect("ADAPTIVE_FORWARDING_PD_ADDR must be supplied by run-realtikv-adaptive-forwarding.sh");
     let loader = PdRegionLoader::connect(pd_address, Duration::from_secs(5))
         .expect("bootstrap live PD region loader");
     let mut cache = RegionCache::new(loader);
@@ -584,11 +584,11 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
     use tidb_txnkv::region::RegionLoader;
     use tidb_txnkv::rpc::{AsyncRequestDispatcher, PendingRequest};
 
-    let pd_seed = std::env::var("C18_PD_SEED")
-        .expect("C18_PD_SEED must be supplied by run-campaign18-pd-batch-topology.sh");
+    let pd_seed = std::env::var("PD_BATCH_PD_SEED")
+        .expect("PD_BATCH_PD_SEED must be supplied by run-realtikv-pd-batch-topology.sh");
     let phase_dir = PathBuf::from(
-        std::env::var("C18_PHASE_DIR")
-            .expect("C18_PHASE_DIR must be supplied by run-campaign18-pd-batch-topology.sh"),
+        std::env::var("PD_BATCH_PHASE_DIR")
+            .expect("PD_BATCH_PHASE_DIR must be supplied by run-realtikv-pd-batch-topology.sh"),
     );
     assert!(phase_dir.is_dir(), "phase directory must already exist");
 

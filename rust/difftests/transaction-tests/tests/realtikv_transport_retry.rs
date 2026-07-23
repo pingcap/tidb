@@ -207,11 +207,11 @@ impl tidb_distsql::LockRecoveryClient for RecordingClient {
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 12 three-PD/three-TiKV runner"]
 fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
-    let pd_seed = std::env::var("C12_PD_SEED")
-        .expect("C12_PD_SEED must be supplied by run-campaign12-realtikv.sh");
+    let pd_seed = std::env::var("TRANSPORT_RETRY_PD_SEED")
+        .expect("TRANSPORT_RETRY_PD_SEED must be supplied by run-realtikv-transport-retry.sh");
     let phase_dir = PathBuf::from(
-        std::env::var("C12_PHASE_DIR")
-            .expect("C12_PHASE_DIR must be supplied by run-campaign12-realtikv.sh"),
+        std::env::var("TRANSPORT_RETRY_PHASE_DIR")
+            .expect("TRANSPORT_RETRY_PHASE_DIR must be supplied by run-realtikv-transport-retry.sh"),
     );
     assert!(phase_dir.is_dir(), "phase directory must already exist");
 

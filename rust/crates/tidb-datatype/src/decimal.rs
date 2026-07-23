@@ -45,6 +45,28 @@ pub struct Decimal {
     storage_scale: u32,
 }
 
+/// Source `MyDecimal.ToInt`/`ToUint` non-fatal disposition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecimalIntegerWarning {
+    /// A non-zero fractional part was discarded.
+    Truncated,
+    /// The integer magnitude was outside the destination range.
+    Overflow,
+}
+
+/// Source `MyDecimal.FromString`'s single non-fatal/fatal disposition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecimalParseError {
+    /// A valid numeric prefix was accepted and trailing or excess digits lost.
+    Truncated,
+    /// The fixed MyDecimal integer buffer could not hold the result.
+    Overflow,
+    /// Integer exponent parsing exceeded its representable range.
+    BadNumber,
+    /// No decimal digits were present.
+    TruncatedWrongValue,
+}
+
 impl Decimal {
     /// The single normalization point for ordinary values, whose stored and
     /// displayed scale are identical.
@@ -94,6 +116,144 @@ impl Decimal {
         Decimal::new(false, format!("{int_norm}{frac_part}"), scale)
     }
 
+    /// Parses the signed decimal strings accepted by datatype conversion.
+    pub fn from_signed_literal(text: &str) -> Self {
+        Self::parse_mysql(text).0
+    }
+
+    fn from_normalized_signed_literal(text: &str) -> Self {
+        let (negative, magnitude) = text
+            .strip_prefix('-')
+            .map_or((false, text), |magnitude| (true, magnitude));
+        let magnitude = magnitude.strip_prefix('+').unwrap_or(magnitude);
+        let mut value = Self::from_literal(magnitude);
+        if negative && value.digits.bytes().any(|digit| digit != b'0') {
+            value.negative = true;
+        }
+        value
+    }
+
+    /// Source `MyDecimal.FromString`, including the fixed word buffer,
+    /// exponent parsing, prefix acceptance, and exact error disposition.
+    pub fn parse_mysql(text: &str) -> (Self, Option<DecimalParseError>) {
+        Self::parse_mysql_with_word_limit(text, CODEC_WORD_BUF_LEN)
+    }
+
+    pub(crate) fn parse_mysql_with_word_limit(
+        text: &str,
+        word_limit: usize,
+    ) -> (Self, Option<DecimalParseError>) {
+        let input = text.trim_start_matches([' ', '\t']);
+        if input.is_empty() {
+            return (
+                Self::from_int(0),
+                Some(DecimalParseError::TruncatedWrongValue),
+            );
+        }
+        let bytes = input.as_bytes();
+        let (negative, start) = match bytes[0] {
+            b'-' => (true, 1),
+            b'+' => (false, 1),
+            _ => (false, 0),
+        };
+        let mut cursor = start;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            cursor += 1;
+        }
+        let integer_end = cursor;
+        let mut end = cursor;
+        if cursor < bytes.len() && bytes[cursor] == b'.' {
+            end += 1;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+        }
+        let integer_digits = integer_end - start;
+        let fraction_start = if integer_end < end {
+            integer_end + 1
+        } else {
+            end
+        };
+        let fraction_digits = end - fraction_start;
+        if integer_digits + fraction_digits == 0 {
+            return (
+                Self::from_int(0),
+                Some(DecimalParseError::TruncatedWrongValue),
+            );
+        }
+
+        let words_int = digits_to_words(integer_digits);
+        let words_frac = digits_to_words(fraction_digits);
+        let mut disposition = None;
+        let (kept_integer_digits, kept_fraction_digits) = if words_int + words_frac <= word_limit {
+            (integer_digits, fraction_digits)
+        } else if words_int > word_limit {
+            disposition = Some(DecimalParseError::Overflow);
+            (word_limit * DIGITS_PER_WORD, 0)
+        } else {
+            disposition = Some(DecimalParseError::Truncated);
+            (integer_digits, (word_limit - words_int) * DIGITS_PER_WORD)
+        };
+
+        let int_begin = integer_end.saturating_sub(kept_integer_digits);
+        let integer = &input[int_begin..integer_end];
+        let fraction_end = (fraction_start + kept_fraction_digits).min(end);
+        let fraction = &input[fraction_start..fraction_end];
+        let magnitude = if fraction.is_empty() {
+            if integer.is_empty() {
+                "0".to_owned()
+            } else {
+                integer.to_owned()
+            }
+        } else {
+            format!(
+                "{}.{fraction}",
+                if integer.is_empty() { "0" } else { integer }
+            )
+        };
+        let signed_magnitude = if negative {
+            format!("-{magnitude}")
+        } else {
+            magnitude
+        };
+        let mut value = Self::from_normalized_signed_literal(&signed_magnitude);
+
+        if end < input.len() && matches!(bytes[end], b'e' | b'E') {
+            let (exponent, exponent_error) = parse_mysql_exponent(&input[end + 1..]);
+            match exponent_error {
+                Some(DecimalParseError::BadNumber) => {
+                    return (Self::from_int(0), Some(DecimalParseError::BadNumber));
+                }
+                Some(DecimalParseError::Truncated) => {
+                    disposition = Some(DecimalParseError::Truncated);
+                }
+                _ => {}
+            }
+            if exponent > i64::from(i32::MAX) / 2 {
+                let max = Self::max_or_min(negative, (word_limit * DIGITS_PER_WORD) as u32, 0);
+                return (max, Some(DecimalParseError::Overflow));
+            }
+            if exponent < i64::from(i32::MIN) / 2 {
+                return (Self::from_int(0), Some(DecimalParseError::Truncated));
+            }
+            let (shifted, shift_warning) =
+                value.shift_mysql_with_word_limit(exponent as i32, word_limit);
+            value = shifted;
+            if let Some(warning) = shift_warning {
+                disposition = Some(match warning {
+                    DecimalCodecWarning::Truncated => DecimalParseError::Truncated,
+                    DecimalCodecWarning::Overflow => DecimalParseError::Overflow,
+                });
+                if warning == DecimalCodecWarning::Overflow {
+                    value = Self::max_or_min(negative, (word_limit * DIGITS_PER_WORD) as u32, 0);
+                }
+            }
+        } else if !input[end..].trim().is_empty() {
+            disposition = Some(DecimalParseError::Truncated);
+        }
+        (value, disposition)
+    }
+
     /// Promotes an integer to a decimal of scale 0, for mixed `int op decimal`
     /// arithmetic/comparison (MySQL's implicit promotion rule).
     pub fn from_int(i: i64) -> Self {
@@ -106,6 +266,59 @@ impl Decimal {
     /// arithmetic and comparison.
     pub fn from_uint(i: u64) -> Self {
         Decimal::new(false, i.to_string(), 0)
+    }
+
+    /// Source `MyDecimal.FromFloat64`.
+    pub fn from_f64(value: f64) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+        let rendered = value.to_string();
+        let expanded = crate::convert_scientific_notation(&rendered).ok()?;
+        Some(Self::from_signed_literal(&expanded))
+    }
+
+    /// Source `MyDecimal.FromParquetArray`: decode a signed big-endian
+    /// two's-complement Parquet DECIMAL payload and apply its logical scale.
+    /// As in Go, negative input is converted to magnitude in place.
+    pub fn from_parquet_array(bytes: &mut [u8], scale: i32) -> (Self, Option<DecimalCodecWarning>) {
+        if bytes.is_empty() {
+            return (Self::from_int(0), None);
+        }
+        let negative = bytes[0] & 0x80 != 0;
+        if negative {
+            for byte in bytes.iter_mut() {
+                *byte = !*byte;
+            }
+            for byte in bytes.iter_mut().rev() {
+                *byte = byte.wrapping_add(1);
+                if *byte != 0 {
+                    break;
+                }
+            }
+        }
+
+        let mut magnitude = "0".to_owned();
+        for byte in bytes.iter().copied() {
+            magnitude = digit_add(&digit_mul(&magnitude, "256"), &u32::from(byte).to_string());
+        }
+        if magnitude.trim_start_matches('0').len() > CODEC_WORD_BUF_LEN * DIGITS_PER_WORD {
+            return (Self::from_int(0), Some(DecimalCodecWarning::Overflow));
+        }
+        let integer = Self::new(negative, magnitude, 0);
+        let (shifted, warning) = integer.shift_mysql(-scale);
+        if warning.is_some() {
+            return (shifted, warning);
+        }
+        (shifted.truncate_to_scale(scale), None)
+    }
+
+    /// Source `NewMaxOrMinDec`/`maxDecimal`.
+    pub fn max_or_min(negative: bool, precision: u32, frac: u32) -> Self {
+        if precision == 0 {
+            return Self::from_int(0);
+        }
+        Self::new(negative, "9".repeat(precision as usize), frac)
     }
 
     /// Returns the number of fractional decimal digits preserved by this
@@ -139,6 +352,42 @@ impl Decimal {
     /// arithmetic precision.
     pub const fn storage_scale(&self) -> u32 {
         self.storage_scale
+    }
+
+    /// Source `MyDecimal.PrecisionAndFrac`.
+    pub fn precision_and_frac(&self) -> (i32, i32) {
+        let split = self.digits.len() - self.storage_scale as usize;
+        let integer_digits = self.digits[..split].trim_start_matches('0').len() as i32;
+        let fraction = self.storage_scale as i32;
+        ((integer_digits + fraction).max(1), fraction)
+    }
+
+    /// Source `MyDecimal.ToHashKey`: numerically equal decimals with different
+    /// written scales produce the same key.
+    pub fn to_hash_key(&self) -> Result<(Vec<u8>, Option<DecimalCodecWarning>), DecimalCodecError> {
+        let split = self.digits.len() - self.storage_scale as usize;
+        let integer_digits = self.digits[..split].trim_start_matches('0').len() as i32;
+        let significant_fraction = self.digits[split..].trim_end_matches('0').len() as i32;
+        let precision = (integer_digits + significant_fraction).max(1);
+        let (mut key, warning) = self.to_bin(precision, significant_fraction)?;
+        key.push(significant_fraction as u8);
+        Ok((
+            key,
+            if warning == Some(DecimalCodecWarning::Truncated) {
+                None
+            } else {
+                warning
+            },
+        ))
+    }
+
+    /// Source `MyDecimal.HashKeySize`.
+    pub fn hash_key_size(&self) -> Result<usize, DecimalCodecError> {
+        let split = self.digits.len() - self.storage_scale as usize;
+        let integer_digits = self.digits[..split].trim_start_matches('0').len() as i32;
+        let significant_fraction = self.digits[split..].trim_end_matches('0').len() as i32;
+        let precision = (integer_digits + significant_fraction).max(1);
+        decimal_bin_size(precision, significant_fraction).map(|size| size + 1)
     }
 
     /// Returns whether this value is numerically zero.
@@ -201,6 +450,38 @@ impl Decimal {
         }
     }
 
+    /// Source `DecimalAdd`, including MyDecimal's nine-word result bound.
+    pub fn add_mysql(&self, other: &Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
+        self.bound_add_sub_result(self.add(other))
+    }
+
+    /// Source `DecimalSub`, including MyDecimal's nine-word result bound.
+    pub fn sub_mysql(&self, other: &Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
+        self.bound_add_sub_result(self.add(&other.negate()))
+    }
+
+    fn bound_add_sub_result(&self, result: Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
+        let split = result.digits.len() - result.storage_scale as usize;
+        let integer_digits = result.digits[..split].trim_start_matches('0').len();
+        let words_int = digits_to_words(integer_digits);
+        if words_int > CODEC_WORD_BUF_LEN {
+            // `doAdd` calls `maxDecimal` before assigning the result sign.
+            return (
+                Decimal::max_or_min(false, (CODEC_WORD_BUF_LEN * DIGITS_PER_WORD) as u32, 0),
+                Some(DecimalCodecWarning::Overflow),
+            );
+        }
+        let words_frac = digits_to_words(result.storage_scale as usize);
+        if words_int + words_frac <= CODEC_WORD_BUF_LEN {
+            return (result, None);
+        }
+        let kept_scale = ((CODEC_WORD_BUF_LEN - words_int) * DIGITS_PER_WORD) as i32;
+        (
+            result.truncate_to_scale(kept_scale),
+            Some(DecimalCodecWarning::Truncated),
+        )
+    }
+
     /// Exact decimal multiplication: result scale is `scale1 + scale2`
     /// (multiplying two exact fixed-point values never loses precision, so
     /// this needs no rounding — unlike division).
@@ -212,6 +493,185 @@ impl Decimal {
             scale,
             self.storage_scale + other.storage_scale,
         )
+    }
+
+    /// Ports `DecimalMul`'s bounded nine-word arithmetic and disposition.
+    ///
+    /// The returned warning is the source `ErrTruncated`/`ErrOverflow`
+    /// outcome. [`Self::mul`] remains the exact digit-string primitive used
+    /// below the MySQL storage boundary; SQL behavior must use this method.
+    pub fn mul_mysql(&self, other: &Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
+        let left = MyDecimalWords::from_decimal(self);
+        let right = MyDecimalWords::from_decimal(other);
+        let words_int_left = digits_to_words(left.digits_int.max(0) as usize) as i32;
+        let mut words_frac_left = digits_to_words(left.digits_frac.max(0) as usize) as i32;
+        let mut words_int_right = digits_to_words(right.digits_int.max(0) as usize) as i32;
+        let mut words_frac_right = digits_to_words(right.digits_frac.max(0) as usize) as i32;
+        let requested_words_int =
+            digits_to_words((left.digits_int + right.digits_int).max(0) as usize) as i32;
+        let requested_words_frac = words_frac_left + words_frac_right;
+        let (words_int, words_frac, warning) =
+            fix_word_cnt_error(requested_words_int as usize, requested_words_frac as usize);
+        let words_int = words_int as i32;
+        let words_frac = words_frac as i32;
+        let result_scale = (self.scale + other.scale).min(CODEC_MAX_DECIMAL_SCALE as u32);
+
+        if warning == Some(DecimalCodecWarning::Overflow) {
+            return (Decimal::new(false, "0".to_owned(), 0), warning);
+        }
+
+        let mut tmp_int = requested_words_int;
+        let mut tmp_frac = requested_words_frac;
+        if warning.is_some() {
+            if tmp_int > words_int {
+                tmp_int -= words_int;
+                tmp_frac = tmp_int >> 1;
+                words_int_right -= tmp_int - tmp_frac;
+                words_frac_left = 0;
+                words_frac_right = 0;
+            } else {
+                tmp_frac -= words_frac;
+                tmp_int = tmp_frac >> 1;
+                if words_frac_left <= words_frac_right {
+                    words_frac_left -= tmp_int;
+                    words_frac_right -= tmp_frac - tmp_int;
+                } else {
+                    words_frac_right -= tmp_int;
+                    words_frac_left -= tmp_frac - tmp_int;
+                }
+            }
+        }
+
+        let mut product = MyDecimalWords {
+            negative: left.negative != right.negative,
+            digits_int: words_int * DIGITS_PER_WORD as i32,
+            digits_frac: (left.digits_frac + right.digits_frac)
+                .min(words_frac * DIGITS_PER_WORD as i32),
+            word_buf: [0; CODEC_WORD_BUF_LEN],
+        };
+
+        let mut start_to = words_int + words_frac - 1;
+        let start_right = words_int_right + words_frac_right - 1;
+        let mut index_left = words_int_left + words_frac_left - 1;
+        while index_left >= 0 {
+            let mut carry = 0;
+            let mut index_to = start_to;
+            let mut index_right = start_right;
+            while index_right >= 0 {
+                let value = i64::from(left.word_buf[index_left as usize])
+                    * i64::from(right.word_buf[index_right as usize]);
+                let base = i64::from(CODEC_POWERS10[DIGITS_PER_WORD]);
+                let high = (value / base) as i32;
+                let low = (value - i64::from(high) * base) as i32;
+                (product.word_buf[index_to as usize], carry) =
+                    add_two_decimal_words(product.word_buf[index_to as usize], low, carry);
+                carry += high;
+                index_right -= 1;
+                index_to -= 1;
+            }
+            if carry > 0 {
+                if index_to < 0 {
+                    return (
+                        Decimal::new(false, "0".to_owned(), 0),
+                        Some(DecimalCodecWarning::Overflow),
+                    );
+                }
+                (product.word_buf[index_to as usize], carry) =
+                    add_decimal_words(product.word_buf[index_to as usize], 0, carry);
+            }
+            index_to -= 1;
+            while carry > 0 {
+                if index_to < 0 {
+                    return (
+                        Decimal::new(false, "0".to_owned(), 0),
+                        Some(DecimalCodecWarning::Overflow),
+                    );
+                }
+                (product.word_buf[index_to as usize], carry) =
+                    add_decimal_words(product.word_buf[index_to as usize], 0, carry);
+                index_to -= 1;
+            }
+            start_to -= 1;
+            index_left -= 1;
+        }
+
+        if product.word_buf[..(words_int + words_frac) as usize]
+            .iter()
+            .all(|word| *word == 0)
+        {
+            return (Decimal::new(false, "0".to_owned(), result_scale), warning);
+        }
+
+        let value = product.to_decimal();
+        let storage_scale = value.storage_scale.max(result_scale);
+        (
+            value.round_or_truncate_to_scale_with_storage(result_scale as i32, true, storage_scale),
+            warning,
+        )
+    }
+
+    /// Source `MyDecimal.Shift`: multiply by `10^shift` inside MyDecimal's
+    /// fixed nine-word buffer. Integer overflow leaves the value untouched;
+    /// excess fractional words are rounded half-up and reported as truncated.
+    pub fn shift_mysql(&self, shift: i32) -> (Decimal, Option<DecimalCodecWarning>) {
+        self.shift_mysql_with_word_limit(shift, CODEC_WORD_BUF_LEN)
+    }
+
+    /// The source tests temporarily reduce Go's package-global `wordBufLen`.
+    /// An explicit limit gives the same coverage without mutable global state.
+    pub(crate) fn shift_mysql_with_word_limit(
+        &self,
+        shift: i32,
+        word_limit: usize,
+    ) -> (Decimal, Option<DecimalCodecWarning>) {
+        if shift == 0 {
+            return (self.clone(), None);
+        }
+        if self.is_zero() {
+            return (Decimal::from_int(0), None);
+        }
+
+        let mut digits = self.digits.clone();
+        let mut scale = i64::from(self.storage_scale) - i64::from(shift);
+        if scale < 0 {
+            digits.push_str(&"0".repeat((-scale) as usize));
+            scale = 0;
+        }
+
+        // Shift computes new bounds from the first and last non-zero digit.
+        while scale > 0 && digits.ends_with('0') {
+            digits.pop();
+            scale -= 1;
+        }
+        while digits.len() < scale as usize {
+            digits.insert(0, '0');
+        }
+        let exact = Decimal::new(self.negative, digits, scale as u32);
+        let split = exact.digits.len() - exact.storage_scale as usize;
+        let integer_digits = exact.digits[..split].trim_start_matches('0').len();
+        let words_int = digits_to_words(integer_digits);
+        if words_int > word_limit {
+            return (self.clone(), Some(DecimalCodecWarning::Overflow));
+        }
+
+        let words_frac = digits_to_words(exact.storage_scale as usize);
+        if words_int + words_frac <= word_limit {
+            return (exact, None);
+        }
+
+        let kept_scale = ((word_limit - words_int) * DIGITS_PER_WORD) as i32;
+        let rounded = exact.round_to_scale(kept_scale);
+        if rounded.is_zero() {
+            return (Decimal::from_int(0), Some(DecimalCodecWarning::Truncated));
+        }
+        let rounded_split = rounded.digits.len() - rounded.storage_scale as usize;
+        let rounded_integer_digits = rounded.digits[..rounded_split]
+            .trim_start_matches('0')
+            .len();
+        if digits_to_words(rounded_integer_digits) > word_limit {
+            return (self.clone(), Some(DecimalCodecWarning::Overflow));
+        }
+        (rounded, Some(DecimalCodecWarning::Truncated))
     }
 
     /// Truncating division (`DIV`) and its remainder (`MOD`): pads both
@@ -240,6 +700,70 @@ impl Decimal {
         };
         let remainder = Decimal::new_with_storage(self.negative, r_digits, scale, storage_scale);
         Some((quotient, remainder))
+    }
+
+    /// Source `DecimalMod`, without routing the discarded quotient through
+    /// `i64` (the source accepts quotients wider than BIGINT).
+    pub fn rem_mysql(&self, other: &Decimal) -> Option<Decimal> {
+        if other.is_zero() {
+            return None;
+        }
+        let storage_scale = self.storage_scale.max(other.storage_scale);
+        let scale = self.scale.max(other.scale);
+        let a = pad_scale(&self.digits, self.storage_scale, storage_scale);
+        let b = pad_scale(&other.digits, other.storage_scale, storage_scale);
+        let (_, remainder) = digit_divmod(&a, &b);
+        Some(Decimal::new_with_storage(
+            self.negative,
+            remainder,
+            scale,
+            storage_scale,
+        ))
+    }
+
+    /// Source `DecimalDiv`: retain the whole base-1e9 fraction words produced
+    /// by the division while exposing `div_precision_increment` through
+    /// `resultFrac`.
+    pub fn div_mysql(&self, other: &Decimal, frac_increment: u32) -> Option<Decimal> {
+        if other.is_zero() {
+            return None;
+        }
+        let result_scale = (self.scale + frac_increment).min(CODEC_MAX_DECIMAL_SCALE as u32);
+        if self.is_zero() {
+            return Some(Decimal::new(false, "0".to_owned(), result_scale));
+        }
+        let frac1 = word_scale(self.storage_scale);
+        let frac2 = word_scale(other.storage_scale);
+        let padding = (frac1 - self.storage_scale) + (frac2 - other.storage_scale);
+        let adjusted_increment = frac_increment.saturating_sub(padding);
+        let storage_scale = word_scale(frac1 + frac2 + adjusted_increment);
+
+        let common_scale = self.storage_scale.max(other.storage_scale);
+        let numerator = pad_scale(
+            &pad_scale(&self.digits, self.storage_scale, common_scale),
+            common_scale,
+            common_scale + storage_scale,
+        );
+        let divisor = pad_scale(&other.digits, other.storage_scale, common_scale);
+        let (quotient, _) = digit_divmod(&numerator, &divisor);
+        Some(Decimal::new_with_storage(
+            self.negative != other.negative,
+            quotient,
+            result_scale,
+            storage_scale,
+        ))
+    }
+
+    /// MyDecimal `ToString`, which exposes stored fraction words without the
+    /// `resultFrac` presentation rounding used by `String`.
+    pub fn storage_string(&self) -> String {
+        Decimal::new_with_storage(
+            self.negative,
+            self.digits.clone(),
+            self.storage_scale,
+            self.storage_scale,
+        )
+        .to_string()
     }
 
     /// True (rounding) division by a positive integer divisor, to
@@ -275,22 +799,7 @@ impl Decimal {
     /// divisor. Sign follows the standard XOR rule, same as every other
     /// decimal operator.
     pub fn true_div(&self, other: &Decimal, target_scale: u32) -> Option<Decimal> {
-        if other.is_zero() {
-            return None;
-        }
-        let common_scale = self.storage_scale.max(other.storage_scale);
-        let a = pad_scale(&self.digits, self.storage_scale, common_scale);
-        let b = pad_scale(&other.digits, other.storage_scale, common_scale);
-        let increment = target_scale - self.scale;
-        let storage_scale = word_scale(self.storage_scale + other.storage_scale + increment);
-        let numerator = pad_scale(&a, 0, storage_scale);
-        let (quotient, _) = digit_divmod(&numerator, &b);
-        Some(Decimal::new_with_storage(
-            self.negative != other.negative,
-            quotient,
-            target_scale,
-            storage_scale,
-        ))
+        self.div_mysql(other, target_scale.saturating_sub(self.scale))
     }
 
     /// Rounds to the nearest integer, ties away from zero — MySQL's
@@ -311,6 +820,45 @@ impl Decimal {
         let mag: i64 = int_part.parse().ok()?;
         let mag = if round_up { mag.checked_add(1)? } else { mag };
         Some(if self.negative { -mag } else { mag })
+    }
+
+    /// Source `MyDecimal.ToInt`: truncates toward zero and reports a non-zero
+    /// discarded fraction separately from overflow.
+    pub fn to_i64_trunc(&self) -> (i64, Option<DecimalIntegerWarning>) {
+        let split = self.digits.len() - self.storage_scale as usize;
+        let integer = self.digits[..split].trim_start_matches('0');
+        let integer = if integer.is_empty() { "0" } else { integer };
+        let magnitude = integer.parse::<u64>();
+        let value = match (self.negative, magnitude) {
+            (false, Ok(value)) if value <= i64::MAX as u64 => value as i64,
+            (true, Ok(value)) if value <= i64::MIN.unsigned_abs() => {
+                if value == i64::MIN.unsigned_abs() {
+                    i64::MIN
+                } else {
+                    -(value as i64)
+                }
+            }
+            (false, _) => return (i64::MAX, Some(DecimalIntegerWarning::Overflow)),
+            (true, _) => return (i64::MIN, Some(DecimalIntegerWarning::Overflow)),
+        };
+        let truncated = self.digits[split..].bytes().any(|digit| digit != b'0');
+        (value, truncated.then_some(DecimalIntegerWarning::Truncated))
+    }
+
+    /// Source `MyDecimal.ToUint`: truncates toward zero, rejects negatives,
+    /// and saturates positive overflow.
+    pub fn to_u64_trunc(&self) -> (u64, Option<DecimalIntegerWarning>) {
+        if self.negative {
+            return (0, Some(DecimalIntegerWarning::Overflow));
+        }
+        let split = self.digits.len() - self.storage_scale as usize;
+        let integer = self.digits[..split].trim_start_matches('0');
+        let integer = if integer.is_empty() { "0" } else { integer };
+        let Ok(value) = integer.parse::<u64>() else {
+            return (u64::MAX, Some(DecimalIntegerWarning::Overflow));
+        };
+        let truncated = self.digits[split..].bytes().any(|digit| digit != b'0');
+        (value, truncated.then_some(DecimalIntegerWarning::Truncated))
     }
 
     /// Like [`Decimal::round_to_i64`], but CLAMPS to `i64::MIN`/`MAX`
@@ -468,6 +1016,39 @@ impl Decimal {
     /// digits.
     pub fn round_to_scale(&self, target_scale: i32) -> Decimal {
         self.round_or_truncate_to_scale(target_scale, true)
+    }
+
+    /// Ports `MyDecimal.Round(..., ModeCeiling)` exactly.
+    ///
+    /// Despite its name, the source mode is not mathematical ceiling: its
+    /// current behavior rounds a non-zero discarded magnitude away from zero
+    /// for both signs. This is distinct from [`Self::ceil_floor`], which owns
+    /// SQL `CEIL`/`FLOOR` semantics.
+    pub fn round_ceiling_to_scale(&self, target_scale: i32) -> Decimal {
+        let result_scale = target_scale.max(0) as u32;
+        let shift = self.storage_scale as i32 - target_scale;
+        if shift <= 0 {
+            let digits = pad_scale(&self.digits, self.storage_scale, result_scale);
+            return Decimal::new(self.negative, digits, result_scale);
+        }
+
+        let shift = shift as usize;
+        let mut digits = self.digits.clone();
+        if digits.len() <= shift {
+            digits = format!("{}{digits}", "0".repeat(shift + 1 - digits.len()));
+        }
+        let split = digits.len() - shift;
+        let kept = &digits[..split];
+        let discarded_nonzero = digits[split..].bytes().any(|digit| digit != b'0');
+        let mut kept = if discarded_nonzero {
+            digit_add(kept, "1")
+        } else {
+            kept.to_owned()
+        };
+        if target_scale < 0 {
+            kept.push_str(&"0".repeat((-target_scale) as usize));
+        }
+        Decimal::new(self.negative, kept, result_scale)
     }
 
     /// Truncates (never rounds) to `target_scale` fractional digits
@@ -685,6 +1266,31 @@ fn digit_sub(a: &str, b: &str) -> String {
     String::from_utf8(out).expect("digits are ASCII")
 }
 
+fn add_decimal_words(left: i32, right: i32, carry: i32) -> (i32, i32) {
+    let base = CODEC_POWERS10[DIGITS_PER_WORD];
+    let sum = left + right + carry;
+    if sum >= base {
+        (sum - base, 1)
+    } else {
+        (sum, 0)
+    }
+}
+
+fn add_two_decimal_words(left: i32, right: i32, carry: i32) -> (i32, i32) {
+    let base = i64::from(CODEC_POWERS10[DIGITS_PER_WORD]);
+    let mut sum = i64::from(left) + i64::from(right) + i64::from(carry);
+    let mut next_carry = 0;
+    if sum >= base {
+        next_carry = 1;
+        sum -= base;
+    }
+    if sum >= base {
+        next_carry += 1;
+        sum -= base;
+    }
+    (sum as i32, next_carry)
+}
+
 /// Multiplies two unsigned decimal digit strings (schoolbook long
 /// multiplication).
 fn digit_mul(a: &str, b: &str) -> String {
@@ -733,6 +1339,58 @@ fn strip_leading_zeros(s: &str) -> String {
     }
 }
 
+fn parse_mysql_exponent(text: &str) -> (i64, Option<DecimalParseError>) {
+    let text = text.trim();
+    if text.is_empty() {
+        return (0, Some(DecimalParseError::Truncated));
+    }
+    let bytes = text.as_bytes();
+    let (negative, mut index) = match bytes[0] {
+        b'-' => (true, 1),
+        b'+' => (false, 1),
+        _ => (false, 0),
+    };
+    let mut magnitude = 0_u64;
+    let mut has_digit = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !byte.is_ascii_digit() {
+            let bounded = magnitude.min(i64::MAX as u64) as i64;
+            return (
+                if negative { -bounded } else { bounded },
+                Some(DecimalParseError::Truncated),
+            );
+        }
+        has_digit = true;
+        let Some(next) = magnitude
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(u64::from(byte - b'0')))
+        else {
+            return (0, Some(DecimalParseError::BadNumber));
+        };
+        magnitude = next;
+        index += 1;
+    }
+    if !has_digit {
+        return (0, Some(DecimalParseError::Truncated));
+    }
+    let limit = i64::MAX as u64 + u64::from(negative);
+    if magnitude > limit {
+        return (
+            if negative { i64::MIN } else { i64::MAX },
+            Some(DecimalParseError::BadNumber),
+        );
+    }
+    (
+        if negative {
+            (0_u64.wrapping_sub(magnitude)) as i64
+        } else {
+            magnitude as i64
+        },
+        None,
+    )
+}
+
 /// Unsigned schoolbook long division: `a` divided by `b` (`b` assumed
 /// nonzero), producing the truncated integer quotient and the remainder —
 /// one digit of `a` at a time, finding each quotient digit (0-9) by repeated
@@ -764,15 +1422,9 @@ fn digit_divmod(a: &str, b: &str) -> (String, String) {
 // `digitsFrac` view (mirroring Go `FromString`'s population), and `to_bin`
 // below is then a line-for-line port of Go `WriteBin`.
 //
-// Surfaced divergence (not hidden): the Rust `Decimal` is arbitrary-precision
-// and strips non-significant leading integer zeros, whereas Go `MyDecimal` is
-// bounded to nine 1e9 words and preserves written leading zeros. Both encode
-// the same VALUE identically — Go `removeLeadingZeros` discards those zeros
-// before encoding, so the reconstructed view converges. They can differ only if
-// an input carries enough leading integer zeros that Go `FromString`'s nine-word
-// clamp would drop fraction digits the normalized form retains — a Go
-// representational quirk, outside any `DECIMAL` the SQL layer emits (max
-// precision 65 < 81). `from_bin` (the inverse) is a separate follow-up.
+// Public parsing applies Go's fixed nine-word bound before values reach this
+// representation. The word view below therefore reconstructs the exact source
+// payload rather than accepting an arbitrary-precision compatibility branch.
 
 const DIGITS_PER_WORD: usize = 9;
 const CODEC_WORD_SIZE: usize = 4;
@@ -1359,5 +2011,89 @@ impl Decimal {
         }
 
         Ok((w.to_decimal(), bin_size, warning))
+    }
+
+    /// Go `MyDecimal.MarshalJSON`'s exact persistence object.
+    pub fn mysql_json_value(&self) -> serde_json::Value {
+        let words = MyDecimalWords::from_decimal(self);
+        let mut object = serde_json::Map::new();
+        object.insert(
+            "DigitsInt".to_owned(),
+            serde_json::Value::from(words.digits_int),
+        );
+        object.insert(
+            "DigitsFrac".to_owned(),
+            serde_json::Value::from(words.digits_frac),
+        );
+        object.insert("ResultFrac".to_owned(), serde_json::Value::from(self.scale));
+        object.insert(
+            "Negative".to_owned(),
+            serde_json::Value::from(words.negative),
+        );
+        object.insert(
+            "WordBuf".to_owned(),
+            serde_json::Value::Array(
+                words
+                    .word_buf
+                    .into_iter()
+                    .map(serde_json::Value::from)
+                    .collect(),
+            ),
+        );
+        serde_json::Value::Object(object)
+    }
+
+    /// Go `MyDecimal.UnmarshalJSON`'s persistence object decoder.
+    pub fn from_mysql_json_value(value: &serde_json::Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "MyDecimal JSON must be an object".to_owned())?;
+        let read_i32 = |name: &str| {
+            object
+                .get(name)
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or_else(|| format!("MyDecimal JSON is missing {name}"))
+        };
+        let digits_int = read_i32("DigitsInt")?;
+        let digits_frac = read_i32("DigitsFrac")?;
+        let result_frac = read_i32("ResultFrac")?;
+        if digits_int < 0 || digits_frac < 0 || result_frac < 0 {
+            return Err("MyDecimal JSON contains negative metadata".to_owned());
+        }
+        let negative = object
+            .get("Negative")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| "MyDecimal JSON is missing Negative".to_owned())?;
+        let encoded_words = object
+            .get("WordBuf")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "MyDecimal JSON is missing WordBuf".to_owned())?;
+        if encoded_words.len() != CODEC_WORD_BUF_LEN {
+            return Err("MyDecimal JSON WordBuf must contain nine words".to_owned());
+        }
+        let mut word_buf = [0; CODEC_WORD_BUF_LEN];
+        for (output, encoded) in word_buf.iter_mut().zip(encoded_words) {
+            *output = encoded
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or_else(|| "MyDecimal JSON contains an invalid word".to_owned())?;
+        }
+        let raw = MyDecimalWords {
+            negative,
+            digits_int,
+            digits_frac,
+            word_buf,
+        }
+        .to_decimal();
+        let result_frac = result_frac as u32;
+        let storage_scale = raw.storage_scale.max(result_frac);
+        let digits = pad_scale(&raw.digits, raw.storage_scale, storage_scale);
+        Ok(Decimal::new_with_storage(
+            negative,
+            digits,
+            result_frac,
+            storage_scale,
+        ))
     }
 }

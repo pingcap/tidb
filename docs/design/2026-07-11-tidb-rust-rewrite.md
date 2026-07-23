@@ -56,43 +56,38 @@ splits, arenas, RAII, typed registries, and supervised async tasks are welcome
 when they remove complexity without changing behavior. Optimizer, SQL,
 transaction, protocol, and storage redesigns wait until parity.
 
-Direct internal Go dependencies must already be current, or the selected work
-must include the dependency-closed group. Existing partial Rust code is seed
-material, never evidence of package completion.
+Keep source files and source test names recognizable during transcreation.
+Split a Go file only when Rust requires it; do not replace source algorithms
+with a new abstraction and then rediscover their edge cases through failures.
+Make Rust-native structural improvements after the complete source package is
+green.
 
 ## Development loop
 
-Select the largest dependency-closed batch that fits one coherent Rust change.
-Every Go package included in the batch must move completely: production code,
-all original tests, generated inputs and outputs, fixtures, and support tools.
-The whole-package rule is a completeness boundary, not a serialization rule;
-several complete packages should move together when they compile in the same
-Rust ownership domain.
+For one Go package:
 
-Transcreate production code first and use compiler errors as the immediate work
-list. Then transcreate all source tests and support artifacts for every package
-in the batch. Do not stop for per-file audits or rerun broad checks after each
-small package. Preserve Go control flow until the batch compiles; let Rust
-modules follow stable ownership boundaries rather than historical Go file
-boundaries.
+1. Copy the whole package shape: one recognizable Rust file per Go file and
+   one recognizable Rust test per Go test, benchmark, and fuzz target.
+2. Mechanically transcreate the entire package before redesigning anything.
+3. Compile once, repair the complete error set, and run the copied tests plus
+   direct consumers.
+4. Commit the complete package; only then do optional Rust-native cleanup.
 
-The inner loop is only `edit -> compile affected crates -> run affected tests`.
-After the entire batch is green, run each source Go package test suite, the
-combined differential suite, direct Rust reverse dependencies, formatting, and
-one final lint pass. Commit and push the batch once. Live-cluster checks belong
-to integration or deployable milestones unless a package in the batch owns an
-external contract.
+That is the entire process. Do not create tasks per file, intermediate
+acceptance states, process artifacts, or repeated clean runs. Existing Rust is
+editable seed code, not a reason to reconstruct Go behavior manually. Compiler
+errors and failing source tests are the work list. Use scripts only for
+mechanical bulk translation or comparison.
 
-The Go package tree is the input, compiler errors are the work list, tests are
-the progress report, and Git is recovery. There are no campaigns, queues,
-gates, claims, receipts, ledgers, freezes, handoffs, per-file status checks, or
-manual parity inventories. Differential tests carry bulk table-driven behavior;
-direct Rust tests exist only for state or diagnostics the differential cannot
-observe.
+Do not hand-curate a smaller Rust test suite and later audit whether it covers
+the Go suite. Preserve source test names and tables during the first pass so
+missing work is visible from the directory tree and ordinary test output.
 
-One Go package may map to several Rust modules or crates when that is a stable
-Rust boundary. It may not be split into partial completion units. A batch may
-contain many complete Go packages; it may not contain fragments of any of them.
+Name executable proofs by the behavior they verify, never by campaign number or
+development history.
+
+One Go package may map to several Rust crates. Develop them as one change and
+accept them only when the whole Go package is complete.
 
 ## Target architecture
 

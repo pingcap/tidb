@@ -28,8 +28,8 @@ use tidb_txnkv::PdRegionLoader;
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 10 TiUP runner"]
 fn pd_only_input_discovers_route_and_reaches_tikv() {
-    let pd_address = std::env::var("C10_PD_ADDR")
-        .expect("C10_PD_ADDR must be supplied by run-campaign10-realtikv.sh");
+    let pd_address = std::env::var("PD_ROUTE_PD_ADDR")
+        .expect("PD_ROUTE_PD_ADDR must be supplied by run-realtikv-pd-route.sh");
     let loader = PdRegionLoader::connect(pd_address, Duration::from_secs(5))
         .expect("bootstrap live PD region loader");
     let region_cache = RegionCache::new(loader);

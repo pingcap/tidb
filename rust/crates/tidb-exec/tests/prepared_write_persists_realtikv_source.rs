@@ -33,7 +33,7 @@
 //!    reads the committed row back. The value therefore lives in TiKV, not in
 //!    the first authority's process memory.
 //!
-//! The runner `scripts/run-campaign28-prepared-write-realtikv.sh` owns the
+//! The runner `scripts/run-realtikv-prepared-write.sh` owns the
 //! tag-owned playground lifecycle. No in-memory database, mock transport, or
 //! fixture row is admitted.
 
@@ -108,10 +108,10 @@ fn arithmetic_update_sql() -> &'static str {
 }
 
 #[test]
-#[ignore = "requires run-campaign28-prepared-write-realtikv.sh"]
+#[ignore = "requires run-realtikv-prepared-write.sh"]
 fn prepared_insert_and_update_persist_through_one_shared_authority() {
     let pd_address =
-        std::env::var("C28_STAGE_E_PD_ADDR").expect("runner must provide C28_STAGE_E_PD_ADDR");
+        std::env::var("PREPARED_WRITE_PD_ADDR").expect("runner must provide PREPARED_WRITE_PD_ADDR");
     let catalog = configured_catalog();
 
     // (1) One authority. Reads and writes must share it.

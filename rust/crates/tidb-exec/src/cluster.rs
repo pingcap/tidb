@@ -1107,6 +1107,10 @@ fn format_datum_for_column(
                 64
             },
         },
+        tidb_datatype::Datum::Float32(value) => tidb_protocol::TextScalar::Float {
+            value: *value,
+            bit_size: 32,
+        },
         tidb_datatype::Datum::String(value) => tidb_protocol::TextScalar::Bytes(value.bytes()),
         tidb_datatype::Datum::Bytes(value) => tidb_protocol::TextScalar::Bytes(value),
         tidb_datatype::Datum::Decimal(value) => {
@@ -1121,6 +1125,16 @@ fn format_datum_for_column(
             return Err(ExecError::Protocol(
                 "range sentinel cannot be materialized in a result row".to_owned(),
             ));
+        }
+        other => {
+            let rendered = other
+                .to_bytes()
+                .map_err(|error| ExecError::Protocol(error.to_string()))?;
+            return tidb_protocol::format_text_value(
+                text_column,
+                tidb_protocol::TextScalar::Bytes(&rendered),
+            )
+            .map_err(|error| ExecError::Protocol(error.to_string()));
         }
     };
     tidb_protocol::format_text_value(text_column, scalar)

@@ -16,8 +16,8 @@ use super::{truncate_overflow_mysql_time, DurationOverflow, MAX_TIME_NANOS, MIN_
 
 use super::{
     can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
-    round_duration_fsp, DurationDateTimeFallbackKind, DurationParseError, DurationParseEvent,
-    DurationRoundError,
+    parse_mysql_duration, round_duration_fsp, DurationDateTimeFallbackKind, DurationParseError,
+    DurationParseEvent, DurationRoundError, MySqlDuration, TimeType,
 };
 
 #[test]
@@ -57,6 +57,185 @@ fn can_fallback_to_datetime_matches_source_shape_rows() {
         assert_eq!(classify_duration_datetime_fallback(input), None);
         assert!(!can_fallback_to_datetime(input));
     }
+}
+
+#[test]
+fn duration_methods_match_source_rows() {
+    for (left, left_fsp, right, right_fsp, sum, difference) in [
+        (100_000_000, 1, 100_000_000, 1, "00:00:00.2", "00:00:00.0"),
+        (0, 0, 100_000_000, 1, "00:00:00.1", "-00:00:00.1"),
+        (90_000_000, 2, 10_000_000, 2, "00:00:00.10", "00:00:00.08"),
+    ] {
+        let left = MySqlDuration::from_nanoseconds(left, left_fsp).unwrap();
+        let right = MySqlDuration::from_nanoseconds(right, right_fsp).unwrap();
+        assert_eq!(left.checked_add(right).unwrap().to_string(), sum);
+        assert_eq!(left.checked_sub(right).unwrap().to_string(), difference);
+    }
+    assert!(MySqlDuration::from_nanoseconds(i64::MAX, 0)
+        .unwrap()
+        .checked_add(MySqlDuration::from_nanoseconds(60_000_000_000, 0).unwrap())
+        .is_err());
+
+    let duration = MySqlDuration::new(23, 12, 34, 123_456, 6).unwrap();
+    assert_eq!(
+        duration.duration_format("%H %k %h %I %l %i %p %r %T %s %S %f %%"),
+        "23 23 11 11 11 12 PM 11:12:34 PM 23:12:34 34 34 123456 %"
+    );
+    assert_eq!(duration.to_number().to_string(), "231234.123456");
+    assert_eq!(
+        MySqlDuration::new(-11, -30, -45, -923_345, 6)
+            .unwrap()
+            .to_number()
+            .to_string(),
+        "-113045.923345"
+    );
+    assert_eq!(
+        MySqlDuration::new(10, 10, 10, 888_888, 6)
+            .unwrap()
+            .round_frac(0)
+            .unwrap()
+            .to_string(),
+        "10:10:11"
+    );
+    assert_eq!(
+        duration.compare_string("23:12:34.123456").unwrap(),
+        std::cmp::Ordering::Equal
+    );
+}
+
+#[test]
+fn duration_time_and_year_conversion_match_source_rows() {
+    use chrono::{TimeZone, Utc};
+
+    let now = Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap();
+    let converted = MySqlDuration::new(1, 0, 0, 0, 0)
+        .unwrap()
+        .convert_to_time(now, TimeType::DateTime, false, false)
+        .unwrap();
+    assert_eq!(converted.to_string(), "2023-11-13 01:00:00");
+
+    for (duration, now, through_concat, expected) in [
+        (
+            MySqlDuration::new(1, 0, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap(),
+            false,
+            2023,
+        ),
+        (
+            MySqlDuration::new(40, 0, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2023, 12, 31, 11, 0, 0).unwrap(),
+            false,
+            2024,
+        ),
+        (
+            MySqlDuration::new(-20, 0, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 1, 1, 13, 0, 0).unwrap(),
+            false,
+            2023,
+        ),
+        (
+            MySqlDuration::new(0, 20, 12, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap(),
+            true,
+            2012,
+        ),
+        (
+            MySqlDuration::new(0, 0, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap(),
+            true,
+            0,
+        ),
+    ] {
+        assert_eq!(
+            duration.convert_to_year(now, through_concat).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn complete_duration_parser_handles_source_datetime_fallback_rows() {
+    for (input, expected) in [
+        ("2011-11-11 00:00:01", "00:00:01.000000"),
+        ("20111111121212.123", "12:12:12.123000"),
+        ("2011-11-11T12:12:12", "12:12:12.000000"),
+    ] {
+        let parsed = parse_mysql_duration(input, 6, &chrono_tz::UTC, true, false).unwrap();
+        let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+        assert_eq!(duration.to_string(), expected, "{input}");
+    }
+}
+
+#[test]
+fn complete_duration_parser_matches_all_test_time_rows() {
+    for (input, expected) in [
+        ("10:11:12", "10:11:12"),
+        ("101112", "10:11:12"),
+        ("020005", "02:00:05"),
+        ("112", "00:01:12"),
+        ("10:11", "10:11:00"),
+        ("101112.123456", "10:11:12"),
+        ("1112", "00:11:12"),
+        ("1", "00:00:01"),
+        ("12", "00:00:12"),
+        ("1 12", "36:00:00"),
+        ("1 10:11:12", "34:11:12"),
+        ("1 10:11:12.123456", "34:11:12"),
+        ("10:11:12.123456", "10:11:12"),
+        ("1 10:11", "34:11:00"),
+        ("1 10", "34:00:00"),
+        ("24 10", "586:00:00"),
+        ("-24 10", "-586:00:00"),
+        ("0 10", "10:00:00"),
+        ("-10:10:10", "-10:10:10"),
+        ("-838:59:59", "-838:59:59"),
+        ("838:59:59", "838:59:59"),
+        ("2011-11-11 00:00:01", "00:00:01"),
+        ("20111111121212.123", "12:12:12"),
+        ("2011-11-11T12:12:12", "12:12:12"),
+    ] {
+        let parsed = parse_mysql_duration(input, 0, &chrono_tz::UTC, true, false).unwrap();
+        let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+        assert_eq!(duration.to_string(), expected, "{input}");
+        assert_eq!(parsed.event(), None, "{input}");
+    }
+
+    for (input, expected) in [
+        ("101112.123456", "10:11:12.123456"),
+        ("1 10:11:12.123456", "34:11:12.123456"),
+        ("10:11:12.123456", "10:11:12.123456"),
+    ] {
+        let parsed = parse_mysql_duration(input, 6, &chrono_tz::UTC, true, false).unwrap();
+        let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+        assert_eq!(duration.to_string(), expected, "{input}");
+    }
+
+    for (input, expected) in [
+        ("0x", "00:00:00.000000"),
+        ("1x", "00:00:01.000000"),
+        ("0000-00-00", "00:00:00.000000"),
+    ] {
+        let parsed = parse_mysql_duration(input, 6, &chrono_tz::UTC, true, false).unwrap();
+        let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+        assert_eq!(duration.to_string(), expected, "{input}");
+        assert_eq!(
+            parsed.event(),
+            Some(DurationParseEvent::Truncated),
+            "{input}"
+        );
+    }
+
+    for input in ["2011-11-11", "232 10", "-232 10"] {
+        let parsed = parse_mysql_duration(input, 0, &chrono_tz::UTC, true, false).unwrap();
+        assert!(parsed.event().is_some(), "{input}");
+    }
+    let overflow =
+        parse_mysql_duration("4294967295 0:59:59", 0, &chrono_tz::UTC, true, false).unwrap();
+    assert_eq!(overflow.nanoseconds(), MAX_TIME_NANOS);
+    assert_eq!(
+        overflow.event(),
+        Some(DurationParseEvent::Overflow(DurationOverflow::Positive))
+    );
 }
 
 #[test]
@@ -168,8 +347,7 @@ fn round_duration_fsp_matches_source_half_away_from_zero_rows() {
 #[test]
 fn parse_duration_matches_source_colon_and_day_forms() {
     // Source: pkg/types/time.go::{matchDuration, ParseDuration} and the
-    // valid rows in pkg/types/time_test.go::TestTime. Date/datetime fallback
-    // and warning/session attachment are intentionally outside this parser.
+    // valid rows in pkg/types/time_test.go::TestTime.
     let parsed = parse_duration(b"10:11:12.123456", 6).unwrap();
     assert_eq!(
         parsed.nanoseconds(),

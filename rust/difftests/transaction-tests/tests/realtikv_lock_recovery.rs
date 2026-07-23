@@ -140,12 +140,12 @@ impl LockRecoveryClient for RecordingClient {
 #[test]
 #[ignore = "requires the cleanup-safe committed-primary locked-secondary runner"]
 fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
-    let pd_address = std::env::var("C13_PD_ADDR").expect("runner must provide PD address");
-    let table_id: i64 = std::env::var("C13_LOCK_TABLE_ID")
+    let pd_address = std::env::var("LOCK_RECOVERY_PD_ADDR").expect("runner must provide PD address");
+    let table_id: i64 = std::env::var("LOCK_RECOVERY_LOCK_TABLE_ID")
         .expect("runner must provide table id")
         .parse()
         .expect("table id must be i64");
-    let current_ts: u64 = std::env::var("C13_CURRENT_TS")
+    let current_ts: u64 = std::env::var("LOCK_RECOVERY_CURRENT_TS")
         .expect("runner must provide exact TSO")
         .parse()
         .expect("current TSO must be u64");

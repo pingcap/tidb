@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-CAMPAIGN_LABEL="Campaign 23"
+CAMPAIGN_LABEL="BIGINT-selection SQL node"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"
 
@@ -10,15 +10,15 @@ if [[ "${1:-}" == --self-test-empty-result-framing \
   || "${1:-}" == --self-test-live-harness ]]; then
   live_sql_node_harness_self_test
   if [[ "${1:-}" == --self-test-empty-result-framing ]]; then
-    echo "Campaign 23 empty-result framing self-test passed"
+    echo "BIGINT-selection SQL-node empty-result framing self-test passed"
   else
-    echo "Campaign 23 shared live-harness self-test passed"
+    echo "BIGINT-selection SQL-node shared live-harness self-test passed"
   fi
   exit 0
 fi
 
 
-SCENARIO_ENV_PREFIX=C23
+SCENARIO_ENV_PREFIX=BIGINT_SELECTION_SQL
 SCENARIO_TAG_SLUG=campaign23-bigint-selection-sql-node
 SCENARIO_DATABASE=campaign23
 SCENARIO_AUTH_USER=campaign23
@@ -54,11 +54,11 @@ run_exact_query_phase() {
   local expected_predicate_count=$7
   local mode=${8:-strict}
   if [[ ! "${expected_predicate_count}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "Campaign 23 ${phase} has invalid predicate count ${expected_predicate_count}" >&2
+    echo "BIGINT-selection SQL-node ${phase} has invalid predicate count ${expected_predicate_count}" >&2
     return 1
   fi
   if [[ "${mode}" != strict && "${mode}" != converge ]]; then
-    echo "Campaign 23 ${phase} has invalid query phase mode ${mode}" >&2
+    echo "BIGINT-selection SQL-node ${phase} has invalid query phase mode ${mode}" >&2
     return 1
   fi
   local output="${RUNTIME_DIR}/${phase}.out"
@@ -75,7 +75,7 @@ run_exact_query_phase() {
   before_output_lines=$(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_OUTPUT}")
   before_error_lines=$(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_ERROR}")
   if ! pid_is_running "${PERSISTENT_CLIENT_PID}"; then
-    echo "Campaign 23 persistent stock client exited before ${phase}" >&2
+    echo "BIGINT-selection SQL-node persistent stock client exited before ${phase}" >&2
     return 1
   fi
   local expected_row_count
@@ -115,7 +115,7 @@ run_exact_query_phase() {
     sleep 0.05
   done
   if [[ "${output_ready}" != true ]]; then
-    echo "Campaign 23 ${phase} persistent stock-client output did not complete" >&2
+    echo "BIGINT-selection SQL-node ${phase} persistent stock-client output did not complete" >&2
     tail -40 "${PERSISTENT_CLIENT_OUTPUT}" >&2
     sed -n '1,160p' "${PERSISTENT_CLIENT_ERROR}" >&2
     return 1
@@ -127,7 +127,7 @@ run_exact_query_phase() {
       "${PERSISTENT_CLIENT_OUTPUT}" >"${output}"
   fi
   if ! query_output_is_exact "${output}" "${expected_header}" "${expected_rows}"; then
-    echo "Campaign 23 ${phase} did not return the exact filtered rows" >&2
+    echo "BIGINT-selection SQL-node ${phase} did not return the exact filtered rows" >&2
     sed -n '1,40p' "${output}" >&2
     return 1
   fi
@@ -151,7 +151,7 @@ run_exact_query_phase() {
      and (.query_id | type) == "number" and .query_id > 0
      and (.session_id | type) == "number" and .session_id > 0
      and ($region == "" or (.region_id | tostring) == $region)' >/dev/null; then
-    echo "Campaign 23 ${phase} last physical publication did not match ${expected_address}" >&2
+    echo "BIGINT-selection SQL-node ${phase} last physical publication did not match ${expected_address}" >&2
     printf '%s\n' "${publications}" >&2
     return 1
   fi
@@ -163,7 +163,7 @@ run_exact_query_phase() {
     PERSISTENT_SESSION_ID=${PHASE_SESSION_ID}
   elif [[ "${PHASE_CONNECTION_ID}" != "${PERSISTENT_CONNECTION_ID}" \
     || "${PHASE_SESSION_ID}" != "${PERSISTENT_SESSION_ID}" ]]; then
-    echo "Campaign 23 ${phase} did not remain on the persistent authenticated session" >&2
+    echo "BIGINT-selection SQL-node ${phase} did not remain on the persistent authenticated session" >&2
     return 1
   fi
   local snapshot
@@ -181,7 +181,7 @@ run_exact_query_phase() {
      and .executor_kinds == ["TableScan", "Selection"]
      and .predicate_count == $predicate_count
      and .output_offsets == $offsets' >/dev/null; then
-    echo "Campaign 23 ${phase} did not publish the exact TableScan-plus-Selection plan" >&2
+    echo "BIGINT-selection SQL-node ${phase} did not publish the exact TableScan-plus-Selection plan" >&2
     printf '%s\n' "${snapshot}" >&2
     return 1
   fi
@@ -203,7 +203,7 @@ run_exact_query_phase() {
        else .batch_attempts >= 1 and .unary_attempts == 0 end))
      and (.located_region_ids | length) > 0
      and (.dispatched_region_ids | length) > 0' >/dev/null; then
-    echo "Campaign 23 ${phase} did not finish through BatchCommands-only transport" >&2
+    echo "BIGINT-selection SQL-node ${phase} did not finish through BatchCommands-only transport" >&2
     printf '%s\n' "${transport}" >&2
     return 1
   fi
@@ -224,11 +224,11 @@ run_exact_query_phase() {
     sleep 0.05
   done
   if [[ "${activity_ready}" != true ]]; then
-    echo "Campaign 23 ${phase} activity did not correlate with publication/transport identity" >&2
+    echo "BIGINT-selection SQL-node ${phase} activity did not correlate with publication/transport identity" >&2
     return 1
   fi
   if ! pid_is_running "${RUST_PID}"; then
-    echo "Campaign 23 ${phase} did not retain the original Rust process" >&2
+    echo "BIGINT-selection SQL-node ${phase} did not retain the original Rust process" >&2
     return 1
   fi
 }
@@ -281,7 +281,7 @@ scenario_validate_block_snapshot() {
 }
 
 scenario_emit_success_receipt() {
-  echo "Campaign 23 live BIGINT-Selection topology proof passed: same_rust_pid=${ORIGINAL_RUST_PID}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; region_id=${REGION_ID}; leader_stores=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; comparison_matrix=eq,ne,lt,le,gt,ge,reversed,empty,and; stored_predicate_plan=TableScan,Selection; stored_predicate_output_offsets=[0]; physical_addresses=${ADDRESS_A}->${ADDRESS_B}->${ADDRESS_C}->${ADDRESS_B}; b_channel_versions=${B_VERSION_BEFORE}->${B_VERSION_AFTER}; b_stream_generations=${B_GENERATION_BEFORE}->${B_GENERATION_AFTER}; blocked_id_eq_publication=$(printf '%s' "${BLOCK_PUBLICATION}" | jq -c '{connection_id,query_id,authority_id,session_id,region_id,physical_address,physical_channel_version,stream_generation}'); shutdown_order=connections,region_cache,tikv_transport,pd,sql_node_stopped; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; rust_exit=0; ${FINAL_CONNECTIONS}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; pd_cluster_id=${PD_CLUSTER_ID}"
+  echo "BIGINT-selection SQL-node live BIGINT-Selection topology proof passed: same_rust_pid=${ORIGINAL_RUST_PID}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; region_id=${REGION_ID}; leader_stores=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; comparison_matrix=eq,ne,lt,le,gt,ge,reversed,empty,and; stored_predicate_plan=TableScan,Selection; stored_predicate_output_offsets=[0]; physical_addresses=${ADDRESS_A}->${ADDRESS_B}->${ADDRESS_C}->${ADDRESS_B}; b_channel_versions=${B_VERSION_BEFORE}->${B_VERSION_AFTER}; b_stream_generations=${B_GENERATION_BEFORE}->${B_GENERATION_AFTER}; blocked_id_eq_publication=$(printf '%s' "${BLOCK_PUBLICATION}" | jq -c '{connection_id,query_id,authority_id,session_id,region_id,physical_address,physical_channel_version,stream_generation}'); shutdown_order=connections,region_cache,tikv_transport,pd,sql_node_stopped; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; rust_exit=0; ${FINAL_CONNECTIONS}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; pd_cluster_id=${PD_CLUSTER_ID}"
 }
 
 run_live_sql_node_topology_scenario

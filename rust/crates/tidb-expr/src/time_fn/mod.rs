@@ -439,6 +439,10 @@ fn int_arg(value: &Datum) -> Result<Option<i64>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel time argument"))
         }
+        other => other
+            .to_i64()
+            .map(|converted| Some(converted.value))
+            .map_err(|_| EvalError::Unsupported("time argument conversion")),
     }
 }
 
@@ -459,6 +463,12 @@ fn number_arg(value: &Datum) -> Result<Option<f64>, EvalError> {
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel numeric argument"));
         }
+        other => Some(
+            other
+                .to_f64()
+                .map_err(|_| EvalError::Unsupported("numeric argument conversion"))?
+                .value,
+        ),
     })
 }
 
@@ -704,10 +714,21 @@ fn duration_precision(value: &Datum) -> Result<usize, EvalError> {
             .to_string()
             .split_once('.')
             .map_or(0, |(_, f)| f.len().min(6)),
+        Datum::Float32(v) => v
+            .to_string()
+            .split_once('.')
+            .map_or(0, |(_, f)| f.len().min(6)),
+        Datum::Duration(value) => usize::from(value.fsp()),
+        Datum::Time(value) => usize::from(value.fsp()),
         Datum::Null => 0,
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel duration argument"));
         }
+        other => other
+            .sql_string()
+            .ok()
+            .and_then(|text| text.split_once('.').map(|(_, f)| f.len().min(6)))
+            .unwrap_or(0),
     })
 }
 

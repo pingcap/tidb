@@ -99,6 +99,82 @@ fn test_sql_mode() {
     );
 }
 
+/// Exact external-package rows from `pkg/types/const_test.go::TestGetSQLMode`.
+#[test]
+fn test_get_sql_mode_from_types_package() {
+    for input in [
+        "NO_ZERO_DATE",
+        ",,NO_ZERO_DATE",
+        "NO_ZERO_DATE,NO_ZERO_IN_DATE",
+        "",
+        ", ",
+        ",",
+    ] {
+        assert!(
+            get_sql_mode(&format_sql_mode_str(input)).is_ok(),
+            "{input:?}"
+        );
+    }
+    for input in [
+        "NO_ZERO_DATE, NO_ZERO_IN_DATE",
+        "NO_ZERO_DATE,adfadsdfasdfads",
+        ", ,NO_ZERO_DATE",
+        " ,",
+    ] {
+        assert!(
+            get_sql_mode(&format_sql_mode_str(input)).is_err(),
+            "{input:?}"
+        );
+    }
+}
+
+/// Exact external-package rows from `pkg/types/const_test.go::TestSQLMode`.
+#[test]
+fn test_sql_mode_from_types_package() {
+    for (input, zero_date, zero_in_date, division_by_zero) in [
+        ("NO_ZERO_DATE", true, false, false),
+        ("NO_ZERO_IN_DATE", false, true, false),
+        ("ERROR_FOR_DIVISION_BY_ZERO", false, false, true),
+        ("NO_ZERO_IN_DATE,NO_ZERO_DATE", true, true, false),
+        ("NO_ZERO_DATE,NO_ZERO_IN_DATE", true, true, false),
+        (
+            "NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO",
+            true,
+            true,
+            true,
+        ),
+        (
+            "NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO",
+            false,
+            true,
+            true,
+        ),
+        ("", false, false, false),
+    ] {
+        let mode = get_sql_mode(input).unwrap();
+        assert_eq!(mode.has_no_zero_date_mode(), zero_date, "{input}");
+        assert_eq!(mode.has_no_zero_in_date_mode(), zero_in_date, "{input}");
+        assert_eq!(
+            mode.has_error_for_division_by_zero_mode(),
+            division_by_zero,
+            "{input}"
+        );
+    }
+}
+
+/// Exact external-package rows from `pkg/types/const_test.go::TestServerStatus`.
+#[test]
+fn test_server_status_from_types_package() {
+    for (status, expected) in [
+        (0, false),
+        (ServerStatusInTrans | ServerStatusNoBackslashEscaped, false),
+        (ServerStatusCursorExists, true),
+        (ServerStatusCursorExists | ServerStatusLastRowSend, true),
+    ] {
+        assert_eq!(has_cursor_exists_flag(status), expected);
+    }
+}
+
 #[test]
 fn test_version_separator() {
     assert_eq!(VersionSeparator, "-TiDB-")

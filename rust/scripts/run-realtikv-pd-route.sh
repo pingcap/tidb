@@ -3,8 +3,8 @@
 set -euo pipefail
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TAG="campaign10-realtikv-${$}"
-PORT_OFFSET=${C10_PORT_OFFSET:-21000}
+TAG="realtikv-pd-route-${$}"
+PORT_OFFSET=${PD_ROUTE_PORT_OFFSET:-21000}
 PD_PORT=$((2379 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
 TIKV_PORT=$((20160 + PORT_OFFSET))
@@ -68,7 +68,7 @@ cleanup() {
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
   if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-    echo "Campaign 10 cleanup failed: tiup clean failed for ${TAG}" >&2
+    echo "PD-route cleanup failed: tiup clean failed for ${TAG}" >&2
     cleanup_failed=true
   fi
 
@@ -95,21 +95,21 @@ cleanup() {
     sleep 1
   done
   if [[ "${processes_cleaned}" != true ]]; then
-    echo "Campaign 10 cleanup failed: owned TiUP registry or process remains for ${TAG}" >&2
+    echo "PD-route cleanup failed: owned TiUP registry or process remains for ${TAG}" >&2
     cleanup_failed=true
   fi
   if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-    echo "Campaign 10 cleanup failed: owned PD endpoint ${PD_ADDR} is still reachable" >&2
+    echo "PD-route cleanup failed: owned PD endpoint ${PD_ADDR} is still reachable" >&2
     cleanup_failed=true
   fi
   if nc -z -w 1 127.0.0.1 "${TIKV_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 10 cleanup failed: owned TiKV endpoint ${TIKV_ADDR} is still reachable" >&2
+    echo "PD-route cleanup failed: owned TiKV endpoint ${TIKV_ADDR} is still reachable" >&2
     cleanup_failed=true
   fi
   if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}"
     if [[ -e "${TAG_DIR}" ]]; then
-      echo "Campaign 10 cleanup failed: owned tag directory remains at ${TAG_DIR}" >&2
+      echo "PD-route cleanup failed: owned tag directory remains at ${TAG_DIR}" >&2
       cleanup_failed=true
     fi
   fi
@@ -122,11 +122,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-  echo "refusing to reuse occupied PD endpoint ${PD_ADDR}; set C10_PORT_OFFSET" >&2
+  echo "refusing to reuse occupied PD endpoint ${PD_ADDR}; set PD_ROUTE_PORT_OFFSET" >&2
   exit 1
 fi
 if nc -z -w 1 127.0.0.1 "${TIKV_PORT}" >/dev/null 2>&1; then
-  echo "refusing to reuse occupied TiKV endpoint ${TIKV_ADDR}; set C10_PORT_OFFSET" >&2
+  echo "refusing to reuse occupied TiKV endpoint ${TIKV_ADDR}; set PD_ROUTE_PORT_OFFSET" >&2
   exit 1
 fi
 
@@ -162,7 +162,7 @@ fi
 
 # The PD endpoint is the only topology input. Rust discovers cluster, region,
 # peer, store, and TiKV address metadata over the checked PD gRPC projection.
-export C10_PD_ADDR="${PD_ADDR}"
+export PD_ROUTE_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
   --test realtikv_pd_route \

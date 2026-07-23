@@ -4,23 +4,23 @@ set -euo pipefail
 
 for prerequisite in tiup cargo curl jq nc pgrep ps awk sed seq grep sort tail; do
   if ! command -v "${prerequisite}" >/dev/null 2>&1; then
-    echo "missing Campaign 20 prerequisite: ${prerequisite}" >&2
+    echo "missing multicolumn SQL-node prerequisite: ${prerequisite}" >&2
     exit 1
   fi
 done
 
-MYSQL_CLIENT=${C20_MYSQL_CLIENT:-mysql}
+MYSQL_CLIENT=${MULTICOLUMN_SQL_MYSQL_CLIENT:-mysql}
 if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
-  echo "C20_MYSQL_CLIENT must name an executable stock MySQL client" >&2
+  echo "MULTICOLUMN_SQL_MYSQL_CLIENT must name an executable stock MySQL client" >&2
   exit 1
 fi
 MYSQL_PLUGIN_ARGS=()
-if [[ -n "${C20_MYSQL_PLUGIN_DIR:-}" ]]; then
-  if [[ ! -f "${C20_MYSQL_PLUGIN_DIR}/mysql_native_password.so" ]]; then
-    echo "C20_MYSQL_PLUGIN_DIR does not contain mysql_native_password.so" >&2
+if [[ -n "${MULTICOLUMN_SQL_MYSQL_PLUGIN_DIR:-}" ]]; then
+  if [[ ! -f "${MULTICOLUMN_SQL_MYSQL_PLUGIN_DIR}/mysql_native_password.so" ]]; then
+    echo "MULTICOLUMN_SQL_MYSQL_PLUGIN_DIR does not contain mysql_native_password.so" >&2
     exit 1
   fi
-  MYSQL_PLUGIN_ARGS=(--plugin-dir="${C20_MYSQL_PLUGIN_DIR}")
+  MYSQL_PLUGIN_ARGS=(--plugin-dir="${MULTICOLUMN_SQL_MYSQL_PLUGIN_DIR}")
 else
   MYSQL_BIN_DIR=$(cd "$(dirname "$(command -v "${MYSQL_CLIENT}")")" && pwd)
   for candidate in \
@@ -36,9 +36,9 @@ fi
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TAG="campaign20-multicolumn-sql-node-${$}-$(date +%s)"
-PORT_OFFSET=${C20_PORT_OFFSET:-40000}
+PORT_OFFSET=${MULTICOLUMN_SQL_PORT_OFFSET:-40000}
 if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || [[ "${PORT_OFFSET}" -gt 45375 ]]; then
-  echo "C20_PORT_OFFSET must be an unsigned integer no greater than 45375" >&2
+  echo "MULTICOLUMN_SQL_PORT_OFFSET must be an unsigned integer no greater than 45375" >&2
   exit 1
 fi
 PD_PORT=$((2379 + PORT_OFFSET))
@@ -110,7 +110,7 @@ cleanup() {
     wait "${RUST_PID}" 2>/dev/null || true
   fi
   if nc -z -w 1 127.0.0.1 "${RUST_SQL_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 20 cleanup failed: Rust SQL node ${RUST_SQL_ADDR} remains reachable" >&2
+    echo "multicolumn SQL-node cleanup failed: Rust SQL node ${RUST_SQL_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
 
@@ -120,7 +120,7 @@ cleanup() {
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
   if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-    echo "Campaign 20 cleanup failed: tiup clean failed for ${TAG}" >&2
+    echo "multicolumn SQL-node cleanup failed: tiup clean failed for ${TAG}" >&2
     cleanup_failed=true
   fi
 
@@ -144,7 +144,7 @@ cleanup() {
     sleep 1
   done
   if [[ "${processes_cleaned}" != true ]]; then
-    echo "Campaign 20 cleanup failed: owned process or TiUP registry row remains" >&2
+    echo "multicolumn SQL-node cleanup failed: owned process or TiUP registry row remains" >&2
     cleanup_failed=true
   fi
 
@@ -152,38 +152,38 @@ cleanup() {
   for address in ${STORE_ADDRESSES}; do
     local port=${address##*:}
     if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-      echo "Campaign 20 cleanup failed: TiKV ${address} remains reachable" >&2
+      echo "multicolumn SQL-node cleanup failed: TiKV ${address} remains reachable" >&2
       cleanup_failed=true
     fi
   done
   if nc -z -w 1 127.0.0.1 "${TIKV_SEED_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 20 cleanup failed: TiKV seed 127.0.0.1:${TIKV_SEED_PORT} remains reachable" >&2
+    echo "multicolumn SQL-node cleanup failed: TiKV seed 127.0.0.1:${TIKV_SEED_PORT} remains reachable" >&2
     cleanup_failed=true
   fi
   if nc -z -w 1 127.0.0.1 "${GO_SQL_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 20 cleanup failed: Go TiDB ${GO_SQL_ADDR} remains reachable" >&2
+    echo "multicolumn SQL-node cleanup failed: Go TiDB ${GO_SQL_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
   if nc -z -w 1 127.0.0.1 "${GO_STATUS_PORT}" >/dev/null 2>&1; then
-    echo "Campaign 20 cleanup failed: Go TiDB status port remains reachable" >&2
+    echo "multicolumn SQL-node cleanup failed: Go TiDB status port remains reachable" >&2
     cleanup_failed=true
   fi
   if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-    echo "Campaign 20 cleanup failed: PD ${PD_ADDR} remains reachable" >&2
+    echo "multicolumn SQL-node cleanup failed: PD ${PD_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
 
   if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}"
     if [[ -e "${TAG_DIR}" ]]; then
-      echo "Campaign 20 cleanup failed: owned data directory remains" >&2
+      echo "multicolumn SQL-node cleanup failed: owned data directory remains" >&2
       cleanup_failed=true
     fi
   fi
   if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
     rm -f -- "${PLAYGROUND_LOG}" "${RUST_LOG}" "${MYSQL_LOG}"
   else
-    echo "Campaign 20 retained logs: ${PLAYGROUND_LOG} ${RUST_LOG} ${MYSQL_LOG}" >&2
+    echo "multicolumn SQL-node retained logs: ${PLAYGROUND_LOG} ${RUST_LOG} ${MYSQL_LOG}" >&2
   fi
   if [[ "${cleanup_failed}" == true ]]; then
     exit 1
@@ -192,21 +192,21 @@ cleanup() {
 }
 
 cd "${RUST_ROOT}"
-if [[ -z "${C20_RUST_SERVER:-}" ]]; then
+if [[ -z "${MULTICOLUMN_SQL_RUST_SERVER:-}" ]]; then
   CARGO_BUILD_JOBS=12 cargo build -j12 -p tidb-server --bin tidb-server
   RUST_SERVER="${RUST_ROOT}/target/debug/tidb-server"
 else
-  RUST_SERVER=${C20_RUST_SERVER}
+  RUST_SERVER=${MULTICOLUMN_SQL_RUST_SERVER}
 fi
 if [[ ! -x "${RUST_SERVER}" ]]; then
-  echo "Campaign 20 Rust server is not executable: ${RUST_SERVER}" >&2
+  echo "multicolumn SQL-node Rust server is not executable: ${RUST_SERVER}" >&2
   exit 1
 fi
 
 for port in "${PD_PORT}" "${GO_SQL_PORT}" "${TIKV_SEED_PORT}" \
   "${GO_STATUS_PORT}" "${RUST_SQL_PORT}"; do
   if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-    echo "refusing occupied Campaign 20 port ${port}; set C20_PORT_OFFSET" >&2
+    echo "refusing occupied multicolumn SQL-node port ${port}; set MULTICOLUMN_SQL_PORT_OFFSET" >&2
     exit 1
   fi
 done
@@ -273,7 +273,7 @@ TABLE_ID=$("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
   -uroot --connect-timeout=5 "${MYSQL_PLUGIN_ARGS[@]}" -Nse \
   "select tidb_table_id from information_schema.tables where table_schema='campaign20' and table_name='rows'")
 if [[ ! "${TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${TABLE_ID}" =~ ^0+$ ]]; then
-  echo "Go TiDB did not resolve the Campaign 20 physical table ID" >&2
+  echo "Go TiDB did not resolve the multicolumn SQL-node physical table ID" >&2
   exit 1
 fi
 
@@ -309,7 +309,7 @@ if ! printf '%s\n' "${READY_JSON}" | jq -e \
    and .column_count == 2
    and .columns == ["id:1:clustered-pk", "balance:2:stored-not-null"]' \
   >/dev/null; then
-  echo "Rust readiness did not retain the ordered Campaign 20 column descriptors, Go-resolved table ID, and real PD cluster identity" >&2
+  echo "Rust readiness did not retain the ordered multicolumn SQL-node column descriptors, Go-resolved table ID, and real PD cluster identity" >&2
   printf '%s\n' "${READY_JSON}" >&2
   exit 1
 fi
@@ -381,4 +381,4 @@ SNAPSHOT_TS=$(printf '%s\n' "${SNAPSHOT_JSON}" | jq -r '.snapshot_ts')
 LOCATED_REGION_IDS=$(printf '%s\n' "${TRANSPORT_JSON}" | jq -r '.located_region_ids | join(",")')
 DISPATCHED_REGION_IDS=$(printf '%s\n' "${TRANSPORT_JSON}" | jq -r '.dispatched_region_ids | join(",")')
 BATCH_ATTEMPTS=$(printf '%s\n' "${TRANSPORT_JSON}" | jq -r '.batch_attempts')
-echo "Campaign 20 live multi-column SQL-node proof passed: stock MySQL client read exact (amount,id) pairs [(913,-7),(-2048,0),(77,42)] from real TiKV; table_id=${TABLE_ID}; pd_cluster_id=${PD_CLUSTER_ID}; snapshot_ts=${SNAPSHOT_TS}; located_region_ids=${LOCATED_REGION_IDS}; dispatched_region_ids=${DISPATCHED_REGION_IDS}; batch_attempts=${BATCH_ATTEMPTS}; active_connections=0"
+echo "multicolumn SQL-node live multi-column SQL-node proof passed: stock MySQL client read exact (amount,id) pairs [(913,-7),(-2048,0),(77,42)] from real TiKV; table_id=${TABLE_ID}; pd_cluster_id=${PD_CLUSTER_ID}; snapshot_ts=${SNAPSHOT_TS}; located_region_ids=${LOCATED_REGION_IDS}; dispatched_region_ids=${DISPATCHED_REGION_IDS}; batch_attempts=${BATCH_ATTEMPTS}; active_connections=0"

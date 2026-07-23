@@ -3,8 +3,8 @@
 set -euo pipefail
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TAG="campaign11-realtikv-${$}"
-PORT_OFFSET=${C11_PORT_OFFSET:-24000}
+TAG="realtikv-region-retry-${$}"
+PORT_OFFSET=${REGION_RETRY_PORT_OFFSET:-24000}
 PD_SEED_PORT=$((2379 + PORT_OFFSET))
 PD_SEED="127.0.0.1:${PD_SEED_PORT}"
 PLAYGROUND_PID=
@@ -102,7 +102,7 @@ cleanup() {
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
   if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
-    echo "Campaign 11 cleanup failed: tiup clean failed for ${TAG}" >&2
+    echo "region-retry cleanup failed: tiup clean failed for ${TAG}" >&2
     cleanup_failed=true
   fi
 
@@ -127,7 +127,7 @@ cleanup() {
     sleep 1
   done
   if [[ "${processes_cleaned}" != true ]]; then
-    echo "Campaign 11 cleanup failed: owned registry or process remains for ${TAG}" >&2
+    echo "region-retry cleanup failed: owned registry or process remains for ${TAG}" >&2
     cleanup_failed=true
   fi
 
@@ -135,7 +135,7 @@ cleanup() {
   if [[ -f "${PHASE_DIR}/members-ready" ]]; then
     while IFS= read -r endpoint; do
       if curl -sf --max-time 1 "${endpoint}/pd/api/v1/version" >/dev/null; then
-        echo "Campaign 11 cleanup failed: PD endpoint ${endpoint} remains reachable" >&2
+        echo "region-retry cleanup failed: PD endpoint ${endpoint} remains reachable" >&2
         cleanup_failed=true
       fi
     done < <(phase_values "${PHASE_DIR}/members-ready" member_url)
@@ -145,7 +145,7 @@ cleanup() {
       local port
       port=$(url_port "${endpoint}")
       if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
-        echo "Campaign 11 cleanup failed: TiKV endpoint ${endpoint} remains reachable" >&2
+        echo "region-retry cleanup failed: TiKV endpoint ${endpoint} remains reachable" >&2
         cleanup_failed=true
       fi
     done < <(phase_values "${PHASE_DIR}/route-ready" store_address)
@@ -153,7 +153,7 @@ cleanup() {
   if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}" "${PHASE_DIR}"
     if [[ -e "${TAG_DIR}" || -e "${PHASE_DIR}" ]]; then
-      echo "Campaign 11 cleanup failed: owned tag or phase directory remains" >&2
+      echo "region-retry cleanup failed: owned tag or phase directory remains" >&2
       cleanup_failed=true
     fi
   fi
@@ -166,7 +166,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if curl -sf --max-time 1 "http://${PD_SEED}/pd/api/v1/version" >/dev/null; then
-  echo "refusing occupied PD seed ${PD_SEED}; set C11_PORT_OFFSET" >&2
+  echo "refusing occupied PD seed ${PD_SEED}; set REGION_RETRY_PORT_OFFSET" >&2
   exit 1
 fi
 mkdir -m 700 "${PHASE_DIR}"
@@ -207,8 +207,8 @@ fi
 
 # These are the only two inputs accepted by Rust. Every PD survivor, region,
 # peer, store, and TiKV address is discovered and written back by that process.
-export C11_PD_SEED="${PD_SEED}"
-export C11_PHASE_DIR="${PHASE_DIR}"
+export REGION_RETRY_PD_SEED="${PD_SEED}"
+export REGION_RETRY_PHASE_DIR="${PHASE_DIR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
   --test realtikv_region_retry \
@@ -308,7 +308,7 @@ fi
 : >"${PHASE_DIR}/region-moved"
 
 wait "${RUST_PID}" || {
-  echo "Campaign 11 Rust movement proof failed" >&2
+  echo "region-retry Rust movement proof failed" >&2
   tail -120 "${RUST_LOG}" >&2
   exit 1
 }
@@ -326,4 +326,4 @@ if [[ -z "${FIRST_TIKV}" ]] || [[ -z "${LAST_TIKV}" ]] \
   echo "expected ${OLD_LEADER_ADDRESS} -> ${TARGET_ADDRESS}, observed ${FIRST_TIKV:-<empty>} -> ${LAST_TIKV:-<empty>}" >&2
   exit 1
 fi
-echo "Campaign 11 movement proof passed: PD ${REMOVED_PD} -> ${SURVIVING_PD}; TiKV ${FIRST_TIKV} -> ${LAST_TIKV}"
+echo "region-retry movement proof passed: PD ${REMOVED_PD} -> ${SURVIVING_PD}; TiKV ${FIRST_TIKV} -> ${LAST_TIKV}"

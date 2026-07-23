@@ -7,18 +7,18 @@
 
 set -euo pipefail
 
-CAMPAIGN_LABEL="Campaign 26"
+CAMPAIGN_LABEL="ordered-join SQL node"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"
 
-SCENARIO_ENV_PREFIX=C26
+SCENARIO_ENV_PREFIX=ORDERED_JOIN_SQL
 SCENARIO_TAG_SLUG=campaign26-ordered-join-sql-node
 SCENARIO_DATABASE=campaign26
 SCENARIO_AUTH_USER=campaign26
 SCENARIO_AUTH_DEFAULT_PASSWORD=campaign26-native-password
 SCENARIO_RELATION_ZERO_LOCK_HANDLE=-7
 SCENARIO_RELATION_ZERO_LOCK_UPDATE_SQL='UPDATE campaign26.left_rows SET payload = payload + 1 WHERE id = -7;'
-# Campaign 26 intentionally sends typed rejections over the same authenticated
+# ordered-join SQL-node intentionally sends typed rejections over the same authenticated
 # session, so the stock client must retain that session after each error.
 SCENARIO_PERSISTENT_CLIENT_FORCE=true
 
@@ -46,7 +46,7 @@ if [[ "${1:-}" == --self-test-live-harness ]]; then
   [[ "${SCENARIO_PERSISTENT_CLIENT_FORCE}" == true ]]
   [[ "${TOPN_QUALIFIED}" == *'ORDER BY r.payload DESC, l.id ASC LIMIT 2;' ]]
   [[ "${LIMIT_OFFSET}" == *'LIMIT 2 OFFSET 1;' ]]
-  echo "Campaign 26 ordered multi-relation harness self-test passed"
+  echo "ordered-join SQL-node ordered multi-relation harness self-test passed"
   exit 0
 fi
 
@@ -423,7 +423,7 @@ scenario_validate_block_snapshot() {
 }
 
 scenario_emit_success_receipt() {
-  echo "Campaign 26 live ordered join proof passed: rust_pid=${ORIGINAL_RUST_PID}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; tables=${LEFT_TABLE_ID},${RIGHT_TABLE_ID}; duplicate_order_keys=right.payload,left.id; topn_cap=3; ordered_shapes=qualified,comma-offset,alias-stable-tie,positive-ordinal,unprojected-key; limit_shapes=offset,comma,zero; topology=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; ${FINAL_CONNECTIONS}"
+  echo "ordered-join SQL-node live ordered join proof passed: rust_pid=${ORIGINAL_RUST_PID}; persistent_connection_id=${PERSISTENT_CONNECTION_ID}; persistent_session_id=${PERSISTENT_SESSION_ID}; tables=${LEFT_TABLE_ID},${RIGHT_TABLE_ID}; duplicate_order_keys=right.payload,left.id; topn_cap=3; ordered_shapes=qualified,comma-offset,alias-stable-tie,positive-ordinal,unprojected-key; limit_shapes=offset,comma,zero; topology=${STORE_A}->${STORE_B}->${STORE_C}->${STORE_B}; shutdown_elapsed_ms=${SHUTDOWN_ELAPSED_MS}; shutdown_grace_ms=${SHUTDOWN_GRACE_MS}; ${FINAL_CONNECTIONS}"
 }
 
 run_live_sql_node_multi_relation_scenario

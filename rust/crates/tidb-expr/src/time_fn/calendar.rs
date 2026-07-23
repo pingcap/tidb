@@ -699,6 +699,12 @@ pub(crate) fn date_add(
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel INTERVAL amount"));
         }
+        other => {
+            other
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("INTERVAL amount conversion"))?
+                .value
+        }
     };
     let Some(s) = coerce_str(date)? else {
         return Ok(Datum::Null);
