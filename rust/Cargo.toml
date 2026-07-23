@@ -94,6 +94,7 @@ chrono-tz = "0.10"
 # TiDB's Go packetio owner. Keep codec choice separate from packet framing.
 flate2 = "1"
 zstd = "0.13"
+crc32fast = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"        # Phase 0 is safe Rust end-to-end.

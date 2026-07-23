@@ -27,13 +27,13 @@ use crate::{ROW_CODEC_VERSION, ROW_FLAG_LARGE};
 /// One source-owned row column entry for [`encode_raw_row`].
 ///
 /// `None` represents SQL `NULL`; non-null bytes are copied to the row's opaque
-/// data section without interpretation. IDs are intentionally unsigned: the
-/// schema/handle layer owns validating which signed logical IDs may enter a
-/// row, while this module owns only the persisted u32 metadata width.
+/// data section without interpretation. IDs remain signed at the API boundary
+/// because Go accepts negative handle/pseudo-column IDs and truncates them to
+/// the selected one- or four-byte physical metadata width.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RawRowColumn<'a> {
     /// Persisted column ID.
-    pub id: u32,
+    pub id: i64,
     /// Already encoded payload, or `None` for SQL `NULL`.
     pub value: Option<&'a [u8]>,
 }
@@ -94,7 +94,7 @@ pub fn encode_raw_row(
     let mut data_len = 0_usize;
     let mut large = false;
     for column in columns {
-        large |= column.id > u32::from(u8::MAX);
+        large |= column.id > i64::from(u8::MAX);
         if let Some(value) = column.value {
             data_len = data_len
                 .checked_add(value.len())
@@ -112,8 +112,13 @@ pub fn encode_raw_row(
     // Go uses sort.Sort on each partition. Unstable sorting preserves the
     // source's duplicate-ID behavior while keeping this metadata operation
     // independent of schema/typed values.
-    not_null.sort_unstable_by_key(|(id, _)| *id);
-    null.sort_unstable();
+    if large {
+        not_null.sort_unstable_by_key(|(id, _)| *id as u32);
+        null.sort_unstable_by_key(|id| *id as u32);
+    } else {
+        not_null.sort_unstable_by_key(|(id, _)| *id as u8);
+        null.sort_unstable_by_key(|id| *id as u8);
+    }
 
     let flags = if large { ROW_FLAG_LARGE } else { 0 };
     buffer.push(ROW_CODEC_VERSION);
@@ -123,10 +128,10 @@ pub fn encode_raw_row(
 
     if large {
         for (id, _) in &not_null {
-            buffer.extend_from_slice(&id.to_le_bytes());
+            buffer.extend_from_slice(&(*id as u32).to_le_bytes());
         }
         for id in &null {
-            buffer.extend_from_slice(&id.to_le_bytes());
+            buffer.extend_from_slice(&(*id as u32).to_le_bytes());
         }
     } else {
         for (id, _) in &not_null {

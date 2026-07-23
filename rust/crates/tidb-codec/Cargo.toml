@@ -14,6 +14,8 @@ workspace = true
 
 [dependencies]
 chrono.workspace = true
+chrono-tz.workspace = true
+crc32fast.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 
 [[test]]

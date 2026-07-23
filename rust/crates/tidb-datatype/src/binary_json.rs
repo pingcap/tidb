@@ -163,10 +163,23 @@ impl fmt::Display for BinaryJSONError {
 impl std::error::Error for BinaryJSONError {}
 
 impl BinaryJSON {
+    /// Reconstructs one value from TiDB's persisted `type code + value`
+    /// representation.
+    ///
+    /// Rowcodec already owns the exact value boundary through its offset
+    /// table, so this constructor deliberately preserves the bytes without
+    /// reparsing or normalizing the document.
+    pub fn from_encoded_parts(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
+        Self {
+            type_code,
+            value: value.into(),
+        }
+    }
+
     /// Reconstructs the exact internal type-code/payload pair stored by
     /// `Datum.UnmarshalJSON`.
     pub(crate) fn from_binary_parts(type_code: u8, value: Vec<u8>) -> Self {
-        Self { type_code, value }
+        Self::from_encoded_parts(type_code, value)
     }
 
     /// Constructs from an exact source type code and value payload.

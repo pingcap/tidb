@@ -242,7 +242,7 @@ pub fn encode_configured_row_value_typed(
     let entries = payloads
         .iter()
         .map(|(id, payload)| RawRowColumn {
-            id: *id,
+            id: i64::from(*id),
             value: Some(payload.as_slice()),
         })
         .collect::<Vec<_>>();
