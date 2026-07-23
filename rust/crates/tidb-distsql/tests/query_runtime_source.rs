@@ -17,6 +17,7 @@
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
@@ -27,6 +28,8 @@ use tidb_distsql::{
     CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE,
     INTERNAL_TXN_STATS_SOURCE,
 };
+use tidb_proto::KvrpcLockInfo;
+use tidb_txnkv::{wrap_cop_meet_lock, CopMeetLock, EventCallback};
 
 fn transport_request(metadata: tidb_distsql::KvRequestMetadata) -> TransportRequest {
     TransportRequest::new(
@@ -279,6 +282,76 @@ fn query_result_has_one_close_owner() {
     assert!(closed.get());
     assert!(result.is_closed());
     assert_eq!(result.next_raw().unwrap(), None);
+}
+
+#[test]
+fn select_client_options_deliver_typed_transaction_events() {
+    struct EventTransport {
+        callback: Option<EventCallback>,
+        response: Option<ResponseChannel<Vec<u8>>>,
+    }
+
+    impl QueryTransport for EventTransport {
+        type Response = ResponseChannel<Vec<u8>>;
+
+        fn set_event_callback(&mut self, callback: Option<EventCallback>) {
+            self.callback = callback;
+        }
+
+        fn send(
+            &mut self,
+            _request: &TransportRequest,
+            _dispatch: &QueryDispatch,
+        ) -> Result<Option<Self::Response>, String> {
+            self.callback.as_ref().expect("send event callback")(
+                wrap_cop_meet_lock(Some(CopMeetLock {
+                    lock_info: Some(KvrpcLockInfo {
+                        key: b"locked".to_vec(),
+                        ..KvrpcLockInfo::default()
+                    }),
+                })),
+            );
+            Ok(self.response.take())
+        }
+    }
+
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let callback_observation = Arc::clone(&observed);
+    let callback: EventCallback = Arc::new(move |event| {
+        callback_observation
+            .lock()
+            .expect("lock callback observation")
+            .push(
+                event
+                    .get_cop_meet_lock()
+                    .and_then(|event| event.lock_info.as_ref())
+                    .expect("lock event")
+                    .key
+                    .clone(),
+            );
+    });
+    let mut runtime = InjectedQueryRuntime::new(EventTransport {
+        callback: None,
+        response: Some(empty_response()),
+    });
+    let result = runtime
+        .select(
+            &request(StoreType::TiKv),
+            input(),
+            QueryResultContext::new(field_types(1), WarningCollector::new())
+                .with_event_callback(callback),
+        )
+        .expect("select with event callback");
+    drop(result);
+    let transport = runtime.into_transport();
+    assert!(
+        transport.callback.is_none(),
+        "send-scoped callback must be cleared"
+    );
+    assert_eq!(
+        observed.lock().expect("lock callback observation").as_slice(),
+        [b"locked".to_vec()]
+    );
 }
 
 #[test]

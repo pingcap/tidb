@@ -55,6 +55,7 @@ mod resource_group;
 mod retry;
 pub mod rpc;
 pub mod transaction;
+mod trxevents;
 mod txn_scope;
 mod txn_source;
 mod union_iter;
@@ -169,6 +170,10 @@ pub use rpc::{
     },
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
+};
+pub use trxevents::{
+    wrap_cop_meet_lock, CopMeetLock, EventCallback, EventType, TransactionEvent,
+    EVENT_TYPE_COP_MEET_LOCK,
 };
 pub use txn_scope::{TxnScopeVar, GLOBAL_TXN_SCOPE, LOCAL_TXN_SCOPE};
 pub use txn_source::{

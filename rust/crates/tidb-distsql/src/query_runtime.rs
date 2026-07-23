@@ -27,6 +27,7 @@ mod query_response;
 pub use query_response::{QueryResponse, QueryResponseError, QueryResultSubset, QuerySelectResult};
 
 use tidb_datatype::FieldType;
+use tidb_txnkv::EventCallback;
 
 use crate::{
     analyze_request_source, analyze_result_metadata, checksum_result_metadata,
@@ -65,10 +66,11 @@ pub struct QueryDispatch {
 /// context into the sole response owner. Bundling them prevents Select and
 /// SelectWithRuntimeStats from growing parallel argument lists for state that
 /// has the same lifetime and consumer.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct QueryResultContext {
     final_field_types: Vec<FieldType>,
     warnings: WarningCollector,
+    event_callback: Option<EventCallback>,
 }
 
 impl QueryResultContext {
@@ -78,7 +80,27 @@ impl QueryResultContext {
         Self {
             final_field_types,
             warnings,
+            event_callback: None,
         }
+    }
+
+    /// Installs the transaction-event callback passed through Go's
+    /// `kv.ClientSendOption` boundary.
+    #[must_use]
+    pub fn with_event_callback(mut self, callback: EventCallback) -> Self {
+        self.event_callback = Some(callback);
+        self
+    }
+}
+
+impl std::fmt::Debug for QueryResultContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("QueryResultContext")
+            .field("final_field_types", &self.final_field_types)
+            .field("warnings", &self.warnings)
+            .field("event_callback", &self.event_callback.is_some())
+            .finish()
     }
 }
 
@@ -86,6 +108,14 @@ impl QueryResultContext {
 pub trait QueryTransport {
     /// Raw response owner returned by this transport.
     type Response: QueryResponse;
+
+    /// Installs the callback from this send's client options.
+    ///
+    /// Transports without transaction events keep the default no-op. A
+    /// concrete transport must copy the callback into its response owner
+    /// during `send`; the runtime clears this transient slot immediately
+    /// afterward.
+    fn set_event_callback(&mut self, _callback: Option<EventCallback>) {}
 
     /// Sends one already-built request and returns its raw response owner.
     ///
@@ -100,6 +130,10 @@ pub trait QueryTransport {
 
 impl<T: QueryTransport + ?Sized> QueryTransport for &mut T {
     type Response = T::Response;
+
+    fn set_event_callback(&mut self, callback: Option<EventCallback>) {
+        (**self).set_event_callback(callback);
+    }
 
     fn send(
         &mut self,
@@ -260,7 +294,10 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
         {
             return Err(QueryRuntimeError::Cancelled);
         }
+        self.transport
+            .set_event_callback(result_context.event_callback.clone());
         let response = self.transport.send(&bound, &dispatch);
+        self.transport.set_event_callback(None);
         // The canonical carrier has Go's post-Send ctx.Err precedence over a
         // simultaneous transport failure or response.
         if bound

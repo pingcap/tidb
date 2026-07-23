@@ -17,6 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use prost::Message;
@@ -37,7 +38,7 @@ fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
 }
 use tidb_proto::{
     errorpb, metapb, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest,
-    CoprocessorResponse, CoprocessorScanDetailV2,
+    CoprocessorResponse, CoprocessorScanDetailV2, KvrpcLockInfo,
 };
 use tidb_txnkv::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
@@ -587,6 +588,14 @@ fn response(data: &[u8]) -> Vec<u8> {
     .encode_to_vec()
 }
 
+fn locked_response(lock: KvrpcLockInfo) -> Vec<u8> {
+    CoprocessorResponse {
+        locked: Some(lock),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
 fn connection_failure(
     address: &str,
     version: u64,
@@ -817,6 +826,53 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
                 stale_read: false,
             },
         ]
+    );
+}
+
+#[test]
+fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let lock = KvrpcLockInfo {
+        key: b"locked-key".to_vec(),
+        primary_lock: b"primary-key".to_vec(),
+        lock_version: 42,
+        ..KvrpcLockInfo::default()
+    };
+    let transport = transport(
+        Rc::clone(&calls),
+        [Ok(locked_response(lock.clone()))],
+        [location(1, "a", "z", "tikv-1:20160")],
+    );
+    let observed = Arc::new(Mutex::new(None));
+    let callback_observation = Arc::clone(&observed);
+    let callback: tidb_txnkv::EventCallback = Arc::new(move |event| {
+        *callback_observation.lock().expect("lock event observation") = event
+            .get_cop_meet_lock()
+            .and_then(|event| event.lock_info.clone());
+    });
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let request = transport_request(metadata("a", "z"));
+    let mut result = runtime
+        .select_with_runtime_stats(
+            &request,
+            SelectInput::default(),
+            QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new())
+                .with_event_callback(callback),
+            vec![1],
+            2,
+            true,
+        )
+        .expect("lazy locked response");
+
+    let _ = result
+        .next_raw()
+        .expect_err("scripted lock recovery cannot complete");
+    assert_eq!(
+        observed
+            .lock()
+            .expect("lock event observation")
+            .as_ref(),
+        Some(&lock)
     );
 }
 

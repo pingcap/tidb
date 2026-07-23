@@ -62,11 +62,16 @@ fn route_success_precedes_lock_delegation_but_paging_does_not() {
         .find("handle_locked_response")
         .map(|offset| locked + offset)
         .expect("lock delegate call");
+    let event_callback = tail[locked..]
+        .find("callback(tidb_txnkv::wrap_cop_meet_lock")
+        .map(|offset| locked + offset)
+        .expect("transaction event callback");
     let accepted = tail
         .find("accept_response")
         .expect("paging acceptance after lock handling");
     assert!(recorded < promoted);
-    assert!(promoted < delegated);
+    assert!(promoted < event_callback);
+    assert!(event_callback < delegated);
     assert!(delegated < accepted);
     assert!(tail[delegated..accepted].contains("return Ok(())"));
     assert!(tail[delegated..accepted].contains("DirectUnaryTransportError::LockRecovery(error)"));

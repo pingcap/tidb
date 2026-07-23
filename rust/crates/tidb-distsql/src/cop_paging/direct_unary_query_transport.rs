@@ -337,6 +337,7 @@ impl From<CopReadTaskError> for DirectUnaryTransportError {
 pub struct DirectUnaryQueryTransport<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    event_callback: Option<tidb_txnkv::EventCallback>,
     async_begin: Option<AsyncBegin<C>>,
     replica_read_seed: ReplicaReadSeed,
     config: DirectUnaryRuntimeConfig,
@@ -607,6 +608,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         Ok(Self {
             shared_runtime,
             locked_response_delegate,
+            event_callback: None,
             async_begin: None,
             replica_read_seed: ReplicaReadSeed::new(),
             config,
@@ -663,6 +665,10 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
     for DirectUnaryQueryTransport<C, L>
 {
     type Response = DirectUnaryQueryResponse<C, L>;
+
+    fn set_event_callback(&mut self, callback: Option<tidb_txnkv::EventCallback>) {
+        self.event_callback = callback;
+    }
 
     fn send(
         &mut self,
@@ -750,6 +756,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
+            event_callback: self.event_callback.clone(),
             async_begin: self.async_begin,
             cancellation,
             call,
@@ -868,6 +875,7 @@ fn task_region_ver_id(
 pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    event_callback: Option<tidb_txnkv::EventCallback>,
     async_begin: Option<AsyncBegin<C>>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
@@ -1393,6 +1401,13 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             Ok::<_, DirectUnaryTransportError>(())
         })??;
         if let Some(lock) = locked {
+            if let Some(callback) = &self.event_callback {
+                callback(tidb_txnkv::wrap_cop_meet_lock(Some(
+                    tidb_txnkv::CopMeetLock {
+                        lock_info: Some(lock.clone()),
+                    },
+                )));
+            }
             let action = self
                 .locked_response_delegate
                 .handle_locked_response(

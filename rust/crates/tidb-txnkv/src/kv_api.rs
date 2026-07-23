@@ -24,8 +24,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    AssertionOp, BatchGetOptions, BatchGetter, CacheDb, FlagsOp, GetOptions, Getter, Key, KeyFlags,
-    KvIterator, MppClient, OptionKey, Request, StagingHandle, ValueEntry, Version,
+    AssertionOp, BatchGetOptions, BatchGetter, CacheDb, EventCallback, FlagsOp, GetOptions, Getter,
+    Key, KeyFlags, KvIterator, MppClient, OptionKey, Request, StagingHandle, ValueEntry, Version,
 };
 
 /// Returns only the bytes from one point read.
@@ -153,7 +153,7 @@ pub struct ClientSendOption<W> {
     /// Whether a rate-limit action is active.
     pub rate_limit_action_enabled: bool,
     /// Transaction event callback.
-    pub event_callback: Option<Box<dyn FnMut(&str) + Send>>,
+    pub event_callback: Option<EventCallback>,
     /// Whether execution information is collected.
     pub collect_execution_info: bool,
     /// TiFlash replica-read policy.
