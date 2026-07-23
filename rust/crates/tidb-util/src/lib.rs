@@ -18,6 +18,7 @@
 //! added only when that package's production files, tests, and support
 //! obligations move together.
 
+pub mod backoff;
 pub mod checksum;
 pub mod disjointset;
 pub mod encrypt;
