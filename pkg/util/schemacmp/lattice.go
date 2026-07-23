@@ -36,6 +36,10 @@ const (
 	ErrMsgDistinctSingletons = "distinct singletons (%v vs %v)"
 	// ErrMsgIncompatibleType is the error message for incompatible type.
 	ErrMsgIncompatibleType = "incompatible mysql type (%v vs %v)"
+	// ErrMsgIncompatibleCharset is the error message for incompatible charset.
+	ErrMsgIncompatibleCharset = "incompatible charset (%v vs %v)"
+	// ErrMsgIncompatibleCollation is the error message for incompatible collation.
+	ErrMsgIncompatibleCollation = "incompatible collation (%v vs %v)"
 	// ErrMsgAtTupleIndex is the error message for at tuple index.
 	ErrMsgAtTupleIndex = "at tuple index %d: %v"
 	// ErrMsgAtMapKey is the error message for at map key.
@@ -76,6 +80,20 @@ func distinctSingletonsErrors(a, b any) *IncompatibleError {
 func incompatibleTypeError(a, b any) *IncompatibleError {
 	return &IncompatibleError{
 		Msg:  ErrMsgIncompatibleType,
+		Args: []any{a, b},
+	}
+}
+
+func incompatibleCharsetError(a, b any) *IncompatibleError {
+	return &IncompatibleError{
+		Msg:  ErrMsgIncompatibleCharset,
+		Args: []any{a, b},
+	}
+}
+
+func incompatibleCollationError(a, b any) *IncompatibleError {
+	return &IncompatibleError{
+		Msg:  ErrMsgIncompatibleCollation,
 		Args: []any{a, b},
 	}
 }
