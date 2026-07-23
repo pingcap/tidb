@@ -191,23 +191,25 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 }
 
 // Close finishes the upload.
-func (w *GCSWriter) Close() error {
+func (w *GCSWriter) Close() (err error) {
 	close(w.chunkCh)
 	w.wg.Wait()
 
-	// A failed part upload or a cancelled context leaves the initiated upload
-	// and its already-staged parts behind; abort it so they don't linger.
-	if err := w.err.Load(); err != nil {
-		return w.abort(err)
-	}
+	// A failed part upload, a cancelled context, or a failed finalize leaves the
+	// initiated upload and its staged parts behind; abort it so they don't linger.
+	defer func() {
+		if err != nil {
+			err = w.abort(err)
+		}
+	}()
 
+	if err = w.err.Load(); err != nil {
+		return err
+	}
 	if len(w.xmlMPUParts) == 0 {
 		return nil
 	}
-	if err := w.finalizeXMLMPU(); err != nil {
-		return w.abort(err)
-	}
-	return nil
+	return w.finalizeXMLMPU()
 }
 
 // abort cancels the multipart upload and returns cause, folding in any
