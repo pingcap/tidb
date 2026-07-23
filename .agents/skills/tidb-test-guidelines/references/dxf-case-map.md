@@ -65,7 +65,7 @@
 - `pkg/dxf/framework/scheduler/balancer_test.go` - dxf/framework/scheduler: Tests balance one task.
 - `pkg/dxf/framework/scheduler/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/dxf/framework/scheduler/nodes_test.go` - dxf/framework/scheduler: Tests maintain live nodes.
-- `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager scheduler ordering and batched cleanup dispatch.
+- `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager scheduler ordering, isolated cleanup batch and drain failure paths, and startup cleanup.
 - `pkg/dxf/framework/scheduler/scheduler_manager_test.go` - dxf/framework/scheduler: Tests cleanup routine and bounded cleanup-batch draining.
 - `pkg/dxf/framework/scheduler/scheduler_nokit_test.go` - dxf/framework/scheduler: Tests scheduler on next stage.
 - `pkg/dxf/framework/scheduler/scheduler_test.go` - dxf/framework/scheduler: Tests task fail in manager.
@@ -102,11 +102,11 @@
 ## pkg/dxf/importinto
 
 ### Tests
-- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batch cleanup groups task files into one scan per storage URI, uses live credentials, and redacts task metadata.
+- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batched file cleanup, storage credential handling, metadata redaction, and cleanup metering success, cancellation, and panic recovery.
 - `pkg/dxf/importinto/collect_conflicts_test.go` - dxf/importinto: Tests collect conflicts step executor.
 - `pkg/dxf/importinto/conflict_resolution_test.go` - dxf/importinto: Tests conflict resolution step executor.
 - `pkg/dxf/importinto/encode_and_sort_operator_test.go` - dxf/importinto: Tests encode and sort operator.
-- `pkg/dxf/importinto/job_testkit_test.go` - dxf/importinto: Tests task submission and exact GetJobLastUpdateTime lookups across active/history subtasks.
+- `pkg/dxf/importinto/job_testkit_test.go` - dxf/importinto: Tests cross-keyspace task submission/cancellation and exact GetJobLastUpdateTime lookups across active/history subtasks.
 - `pkg/dxf/importinto/metrics_test.go` - dxf/importinto: Tests metric manager.
 - `pkg/dxf/importinto/planner_test.go` - dxf/importinto: Tests logical plan.
 - `pkg/dxf/importinto/proto_test.go` - dxf/importinto: Tests KV conflict info aggregation.

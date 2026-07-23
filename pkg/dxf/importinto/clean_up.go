@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -44,6 +45,10 @@ var (
 	_ scheduler.CleanUpRoutine      = (*ImportCleanUp)(nil)
 	_ scheduler.BatchCleanUpRoutine = (*ImportCleanUp)(nil)
 )
+
+// Metering sends use little CPU and memory, so four concurrent workers are a
+// temporary conservative setting to improve throughput without unbounded pressure.
+const cleanUpMeteringConcurrency = 4
 
 // ImportCleanUp implements scheduler.BatchCleanUpRoutine.
 type ImportCleanUp struct {
@@ -63,6 +68,8 @@ type cleanUpFileGroup struct {
 	nonPartitionedDirs []string
 	taskIDs            []int64
 }
+
+type sendMeterOnCleanUpFunc func(context.Context, *proto.Task, *zap.Logger) error
 
 // CleanUpBatch implements scheduler.BatchCleanUpRoutine.
 // Global-sort files are partitioned by task ID, but finding them requires a scan
@@ -124,14 +131,44 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 		}
 	}
 
-	for _, task := range meterTasks {
-		logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-		if err := sendMeterOnCleanUp(ctx, task, logger); err != nil {
-			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
-			return err
+	return sendMeterOnCleanUpInParallel(ctx, meterTasks, sendMeterOnCleanUp)
+}
+
+func sendMeterOnCleanUpInParallel(ctx context.Context, tasks []*proto.Task, sendFn sendMeterOnCleanUpFunc) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	taskCh := make(chan *proto.Task)
+	workerCount := min(cleanUpMeteringConcurrency, len(tasks))
+	for range workerCount {
+		eg.Go(func() error {
+			for task := range taskCh {
+				logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+				if err := sendFn(egCtx, task, logger); err != nil {
+					logger.Warn("failed to send metering data on cleanup", zap.Error(err))
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	for _, task := range tasks {
+		select {
+		case <-egCtx.Done():
+			cancelErr := egCtx.Err()
+			close(taskCh)
+			if err := eg.Wait(); err != nil {
+				return err
+			}
+			return cancelErr
+		case taskCh <- task:
 		}
 	}
-	return nil
+	close(taskCh)
+	return eg.Wait()
 }
 
 func cleanUpTableMode(ctx context.Context, taskMeta *TaskMeta) error {
