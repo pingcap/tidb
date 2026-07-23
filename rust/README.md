@@ -30,7 +30,7 @@ but does not replace reading or translating the source.
 | `crates/tidb-ast` | typed AST and canonical restore | `pkg/parser/ast/**` |
 | `crates/tidb-parser` | recursive-descent grammar | `pkg/parser/**_parser.go` |
 | `crates/tidb-hack` | zero-copy byte views and allocation-aware hash maps | `pkg/util/hack` |
-| `crates/tidb-util` | complete dependency-leaf utility packages | `pkg/util/{disjointset,zeropool,encrypt,checksum,intest,sqlescape,mathutil,naming}`, followed by whole utility packages only |
+| `crates/tidb-util` | complete dependency-leaf utility packages | `pkg/util/{disjointset,zeropool,encrypt,checksum,intest,sqlescape,mathutil,naming,size}`, followed by whole utility packages only |
 | `crates/tidb-datatype` | SQL scalar representation, charset, and collation | `pkg/parser/charset`, `pkg/util/collate`, `pkg/types/**`, later extracted TiKV query datatypes |
 | `crates/tidb-codec` | byte-compatible comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
 | `crates/tidb-txnkv` | complete KV contracts plus real PD/TiKV transaction runtime | `pkg/kv/**` and the required client-go transaction protocols |

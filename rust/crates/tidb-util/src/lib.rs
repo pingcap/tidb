@@ -25,5 +25,6 @@ pub mod intest;
 pub mod layered_io;
 pub mod mathutil;
 pub mod naming;
+pub mod size;
 pub mod sqlescape;
 pub mod zeropool;
