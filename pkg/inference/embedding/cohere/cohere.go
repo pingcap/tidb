@@ -83,6 +83,8 @@ func embeddingsEndpoint(configured string) (string, error) {
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
+// Cohere v3 and newer models require opts to include an "input_type" appropriate
+// for the current call, such as "search_document" or "search_query".
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
 	// ref: https://docs.cohere.com/v1/reference/embed

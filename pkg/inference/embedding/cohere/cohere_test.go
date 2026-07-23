@@ -59,7 +59,8 @@ func TestCohereEmbedder_Success(t *testing.T) {
 		assert.NoError(t, err)
 		assert.JSONEq(t, `{
 			"model": "embed-v4.0",
-			"texts": ["hello world", "test text", "sample input"]
+			"texts": ["hello world", "test text", "sample input"],
+			"input_type": "search_document"
 		}`, string(body))
 
 		w.Header().Set("Content-Type", "application/json")
@@ -75,7 +76,9 @@ func TestCohereEmbedder_Success(t *testing.T) {
 	})
 
 	texts := []string{"hello world", "test text", "sample input"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "embed-v4.0", texts, nil)
+	embeddings, err := embedder.CreateEmbeddings(context.Background(), "embed-v4.0", texts, map[string]any{
+		"input_type": "search_document",
+	})
 
 	require.NoError(t, err)
 	require.Len(t, embeddings, 3)

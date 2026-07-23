@@ -14,21 +14,6 @@
 
 package gemini
 
-// BatchRequest is the model for Gemini batch embeddings API request.
-type BatchRequest struct {
-	Requests []Request `json:"requests"`
-}
-
-// Request is the model for a single Gemini embeddings API request.
-type Request struct {
-	Model   string `json:"model"`
-	Content struct {
-		Parts []struct {
-			Text string `json:"text"`
-		} `json:"parts"`
-	} `json:"content"`
-}
-
 // BatchResponse is the model for Gemini batch embeddings API response.
 type BatchResponse struct {
 	Embeddings []struct {

@@ -14,12 +14,6 @@
 
 package tidbcloud
 
-// Request is the model for TiDB Cloud Free embeddings API request.
-type Request struct {
-	Model string   `json:"model"`
-	Texts []string `json:"texts"`
-}
-
 // Response is the model for TiDB Cloud Free embeddings API response.
 type Response struct {
 	Embeddings [][]byte `json:"embeddings"` // Base64 encoded embeddings, will be decoded by Golang

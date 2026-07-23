@@ -95,6 +95,11 @@ func escapePathSegment(segment string) string {
 	return escaped
 }
 
+func logRequestError(apiKey string, err error) {
+	logutil.BgLogger().Error("TiDB Cloud Inference API request failed",
+		zap.String("error", base.SanitizeErrorText(err.Error(), apiKey)))
+}
+
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
@@ -127,8 +132,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	fullURL, err := embeddingsEndpoint(baseURL, billingID)
 	if err != nil {
-		logutil.BgLogger().Error("TiDB Cloud Inference API request failed",
-			zap.String("error", base.SanitizeErrorText(err.Error(), apiKey)))
+		logRequestError(apiKey, err)
 		// Do not return error directly to users to avoid exposing URLs.
 		return nil, fmt.Errorf("failed to request TiDB Cloud Inference Service")
 	}
@@ -138,15 +142,13 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		"texts": texts,
 	}, opts))
 	if err != nil {
-		logutil.BgLogger().Error("TiDB Cloud Inference API request failed",
-			zap.String("error", base.SanitizeErrorText(err.Error(), apiKey)))
+		logRequestError(apiKey, err)
 		return nil, fmt.Errorf("unexpected marshal request error")
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		logutil.BgLogger().Error("TiDB Cloud Inference API request failed",
-			zap.String("error", base.SanitizeErrorText(err.Error(), apiKey)))
+		logRequestError(apiKey, err)
 		// Do not return error directly to users to avoid exposing URLs
 		return nil, fmt.Errorf("failed to request TiDB Cloud Inference Service")
 	}
@@ -156,8 +158,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		logutil.BgLogger().Error("TiDB Cloud Inference API request failed",
-			zap.String("error", base.SanitizeErrorText(err.Error(), apiKey)))
+		logRequestError(apiKey, err)
 		if ctx.Err() != nil {
 			return nil, context.Cause(ctx)
 		}
@@ -168,8 +169,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	body, err := base.ReadResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
 	if err != nil {
-		logutil.BgLogger().Error("TiDB Cloud Inference API request failed",
-			zap.String("error", base.SanitizeErrorText(err.Error(), apiKey)))
+		logRequestError(apiKey, err)
 		if ctx.Err() != nil {
 			return nil, context.Cause(ctx)
 		}
@@ -213,11 +213,11 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	for idx, item := range respObj.Embeddings {
 		// item.Embedding is []byte. During JSON unmarshal,
 		// it is already base64 decoded by Golang from base64.
-		e, err := base.DecodeFloat32ArrayBytes(item)
+		embedding, err := base.DecodeFloat32ArrayBytes(item)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode embedding for index %d: %w", idx, err)
 		}
-		embeddings[idx] = e
+		embeddings[idx] = embedding
 	}
 	return embeddings, nil
 }

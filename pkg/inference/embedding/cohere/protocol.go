@@ -14,12 +14,6 @@
 
 package cohere
 
-// Request is the model for Cohere embeddings API request.
-type Request struct {
-	Model string   `json:"model"`
-	Texts []string `json:"texts"`
-}
-
 // Response is the model for Cohere embeddings API response.
 type Response struct {
 	Embeddings [][]float32 `json:"embeddings"`

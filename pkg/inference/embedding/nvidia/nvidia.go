@@ -191,11 +191,11 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		}
 		// item.Embedding is []byte. During JSON unmarshal,
 		// it is already base64 decoded by Golang from base64.
-		e, err := base.DecodeFloat32ArrayBytes(item.Embedding)
+		embedding, err := base.DecodeFloat32ArrayBytes(item.Embedding)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode embedding for index %d: %w", item.Index, err)
 		}
-		embeddings[item.Index] = e
+		embeddings[item.Index] = embedding
 	}
 	return embeddings, nil
 }
