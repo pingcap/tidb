@@ -2411,13 +2411,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			},
 		}
 		if batchResp.GetDataMergedIntoResponse() {
-			// The task's result is already carried by the main response's data,
-			// so retain its execution details as unconsumed stats instead of
-			// handing an empty response to the result consumer.
-			if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
-				return batchRespList, nil, err
-			}
-			worker.stats.append(resp.detail)
+			// The task's data and execution details are already aggregated
+			// into the main response by the store's finalizer, and the main
+			// response's details are collected exactly once in
+			// handleCopResponse. The per-task copy on this ACK is wire/debug
+			// metadata only; collecting it here would double count scan and
+			// time totals in runtime stats and runaway tracking.
 			continue
 		}
 		task := batchedTask.task

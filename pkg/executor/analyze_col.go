@@ -118,11 +118,12 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	// full-sampling analyze, whose consumers derive everything (histograms,
 	// TopN, correlation) from the collected samples and never rely on scan
 	// order, and keep-order would rule out store batching.
+	concurrency, storeBatchSize := analyzeBatchScanBudget(e.concurrency, e.ctx.GetSessionVars().StoreBatchSize)
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
-		SetConcurrency(e.concurrency).
-		SetStoreBatchSize(e.ctx.GetSessionVars().StoreBatchSize).
+		SetConcurrency(concurrency).
+		SetStoreBatchSize(storeBatchSize).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
@@ -135,6 +136,30 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		return nil, err
 	}
 	return result, nil
+}
+
+// maxAnalyzeStoreBatchSize caps the batched regions per analyze group at
+// TiKV's per-request mergeable-task maximum (5 physical scans: the primary
+// region plus 4 batched ones). Exceeding it would leave the excess children
+// unanswered by the store and force per-region retries for normal traffic.
+const maxAnalyzeStoreBatchSize = 4
+
+// analyzeBatchScanBudget fits the store-batch size and the outer iterator
+// concurrency of a full-sampling analyze request into the configured analyze
+// scan concurrency. A batched group makes the store scan its primary region
+// plus every batched region concurrently, so admission must count a group by
+// its physical width (children + 1) rather than as one task; the returned
+// values keep concurrency × (batch+1) within the pre-batching budget.
+// concurrency <= 1 degenerates to unbatched requests.
+func analyzeBatchScanBudget(concurrency, storeBatchSize int) (int, int) {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if storeBatchSize <= 0 {
+		return concurrency, 0
+	}
+	width := min(storeBatchSize+1, concurrency, maxAnalyzeStoreBatchSize+1)
+	return max(1, concurrency/width), width - 1
 }
 
 func hasPkHist(handleCols plannerutil.HandleCols) bool {

@@ -1145,11 +1145,13 @@ func TestHandleBatchCopResponseMergedAndUnansweredTasks(t *testing.T) {
 	require.Equal(t, inlineData, []byte(responses[0].pbResp.Data))
 	require.Equal(t, uint64(2), batched.Load())
 	require.Zero(t, fallback.Load())
-	collectedStats := (&copIterator{stats: executionStats}).CollectUnconsumedCopRuntimeStats()
-	require.Len(t, collectedStats, 1)
-	require.Equal(t, int64(7), collectedStats[0].ScanDetail.ProcessedKeys)
-	require.Equal(t, time.Millisecond, collectedStats[0].TimeDetail.ProcessTime)
-	require.Equal(t, int64(7), runawayChecker.processedKeys.Load())
+	// A merged task's execution details are aggregated into the main
+	// response by the store and collected once in handleCopResponse; the
+	// per-task copy on the ACK must NOT be collected again here, or scan
+	// and time totals would double count in runtime stats and runaway
+	// tracking.
+	require.Empty(t, (&copIterator{stats: executionStats}).CollectUnconsumedCopRuntimeStats())
+	require.Zero(t, runawayChecker.processedKeys.Load())
 
 	unansweredTask := &copTask{taskID: 3}
 	responses, remains, err = worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{

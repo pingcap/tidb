@@ -25,7 +25,7 @@ import (
 	clientgoconfig "github.com/tikv/client-go/v2/config"
 )
 
-func TestRUEMASeedAndConverge(t *testing.T) {
+func TestRUEMA(t *testing.T) {
 	t.Run("seeded prediction", func(t *testing.T) {
 		const pageSizeBytes uint64 = 4 * 1024 * 1024
 		e := newRUEMA(pageSizeBytes)
@@ -50,37 +50,89 @@ func TestRUEMASeedAndConverge(t *testing.T) {
 		require.InDelta(t, float64(1_000_000), float64(e.Predict()), 1,
 			"steady input: prediction stays at the input")
 	})
-}
 
-func TestRUEMATracksShift(t *testing.T) {
-	e := newRUEMA(0)
-	now := time.Now()
-	for i := 0; i < 5; i++ {
-		e.Observe(100_000, now.Add(time.Duration(i)*100*time.Millisecond))
-	}
-	require.InDelta(t, float64(100_000), float64(e.Predict()), 1,
-		"EMA should have converged to 100K after 5 identical samples")
+	t.Run("tracks shift", func(t *testing.T) {
+		e := newRUEMA(0)
+		now := time.Now()
+		for i := 0; i < 5; i++ {
+			e.Observe(100_000, now.Add(time.Duration(i)*100*time.Millisecond))
+		}
+		require.InDelta(t, float64(100_000), float64(e.Predict()), 1,
+			"EMA should have converged to 100K after 5 identical samples")
 
-	// Shift workload to 500K per RPC. After enough new samples with tau=1s
-	// and 100 ms gaps, the EMA should follow the new regime.
-	for i := 5; i < 20; i++ {
-		e.Observe(500_000, now.Add(time.Duration(i)*100*time.Millisecond))
-	}
-	require.Greater(t, e.Predict(), uint64(400_000),
-		"EMA should have shifted well above the old steady value")
-	require.LessOrEqual(t, e.Predict(), uint64(500_000),
-		"EMA should not overshoot the new steady value")
-}
+		// Shift workload to 500K per RPC. After enough new samples with tau=1s
+		// and 100 ms gaps, the EMA should follow the new regime.
+		for i := 5; i < 20; i++ {
+			e.Observe(500_000, now.Add(time.Duration(i)*100*time.Millisecond))
+		}
+		require.Greater(t, e.Predict(), uint64(400_000),
+			"EMA should have shifted well above the old steady value")
+		require.LessOrEqual(t, e.Predict(), uint64(500_000),
+			"EMA should not overshoot the new steady value")
+	})
 
-func TestRUEMALargeGapCollapsesWeight(t *testing.T) {
-	e := newRUEMA(0)
-	now := time.Now()
-	e.Observe(100_000, now)
-	// A gap much larger than tau (default 1s) means alpha ≈ 1, so the new
-	// sample should dominate the EMA almost entirely.
-	e.Observe(1_000_000, now.Add(10*time.Second))
-	require.InDelta(t, float64(1_000_000), float64(e.Predict()), 1_000,
-		"a gap >> tau should collapse the older sample's weight")
+	t.Run("large gap collapses weight", func(t *testing.T) {
+		e := newRUEMA(0)
+		now := time.Now()
+		e.Observe(100_000, now)
+		// A gap much larger than tau (default 1s) means alpha ≈ 1, so the new
+		// sample should dominate the EMA almost entirely.
+		e.Observe(1_000_000, now.Add(10*time.Second))
+		require.InDelta(t, float64(1_000_000), float64(e.Predict()), 1_000,
+			"a gap >> tau should collapse the older sample's weight")
+	})
+
+	t.Run("concurrent observe and predict", func(t *testing.T) {
+		// One EMA per copIterator is shared by multiple workers, so Observe and
+		// Predict must be race-free. Run with `go test -race` to exercise the
+		// mutex; this test guarantees no panic/deadlock and that readiness is
+		// eventually observed from a reader goroutine.
+		e := newRUEMA(0)
+		const writers = 8
+		const iters = 200
+		done := make(chan struct{})
+		go func() {
+			// Reader: hammer Predict while writers fan in samples.
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_ = e.Predict()
+				}
+			}
+		}()
+		base := time.Now()
+		var wg sync.WaitGroup
+		for w := 0; w < writers; w++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for i := 0; i < iters; i++ {
+					e.Observe(uint64(100_000+id*1_000+i),
+						base.Add(time.Duration(i)*time.Millisecond))
+				}
+			}(w)
+		}
+		wg.Wait()
+		close(done)
+		require.Greater(t, e.Predict(), uint64(0), "prediction must be positive after observations")
+	})
+
+	t.Run("non-monotonic time", func(t *testing.T) {
+		// If for any reason a later observation carries an earlier timestamp
+		// (clock skew, test fixture), Observe must not blow up with a negative
+		// Δt. The behavior we want: treat the gap as zero and use the new
+		// sample only minimally.
+		e := newRUEMA(0)
+		now := time.Now()
+		e.Observe(100_000, now)
+		e.Observe(500_000, now.Add(-1*time.Second))
+		// With Δt clamped to 0, alpha = 0, so the EMA should stay at the first
+		// sample's value.
+		require.InDelta(t, float64(100_000), float64(e.Predict()), 1,
+			"negative Δt should be clamped so the new sample has ~zero weight")
+	})
 }
 
 func TestPagingResponseReadBytes(t *testing.T) {
@@ -128,56 +180,4 @@ func TestPagingResponseReadBytes(t *testing.T) {
 			require.Equal(t, want, pagingResponseReadBytes(resp))
 		})
 	}
-}
-
-func TestRUEMAConcurrentObserveAndPredict(t *testing.T) {
-	// One EMA per copIterator is shared by multiple workers, so Observe and
-	// Predict must be race-free. Run with `go test -race` to exercise the
-	// mutex; this test guarantees no panic/deadlock and that readiness is
-	// eventually observed from a reader goroutine.
-	e := newRUEMA(0)
-	const writers = 8
-	const iters = 200
-	done := make(chan struct{})
-	go func() {
-		// Reader: hammer Predict while writers fan in samples.
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				_ = e.Predict()
-			}
-		}
-	}()
-	base := time.Now()
-	var wg sync.WaitGroup
-	for w := 0; w < writers; w++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			for i := 0; i < iters; i++ {
-				e.Observe(uint64(100_000+id*1_000+i),
-					base.Add(time.Duration(i)*time.Millisecond))
-			}
-		}(w)
-	}
-	wg.Wait()
-	close(done)
-	require.Greater(t, e.Predict(), uint64(0), "prediction must be positive after observations")
-}
-
-func TestRUEMANonMonotonicTime(t *testing.T) {
-	// If for any reason a later observation carries an earlier timestamp
-	// (clock skew, test fixture), Observe must not blow up with a negative
-	// Δt. The behavior we want: treat the gap as zero and use the new
-	// sample only minimally.
-	e := newRUEMA(0)
-	now := time.Now()
-	e.Observe(100_000, now)
-	e.Observe(500_000, now.Add(-1*time.Second))
-	// With Δt clamped to 0, alpha = 0, so the EMA should stay at the first
-	// sample's value.
-	require.InDelta(t, float64(100_000), float64(e.Predict()), 1,
-		"negative Δt should be clamped so the new sample has ~zero weight")
 }
