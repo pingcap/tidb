@@ -279,8 +279,12 @@ type mockResponse struct {
 	batch int
 	ctx   sessionctx.Context
 	// intermediateOutputs is used to mock the intermediate output from coprocessor.
-	intermediateOutputs [][]*tipb.IntermediateOutput
-	closed              bool
+	intermediateOutputs       [][]*tipb.IntermediateOutput
+	closed                    bool
+	limiterWait               copr.LimiterWaitStats
+	limiterWaitReadAfterClose bool
+	unconsumedCopStats        []*copr.CopRuntimeStats
+	unconsumedReadAfterClose  bool
 	sync.Mutex
 }
 
@@ -292,6 +296,22 @@ func (resp *mockResponse) Close() error {
 	resp.closed = true
 	resp.count = 0
 	return nil
+}
+
+func (resp *mockResponse) GetLimiterWaitStats() copr.LimiterWaitStats {
+	resp.Lock()
+	defer resp.Unlock()
+
+	resp.limiterWaitReadAfterClose = resp.closed
+	return resp.limiterWait
+}
+
+func (resp *mockResponse) CollectUnconsumedCopRuntimeStats() []*copr.CopRuntimeStats {
+	resp.Lock()
+	defer resp.Unlock()
+
+	resp.unconsumedReadAfterClose = resp.closed
+	return resp.unconsumedCopStats
 }
 
 // Next implements kv.Response interface.

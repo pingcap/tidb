@@ -62,15 +62,9 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	backOffSleep["RegionMiss"] = time.Duration(200)
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
 		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
-		LimiterWait: copr.LimiterWaitStats{
-			TotalTime: time.Millisecond,
-			MaxTime:   time.Millisecond,
-		},
 	}, 0, false)
 	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(200))
-	require.Equal(t, time.Millisecond, sr.stats.limiterWait.TotalTime)
-	require.Equal(t, time.Millisecond, sr.stats.limiterWait.MaxTime)
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
@@ -79,15 +73,51 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	backOffSleep["RegionMiss"] = time.Duration(300)
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
 		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
-		LimiterWait: copr.LimiterWaitStats{
-			TotalTime: 2 * time.Millisecond,
-			MaxTime:   2 * time.Millisecond,
-		},
 	}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
-	require.Equal(t, 3*time.Millisecond, sr.stats.limiterWait.TotalTime)
-	require.Equal(t, 2*time.Millisecond, sr.stats.limiterWait.MaxTime)
+
+	limiterWaitResp := &mockResponse{
+		limiterWait: copr.LimiterWaitStats{
+			TotalTime: 5 * time.Millisecond,
+			MaxTime:   3 * time.Millisecond,
+		},
+		unconsumedCopStats: []*copr.CopRuntimeStats{
+			{
+				CopExecDetails: execdetails.CopExecDetails{
+					CalleeAddress: "late-callee",
+					BackoffSleep:  map[string]time.Duration{"RegionMiss": time.Millisecond},
+				},
+			},
+		},
+	}
+	sr.resp = limiterWaitResp
+	sr.stats = &selectResultRuntimeStats{}
+	require.NoError(t, sr.close())
+	require.True(t, limiterWaitResp.limiterWaitReadAfterClose)
+	require.True(t, limiterWaitResp.unconsumedReadAfterClose)
+	require.Equal(t, limiterWaitResp.limiterWait, sr.stats.limiterWait)
+	require.Equal(t, time.Millisecond, sr.stats.backoffSleep["RegionMiss"])
+	require.Contains(t,
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(sr.rootPlanID).String(),
+		"limiter_wait:{total:5ms, max:3ms}")
+
+	noRuntimeStatsResp := &mockResponse{
+		limiterWait: copr.LimiterWaitStats{
+			TotalTime: time.Millisecond,
+			MaxTime:   time.Millisecond,
+		},
+	}
+	noRuntimeStatsResult := selectResult{
+		ctx:        &distsqlctx.DistSQLContext{},
+		resp:       noRuntimeStatsResp,
+		rootPlanID: sr.rootPlanID,
+	}
+	require.NotPanics(t, func() {
+		require.NoError(t, noRuntimeStatsResult.close())
+	})
+	require.True(t, noRuntimeStatsResp.closed)
+	require.Nil(t, noRuntimeStatsResult.stats)
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {
