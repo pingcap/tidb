@@ -1047,7 +1047,8 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 
 // TestTryColumnEstimateGuards verifies that tryColumnEstimateForSingleColRanges
 // bails out (returns false) for partial indexes, MV indexes, and single-column
-// unique indexes on point probes, deferring to the index-based estimation path
+// unique indexes whose range set contains a point probe (including mixed
+// point + interval range sets), deferring to the index-based estimation path
 // in each case.
 func TestTryColumnEstimateGuards(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -1137,6 +1138,25 @@ func TestTryColumnEstimateGuards(t *testing.T) {
 	require.NoError(t, err)
 	// Column path was taken: cache now has an entry for the column.
 	require.NotNil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+
+	// Mixed point + interval ranges on the unique index (a = 1 OR a BETWEEN 3
+	// AND 7): the guard must still bail out so the point probe keeps the index
+	// path's "exactly 1 row" guarantee. Stale stats make the difference
+	// observable: with the realtime count at twice the histogram total, the
+	// column path would scale the point estimate by the increase factor
+	// (1 -> 2), while the index path pins it at 1 and only scales the interval
+	// portion.
+	uniqStatsTbl.RealtimeCount = 20
+	uniqStatsTbl.ModifyCount = 10
+	mixedRanges := append(getRange(1, 1), getRange(3, 7)...)
+	mixedSctx := mock.NewContext()
+	mixedResult, err := cardinality.GetRowCountByIndexRanges(mixedSctx, &uniqStatsTbl.HistColl, idxID, mixedRanges, nil)
+	require.NoError(t, err)
+	// Point probe contributes exactly 1 (no increase factor); interval [3, 7]
+	// covers 5 histogram rows scaled by the increase factor 20/10 = 2.
+	require.Equal(t, 11.0, mixedResult.Est)
+	// Guard fired: the index path was used and no column estimate was cached.
+	require.Nil(t, mixedSctx.GetSessionVars().StmtCtx.ColEstimateCache)
 
 	// Asymmetric bounds: range intersection (fix control 54337) can produce index
 	// ranges whose LowVal and HighVal have different lengths, e.g. intersecting

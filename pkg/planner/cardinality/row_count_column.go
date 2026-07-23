@@ -35,10 +35,9 @@ func init() {
 }
 
 // colEstimateCacheKey identifies a column estimate lookup. realtimeCount and
-// modifyCount are included because they affect the estimate through out-of-range
-// and uniform-distribution fallback logic (IsLastBucketEndValueUnderrepresented,
-// estimateRowCountWithUniformDistribution, OutOfRangeRowCount), and through
-// GetIncreaseFactor which is applied per range inside getColumnRowCount.
+// modifyCount are included because they affect the estimate through the
+// out-of-range and uniform-distribution fallback logic, and through the
+// table-growth increase factor applied per range.
 //
 // TODO: remove realtimeCount and modifyCount from the key. Two possible routes:
 //  1. Pin the stats snapshot per statement (suggested by @qw4990 in #67098):
@@ -273,26 +272,24 @@ func tryColumnEstimateForSingleColRanges(
 	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colInfoID) {
 		return statistics.RowEstimate{}, false
 	}
-	// For a single-column unique index where all ranges are non-null point
-	// probes, the index-based path returns exactly 1 per range, which is more
-	// accurate than histogram estimation. Bail out so the caller can use that
-	// path instead. Multi-column unique indexes are not eligible because
-	// single-column ranges don't cover the full index, so the "exactly 1"
-	// guarantee does not apply. Column nullability does not matter: a unique
-	// index only enforces uniqueness on non-null values, but IsPointNonNullable
-	// already filters out NULL ranges, so any range that survives is a
-	// non-null point and the unique constraint applies.
+	// For a single-column unique index, the index-based path returns exactly 1
+	// for every non-null point probe, which is more accurate than histogram
+	// estimation (the histogram cannot know about uniqueness, and the increase
+	// factor would scale the point estimate above 1 on stale stats). Bail out
+	// if any range is a non-null point so those probes keep the uniqueness
+	// guarantee; mixed range sets (e.g. a = 1 OR a BETWEEN 10 AND 20) give up
+	// the column estimate for their interval portion as the price. Multi-column
+	// unique indexes are not eligible because single-column ranges don't cover
+	// the full index, so the "exactly 1" guarantee does not apply. Column
+	// nullability does not matter: a unique index only enforces uniqueness on
+	// non-null values, but IsPointNonNullable already filters out NULL ranges,
+	// so any range it accepts is a non-null point and the constraint applies.
 	if len(idx.Info.Columns) == 1 && idx.Info.Unique {
 		tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
-		allPoints := true
 		for _, r := range indexRanges {
-			if !r.IsPointNonNullable(tc) {
-				allPoints = false
-				break
+			if r.IsPointNonNullable(tc) {
+				return statistics.RowEstimate{}, false
 			}
-		}
-		if allPoints {
-			return statistics.RowEstimate{}, false
 		}
 	}
 	// Compute or retrieve from cache.
@@ -480,14 +477,17 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
 func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) statistics.RowEstimate {
-	// TODO: Track min/max range for column estimates, currently only used for indexes.
 	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
 	}
 	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))
-	// Only add TopN count to the main estimate, keep min/max estimates from histogram
-	histBetweenCnt.Est += topNCnt
+	// TopN counts are exact observed frequencies, so they shift the whole
+	// estimate band: add to Est, MinEst, and MaxEst alike, matching
+	// betweenRowCountOnIndex. Column min/max now feeds index estimation via
+	// tryColumnEstimateForSingleColRanges, so the fields must stay consistent
+	// between the two paths.
+	histBetweenCnt.AddAll(topNCnt)
 	return histBetweenCnt
 }
 
