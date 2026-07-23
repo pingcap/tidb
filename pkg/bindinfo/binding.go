@@ -102,7 +102,28 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
+<<<<<<< HEAD
 	return time.Since(updateTime), nil
+=======
+	// When the domain is initializing, the bind will be nil.
+	if sctx.Value(SessionBindInfoKeyType) == nil {
+		return
+	}
+	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
+	if intest.InTest {
+		// Prepared statements may cache binding info before AST rewrites.
+		if cache != nil && info == nil {
+			return cache.binding, cache.matched, cache.scope
+		}
+		binding, matched, scope = matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+		assertMatchSQLBinding(cache, matched, binding, scope)
+		return
+	}
+	if cache != nil {
+		return cache.binding, cache.matched, cache.scope
+	}
+	return matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+>>>>>>> 5ccce269d2b (planner: fix the global binding is not working when using Prepared Statement with "select ... as col ... group by col" (#69766))
 }
 
 // Bindings represents a sql bind record retrieved from the storage.

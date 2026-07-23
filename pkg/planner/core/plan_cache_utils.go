@@ -133,6 +133,16 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+<<<<<<< HEAD
+=======
+	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
+	var bindingInfo bindinfo.BindingMatchInfo
+	if isPrepStmt {
+		// PlanBuilder may rewrite the prepared AST, so keep the original binding key.
+		_, bindingInfo.NoDBDigest = bindinfo.NormalizeStmtForBinding(prepared.Stmt, "", true)
+		bindingInfo.TableNames = bindinfo.CollectTableNames(prepared.Stmt)
+	}
+>>>>>>> 5ccce269d2b (planner: fix the global binding is not working when using Prepared Statement with "select ... as col ... group by col" (#69766))
 
 	var (
 		cacheable bool
@@ -217,6 +227,11 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+<<<<<<< HEAD
+=======
+		HasUsePlanCacheHint: hasUsePlanCacheHint,
+		BindingInfo:         bindingInfo,
+>>>>>>> 5ccce269d2b (planner: fix the global binding is not working when using Prepared Statement with "select ... as col ... group by col" (#69766))
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
