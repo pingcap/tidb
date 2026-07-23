@@ -1919,9 +1919,9 @@ func (worker *copIteratorWorker) setRequestAttemptAdmission(req *tikvrpc.Request
 
 	req.RequestAttemptAdmission = func(ctx context.Context, storeID uint64) (func(), error) {
 		limiter := requestLimiter
+		failpoint.InjectCall("onBeforeAcquireCoprRequestLimiter", req, storeID)
 		if queryLimiter != nil {
 			limiter = queryLimiter.GetStoreLimiter(storeID)
-			failpoint.InjectCall("onBeforeAcquireQueryCopStoreLimiter", req, storeID)
 		}
 		if limiter == nil {
 			return nil, nil

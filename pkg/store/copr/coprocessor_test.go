@@ -85,11 +85,14 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 		release func()
 		err     error
 	}
+	secondStarted := make(chan struct{})
 	secondResult := make(chan admissionResult, 1)
 	go func() {
+		close(secondStarted)
 		release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
 		secondResult <- admissionResult{release: release, err: err}
 	}()
+	<-secondStarted
 	select {
 	case <-secondResult:
 		require.Fail(t, "second per-store admission should wait")
@@ -115,6 +118,58 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 	require.NotNil(t, release)
 	require.False(t, requestLimiter.TryAcquire(), "request-local limiter must remain the fallback")
 	release()
+
+	t.Run("CanceledContext", func(t *testing.T) {
+		limiter := kv.NewCoprRequestLimiter(1)
+		require.True(t, limiter.TryAcquire())
+		worker := &copIteratorWorker{
+			req:      &kv.Request{CoprRequestLimiter: limiter},
+			finishCh: make(chan struct{}),
+		}
+		rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+		waitStats := worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		release, err := rpcReq.RequestAttemptAdmission(ctx, 42)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, release)
+		require.True(t, waitStats.snapshot().IsZero())
+
+		limiter.Release()
+		require.True(t, limiter.TryAcquire(), "canceled admission must not leak a token")
+		limiter.Release()
+	})
+
+	t.Run("FinishedIterator", func(t *testing.T) {
+		limiter := kv.NewCoprRequestLimiter(1)
+		require.True(t, limiter.TryAcquire())
+		finishCh := make(chan struct{})
+		close(finishCh)
+		worker := &copIteratorWorker{
+			req:      &kv.Request{CoprRequestLimiter: limiter},
+			finishCh: finishCh,
+		}
+		rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+		waitStats := worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+
+		release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+		require.ErrorIs(t, err, errCoprRequestLimiterFinished)
+		require.Nil(t, release)
+		require.True(t, waitStats.snapshot().IsZero())
+
+		limiter.Release()
+		require.True(t, limiter.TryAcquire(), "finished admission must not leak a token")
+		limiter.Release()
+	})
+
+	aggregateStats := &requestAttemptAdmissionWaitStats{}
+	aggregateStats.record(time.Millisecond)
+	aggregateStats.record(3 * time.Millisecond)
+	require.Equal(t, LimiterWaitStats{
+		TotalTime: 4 * time.Millisecond,
+		MaxTime:   3 * time.Millisecond,
+	}, aggregateStats.snapshot())
 
 	rpcReq.RequestAttemptAdmission = nil
 	worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiFlash})

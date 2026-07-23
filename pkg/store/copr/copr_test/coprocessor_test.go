@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -219,7 +220,7 @@ func TestQueryCopStoreLimiterLimitsSameStoreCoprRequests(t *testing.T) {
 	}
 	defer releaseFirst()
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeAcquireQueryCopStoreLimiter", func(req *tikvrpc.Request, storeID uint64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeAcquireCoprRequestLimiter", func(req *tikvrpc.Request, storeID uint64) {
 		copReq, ok := req.Req.(*coprocessor.Request)
 		if !ok || copReq.ConnectionId != targetConnID {
 			return
@@ -294,6 +295,112 @@ func TestQueryCopStoreLimiterLimitsSameStoreCoprRequests(t *testing.T) {
 	require.NoError(t, <-done)
 	require.GreaterOrEqual(t, sendCount.Load(), int64(2))
 	require.Equal(t, int64(1), maxActive.Load())
+}
+
+func TestRequestLocalCoprLimiterLimitsConcurrentRequests(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=8")
+	tk.MustExec("set @@tidb_query_cop_store_limit=0")
+	tk.MustExec("set @@tidb_enable_paging=off")
+	targetConnID := tk.Session().GetSessionVars().ConnectionID
+
+	tk.MustExec("create table t (id int primary key, v int)")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	tk.MustQuery("split table t by (20), (40), (60), (80)").Check(testkit.Rows("4 1"))
+	tk.MustQuery("select sum(v) from t where id >= 0").Check(testkit.Rows("4950"))
+
+	requestLimiter := kv.NewCoprRequestLimiter(1)
+	var unexpectedQueryLimiter atomic.Bool
+	setRequestLimiter := func(req *kv.Request) {
+		if req.ConnID != targetConnID {
+			return
+		}
+		if req.QueryCopStoreLimiter != nil {
+			unexpectedQueryLimiter.Store(true)
+		}
+		req.CoprRequestLimiter = requestLimiter
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker"))
+	}()
+
+	enteredFirstRequest := make(chan struct{})
+	enteredSecondAcquire := make(chan struct{})
+	releaseFirstRequest := make(chan struct{})
+	var firstRequestBlocked atomic.Bool
+	var firstRequestReleased atomic.Bool
+	var acquireCount atomic.Int64
+	var sendCount atomic.Int64
+	releaseFirst := func() {
+		if firstRequestReleased.CompareAndSwap(false, true) {
+			close(releaseFirstRequest)
+		}
+	}
+	defer releaseFirst()
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeAcquireCoprRequestLimiter", func(req *tikvrpc.Request, _ uint64) {
+		copReq, ok := req.Req.(*coprocessor.Request)
+		if !ok || copReq.ConnectionId != targetConnID {
+			return
+		}
+		if acquireCount.Add(1) == 2 {
+			close(enteredSecondAcquire)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
+		copReq, ok := req.Req.(*coprocessor.Request)
+		if !ok || copReq.ConnectionId != targetConnID {
+			return
+		}
+		sendCount.Add(1)
+		if firstRequestBlocked.CompareAndSwap(false, true) {
+			close(enteredFirstRequest)
+			<-releaseFirstRequest
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		ctx = context.WithValue(ctx, "CheckSelectRequestHook", setRequestLimiter)
+		rs, err := tk.Session().ExecuteInternal(ctx, "select sum(v) from t where id >= 0")
+		if err != nil {
+			done <- err
+			return
+		}
+		_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+		if closeErr := rs.Close(); err == nil {
+			err = closeErr
+		}
+		done <- err
+	}()
+	select {
+	case <-enteredFirstRequest:
+	case err := <-done:
+		require.NoError(t, err)
+		require.Fail(t, "query finished before sending the first cop request")
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "timeout waiting for the first cop request")
+	}
+	select {
+	case <-enteredSecondAcquire:
+	case err := <-done:
+		require.NoError(t, err)
+		require.Fail(t, "query finished before the second request entered the request-local limiter")
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "timeout waiting for the second cop request to enter the request-local limiter")
+	}
+	require.Equal(t, int64(1), sendCount.Load())
+
+	releaseFirst()
+	require.NoError(t, <-done)
+	require.GreaterOrEqual(t, sendCount.Load(), int64(2))
+	require.False(t, unexpectedQueryLimiter.Load())
 }
 
 func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
