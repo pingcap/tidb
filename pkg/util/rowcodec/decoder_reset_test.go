@@ -55,3 +55,33 @@ func TestChunkDecoderReset(t *testing.T) {
 	require.Same(t, location, decoder.loc)
 	require.NotNil(t, decoder.defDatum)
 }
+
+func TestChunkDecoderReuseConfigBuffers(t *testing.T) {
+	oldColumns := []ColInfo{
+		{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Ft: types.NewFieldType(mysql.TypeVarchar)},
+		{ID: 3, Ft: types.NewFieldType(mysql.TypeBlob)},
+	}
+	oldHandleIDs := make([]int64, 2, 4)
+	oldHandleIDs[0], oldHandleIDs[1] = 1, 2
+	decoder := NewChunkDecoder(oldColumns, oldHandleIDs, nil, time.UTC)
+
+	columns, handleIDs := decoder.ReuseConfigBuffers(1)
+	require.Len(t, columns, 1)
+	require.Empty(t, handleIDs)
+	require.Same(t, oldColumns[0].Ft, columns[0].Ft)
+	require.Nil(t, oldColumns[1].Ft)
+	require.Nil(t, oldColumns[2].Ft)
+
+	columns[0] = ColInfo{ID: 4, Ft: types.NewFieldType(mysql.TypeFloat)}
+	handleIDs = append(handleIDs, 4)
+	require.Equal(t, int64(4), oldHandleIDs[0])
+
+	decoder.Reset(columns, handleIDs, nil, time.UTC)
+	grownColumns, grownHandleIDs := decoder.ReuseConfigBuffers(3)
+	require.Len(t, grownColumns, 3)
+	require.Empty(t, grownHandleIDs)
+	require.Equal(t, int64(4), grownColumns[0].ID)
+	require.Nil(t, grownColumns[1].Ft)
+	require.Nil(t, grownColumns[2].Ft)
+}

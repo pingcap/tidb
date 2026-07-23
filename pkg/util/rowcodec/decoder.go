@@ -214,6 +214,21 @@ func (d *ChunkDecoder) Reset(columns []ColInfo, handleColIDs []int64, defDatum f
 	}
 }
 
+// ReuseConfigBuffers returns decoder-owned buffers for rebuilding the
+// column and handle configuration before Reset.
+func (d *ChunkDecoder) ReuseConfigBuffers(columnCount int) ([]ColInfo, []int64) {
+	columns := d.columns
+	if cap(columns) < columnCount {
+		columns = make([]ColInfo, columnCount)
+	} else {
+		if columnCount < len(columns) {
+			clear(columns[columnCount:])
+		}
+		columns = columns[:columnCount]
+	}
+	return columns, d.handleColIDs[:0]
+}
+
 // DecodeToChunk decodes a row to chunk.
 func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk *chunk.Chunk) error {
 	err := decoder.fromBytes(rowData)

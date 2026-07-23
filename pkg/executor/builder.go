@@ -5336,7 +5336,12 @@ func initRowDecoder(decoder *rowcodec.ChunkDecoder, ctx sessionctx.Context, sche
 		return nil
 	}
 	var pkCols []int64
-	reqCols := make([]rowcodec.ColInfo, len(schema.Columns))
+	var reqCols []rowcodec.ColInfo
+	if decoder == nil {
+		reqCols = make([]rowcodec.ColInfo, len(schema.Columns))
+	} else {
+		reqCols, pkCols = decoder.ReuseConfigBuffers(len(schema.Columns))
+	}
 	for i := range schema.Columns {
 		idx, col := i, schema.Columns[i]
 		isPK := (tbl.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag())) || col.ID == model.ExtraHandleID
@@ -5354,9 +5359,13 @@ func initRowDecoder(decoder *rowcodec.ChunkDecoder, ctx sessionctx.Context, sche
 		}
 	}
 	if len(pkCols) == 0 {
-		pkCols = tables.TryGetCommonPkColumnIds(tbl)
-		if len(pkCols) == 0 {
-			pkCols = []int64{-1}
+		commonPKCols := tables.TryGetCommonPkColumnIds(tbl)
+		if len(commonPKCols) == 0 {
+			pkCols = append(pkCols, -1)
+		} else if decoder == nil {
+			pkCols = commonPKCols
+		} else {
+			pkCols = append(pkCols, commonPKCols...)
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
