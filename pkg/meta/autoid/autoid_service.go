@@ -306,7 +306,8 @@ func (sp *singlePointAlloc) repeatedNotLeaderError(
 }
 
 // handled is false for non-target errors. For handled errors, terminalErr stops
-// the request; otherwise retryImmediately controls whether the caller skips backoff.
+// the request; retryImmediately means revalidation found and cached a different
+// leader, so the caller retries it without backoff. Otherwise it backs off.
 func (sp *singlePointAlloc) handleNotLeaderError(
 	ctx context.Context,
 	operation string,
