@@ -20,9 +20,10 @@ import (
 
 const (
 	// csvUploadConcurrency and csvUploadPartSize configure the concurrent
-	// multipart upload of CSV data files.
-	csvUploadConcurrency = 8
-	csvUploadPartSize    = 8 * units.MiB
+	// multipart upload of CSV data files. 5 MiB is the object store's minimum
+	// part size (S3/GCS).
+	csvUploadConcurrency = 4
+	csvUploadPartSize    = 5 * units.MiB
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
