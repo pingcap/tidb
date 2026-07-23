@@ -111,11 +111,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 29,
-=======
-    shard_count = 34,
->>>>>>> e09d2bdaa08 (dxf, importinto: improve cleanup throughput (#69976))
+    shard_count = 32,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
