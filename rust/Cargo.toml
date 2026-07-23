@@ -81,6 +81,10 @@ rustix = { version = "1.1", features = ["process"] }
 # audited DES implementation preserves that algorithm without a hand-rolled
 # cryptographic primitive.
 des = "=0.9.0"
+# `pkg/util/encrypt` uses Go's standard-library AES primitive. RustCrypto's
+# audited AES implementation supplies the same 128-bit block primitive; TiDB's
+# exact ECB/CBC/OFB/CTR/CFB framing stays source-shaped in `tidb-util`.
+aes = "0.9"
 # JSON builtins (`pkg/expression/builtin_json.go` over TiDB's BinaryJSON):
 # serde_json for PARSING/validation only; output formatting is hand-written
 # to match TiDB's own text form exactly (spacing differs from serde_json's

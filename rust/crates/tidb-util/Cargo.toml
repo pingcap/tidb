@@ -10,6 +10,15 @@ description = "Complete TiDB utility package transcreations shared by the Rust S
 [lints]
 workspace = true
 
+[dependencies]
+aes.workspace = true
+crc32fast.workspace = true
+getrandom.workspace = true
+
+[[bench]]
+name = "encrypt"
+harness = false
+
 [[bench]]
 name = "zeropool"
 harness = false
