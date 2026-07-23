@@ -70,7 +70,7 @@ pub fn gen_init_stats_meta_sql(table_ids: &[i64]) -> String {
     }
     format!(
         "{STATS_META_SELECT_PREFIX} where table_id in ({})",
-        join_ids(table_ids)
+        tidb_util::slice::int64s_to_strings(table_ids).join(",")
     )
 }
 
@@ -79,20 +79,13 @@ pub fn gen_init_stats_meta_sql(table_ids: &[i64]) -> String {
 pub fn gen_init_stats_histograms_sql(options: &HistSqlOptions) -> String {
     let suffix = match &options.mode {
         HistSqlMode::TableIds(table_ids) if table_ids.is_empty() => String::new(),
-        HistSqlMode::TableIds(table_ids) => {
-            format!(" where table_id in ({})", join_ids(table_ids))
-        }
+        HistSqlMode::TableIds(table_ids) => format!(
+            " where table_id in ({})",
+            tidb_util::slice::int64s_to_strings(table_ids).join(",")
+        ),
         HistSqlMode::Paging { start, end } => {
             format!(" where table_id >= {start} and table_id < {end}")
         }
     };
     format!("{STATS_HISTOGRAMS_SELECT_PREFIX}{suffix} order by table_id")
-}
-
-fn join_ids(table_ids: &[i64]) -> String {
-    table_ids
-        .iter()
-        .map(i64::to_string)
-        .collect::<Vec<_>>()
-        .join(",")
 }

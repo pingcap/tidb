@@ -1403,6 +1403,7 @@ name = "tidb-stats"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-util",
 ]
 
 [[package]]
