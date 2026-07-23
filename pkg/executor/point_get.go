@@ -135,7 +135,7 @@ type PointGetExecutor struct {
 	done             bool
 	lock             bool
 	lockWaitTime     int64
-	rowDecoder       *rowcodec.ChunkDecoder
+	rowDecoder       rowcodec.ChunkDecoder
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -197,7 +197,7 @@ func (e *PointGetExecutor) Recreated(p *physicalop.PointGetPlan, ctx sessionctx.
 // Note: since this function is also used by Recreated function, thus we can't rely on member field's default value
 // for example: we need to explicitly set e.stats to nil when e.RuntimeStats() is nil
 func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
-	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
+	initRowDecoder(&e.rowDecoder, e.Ctx(), p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
@@ -211,7 +211,6 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 		e.lock = false
 		e.lockWaitTime = 0
 	}
-	e.rowDecoder = decoder
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
@@ -434,7 +433,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, &e.rowDecoder)
 	if err != nil {
 		return err
 	}
