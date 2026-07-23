@@ -950,31 +950,6 @@ func TestSetTIDBFastDDL(t *testing.T) {
 	require.Equal(t, vardef.Off, val)
 }
 
-func TestSetTiDBDDLEnableAutoSplitIndexRegions(t *testing.T) {
-	vars := NewSessionVars(nil)
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-	autoPresplit := GetSysVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
-
-	require.Equal(t, vardef.Off, autoPresplit.Value)
-	require.Equal(t, vardef.TypeBool, autoPresplit.Type)
-	require.True(t, autoPresplit.HasGlobalScope())
-	require.True(t, autoPresplit.HasSessionScope())
-
-	for _, tc := range []struct{ input, expected string }{{"1", vardef.On}, {"0", vardef.Off}} {
-		require.NoError(t, vars.SetSystemVar(autoPresplit.Name, tc.input))
-		val, ok := vars.GetSystemVar(autoPresplit.Name)
-		require.True(t, ok)
-		require.Equal(t, tc.expected, val)
-
-		require.NoError(t, mock.SetGlobalSysVar(context.Background(), autoPresplit.Name, tc.input))
-		val, err := mock.GetGlobalSysVar(autoPresplit.Name)
-		require.NoError(t, err)
-		require.Equal(t, tc.expected, val)
-	}
-}
-
 func TestSetTIDBDiskQuota(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()

@@ -101,8 +101,6 @@ type DDLReorgMeta struct {
 	// captured value instead of the executor process default. Nil means old metadata
 	// and should fall back to the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
-	// AutoPresplitResults records the best-effort auto presplit summary for ADD INDEX and ADD PRIMARY KEY.
-	AutoPresplitResults []AutoPresplitResult `json:"auto_presplit_results,omitempty"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.
@@ -115,30 +113,6 @@ type DDLReorgMeta struct {
 func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
 	newMeta := *dm
 	return &newMeta
-}
-
-// AutoPresplitStatus is the status of best-effort ADD INDEX and ADD PRIMARY KEY auto presplit.
-type AutoPresplitStatus string
-
-const (
-	// AutoPresplitStatusSplit means split keys were generated and split succeeded.
-	AutoPresplitStatusSplit AutoPresplitStatus = "split"
-	// AutoPresplitStatusSkipped means auto presplit was enabled but no split was attempted.
-	AutoPresplitStatusSkipped AutoPresplitStatus = "skipped"
-	// AutoPresplitStatusFailed means planning or splitting failed.
-	AutoPresplitStatusFailed AutoPresplitStatus = "failed"
-	// AutoPresplitStatusUnsupported means the storage does not support region split.
-	AutoPresplitStatusUnsupported AutoPresplitStatus = "unsupported"
-)
-
-// AutoPresplitResult records a compact result for one index auto presplit attempt.
-type AutoPresplitResult struct {
-	IndexName            string             `json:"index_name,omitempty"`
-	Status               AutoPresplitStatus `json:"status,omitempty"`
-	SplitKeyCount        int                `json:"split_key_count,omitempty"`
-	SplitRegionCount     int                `json:"split_region_count,omitempty"`
-	ScatteredRegionCount int                `json:"scattered_region_count,omitempty"`
-	Reason               string             `json:"reason,omitempty"`
 }
 
 // GetConcurrency gets the concurrency from DDLReorgMeta.
