@@ -10,6 +10,11 @@ description = "Complete TiDB utility package transcreations shared by the Rust S
 [lints]
 workspace = true
 
+[features]
+default = []
+enableassert = []
+intest = []
+
 [dependencies]
 aes.workspace = true
 crc32fast.workspace = true
