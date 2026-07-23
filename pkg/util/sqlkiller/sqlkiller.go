@@ -139,9 +139,11 @@ func (killer *SQLKiller) HandleSignal() error {
 			checkConnectionAliveDur = time.Millisecond
 		}
 		if lastCheckTime == nil {
-			killer.lastCheckTime.Store(&now)
+			checkedAt := now
+			killer.lastCheckTime.Store(&checkedAt)
 		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
-			killer.lastCheckTime.Store(&now)
+			checkedAt := now
+			killer.lastCheckTime.Store(&checkedAt)
 			if !(*fn)() {
 				atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
 			}
