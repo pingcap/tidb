@@ -924,6 +924,9 @@ func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
+	if err := u.err.Load(); err != nil {
+		return 0, err
+	}
 	generatedUUID, err := uuid.NewUUID()
 	if err != nil {
 		return 0, errors.Annotate(err, "Fail to generate uuid")
