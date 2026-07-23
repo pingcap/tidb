@@ -250,7 +250,7 @@ func (c *stmtSummarySysVarContext) ExecRestrictedSQL(context.Context, []sqlexec.
 	return c.rows, nil, nil
 }
 
-// Regression coverage for issue #69913's periodic trigger path.
+// Regression coverage for issue #69913's repeated sysvar-cache rebuild path.
 func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 	require.False(t, config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent)
 
@@ -272,14 +272,36 @@ func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(true))
+	originalInternalEnabled := stmtsummaryv2.EnabledInternal()
 	t.Cleanup(func() {
-		require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(false))
+		require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(originalInternalEnabled))
 	})
-	require.True(t, stmtsummaryv2.EnabledInternal())
+	require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(false))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+
+	stmtSummarySysVar := variable.GetSysVar(vardef.TiDBStmtSummaryInternalQuery)
+	require.NotNil(t, stmtSummarySysVar)
+	wrappedStmtSummarySysVar := *stmtSummarySysVar
+	originalSetGlobal := wrappedStmtSummarySysVar.SetGlobal
+	appliedValues := make([]string, 0, 2)
+	wrappedStmtSummarySysVar.SetGlobal = func(ctx context.Context, vars *variable.SessionVars, val string) error {
+		appliedValues = append(appliedValues, val)
+		return originalSetGlobal(ctx, vars, val)
+	}
+	variable.RegisterSysVar(&wrappedStmtSummarySysVar)
+	t.Cleanup(func() {
+		variable.RegisterSysVar(stmtSummarySysVar)
+	})
 
 	require.NoError(t, dom.LoadSysVarCacheLoop(ctx))
 	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, []string{vardef.Off}, appliedValues)
+
+	// The persisted and local values both remain OFF. A second rebuild must still
+	// invoke the callback, which runs the internal-summary cleanup path again.
+	require.NoError(t, dom.rebuildSysVarCache(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, []string{vardef.Off, vardef.Off}, appliedValues)
 }
 
 func sysMockFactory(*Domain) (pools.Resource, error) {

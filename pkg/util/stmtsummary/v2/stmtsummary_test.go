@@ -123,6 +123,76 @@ func TestStmtWindow(t *testing.T) {
 		require.Equal(t, 2, ss.window.evicted.count())
 		require.Equal(t, int64(2), ss.window.evicted.other.ExecCount)
 	})
+
+	t.Run("concurrent external add survives internal cleanup", func(t *testing.T) {
+		ss := NewStmtSummary4Test(1)
+		defer ss.Close()
+		require.NoError(t, ss.SetEnableInternalQuery(true))
+
+		internal := GenerateStmtExecInfo4Test("mixed_digest")
+		internal.IsInternal = true
+		ss.Add(internal)
+
+		values := ss.window.lru.Values()
+		require.Len(t, values, 1)
+		record := values[0].(*lockedStmtRecord)
+		record.Lock()
+		recordLocked := true
+		defer func() {
+			if recordLocked {
+				record.Unlock()
+			}
+		}()
+
+		addDone := make(chan struct{})
+		go func() {
+			ss.Add(GenerateStmtExecInfo4Test(internal.Digest))
+			close(addDone)
+		}()
+
+		// Add must keep the window locked while waiting for the record lock, so
+		// ClearInternal cannot detach the record before Add marks it non-internal.
+		require.Eventually(t, func() bool {
+			if ss.windowLock.TryLock() {
+				ss.windowLock.Unlock()
+				return false
+			}
+			return true
+		}, time.Second, time.Millisecond)
+
+		clearDone := make(chan struct{})
+		go func() {
+			ss.ClearInternal()
+			close(clearDone)
+		}()
+
+		record.Unlock()
+		recordLocked = false
+		require.Eventually(t, func() bool {
+			select {
+			case <-addDone:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, time.Millisecond)
+		require.Eventually(t, func() bool {
+			select {
+			case <-clearDone:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, time.Millisecond)
+
+		values = ss.window.lru.Values()
+		require.Len(t, values, 1)
+		record = values[0].(*lockedStmtRecord)
+		record.Lock()
+		defer record.Unlock()
+		require.False(t, record.IsInternal)
+		require.Equal(t, int64(2), record.ExecCount)
+	})
 }
 
 func TestStmtSummary(t *testing.T) {
