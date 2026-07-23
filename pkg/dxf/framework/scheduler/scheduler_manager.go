@@ -426,7 +426,11 @@ func (sm *Manager) drainCleanupTaskBatches() {
 	// keep cleaning as long as we made any progress in each cycle. and since
 	// we do clean using single routine, it's fine to keep running without a
 	// overall bound.
-	for sm.processCleanupTaskBatch() > 0 {
+	for {
+		count := sm.processCleanupTaskBatch()
+		if count <= 0 {
+			break
+		}
 	}
 }
 
@@ -452,7 +456,7 @@ func (sm *Manager) processCleanupTaskBatch() int {
 		return 0
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
-	sm.logger.Info("cleanup routine success")
+	sm.logger.Info("cleanup routine success", zap.Int("count", transferredTaskCount))
 	return transferredTaskCount
 }
 
