@@ -208,4 +208,7 @@ DROP TABLE IF EXISTS t_empty_time;
 CREATE TABLE t_empty_time(t TIME, t3 TIME(3));
 INSERT INTO t_empty_time VALUES ('', '');
 SELECT t, t3 FROM t_empty_time;
+INSERT INTO t_empty_time VALUES ('01:02:03', '01:02:03.456');
+UPDATE t_empty_time SET t = '', t3 = '' WHERE t = '01:02:03';
+SELECT t, t3 FROM t_empty_time;
 DROP TABLE t_empty_time;

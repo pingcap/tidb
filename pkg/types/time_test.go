@@ -357,8 +357,9 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, _, err := types.ParseDuration(typeCtx, test.Input, types.MaxFsp)
+		duration, isNull, err := types.ParseDuration(typeCtx, test.Input, types.MaxFsp)
 		require.NoError(t, err)
+		require.False(t, isNull)
 		require.Equal(t, test.Expect, duration.String())
 	}
 

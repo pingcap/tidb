@@ -348,4 +348,10 @@ INSERT INTO t_empty_time VALUES ('', '');
 SELECT t, t3 FROM t_empty_time;
 t	t3
 00:00:00	00:00:00.000
+INSERT INTO t_empty_time VALUES ('01:02:03', '01:02:03.456');
+UPDATE t_empty_time SET t = '', t3 = '' WHERE t = '01:02:03';
+SELECT t, t3 FROM t_empty_time;
+t	t3
+00:00:00	00:00:00.000
+00:00:00	00:00:00.000
 DROP TABLE t_empty_time;
