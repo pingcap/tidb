@@ -45,6 +45,31 @@ func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
 	return m.GetCounter().GetValue()
 }
 
+type persistedWindowSnapshot struct {
+	recordCount int
+	execCount   int64
+}
+
+type snapshotStmtStorage struct {
+	persisted chan persistedWindowSnapshot
+}
+
+func (s *snapshotStmtStorage) persist(w *stmtWindow, _ time.Time) {
+	values := w.lru.Values()
+	snapshot := persistedWindowSnapshot{recordCount: len(values)}
+	for _, value := range values {
+		record := value.(*lockedStmtRecord)
+		record.Lock()
+		snapshot.execCount += record.ExecCount
+		record.Unlock()
+	}
+	s.persisted <- snapshot
+}
+
+func (*snapshotStmtStorage) logEvicted([]*StmtRecord) {}
+
+func (*snapshotStmtStorage) sync() error { return nil }
+
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
 	defer ss.Close()
@@ -192,6 +217,69 @@ func TestStmtWindow(t *testing.T) {
 		defer record.Unlock()
 		require.False(t, record.IsInternal)
 		require.Equal(t, int64(2), record.ExecCount)
+	})
+
+	t.Run("concurrent add completes before rotated window persistence", func(t *testing.T) {
+		storage := &snapshotStmtStorage{persisted: make(chan persistedWindowSnapshot, 1)}
+		ss := NewStmtSummary4Test(1)
+		ss.storage = storage
+		defer ss.Close()
+
+		info := GenerateStmtExecInfo4Test("digest")
+		ss.Add(info)
+		values := ss.window.lru.Values()
+		require.Len(t, values, 1)
+		record := values[0].(*lockedStmtRecord)
+		record.Lock()
+		recordLocked := true
+		defer func() {
+			if recordLocked {
+				record.Unlock()
+			}
+		}()
+
+		addDone := make(chan struct{})
+		go func() {
+			ss.Add(info)
+			close(addDone)
+		}()
+
+		// Add must hold windowLock until it owns the record lock. This prevents
+		// rotate from handing the old window to persistence before Add can update it.
+		require.Eventually(t, func() bool {
+			if ss.windowLock.TryLock() {
+				ss.windowLock.Unlock()
+				return false
+			}
+			return true
+		}, time.Second, time.Millisecond)
+
+		rotateDone := make(chan struct{})
+		go func() {
+			ss.windowLock.Lock()
+			ss.rotate(timeNow())
+			ss.windowLock.Unlock()
+			close(rotateDone)
+		}()
+
+		record.Unlock()
+		recordLocked = false
+		select {
+		case <-addDone:
+		case <-time.After(time.Second):
+			t.Fatal("Add did not finish")
+		}
+		select {
+		case <-rotateDone:
+		case <-time.After(time.Second):
+			t.Fatal("rotate did not finish")
+		}
+		select {
+		case snapshot := <-storage.persisted:
+			require.Equal(t, persistedWindowSnapshot{recordCount: 1, execCount: 2}, snapshot)
+		case <-time.After(time.Second):
+			t.Fatal("rotated window was not persisted")
+		}
 	})
 }
 

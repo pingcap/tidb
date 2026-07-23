@@ -100,9 +100,11 @@ type StmtSummary struct {
 	optPersistEvicted      *atomic2.Bool
 	optGroupByUser         *atomic2.Bool
 
-	// windowLock protects the current window and its LRU membership and order.
-	// A lockedStmtRecord mutex protects the mutable fields of that record. When
-	// both are needed, windowLock must be acquired before the record mutex.
+	// Locking invariant:
+	//   - windowLock protects the current window and its LRU membership and order.
+	//   - lockedStmtRecord.Mutex protects the mutable fields of that record.
+	//   - When both are needed, acquire windowLock before the record mutex. Code
+	//     holding only a record mutex must never try to acquire windowLock.
 	window     *stmtWindow
 	windowLock sync.Mutex
 	storage    stmtStorage
@@ -307,14 +309,23 @@ func (s *StmtSummary) SetGroupByUser(v bool) error {
 	return nil
 }
 
-// lockRecordForAdd returns the matching record with its mutex held and
-// windowLock released. Locking the record before releasing windowLock keeps
-// the LRU lookup-to-update handoff atomic with cleanup.
-func (s *StmtSummary) lockRecordForAdd(info *stmtsummary.StmtExecInfo, k *stmtsummary.StmtDigestKey) (*lockedStmtRecord, bool) {
+// Add adds a single stmtsummary.StmtExecInfo to the current statistics window
+// of StmtSummary. Before adding, it will check whether the current window has
+// expired, and if it has expired, the window will be persisted asynchronously
+// and a new window will be created to replace the current one.
+func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
+	if s.closed.Load() {
+		return
+	}
+
+	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
+
+	// Add info to the current statistics window.
 	s.windowLock.Lock()
 	if s.closed.Load() {
 		s.windowLock.Unlock()
-		return nil, false
+		stmtsummary.StmtDigestKeyPool.Put(k)
+		return
 	}
 	// Decide userForKey under windowLock so SetGroupByUser's flag flip + clear
 	// is atomic w.r.t. Add; otherwise a post-clear insert could land under the
@@ -332,26 +343,12 @@ func (s *StmtSummary) lockRecordForAdd(info *stmtsummary.StmtExecInfo, k *stmtsu
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
 		s.window.lru.Put(k, record)
 	}
+	// Lock handoff invariant: windowLock keeps record attached to this window
+	// until record.Lock takes over protection for the update. Do not move
+	// record.Lock below windowLock.Unlock; otherwise ClearInternal or LRU
+	// eviction can detach and finalize record before this Add reaches it.
 	record.Lock()
 	s.windowLock.Unlock()
-	return record, exist
-}
-
-// Add adds a single stmtsummary.StmtExecInfo to the current statistics window
-// of StmtSummary. Before adding, it will check whether the current window has
-// expired, and if it has expired, the window will be persisted asynchronously
-// and a new window will be created to replace the current one.
-func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
-	if s.closed.Load() {
-		return
-	}
-
-	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
-	record, exist := s.lockRecordForAdd(info, k)
-	if record == nil {
-		stmtsummary.StmtDigestKeyPool.Put(k)
-		return
-	}
 
 	record.Add(info)
 	record.Unlock()
@@ -394,6 +391,9 @@ func (s *StmtSummary) ClearInternal() {
 			continue
 		}
 		record := v.(*lockedStmtRecord)
+		// Match the global windowLock -> record lock order. This also pairs with
+		// Add's lock handoff: an Add that already found this record must finish
+		// updating IsInternal before cleanup decides whether to delete it.
 		record.Lock()
 		if record.IsInternal {
 			s.window.lru.Delete(k)
@@ -701,6 +701,9 @@ func newEvictedAggregateRecord() *StmtRecord {
 	}
 }
 
+// lockedStmtRecord protects the mutable fields of StmtRecord. Never acquire a
+// StmtSummary windowLock while holding this mutex; see StmtSummary's locking
+// invariant for the global lock order.
 type lockedStmtRecord struct {
 	sync.Mutex
 	*StmtRecord
