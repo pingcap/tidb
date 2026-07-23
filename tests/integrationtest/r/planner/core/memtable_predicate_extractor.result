@@ -34,9 +34,9 @@ describe t ID;
 Field	Type	Null	Key	Default	Extra
 id	int	YES		NULL	
 describe t 'I%';
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "'I%';" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "'I%'" 
 describe t I%;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 13 near "%;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 13 near "%" 
 show columns from t like 'abctime';
 Field	Type	Null	Key	Default	Extra
 abctime	int	YES		NULL	

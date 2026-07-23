@@ -65,6 +65,12 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
+type jsonSQLWarn struct {
+	Level  string        `json:"level"`
+	SQLErr *terror.Error `json:"err,omitempty"`
+	Msg    string        `json:"msg,omitempty"`
+}
+
 // LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
 // building a logical plan from AST.
 type LogicalPlanBuildState struct {
@@ -77,6 +83,21 @@ type LogicalPlanBuildState struct {
 	useDynamicPruneMode  bool
 	viewDepth            int32
 	colRefFromUpdatePlan intset.FastIntSet
+	optimizeTracer       *tracing.OptimizeTracer
+	optimizerCETrace     []*tracing.CETraceRecord
+	optimizerDebugTrace  any
+	statsLoadTimeout     time.Duration
+	statsLoadNeededItems []model.StatsLoadItem
+	statsLoadResultCh    []<-chan singleflight.Result
+	statsLoadStartTime   time.Time
+	isSyncStatsFailed    bool
+	// usedStatsInfo records the stats used per table during logical/physical
+	// optimization. It is captured by pointer: buildLogicalPlan starts each round
+	// with a nil usedStatsInfo, so every round allocates a fresh map. Restoring the
+	// winning round's pointer at the end keeps the used-stats consistent with the
+	// chosen plan (the losing round's map is simply discarded).
+	usedStatsInfo *UsedStatsInfo
+	indexForce    bool
 	// plan cache related stuff
 	planCacheUseCache    bool
 	planCacheType        contextutil.PlanCacheType
@@ -85,10 +106,17 @@ type LogicalPlanBuildState struct {
 	planCacheAlwaysWarn  bool
 }
 
-type jsonSQLWarn struct {
-	Level  string        `json:"level"`
-	SQLErr *terror.Error `json:"err,omitempty"`
-	Msg    string        `json:"msg,omitempty"`
+// logicalPlanBuildStateCloner lets pointer-backed state provide its own clone
+// without coupling stmtctx to the concrete planner trace implementation.
+type logicalPlanBuildStateCloner interface {
+	CloneForLogicalPlanBuild() any
+}
+
+func cloneLogicalPlanBuildStateValue(value any) any {
+	if cloner, ok := value.(logicalPlanBuildStateCloner); ok {
+		return cloner.CloneForLogicalPlanBuild()
+	}
+	return value
 }
 
 // ReferenceCount indicates the reference count of StmtCtx.
@@ -283,6 +311,8 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
+	InDiagnostics          bool
+	LastWarningNum         int
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
@@ -477,6 +507,17 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
+	// alternativeLogicalPlanDecorrelatedApply indicates whether the first logical
+	// optimization round decorrelated at least one Apply into Join. This is a scheduling
+	// signal; it does not describe the selected final plan.
+	alternativeLogicalPlanDecorrelatedApply bool
+	// alternativeLogicalPlanEvaluatedSubquery indicates whether the first logical plan
+	// build evaluated a non-correlated subquery. Rebuilding the plan after that can repeat
+	// SQL-visible side effects, so the alternative round is skipped. This signal does not
+	// describe the selected final plan.
+	alternativeLogicalPlanEvaluatedSubquery      bool
+	alternativeLogicalPlanDecorrelatedApplyCount int
+	alternativeLogicalPlanSameOrderIndexJoinIDs  map[int]struct{}
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -490,6 +531,23 @@ type StatementContext struct {
 		// The SavepointName is use to do rollback when handle foreign key cascade failed.
 		SavepointName string
 		HasFKCascades bool
+	}
+
+	TriggerCtx struct {
+		HasTriggerCascades bool
+
+		InTrigger bool
+		TableInfo *model.TableInfo
+		OldData   []types.Datum
+		NewData   []types.Datum
+		Updated   []bool
+		Exec      any
+	}
+
+	UserFuncCtx struct {
+		sync.RWMutex
+		StoredFuncName       map[[2]string]*types.FieldType
+		loadableFuncCleanups []func()
 	}
 
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
@@ -569,6 +627,12 @@ func (sc *StatementContext) Reset() bool {
 		}
 		defer sc.StaleTSOProvider.Unlock()
 	}
+
+	// UDF cleanups are statement-scoped and must not leak across statements.
+	// Execute them here as a safety net in case statement execution exits early
+	// and misses the normal cleanup path in executor.
+	sc.UDFCleanup()
+
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -600,7 +664,27 @@ func (sc *StatementContext) Reset() bool {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
+	sc.UserFuncCtx.StoredFuncName = nil
 	return true
+}
+
+// RegisterUDFCleanup registers a statement-scoped cleanup callback for loadable
+// functions (UDF). It is concurrency-safe.
+func (sc *StatementContext) RegisterUDFCleanup(cleanup func()) {
+	if cleanup == nil {
+		return
+	}
+	sc.UserFuncCtx.Lock()
+	sc.UserFuncCtx.loadableFuncCleanups = append(sc.UserFuncCtx.loadableFuncCleanups, cleanup)
+	sc.UserFuncCtx.Unlock()
+}
+
+// UDFCleanup calls cleanup functions registered by RegisterUDFCleanup.
+func (sc *StatementContext) UDFCleanup() {
+	for _, f := range sc.UserFuncCtx.loadableFuncCleanups {
+		f()
+	}
+	sc.UserFuncCtx.loadableFuncCleanups = nil
 }
 
 // SaveLogicalPlanBuildState captures the statement-scoped planner state before building
@@ -617,6 +701,16 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
 		viewDepth:            sc.ViewDepth,
 		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
+		optimizeTracer:       sc.OptimizeTracer,
+		optimizerCETrace:     slices.Clone(sc.OptimizerCETrace),
+		optimizerDebugTrace:  cloneLogicalPlanBuildStateValue(sc.OptimizerDebugTrace),
+		statsLoadTimeout:     sc.StatsLoad.Timeout,
+		statsLoadNeededItems: slices.Clone(sc.StatsLoad.NeededItems),
+		statsLoadResultCh:    slices.Clone(sc.StatsLoad.ResultCh),
+		statsLoadStartTime:   sc.StatsLoad.LoadStartTime,
+		isSyncStatsFailed:    sc.IsSyncStatsFailed,
+		usedStatsInfo:        sc.usedStatsInfo.Load(),
+		indexForce:           sc.indexForce,
 		planCacheUseCache:    planCacheUseCache,
 		planCacheType:        planCacheType,
 		planCacheUnqualified: planCacheUnqualified,
@@ -637,28 +731,52 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
 	sc.ViewDepth = state.viewDepth
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
+	sc.OptimizeTracer = state.optimizeTracer
+	sc.OptimizerCETrace = slices.Clone(state.optimizerCETrace)
+	sc.OptimizerDebugTrace = cloneLogicalPlanBuildStateValue(state.optimizerDebugTrace)
+	sc.StatsLoad.Timeout = state.statsLoadTimeout
+	sc.StatsLoad.NeededItems = slices.Clone(state.statsLoadNeededItems)
+	sc.StatsLoad.ResultCh = slices.Clone(state.statsLoadResultCh)
+	sc.StatsLoad.LoadStartTime = state.statsLoadStartTime
+	sc.IsSyncStatsFailed = state.isSyncStatsFailed
+	sc.usedStatsInfo.Store(state.usedStatsInfo)
+	sc.indexForce = state.indexForce
 	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 
-// ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
-// alternative logical plan feature.
+// ResetAlternativeLogicalPlanSignals clears the first-round scheduling signals used
+// by the alternative logical plan feature.
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanDecorrelatedApply = false
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
+	sc.alternativeLogicalPlanDecorrelatedApply = false
+	sc.alternativeLogicalPlanEvaluatedSubquery = false
+	sc.alternativeLogicalPlanDecorrelatedApplyCount = 0
+	sc.alternativeLogicalPlanSameOrderIndexJoinIDs = nil
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
-// been decorrelated into a Join in the current round.
-func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
+// been decorrelated into a Join in the first round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() int {
 	sc.AlternativeLogicalPlanDecorrelatedApply = true
+	sc.alternativeLogicalPlanDecorrelatedApply = true
+	sc.alternativeLogicalPlanDecorrelatedApplyCount++
+	return sc.alternativeLogicalPlanDecorrelatedApplyCount
 }
 
 // MarkAlternativeLogicalPlanSameOrderIndexJoin records that the current first round
 // has already produced a same-order index join candidate for a decorrelated Apply.
-func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
+func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin(applyID int) {
+	if applyID <= 0 {
+		return
+	}
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+	if sc.alternativeLogicalPlanSameOrderIndexJoinIDs == nil {
+		sc.alternativeLogicalPlanSameOrderIndexJoinIDs = make(map[int]struct{})
+	}
+	sc.alternativeLogicalPlanSameOrderIndexJoinIDs[applyID] = struct{}{}
 }
 
 // MarkAlternativeLogicalPlanPreferCorrelate records that the current logical
@@ -666,6 +784,20 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
 // the correlate-to-Apply alternative.
 func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 	sc.AlternativeLogicalPlanPreferCorrelate = true
+}
+
+// MarkAlternativeLogicalPlanEvaluatedSubquery records that the first logical plan
+// build has evaluated a non-correlated subquery.
+func (sc *StatementContext) MarkAlternativeLogicalPlanEvaluatedSubquery() {
+	sc.alternativeLogicalPlanEvaluatedSubquery = true
+}
+
+// NeedAlternativeLogicalPlanRound reports whether the first-round scheduling signals
+// show that it is useful and safe to run the no-decorrelate alternative round.
+func (sc *StatementContext) NeedAlternativeLogicalPlanRound() bool {
+	return sc.alternativeLogicalPlanDecorrelatedApply &&
+		!sc.alternativeLogicalPlanEvaluatedSubquery &&
+		sc.alternativeLogicalPlanDecorrelatedApplyCount > len(sc.alternativeLogicalPlanSameOrderIndexJoinIDs)
 }
 
 // CtxID returns the context id of the statement
@@ -939,6 +1071,12 @@ func (sc *StatementContext) SetIndexForce() {
 	sc.indexForce = true
 }
 
+// ResetIndexForce clears the statement-wide forced-index marker before building
+// another logical-plan candidate from the same AST.
+func (sc *StatementContext) ResetIndexForce() {
+	sc.indexForce = false
+}
+
 // PlanCacheType is the flag of plan cache
 type PlanCacheType int
 
@@ -1111,6 +1249,9 @@ func (sc *StatementContext) WarningCount() uint16 {
 	if sc.InShowWarning {
 		return 0
 	}
+	if sc.InDiagnostics {
+		return uint16(sc.WarnHandler.WarningCount() - sc.LastWarningNum)
+	}
 	return uint16(sc.WarnHandler.WarningCount())
 }
 
@@ -1181,6 +1322,30 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.copied = 0
 	sc.mu.touched = 0
 	sc.mu.message = ""
+}
+
+// CopyMuForCallProcedure copy the changed states for srcCtx.mu at end of call and
+// Clear the execution status of the last SQL, use call instead .
+func (sc *StatementContext) CopyMuForCallProcedure(srcCtx *StatementContext) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	// Inherit the execution information of the last SQL.
+	srcCtx.mu.affectedRows = sc.mu.affectedRows
+	srcCtx.mu.foundRows = sc.mu.foundRows
+	srcCtx.mu.records = sc.mu.records
+	srcCtx.mu.deleted = sc.mu.deleted
+	srcCtx.mu.updated = sc.mu.updated
+	srcCtx.mu.copied = sc.mu.copied
+	srcCtx.mu.touched = sc.mu.touched
+	srcCtx.mu.message = sc.mu.message
+	srcCtx.WarnHandler.SetWarnings(sc.GetWarnings())
+	//
+	d := sc.SyncExecDetails.GetExecDetails()
+	srcCtx.SyncExecDetails.Reset()
+	srcCtx.SyncExecDetails.MergeExecDetails(&d, nil)
+	srcCtx.MemTracker = sc.MemTracker
+	srcCtx.DiskTracker = sc.DiskTracker
+	srcCtx.SetTimeZone(sc.TimeZone())
 }
 
 // ResetForRetry resets the changed states during execution.
@@ -1341,6 +1506,13 @@ func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) *UsedStatsInfo {
 		sc.usedStatsInfo.CompareAndSwap(nil, &UsedStatsInfo{})
 	}
 	return sc.usedStatsInfo.Load()
+}
+
+// ResetUsedStatsInfo clears the stats recorded by a previous logical-plan build
+// round. Each round must record into a fresh UsedStatsInfo so a discarded round
+// cannot change the stats metadata restored for the winning plan.
+func (sc *StatementContext) ResetUsedStatsInfo() {
+	sc.usedStatsInfo.Store(nil)
 }
 
 // RecordedStatsLoadStatusCnt returns the total number of recorded column/index stats status, which is not full loaded.
@@ -1614,4 +1786,64 @@ func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
 		return val.(string)
 	}
 	return ast.GetStmtLabel(node)
+}
+
+// BackupStmtCtx records the backup session status
+type BackupStmtCtx struct {
+	AffectedRows int64
+	FoundRows    uint64
+	Records      uint64
+	Deleted      uint64
+	Updated      uint64
+	Copied       uint64
+	Touched      uint64
+
+	Message       string
+	Warnings      []SQLWarn
+	ErrorCount    uint16
+	ExtraWarnings []SQLWarn
+}
+
+// BackupForHandler backs up session status.
+func (sc *StatementContext) BackupForHandler() (b *BackupStmtCtx) {
+	b = &BackupStmtCtx{}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	b.AffectedRows = sc.PrevAffectedRows
+	b.FoundRows = sc.mu.foundRows
+	b.Records = sc.mu.records
+	b.Deleted = sc.mu.deleted
+	b.Updated = sc.mu.updated
+	b.Copied = sc.mu.copied
+	b.Touched = sc.mu.touched
+	b.Message = sc.mu.message
+	b.Warnings = make([]SQLWarn, len(sc.WarnHandler.GetWarnings()))
+	copy(b.Warnings, sc.WarnHandler.GetWarnings())
+	b.ErrorCount = 0
+	return
+}
+
+// ResetExecutionCaches clears statement-derived execution caches and returns
+// a restore closure so nested same-context execution can put them back.
+func (sc *StatementContext) ResetExecutionCaches() func() {
+	distSQLCtxCache := sc.distSQLCtxCache
+	rangerCtxCache := sc.rangerCtxCache
+	buildPBCtxCache := sc.buildPBCtxCache
+	sc.distSQLCtxCache = struct {
+		init sync.Once
+		dctx *distsqlctx.DistSQLContext
+	}{}
+	sc.rangerCtxCache = struct {
+		init sync.Once
+		rctx any
+	}{}
+	sc.buildPBCtxCache = struct {
+		init sync.Once
+		bctx any
+	}{}
+	return func() {
+		sc.distSQLCtxCache = distSQLCtxCache
+		sc.rangerCtxCache = rangerCtxCache
+		sc.buildPBCtxCache = buildPBCtxCache
+	}
 }

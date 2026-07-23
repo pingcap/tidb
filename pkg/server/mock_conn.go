@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -48,11 +49,19 @@ type MockConn interface {
 	ID() uint64
 	// GetOutbound replaces the internal outbound endpoint with a empty buffer, and return it
 	GetOutput() *bytes.Buffer
+	// HandleWhiteList handles whitelist.
+	HandleWhiteList() bool
 }
 
 type mockConn struct {
 	*clientConn
 	t *testing.T
+}
+
+// HandleWhiteList implements MockConn.HandleWhiteList
+func (mc *mockConn) HandleWhiteList() bool {
+	mc.onExtensionConnEvent(extension.ConnConnected, nil)
+	return mc.AllowIPConnection()
 }
 
 // HandleQuery implements MockConn.HandleQuery
@@ -114,7 +123,7 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 	require.NoError(t, err)
 
 	connID := rand.Uint64()
-	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil, extensions.NewSessionExtensions())
+	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil, nil, extensions.NewSessionExtensions())
 	require.NoError(t, err)
 
 	cc := &clientConn{
@@ -133,6 +142,10 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 	cc.server.rwlock.Unlock()
 	tc.Session.SetSessionManager(server)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	failpoint.Inject("mock-whitelist-connection-host", func(val failpoint.Value) {
+		host := val.(string)
+		tc.Session.GetSessionVars().ConnectionInfo.Host = host
+	})
 	err = tc.Session.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
 	return &mockConn{

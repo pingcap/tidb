@@ -552,10 +552,10 @@ select 1;
 1
 1
 create invalid;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid" 
 show errors;
 Level	Code	Message
-Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid" 
 show tables;
 Error 1046 (3D000): No database selected
 show tables;
@@ -597,10 +597,18 @@ aes_decrypt
 aes_encrypt
 and
 any_value
+array_element
 ascii
 asin
 atan
 atan2
+audit_log_create_filter
+audit_log_create_rule
+audit_log_disable_rule
+audit_log_enable_rule
+audit_log_remove_filter
+audit_log_remove_rule
+audit_log_rotate
 benchmark
 bin
 bin_to_uuid
@@ -620,6 +628,7 @@ charset
 coalesce
 coercibility
 collation
+column_decryption
 compress
 concat
 concat_ws
@@ -638,6 +647,7 @@ current_time
 current_timestamp
 current_user
 curtime
+data_operation_audit
 database
 date
 date_add
@@ -662,6 +672,7 @@ eq
 exp
 export_set
 extract
+extractvalue
 field
 find_in_set
 floor
@@ -731,9 +742,11 @@ json_storage_size
 json_type
 json_unquote
 json_valid
+label_accessible
 last_day
 last_insert_id
 lastval
+lbac_dominates
 lcase
 le
 least
@@ -808,6 +821,8 @@ rpad
 rtrim
 schema
 sec_to_time
+seclabel
+seclabel_to_char
 second
 session_user
 setval
@@ -1059,6 +1074,8 @@ show collation;
 Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
@@ -1074,6 +1091,8 @@ select * from information_schema.COLLATIONS;
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
@@ -1099,6 +1118,8 @@ show collation;
 Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
@@ -1114,6 +1135,8 @@ select * from information_schema.COLLATIONS;
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE

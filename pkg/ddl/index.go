@@ -751,8 +751,20 @@ func checkAndBuildIndexInfo(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	indexInfo.ShardIndexVersion, err = detectShardIndexVersionFromColumnInfos(args.IndexPartSpecifications, args.Unique, tblInfo.Columns)
+	if err != nil {
+		return nil, err
+	}
 	if isPK {
-		if _, err = CheckPKOnGeneratedColumn(tblInfo, args.IndexPartSpecifications); err != nil {
+		// In multi-schema change, the referenced column may be non-public at this moment
+		// (e.g. the column is added earlier in the same statement), so allow non-public
+		// columns for this specific generated-column check.
+		if job.MultiSchemaInfo != nil {
+			_, err = checkPKOnGeneratedColumnAllowNonPublic(tblInfo, args.IndexPartSpecifications)
+		} else {
+			_, err = CheckPKOnGeneratedColumn(tblInfo, args.IndexPartSpecifications)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -2080,7 +2092,7 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 		}
 
 		// Double check for drop index needed in foreign key.
-		if err := checkIndexNeededInForeignKeyInOwner(infoCache, job, job.SchemaName, tblInfo, indexInfo); err != nil {
+		if err := checkIndexNeededInForeignKeyInOwner(infoCache, job, job.GetSchemaName(), tblInfo, indexInfo); err != nil {
 			return nil, nil, false, errors.Trace(err)
 		}
 		indexInfos = append(indexInfos, indexInfo)
@@ -3280,6 +3292,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
 	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
 	// (i.e. pi.Definitions - pi.DroppingDefinitions)
+	// MODIFY COLUMN - no change in partitions, just use pi.Definitions (5)
 	var pid int64
 	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
@@ -3322,6 +3335,9 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
+	} else if len(pi.DroppingDefinitions) == 0 {
+		// case 5
+		pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
 	} else {
 		// case 2
 		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)

@@ -158,7 +158,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 			join.SetSelf(join)
 			join.SetTP(plancodec.TypeJoin)
 			if p.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
-				p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanDecorrelatedApply()
+				join.DecorrelatedApplyID = p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanDecorrelatedApply()
 				join.FromDecorrelatedApply = true
 			}
 			p = join

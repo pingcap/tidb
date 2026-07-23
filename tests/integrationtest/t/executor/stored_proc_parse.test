@@ -1,0 +1,7948 @@
+set global tidb_enable_procedure = ON;
+
+# TiDB doesn't support this syntax.
+# --error ER_SP_NO_DROP_SP
+# CREATE PROCEDURE sp1()
+# DROP PROCEDURE sp1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE !_sp1( f1 char(20) )
+SELECT * from t1 where f2 = f1;
+
+CREATE PROCEDURE `function`()
+   SELECT * from t1 where f2=f1;
+DROP PROCEDURE `function`;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE accessible()
+#   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE add()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE all()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE alter()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE analyze()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE and()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE as()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE asc()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE asensitive()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE before()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE between()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE bigint()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE binary()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE blob()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE both()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE by()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE call()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE cascade()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE case()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE change()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE char()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE character()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE check()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE collate()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE column()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE condition()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE constraint()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE continue()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE convert()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE create()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE cross()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE current_date()
+  SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE current_time()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE current_timestamp()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE current_user()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE cursor()
+  SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE database()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE databases()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE day_hour()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE day_microsecond()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE day_minute()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE day_second()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE dec()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE decimal()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE declare()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE default()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE delayed()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE delete()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE desc()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE describe()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE deterministic()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE distinct()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE distinctrow()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE div()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE double()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE drop()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE dual()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE each()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE else()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE elseif()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE enclosed()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE escaped()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE exists()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE exit()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE explain()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE false()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE fetch()
+   SELECT * from t1 where f2=f1;
+
+#--error ER_PARSE_ERROR
+CREATE PROCEDURE fields()
+   SELECT * from t1 where f2=f1;
+DROP PROCEDURE fields;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE float()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE for()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE force()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE foreign()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE from()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE fulltext()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE grant()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE group()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE having()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE high_priority()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE hour_microsecond()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE hour_minute()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE hour_second()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE if()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE ignore()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE in()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE index()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE infile()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE inner()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE inout()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE insensitive()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE insert()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE int()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE int1()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE int2()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE int3()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE int4()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE int8()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE integer()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE interval()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE into()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE is()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE iterate()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE join()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE key()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE keys()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE kill()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE leading()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE leave()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE left()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE like()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE limit()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE linear()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE lines()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE load()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE localtime()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE localtimestamp()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE lock()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE long()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE longblob()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE longtext()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE loop()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE low_priority()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE match()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE mediumblob()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE mediumint()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE mediumtext()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE middleint()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE minute_microsecond()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE minute_second()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE mod()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE modifies()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE natural()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE not()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE no_write_to_binlog()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE null()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE numeric()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE on()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE optimize()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE option()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE optionally()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE or()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE order()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE out()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE outer()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE outfile()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE precision()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE primary()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE procedure()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE purge()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE range()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE read()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE reads()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE real()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE references()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE regexp()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE release()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE rename()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE repeat()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE replace()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE require()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE restrict()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE return()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE revoke()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE right()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE rlike()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE schema()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE schemas()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE second_microsecond()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE select()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sensitive()
+#    SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE separator()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE set()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE show()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE smallint()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE spatial()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE specific()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sql()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sqlexception()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sqlstate()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sqlwarning()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sql_big_result()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sql_calc_found_rows()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sql_small_result()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE ssl()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE starting()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE straight_join()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE table()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE terminated()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE then()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE tinyblob()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE tinyint()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE tinytext()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE to()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE trailing()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE trigger()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE true()
+   SELECT * from t1 where f2=f1;
+
+# TiDB doesn't support this keyword.
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE undo()
+#    SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE union()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE unique()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE unlock()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE unsigned()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE update()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE usage()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE use()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE using()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE utc_date()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE utc_time()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE utc_timestamp()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE values()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE varbinary()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE varchar()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE varcharacter()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE varying()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE when()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE where()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE while()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE with()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE write()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE xor()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE year_month()
+   SELECT * from t1 where f2=f1;
+
+--error ER_PARSE_ERROR
+CREATE PROCEDURE zerofill()
+   SELECT * from t1 where f2=f1;
+
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION !_fn1(f1 char) returns char
+    return f1;
+
+--disable_warnings
+--error ER_PARSE_ERROR
+CREATE FUNCTION char(f1 char) returns char
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION char binary(f1 char binary) returns char binary
+    return f1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION char ascii(f1 char ascii) returns char ascii
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION char not null(f1 char not null) returns char not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION char binary not null(f1 char binary not null) returns char binary not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION char ascii not null(f1 char ascii not null) returns char ascii not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinytext(f1 tinytext) returns tinytext
+    return f1;
+
+#--error ER_PARSE_ERROR
+CREATE FUNCTION text(f1 text) returns text
+    return f1;
+  DROP FUNCTION text;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumtext(f1 mediumtext) returns mediumtext
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION longtext(f1 longtext) returns longtext
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinytext not null(f1 tinytext not null) returns tinytext not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION text not null(f1 text not null) returns text not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumtext not null(f1 mediumtext not null) returns mediumtext not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION longtext not null(f1 longtext not null) returns longtext not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinyblob(f1 tinyblob) returns tinyblob
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION blob(f1 blob) returns blob
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumblob(f1 mediumblob) returns mediumblob
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION longblob(f1 longblob) returns longblob
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinyblob not null(f1 tinyblob not null) returns tinyblob not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION blob not null(f1 blob not null) returns blob not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumblob not null(f1 mediumblob not null) returns mediumblob not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION longblob not null(f1 longblob not null) returns longblob not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION binary(f1 binary) returns binary
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION binary not null(f1 binary not null) returns binary not null
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinyint(f1 tinyint) returns tinyint
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinyint unsigned(f1 tinyint unsigned) returns tinyint unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinyint zerofill(f1 tinyint zerofill) returns tinyint zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION tinyint unsigned zerofill(f1 tinyint unsigned zerofill) returns tinyint unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION smallint(f1 smallint) returns smallint
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION smallint unsigned(f1 smallint unsigned) returns smallint unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION smallint zerofill(f1 smallint zerofill) returns smallint zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION smallint unsigned zerofill(f1 smallint unsigned zerofill) returns smallint unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumint(f1 mediumint) returns mediumint
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumint unsigned(f1 mediumint unsigned) returns mediumint unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumint zerofill(f1 mediumint zerofill) returns mediumint zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION mediumint unsigned zerofill(f1 mediumint unsigned zerofill) returns mediumint unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int(f1 int) returns int
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int1(f1 int1) returns int1
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int2(f1 int2) returns int2
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int3(f1 int3) returns int3
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int4(f1 int4) returns int4
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int8(f1 int8) returns int8
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int unsigned(f1 int unsigned) returns int unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int zerofill(f1 int zerofill) returns int zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION int unsigned zerofill(f1 int unsigned zerofill) returns int unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION bigint(f1 bigint) returns bigint
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION bigint unsigned(f1 bigint unsigned) returns bigint unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION bigint zerofill(f1 bigint zerofill) returns bigint zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION bigint unsigned zerofill(f1 bigint unsigned zerofill) returns bigint unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION decimal(f1 decimal) returns decimal
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION decimal unsigned(f1 decimal unsigned) returns decimal unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION decimal zerofill(f1 decimal zerofill) returns decimal zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION decimal unsigned zerofill(f1 decimal unsigned zerofill) returns decimal unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION numeric(f1 numeric) returns numeric
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION numeric unsigned(f1 numeric unsigned) returns numeric unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION numeric zerofill(f1 numeric zerofill) returns numeric zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION numeric unsigned zerofill(f1 numeric unsigned zerofill) returns numeric unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION real(f1 real) returns real
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION real unsigned(f1 real unsigned) returns real unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION real zerofill(f1 real zerofill) returns real zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION real unsigned zerofill(f1 real unsigned zerofill) returns real unsigned zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION float(f1 float) returns float
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION float unsigned(f1 float unsigned) returns float unsigned
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION float zerofill(f1 float zerofill) returns float zerofill
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION float unsigned zerofill(f1 float unsigned zerofill) returns float unsigned zerofill
+    return f1;
+
+CREATE FUNCTION date(f1 date) returns date
+    return f1;
+DROP FUNCTION date;
+
+CREATE FUNCTION time(f1 time) returns time
+    return f1;
+DROP FUNCTION time;
+
+CREATE FUNCTION datetime(f1 datetime) returns datetime
+    return f1;
+DROP FUNCTION datetime;
+
+CREATE FUNCTION timestamp(f1 timestamp) returns timestamp
+    return f1;
+DROP FUNCTION timestamp;
+
+CREATE FUNCTION year(f1 year) returns year
+    return f1;
+DROP FUNCTION year;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION year(4)(f1 year(4)) returns year(4)
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION enum("1enum", "2enum")(f1 enum("1enum", "2enum")) returns enum("1enum", "2enum")
+    return f1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION set("1set", "2set")(f1 set("1set", "2set")) returns set("1set", "2set")
+    return f1;
+--enable_warnings
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 char ) returns char
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 char binary ) returns char binary
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 char ascii ) returns char ascii
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 char not null ) returns char not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 char binary not null ) returns char binary not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 char ascii not null ) returns char ascii not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 tinytext ) returns tinytext
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 text ) returns text
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 mediumtext ) returns mediumtext
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 longtext ) returns longtext
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 tinytext not null ) returns tinytext not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 text not null ) returns text not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 mediumtext not null ) returns mediumtext not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 longtext not null ) returns longtext not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 tinyblob ) returns tinyblob
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 blob ) returns blob
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 mediumblob ) returns mediumblob
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 longblob ) returns longblob
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 tinyblob not null ) returns tinyblob not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 blob not null ) returns blob not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 mediumblob not null ) returns mediumblob not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 longblob not null ) returns longblob not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 binary ) returns binary
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 binary not null ) returns binary not null
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 tinyint ) returns tinyint
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 tinyint unsigned ) returns tinyint unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 tinyint zerofill ) returns tinyint zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 tinyint unsigned zerofill ) returns tinyint unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 smallint ) returns smallint
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 smallint unsigned ) returns smallint unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 smallint zerofill ) returns smallint zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 smallint unsigned zerofill ) returns smallint unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 mediumint ) returns mediumint
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 mediumint unsigned ) returns mediumint unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 mediumint zerofill ) returns mediumint zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 mediumint unsigned zerofill ) returns mediumint unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int ) returns int
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int unsigned ) returns int unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int1 unsigned ) returns int1 unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int2 unsigned ) returns int2 unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int3 unsigned ) returns int3 unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int4 unsigned ) returns int4 unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int8 unsigned ) returns int8 unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int zerofill ) returns int zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 int unsigned zerofill ) returns int unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 bigint ) returns bigint
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 bigint unsigned ) returns bigint unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 bigint zerofill ) returns bigint zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 bigint unsigned zerofill ) returns bigint unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 decimal ) returns decimal
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 decimal unsigned ) returns decimal unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 decimal zerofill ) returns decimal zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 decimal unsigned zerofill ) returns decimal unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 numeric ) returns numeric
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 numeric unsigned ) returns numeric unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 numeric zerofill ) returns numeric zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 numeric unsigned zerofill ) returns numeric unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 real ) returns real
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 real unsigned ) returns real unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 real zerofill ) returns real zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 real unsigned zerofill ) returns real unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 float ) returns float
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 float unsigned ) returns float unsigned
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 float zerofill ) returns float zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 float unsigned zerofill ) returns float unsigned zerofill
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 date ) returns date
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 time ) returns time
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 datetime ) returns datetime
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 timestamp ) returns timestamp
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+CREATE FUNCTION fn1(f1 year ) returns year
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 year(f1 4) ) returns year(4)
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 enum(f1 "1enum", "2enum") ) returns enum("1enum", "2enum")
+    return f1;
+
+DROP FUNCTION IF EXISTS executor__stored_proc_parse.fn1;
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(f1 set(f1 "1set", "2set") ) returns set("1set", "2set")
+    return f1;
+
+
+# missing BEGIN
+# PLEASE NOTE:
+# this test client has the MULTI_QUERY capability,
+# so that the following request (starting at 'CREATE' and ending at the //
+# delimiter) is interpreted as follows:
+# 1) it's a multi query
+# 2) the first query is a valid CREATE PROCEDURE statement, and the
+# procedure consist of only one SELECT statement
+# 3) the second query is a SET statement, which is broken since it's
+# referencing an unknown column 'cnt'
+# 4) the next query (SELECT @count) is not parsed or executed, since 3)
+# failed
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( cnt int(20) )
+    SELECT count(*) into cnt from t2;
+    set @count = cnt;
+    SELECT @count;
+END//
+delimiter ;
+
+# CALL sp1( 10 );
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# wrong order of BEGIN and END
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( cnt int(20) )
+END
+    SELECT count(*) into cnt from t2;
+    set @count = cnt;
+    SELECT @count;
+BEGIN//
+delimiter ;
+
+--error ER_SP_DOES_NOT_EXIST
+CALL sp1( 10 );
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# invalid usage of BEGIN + END
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( cnt int(20) )
+BEGIN
+   SELECT count(*) into cnt from t2;
+   BEGIN
+      BEGIN END;
+   BEGIN
+   END;
+   set @count = cnt;
+   SELECT @count;
+END//
+delimiter ;
+
+# Testcase 4.2.4:
+# Ensure that every BEGIN statement is coupled with a terminating END statement.
+# (BEGIN with no END);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x char;
+    declare y char;
+    SELECT f1, f2 into x, y from t2 limit 1;
+END//
+delimiter ;
+
+# Testcase ....:
+# Labels as reserved keywords
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   accessible:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  add:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  all:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  alter:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  analyze:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  and:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  as:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  asc:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   asensitive:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  before:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  between:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  bigint:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  binary:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  blob:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  both:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  by:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  call:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  cascade:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  case:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  change:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  char:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  character:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  check:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  collate:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  column:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  condition:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  constraint:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  continue:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  convert:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  create:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  cross:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  current_date:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  current_time:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  current_timestamp:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  current_user:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  cursor:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  database:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  databases:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  day_hour:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  day_microsecond:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  day_minute:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  day_second:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  dec:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  decimal:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  declare:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  default:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  delayed:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  delete:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  desc:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  describe:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   deterministic:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  distinct:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  distinctrow:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  div:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  double:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+drop:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  dual:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  each:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  else:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  elseif:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  enclosed:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  escaped:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  exists:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  exit:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  explain:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  false:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  fetch:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  float:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  float4:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  float8:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  for:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  force:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  foreign:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  from:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  fulltext:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  grant:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  group:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  having:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  high_priority:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  hour_microsecond:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  hour_minute:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  hour_second:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  if:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  ignore:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  in:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  index:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  infile:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  inner:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  inout:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   insensitive:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  insert:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  int:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  int1:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  int2:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  int3:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  int4:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  int8:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  integer:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  interval:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  into:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  is:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  iterate:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  join:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  key:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  keys:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  kill:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  leading:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  leave:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  left:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  like:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  limit:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  linear:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  lines:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  load:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  localtime:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  localtimestamp:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  lock:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  long:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  longblob:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  longtext:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  loop:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  low_priority:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  match:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  mediumblob:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  mediumint:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  mediumtext:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  middleint:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  minute_microsecond:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  minute_second:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  mod:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   modifies:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  natural:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  not:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  no_write_to_binlog:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  null:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  numeric:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  on:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  optimize:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  option:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  optionally:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  or:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  order:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  out:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  outer:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  outfile:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  precision:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  primary:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  procedure:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  purge:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  range:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  read:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   reads:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   read_only:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   read_write:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  real:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  references:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  regexp:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  release:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  rename:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  repeat:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  replace:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  require:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  restrict:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  return:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  revoke:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  right:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  rlike:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  schema:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  schemas:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  second_microsecond:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  select:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   sensitive:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  separator:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  set:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  show:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  smallint:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  spatial:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   specific:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  sql:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  sqlexception:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  sqlstate:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  sqlwarning:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  sql_big_result:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  sql_calc_found_rows:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  sql_small_result:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  ssl:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  starting:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  straight_join:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  table:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  terminated:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  then:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  tinyblob:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  tinyint:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  tinytext:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  to:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  trailing:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  trigger:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  true:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support this keyword.
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+#   undo:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  union:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  unique:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB unlock is unreserved keyword.
+# delimiter //
+# --error ER_SP_BADSTATEMENT
+# CREATE PROCEDURE sp1()
+#   unlock:BEGIN
+#     SELECT @x;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  unsigned:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  update:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  usage:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  use:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  using:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  utc_date:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  utc_time:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  utc_timestamp:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  values:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  varbinary:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  varchar:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  varcharacter:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  varying:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  when:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  where:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  while:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  with:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  write:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  xor:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  year_month:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+  zerofill:BEGIN
+    SELECT @x;
+END//
+delimiter ;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.13: 
+# Ensure that the variables declared for a stored procedure (with the declare
+# statement) may only be defined in the correct order.;
+# --source include/show_msg80.inc
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare x default '0' char;
+    SELECT x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare x char, integer default '0';
+    SELECT x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare x1, x2 char, integer default '0', 1;
+    SELECT x;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare char x;
+   declare char y;
+   SELECT f1, f2 into x, y from t2 limit 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare char x, y1 integer default 0;
+   declare char y;
+   SELECT f1, f2 into x, y from t2 limit 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare x default 'a' char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare condition notable for sqlstate '42s22';
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare condition for notable sqlstate '42s22';
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare condition for sqlstate notable '42s22';
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare condition for sqlstate '42s22' notable;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare cursor cur1 for SELECT f1 from db_storedproc.t2;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare cursor for cur1 SELECT f1 from db_storedproc.t2;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare cursor for SELECT cur1 f1 from db_storedproc.t2;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare handler continue for sqlstate '02000' set @x2 = 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare handler exit for sqlstate '02000' set @x2 = 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare handler undo for sqlstate '02000' set @x2 = 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare char x;
+    SELECT f1 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare char binary  x;
+    SELECT f2 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare char ascii  x;
+    SELECT f3 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare tinytext  x;
+    SELECT f4 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare  x;
+    SELECT f5 text  into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare mediumtext  x;
+    SELECT f6 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare longtext  x;
+    SELECT f7 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare tinyblob  x;
+    SELECT f8 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare blob x;
+    SELECT f9 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare mediumblob  x;
+    SELECT f10 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare longblob  x;
+    SELECT f11 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare binary  x;
+    SELECT f12 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare tinyint  x;
+    SELECT f13 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare tinyint unsigned  x;
+    SELECT f14 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare tinyint zerofill  x;
+    SELECT f15 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare tinyint unsigned zerofill  x;
+    SELECT f16 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare smallint  x;
+    SELECT f17 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare smallint unsigned   x;
+    SELECT f18 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare smallint zerofill  x;
+    SELECT f19 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare smallint unsigned zerofill  x;
+    SELECT f20 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare mediumint  x;
+    SELECT f21 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare mediumint unsigned  x;
+    SELECT f22 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare mediumint zerofill  x;
+    SELECT f23 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare mediumint unsigned zerofill  x;
+    SELECT f24 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare int  x;
+    SELECT f25 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare int unsigned  x;
+    SELECT f26 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare int zerofill  x;
+    SELECT f27 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare int unsigned zerofill  x;
+    SELECT f28 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare bigint  x;
+    SELECT f29 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare bigint unsigned  x;
+    elect f30 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare bigint zerofill  x;
+    SELECT f31 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare bigint unsigned zerofill  x;
+    SELECT f32 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal  x;
+    SELECT f33 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal unsigned  x;
+    SELECT f34 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal zerofill  x;
+    SELECT f35 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal unsigned zerofill not null  x;
+    SELECT f36 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (0) not null  x;
+    SELECT f37 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (64) not null  x;
+    SELECT f38 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (0) unsigned not null  x;
+    SELECT f39 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (64) unsigned not null  x;
+    SELECT f40 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (0) zerofill not null  x;
+    SELECT f41 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (64) zerofill not null  x;
+    SELECT f42 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (0) unsigned zerofill not null  x;
+    SELECT f43 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (64) unsigned zerofill not null  x;
+    SELECT f44 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (00) not null  x;
+    SELECT f45 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (63, 30) not null  x;
+    SELECT f46 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (00) unsigned not null  x;
+    SELECT f47 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (63, 30) unsigned not null  x;
+    SELECT f48 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (00) zerofill not null  x;
+    SELECT f49 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (63, 30) zerofill not null  x;
+    SELECT f50 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (00) unsigned zerofill not null  x;
+    SELECT f51 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare decimal (63, 30) unsigned zerofill not null  x;
+    SELECT f52 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric not null  x;
+    SELECT f53 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric unsigned not null  x;
+    SELECT f54 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric zerofill not null  x;
+    SELECT f55 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric unsigned zerofill not null  x;
+    SELECT f56 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (0) not null  x;
+    SELECT f57 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (64) not nul x;
+    SELECT f58 into x from tb1 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (0) unsigned  x;
+    SELECT f59 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (64) unsigned  x;
+    SELECT f60 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (0) zerofill  x;
+    SELECT f61 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (64) zerofill  x;
+    SELECT f62 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (0) unsigned zerofill  x;
+    SELECT f63 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (64) unsigned zerofill  x;
+    SELECT f64 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (00)  x;
+    SELECT f65 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (63, 30)  x;
+    SELECT f66 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (00) unsigned  x;
+    SELECT f67 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (63, 30) unsigned  x;
+    SELECT f68 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (00) zerofill  x;
+    SELECT f69 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (63, 30) zerofill  x;
+    SELECT f70 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (00) unsigned zerofill  x;
+    SELECT f71 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare numeric (63, 30) unsigned zerofill  x;
+    SELECT f72 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare real  x;
+    SELECT f73 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare real unsigned  x;
+    SELECT f74 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare real zerofill  x;
+    SELECT f75 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare real unsigned zerofill  x;
+    SELECT f76 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare double  x;
+    SELECT f77 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare double unsigned  x;
+    SELECT f78 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare double zerofill  x;
+    SELECT f79 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare double unsigned zerofill  x;
+    SELECT f80 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float not null  x;
+    SELECT f81 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float unsigned not null  x;
+    SELECT f82 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float zerofill not null  x;
+    SELECT f83 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float unsigned zerofill not null  x;
+    SELECT f84 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(0) not null  x;
+    SELECT f85 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(23) not null  x;
+    SELECT f86 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(0) unsigned not null  x;
+    SELECT f87 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(23) unsigned not null  x;
+    SELECT f88 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(0) zerofill not null  x;
+    SELECT f89 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(23) zerofill not null  x;
+    SELECT f90 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(0) unsigned zerofill not null  x;
+    SELECT f91 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(23) unsigned zerofill not null  x;
+    SELECT f92 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(24) not null  x;
+    SELECT f93 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(53) not null  x;
+    SELECT f94 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(24) unsigned not null  x;
+    SELECT f95 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(53) unsigned not null  x;
+    SELECT f96 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(24) zerofill not null  x;
+    SELECT f97 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(53) zerofill not null  x;
+    SELECT f98 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(24) unsigned zerofill not null  x;
+    SELECT f99 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare float(53) unsigned zerofill not null  x;
+    SELECT f100 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare date not null  x;
+    SELECT f101 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare time not null  x;
+    SELECT f102 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare datetime not null  x;
+    SELECT f103 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare timestamp not null  x;
+    SELECT f104 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare year not null  x;
+    SELECT f105 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare year(4) not null  x;
+    SELECT f107 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare enum("1enum", "2enum") not null  x;
+    SELECT f108 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare set("1set", "2set") not nul x;
+    SELECT f109 into x from tb2 limit 9998, 1;
+END//
+delimiter ;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.17 
+# Ensure that the invalid variable declarations are rejected, with an appropriate
+# error message.;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare @x char;
+   SELECT f2 into x from t2 limit 1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare accessible char;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare add char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare all char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare alter char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare analyze char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare and char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare as char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare asc char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare asensitive char;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare before char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare between char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare bigint char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare binary char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare blob char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare both char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare by char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare call char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare cascade char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare case char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare change char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare char char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare character char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare check char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare collate char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare column char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare condition char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare constraint char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare continue char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare convert char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare create char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare cross char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare current_date char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare current_time char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare current_timestamp char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare current_user char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare cursor char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare database char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare databases char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare day_hour char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare day_microsecond char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare day_minute char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare day_second char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare dec char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare decimal char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare declare char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare default char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare delayed char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare delete char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare desc char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare describe char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare deterministic char;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare distinct char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare distinctrow char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare div char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare double char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare drop char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare dual char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare each char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare else char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare elseif char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare enclosed char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare escaped char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare exists char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare exit char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare explain char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare false char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare fetch char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare float char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare float4 char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare float8 char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare for char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare force char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare foreign char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare from char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare fulltext char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare grant char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare group char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare having char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare high_priority char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare hour_microsecond char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare hour_minute char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare hour_second char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare if char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare ignore char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare in char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare index char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare infile char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare inner char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare inout char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare insensitive char;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare insert char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare int char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare int1 char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare int2 char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare int3 char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare int4 char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare int8 char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare integer char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare interval char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare into char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare is char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare iterate char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare join char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare key char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare keys char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare kill char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare leading char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare leave char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare left char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare like char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare limit char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare linear char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare lines char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare load char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare localtime char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare localtimestamp char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare lock char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare long char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare longblob char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare longtext char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare loop char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare low_priority char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare match char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare mediumblob char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare mediumint char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare mediumtext char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare middleint char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare minute_microsecond char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare minute_second char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare mod char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare modifies char;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare natural char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare not char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare no_write_to_binlog char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare null char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare numeric char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare on char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare optimize char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare option char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare optionally char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare or char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare order char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare out char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare outer char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare outfile char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare precision char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare primary char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare procedure char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare purge char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare range char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare read char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare reads char;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+# FIXME 31947
+#--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare read_only char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare read_write char;
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare real char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare references char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare regexp char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare release char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare rename char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare repeat char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare replace char;
+END//
+delimiter ;
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+   declare require char;
+END//
+delimiter ;
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare restrict char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare return char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare revoke char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare right char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare rlike char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare schema char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare schemas char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare second_microsecond char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare SELECT char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare sensitive char;
+# END//
+# delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare separator char;
+# END//
+# delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare set char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare show char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare smallint char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare spatial char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare specific char;
+# END//
+# delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare sql char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare sqlexception char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare sqlstate char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare sqlwarning char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare sql_big_result char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare sql_calc_found_rows char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare sql_small_result char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare ssl char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare starting char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare straight_join char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare table char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare terminated char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare then char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare tinyblob char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare tinyint char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare tinytext char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare to char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare trailing char;
+END//
+delimiter ;
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare trigger char;
+END//
+delimiter ;
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare true char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# --error ER_PARSE_ERROR
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare undo char;
+# END//
+# delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare union char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare unique char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare unlock char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare unsigned char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare update char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare usage char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare use char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare using char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare utc_date char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare utc_time char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare utc_timestamp char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare values char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare varbinary char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare varchar char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare varcharacter char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare varying char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare when char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare where char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare while char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare with char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare write char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xor char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare year_month char;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1()
+BEGIN
+    declare zerofill char;
+END//
+delimiter ;

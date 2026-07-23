@@ -93,6 +93,15 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
 		}
+		if memTable, ok := p.Children()[0].(*PhysicalMemTable); ok {
+			if extractor, ok := memTable.Extractor.(*SlowQueryExtractor); ok {
+				end := limit.Offset + limit.Count
+				if end < limit.Offset {
+					end = ^uint64(0)
+				}
+				extractor.SetRowLimitHint(end)
+			}
+		}
 	}
 	return p, err
 }
@@ -125,6 +134,16 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 	switch strings.ToUpper(p.Table.Name.O) {
 	case infoschema.ClusterTableSlowLog:
 		extractor := &SlowQueryExtractor{}
+		extractor.Desc = tblScan.Desc
+		if b.ranges != nil {
+			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.Extractor = extractor
+	case infoschema.ClusterTableAuditLog:
+		extractor := &AuditLogExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
 			err := extractor.buildTimeRangeFromKeyRange(b.ranges)

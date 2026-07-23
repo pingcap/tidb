@@ -203,6 +203,10 @@ const (
 	FromBase64      = "from_base64"
 	InsertFunc      = "insert_func"
 	Instr           = "instr"
+	LabelAceesible  = "label_accessible"
+	Seclabel        = "seclabel"
+	SeclabelToChar  = "seclabel_to_char"
+	LBACDominates   = "lbac_dominates"
 	Lcase           = "lcase"
 	Left            = "left"
 	Length          = "length"
@@ -270,6 +274,8 @@ const (
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
 	CurrentResourceGroup = "current_resource_group"
+	DataOperationAudit   = "data_operation_audit"
+	ColumnDecryption     = "column_decryption"
 
 	// control functions
 	If     = "if"
@@ -356,6 +362,10 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
+	// PingKaiDB Enterprise Edit functions
+	ArrayElementAt = "array_element"
+	ExtractValue   = "extractvalue"
+
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"
 	VecL1Distance           = "vec_l1_distance"
@@ -380,6 +390,10 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// procedure variable function
+	SetProcedureVar = "setprocedurevar"
+	GetProcedureVar = "getprocedurevar"
 )
 
 type FuncCallExprType int8

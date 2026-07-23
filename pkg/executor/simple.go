@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -98,6 +99,8 @@ type SimpleExec struct {
 
 	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
 	staleTxnStartTS uint64
+
+	extensions *extension.SessionExtensions
 }
 
 // resourceOptionsInfo represents the resource information to limit user.
@@ -206,6 +209,26 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAlterRange(x)
 	case *ast.DropQueryWatchStmt:
 		err = e.executeDropQueryWatch(x)
+	case *ast.CreateSecurityLabelComponentStmt:
+		err = executeCreateSecurityLabelComponent(ctx, e.Ctx(), x)
+	case *ast.DropSecurityLabelComponentStmt:
+		err = executeDropSecurityLabelComponent(ctx, e.Ctx(), x)
+	case *ast.CreateSecurityPolicyStmt:
+		err = executeCreateSecurityPolicy(ctx, e.Ctx(), x)
+	case *ast.DropSecurityPolicyStmt:
+		err = executeDropSecurityPolicy(ctx, e.Ctx(), x)
+	case *ast.CreateSecurityLabelStmt:
+		err = executeCreateSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.DropSecurityLabelStmt:
+		err = executeDropSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.GrantSecurityLabelStmt:
+		err = executeGrantSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.RevokeSecurityLabelStmt:
+		err = executeRevokeSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.GrantExemptionStmt:
+		err = executeGrantExemption(ctx, e.Ctx(), x)
+	case *ast.RevokeExemptionStmt:
+		err = executeRevokeExemption(ctx, e.Ctx(), x)
 	}
 	e.done = true
 	return err
@@ -603,6 +626,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	}
 	e.Ctx().GetSessionVars().CurrentDBChanged = dbname.O != e.Ctx().GetSessionVars().CurrentDB
 	e.Ctx().GetSessionVars().CurrentDB = dbname.O
+	e.Ctx().GetSessionVars().CurrentDBCI = dbname
 	sessionVars := e.Ctx().GetSessionVars()
 	dbCollate := dbinfo.Collate
 	if dbCollate == "" {
@@ -1728,6 +1752,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		maxConnectionsPerHour: 0,
 		// can't set 0 to maxUserConnections as default, because user could set 0 to this field.
 		// so we use -1(invalid value) as default.
+		// -1(invalid value) as a default parameter.
 		maxUserConnections: -1,
 	}
 
@@ -1930,6 +1955,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(plOptions.lockAccount) != 0 {
 			fields = append(fields, alterField{"account_locked=%?", plOptions.lockAccount})
+			if plOptions.lockAccount == "N" && e.extensions != nil {
+				e.extensions.OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+					ConnectionInfo: e.Ctx().GetSessionVars().ConnectionInfo,
+					ActiveRoles:    e.Ctx().GetSessionVars().ActiveRoles,
+					Info:           fmt.Sprintf("unlock %s@%s", spec.User.Username, spec.User.Hostname),
+				})
+			}
 		}
 
 		// support alter Password_reuse_history and Password_reuse_time.
@@ -2134,12 +2166,21 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 
+	if err := checkSpecialRoleGrantingByRoot(e.Ctx(), s.Roles); err != nil {
+		return err
+	}
+
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
 	sqlExecutor := restrictedCtx.GetSQLExecutor()
+
+	err = checkExclusiveRoleGranting(internalCtx, sqlExecutor, s.Roles, s.Users)
+	if err != nil {
+		return err
+	}
 
 	// begin a transaction to insert role graph edges.
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
@@ -2355,6 +2396,12 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.FastGenByArgs(user))
 		}
 
+		// if the mode of duty-separation is enabled, forbidding dropping admin roles.
+		if variable.EnableDutySeparationMode.Load() && IsAdminRole(user.Username) {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// Certain users require additional privileges in order to be modified.
 		// If this is the case, we need to rollback all changes and return a privilege error.
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
@@ -2451,6 +2498,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		// delete relationship from mysql.global_grants
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, "global_grants", user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
+		// delete privileges from mysql.procs_priv
+		sql.Reset()
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ProcsPriv, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -3044,7 +3099,10 @@ func (e *SimpleExec) autoNewTxn() bool {
 	// Data definition language (DDL) statements that define or modify database objects.
 	// (handled in DDL package)
 	// Statements that implicitly use or modify tables in the mysql database.
-	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt:
+	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt,
+		*ast.CreateSecurityLabelComponentStmt, *ast.DropSecurityLabelComponentStmt, *ast.CreateSecurityPolicyStmt, *ast.DropSecurityPolicyStmt,
+		*ast.CreateSecurityLabelStmt, *ast.DropSecurityLabelStmt, *ast.GrantSecurityLabelStmt, *ast.RevokeSecurityLabelStmt,
+		*ast.GrantExemptionStmt, *ast.RevokeExemptionStmt:
 		return true
 	// Transaction-control and locking statements.  BEGIN, LOCK TABLES, SET autocommit = 1 (if the value is not already 1), START TRANSACTION, UNLOCK TABLES.
 	// (handled in other place)
@@ -3117,7 +3175,110 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminSetBDRRole(s)
 	case ast.AdminUnsetBDRRole:
 		return e.executeAdminUnsetBDRRole()
+	case ast.AdminLBACEnable:
+		return e.executeAdminLBACEnable(s)
 	}
+	return nil
+}
+
+// clearSysSession close the session does not return the session.
+// Since the environment variables in the session are changed, the session object is not returned.
+func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
+	if sctx == nil {
+		return
+	}
+	_, _ = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+	sctx.(pools.Resource).Close()
+}
+
+func (e *SimpleExec) executeAdminLBACEnable(s *ast.AdminStmt) error {
+	sysSession, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabelSecurity)
+	defer clearSysSession(internalCtx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	defer func() {
+		if err == nil {
+			return
+		}
+		// In fact, we need only execute dropLabelSecuritySchema, but TiDB currently can't
+		// drop the procedures in the schema when we drop the schema.
+		// TODO: remove all drop sqls execept dropLabelSecuritySchema.
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreatePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropPolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateLevel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropLevel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateCompart)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropCompart)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateGroup)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropGroup)
+		sqlExecutor.ExecuteInternal(internalCtx, dropSetUserLabel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropUserLabel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropApplyTablePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropRemoveTablePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropLabelSecuritySchema)
+	}()
+
+	sqlMod, ok := e.Ctx().GetSessionVars().GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		return errors.New("unknown system var " + variable.SQLModeVar)
+	}
+	sysSession.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlMod)
+	chs, ok := e.Ctx().GetSessionVars().GetSystemVar(variable.CharacterSetClient)
+	if !ok {
+		return errors.New("unknown system var " + variable.CharacterSetClient)
+	}
+	sysSession.GetSessionVars().SetSystemVar(variable.CharacterSetClient, chs)
+
+	// Create schema LABELSECURITY_SCHEMA
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createLabelSecuritySchema); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createPolicy); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropPolicy); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createLevel); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropLevel); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createCompart); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropCompart); err != nil {
+		return err
+	}
+
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, createGroup); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropGroup); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, setUserLabel); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropUserLabel); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, applyTablePolicy); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, removeTablePolicy); err != nil {
+		return err
+	}
+
 	return nil
 }
 

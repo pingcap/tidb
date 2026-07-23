@@ -964,6 +964,20 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.MergeNulls(buf)
 	tc := typeCtx(ctx)
 	i64s := result.Int64s()
+	switch b.tp.GetSubType() {
+	case mysql.SubTypeIntervalYearToMonth, mysql.SubTypeIntervalDayToSecond:
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			i64s[i], err = types.ConvertIntervalStringToInt(buf.GetString(i), b.tp.GetSubType(), b.tp.GetFlen())
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	isUnsigned := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	unionUnsigned := isUnsigned && b.inUnion
 	for i := 0; i < n; i++ {

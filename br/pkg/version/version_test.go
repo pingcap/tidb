@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/meta/model"

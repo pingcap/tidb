@@ -380,6 +380,8 @@ func getSelectPlan(p base.Plan) base.PhysicalPlan {
 			selectPlan = x.SelectPlan
 		case *Explain:
 			selectPlan = getSelectPlan(x.TargetPlan)
+		case *SelectInto:
+			selectPlan = getSelectPlan(x.TargetPlan)
 		}
 	}
 	return selectPlan

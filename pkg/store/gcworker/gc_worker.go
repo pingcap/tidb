@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -72,6 +73,10 @@ type GCWorker struct {
 	cancel             context.CancelFunc
 	done               chan error
 	regionLockResolver tikv.RegionLockResolver
+
+	// follow item is used to gc some records in system table.
+	lastGCSysTable     time.Time
+	intervalGcSystable time.Duration //the interval is 10min to GC system table
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -100,6 +105,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		lastFinish:         time.Now(),
 		regionLockResolver: tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
 		done:               make(chan error),
+		intervalGcSystable: time.Minute * 10,
 	}
 	variable.RegisterStatistics(worker)
 	return worker, nil
@@ -210,6 +216,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 		}
 	}()
 	for {
+		pkdbrepl.CheckStandbyBlocking(ctx)
 		select {
 		case <-ticker.C:
 			w.tick(ctx)
@@ -279,6 +286,10 @@ func (w *GCWorker) tick(ctx context.Context) {
 		err = w.leaderTick(ctx)
 		if err != nil {
 			logutil.Logger(ctx).Warn("leader tick", zap.String("category", "gc worker"), zap.Error(err))
+		}
+		err = w.TickGCSysTable(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Warn("[gc worker] tick gc system table", zap.Error(err))
 		}
 	} else {
 		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
@@ -1007,11 +1018,22 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 func (w *GCWorker) doUnsafeDestroyRangeRequest(
 	ctx context.Context, startKey []byte, endKey []byte,
 ) error {
+	return doUnsafeDestroyRangeRequest(ctx, startKey, endKey, w.pdClient, w.tikvStore, w.uuid)
+}
+
+func doUnsafeDestroyRangeRequest(
+	ctx context.Context,
+	startKey []byte,
+	endKey []byte,
+	pdCli pd.Client,
+	tikvStore tikv.Storage,
+	uuid string,
+) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
-	stores, err := w.getStoresForGC(ctx)
+	stores, err := getStoresForGC(ctx, pdCli)
 	if err != nil {
 		logutil.Logger(ctx).Error("delete ranges: got an error while trying to get store list from PD", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
+			zap.String("uuid", uuid),
 			zap.Error(err))
 		metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("get_stores").Inc()
 		return errors.Trace(err)
@@ -1032,7 +1054,7 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(
 		go func() {
 			defer wg.Done()
 
-			resp, err1 := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, unsafeDestroyRangeTimeout)
+			resp, err1 := tikvStore.GetTiKVClient().SendRequest(ctx, address, req, unsafeDestroyRangeTimeout)
 			if err1 == nil {
 				if resp == nil || resp.Resp == nil {
 					err1 = errors.Errorf("unsafe destroy range returns nil response from store %v", storeID)
@@ -1097,6 +1119,12 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 		logutil.BgLogger().Debug("will ignore gc tiflash_compute node", zap.String("category", "gc worker"))
 		return false, nil
 
+	case placement.EngineLabelReplicator:
+		// Currently, we implement unsafe destroy range for replicator by, letting
+		// replica cluster process unsafe destroy range request by checking DDL finished
+		// TS and min safe TS. So here GC module no need to consider replicator store.
+		return false, nil
+
 	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
 		return true, nil
@@ -1111,7 +1139,11 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 
 // getStoresForGC gets the list of stores that needs to be processed during GC.
 func (w *GCWorker) getStoresForGC(ctx context.Context) ([]*metapb.Store, error) {
-	stores, err := w.pdClient.GetAllStores(ctx)
+	return getStoresForGC(ctx, w.pdClient)
+}
+
+func getStoresForGC(ctx context.Context, pdCli pd.Client) ([]*metapb.Store, error) {
+	stores, err := pdCli.GetAllStores(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1664,6 +1696,12 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	return nil
 }
 
+func doGCPlacementRulesForDDLJob(store kv.Storage, ddlJobID int64) error {
+	se := createSession(store)
+	defer se.Close()
+	return doGCPlacementRules(se, 0, util.DelRangeTask{JobID: ddlJobID}, &sync.Map{})
+}
+
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
@@ -1863,4 +1901,9 @@ func (w *MockGCWorker) DeleteRanges(ctx context.Context, safePoint uint64) error
 	logutil.Logger(ctx).Error("deleteRanges is called")
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnGC)
 	return w.worker.deleteRanges(ctx, safePoint, gcConcurrency{1, false})
+}
+
+func init() {
+	ddl.DoUnsafeDestroyRangeRequest = doUnsafeDestroyRangeRequest
+	ddl.DoGCPlacementRules = doGCPlacementRulesForDDLJob
 }

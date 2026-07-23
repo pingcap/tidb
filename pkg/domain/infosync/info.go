@@ -1030,7 +1030,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		res = fmt.Sprintf("http://%s", net.JoinHostPort(prometheus.IP, strconv.Itoa(prometheus.Port)))
+		res = fmt.Sprintf("%s://%s", util2.InternalHTTPSchema(), net.JoinHostPort(prometheus.IP, strconv.Itoa(prometheus.Port)))
 	}
 	is.prometheusAddr = res
 	is.modifyTime = time.Now()
@@ -1291,6 +1291,16 @@ func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount
 		return errors.Trace(err)
 	}
 	return is.tiflashReplicaManager.GetRegionCountFromPD(ctx, tableID, regionCount)
+}
+
+// GetPlacementRule is a helper function to get placement rule by table id.
+func GetPlacementRule(ctx context.Context, tableID int64) (*pdhttp.Rule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.tiflashReplicaManager.GetPlacementRule(ctx, tableID)
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.

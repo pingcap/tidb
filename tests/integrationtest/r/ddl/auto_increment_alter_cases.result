@@ -1,0 +1,192 @@
+drop table if exists t_auto_case_01;
+create table t_auto_case_01 (
+c_payload int,
+c_extra int
+);
+insert into t_auto_case_01 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_01 add c_auto_id int auto_increment primary key;
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_01;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+3	3	0	0
+insert into t_auto_case_01(c_payload, c_extra) values (40, 4);
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_01;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+4	4	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=database() and table_name='t_auto_case_01';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_01' and column_name='c_auto_id';
+EXTRA
+auto_increment
+drop table if exists t_auto_case_02;
+create table t_auto_case_02 (
+c_payload int,
+c_extra int
+);
+insert into t_auto_case_02 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_02 add column c_auto_id int not null auto_increment primary key first;
+select column_name from information_schema.columns where table_schema=database() and table_name='t_auto_case_02' order by ordinal_position limit 1;
+column_name
+c_auto_id
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_02;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+3	3	0	0
+insert into t_auto_case_02(c_payload, c_extra) values (40, 4);
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_02;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+4	4	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=database() and table_name='t_auto_case_02';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_02' and column_name='c_auto_id';
+EXTRA
+auto_increment
+drop table if exists t_auto_case_03;
+create table t_auto_case_03 (
+c_payload int,
+c_extra int
+);
+insert into t_auto_case_03 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_03 add c_auto_id int not null auto_increment, add primary key (c_auto_id);
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_03;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+3	3	0	0
+insert into t_auto_case_03(c_payload, c_extra) values (40, 4);
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_03;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+4	4	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=database() and table_name='t_auto_case_03';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_03' and column_name='c_auto_id';
+EXTRA
+auto_increment
+drop table if exists t_auto_case_04;
+create table t_auto_case_04 (
+c_existing int
+);
+insert into t_auto_case_04 values (10), (20), (30);
+alter table t_auto_case_04 add (
+c_auto_id int not null primary key auto_increment,
+c_ref_01 integer,
+c_ref_02 integer
+);
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_04;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+3	3	0	0
+insert into t_auto_case_04(c_existing, c_ref_01, c_ref_02) values (40, 1, 2);
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_04;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+4	4	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=database() and table_name='t_auto_case_04';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_04' and column_name='c_auto_id';
+EXTRA
+auto_increment
+drop table if exists t_auto_case_05;
+create table t_auto_case_05 (
+c_payload int,
+c_extra int
+);
+insert into t_auto_case_05 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_05 add column c_auto_id int(11) not null auto_increment first, add primary key (c_auto_id);
+select column_name from information_schema.columns where table_schema=database() and table_name='t_auto_case_05' order by ordinal_position limit 1;
+column_name
+c_auto_id
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_05;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+3	3	0	0
+insert into t_auto_case_05(c_payload, c_extra) values (40, 4);
+select count(*), count(distinct c_auto_id), sum(c_auto_id is null), sum(c_auto_id=0) from t_auto_case_05;
+count(*)	count(distinct c_auto_id)	sum(c_auto_id is null)	sum(c_auto_id=0)
+4	4	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=database() and table_name='t_auto_case_05';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_05' and column_name='c_auto_id';
+EXTRA
+auto_increment
+drop table if exists t_auto_case_06;
+create table t_auto_case_06 (
+c_key int(11) not null,
+c_payload int
+);
+insert into t_auto_case_06 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_06 change c_key c_key int(11) not null auto_increment, add primary key (c_key);
+select count(*), count(distinct c_key), sum(c_key is null), sum(c_key=0) from t_auto_case_06;
+count(*)	count(distinct c_key)	sum(c_key is null)	sum(c_key=0)
+3	3	0	0
+insert into t_auto_case_06(c_payload) values (40);
+select c_key > 30 from t_auto_case_06 where c_payload=40;
+c_key > 30
+1
+select TIDB_PK_TYPE from information_schema.tables where table_schema=database() and table_name='t_auto_case_06';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_06' and column_name='c_key';
+EXTRA
+auto_increment
+set tidb_enable_clustered_index = OFF;
+drop table if exists t_auto_case_07;
+create table t_auto_case_07 (
+c_key int not null,
+c_payload int,
+primary key (c_key)
+);
+insert into t_auto_case_07 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_07 change c_key c_key int not null auto_increment;
+insert into t_auto_case_07(c_payload) values (40);
+select c_key > 30 from t_auto_case_07 where c_payload=40;
+c_key > 30
+1
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_07' and column_name='c_key';
+EXTRA
+auto_increment
+drop table if exists t_auto_case_08;
+create table t_auto_case_08 (
+c_key integer not null,
+c_payload int,
+primary key (c_key)
+);
+insert into t_auto_case_08 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_08 modify c_key integer auto_increment;
+insert into t_auto_case_08(c_payload) values (40);
+select c_key > 30 from t_auto_case_08 where c_payload=40;
+c_key > 30
+1
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_08' and column_name='c_key';
+EXTRA
+auto_increment
+set tidb_enable_clustered_index = default;
+drop table if exists t_auto_case_09;
+create table t_auto_case_09 (
+c_key int(11) not null auto_increment,
+c_payload int,
+primary key (c_key)
+);
+alter table t_auto_case_09 change column c_key c_key varchar(50) not null;
+Error 8200 (HY000): Unsupported modify column: this column has primary key flag
+select COLUMN_TYPE, EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_09' and column_name='c_key';
+COLUMN_TYPE	EXTRA
+int	auto_increment
+drop table if exists t_auto_case_10;
+create table t_auto_case_10 (
+c_aux_id int not null,
+c_payload int
+);
+insert into t_auto_case_10 values (10, 1), (20, 2), (30, 3);
+alter table t_auto_case_10 modify c_aux_id int auto_increment primary key;
+select count(*), count(distinct c_aux_id), sum(c_aux_id is null), sum(c_aux_id=0) from t_auto_case_10;
+count(*)	count(distinct c_aux_id)	sum(c_aux_id is null)	sum(c_aux_id=0)
+3	3	0	0
+insert into t_auto_case_10(c_payload) values (40);
+select c_aux_id > 30 from t_auto_case_10 where c_payload=40;
+c_aux_id > 30
+1
+select TIDB_PK_TYPE from information_schema.tables where table_schema=database() and table_name='t_auto_case_10';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=database() and table_name='t_auto_case_10' and column_name='c_aux_id';
+EXTRA
+auto_increment

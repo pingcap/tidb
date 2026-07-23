@@ -86,6 +86,13 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	// rcWaitAuditLog is the audit log template for pending due to resource control
+	rcWaitAuditLog = "[Resource group wait time:%s] [Resource group name:%s]"
+	// rcErrorAuditLog is the audit log template for resource control failure
+	rcErrorAuditLog = "[Resource group error:%s] [Resource group name:%s]"
+)
+
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -127,7 +134,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			emptyOrgName = true
 		}
 		rf := &resolve.ResultField{
-			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
+			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType, Encryption: schema.Columns[i].Encryption},
 			ColumnAsName: names[i].ColName,
 			EmptyOrgName: emptyOrgName,
 			Table:        &model.TableInfo{Name: names[i].OrigTblName},
@@ -200,6 +207,7 @@ func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
 		err = exec.Close(a.executor)
+		a.stmt.Ctx.GetSessionVars().StmtCtx.UDFCleanup()
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -650,7 +658,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 	}
 
-	a.prepareFKCascadeContext(e)
+	a.prepareCascadeContext(e)
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		return result, err
 	}
@@ -697,20 +705,20 @@ func (a *ExecStmt) getSQLForProcessInfo() string {
 	return sql
 }
 
-func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Executor) error {
+func (a *ExecStmt) handleStmtTrigger(ctx context.Context, e exec.Executor) error {
 	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
-	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
+	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades || stmtCtx.TriggerCtx.HasTriggerCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
-	err := a.handleForeignKeyTrigger(ctx, e, 1)
+	err := a.handleAllCascades(ctx, e, 1)
 	if err != nil {
 		err1 := a.handleFKTriggerError(stmtCtx)
 		if err1 != nil {
-			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
+			return errors.Errorf("handle trigger error failed, err: %v, original_err: %v", err1, err)
 		}
 		return err
 	}
@@ -722,7 +730,15 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 
 var maxForeignKeyCascadeDepth = 15
 
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e exec.Executor, depth int) error {
+func (a *ExecStmt) handleAllCascades(ctx context.Context, e exec.Executor, depth int) error {
+	err := a.handleTriggerCascade(ctx, e, depth)
+	if err != nil {
+		return err
+	}
+	return a.handleFKCascades(ctx, e, depth)
+}
+
+func (a *ExecStmt) handleFKCascades(ctx context.Context, e exec.Executor, depth int) error {
 	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok {
 		return nil
@@ -742,6 +758,79 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e exec.Executor,
 		}
 	}
 	return nil
+}
+
+func (a *ExecStmt) handleTriggerCascade(ctx context.Context, e exec.Executor, depth int) error {
+	execWithTrigger, ok := e.(WithTriggerSupport)
+	if !ok {
+		return nil
+	}
+	sessVars := a.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	if stmtCtx.InHandleForeignKeyTrigger {
+		// Cascade operations should NOT cause trigger execution on the affected child rows.
+		return nil
+	}
+	trigExec := execWithTrigger.GetTriggerExec()
+	if trigExec == nil {
+		return nil
+	}
+	err := trigExec.collectActivateTriggers()
+	if err != nil {
+		return err
+	}
+	origSQLMode := sessVars.SQLMode
+	defer func() {
+		sessVars.SQLMode = origSQLMode
+	}()
+
+	for {
+		pendingStmt := trigExec.currentStmt()
+		if pendingStmt == nil {
+			return nil
+		}
+		sessVars.SQLMode = pendingStmt.sqlMode
+		restoreStmtCtx := resetStmtCtx(a.Ctx, pendingStmt.stmt)
+		e, err := trigExec.buildNextExecutor(ctx)
+		if err != nil || e == nil {
+			restoreStmtCtx()
+			return err
+		}
+
+		if err := exec.Open(ctx, e); err != nil {
+			terror.Log(exec.Close(e))
+			restoreStmtCtx()
+			return err
+		}
+		chk := exec.NewFirstChunk(e)
+		err = exec.Next(ctx, e, chk)
+		if err == nil {
+			if sel, ok := pendingStmt.stmt.(*ast.SelectStmt); !(ok && sel.SelectIntoOpt != nil) {
+				if chk.NumRows() > 0 || (e.Schema() != nil && e.Schema().Len() > 0) {
+					err = exeerrors.ErrSpNoRetset.FastGenByArgs("TRIGGER")
+				}
+			}
+		}
+		closeErr := exec.Close(e)
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			restoreStmtCtx()
+			return err
+		}
+		a.Ctx.StmtCommit(ctx)
+		err = a.handleFKCascades(ctx, e, depth+1)
+		if err != nil {
+			restoreStmtCtx()
+			return err
+		}
+		restoreStmtCtx()
+		err = trigExec.castNewData()
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // handleForeignKeyCascade uses to execute foreign key cascade behaviour, the progress is:
@@ -802,22 +891,35 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
 		// then the later fk cascade executors can see the mem-buffer changes.
 		a.Ctx.StmtCommit(ctx)
-		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
+		err = a.handleFKCascades(ctx, e, depth+1)
 		if err != nil {
 			return err
 		}
 	}
 }
 
-// prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
+// prepareCascadeContext records a transaction savepoint for cascade when this ExecStmt has foreign key / trigger
 // cascade behaviour and this ExecStmt is in transaction.
-func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
-	exec, ok := e.(WithForeignKeyTrigger)
-	if !ok || !exec.HasFKCascades() {
+func (a *ExecStmt) prepareCascadeContext(e exec.Executor) {
+	var execWithTrig WithForeignKeyTrigger
+	if explain, ok := e.(*ExplainExec); ok {
+		execWithTrig, _ = explain.analyzeExec.(WithForeignKeyTrigger)
+	} else {
+		execWithTrig, _ = e.(WithForeignKeyTrigger)
+	}
+	if execWithTrig == nil {
+		return
+	}
+	hasFKCascade := execWithTrig.HasFKCascades()
+	trigExec := execWithTrig.GetTriggerExec()
+	hasTriggerCascade := trigExec != nil
+	if !hasFKCascade && !hasTriggerCascade {
 		return
 	}
 	sessVar := a.Ctx.GetSessionVars()
-	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
+	if hasFKCascade {
+		sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
+	}
 	if !sessVar.InTxn() {
 		return
 	}
@@ -827,7 +929,7 @@ func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
 	}
 	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
 	// cascade failed.
-	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
+	savepointName := "tg_sp_" + strconv.FormatUint(txn.StartTS(), 10)
 	memDBCheckpoint := txn.GetMemDBCheckpoint()
 	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
 	sessVar.StmtCtx.ForeignKeyTriggerCtx.SavepointName = savepointName
@@ -863,6 +965,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 		// `rs.Close` in `handleStmt`
 		if handled && sc != nil && rs == nil {
 			sc.DetachMemDiskTracker()
+			a.Ctx.GetSessionVars().StmtCtx.UDFCleanup()
 			cteErr := resetCTEStorageMap(a.Ctx)
 			if err == nil {
 				// Only overwrite err when it's nil.
@@ -1059,8 +1162,17 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	if err != nil {
 		return nil, err
 	}
-	err = a.handleStmtForeignKeyTrigger(ctx, e)
+	err = a.handleStmtTrigger(ctx, e)
 	return nil, err
+}
+
+// CallStmt is used to execute procedure. If call the function txnManager.OnPessimisticStmtStart(ctx), it will create KVTxn.aggressiveLockingContext,
+// when it goes to the first statement of the procedure, it will call the function txnManager.OnPessimisticStmtStart(ctx) again which leads to panic at driver/txn/txn_driver.go:385.
+// So it needs to skip txnManager.OnPessimisticStmtStart(ctx) for callStmt.
+// The executing of sql statements in procedure will call txnManager.OnPessimisticStmtStart and txnManager.OnPessimisticStmtEnd.
+func (a *ExecStmt) needSkipPessimisticStmtStart() bool {
+	_, ok := a.StmtNode.(*ast.CallStmt)
+	return ok
 }
 
 func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (err error) {
@@ -1093,15 +1205,22 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 	}()
 
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
-	err = txnManager.OnPessimisticStmtStart(ctx)
+	if !a.needSkipPessimisticStmtStart() {
+		err = txnManager.OnPessimisticStmtStart(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	if err != nil {
 		return err
 	}
 	defer func() {
 		isSuccessful := err == nil
-		err1 := txnManager.OnPessimisticStmtEnd(ctx, isSuccessful)
-		if err == nil && err1 != nil {
-			err = err1
+		if !a.needSkipPessimisticStmtStart() {
+			err1 := txnManager.OnPessimisticStmtEnd(ctx, isSuccessful)
+			if err == nil && err1 != nil {
+				err = err1
+			}
 		}
 	}()
 
@@ -1385,6 +1504,7 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (exec.Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, sctx, a.InfoSchema, a.Ti)
+	b.triggerExec = newTriggerExec(a.GoCtx, b, a)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -1549,6 +1669,31 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 	}
 }
 
+// rcAuitLog write audit log about resource group
+func (a *ExecStmt) rcAuitLog(err error) {
+	if a.Ctx.GetExtensions() == nil || err == nil {
+		return
+	}
+
+	if !a.Ctx.GetExtensions().HasSecurityEventListeners() {
+		return
+	}
+
+	errInfo := err.Error()
+	if strings.Contains(errInfo, "Query execution was interrupted, identified as runaway query") || strings.Contains(errInfo, "Quarantined and interrupted because of being in runaway watch list") {
+		sessionctx.OnExtensionSecurity(a.Ctx, fmt.Sprintf(rcErrorAuditLog, errInfo, a.Ctx.GetSessionVars().StmtCtx.ResourceGroup), a.Ctx.GetSessionVars().StmtCtx)
+		return
+	}
+
+	ruDetails := util.NewRUDetails()
+	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
+		ruDetails = ruDetailsVal.(*util.RUDetails)
+	}
+	if ruDetails.RUWaitDuration() > 0 {
+		sessionctx.OnExtensionSecurity(a.Ctx, fmt.Sprintf(rcWaitAuditLog, ruDetails.RUWaitDuration(), a.Ctx.GetSessionVars().StmtCtx.ResourceGroup), a.Ctx.GetSessionVars().StmtCtx)
+	}
+}
+
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
 // 1. record slow log if needed.
 // 2. record summary statement.
@@ -1588,6 +1733,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
+	a.rcAuitLog(err)
 	a.SummaryStmt(succ)
 	a.observeStmtFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
@@ -2209,6 +2355,12 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
+	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
+		// To reduce the performance impact on fast plan.
+		// Drop them does not cause notable accuracy issue in TopSQL.
+		return ctx
+	}
+
 	vars := a.Ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	normalizedSQL, sqlDigest := sc.SQLDigest()
@@ -2222,11 +2374,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopSQLEnabled() {
-		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in TopSQL.
-		if IsFastPlan(a.Plan) {
-			return ctx
-		}
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())

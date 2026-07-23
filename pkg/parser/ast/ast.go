@@ -142,7 +142,7 @@ type Visitor interface {
 	// skipChildren returns true means children nodes should be skipped,
 	// this is useful when work is done in Enter and there is no need to visit children.
 	Enter(n Node) (node Node, skipChildren bool)
-	// Leave is called after children nodes have been visited.
+	// Leave is called after children nodes have been visited (or skipped).
 	// The returned node's type can be different from the input node if it is a ExprNode,
 	// Non-expression node must be the same type as the input node n.
 	// ok returns false to stop visiting.
@@ -193,6 +193,11 @@ func GetStmtLabel(stmtNode StmtNode) string {
 			return "ExplainAnalyzeSQL"
 		}
 		return "ExplainSQL"
+	case *ExplainRoutineStmt:
+		if x.Analyze {
+			return "ExplainAnalyzeSQL"
+		}
+		return "ExplainSQL"
 	case *InsertStmt:
 		if x.IsReplace {
 			return "Replace"
@@ -238,6 +243,18 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Savepoint"
 	case *OptimizeTableStmt:
 		return "Optimize"
+	case *CreateProcedureInfo:
+		return "CreateProcedure"
+	case *DropProcedureStmt:
+		return "DropProcedure"
+	case *AlterProcedureStmt:
+		return "AlterProcedure"
+	case *CallStmt:
+		return "Call"
+	case *CreateTriggerStmt:
+		return "CreateTrigger"
+	case *DropTriggerStmt:
+		return "DropTrigger"
 	}
 	return "other"
 }

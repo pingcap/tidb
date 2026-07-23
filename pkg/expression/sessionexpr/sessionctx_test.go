@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	tmock "github.com/stretchr/testify/mock"
@@ -165,6 +167,20 @@ func TestSessionEvalContextCurrentTime(t *testing.T) {
 	tm2, err := impl.CurrentTime()
 	require.NoError(t, err)
 	require.Equal(t, tm.UnixNano(), tm2.UnixNano())
+}
+
+func TestLoadStoredFunctionNoDBWhenStoredFuncCtxInited(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().CurrentDB = ""
+
+	sc := sctx.GetSessionVars().StmtCtx
+	sc.UserFuncCtx.Lock()
+	sc.UserFuncCtx.StoredFuncName = make(map[[2]string]*types.FieldType)
+	sc.UserFuncCtx.Unlock()
+
+	ectx := sessionexpr.NewExprContext(sctx)
+	_, err := ectx.LoadStoredFunction("", "xxx")
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrNoDB), "err: %v", err)
 }
 
 type mockPrivManager struct {

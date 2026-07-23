@@ -142,7 +142,7 @@ select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' 
 create user key_column_tester;
 
 connect (conn1, localhost, key_column_tester,, information_schema);
-select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME != 'CLUSTER_SLOW_QUERY';
+select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME != 'CLUSTER_SLOW_QUERY' AND TABLE_NAME != 'CLUSTER_AUDIT_LOG';
 
 connection default;
 CREATE ROLE r_stats_meta ;

@@ -98,6 +98,18 @@ func updateRecord(
 	sessVars := sctx.GetSessionVars()
 	sc := sessVars.StmtCtx
 
+	if ts, ok := sctx.GetTableCtx().GetTriggerSupport(); ok {
+		if err := ts.OnUpdateBefore(t.Meta(), oldData, newData); err != nil {
+			retErr = err
+			return
+		}
+		defer func() {
+			if retErr == nil {
+				retErr = ts.OnUpdateAfter(t.Meta(), oldData, newData)
+			}
+		}()
+	}
+
 	// changed, handleChanged indicated whether row/handle is changed
 	changed, handleChanged := false, false
 	// onUpdateNeedModify is for "UPDATE SET ts_field = old_value".

@@ -56,6 +56,11 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.DoStmt{},
 		&ast.ExecuteStmt{UsingVars: []ast.ExprNode{valueExpr}},
 		&ast.ExplainStmt{Stmt: &ast.ShowStmt{}},
+		&ast.ExplainRoutineStmt{
+			RoutineType: ast.ExplainRoutineTypeFunction,
+			Name:        &ast.TableName{},
+			Args:        []ast.ExprNode{valueExpr},
+		},
 		&ast.GrantStmt{},
 		&ast.PrepareStmt{SQLVar: &ast.VariableExpr{Value: valueExpr}},
 		&ast.RollbackStmt{},

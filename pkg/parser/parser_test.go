@@ -822,6 +822,18 @@ func TestDMLStmt(t *testing.T) {
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' enclosed BY '\"' lines terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\r'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' optionally enclosed BY '\"' lines starting by 'xy' terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' enclosed BY '\"' lines starting by 'xy' terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'"},
+		// select into var list
+		{"select 1 into @a", true, "SELECT 1 INTO @`a`"},
+		{"select 1 into @a from dual", true, "SELECT 1 INTO @`a`"},
+		{"select a into @a from t", true, "SELECT `a` INTO @`a` FROM `t`"},
+		{"select a, b into @a, @bc from t", true, "SELECT `a`,`b` INTO @`a`,@`bc` FROM `t`"},
+		{"select a, b+1 into @a, @bc from t", true, "SELECT `a`,`b`+1 INTO @`a`,@`bc` FROM `t`"},
+		{"select a into a from t", true, "SELECT `a` INTO `a` FROM `t`"},
+		{"select a, b into a, bc from t", true, "SELECT `a`,`b` INTO `a`,`bc` FROM `t`"},
+		{"select a, b+1 into a, bc from t", true, "SELECT `a`,`b`+1 INTO `a`,`bc` FROM `t`"},
+		{"select * from t into outfile 'ttt' union select * from u", true, "SELECT * FROM `t` INTO OUTFILE 'ttt' UNION SELECT * FROM `u`"},
+		{"select * from t union select * from u into outfile 'ttt'", true, "SELECT * FROM `t` UNION SELECT * FROM `u` INTO OUTFILE 'ttt'"},
+		{"select 1 union select 2 into @a", true, "SELECT 1 UNION SELECT 2 INTO @`a`"},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true, "SELECT * FROM ((`t1`) JOIN `t2`) JOIN `t3`"},
@@ -3008,6 +3020,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (d date default date_format(now(),'%Y-%m'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m')))"},
 		{"create table t (d date default (date_format(now(),'%Y-%m')))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m')))"},
 		{"create table t (d date default date_format(now(),'%Y-%m-%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d')))"},
+		{"create table t (d date default date_format(now(),'%y%m%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%y%m%d')))"},
+		{"create table t (d date default date_format('2025-08-08 13:13:13','%y%m%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(_UTF8MB4'2025-08-08 13:13:13', _UTF8MB4'%y%m%d')))"},
 		{"create table t (d date default date_format(now(),'%Y-%m-%d %H.%i.%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H.%i.%s')))"},
 		{"create table t (d date default date_format(now(),'%Y-%m-%d %H:%i:%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H:%i:%s')))"},
 		{"create table t (d date default date_format(now(),'%b %d %Y %h:%i %p'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%b %d %Y %h:%i %p')))"},
@@ -4160,6 +4174,9 @@ func TestErrorMsg(t *testing.T) {
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
 	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")
 
+	_, _, err = p.Parse("SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a", "", "")
+	require.EqualError(t, err, "[parser:1221]Incorrect usage of INTO and subquery")
+
 	_, _, err = p.Parse("load data infile 'aaa' into table aaa FIELDS  Enclosed by '\\\\b';", "", "")
 	require.EqualError(t, err, "[parser:1083]Field separator argument is not what is expected; check the manual")
 
@@ -5241,6 +5258,12 @@ func TestParserErrMsg(t *testing.T) {
 	RunErrMsgTest(t, funcCallMsgCases)
 }
 
+func TestSelectIntoInSubqueryErrMsg(t *testing.T) {
+	p := parser.New()
+	_, _, err := p.Parse("SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a", "", "")
+	require.EqualError(t, err, "[parser:1221]Incorrect usage of INTO and subquery")
+}
+
 type subqueryChecker struct {
 	text string
 	t    *testing.T
@@ -5288,6 +5311,9 @@ func TestSubquery(t *testing.T) {
 		{"select * from (((select * from t1)) union (select * from t1) union (select * from t1)) a", true, "SELECT * FROM ((SELECT * FROM `t1`) UNION (SELECT * FROM `t1`) UNION (SELECT * FROM `t1`)) AS `a`"},
 		{"SELECT COUNT(*) FROM plan_executions WHERE (EXISTS((SELECT * FROM triggers WHERE plan_executions.trigger_id=triggers.id AND triggers.type='CRON')))", true, "SELECT COUNT(1) FROM `plan_executions` WHERE (EXISTS (SELECT * FROM `triggers` WHERE `plan_executions`.`trigger_id`=`triggers`.`id` AND `triggers`.`type`=_UTF8MB4'CRON'))"},
 		{"select exists((select 1));", true, "SELECT EXISTS (SELECT 1)"},
+		{"SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a", false, ""},
+		{"(SELECT 1 INTO @v) UNION SELECT 2", false, ""},
+		{"SELECT 1 UNION (SELECT 2 INTO @v)", false, ""},
 		{"select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b", true, "SELECT * FROM ((SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)) AS `t` ORDER BY `a`,`b`"},
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
 		{"(WITH v0 AS (SELECT TRUE) (SELECT 'abc' EXCEPT (SELECT TRUE)))", true, "WITH `v0` AS (SELECT TRUE) (SELECT _UTF8MB4'abc' EXCEPT (SELECT TRUE))"},
@@ -5483,7 +5509,7 @@ func TestUnionOrderBy(t *testing.T) {
 func TestLikeEscape(t *testing.T) {
 	table := []testCase{
 		// for like escape
-		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
+		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_' ESCAPE ''"},
 		{`select "abc_" like "abc\\_" escape '\\'`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
 		{`select "abc_" like "abc\\_" escape '||'`, false, ""},
 		{`select "abc" like "escape" escape '+'`, true, "SELECT _UTF8MB4'abc' LIKE _UTF8MB4'escape' ESCAPE '+'"},
@@ -5676,6 +5702,14 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN FORMAT = TIDB_JSON FOR CONNECTION 1", true, "EXPLAIN FORMAT = 'TIDB_JSON' FOR CONNECTION 1"},
 		{"EXPLAIN FORMAT = tidb_json SELECT 1", true, "EXPLAIN FORMAT = 'tidb_json' SELECT 1"},
 		{"EXPLAIN ANALYZE FORMAT = tidb_json SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'tidb_json' SELECT 1"},
+		{"EXPLAIN ROUTINE FUNCTION db.f", true, "EXPLAIN ROUTINE FUNCTION `db`.`f`()"},
+		{"EXPLAIN ROUTINE FUNCTION db.f(1, 'x')", true, "EXPLAIN ROUTINE FUNCTION `db`.`f`(1, _UTF8MB4'x')"},
+		{"EXPLAIN ROUTINE PROCEDURE db.p(1, @x)", true, "EXPLAIN ROUTINE PROCEDURE `db`.`p`(1, @`x`)"},
+		{"EXPLAIN ROUTINE FUNCTION db.f(1) FOR STMT 7", false, ""},
+		{"EXPLAIN FORMAT = 'brief' ROUTINE FUNCTION db.f(1)", true, "EXPLAIN FORMAT = 'brief' ROUTINE FUNCTION `db`.`f`(1)"},
+		{"EXPLAIN ANALYZE ROUTINE FUNCTION db.f(1)", true, "EXPLAIN ANALYZE ROUTINE FUNCTION `db`.`f`(1)"},
+		{"EXPLAIN ANALYZE ROUTINE FUNCTION db.f(1) FOR STMT 7", true, "EXPLAIN ANALYZE ROUTINE FUNCTION `db`.`f`(1) FOR STMT 7"},
+		{"EXPLAIN ANALYZE FORMAT = 'tidb_json' ROUTINE PROCEDURE db.p(1, @x) FOR STMT 3", true, "EXPLAIN ANALYZE FORMAT = 'tidb_json' ROUTINE PROCEDURE `db`.`p`(1, @`x`) FOR STMT 3"},
 	}
 	RunTest(t, table, false)
 }
@@ -6974,6 +7008,10 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	}
 
 	switch node := in.(type) {
+	case *ast.PatternLikeOrIlikeExpr:
+		if node.Escape == '\\' {
+			node.EscapeExplicit = false
+		}
 	case *ast.CreateTableStmt:
 		for _, opt := range node.Options {
 			switch opt.Tp {
@@ -7507,6 +7545,54 @@ func TestGBKEncoding(t *testing.T) {
 	}
 }
 
+func TestGB18030Encoding(t *testing.T) {
+	p := parser.New()
+	gb18030Encoding, _ := charset.Lookup("gb18030")
+	encoder := gb18030Encoding.NewEncoder()
+	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GB18030测试用例');")
+	require.NoError(t, err)
+
+	stmt, _, err := p.ParseSQL(sql)
+	require.NoError(t, err)
+	checker := &gbkEncodingChecker{}
+	_, _ = stmt[0].Accept(checker)
+	require.NotEqual(t, "测试表", checker.tblName)
+	require.NotEqual(t, "测试列", checker.colName)
+
+	gb18030Opt := parser.CharsetClient("gb18030")
+	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
+	require.NoError(t, err)
+	_, _ = stmt[0].Accept(checker)
+	require.Equal(t, "测试表", checker.tblName)
+	require.Equal(t, "测试列", checker.colName)
+	require.Equal(t, "GB18030测试用例", checker.expr)
+
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gb18030Opt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
+}
+
 type gbkEncodingChecker struct {
 	tblName string
 	colName string
@@ -7741,6 +7827,32 @@ func TestVector(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestTableSplitStmt(t *testing.T) {
+	table := []testCase{
+		// Valid cases
+		{"SELECT * FROM t TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` TABLESPLIT('a', 'b')"},
+		{"select * from t tablesplit ('a', 'b')", true, "SELECT * FROM `t` TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t AS t1 TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` AS `t1` TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t PARTITION (p0) TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` PARTITION(`p0`) TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t1 TABLESPLIT ('a', 'b'), t2", true, "SELECT * FROM (`t1` TABLESPLIT('a', 'b')) JOIN `t2`"},
+		{"SELECT * FROM t1, t2 TABLESPLIT ('a', 'b')", true, "SELECT * FROM (`t1`) JOIN `t2` TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t TABLESPLIT ('', 'b')", true, "SELECT * FROM `t` TABLESPLIT('', 'b')"},
+		{"SELECT * FROM t PARTITION (p0, p1) AS t1 TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` PARTITION(`p0`, `p1`) AS `t1` TABLESPLIT('a', 'b')"},
+
+		// Invalid cases
+		{"SELECT * FROM t TABLESPLIT", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a')", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a',)", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a', 'b', 'c')", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a' 'b')", false, ""},
+		{"SELECT * FROM t TABLESPLIT 'a', 'b'", false, ""},
+		{"SELECT * FROM t TABLESPLIT (a, b)", false, ""},
+		{"SELECT * FROM t TABLESPLIT (1, 2)", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
+
 func TestTableAffinityOption(t *testing.T) {
 	table := []testCase{
 		// create table with affinity option
@@ -7772,6 +7884,181 @@ func TestPartialIndex(t *testing.T) {
 		{"create table `t` (`id` int primary key,`col` int,index(`col`) where `col`>100)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`col` INT,INDEX(`col`) WHERE `col`>100)"},
 		{"create index `idx` on `t` (`col`) where `col`>100", true, "CREATE INDEX `idx` ON `t` (`col`) WHERE `col`>100"},
 		{"alter table `t` add index `idx`(`col`) where `col`>100", true, "ALTER TABLE `t` ADD INDEX `idx`(`col`) WHERE `col`>100"},
+	}
+	RunTest(t, cases, false)
+}
+
+func TestLBAC(t *testing.T) {
+	table := []testCase{
+		{"CREATE SECURITY LABEL COMPONENT test ARRAY ('a','b','c')", true, "CREATE SECURITY LABEL COMPONENT `test` ARRAY ('a','b','c')"},
+		{"CREATE SECURITY LABEL COMPONENT test SET ('a','b','c')", true, "CREATE SECURITY LABEL COMPONENT `test` SET ('a','b','c')"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ( 'b' ROOT )", true, "CREATE SECURITY LABEL COMPONENT `test` TREE ('b' ROOT)"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ( 'b' ROOT, 'l1' under 'b', 'l2' under 'b')", true, "CREATE SECURITY LABEL COMPONENT `test` TREE ('b' ROOT, 'l1' UNDER 'b', 'l2' UNDER 'b')"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ( 'b' ROOT, 'l1' under 'b', 'l2' under 'b', 'l3' under 'l1')", true, "CREATE SECURITY LABEL COMPONENT `test` TREE ('b' ROOT, 'l1' UNDER 'b', 'l2' UNDER 'b', 'l3' UNDER 'l1')"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ()", false, ""},
+		{"CREATE SECURITY POLICY my_policy COMPONENTS comp1", true, "CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`"},
+		{"CREATE SECURITY POLICY my_policy COMPONENTS comp1 WITH LBACRULES", true, "CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1` WITH LBACRULES"},
+		{"CREATE SECURITY POLICY my_policy COMPONENTS comp1, comp2, comp3 WITH LBACRULES", true, "CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`, `comp2`, `comp3` WITH LBACRULES"},
+		{
+			"CREATE SECURITY POLICY my_policy COMPONENTS comp1, comp2, comp3 WITH LBACRULES OVERRIDE NOT AUTHORIZED WRITE SECURITY LABEL",
+			true,
+			"CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`, `comp2`, `comp3` WITH LBACRULES OVERRIDE NOT AUTHORIZED WRITE SECURITY LABEL",
+		},
+		{
+			"CREATE SECURITY POLICY my_policy COMPONENTS comp1, comp2, comp3 WITH LBACRULES RESTRICT NOT AUTHORIZED WRITE SECURITY LABEL",
+			true,
+			"CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`, `comp2`, `comp3` WITH LBACRULES RESTRICT NOT AUTHORIZED WRITE SECURITY LABEL",
+		},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1'"},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1' COMPONENT comp2 'value2'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1' COMPONENT `comp2` 'value2'"},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1', 'value2' COMPONENT comp2 'value3'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1', 'value2' COMPONENT `comp2` 'value3'"},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1' COMPONENT comp2 'value2' COMPONENT comp3 'value3'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1' COMPONENT `comp2` 'value2' COMPONENT `comp3` 'value3'"},
+		{"DROP SECURITY POLICY my_policy", true, "DROP SECURITY POLICY `my_policy`"},
+		{"DROP SECURITY LABEL my_policy.my_label", true, "DROP SECURITY LABEL `my_policy`.`my_label`"},
+		{"DROP SECURITY LABEL COMPONENT comp1", true, "DROP SECURITY LABEL COMPONENT `comp1`"},
+		{"GRANT SECURITY LABEL my_policy.my_label TO USER alice FOR READ ACCESS", true, "GRANT SECURITY LABEL `my_policy`.`my_label` TO USER `alice`@`%` FOR READ ACCESS"},
+		{"GRANT SECURITY LABEL my_policy.my_label TO USER alice, USER bob FOR READ ACCESS, WRITE ACCESS", true, "GRANT SECURITY LABEL `my_policy`.`my_label` TO USER `alice`@`%`, USER `bob`@`%` FOR READ ACCESS, WRITE ACCESS"},
+		{"GRANT SECURITY LABEL my_policy.my_label TO ROLE admin FOR READ ACCESS", false, ""},
+		{"REVOKE SECURITY LABEL my_policy.my_label FROM USER alice", true, "REVOKE SECURITY LABEL `my_policy`.`my_label` FROM USER `alice`@`%`"},
+		{"REVOKE SECURITY LABEL my_policy.my_label FROM USER alice, USER bob", true, "REVOKE SECURITY LABEL `my_policy`.`my_label` FROM USER `alice`@`%`, USER `bob`@`%`"},
+		{"REVOKE SECURITY LABEL my_policy.my_label FROM GROUP sales_team", false, ""},
+		{"GRANT EXEMPTION ON RULE all FOR policy1 TO USER alice", true, "GRANT EXEMPTION ON RULE ALL FOR `policy1` TO USER `alice`@`%`"},
+		{"GRANT EXEMPTION ON RULE all FOR policy2 TO USER alice, USER bob", true, "GRANT EXEMPTION ON RULE ALL FOR `policy2` TO USER `alice`@`%`, USER `bob`@`%`"},
+		{"GRANT EXEMPTION ON RULE ALL FOR policy3 TO ROLE admin", false, ""},
+		{"REVOKE EXEMPTION ON RULE all FOR policy1 FROM USER alice", true, "REVOKE EXEMPTION ON RULE ALL FOR `policy1` FROM USER `alice`@`%`"},
+		{"REVOKE EXEMPTION ON RULE ALL FOR policy2 FROM USER alice, USER bob", true, "REVOKE EXEMPTION ON RULE ALL FOR `policy2` FROM USER `alice`@`%`, USER `bob`@`%`"},
+		{"REVOKE EXEMPTION ON RULE ALL FOR policy3 FROM GROUP sales_team", false, ""},
+
+		// SECURITY POLICY table option
+		{"CREATE TABLE users (id INT, name VARCHAR(100)) SECURITY POLICY user_access_policy", true, "CREATE TABLE `users` (`id` INT,`name` VARCHAR(100)) SECURITY POLICY `user_access_policy`"},
+		{"CREATE TABLE orders (id INT, user_id INT) ENGINE=InnoDB SECURITY POLICY `order_policy`", true, "CREATE TABLE `orders` (`id` INT,`user_id` INT) ENGINE = InnoDB SECURITY POLICY `order_policy`"},
+		{"CREATE TABLE sensitive_data (id INT, data TEXT) SECURITY POLICY high_security_policy ENCRYPTION='Y'", true, "CREATE TABLE `sensitive_data` (`id` INT,`data` TEXT) SECURITY POLICY `high_security_policy` ENCRYPTION = 'Y'"},
+
+		{"create table t (a int, b varchar(255) SECURED WITH l1)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255) SECURED WITH `l1`)"},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestStoredRoutines(t *testing.T) {
+	cases := []testCase{
+		{
+			`CREATE FUNCTION func_1(f1 DECIMAL(65, 30)) RETURNS DECIMAL(65,30)
+			SQL SECURITY INVOKER COMMENT 'this is simple'
+			BEGIN
+			RETURN f1;
+			END`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `func_1`(`f1` decimal(65,30)) RETURNS decimal(65,30) SQL SECURITY INVOKER COMMENT 'this is simple' BEGIN RETURN `f1`; END",
+		},
+		{
+			`CREATE FUNCTION fn1(a char) returns int deterministic return 1;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn1`(`a` char) RETURNS int DETERMINISTIC RETURN 1",
+		},
+		{
+			`CREATE FUNCTION fn2() RETURNS varchar(100) NOT DETERMINISTIC RETURN 'test';`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn2`() RETURNS varchar(100) NOT DETERMINISTIC RETURN _UTF8MB4'test'",
+		},
+		{
+			`CREATE FUNCTION fn3(x INT, y INT) RETURNS INT READS SQL DATA BEGIN RETURN x + y; END;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn3`(`x` int, `y` int) RETURNS int READS SQL DATA BEGIN RETURN `x`+`y`; END",
+		},
+		{
+			`CREATE FUNCTION fn4(val DOUBLE) RETURNS DOUBLE MODIFIES SQL DATA RETURN val * 2;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn4`(`val` double) RETURNS double MODIFIES SQL DATA RETURN `val`*2",
+		},
+		{
+			`CREATE FUNCTION fn5() RETURNS INT NO SQL RETURN 42;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn5`() RETURNS int NO SQL RETURN 42",
+		},
+		{
+			`CREATE FUNCTION fn6(a TEXT) RETURNS TEXT CONTAINS SQL RETURN UPPER(a);`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn6`(`a` text) RETURNS text CONTAINS SQL RETURN UPPER(`a`)",
+		},
+		{
+			`CREATE DEFINER='user'@'host' FUNCTION fn7(x INT) RETURNS INT SQL SECURITY DEFINER RETURN x * x;`,
+			true,
+			"CREATE DEFINER = `user`@`host` FUNCTION `fn7`(`x` int) RETURNS int SQL SECURITY DEFINER RETURN `x`*`x`",
+		},
+		{
+			`CREATE FUNCTION fn8(p DECIMAL(10,2)) RETURNS DECIMAL(10,2) DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'square function' BEGIN RETURN p * p; END;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn8`(`p` decimal(10,2)) RETURNS decimal(10,2) DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'square function' BEGIN RETURN `p`*`p`; END",
+		},
+		{
+			`CREATE FUNCTION fn9(d DATE) RETURNS DATE NOT DETERMINISTIC NO SQL RETURN d + INTERVAL 1 DAY;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn9`(`d` date) RETURNS date NOT DETERMINISTIC NO SQL RETURN DATE_ADD(`d`, INTERVAL 1 DAY)",
+		},
+		{
+			`CREATE FUNCTION fn10(flag BOOLEAN) RETURNS VARCHAR(10) LANGUAGE SQL RETURN IF(flag, 'true', 'false');`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn10`(`flag` tinyint(1)) RETURNS varchar(10) RETURN IF(`flag`, _UTF8MB4'true', _UTF8MB4'false')",
+		},
+		{
+			`CREATE FUNCTION fn11() RETURNS JSON DETERMINISTIC RETURN JSON_OBJECT('key', 'value');`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn11`() RETURNS json DETERMINISTIC RETURN JSON_OBJECT(_UTF8MB4'key', _UTF8MB4'value')",
+		},
+		{
+			`CREATE FUNCTION fn12(a INT, b INT, c INT) RETURNS INT BEGIN DECLARE result INT; SET result = a + b + c; RETURN result; END;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn12`(`a` int, `b` int, `c` int) RETURNS int BEGIN DECLARE `result` INT;SET `result`=`a`+`b`+`c`;RETURN `result`; END",
+		},
+		{
+			`CREATE FUNCTION fn13(str VARCHAR(255)) RETURNS INT DETERMINISTIC RETURN LENGTH(str);`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn13`(`str` varchar(255)) RETURNS int DETERMINISTIC RETURN LENGTH(`str`)",
+		},
+		{
+			`CREATE FUNCTION fn14() RETURNS BIGINT UNSIGNED DETERMINISTIC RETURN 18446744073709551615;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn14`() RETURNS bigint UNSIGNED DETERMINISTIC RETURN 18446744073709551615",
+		},
+		{
+			`CREATE FUNCTION fn15(ts TIMESTAMP) RETURNS DATETIME MODIFIES SQL DATA SQL SECURITY DEFINER RETURN CONVERT_TZ(ts, '+00:00', '+08:00');`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn15`(`ts` timestamp) RETURNS datetime MODIFIES SQL DATA SQL SECURITY DEFINER RETURN CONVERT_TZ(`ts`, _UTF8MB4'+00:00', _UTF8MB4'+08:00')",
+		},
+		{
+			`CREATE FUNCTION udf1 RETURNS INTEGER SONAME 'udf1.so';`,
+			true,
+			"CREATE FUNCTION `udf1` RETURNS INTEGER SONAME 'udf1.so'",
+		},
+		{
+			`CREATE FUNCTION udf2 RETURNS INTEGER NOT DETERMINISTIC READS SQL DATA SONAME 'udf2.so';`,
+			false,
+			"",
+		},
+		{
+			`CREATE AGGREGATE FUNCTION udf3 RETURNS STRING SONAME 'udf3.so';`,
+			true,
+			"CREATE AGGREGATE FUNCTION `udf3` RETURNS STRING SONAME 'udf3.so'",
+		},
+		{
+			`CREATE AGGREGATE FUNCTION udf4 RETURNS STRING DETERMINISTIC SONAME 'udf4.so';`,
+			false,
+			"",
+		},
+		{
+			`CREATE PROCEDURE sp6( )
+			BEGIN
+				declare e char default 'b';
+				declare next cursor for SELECT f1 from db_storedproc.t2;
+				declare continue handler for sqlstate '02000' set @x2 = 1;
+				open next;
+				fetch next into e;
+				close next;
+			END`,
+			true,
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `sp6`() BEGIN DECLARE `e` CHAR DEFAULT _UTF8MB4'b';DECLARE NEXT CURSOR FOR SELECT `f1` FROM `db_storedproc`.`t2`;DECLARE CONTINUE HANDLER FOR SQLSTATE '02000' SET @`x2`=1;OPEN NEXT;FETCH NEXT INTO E;CLOSE NEXT; END",
+		},
 	}
 	RunTest(t, cases, false)
 }

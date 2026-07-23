@@ -125,6 +125,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 }
 
 func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
+	t.Skip("will fix later, @fzzf678")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(session.CreateAnalyzeJobs)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -615,6 +616,115 @@ func (helper extractHelper) extractTimeRange(
 		}
 	}
 	return
+}
+
+// extracts the uint64 range column as a half-open interval [start, end), e.g:
+// SELECT * FROM t WHERE id=10
+// SELECT * FROM t WHERE id>=10 AND id<20
+func (helper extractHelper) extractUint64Range(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	extractColName string,
+) (
+	remained []expression.Expression,
+	start uint64,
+	end uint64,
+	skip bool,
+) {
+	remained = make([]expression.Expression, 0, len(predicates))
+	startIsSet := false
+	endIsSet := false
+	extractCols := helper.findColumn(schema, names, extractColName)
+	if len(extractCols) == 0 {
+		return predicates, start, end, false
+	}
+
+	for _, expr := range predicates {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			remained = append(remained, expr)
+			continue
+		}
+
+		fnName := fn.FuncName.L
+		switch fnName {
+		case ast.EQ, ast.GT, ast.GE, ast.LT, ast.LE:
+		default:
+			remained = append(remained, expr)
+			continue
+		}
+
+		colName, datums := helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		if colName != extractColName {
+			remained = append(remained, expr)
+			continue
+		}
+
+		switch datums[0].Kind() {
+		case types.KindUint64, types.KindInt64:
+		default:
+			remained = append(remained, expr)
+			continue
+		}
+		uintValue := datums[0].GetUint64()
+
+		switch fnName {
+		case ast.EQ:
+			if (startIsSet && uintValue < start) || (endIsSet && uintValue >= end) {
+				skip = true
+				break
+			}
+			start = uintValue
+			startIsSet = true
+			if uintValue < math.MaxUint64 {
+				end = uintValue + 1
+				endIsSet = true
+			} else {
+				end = 0
+				endIsSet = false
+			}
+		case ast.GT:
+			if uintValue == math.MaxUint64 {
+				skip = true
+				break
+			}
+			startValue := uintValue + 1
+			if !startIsSet || startValue > start {
+				start = startValue
+				startIsSet = true
+			}
+		case ast.GE:
+			if !startIsSet || uintValue > start {
+				start = uintValue
+				startIsSet = true
+			}
+		case ast.LT:
+			if !endIsSet || uintValue < end {
+				end = uintValue
+				endIsSet = true
+			}
+		case ast.LE:
+			if uintValue < math.MaxUint64 {
+				endValue := uintValue + 1
+				if !endIsSet || endValue < end {
+					end = endValue
+					endIsSet = true
+				}
+			}
+		}
+
+		if startIsSet && endIsSet && start >= end {
+			skip = true
+			break
+		}
+	}
+
+	if skip {
+		return nil, start, end, true
+	}
+	return remained, start, end, false
 }
 
 func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
@@ -1278,6 +1388,126 @@ func (e *InspectionRuleTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return r.String()
 }
 
+// AuditLogExtractor is used to extract some predicates of `audit_log`
+type AuditLogExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	TimeRanges  []*TimeRange
+	// Enable is true means the executor should use the time range to locate the audit-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current audit-log file.
+	Enable bool
+	Desc   bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *AuditLogExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *AuditLogExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return fmt.Sprintf("only search in the current '%v' file", p.SCtx().GetSessionVars().SlowQueryFile)
+	}
+	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
+	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
+	return fmt.Sprintf("start_time:%v, end_time:%v",
+		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
+}
+
+func (e *AuditLogExtractor) setTimeRange(start, end int64) {
+	const defaultAuditLogDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultAuditLogDuration)
+	}
+	if end == 0 {
+		endTime = time.Now()
+	}
+	timeRange := &TimeRange{
+		StartTime: startTime,
+		EndTime:   endTime,
+	}
+	e.TimeRanges = append(e.TimeRanges, timeRange)
+	e.Enable = true
+}
+
+func (e *AuditLogExtractor) buildTimeRangeFromKeyRange(keyRanges []*coprocessor.KeyRange) error {
+	for _, kr := range keyRanges {
+		startTime, err := e.decodeBytesToTime(kr.Start)
+		if err != nil {
+			return err
+		}
+		endTime, err := e.decodeBytesToTime(kr.End)
+		if err != nil {
+			return err
+		}
+		e.setTimeRange(startTime, endTime)
+	}
+	return nil
+}
+
+func (e *AuditLogExtractor) decodeBytesToTime(bs []byte) (int64, error) {
+	if len(bs) >= tablecodec.RecordRowKeyLen {
+		t, err := tablecodec.DecodeRowKey(bs)
+		if err != nil {
+			return 0, nil
+		}
+		return e.decodeToTime(t)
+	}
+	return 0, nil
+}
+
+func (*AuditLogExtractor) decodeToTime(handle kv.Handle) (int64, error) {
+	tp := types.NewFieldType(mysql.TypeDatetime)
+	col := rowcodec.ColInfo{Ft: tp}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
+	coder := codec.NewDecoder(chk, nil)
+	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)
+	if err != nil {
+		return 0, err
+	}
+	datum := chk.GetRow(0).GetDatum(0, tp)
+	mysqlTime := (&datum).GetMysqlTime()
+	timestampInNano := time.Date(mysqlTime.Year(),
+		time.Month(mysqlTime.Month()),
+		mysqlTime.Day(),
+		mysqlTime.Hour(),
+		mysqlTime.Minute(),
+		mysqlTime.Second(),
+		mysqlTime.Microsecond()*1000,
+		time.UTC,
+	).UnixNano()
+	return timestampInNano, err
+}
+
 // SlowQueryExtractor is used to extract some predicates of `slow_query`
 type SlowQueryExtractor struct {
 	extractHelper
@@ -1289,12 +1519,31 @@ type SlowQueryExtractor struct {
 	// current slow-log file.
 	Enable bool
 	Desc   bool
+	// Limit is a hint for early-exit optimizations when scanning slow log files.
+	// It is usually derived from a pushed down LIMIT/TopN (offset+count).
+	// A value of 0 means "no limit hint".
+	Limit uint64
 }
 
 // TimeRange is used to check whether a given log should be extracted.
 type TimeRange struct {
 	StartTime time.Time
 	EndTime   time.Time
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *SlowQueryExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// SetDesc implements base.MemTableDescHintSetter.
+func (e *SlowQueryExtractor) SetDesc(desc bool) {
+	e.Desc = desc
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1724,4 +1973,195 @@ func (e *TiKVRegionStatusExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 // GetTablesID returns TablesID
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
+}
+
+// TableRegionsExtractor is used to extract single schema and table from predictions
+type TableRegionsExtractor struct {
+	extractHelper
+	schemaName, tableName pmodel.CIStr
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TableRegionsExtractor) Extract(ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: support more push down strategies, for example, only table_name or only db_name, or multiple table_name/db_name.
+	remained, _, dbNameSet := e.extractCol(ctx, schema, names, predicates, "db_name", true)
+	if dbNameSet.Count() != 1 {
+		return predicates
+	}
+	remained, _, tableNameSet := e.extractCol(ctx, schema, names, remained, "table_name", true)
+	if tableNameSet.Count() != 1 {
+		return predicates
+	}
+	for dbName := range dbNameSet {
+		for tableName := range tableNameSet {
+			e.schemaName = pmodel.NewCIStr(dbName)
+			e.tableName = pmodel.NewCIStr(tableName)
+		}
+	}
+	return remained
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TableRegionsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	r := new(bytes.Buffer)
+	if e.schemaName.String() != "" {
+		r.WriteString("schema name: ")
+		r.WriteString(e.schemaName.String())
+	}
+	if e.tableName.String() != "" {
+		r.WriteString(", table name: ")
+		r.WriteString(e.tableName.String())
+	}
+	return r.String()
+}
+
+// GetSchemaName return the extracted schema name
+func (e *TableRegionsExtractor) GetSchemaName() pmodel.CIStr {
+	return e.schemaName
+}
+
+// GetTableName return the extracted table name
+func (e *TableRegionsExtractor) GetTableName() pmodel.CIStr {
+	return e.tableName
+}
+
+// LogReplStatusGlobalExtractor extracts predicates for LR_STATUS_GLOBAL table
+type LogReplStatusGlobalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplStatusGlobalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for log replication status
+	// For now, return all predicates as they cannot be pushed down
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplStatusGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
+
+// LogReplClusterStatusGlobalExtractor extracts predicates for LR_CLUSTER_STATUS_GLOBAL table
+type LogReplClusterStatusGlobalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplClusterStatusGlobalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for cluster status
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplClusterStatusGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
+
+// LogReplWorkflowHistoryGlobalExtractor extracts predicates for LR_WORKFLOW_HISTORY_GLOBAL table
+type LogReplWorkflowHistoryGlobalExtractor struct {
+	extractHelper
+
+	// SkipRequest means the workflow_id predicates cannot match any workflow.
+	SkipRequest bool
+	// StartWorkflowID is the inclusive start ID extracted from workflow_id predicates.
+	StartWorkflowID uint64
+	// EndWorkflowID is the exclusive end ID extracted from workflow_id predicates.
+	EndWorkflowID uint64
+	// Limit is the maximum number of rows to request from PD for this scan.
+	// A value of 0 means no limit is pushed down to PD.
+	Limit uint64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *LogReplWorkflowHistoryGlobalExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, e.StartWorkflowID, e.EndWorkflowID, e.SkipRequest = e.extractUint64Range(
+		ctx,
+		schema,
+		names,
+		predicates,
+		"workflow_id",
+	)
+	if e.SkipRequest {
+		e.Limit = 0
+		return nil
+	}
+	return remained
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *LogReplWorkflowHistoryGlobalExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+
+	if e.SkipRequest {
+		e.Limit = 0
+		return
+	}
+	if e.StartWorkflowID > 0 && e.EndWorkflowID > 0 {
+		rangeLimit := e.EndWorkflowID - e.StartWorkflowID
+		limit = min(rangeLimit, limit)
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *LogReplWorkflowHistoryGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	items := make([]string, 0, 3)
+	if e.StartWorkflowID > 0 {
+		items = append(items, fmt.Sprintf("start_workflow_id:%d", e.StartWorkflowID))
+	}
+	if e.EndWorkflowID > 0 {
+		items = append(items, fmt.Sprintf("end_workflow_id:%d", e.EndWorkflowID))
+	}
+	if e.Limit > 0 {
+		items = append(items, fmt.Sprintf("limit:%d", e.Limit))
+	}
+	return strings.Join(items, ", ")
+}
+
+// LogReplStatusLocalExtractor extracts predicates for LR_STATUS_LOCAL table
+type LogReplStatusLocalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplStatusLocalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for local status
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplStatusLocalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
 }

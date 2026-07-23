@@ -38,9 +38,11 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"golang.org/x/sync/singleflight"
 )
 
 func TestCopTasksDetails(t *testing.T) {
@@ -221,6 +223,14 @@ func TestMarshalSQLWarn(t *testing.T) {
 	tk.MustQuery("show warnings").Check(rows)
 }
 
+type logicalPlanBuildStateCloneValue struct {
+	values []string
+}
+
+func (v *logicalPlanBuildStateCloneValue) CloneForLogicalPlanBuild() any {
+	return &logicalPlanBuildStateCloneValue{values: append([]string(nil), v.values...)}
+}
+
 func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
 	sc.AppendWarning(errors.New("baseline warning"))
@@ -232,6 +242,21 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{tblInfo: true}
 	sc.UseDynamicPruneMode = true
 	sc.ColRefFromUpdatePlan.Insert(7)
+	optimizeTracer := &tracing.OptimizeTracer{IsFastPlan: true}
+	sc.OptimizeTracer = optimizeTracer
+	sc.OptimizerCETrace = []*tracing.CETraceRecord{{TableName: "baseline trace"}}
+	debugTrace := &logicalPlanBuildStateCloneValue{values: []string{"baseline trace"}}
+	sc.OptimizerDebugTrace = debugTrace
+	statsLoadResultCh := make(chan singleflight.Result, 1)
+	statsLoadStartTime := time.Unix(123, 0)
+	sc.StatsLoad.Timeout = time.Second
+	sc.StatsLoad.NeededItems = []model.StatsLoadItem{{
+		TableItemID: model.TableItemID{TableID: 1, ID: 2, IsIndex: true},
+		FullLoad:    true,
+	}}
+	sc.StatsLoad.ResultCh = []<-chan singleflight.Result{statsLoadResultCh}
+	sc.StatsLoad.LoadStartTime = statsLoadStartTime
+	sc.IsSyncStatsFailed = true
 	sc.SetCacheType(contextutil.SessionNonPrepared)
 	sc.EnablePlanCache()
 
@@ -245,6 +270,17 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{{ID: 99}: false}
 	sc.UseDynamicPruneMode = false
 	sc.ColRefFromUpdatePlan.Insert(9)
+	sc.OptimizeTracer = &tracing.OptimizeTracer{}
+	sc.OptimizerCETrace = []*tracing.CETraceRecord{{TableName: "candidate trace"}}
+	debugTrace.values = append(debugTrace.values, "mutated after save")
+	sc.OptimizerDebugTrace = &logicalPlanBuildStateCloneValue{values: []string{"candidate trace"}}
+	sc.StatsLoad.Timeout = 2 * time.Second
+	sc.StatsLoad.NeededItems = []model.StatsLoadItem{{
+		TableItemID: model.TableItemID{TableID: 3, ID: 4},
+	}}
+	sc.StatsLoad.ResultCh = []<-chan singleflight.Result{make(chan singleflight.Result, 1)}
+	sc.StatsLoad.LoadStartTime = time.Unix(456, 0)
+	sc.IsSyncStatsFailed = false
 	sc.SetSkipPlanCache("candidate reason")
 
 	sc.RestoreLogicalPlanBuildState(state)
@@ -264,8 +300,95 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	require.True(t, sc.UseDynamicPartitionPrune())
 	require.True(t, sc.ColRefFromUpdatePlan.Has(7))
 	require.False(t, sc.ColRefFromUpdatePlan.Has(9))
+	require.Same(t, optimizeTracer, sc.OptimizeTracer)
+	require.Equal(t, []*tracing.CETraceRecord{{TableName: "baseline trace"}}, sc.OptimizerCETrace)
+	restoredDebugTrace, ok := sc.OptimizerDebugTrace.(*logicalPlanBuildStateCloneValue)
+	require.True(t, ok)
+	require.Equal(t, []string{"baseline trace"}, restoredDebugTrace.values)
+	restoredDebugTrace.values = append(restoredDebugTrace.values, "mutated after restore")
+	sc.RestoreLogicalPlanBuildState(state)
+	restoredDebugTrace = sc.OptimizerDebugTrace.(*logicalPlanBuildStateCloneValue)
+	require.Equal(t, []string{"baseline trace"}, restoredDebugTrace.values)
+	require.Equal(t, time.Second, sc.StatsLoad.Timeout)
+	require.Equal(t, []model.StatsLoadItem{{
+		TableItemID: model.TableItemID{TableID: 1, ID: 2, IsIndex: true},
+		FullLoad:    true,
+	}}, sc.StatsLoad.NeededItems)
+	require.Equal(t, []<-chan singleflight.Result{statsLoadResultCh}, sc.StatsLoad.ResultCh)
+	require.Equal(t, statsLoadStartTime, sc.StatsLoad.LoadStartTime)
+	require.True(t, sc.IsSyncStatsFailed)
 	require.True(t, sc.UseCache())
 	require.Empty(t, sc.PlanCacheUnqualified())
+}
+
+// TestLogicalPlanBuildStateRestoreUsedStatsInfo mirrors the two-round flow: the
+// alternative round is seeded from the initial (nil) snapshot so it records into a
+// fresh map, and restoring the winning round's snapshot brings back exactly that
+// round's used stats -- the losing round's records must not leak in.
+func TestLogicalPlanBuildStateRestoreUsedStatsInfo(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	// optimize() entry: nothing recorded yet.
+	initialState := sc.SaveLogicalPlanBuildState()
+
+	// First (winning) round records table 7.
+	sc.GetUsedStatsInfo(true).RecordUsedInfo(7, &stmtctx.UsedStatsInfoForTable{Name: "first round"})
+	bestState := sc.SaveLogicalPlanBuildState()
+
+	// Before the alternative round we restore the initial snapshot, which de-aliases
+	// the map so the second round records into a fresh one (table 8) and leaves the
+	// first round's map untouched.
+	sc.RestoreLogicalPlanBuildState(initialState)
+	require.Nil(t, sc.GetUsedStatsInfo(false))
+	sc.GetUsedStatsInfo(true).RecordUsedInfo(8, &stmtctx.UsedStatsInfoForTable{Name: "second round"})
+
+	// The first round wins: restoring its snapshot must expose only its used stats.
+	sc.RestoreLogicalPlanBuildState(bestState)
+	used := sc.GetUsedStatsInfo(false)
+	require.NotNil(t, used)
+	require.NotNil(t, used.GetUsedInfo(7))
+	require.Equal(t, "first round", used.GetUsedInfo(7).Name)
+	require.Nil(t, used.GetUsedInfo(8))
+}
+
+func TestLogicalPlanBuildStateRestoreIndexForce(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	sc.SetIndexForce()
+	forcedState := sc.SaveLogicalPlanBuildState()
+
+	sc.ResetIndexForce()
+	require.False(t, sc.GetIndexForce())
+
+	sc.RestoreLogicalPlanBuildState(forcedState)
+	require.True(t, sc.GetIndexForce())
+}
+
+func TestAlternativeLogicalPlanRoundSignals(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.False(t, sc.NeedAlternativeLogicalPlanRound())
+
+	firstApplyID := sc.MarkAlternativeLogicalPlanDecorrelatedApply()
+	require.True(t, sc.NeedAlternativeLogicalPlanRound())
+
+	sc.MarkAlternativeLogicalPlanSameOrderIndexJoin(firstApplyID)
+	require.False(t, sc.NeedAlternativeLogicalPlanRound())
+
+	secondApplyID := sc.MarkAlternativeLogicalPlanDecorrelatedApply()
+	require.True(t, sc.NeedAlternativeLogicalPlanRound())
+
+	sc.MarkAlternativeLogicalPlanSameOrderIndexJoin(firstApplyID)
+	require.True(t, sc.NeedAlternativeLogicalPlanRound())
+
+	sc.MarkAlternativeLogicalPlanSameOrderIndexJoin(secondApplyID)
+	require.False(t, sc.NeedAlternativeLogicalPlanRound())
+
+	sc.ResetAlternativeLogicalPlanSignals()
+	require.False(t, sc.NeedAlternativeLogicalPlanRound())
+
+	sc = stmtctx.NewStmtCtx()
+	sc.MarkAlternativeLogicalPlanDecorrelatedApply()
+	require.True(t, sc.NeedAlternativeLogicalPlanRound())
+	sc.MarkAlternativeLogicalPlanEvaluatedSubquery()
+	require.False(t, sc.NeedAlternativeLogicalPlanRound())
 }
 
 func TestQBHintHandlerBuildState(t *testing.T) {

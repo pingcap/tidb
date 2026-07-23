@@ -31,7 +31,9 @@ func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 		Flag:         uint16(fld.Column.GetFlag()),
 		Charset:      uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
 		Type:         fld.Column.GetType(),
+		SubType:      fld.Column.FieldType.GetSubType(),
 		DefaultValue: fld.Column.GetDefaultValue(),
+		Encryption:   fld.Column.Encryption,
 	}
 
 	if fld.EmptyOrgName {

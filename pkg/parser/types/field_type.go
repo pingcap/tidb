@@ -19,6 +19,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -37,6 +38,8 @@ const (
 // length is deprecated, referring this issue #6688 for more details.
 var (
 	TiDBStrictIntegerDisplayWidth bool
+	// EnableExtraDataType controls whether extra data types like ARRAY/XML are enabled.
+	EnableExtraDataType atomic.Bool
 )
 
 // IHasher is internal usage represent cascades/base.Hasher
@@ -58,6 +61,8 @@ type IHasher interface {
 type FieldType struct {
 	// tp is type of the field
 	tp byte
+	// subType is used to simulate/support additional data types on top of the original (base) data type, such as ARRAY, XML, etc.
+	subType byte
 	// flag represent NotNull, Unsigned, PriKey flags etc.
 	flag uint
 	// flen represent size of bytes of the field
@@ -82,6 +87,7 @@ func (ft *FieldType) DeepCopy() *FieldType {
 	}
 	ret := &FieldType{
 		tp:      ft.tp,
+		subType: ft.subType,
 		flag:    ft.flag,
 		flen:    ft.flen,
 		decimal: ft.decimal,
@@ -103,6 +109,7 @@ func (ft *FieldType) DeepCopy() *FieldType {
 // Hash64 implements the cascades/base.Hasher.<0th> interface.
 func (ft *FieldType) Hash64(h IHasher) {
 	h.HashByte(ft.tp)
+	h.HashByte(ft.subType)
 	h.HashUint64(uint64(ft.flag))
 	h.HashInt(ft.flen)
 	h.HashInt(ft.decimal)
@@ -134,6 +141,7 @@ func (ft *FieldType) Equals(other any) bool {
 		return false
 	}
 	ok := ft.tp == ft2.tp &&
+		ft.subType == ft2.subType &&
 		ft.flag == ft2.flag &&
 		ft.flen == ft2.flen &&
 		ft.decimal == ft2.decimal &&
@@ -335,6 +343,29 @@ func (ft *FieldType) IsArray() bool {
 	return ft.array
 }
 
+// SetSubType sets the subtype of the FieldType.
+func (ft *FieldType) SetSubType(subType byte) {
+	if !EnableExtraDataType.Load() {
+		return
+	}
+	ft.subType = subType
+}
+
+// GetSubType returns the subtype of the FieldType.
+func (ft *FieldType) GetSubType() byte {
+	return ft.subType
+}
+
+// SetSecurityLabel sets the subtype of the FieldType to SubTypeSecurityLabel.
+func (ft *FieldType) SetSecurityLabel() {
+	ft.subType = mysql.SubTypeSecurityLabel
+}
+
+// IsSecurityLabel return true if the filed type is security label.
+func (ft *FieldType) IsSecurityLabel() bool {
+	return ft.subType == mysql.SubTypeSecurityLabel
+}
+
 // ArrayType return the type of the array.
 func (ft *FieldType) ArrayType() *FieldType {
 	if !ft.array {
@@ -394,6 +425,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength) || ft.EvalType() == ETJson
 	ignoreDecimal := ft.EvalType() == ETInt || ft.EvalType() == ETString
 	partialEqual := tpEqual &&
+		ft.subType == other.subType &&
 		(ignoreDecimal || ft.decimal == other.decimal) &&
 		ft.charset == other.charset &&
 		ft.collate == other.collate &&
@@ -413,7 +445,7 @@ func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
 		return ft.Equal(other)
 	}
 
-	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+	partialEqual := ft.subType == other.subType && ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
 	if !partialEqual || len(ft.elems) != len(other.elems) {
 		return false
 	}
@@ -484,6 +516,17 @@ func (ft *FieldType) CompactStr() string {
 	}
 
 	switch ft.GetType() {
+	case mysql.TypeJSON:
+		if ft.subType == mysql.SubTypeArray {
+			ts = "array"
+		}
+	case mysql.TypeLongBlob:
+		switch ft.subType {
+		case mysql.SubTypeXML:
+			ts = "xml"
+		case mysql.SubTypeSecurityLabel:
+			ts = "securitylabel"
+		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
 		es := make([]string, 0, len(ft.elems))
@@ -519,13 +562,23 @@ func (ft *FieldType) CompactStr() string {
 			suffix = fmt.Sprintf("(%d)", displayFlen)
 		}
 	case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch ft.subType {
+		case mysql.SubTypeIntervalYearToMonth:
+			return fmt.Sprintf("interval year(%d) to month", ft.flen)
+		case mysql.SubTypeIntervalDayToSecond:
+			return fmt.Sprintf("interval day(%d) to second", ft.flen)
+		default:
+			// fall back to base type representation.
+		}
 		// Referring this issue #6688, the integer max display length is deprecated in MySQL 8.0.
 		// Since the length doesn't take any effect in TiDB storage or showing result, we remove it here.
 		if !TiDBStrictIntegerDisplayWidth || mysql.HasZerofillFlag(ft.flag) {
 			suffix = fmt.Sprintf("(%d)", displayFlen)
 		}
 	case mysql.TypeYear:
-		suffix = fmt.Sprintf("(%d)", ft.flen)
+		if ft.flen != UnspecifiedLength {
+			suffix = fmt.Sprintf("(%d)", ft.flen)
+		}
 	case mysql.TypeTiDBVectorFloat32:
 		if ft.flen != UnspecifiedLength {
 			suffix = fmt.Sprintf("(%d)", ft.flen)
@@ -741,6 +794,7 @@ func HasCharset(ft *FieldType) bool {
 // for json
 type jsonFieldType struct {
 	Tp               byte
+	SubType          byte
 	Flag             uint
 	Flen             int
 	Decimal          int
@@ -757,6 +811,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	err := json.Unmarshal(data, &r)
 	if err == nil {
 		ft.tp = r.Tp
+		ft.subType = r.SubType
 		ft.flag = r.Flag
 		ft.flen = r.Flen
 		ft.decimal = r.Decimal
@@ -773,6 +828,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	var r jsonFieldType
 	r.Tp = ft.tp
+	r.SubType = ft.subType
 	r.Flag = ft.flag
 	r.Flen = ft.flen
 	r.Decimal = ft.decimal

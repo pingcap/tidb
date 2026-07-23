@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -92,6 +92,9 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 		return errors.Trace(err)
 	}
 	for _, s := range stores {
+		if engine.IsReplicator(s) {
+			continue
+		}
 		isTiFlash := engine.IsTiFlash(s)
 		log.Debug("checking compatibility of store in cluster",
 			zap.Uint64("ID", s.GetId()),

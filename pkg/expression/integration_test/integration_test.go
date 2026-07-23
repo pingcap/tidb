@@ -1260,6 +1260,7 @@ func TestInfoBuiltin(t *testing.T) {
 	lines := strings.Split(tidbVersionResult, "\n")
 	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
 	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
+	assert.Contains(t, tidbVersionResult, "Core Version: "+versioninfo.TiDBCoreVersion, "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")
@@ -1557,18 +1558,18 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000705f728000000000000001"))
+		Check(testkit.Rows("7480000000000000905f728000000000000001"))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000705f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows("7480000000000000905f698000000000000001038000000000000001038000000000000001"))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('7480000000000000755f728000000000000001');")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000955f728000000000000001"))
+	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1584,7 +1585,7 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000955f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -4163,4 +4164,10 @@ func TestIssue57608(t *testing.T) {
 			"<nil> <nil> <nil>",
 		))
 	}
+}
+
+func TestDataOperationAuditFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select data_operation_audit('tidb-lightning', 'success', 'target', 'table.t1', '~/')")
 }

@@ -1,0 +1,7911 @@
+set global tidb_enable_procedure = ON;
+create database db_storedproc;
+use db_storedproc;
+
+create table t1(f1 char(20),f2 char(25),f3 date,f4 int,f5 char(25),f6 int);
+insert into t1 values
+('a`', 'a`', '1000-01-01', -5000, 'a`', -5000),
+('aaa', 'aaa', '1000-01-02', -4999, 'aaa', -4999),
+('abaa', 'abaa', '1000-01-03', -4998, 'abaa', -4998),
+('acaaa', 'acaaa', '1000-01-04', -4997, 'acaaa', -4997),
+('adaaaa', 'adaaaa', '1000-01-05', -4996, 'adaaaa', -4996),
+('aeaaaaa', 'aeaaaaa', '1000-01-06', -4995, 'aeaaaaa', -4995),
+('afaaaaaa', 'afaaaaaa', '1000-01-07', -4994, 'afaaaaaa', -4994),
+('agaaaaaaa', 'agaaaaaaa', '1000-01-08', -4993, 'agaaaaaaa', -4993),
+('a^aaaaaaaa', 'a^aaaaaaaa', '1000-01-09', -4992, 'a^aaaaaaaa', -4992),
+('a_aaaaaaaaa', 'a_aaaaaaaaa', '1000-01-10', -4991, 'a_aaaaaaaaa', -4991);
+
+create table t2(f1 char(20),f2 char(25),f3 date,f4 int,f5 char(25),f6 int);
+insert into t2 values
+('a`', 'a`', '1000-01-01', -5000, 'a`', -5000),
+('aaa', 'aaa', '1000-01-02', -4999, 'aaa', -4999),
+('abaa', 'abaa', '1000-01-03', -4998, 'abaa', -4998);
+
+# Check assignment of float values to DECIMAL(65, 30) parameters of
+# PRODDUREs and FUNCTIONs.
+--disable_warnings
+DROP TABLE IF EXISTS t1_aux;
+DROP PROCEDURE IF EXISTS sproc_1;
+DROP FUNCTION IF EXISTS db_storedproc.func_1;
+--enable_warnings
+CREATE TABLE t1_aux ( f1 DECIMAL(65, 30) );
+INSERT INTO t1_aux SET f1 = NULL;
+delimiter //
+CREATE PROCEDURE sproc_1(f1 DECIMAL(65, 30), OUT f2 DECIMAL(65, 30))
+  SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET f2 = NULL;
+   SET f2 = f1;
+   SET @v2_proc = f1;
+END//
+CREATE FUNCTION func_1(f1 DECIMAL(65, 30)) RETURNS DECIMAL(65,30)
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+    RETURN f1;
+END//
+delimiter ;
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS WHERE db = 'db_storedproc';
+--replace_column 5 <modified> 6 <created>
+SHOW FUNCTION STATUS WHERE db = 'db_storedproc';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+--error ER_TOO_LONG_IDENT
+DROP PROCEDURE IF EXISTS sp1_thisisaveryverylongname234872934_thisisaveryverylongname234872934;
+
+--error ER_TOO_LONG_IDENT
+CREATE PROCEDURE sp1_thisisaveryverylongname234872934_thisisaveryverylongname234872934 (f1 char(20) )
+            SELECT * from t1 where f2 = f1;
+--error ER_TOO_LONG_IDENT
+CALL sp1_thisisaveryverylongname234872934_thisisaveryverylongname234872934('aaaa');
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+--error ER_TOO_LONG_IDENT
+DROP PROCEDURE IF EXISTS sp1_thisisaveryverylongname234872934_thisisaveryverylongnameabcde;
+
+delimiter //
+--error ER_TOO_LONG_IDENT
+CREATE PROCEDURE sp1_thisisaveryverylongname234872934_thisisaveryverylongnameabcde( f1 TINYTEXT )
+   SQL SECURITY DEFINER COMMENT 'this is simple'
+BEGIN
+   SET @v1 = f1;
+   SELECT @v1, @v1;
+END//
+delimiter ;
+
+--error ER_TOO_LONG_IDENT
+CALL sp1_thisisaveryverylongname234872934_thisisaveryverylongnameabcde( 'abc' );
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS WHERE db = 'db_storedproc';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( f1 BINARY )
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET @v1 = f1;
+   SELECT @v1;
+END//
+delimiter ;
+--error ER_DATA_TOO_LONG
+CALL sp1( 34 );
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS WHERE db = 'db_storedproc';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( f1 BLOB )
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   set @v1 = f1;
+   SELECT @v1;
+END//
+delimiter ;
+
+CALL sp1( 34 );
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS WHERE db = 'db_storedproc';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( f1 INT )
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET @v1 = f1;
+   SELECT @v1;
+END//
+delimiter ;
+
+CALL sp1( 34 );
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS WHERE db = 'db_storedproc';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_TOO_BIG_PRECISION
+CREATE PROCEDURE sp1( f1 DECIMAL(256, 30) )
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET @v1 = f1;
+   SELECT @v1;
+END//
+DROP PROCEDURE IF EXISTS sp1//
+
+--error ER_TOO_BIG_PRECISION
+CREATE PROCEDURE sp1( f1 DECIMAL(66, 30) )
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET @v1 = f1;
+   SELECT @v1;
+END//
+DROP PROCEDURE IF EXISTS sp1//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_DUPLICATED_VALUE_IN_TYPE
+CREATE PROCEDURE sp1( f1 ENUM("value1", "value1") )
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SELECT f1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+CREATE PROCEDURE sp1( f1 TEXT ) SELECT f1;
+
+CALL sp1( 'abc' );
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS LIKE 'sp1';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+CREATE PROCEDURE sp1( f1 TEXT ) SQL SECURITY DEFINER SELECT f1;
+CALL sp1( 'abc' );
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS LIKE 'sp1';
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+CREATE PROCEDURE sp1( f1 TEXT ) COMMENT 'this is simple' SELECT f1;
+CALL sp1( 'abc' );
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE STATUS LIKE 'sp1';
+
+# cleanup
+DROP PROCEDURE sp1;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+CREATE FUNCTION fn1 (s CHAR(20)) RETURNS CHAR(50)
+   RETURN CONCAT('hello, ', s, '!');
+SELECT fn1('world');
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+delimiter //
+CREATE FUNCTION fn1( f1 MEDIUMTEXT ) RETURNS MEDIUMTEXT
+   SQL SECURITY DEFINER COMMENT 'this is simple'
+BEGIN
+   SET @v1 = 'hello';
+   SET f1 = CONCAT( @v1, f1 );
+   RETURN f1;
+END//
+delimiter ;
+
+SELECT fn1( ' world');
+
+--replace_column 5 <modified> 6 <created>
+SHOW FUNCTION STATUS LIKE 'fn1';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+delimiter //
+CREATE FUNCTION fn1( f1 SMALLINT ) RETURNS SMALLINT
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET f1 = 1 + f1;
+   RETURN f1;
+END//
+delimiter ;
+
+SELECT fn1( 126 );
+
+--replace_column 5 <modified> 6 <created>
+SHOW FUNCTION STATUS LIKE 'fn1';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+delimiter //
+# 1425: Too big scale 63 specified for column ''. Maximum is 30.
+--error ER_TOO_BIG_SCALE
+CREATE FUNCTION fn1( f1 DECIMAL(63, 31) ) RETURNS DECIMAL(63, 31)
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET f1 = 1000000 + f1;
+   RETURN f1;
+END//
+delimiter ;
+
+--error ER_SP_DOES_NOT_EXIST
+SELECT fn1( 1.3326e+8 );
+
+delimiter //
+CREATE FUNCTION fn1( f1 DECIMAL(63, 30) ) RETURNS DECIMAL(63, 30)
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   SET f1 = 1000000 + f1;
+   RETURN f1;
+END//
+delimiter ;
+
+SELECT fn1( 1.3326e+8 );
+
+--replace_column 5 <modified> 6 <created>
+SHOW FUNCTION STATUS LIKE 'fn1';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+delimiter //
+--error ER_DUPLICATED_VALUE_IN_TYPE
+CREATE FUNCTION fn1( f1 ENUM("value1", "value1") ) RETURNS DECIMAL(63, 30)
+   SQL SECURITY INVOKER COMMENT 'this is simple'
+BEGIN
+   RETURN f1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+delimiter //
+CREATE FUNCTION fn1( f1 SMALLINT ) RETURNS SMALLINT
+BEGIN
+   SET f1 = 1 + f1;
+   RETURN f1;
+END//
+delimiter ;
+
+SELECT fn1( 126 );
+
+--replace_column 5 <modified> 6 <created>
+SHOW FUNCTION STATUS LIKE 'fn1';
+
+# cleanup
+DROP FUNCTION fn1;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+CREATE PROCEDURE sp1 (f1 char(20) )
+    SELECT * from t1 where f2 = f1;
+
+--replace_column 5 <modified> 6 <created>
+show CREATE PROCEDURE sp1;
+
+# cleanup
+DROP PROCEDURE sp1;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+CREATE FUNCTION fn1 (s char(20)) returns char(50)
+   return concat('hello, ', s, '!');
+
+--replace_column 5 <modified> 6 <created>
+show CREATE FUNCTION fn1;
+
+# cleanup
+DROP FUNCTION fn1;
+
+CREATE PROCEDURE sp5()
+   SELECT * from t1;
+
+--replace_column 5 <modified> 6 <created>
+SHOW PROCEDURE status like 'sp5';
+
+# cleanup
+DROP PROCEDURE sp5;
+
+delimiter //
+CREATE FUNCTION fn5(a int) returns int
+BEGIN
+   set @b = 0.9 * a;
+   return @b;
+END//
+delimiter ;
+
+--replace_column 5 <modified> 6 <created>
+SHOW FUNCTION STATUS LIKE 'fn5';
+
+# cleanup
+DROP FUNCTION fn5;
+
+--disable_warnings
+DROP PROCEDURE IF EXISTS sp7a;
+DROP PROCEDURE IF EXISTS sp7b;
+DROP PROCEDURE IF EXISTS sp7c;
+--enable_warnings
+
+CREATE PROCEDURE sp7a(a char(20))
+    SELECT * from t1 where t1.f2 = a;
+
+CALL sp7a( 'xyz' );
+
+delimiter //
+CREATE PROCEDURE sp7b (a char (20), out b char(20))
+BEGIN
+SET b = (SELECT f1 from t1 where t1.f2= a);
+END//
+delimiter ;
+
+CALL sp7b('xyz', @out_param);
+SELECT @out_param;
+
+delimiter //
+CREATE PROCEDURE sp7c (a char (20), out b char(20), inout c int)
+BEGIN
+SET b = (SELECT f1 from t1 where t1.f2=a);
+update t1 set t1.f2=999 where t1.f4=c;
+SET c = (SELECT f2 from t1 where t1.f2=999);
+END//
+delimiter ;
+
+--disable_warnings
+set @c=1;
+CALL sp7c('xyz', @out_param, @c);
+SELECT @out_param;
+SELECT @c;
+--enable_warnings
+
+# cleanup
+DROP PROCEDURE sp7a;
+DROP PROCEDURE sp7b;
+DROP PROCEDURE sp7c;
+
+CREATE FUNCTION fn8(a char(20)) returns char(50)
+return concat('hello, ', a, '!');
+SELECT fn8('world');
+
+# cleanup
+DROP FUNCTION fn8;
+
+--sorted_result
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='sp9';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp9;
+
+--sorted_result
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='sp9';
+
+CREATE PROCEDURE sp9()SELECT * from t1;
+
+--sorted_result
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='sp9';
+
+DROP PROCEDURE sp9;
+
+--sorted_result
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='sp9';
+
+CREATE PROCEDURE sp9()SELECT * from t1;
+
+--sorted_result
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='sp9';
+
+DROP PROCEDURE IF EXISTS sp9;
+
+--sorted_result
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='sp9';
+
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='fn10' and routine_type='FUNCTION';
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn10;
+
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='fn10' and routine_type='FUNCTION';
+
+
+CREATE FUNCTION fn10() returns int return 100;
+
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='fn10' and routine_type='FUNCTION';
+
+DROP FUNCTION fn10;
+
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='fn10' and routine_type='FUNCTION';
+
+CREATE FUNCTION fn10() returns int return 100;
+
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='fn10' and routine_type='FUNCTION';
+
+DROP FUNCTION IF EXISTS db_storedproc.fn10;
+
+--replace_column 24 <created> 25 <modified>
+SELECT * from information_schema.routines where specific_name='fn10' and routine_type='FUNCTION';
+
+drop user if exists 'user_1'@'localhost';
+create user 'user_1'@'localhost';
+grant execute on db_storedproc.* to 'user_1'@'localhost';
+flush privileges;
+drop table IF EXISTS mysql.t1;
+create table mysql.t1( f1 char );
+DROP PROCEDURE IF EXISTS sp11;
+CREATE PROCEDURE sp11() insert into mysql.t1 values('a');
+SELECT security_type from information_schema.routines where specific_name='sp11';
+
+connect (u_1, localhost, user_1, ,);
+USE db_storedproc;
+
+CALL sp11();
+
+connection default;
+USE db_storedproc;
+
+alter procedure sp11 sql security invoker;
+SELECT security_type from information_schema.routines where specific_name='sp11';
+
+connection u_1;
+USE db_storedproc;
+
+--error ER_TABLEACCESS_DENIED_ERROR
+CALL sp11();
+
+commit;
+disconnect u_1;
+connection default;
+
+alter procedure sp11 sql security DEFINER;
+SELECT security_type from information_schema.routines where specific_name='sp11';
+CALL sp11();
+
+# cleanup
+DROP USER 'user_1'@'localhost';
+DROP PROCEDURE sp11;
+drop table mysql.t1;
+
+CREATE FUNCTION fn12() returns int
+ return 100;
+SELECT security_type from information_schema.routines where specific_name='fn12';
+SELECT fn12();
+
+alter function fn12 sql security invoker;
+SELECT security_type from information_schema.routines where specific_name='fn12';
+SELECT fn12();
+
+alter function fn12 sql security DEFINER;
+SELECT security_type from information_schema.routines where specific_name='fn12';
+SELECT fn12();
+
+# cleanup
+DROP FUNCTION fn12;
+
+DROP PROCEDURE IF EXISTS sp11;
+CREATE PROCEDURE sp11()
+   SELECT * from t1;
+
+SELECT ROUTINE_COMMENT from information_schema.routines where specific_name='sp11';
+alter procedure sp11 comment 'this is simple';
+SELECT ROUTINE_COMMENT from information_schema.routines where specific_name='sp11';
+
+# cleanup
+DROP PROCEDURE sp11;
+
+DROP FUNCTION IF EXISTS db_storedproc.fn12;
+CREATE FUNCTION fn12() returns int
+    return 100;
+  SELECT routine_comment from information_schema.routines where specific_name='fn12';
+
+  alter function fn12 comment 'this is simple';
+  SELECT routine_comment from information_schema.routines where specific_name='fn12';
+
+# cleanup
+DROP FUNCTION fn12;
+
+DROP PROCEDURE IF EXISTS sp16;
+
+--error ER_SP_DOES_NOT_EXIST
+CALL sp16( 'xyz' );
+
+CREATE DATABASE db1;
+USE db1;
+
+delimiter //
+CREATE PROCEDURE sp16()
+BEGIN
+    set @var1 = 1;
+    SELECT @var1;
+END//
+delimiter ;
+
+--error ER_SP_DOES_NOT_EXIST
+CALL db_storedproc.sp16();
+
+# cleanup
+USE db_storedproc;
+DROP PROCEDURE db1.sp16;
+DROP DATABASE db1;
+
+DROP FUNCTION IF EXISTS db_storedproc.sp1;
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1 ()
+BEGIN
+    declare x enum( 'db1', 'test' ) default 'test';
+    SELECT x;
+END//
+delimiter ;
+
+CALL sp1();
+
+CREATE FUNCTION sp1 (y char) returns char return y;
+  SELECT sp1( 'a' );
+
+DROP DATABASE IF EXISTS db1;
+CREATE DATABASE db1;
+USE db1;
+CALL db_storedproc.sp1( );
+SELECT db_storedproc.sp1( 'a' );
+
+DROP FUNCTION db_storedproc.sp1;
+USE db_storedproc;
+
+--error ER_SP_DOES_NOT_EXIST
+SELECT sp1('a');
+
+DROP PROCEDURE sp1;
+
+--error ER_SP_DOES_NOT_EXIST
+CALL sp1();
+
+--error ER_SP_DOES_NOT_EXIST
+SELECT sp1('a');
+
+# cleanup
+USE db_storedproc;
+DROP DATABASE db1;
+
+DROP PROCEDURE IF EXISTS sp1;
+DROP FUNCTION IF EXISTS db_storedproc.sp1;
+set @x=null; set @y=null;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    set @x= 1;
+    SELECT @x;
+END//
+delimiter ;
+
+CREATE FUNCTION sp1 () returns int return 2.2;
+CALL db_storedproc.sp1();
+SELECT db_storedproc.sp1();
+
+DROP DATABASE IF EXISTS db1;
+CREATE DATABASE db1;
+USE db1;
+alter procedure db_storedproc.sp1 sql security invoker;
+--sorted_result
+SELECT routine_name, routine_type, security_type from information_schema.routines
+       where routine_schema like 'db_storedproc%' and routine_name='sp1';
+
+alter function db_storedproc.sp1 sql security invoker;
+--sorted_result
+SELECT routine_name, routine_type, security_type from information_schema.routines
+       where routine_schema like 'db_storedproc%' and routine_name='sp1';
+
+CALL db_storedproc.sp1();
+
+SELECT db_storedproc.sp1();
+
+USE db_storedproc;
+alter procedure sp1 sql security DEFINER;
+CALL db_storedproc.sp1();
+
+SELECT db_storedproc.sp1();
+
+alter function sp1 sql security DEFINER;
+--sorted_result
+SELECT routine_name, routine_type, security_type from information_schema.routines
+       where routine_schema like 'db_storedproc%' and routine_name='sp1';
+CALL db_storedproc.sp1();
+
+SELECT db_storedproc.sp1();
+
+# cleanup
+USE db_storedproc;
+DROP DATABASE db1;
+DROP PROCEDURE db_storedproc.sp1;
+DROP FUNCTION db_storedproc.sp1;
+
+CREATE DATABASE db_storedproc_3122;
+USE db_storedproc;
+SET @x = NULL;
+SET @y = NULL;
+DROP PROCEDURE IF EXISTS sp1;
+DROP FUNCTION IF EXISTS db_storedproc.sp1;
+DROP PROCEDURE IF EXISTS db_storedproc_3122.sp1;
+DROP FUNCTION IF EXISTS db_storedproc_3122.sp1;
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    SET @x = 1;
+    SELECT @x;
+END//
+delimiter ;
+
+CREATE FUNCTION db_storedproc_3122.sp1() RETURNS DOUBLE RETURN 2.2;
+CALL sp1();
+SELECT db_storedproc_3122.sp1();
+USE db_storedproc_3122;
+
+delimiter //
+CREATE PROCEDURE sp1 ()
+BEGIN
+    SET @x = 3;
+    SELECT @x;
+END//
+delimiter ;
+
+CREATE FUNCTION db_storedproc.sp1() RETURNS DOUBLE RETURN 4.4;
+CALL sp1();
+SELECT db_storedproc.sp1();
+
+ALTER PROCEDURE db_storedproc_3122.sp1 SQL SECURITY INVOKER;
+ALTER FUNCTION sp1 SQL SECURITY INVOKER;
+
+--sorted_result
+SELECT routine_name, routine_type, security_type from information_schema.routines
+       where routine_schema like 'db_storedproc%' and routine_name='sp1';
+
+CALL db_storedproc.sp1();
+
+SELECT db_storedproc.sp1();
+CALL db_storedproc_3122.sp1();
+SELECT db_storedproc_3122.sp1();
+
+# clean up
+USE db_storedproc;
+DROP DATABASE db_storedproc_3122;
+DROP FUNCTION db_storedproc.sp1;
+DROP PROCEDURE db_storedproc.sp1;
+
+
+# Testcase 4.1.20:
+# Ensure that it is possible to alter the comment of a procedure
+# and a function with the same name, even in the same database;
+
+USE db_storedproc;
+set @x=null;
+
+--disable_warnings
+DROP PROCEDURE IF EXISTS sp1;
+DROP FUNCTION IF EXISTS db_storedproc.sp1;
+--enable_warnings
+
+CREATE PROCEDURE sp1 () set @x= 1;
+CREATE FUNCTION sp1 () returns int return 2;
+
+DROP DATABASE IF EXISTS db_storedproc_3122;
+CREATE DATABASE db_storedproc_3122;
+USE db_storedproc_3122;
+
+CREATE PROCEDURE sp1 () set @x= 3;
+CREATE FUNCTION sp1 () returns int return 4;
+
+alter procedure sp1 sql security invoker comment 'this is a procedure';
+alter function sp1 sql security invoker comment 'this is a function';
+
+alter procedure sp1 sql security DEFINER;
+alter function sp1 sql security DEFINER;
+--replace_column 5 <modified> 6 <created>
+show CREATE PROCEDURE sp1;
+--replace_column 5 <modified> 6 <created>
+show CREATE FUNCTION sp1;
+
+# clean up
+USE db_storedproc;
+DROP DATABASE db_storedproc_3122;
+DROP FUNCTION db_storedproc.sp1;
+DROP PROCEDURE db_storedproc.sp1;
+
+
+# Testcase 4.1.21:
+# Ensure that it is not possible to create two procedures with same name
+# in same database;
+
+USE db_storedproc;
+set @x=null;
+set @y=null;
+
+CREATE DATABASE db1;
+DROP PROCEDURE IF EXISTS sp1;
+CREATE PROCEDURE sp1 () set @x=1;
+
+--error ER_SP_ALREADY_EXISTS
+CREATE PROCEDURE sp1 () set @x=2;
+
+CALL sp1();
+SELECT @x;
+USE db1;
+--error ER_SP_ALREADY_EXISTS
+CREATE PROCEDURE db_storedproc.sp1 () set @x=3;
+CALL db_storedproc.sp1();
+  SELECT @x;
+
+DROP PROCEDURE IF EXISTS db_storedproc.sp1;
+CREATE PROCEDURE db_storedproc.sp1 () set @x=1;
+--error ER_SP_ALREADY_EXISTS
+CREATE PROCEDURE db_storedproc.sp1 () set @x=2;
+CALL db_storedproc.sp1();
+SELECT @x;
+
+# clean up
+USE db_storedproc;
+DROP DATABASE db1;
+DROP PROCEDURE db_storedproc.sp1;
+
+
+# Testcase 4.1.22:
+# Ensure that it is not possible to create two functions with same name in the
+# same database;
+
+USE db_storedproc;
+DROP DATABASE IF EXISTS db1;
+CREATE DATABASE db1;
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+CREATE FUNCTION fn1 () returns int return 1;
+--error ER_SP_ALREADY_EXISTS
+CREATE FUNCTION fn1 () returns int return 2;
+SELECT fn1();
+USE db1;
+--error ER_SP_ALREADY_EXISTS
+CREATE FUNCTION db_storedproc.fn1 () returns int return 3;
+SELECT db_storedproc.fn1();
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+CREATE FUNCTION db_storedproc.fn1 () returns int return 1;
+--error ER_SP_ALREADY_EXISTS
+CREATE FUNCTION db_storedproc.fn1 () returns int return 2;
+SELECT db_storedproc.fn1();
+
+# clean up
+USE db_storedproc;
+DROP DATABASE db1;
+DROP FUNCTION db_storedproc.fn1;
+
+
+# Testcase 4.1.23:
+# Ensure that it is possible to create two or more procedures with the same name,
+# providing each resides in different databases;
+
+USE db_storedproc;
+set @x=null;
+set @y=null;
+DROP PROCEDURE IF EXISTS sp1;
+CREATE PROCEDURE sp1 () set @x= 1;
+DROP DATABASE IF EXISTS test3124;
+CREATE DATABASE test3124;
+USE test3124;
+CREATE PROCEDURE sp1 () set @y= 2;
+CALL sp1();
+SELECT @x, @y;
+USE db_storedproc;
+CALL sp1();
+SELECT @x, @y;
+
+# clean up
+USE db_storedproc;
+DROP DATABASE test3124;
+DROP PROCEDURE db_storedproc.sp1;
+
+
+# Testcase 4.1.24:
+# Ensure that it is possible to create two or more functions with the same name,
+# providing each resides in different databases.;
+
+USE db_storedproc;
+DROP FUNCTION IF EXISTS db_storedproc.f1;
+CREATE FUNCTION f1 () returns int return 1;
+DROP DATABASE IF EXISTS test3125;
+CREATE DATABASE test3125;
+USE test3125; CREATE FUNCTION f1 () returns int return 2;
+SELECT f1();
+USE db_storedproc;
+SELECT f1();
+
+# clean up
+USE db_storedproc;
+DROP DATABASE test3125;
+DROP FUNCTION db_storedproc.f1;
+
+
+# Testcase 4.1.25:
+# Ensure that any invalid function name is never accepted, and that an appropriate
+# error message is returned when the name is rejected. (invalid func name);
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE FUNCTION !_fn1( f1 char(20) ) returns int
+BEGIN
+   SELECT * from t1 where f2 = f1;
+   return 1;
+END//
+delimiter ;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1( f1 char(20) ) return int
+BEGIN
+   SELECT * from t1 where f2 = f1;
+   return 1;
+END//
+delimiter ;
+
+CREATE FUNCTION fn1() returns int
+  return 'a';
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION procedure() returns int
+  return 1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(a char) returns int lang sql return 1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(a char) returns int deterministic( return 1);
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(a char) returns int non deterministic return 1;
+
+--error ER_PARSE_ERROR
+CREATE FUNCTION fn1(a char) returns int not deterministic comment 'abc' language sql sql security refiner return 1;
+
+# clean up
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+
+
+# Testcase 4.1.1:
+# Ensure that all clauses that should be supported are supported.
+# CREATE PROCEDURE;
+
+USE db_storedproc;
+
+set @count = 0;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1(cnt int(20))
+BEGIN
+    SELECT count(*) into cnt from t2;
+    set @count = cnt;
+END//
+delimiter ;
+
+CALL sp1( 10 );
+
+SELECT @count;
+
+# clean up
+DROP PROCEDURE sp1;
+
+# Testcase 4.2.2:
+# BEGINend;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( cnt int(20) )
+BEGIN
+    SELECT count(*) into cnt from t2;
+    set @count = cnt;
+    SELECT @count;
+END//
+delimiter ;
+
+CALL sp1( 10 );
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.6:
+# Ensure that a beginning and ending label may enclose a BEGIN/END block;
+# Ensure that it is possible to nest blocks at least to a depth of 20;
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+
+delimiter //
+CREATE PROCEDURE sp1( )
+begin_label: BEGIN
+    declare x char;
+    declare y char;
+    set x = '1';
+    set y = '2';
+    label1: BEGIN
+      declare x char;
+      declare y char;
+      SELECT f1, f2 into x, y from t2 limit 1;
+    END label1;
+    set @v1 = x;
+    set @v2 = y;
+    SELECT @v1, @v2;
+END begin_label//
+delimiter ;
+
+CALL sp1();
+
+# clean up
+DROP PROCEDURE sp1;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.7:
+# Ensure that the labels enclosing each BEGIN/END compound statement must match.
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_SP_LABEL_MISMATCH
+CREATE PROCEDURE sp1( )
+begin1_label: BEGIN
+    declare x char;
+    declare y char;
+    SELECT lf1, f1 into x, y from t2 limit 1;
+    begin2_label: BEGIN
+      declare x char;
+      declare y char;
+      SELECT f1, f2 into x, y from t2 limit 1;
+    END begin2_changed;
+END begin1_changed//
+delimiter ;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.8:
+# Ensure that it is possible to put a beginning label at the start of a
+# BEGIN/END compound statement without also requiring an ending label
+# at the END of the same statement.
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+    begin_label: BEGIN
+    declare x char;
+    declare y char;
+    SELECT f1, f2 into x, y from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+# clean up
+DROP PROCEDURE sp1;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.9:
+# Ensure that it is not possible to put an ending label at the END of
+# a BEGIN/END compound statement without also requiring a matching
+# beginning label at the start of the same statement
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x char;
+    declare y char;
+    SELECT f1, f2 into x, y from t2 limit 1;
+END begin_label//
+delimiter ;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.10:
+# Ensure that every beginning label must END with a colon(:)
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp1( )
+begin_label BEGIN
+   declare x char;
+   declare y char;
+   SELECT f1, f2 into x, y from t2 limit 1;
+END begin_label//
+delimiter ;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.11:
+# Ensure that every beginning label with the same scope must be unique. (same label names)
+# ------------------------------------------------------------------------------
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_SP_LABEL_REDEFINE
+CREATE PROCEDURE sp6( )
+begin_samelabel: BEGIN
+    declare x char;
+    declare y char;
+    SELECT f1, f2 into x, y from t2 limit 1;
+    begin_samelabel: BEGIN
+      declare x char;
+      declare y char;
+      SELECT f1, f2 into x, y from t2 limit 1;
+    END begin_samelabel;
+    begin_samelabel: BEGIN
+      declare x char;
+      declare y char;
+      SELECT f1, f2 into x, y from t2 limit 1;
+    END begin_samelabel;
+END begin_samelabel//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.12:
+# Ensure that the variables, cursors, conditions, and handlers declared for
+# a stored procedure (with the declare statement) may only be properly defined
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_TOO_BIG_SCALE
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare x char default 'a';
+    declare y integer default 1;
+    declare z float default 1.1;
+    declare a enum("value1", "value2") default 'value1';
+    declare b decimal(255, 255) default 1.2e+12;
+    declare c mediumtext default 'mediumtext';
+    declare d datetime default '2005-02-02 12:12:12';
+    declare e char default 'b';
+    declare cur1 cursor for SELECT f1 from db_storedproc.t2;
+    declare continue handler for sqlstate '02000' set @x2 = 1;
+    open cur1;
+    fetch cur1 into e;
+    SELECT x, y, z, a, b, c, d, e;
+    close cur1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare x12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567 char default '0';
+    SELECT x12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567;
+END//
+delimiter ;
+
+CALL sp6();
+
+# clean up
+DROP PROCEDURE sp6;
+
+
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.14:
+# Ensure that the handlers declared for a stored procedure (with the declare
+# statement) may only be defined in the correct order;
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_SP_VARCOND_AFTER_CURSHNDLR
+CREATE PROCEDURE sp1()
+BEGIN
+   declare continue handler for sqlstate '23000' set @x2 = 1;
+   declare x char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_SP_VARCOND_AFTER_CURSHNDLR
+CREATE PROCEDURE sp6( )
+BEGIN
+    declare cursor1 cursor for SELECT f1 from t1;
+    declare x char;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+# TiDB doesn't support DECLARE CONDITION in stored procedures.
+# delimiter //
+# --error ER_SP_VARCOND_AFTER_CURSHNDLR
+# CREATE PROCEDURE sp6( )
+# BEGIN
+#     declare cursor1 cursor for SELECT f1 from t1;
+#     declare sqlcondition condition for sqlstate '02000';
+# END//
+# delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+# TiDB doesn't support DECLARE CONDITION in stored procedures.
+# delimiter //
+# --error ER_SP_CURSOR_AFTER_HANDLER
+# CREATE PROCEDURE sp6( )
+# BEGIN
+#     declare sqlcondition condition for sqlstate '02000';
+#     declare continue handler for sqlcondition set @x=1;
+#     declare cursor1 cursor for SELECT f1 from t1;
+# END//
+# delimiter ;
+
+# ------------------------------------------------------------------------------
+# Testcase 4.2.15:
+# Ensure that the declare statement can declare multiple variables both separately
+# and all at once from a variable list. (multiple declaration);
+# ------------------------------------------------------------------------------
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+   BEGIN
+      DECLARE x1 CHAR(100) DEFAULT 'outer';
+      BEGIN
+         DECLARE x1 CHAR(100) DEFAULT x1;
+      END;
+   END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z char default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z char ascii default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z tinytext default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z text default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z mediumtext default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z longtext default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z tinyblob default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z blob default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z mediumblob default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z longblob default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z binary default null;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z tinyint default -126;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z tinyint unsigned default 253;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support declaring variables with zerofill and negative default values
+# This causes overflow error at CREATE PROCEDURE time, while MySQL may handle it differently
+#delimiter //
+#CREATE PROCEDURE sp1( )
+#BEGIN
+#   declare x, y, z tinyint zerofill default -1;
+#   GET DIAGNOSTICS @n = NUMBER;
+#   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+#   SELECT @err_no, @err_txt;
+#   SELECT x, y, z;
+#END//
+#delimiter ;
+#
+#CALL sp1();
+#
+#--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+#DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z tinyint unsigned zerofill default 1;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z smallint default -32768;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z smallint unsigned default 65535;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+# TiDB doesn't support declaring variables with zerofill and negative default values
+#delimiter //
+#CREATE PROCEDURE sp1( )
+#BEGIN
+#   declare x, y, z smallint zerofill default -1;
+#   GET DIAGNOSTICS @n = NUMBER;
+#   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+#   SELECT @err_no, @err_txt;
+#   SELECT x, y, z;
+#END//
+#delimiter ;
+#
+#CALL sp1();
+#
+#--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+#DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z smallint unsigned zerofill default 1;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z mediumint default -8388608;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z mediumint unsigned default 16777215;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z mediumint zerofill default -1;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z mediumint unsigned zerofill default 1;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z int default -2147483648;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z int unsigned default 4294967295;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z int zerofill default -1;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z int unsigned zerofill default 1;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z bigint default -9223372036854775808;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z bigint unsigned default 18446744073709551615;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z bigint zerofill default -1;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z bigint unsigned zerofill default 1;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z decimal default -34028234660123456789012345678901234567;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z decimal unsigned default 1.175494351e-38;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z decimal zerofill default -34028234660123456789012345678901234567;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z decimal unsigned zerofill default 1.175494351e-38;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z numeric default 1.175494351e-38;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z numeric unsigned default 1.175494351e-38;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z numeric zerofill default 1.175494351e-38;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z numeric unsigned zerofill default 1.175494351e-38;
+   GET DIAGNOSTICS @n = NUMBER;
+   GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+   SELECT @err_no, @err_txt, x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z real default 1.175494351e-38;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z real unsigned default 1.175494351e-38;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+   declare x, y, z real zerofill default 1.175494351e-38;
+   SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z real unsigned zerofill default 1.175494351e-38;
+    SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z float default 1.175494351e-38;
+    SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z float unsigned default 1.175494351e-38;
+    SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z float zerofill default 1.175494351e-38;
+    SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z float unsigned zerofill default 1.175494351e-38;
+    SELECT x, y, z;
+END//
+delimiter ;
+
+--replace_result e-038 e-38
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z date default '2005-02-02';
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z time default '12:20:12';
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z datetime default '2005-02-02 12:20:12';
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z timestamp default '20050202122012';
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z year default 2005;
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z year default 2005;
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z enum("1enum", "2enum") default "2enum";
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x, y, z set("1set", "2set") default "2set";
+    SELECT x, y, z;
+END//
+delimiter ;
+
+CALL sp1();
+
+# clean up
+DROP PROCEDURE sp1;
+
+# Testcase 4.2.16: Ensure that the declare statement can declare multiple variables both separately and all at once from a variable list.
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+CREATE PROCEDURE sp6( )
+BEGIN
+   declare a, b char default '2';
+   declare c, d float default 1.3;
+   declare e, f text default 'text';
+   declare g, h enum("value1", "value2" ) default 'value1';
+   declare i, j datetime default '2005-02-02 12:12:12';
+   declare k, l blob default 'blob';
+   SELECT a, b, c, d, e, f, g, h, k, l;
+END//
+delimiter ;
+
+CALL sp6();
+
+# clean up
+DROP PROCEDURE sp6;
+
+# Testcase 4.2.29:
+# testcase: ensure that the set statement can assign values to variables either
+#            separately or multiple variables in a list.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx char default 'x';
+    declare xy char default 'y';
+    declare xz char default 'z';
+    set @xx = xx, @xy = xy;
+    set @xz = xz;
+    SELECT @xx, @xy, @xz;
+END//
+delimiter ;
+
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# Testcase 4.2.30:;
+# testcase: ensure that the set statement may assign only those values to a variable
+#            that are appropriate for that variables data type definition
+
+# integer data_type.
+
+  set @xx=0;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx int;
+    set xx = 'asd';
+    GET DIAGNOSTICS @n = NUMBER;
+    GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+    set @xx = xx;
+    SELECT @err_no, @err_txt, @xx;
+END//
+delimiter ;
+
+--error ER_TRUNCATED_WRONG_VALUE
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx int;
+    set xx = 5;
+    set @xx = xx;
+    SELECT @xx;
+END//
+delimiter ;
+
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# character data_type
+
+  set @xx=0;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx char;
+    set xx = 'temp';
+    GET DIAGNOSTICS @n = NUMBER;
+    GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+    SELECT @err_no, @err_txt;
+    set @xx = xx;
+END//
+delimiter ;
+
+--error ER_DATA_TOO_LONG
+CALL sp1();
+
+SELECT @xx;
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# float data_type
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx float;
+    set xx = 'asd';
+    GET DIAGNOSTICS @n = NUMBER;
+    GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+    SELECT @err_no, @err_txt, xx;
+END//
+delimiter ;
+
+--error ER_TRUNCATED_WRONG_VALUE
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx float;
+    set xx = 1.6;
+    SELECT xx;
+END//
+delimiter ;
+
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# datetime data_type
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx datetime;
+    set xx = 'asd';
+    GET DIAGNOSTICS @n = NUMBER;
+    GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+    SELECT @err_no, @err_txt, xx;
+END//
+delimiter ;
+
+--error ER_TRUNCATED_WRONG_VALUE
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx datetime;
+    set xx = '2006-06-06 01:01:01';
+    SELECT xx;
+END//
+delimiter ;
+
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# varchar data_type
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx varchar(20);
+    set xx = "abcdefghijk";
+    SELECT xx;
+END//
+delimiter ;
+
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# tinyint
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx tinyint;
+    set xx = 'asd';
+    GET DIAGNOSTICS @n = NUMBER;
+    GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+    SELECT @err_no, @err_txt;
+    SELECT xx;
+END//
+delimiter ;
+
+--error ER_TRUNCATED_WRONG_VALUE
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare xx tinyint;
+    set xx = -125;
+    SELECT xx;
+END//
+delimiter ;
+
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# Testcase 4.2.37:
+# testcase: ensure that the SELECT  into statement that retrieves column values
+#            with inappropriate data types for the matching variables in its variable
+#            list is rejected, with an appropriate error message.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare x integer; declare y integer;
+    SELECT sal, f2 into x, y from t2 limit 1;
+    set @x=x; set @y=y;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS sp1;
+
+# delimiter //
+# CREATE PROCEDURE sp1()
+# BEGIN
+#     declare x char ascii;
+#     SELECT f1 into x from t2 limit 1;
+# END//
+# delimiter ;
+
+# CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x tinytext;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x text;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x mediumtext;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x longtext;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x tinyblob;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x blob;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x mediumblob;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x longblob;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x binary;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+--disable_warnings
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x tinyint;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x tinyint unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x tinyint zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x tinyint unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x smallint;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x smallint unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x smallint zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x smallint unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x mediumint;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x mediumint unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x mediumint zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x mediumint unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x int;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x int unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x int zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x int unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x bigint;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x bigint unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x bigint zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x bigint unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x decimal;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x decimal unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x decimal zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x decimal unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x numeric;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x numeric unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x numeric zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x numeric unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x real;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x real unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x real zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x real unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x float;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x float unsigned;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x float zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x float unsigned zerofill;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x date;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x time;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x datetime;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x timestamp;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x year;
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x year(4);
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x enum("1enum", "2enum");
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+    declare x set("1set", "2set");
+    SELECT f1 into x from t2 limit 1;
+END//
+delimiter ;
+
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+--enable_warnings
+
+
+# Testcase 4.2.52:;
+# testcase: ensure that no two cursors in a stored procedure can have the same name.
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_SP_DUP_CURS
+CREATE PROCEDURE sp1( )
+BEGIN
+    declare done int default 0;
+    declare count integer default 20;
+    declare newf1 char(20);
+    declare newf2 char(20);
+    declare newf3 char(20);
+    declare newf4 integer;
+    declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+    declare cur1 cursor for SELECT f1, f2 from t2;
+    declare continue handler for sqlstate '02000' set done = 1;
+    BEGIN
+      open cur1;
+      set count = count - 1;
+      while count > 0 do
+        fetch cur1 into newf1, newlf1, newf3, newsal;
+        set count = count - 1;
+      END while;
+      close cur1;
+    END;
+END//
+delimiter ;
+
+
+# Testcase 4.2.53:;
+# testcase: ensure that a cursor declaration may not include a SELECT  into statement.
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+# FIXME(udf): fix unexpected undeclared variable, it should be 
+# ERROR 1323 (42000): Cursor SELECT must not have INTO
+--error ER_SP_UNDECLARED_VAR
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, lf1, f3, f4 into @w, @x, @y, @z from t2;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newlf1, newf3, newsal;
+                set count = count - 1;
+            END while;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+
+# Testcase 4.2.55:;
+# testcase: ensure that open <cursor name> fails unless a cursor with
+#            the same name has already been declared.
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+--error ER_SP_CURSOR_MISMATCH
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2, newf4, newf3;
+                set count = count - 1;
+            END while;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 0;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            BEGIN
+                open cur1;
+                set count = count - 1;
+                while count > 0 do
+                    fetch cur1 into newf1, newf2, newf3, newf4;
+                    set count = count - 1;
+                END while;
+            END;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_ALREADY_OPEN
+CALL sp1();
+
+
+# Testcase 4.2.56:;
+# testcase: ensure that open <cursor name> fails if the same cursor is currently already open.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            open cur1;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2, newf4, newf3;
+                set count = count - 1;
+            END while;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_ALREADY_OPEN
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# Testcase 4.2.57:;
+# testcase: ensure that fetch <cursor name> fails unless a cursor with the same name is already open.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2;
+        declare cur2 cursor for SELECT f1, f2 from t2;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur2;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2, newf4, newf3;
+                set count = count - 1;
+            END while;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+# Testcase 4.2.59:;
+# testcase: ensure that fetch <cursor name> fails with an appropriate error message
+#            if it is executed before the cursor has been opened.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 20, 10;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2, newf4, newf3;
+                set count = count - 1;
+            END while;
+            open cur1;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 10;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+        declare continue handler for sqlstate '02000' set done = 1;
+        open cur1;
+        BEGIN
+            declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2, newf3, newf4;
+                set count = count - 1;
+            END while;
+            open cur1;
+            close cur1;
+        END;
+        close cur1;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.60:;
+# testcase: ensure that fetch <cursor name> fails with an appropriate error message
+#            if it is executed after the cursor has been closed.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 20, 10;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            close cur1;
+            set count = count - 1;
+            while count > 0 do
+                    fetch cur1 into newf1, newf2, newf4, newf3;
+                    set count = count - 1;
+            END while;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+        declare continue handler for sqlstate '02000' set done = 1;
+        open cur1;
+        close cur1;
+        BEGIN
+            declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+            open cur1;
+        END;
+        fetch cur1 into newf1, newf2, newf3, newf4;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.62:;
+# testcase: ensure that fetch <cursor name> fails with an appropriate error message
+#            if the data type of the column values being fetched are not appropriate
+#            for the matching fetch variables to which the data is being assigned.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf2 char(20);
+        declare newf1 int1;
+        declare cur1 cursor for SELECT f1, f3 from t2 limit 20, 10;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2;
+                set @x = newf1;
+                set @y = newf2;
+                SELECT @x, @y;
+                set count = count - 1;
+            END while;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+#This test seems to make no sense, as always NULL may be set.
+#--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.63:;
+# testcase: ensure that close <cursor name> fails unless a cursor with the same name is already open.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1()
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 20, 10;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            close cur1;
+            open cur1;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2, newf4, newf3;
+                set count = count - 1;
+            END while;
+            close cur1;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 0;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            declare cur1 cursor for SELECT f1, f2, f3, f4 from t2;
+            open cur1;
+        END;
+        close cur1;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.64:;
+# testcase: ensure that all cursors are closed when a transaction terminates with a commit statement.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 20, 10;
+        BEGIN
+            open cur1;
+            start transaction;
+            fetch cur1 into newf1, newf2, newf4, newf3;
+            commit;
+            fetch cur1 into newf1, newf2, newf4, newf3;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_FETCH_NO_DATA
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.65:;
+# testcase: ensure that all cursors are closed when a transaction terminates with a rollback statement.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 20, 10;
+        BEGIN
+            open cur1;
+            fetch cur1 into newf1, newf2, newf4, newf3;
+            rollback;
+            fetch cur1 into newf1, newf2, newf4, newf3;
+            commit;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_FETCH_NO_DATA
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.66:;
+# testcase: ensure that the result set of the cursor that has been closed is not
+#            longer available to the fetch statement.
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 20, 10;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            set count = count - 1;
+            while count > 0 do
+                fetch cur1 into newf1, newf2, newf4, newf3;
+                set count = count - 1;
+            END while;
+            close cur1;
+            fetch cur1 into newf1, newf2, newf4, newf3;
+        END;
+END//
+delimiter ;
+
+--error ER_SP_CURSOR_NOT_OPEN
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.67:;
+# testcase: ensure that cursor declared within a compound statement is closed when
+#            that compound statement ends (without cursor close statement)
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 20, 10;
+        declare continue handler for sqlstate '02000' set done = 1;
+        BEGIN
+            open cur1;
+            fetch cur1 into newf1, newf2, newf4, newf3;
+        END;
+        fetch cur1 into newf1, newf2, newf4, newf3;
+END//
+delimiter ;
+
+#--error ER_SP_FETCH_NO_DATA
+CALL sp1();
+
+# cleanup
+DROP PROCEDURE sp1;
+
+
+# Testcase 4.2.70:;
+# testcase: ensure that multiple cursors, nested within multiple compound statements
+#            within a stored procedure always act correctly and return the expected result.
+
+create table temp1( f1 char(20), f2 char(20), f3 int, f4 char(20) );
+create table temp2( f1 char(20), f2 char(20), f3 int, f4 char(20) );
+
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( )
+BEGIN
+        declare done int default 0;
+        declare count integer default 20;
+        declare newf1 char(20);
+        declare newf2 char(20);
+        declare newf3 char(20);
+        declare newf4 integer;
+        declare newf21 char(20);
+        declare newf22 char(20);
+        declare newf23 char(20);
+        declare newf24 integer;
+        declare cur1 cursor for SELECT f1, f2, f4, f5 from t2 limit 7, 1;
+        declare cur2 cursor for SELECT f1, f2, f4, f5 from t2 limit 15, 1;
+        declare continue handler for sqlstate '02000' set done = 1;
+        open cur1;
+        BEGIN
+            set count = 10;
+            BEGIN
+                open cur2;
+                while count > 0 do
+                    fetch cur1 into newf1, newf2, newf4, newf3;
+                    set count = count - 1;
+                END while;
+            END;
+            insert into temp1 values(newf1, newf2, newf4, newf3);
+            close cur1;
+        END;
+        BEGIN
+            set count = 10;
+            while count > 0 do
+                fetch cur2 into newf21, newf22, newf24, newf23;
+                set count = count - 1;
+            END while;
+        END;
+        insert into temp2 values(newf21, newf22, newf24, newf23);
+        close cur2;
+END//
+delimiter ;
+
+CALL sp1();
+
+SELECT count(*) from temp1;
+SELECT * from temp2;
+
+# cleanup
+DROP PROCEDURE sp1;
+drop table temp1;
+drop table temp2;
+
+
+# ==============================================================================
+# let $message= Section 3.1.3 - Syntax checks for the stored procedure-specific flow control statements
+#               .               IF, CASE, LOOP, LEAVE, ITERATE, REPEAT, WHILE:
+
+USE db_storedproc;
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.1:
+
+# testcase : ensure that all clauses that should be supported are supported
+
+--disable_warnings
+DROP PROCEDURE IF EXISTS sp1;
+DROP TABLE IF EXISTS res_t3_itisalongname_1381742_itsaverylongname_1381742;
+--enable_warnings
+
+CREATE TABLE res_t3_itisalongname_1381742_itsaverylongname_1381742(
+    middleinitial CHAR, lastname VARCHAR(50),
+    age_averylongfieldname_averylongname_1234569 INT, COMMENT VARCHAR(100));
+
+INSERT INTO res_t3_itisalongname_1381742_itsaverylongname_1381742
+VALUES('a', 'aaaaaaaaaabbbbbbbbc', 0, 'default');
+
+delimiter //
+CREATE PROCEDURE sp1(a INT)
+BEGIN
+    DECLARE itisjustaverylargevariablename_xxxxxxxxxxxxxxxxxxxxx CHAR;
+    DECLARE itisjustaverylargevarcharvariablename_xxxxxxxxxxxxxxxxxxxxx VARCHAR(100);
+    DECLARE itisjustamediumsizeintintegervariablename INTEGER;
+    SET itisjustaverylargevariablename_xxxxxxxxxxxxxxxxxxxxx = 'b';
+    SET itisjustaverylargevarcharvariablename_xxxxxxxxxxxxxxxxxxxxx
+        = 'oldmacdonalds)(*&(^^%$&^%$&^%*^)(*^#@$@%';
+    SET itisjustamediumsizeintintegervariablename = 5;
+    SET @comment='a';
+    label1: LOOP
+        IF a > 100 THEN
+            SET @comment = 'value of a is greater than 100';
+        ELSEIF a < 100 THEN
+            IF a < 50 THEN
+                SET @comment = 'value of a is less than 50';
+            ELSEIF a < 25 THEN
+                SET @comment = 'value of a is less than 25';
+            ELSE
+                SET @comment = 'value of a is greater than 50 and less than 100';
+            END IF;
+        ELSE
+            SET @comment = 'value of a is 100';
+        END IF;
+
+        IF itisjustamediumsizeintintegervariablename = 0 THEN LEAVE label1;
+        END IF;
+        INSERT INTO res_t3_itisalongname_1381742_itsaverylongname_1381742
+        VALUES(itisjustaverylargevariablename_xxxxxxxxxxxxxxxxxxxxx,
+                 CONCAT(itisjustaverylargevarcharvariablename_xxxxxxxxxxxxxxxxxxxxx,
+                 '  ', a), a, @comment);
+        SET itisjustamediumsizeintintegervariablename
+            = itisjustamediumsizeintintegervariablename - 1;
+        ITERATE label1;
+    END LOOP label1;
+END//
+delimiter ;
+
+CALL sp1(101);
+
+CALL sp1(100);
+
+CALL sp1(75);
+
+CALL sp1(40);
+
+CALL sp1(20);
+
+CALL sp1(-1);
+
+SELECT * from res_t3_itisalongname_1381742_itsaverylongname_1381742
+ ORDER BY middleinitial, lastname, age_averylongfieldname_averylongname_1234569;
+
+# cleanup
+drop table res_t3_itisalongname_1381742_itsaverylongname_1381742;
+DROP PROCEDURE sp1;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.2:
+
+# testcase: ensure that all clauses that should be supported are supported (case, while, repeat)
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp2;
+DROP TABLE IF EXISTS t3;
+--enable_warnings
+
+CREATE TABLE t3(f1 char(20), f2 char(20), f3 int);
+
+delimiter //
+CREATE PROCEDURE sp2( action char(20) )
+BEGIN
+     declare v1 char(20);
+     declare v2 char(20);
+     declare count integer;
+     set v1 = 'f1';
+     set v2 = 'address';
+     set count = 1;
+     case when action = 'delete'  then
+            insert into t3 values(v1, v2, count);
+            delete from t3 where f1=v1;
+     when action = 'insert' then
+            repeat
+                 insert into t3 values(v1, v2, count);
+                 set count = count + 1;
+            until count > 5
+            END repeat;
+            set count = 1;
+            label1: repeat
+                insert into t3 values(v1, v2, count);
+            if count > 5 then leave label1;
+                        END if;
+                            set count = count + 1;
+            until count > 5
+            END repeat;
+                                set count = 1;
+            while count < 5 do
+                insert into t3 values(v1, v2, count);
+                set count = count + 1;
+            END while;
+            set count = 1;
+            label1: while count < 5 do
+                insert into t3 values(v1, v2, count);
+                if count > 5 then leave label1;
+                                END if;
+                set count = count + 1;
+            END while;
+    else
+            set @dummystring = 'temp value';
+    END case;
+END//
+delimiter ;
+
+CALL sp2( 'insert' );
+--sorted_result
+SELECT * from t3 where f3 <=5 && f3 >= 0;
+
+SELECT count(*) from t3;
+CALL sp2( 'delete' );
+SELECT count(*) from t3;
+
+CALL sp2 ('test');
+SELECT @dummystring;
+
+# cleanup
+DROP PROCEDURE sp2;
+DROP TABLE t3;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.1.2:
+#               ---------------
+# Ensure that all sub-clauses that should not be supported are disallowed with
+# an appropriate error message. (case);
+
+--disable_warnings
+drop table IF EXISTS res_t3_itisalongname_1381742_itsaverylongname_1381742;
+DROP PROCEDURE IF EXISTS sp3;
+--enable_warnings
+
+create table res_t3_itisalongname_1381742_itsaverylongname_1381742 (name char(20), address varchar(50), age_averylongfieldname_averylongname_1234569 smallint);
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp3( action char(20) )
+BEGIN
+label1: case
+  when action = 'delete'  then
+  delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+else
+        set @dummystring = 'temp value';
+        iterate label1;
+END case label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp3;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp3( action char(20) )
+BEGIN
+label1: BEGIN
+  case
+  action = 'delete'  then
+  delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+  else
+        set @dummystring = 'temp value';
+        iterate label1;
+  END case;
+  END label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp3;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp3( action char(20) )
+BEGIN
+case
+  when action = 'delete'  then
+     delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+  then action = 'truncate'  when
+  truncate from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+  else
+        set @dummystring = 'temp value';
+        iterate label1;
+  END case;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp3;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp3( action char(20) )
+BEGIN
+declare v1 char(20);
+declare v2 char(20);
+declare count integer;
+set v1 = 'f1';
+set v2= 'address';
+set count = 1;
+case action
+  when 'delete'  then
+  when 'delete'  then
+     delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+  END case;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp3;
+
+
+delimiter //
+CREATE PROCEDURE sp3( action char(20) )
+BEGIN
+    declare count int default 1;
+    declare done int default 0;
+    declare continue handler for sqlstate 'HY000' set done=1;
+    label1: loop
+        case
+            when action = 'delete'  then
+                label3:BEGIN
+                    delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+                END label3;
+            when action = 'insert' then
+                label2: while count < 10 do
+                BEGIN
+                    insert into res_t3_itisalongname_1381742_itsaverylongname_1381742
+                        values('xxxxxxxxxxxxxxxxxxx', '1231230981(*&(*&)(*&(', count);
+                    GET DIAGNOSTICS @n = NUMBER;
+                    GET DIAGNOSTICS CONDITION @n @err_no = MYSQL_ERRNO, @err_txt = MESSAGE_TEXT;
+                    set count = count + 1;
+                    if count= 10 then
+                        set done=1;
+                    END if;
+                END;
+                END while label2;
+            else
+                set @dummystring = 'temp value';
+                iterate label1;
+        END case;
+        if done=1 then
+            leave label1;
+        END if;
+    END loop label1;
+    SELECT count, done;
+    SELECT @err_no, @err_txt;
+END//
+delimiter ;
+
+CALL sp3('insert');
+
+# cleanup
+DROP PROCEDURE sp3;
+drop table res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.4:
+
+# testcase: ensure that all supported sub-clauses are supported only in the correct order (if)
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp4;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp4()
+BEGIN
+declare count int;
+    set count = 1;
+    label1: loop
+        if count > 10 then leave label1;
+        else
+            set count = count + 1;
+        elseif count > 20 then
+            leave label1;
+        END if;
+        iterate label1;
+    END loop label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp4;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp4()
+BEGIN
+declare count int;
+    set count = 1;
+    label1: loop
+        else
+            set count = count + 1;
+        if count > 20 then
+            leave label1;
+        END if;
+        iterate label1;
+    END loop label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp4;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp4()
+BEGIN
+declare count int;
+    set count = 1;
+    label1: loop
+        elseif count > 20 then
+            leave label1;
+        else
+            set count=count+1;
+        END if;
+        iterate label1;
+    END loop label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp4;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp4()
+BEGIN
+declare count int;
+    set count = 1;
+    label1: loop
+        END if;
+        if count > 20 then
+            leave label1;
+        else
+            set count=count+1;
+        iterate label1;
+    END loop label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp4;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp4()
+BEGIN
+    declare i int default 10;
+    if i > 20 then
+        set i=25;
+    END if
+    declare count int;
+    set count = 1;
+    label1: loop
+        if count > 20 then
+            leave label1;
+        else
+            set count=count+1;
+        iterate label1;
+    END loop label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp4;
+
+delimiter //
+CREATE PROCEDURE sp4()
+BEGIN
+    declare idummy int default 10;
+    declare count int;
+    set count = 1;
+    label1: loop
+    BEGIN
+        if count < 20 then
+            BEGIN
+                declare idummy2 int default 10;
+                set count=count+1;
+            END;
+        else
+            BEGIN
+                SELECT idummy2;
+                leave label1;
+            END;
+        END if;
+        iterate label1;
+    END;
+    END loop label1;
+END//
+delimiter ;
+
+--error ER_BAD_FIELD_ERROR
+CALL sp4();
+
+# cleanup
+DROP PROCEDURE sp4;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.5:
+
+#test case: ensure that all supported sub-clauses are supported only in the correct order (case)
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp5;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp5()
+BEGIN
+    declare count integer default 1;
+    set count = 1;
+    case
+    else
+        set count = 10;
+    when count  = 1 then
+        set count =  count + 1;
+    END case;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp5;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp5(count int)
+BEGIN
+    when case count = 1 then
+        set count = 10;
+    when count  = 2 then
+        set count =  count + 1;
+    END case;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp5;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp5(count int)
+BEGIN
+    END case;
+    when count = 1 then
+        set count = 10;
+    when count  = 2 then
+        set count =  count + 1;
+    END case;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp5;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp5(count int)
+BEGIN
+    when count = 1 then
+        set count = 10;
+    case when count  = 2 then
+        set count =  count + 1;
+    END case;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.6:
+#               ---------------
+# Ensure that all supported sub-clauses are supported only in the correct order (repeat).
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6()
+BEGIN
+    declare count1 integer default 1;
+    label1: repeat
+        set count1 = count1 + 1;
+        if count1 > 5 then leave label1; END if;
+    END repeat;
+    until count1 > 5
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6()
+BEGIN
+    declare count1 integer default 1;
+    label1:   until count1 > 5
+    repeat
+        set count1 = count1 + 1;
+        if count1 > 5 then leave label1; END if;
+    END repeat;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6()
+BEGIN
+    declare count1 integer default 1;
+    label1: END repeat
+        set count1 = count1 + 1;
+        if count1 > 5 then leave label1; END if;
+    until count1 > 5
+    repeat;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6()
+BEGIN
+    declare count1 integer default 1;
+    label1: repeat
+        set count1 = count1 + 1;
+        if count1 > 5 then leave label1; END if;
+    END repeat;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp6()
+BEGIN
+    declare count1 integer default 1;
+    label1: repeat
+        set count1 = count1 + 1;
+        if count1 > 5 then leave label1; END if;
+    until count1 > 10;
+    SELECT count1;
+    END repeat;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+CREATE PROCEDURE sp6()
+BEGIN
+    declare count1 integer default 1;
+    label1: repeat
+        set count1 = count1-1;
+    until count1 < 0
+    END repeat label1;
+    SELECT count1;
+END//
+delimiter ;
+
+CALL sp6();
+
+# cleanup
+DROP PROCEDURE sp6;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.7:
+
+# testcase: ensure that an appropriate error message is returned if a
+#         sub claUSE is out-of-order in a stored procedure definition (loop, if, iterate, leave).
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp7;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp7()
+BEGIN
+    label1: loop
+        set @dummystring = 'temp value';
+        if count > 10 then leave label1;
+        END if;
+        label1 iterate;
+    END label1 loop;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp7;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp7()
+BEGIN
+    label1: END loop;
+        set @dummystring = 'temp value';
+        if count > 10 then leave label1;
+        END if;
+        iterate label1;
+    loop;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp7;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp7()
+BEGIN
+    label1: iterate label1;
+    loop
+        set @dummystring = 'temp value';
+        if count > 10 then leave label1;
+        END if;
+
+    END loop label1;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.8:
+
+# testcase: ensure that an appropriate error message is returned if a sub claUSE is
+#         out-of-order in a stored procedure definition. (while)
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp8;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp8()
+BEGIN
+    declare v1 int default 5;
+    do while v1 > 0
+        set v1 = v1 - 1;
+        END while;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp8;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp8()
+BEGIN
+    declare v1 int default 5;
+    do v1 > 0 while
+        set v1 = v1 - 1;
+    END while;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp8;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp8()
+BEGIN
+    declare v1 int default 5;
+    END while;
+        set v1 = v1 - 1;
+    while v1 > 0 do;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.12:
+
+# testcase : ensure that the labels enclosing each loop statement must match
+
+--disable_warnings
+drop table IF EXISTS res_t3_itisalongname_1381742_itsaverylongname_1381742;
+DROP PROCEDURE IF EXISTS sp12;
+--enable_warnings
+
+create table res_t3_itisalongname_1381742_itsaverylongname_1381742( f1 char(20), f2 varchar(20), f3 smallint);
+
+delimiter //
+--error ER_SP_LABEL_MISMATCH
+CREATE PROCEDURE sp12( )
+BEGIN
+    declare count1 integer default 1;
+    declare count2 int;
+    label1: loop
+        if count1 > 2 then leave label1;
+        END if;
+        insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+        label2: loop
+            if count2 > 2 then leave label2;
+            END if;
+            set count2 = count2 + 1;
+        END loop label1;
+        set count1 = count1 + 1;
+        iterate label1;
+    END loop label2;
+END//
+delimiter ;
+
+# cleanup
+drop table res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.13:
+
+# ensure that it is possible to put a beginning label at the start of a loop statement
+#         without also requiring an ending label at the END of the same statement
+
+--disable_warnings
+drop table IF EXISTS res_t3_itisalongname_1381742_itsaverylongname_1381742;
+DROP PROCEDURE IF EXISTS sp13;
+--enable_warnings
+
+create table res_t3_itisalongname_1381742_itsaverylongname_1381742( f1 char(20), f2 varchar(20), f3 smallint);
+
+delimiter //
+CREATE PROCEDURE sp13( )
+BEGIN
+    declare count1 integer default 1;
+    lable1: loop
+        if count1 > 2 then leave lable1;
+        END if;
+        insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+        set count1 = count1 + 1;
+        iterate lable1;
+    END loop;
+END//
+delimiter ;
+
+CALL sp13();
+SELECT * from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+# cleanup
+DROP PROCEDURE sp13;
+drop table res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.14:
+
+# testcase: ensure that it is not possible to put an ending label at the END of a loop statement
+#             without also requiring a matching beginning label at the start of the same statement.
+
+--disable_warnings
+drop table IF EXISTS res_t3_itisalongname_1381742_itsaverylongname_1381742;
+DROP PROCEDURE IF EXISTS sp14;
+--enable_warnings
+
+create table res_t3_itisalongname_1381742_itsaverylongname_1381742( f1 char(20), f2 varchar(20), f3 smallint);
+
+delimiter //
+# FIXME(udf): TiDB doesn't support END LOOP label syntax. It should be ER_SP_LILABEL_MISMATCH.
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp14( )
+BEGIN
+        declare count1 integer default 1;
+        loop
+            if count1 > 2 then leave lable1;
+            END if;
+            insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            set count1 = count1 + 1;
+            iterate lable1;
+        END loop label1;
+END//
+delimiter ;
+
+# cleanup
+drop table res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.15:
+
+# ensure that every beginning label must END with a colon (:)
+
+--disable_warnings
+drop table IF EXISTS res_t3_itisalongname_1381742_itsaverylongname_1381742;
+DROP PROCEDURE IF EXISTS sp15;
+--enable_warnings
+
+create table res_t3_itisalongname_1381742_itsaverylongname_1381742( f1 char(20), f2 varchar(20), f3 smallint);
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp15( )
+BEGIN
+        declare count1 integer default 1;
+        label1 loop
+            if count1 > 2 then leave lable1;
+            END if;
+            insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            set count1 = count1 + 1;
+            iterate lable1;
+        END loop label1;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.16:
+#               ----------------
+# Ensure that every beginning label with the same scope must be unique.
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp16;
+
+delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+delimiter //
+--error ER_SP_LABEL_REDEFINE
+CREATE PROCEDURE sp16( )
+BEGIN
+        declare count1 integer default 1;
+        declare count2 integer default 1;
+        label1: repeat
+            set count1 = count1 + 1;
+            set count2 = 1;
+            label1: repeat
+                set count2 = count2 + 1;
+                insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( xyz , pqr, count1);
+                until count2 > 3
+            END repeat label1;
+            until count1 > 3
+        END repeat label1;
+END//
+delimiter ;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp16;
+
+delimiter //
+--error ER_SP_LABEL_REDEFINE
+CREATE PROCEDURE sp16( )
+BEGIN
+    declare count1 integer default 1;
+    declare count2 integer default 1;
+    declare count3 integer default 1;
+    label1: repeat
+        set count1 = count1 + 1;
+        label1: repeat
+            set count2 = count2 + 1;
+            SELECT count2;
+            until count2 > 3
+        END repeat label1;
+        SELECT count1;
+    until count1 > 3
+    END repeat label1;
+    label1: repeat
+        set count3 = count3 + 1;
+        SELECT count3;
+    until count3 > 3
+    END repeat label1;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.17:
+
+# testcase: ensure that the repeat statement acts correctly for all variants,
+#            including cases where statements are nested.
+
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.18:
+
+# testcase : ensure that the labels enclosing each repeat statement must match.
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp18;
+
+delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+delimiter //
+--error ER_SP_LABEL_MISMATCH
+CREATE PROCEDURE sp18( )
+BEGIN
+        declare count1 integer default 1;
+        label1: repeat
+            set count1 = count1 + 1;
+            insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            until count1 < 3
+        END repeat label2;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.19:
+
+# testcase: ensure that it is possible to put a beginning label at the start of
+#            a repeat statement without also requiring an ending label at the
+#            END of the same statement.
+
+delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp19;
+
+delimiter //
+CREATE PROCEDURE sp19( )
+BEGIN
+        declare count1 integer default 1;
+        label1: repeat
+            set count1 = count1 + 1;
+            insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            until count1 < 3
+        END repeat;
+END//
+delimiter ;
+
+CALL sp19();
+SELECT * from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+# cleanup
+DROP PROCEDURE sp19;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.20:
+
+# testcase: ensure that it is not possible to put an ending label at the END of a
+#            repeat statement without also requiring a matching beginning label
+#            at the start of the same statement.
+
+delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp20;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp20( )
+BEGIN
+        declare count1 integer default 1;
+        repeat
+            set count1 = count1 + 1;
+            insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            until count1 < 3
+        END repeat label1;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.21:
+
+# ensure that the while statement acts correctly for all variants,
+#         including cases where statements are nested
+
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.22:
+
+# testcase: ensure that the labels enclosing each while statement must match.
+
+delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp22;
+
+delimiter //
+--error ER_SP_LABEL_MISMATCH
+CREATE PROCEDURE sp22( )
+BEGIN
+        declare count1 integer default 1;
+        declare count2 integer default 1;
+        while count1 < 3 do
+            set count1 = count1 + 1;
+            set count2 = 1;
+            label1: while count2 < 3 do
+                set count2 = count2 + 1;
+                insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            END while label2;
+        END while;
+END//
+delimiter ;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.23:
+
+# testcase: ensure that it is not possible to put an ending label at the END of
+#            a while statement without also requiring a matching beginning label
+#            at the start of the same statement.
+
+delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp23;
+
+delimiter //
+--error ER_PARSE_ERROR
+CREATE PROCEDURE sp23( )
+BEGIN
+        declare count1 integer default 1;
+        declare count2 integer default 1;
+        while count1 < 3 do
+            set count1 = count1 + 1;
+            set count2 = 1;
+            while count2 < 3 do
+                set count2 = count2 + 1;
+                insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            END while label1;
+        END while;
+END//
+delimiter ;
+
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.3.25:
+
+# testcase: ensure that it is possible to put a beginning label at the start of a
+#            while statement without also requiring an ending label at the END of the same statement.
+
+delete from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp25;
+
+delimiter //
+CREATE PROCEDURE sp25( )
+BEGIN
+        declare count1 integer default 1;
+        declare count2 integer default 1;
+        while count1 < 3 do
+            set count1 = count1 + 1;
+            set count2 = 1;
+            label1: while count2 < 3 do
+                set count2 = count2 + 1;
+                insert into res_t3_itisalongname_1381742_itsaverylongname_1381742 values( 'xyz' , 'pqr', count1);
+            END while;
+        END while;
+END//
+delimiter ;
+
+CALL sp25 ();
+SELECT * from res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+# cleanup
+DROP PROCEDURE sp25;
+drop table res_t3_itisalongname_1381742_itsaverylongname_1381742;
+
+
+# ============================================================================== 
+# let $message= Section 3.1.4 - Checks for the global nature of stored procedures:
+
+USE db_storedproc;
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.1:
+
+# testcase: ensure that, regardless of the database in which it was created,
+#            a stored procedure can be called (for a procedure) from any #database
+
+--disable_warnings
+DROP PROCEDURE IF EXISTS sp1;
+DROP DATABASE IF EXISTS d40401;
+--enable_warnings
+
+delimiter //
+CREATE PROCEDURE sp1 ( n char(20) )
+BEGIN
+        SELECT n;
+END//
+delimiter ;
+
+    CREATE DATABASE d40401;
+    USE d40401;
+
+CALL db_storedproc.sp1('abcd');
+
+    USE db_storedproc;
+
+# cleanup
+DROP PROCEDURE sp1;
+DROP DATABASE d40401;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.2:
+
+# testcase: ensure that, regardless of the database in which it was created,
+#      a stored procedure can be executed (for a function) from any database.
+
+--disable_warnings
+DROP FUNCTION IF EXISTS db_storedproc.fn1;
+DROP FUNCTION IF EXISTS db_storedproc.fn11;
+DROP DATABASE IF EXISTS d40402;
+--enable_warnings
+
+delimiter //
+CREATE FUNCTION fn1(n int) returns int
+    BEGIN
+    declare a int;
+    set a = 9 * n;
+    return a;
+END//
+delimiter ;
+
+    CREATE DATABASE d40402;
+    USE d40402;
+
+
+        SELECT db_storedproc.fn1(100);
+
+        SELECT db_storedproc.fn1(1000);
+
+delimiter //
+CREATE FUNCTION db_storedproc.fn11(n int) returns int
+BEGIN
+        declare a int;
+        set a = 9 * n;
+        return a;
+END//
+delimiter ;
+
+    SELECT db_storedproc.fn11(100);
+
+    SELECT db_storedproc.fn11(1000);
+
+    USE db_storedproc;
+
+# cleanup
+DROP FUNCTION fn1;
+DROP FUNCTION fn11;
+DROP DATABASE d40402;
+
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.3:
+
+# testcase: ensure that the USE of a stored procedure from a database other than the database in
+#      which it was created does not permanently change the database in use.
+
+--disable_warnings
+DROP DATABASE IF EXISTS d1;
+DROP DATABASE IF EXISTS d2;
+--enable_warnings
+
+    CREATE DATABASE d1;
+    CREATE DATABASE d2;
+
+    USE d1;
+
+    create table res_t41(a char(5), b char(10));
+    insert into res_t41 values('abcde', 'a!@#$%^&*(');
+
+    USE d2;
+
+    create table res_t42(a char(5), b char(10));
+
+    USE d1;
+
+delimiter //
+CREATE PROCEDURE sp2(n char (20))
+BEGIN
+                 SELECT res_t41.a, res_t41.b into @a, @b from res_t41 where res_t41.b = n;
+                 insert into d2.res_t42 values (@a, @b);
+END//
+delimiter ;
+
+    USE d2;
+
+CALL d1.sp2('a!@#$%^&*(');
+
+    show warnings;
+
+    SELECT * from d1.res_t41;
+    SELECT * from res_t42;
+
+# cleanup
+    USE db_storedproc;
+DROP DATABASE d1;
+DROP DATABASE d2;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.4:
+
+# testcase : ensure that the mysql-specific USE <database name> statement is disallowed
+#       in a stored procedure.
+
+CREATE DATABASE d1;
+USE d1;
+
+delimiter //
+--error ER_SP_BADSTATEMENT
+CREATE PROCEDURE sp3()
+BEGIN
+        USE d1;
+END//
+delimiter ;
+
+# cleanup
+USE db_storedproc;
+DROP DATABASE d1;
+
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.5:
+
+# testcase: ensure that when a database is dropped, all stored procedures #created within
+#            that database are also cleanly dropped.
+
+CREATE DATABASE d1;
+
+USE d1;
+create table t43(a char(5), b char(10));
+insert into t43 values('abcde', 'a!@#$%^&*(');
+
+CREATE PROCEDURE d1.sp4()
+     SELECT * from d1.t43;
+
+--replace_column 24 modified 25 created
+    SELECT * from information_schema.routines where specific_name = 'sp4';
+
+    USE db_storedproc;
+DROP DATABASE d1;
+    CREATE DATABASE d1;
+
+    USE d1;
+    create table t44(a char(5), b char(10));
+
+--replace_column 24 modified 25 created
+    SELECT * from information_schema.routines where specific_name = 'sp4';
+
+# cleanup
+    USE db_storedproc;
+DROP DATABASE d1;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.6:
+
+# testcase: ensure that a stored procedure created without a qualifying #database name belongs
+#            to the database in USE at creation time.
+
+
+    USE db_storedproc;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp5;
+
+CREATE PROCEDURE sp5()
+    SELECT * from db_storedproc.t4 limit 0, 10;
+
+    SELECT routine_schema from information_schema.routines where specific_name = 'sp5';
+
+# cleanup
+DROP PROCEDURE sp5;
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.7:
+
+# testcase: ensure that a stored procedure created with a qualifying database
+#        name belongs to the database specified.
+
+    USE db_storedproc;
+
+--disable_warnings
+drop table IF EXISTS t46;
+DROP PROCEDURE IF EXISTS sp6;
+--enable_warnings
+
+    create table t46(f1 char(20), f2 char(20));
+    insert into t46 values ('abcd', 'wxyz');
+
+CREATE PROCEDURE db_storedproc.sp6()
+  SELECT * from db_storedproc.t4 limit 0, 10;
+
+SELECT routine_schema from information_schema.routines where specific_name = 'sp6';
+
+# cleanup
+drop table t46;
+DROP PROCEDURE sp6;
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.8:
+
+# testcase : ensure that, regardless of the database in which it was created,
+#       a procedure can be altered from any database.
+
+--disable_warnings
+DROP DATABASE IF EXISTS d1;
+DROP DATABASE IF EXISTS d2;
+--enable_warnings
+
+    CREATE DATABASE d1;
+    CREATE DATABASE d2;
+
+    USE d1;
+
+CREATE PROCEDURE sp8 ( n char(20) ) sql security DEFINER comment 'initial'
+    SELECT * from t1 where t1.f1 = n;
+
+    USE d2;
+    alter procedure d1.sp8 sql security DEFINER comment 'updated';
+--replace_column 24 modified 25 created
+    SELECT * from information_schema.routines where specific_name = 'sp8' and routine_schema = 'd1';
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.9:
+
+# testcase :ensure that, regardless of the database in which it was created,
+#      a stored procedure can be executed (for a function) from any database.
+
+  USE d1;
+
+--disable_warnings
+DROP FUNCTION IF EXISTS d1.fn1;
+DROP FUNCTION IF EXISTS d1.fn11;
+--enable_warnings
+
+delimiter //
+CREATE FUNCTION d1.fn2(n int) returns int sql security invoker comment 'initial'
+BEGIN
+    declare a int;
+    set a = 0.9 * n;
+    return a;
+END//
+delimiter ;
+
+  USE d2;
+  alter function d1.fn2 sql security DEFINER comment 'updated';
+--replace_column 24 modified 25 created
+  SELECT * from information_schema.routines where specific_name = 'fn2' and routine_schema = 'd1';
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.10:
+
+# testcase: ensure that, regardless of the database in which it was created,
+#      a procedure can be dropped from any database.
+
+
+  USE d1;
+
+CREATE PROCEDURE sp9 ( n char(20) )
+  SELECT * from t1 where t1.f1 = n;
+
+  USE d2;
+DROP PROCEDURE d1.sp9;
+--replace_column 24 modified 25 created
+  SELECT * from information_schema.routines where specific_name = 'sp9' and routine_schema = 'd1';
+
+
+# ------------------------------------------------------------------------------
+# let $message= Testcase 4.4.11:
+
+# testcase: ensure that, regardless of the database in which it was created,
+#      a function can be dropped from any database.
+
+
+  USE d1;
+
+delimiter //
+CREATE FUNCTION d1.fn3(n int) returns int
+BEGIN
+    declare a int;
+    set a = 0.9 * n;
+    return a;
+END//
+delimiter ;
+
+  USE d2;
+DROP FUNCTION d1.fn3;
+--replace_column 24 modified 25 created
+  SELECT * from information_schema.routines where specific_name = 'fn3' and routine_schema = 'd1';
+
+# cleanup
+
+  USE db_storedproc;
+DROP DATABASE d1;
+DROP DATABASE d2;
+
+
+# ==============================================================================
+# test plan section: 4.5 -
+# ==============================================================================
+# let $message= Section 3.1.5 - Parameter use checks:
+# Functions with all data types;
+
+CREATE DATABASE d1;
+USE d1;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn1;
+
+delimiter //
+CREATE FUNCTION fn1( f1 bigint) returns bigint
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn1(-9.22e+18);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn2;
+
+delimiter //
+CREATE FUNCTION fn2( f1 bigint unsigned) returns bigint unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn2(1.84e+19);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn3;
+
+delimiter //
+CREATE FUNCTION fn3( f1 bigint unsigned zerofill) returns bigint unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--disable_ps_protocol ONCE
+SELECT fn3(1.84e+17);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn4;
+
+delimiter //
+CREATE FUNCTION fn4( f1 bigint zerofill) returns bigint zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn4(-9.22e+15);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn5;
+
+delimiter //
+CREATE FUNCTION fn5( f1 decimal) returns decimal
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn5(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn6;
+
+delimiter //
+CREATE FUNCTION fn6( f1 decimal (0)) returns decimal (0)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn6(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn7;
+
+delimiter //
+CREATE FUNCTION fn7( f1 decimal (0) unsigned) returns decimal (0) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn7(99999999999);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn8;
+
+delimiter //
+CREATE FUNCTION fn8( f1 decimal (0) unsigned zerofill) returns decimal (0) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn8(999999999);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn9;
+
+delimiter //
+CREATE FUNCTION fn9( f1 decimal (0) zerofill) returns decimal (0) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn9(-1.00e+09);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn10;
+
+delimiter //
+CREATE FUNCTION fn10( f1 decimal (0, 0)) returns decimal (0, 0)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn10(-1.00e+09);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn11;
+
+delimiter //
+CREATE FUNCTION fn11( f1 decimal (0, 0) unsigned) returns decimal (0, 0) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn11(99999999999);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn12;
+
+delimiter //
+CREATE FUNCTION fn12( f1 decimal (0, 0) unsigned zerofill) returns decimal (0, 0) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn12(999999999);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn13;
+
+delimiter //
+CREATE FUNCTION fn13( f1 decimal (0, 0) zerofill) returns decimal (0, 0) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+# There should be a bug in MySQL, because zerofill implies unsigned.
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn13(-1.00e+09);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn14;
+
+delimiter //
+CREATE FUNCTION fn14( f1 decimal (63, 30)) returns decimal (63, 30)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn14(-1.00e+21);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn15;
+
+delimiter //
+CREATE FUNCTION fn15( f1 decimal (63, 30) unsigned) returns decimal (63, 30) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn15(1.00e+16);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn16;
+
+delimiter //
+CREATE FUNCTION fn16( f1 decimal (63, 30) unsigned zerofill) returns decimal (63, 30) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn16(1.00e+16);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn17;
+
+delimiter //
+CREATE FUNCTION fn17( f1 decimal (63, 30) zerofill) returns decimal (63, 30) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn17(-1.00e+21);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn18_d;
+
+delimiter //
+CREATE FUNCTION fn18_d( f1 decimal (64)) returns decimal (64)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn18_d(-1000000000000000000000000000000);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn19_du;
+
+delimiter //
+CREATE FUNCTION fn19_du( f1 decimal (64) unsigned) returns decimal (64) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn19_du(100000000000000000000);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn20_duz;
+
+delimiter //
+CREATE FUNCTION fn20_duz( f1 decimal (64) unsigned zerofill) returns decimal (64) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn20_duz(1000000000000000000000000);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn21_d_z;
+
+delimiter //
+CREATE FUNCTION fn21_d_z( f1 decimal (64) zerofill) returns decimal (64) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn21_d_z(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn22;
+
+delimiter //
+CREATE FUNCTION fn22( f1 decimal unsigned) returns decimal unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn22(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn23;
+
+delimiter //
+CREATE FUNCTION fn23( f1 decimal unsigned zerofill) returns decimal unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn23(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn24;
+
+delimiter //
+CREATE FUNCTION fn24( f1 decimal zerofill) returns decimal zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn24(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn25;
+
+delimiter //
+CREATE FUNCTION fn25( f1 double) returns double
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn25(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn26;
+
+delimiter //
+CREATE FUNCTION fn26( f1 double unsigned) returns double unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn26(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn27;
+
+delimiter //
+CREATE FUNCTION fn27( f1 double unsigned zerofill) returns double unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn27(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn28;
+
+delimiter //
+CREATE FUNCTION fn28( f1 double zerofill) returns double zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn28(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn29;
+
+
+delimiter //
+CREATE FUNCTION fn29( f1 float) returns float
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn29(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn30;
+
+delimiter //
+CREATE FUNCTION fn30( f1 float unsigned) returns float unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn30(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn31;
+
+delimiter //
+CREATE FUNCTION fn31( f1 float unsigned zerofill) returns float unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn31(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn32;
+
+delimiter //
+CREATE FUNCTION fn32( f1 float zerofill) returns float zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn32(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn33;
+
+delimiter //
+CREATE FUNCTION fn33( f1 float(0)) returns float(0)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn33(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn34;
+
+delimiter //
+CREATE FUNCTION fn34( f1 float(0) unsigned) returns float(0) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn34(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn35;
+
+delimiter //
+CREATE FUNCTION fn35( f1 float(0) unsigned zerofill) returns float(0) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn35(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn36;
+
+delimiter //
+CREATE FUNCTION fn36( f1 float(0) zerofill) returns float(0) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn36(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn37;
+
+delimiter //
+CREATE FUNCTION fn37( f1 float(23)) returns float(23)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn37(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn38;
+
+delimiter //
+CREATE FUNCTION fn38( f1 float(23) unsigned) returns float(23) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn38(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn39;
+
+delimiter //
+CREATE FUNCTION fn39( f1 float(23) unsigned zerofill) returns float(23) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn39(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn40;
+
+delimiter //
+CREATE FUNCTION fn40( f1 float(23) zerofill) returns float(23) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn40(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn41;
+
+delimiter //
+CREATE FUNCTION fn41( f1 float(24)) returns float(24)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn41(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn42;
+
+delimiter //
+CREATE FUNCTION fn42( f1 float(24) unsigned) returns float(24) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn42(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn43;
+
+delimiter //
+CREATE FUNCTION fn43( f1 float(24) unsigned zerofill) returns float(24) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn43(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn44;
+
+delimiter //
+CREATE FUNCTION fn44( f1 float(24) zerofill) returns float(24) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn44(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn45;
+
+delimiter //
+CREATE FUNCTION fn45( f1 float(53)) returns float(53)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn45(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn46;
+
+delimiter //
+CREATE FUNCTION fn46( f1 float(53) unsigned) returns float(53) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn46(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn47;
+
+delimiter //
+CREATE FUNCTION fn47( f1 float(53) unsigned zerofill) returns float(53) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn47(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn48;
+
+delimiter //
+CREATE FUNCTION fn48( f1 float(53) zerofill) returns float(53) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn48(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn49;
+
+delimiter //
+CREATE FUNCTION fn49( f1 int) returns int
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn49(-2.15e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn50;
+
+delimiter //
+CREATE FUNCTION fn50( f1 int unsigned) returns int unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn50(4.29e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn51;
+
+delimiter //
+CREATE FUNCTION fn51( f1 int unsigned zerofill) returns int unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn51(4.29e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn52;
+
+delimiter //
+CREATE FUNCTION fn52( f1 int zerofill) returns int zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn52(2.15e+08);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn53;
+
+delimiter //
+CREATE FUNCTION fn53( f1 mediumint) returns mediumint
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn53(-8388600);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn54;
+
+delimiter //
+CREATE FUNCTION fn54( f1 mediumint unsigned) returns mediumint unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn54(16777201);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn55;
+
+delimiter //
+CREATE FUNCTION fn55( f1 mediumint unsigned zerofill) returns mediumint unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn55(16777210);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn56;
+
+delimiter //
+CREATE FUNCTION fn56( f1 mediumint zerofill) returns mediumint zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn56(-8388601);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn57;
+
+delimiter //
+CREATE FUNCTION fn57( f1 numeric) returns numeric
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn57(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn58;
+
+delimiter //
+CREATE FUNCTION fn58( f1 numeric (0)) returns numeric (0)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn58(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn59;
+
+delimiter //
+CREATE FUNCTION fn59( f1 numeric (0) unsigned) returns numeric (0) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn59(9999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn60;
+
+delimiter //
+CREATE FUNCTION fn60( f1 numeric (0) unsigned zerofill) returns numeric (0) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn60(99999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn61;
+
+delimiter //
+CREATE FUNCTION fn61( f1 numeric (0) zerofill) returns numeric (0) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn61(-99999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn62;
+
+delimiter //
+CREATE FUNCTION fn62( f1 numeric (0, 0)) returns numeric (0, 0)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn62(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn63;
+
+delimiter //
+CREATE FUNCTION fn63( f1 numeric (0, 0) unsigned) returns numeric (0, 0) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn63(9999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn64;
+
+delimiter //
+CREATE FUNCTION fn64( f1 numeric (0, 0) unsigned zerofill) returns numeric (0, 0) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn64(99999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn65;
+
+delimiter //
+CREATE FUNCTION fn65( f1 numeric (0, 0) zerofill) returns numeric (0, 0) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn65(-99999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn66;
+
+delimiter //
+CREATE FUNCTION fn66( f1 numeric (63, 30)) returns numeric (63, 30)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn66(-1e+36);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn67;
+
+delimiter //
+CREATE FUNCTION fn67( f1 numeric (63, 30) unsigned) returns numeric (63, 30) unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn67(1e+36);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn68;
+
+delimiter //
+CREATE FUNCTION fn68( f1 numeric (63, 30) unsigned zerofill) returns numeric (63, 30) unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn68(1e+36);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn69;
+
+delimiter //
+CREATE FUNCTION fn69( f1 numeric (63, 30) zerofill) returns numeric (63, 30) zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn69(-1e+36);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn74;
+
+delimiter //
+CREATE FUNCTION fn74( f1 numeric unsigned) returns numeric unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn74(999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn75;
+
+delimiter //
+CREATE FUNCTION fn75( f1 numeric unsigned zerofill) returns numeric unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn75(999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn76;
+
+delimiter //
+CREATE FUNCTION fn76( f1 numeric zerofill) returns numeric zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn76(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn77;
+
+delimiter //
+CREATE FUNCTION fn77( f1 real) returns real
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn77(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn78;
+
+delimiter //
+CREATE FUNCTION fn78( f1 real unsigned) returns real unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn78(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn79;
+
+delimiter //
+CREATE FUNCTION fn79( f1 real unsigned zerofill) returns real unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn79(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn80;
+
+delimiter //
+CREATE FUNCTION fn80( f1 real zerofill) returns real zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn80(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn81;
+
+delimiter //
+CREATE FUNCTION fn81( f1 smallint) returns smallint
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn81(-32701);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn82;
+
+delimiter //
+CREATE FUNCTION fn82( f1 smallint unsigned) returns smallint unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn82(65531);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn83;
+
+delimiter //
+CREATE FUNCTION fn83( f1 smallint unsigned zerofill) returns smallint unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn83(65531);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn84;
+
+delimiter //
+CREATE FUNCTION fn84( f1 smallint zerofill) returns smallint zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn84(-32601);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn85;
+
+delimiter //
+CREATE FUNCTION fn85( f1 tinyint) returns tinyint
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn85(-115);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn86;
+
+delimiter //
+CREATE FUNCTION fn86( f1 tinyint unsigned) returns tinyint unsigned
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn86(251);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn87;
+
+delimiter //
+CREATE FUNCTION fn87( f1 tinyint unsigned zerofill) returns tinyint unsigned zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn87(201);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn88;
+
+delimiter //
+CREATE FUNCTION fn88( f1 tinyint zerofill) returns tinyint zerofill
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+SELECT fn88(-101);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn89;
+
+delimiter //
+CREATE FUNCTION fn89( f1 enum('1enum', '2enum')) returns enum('1enum', '2enum')
+BEGIN
+ IF f1 = '1enum' THEN
+   SET f1 = '2enum';
+  ELSE
+   SET f1 = '1enum';
+ END IF;
+ RETURN f1;
+END//
+delimiter ;
+
+SELECT fn89( '1enum');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn90;
+
+delimiter //
+CREATE FUNCTION fn90( f1 set('1set', '2set')) returns set('1set', '2set')
+BEGIN
+   IF f1 = '1set' THEN
+      SET f1 = '2set';
+   ELSE
+      SET f1 = '1set';
+   END IF;
+   RETURN f1;
+END//
+delimiter ;
+
+SELECT fn90( '1set');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn91;
+
+delimiter //
+CREATE FUNCTION fn91( f1 date) returns date
+BEGIN
+  set f1 = adddate(f1, interval 31 day);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn91('1997-12-31');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn92;
+
+delimiter //
+CREATE FUNCTION fn92( f1 time) returns time
+BEGIN
+  set f1 = addtime(f1, '02:00:00.999998');
+  return f1;
+END//
+delimiter ;
+
+SELECT fn92( '23:59:59.999999');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn93;
+
+delimiter //
+CREATE FUNCTION fn93( f1 datetime) returns datetime
+BEGIN
+  set f1 = addtime(f1, '1 1:1:1.000002');
+  return f1;
+END//
+delimiter ;
+
+SELECT fn93('1997-12-31 23:59:59.999999');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn94;
+
+delimiter //
+CREATE FUNCTION fn94( f1 char) returns char
+BEGIN
+  set f1 = concat('a', f1);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_TOO_LONG
+SELECT fn94( 'h');
+
+
+# --disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+# DROP FUNCTION IF EXISTS fn95;
+# 
+# delimiter //
+# CREATE FUNCTION fn95( f1 char ascii) returns char ascii
+# BEGIN
+#   set f1 = concat('a', f1);
+#   return f1;
+# END//
+# delimiter ;
+# 
+# --error ER_DATA_TOO_LONG
+# SELECT fn95('h');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn96;
+
+delimiter //
+CREATE FUNCTION fn96( f1 binary) returns binary(2)
+BEGIN
+  set f1 = concat('a', f1);
+  return f1;
+END//
+delimiter ;
+
+--error ER_DATA_TOO_LONG
+SELECT fn96( 'h');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn97;
+
+delimiter //
+CREATE FUNCTION fn97( f1 longtext) returns longtext
+BEGIN
+  set f1 = concat('hello', f1);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn97( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn98;
+
+delimiter //
+CREATE FUNCTION fn98( f1 mediumtext) returns mediumtext
+BEGIN
+  set f1 = concat('hello', f1);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn98( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn99;
+
+delimiter //
+CREATE FUNCTION fn99( f1 text) returns text
+BEGIN
+  set f1 = concat('hello', f1);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn99( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn100;
+
+delimiter //
+CREATE FUNCTION fn100( f1 tinytext) returns tinytext
+BEGIN
+  set f1 = concat('hello', f1);
+  return f1;
+END//
+delimiter ;
+
+SELECT fn100( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn101;
+
+delimiter //
+CREATE FUNCTION fn101( f1 year) returns year
+BEGIN
+  set f1 = f1 + 10;
+  return f1;
+END//
+delimiter ;
+
+SELECT fn101(51);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn102;
+
+delimiter //
+CREATE FUNCTION fn102( f1 year) returns year
+BEGIN
+  set f1 = f1 + 51;
+  return f1;
+END//
+delimiter ;
+
+SELECT fn102(1982);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP FUNCTION IF EXISTS d1.fn107;
+
+delimiter //
+CREATE FUNCTION fn107( f1 timestamp) returns timestamp
+BEGIN
+  set f1 = now();
+  return f1;
+END//
+delimiter ;
+
+--replace_column 1 returned
+SELECT fn107(20050510080451);
+
+USE db_storedproc;
+DROP DATABASE IF EXISTS d1;
+
+# stored procs with in parameters using all datatypes
+
+CREATE DATABASE db1;
+USE db1;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp1;
+
+delimiter //
+CREATE PROCEDURE sp1( f1 bigint)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp1(-9.22e+18);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp2;
+
+delimiter //
+CREATE PROCEDURE sp2( f1 bigint unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp2(1.84e+19);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp3;
+
+delimiter //
+CREATE PROCEDURE sp3( f1 bigint unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp3(1.84e+17);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp4;
+
+delimiter //
+CREATE PROCEDURE sp4( f1 bigint zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp4(-9.22e+15);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp5;
+
+delimiter //
+CREATE PROCEDURE sp5( f1 decimal)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp5(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp6;
+
+delimiter //
+CREATE PROCEDURE sp6( f1 decimal (0))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp6(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp7;
+
+delimiter //
+CREATE PROCEDURE sp7( f1 decimal (0) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp7(99999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp8;
+
+delimiter //
+CREATE PROCEDURE sp8( f1 decimal (0) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp8(999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp9;
+
+delimiter //
+CREATE PROCEDURE sp9( f1 decimal (0) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp9(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp10;
+
+delimiter //
+CREATE PROCEDURE sp10( f1 decimal (0, 0))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp10(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp11;
+
+delimiter //
+CREATE PROCEDURE sp11( f1 decimal (0, 0) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp11(99999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp12;
+
+delimiter //
+CREATE PROCEDURE sp12( f1 decimal (0, 0) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp12(999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp13;
+
+delimiter //
+CREATE PROCEDURE sp13( f1 decimal (0, 0) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp13(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp14;
+
+delimiter //
+CREATE PROCEDURE sp14( f1 decimal (63, 30))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp14(-1.00e+21);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp15;
+
+delimiter //
+CREATE PROCEDURE sp15( f1 decimal (63, 30) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp15(1.00e+21);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp16;
+
+delimiter //
+CREATE PROCEDURE sp16( f1 decimal (63, 30) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp16(1.00e+16);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp17;
+
+delimiter //
+CREATE PROCEDURE sp17( f1 decimal (63, 30) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp17(-1.00e+21);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp21;
+
+delimiter //
+CREATE PROCEDURE sp21( f1 decimal (64) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp21(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp22;
+
+delimiter //
+CREATE PROCEDURE sp22( f1 decimal unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp22(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp23;
+
+delimiter //
+CREATE PROCEDURE sp23( f1 decimal unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp23(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp24;
+
+delimiter //
+CREATE PROCEDURE sp24( f1 decimal zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp24(-1.00e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp25;
+
+delimiter //
+CREATE PROCEDURE sp25( f1 double)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp25(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp26;
+
+delimiter //
+CREATE PROCEDURE sp26( f1 double unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp26(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp27;
+
+delimiter //
+CREATE PROCEDURE sp27( f1 double unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp27(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp28;
+
+delimiter //
+CREATE PROCEDURE sp28( f1 double zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp28(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp29;
+
+delimiter //
+CREATE PROCEDURE sp29( f1 float)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp29(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp30;
+
+delimiter //
+CREATE PROCEDURE sp30( f1 float unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp30(1.00e+00);
+
+DROP PROCEDURE sp30;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp31;
+
+delimiter //
+CREATE PROCEDURE sp31( f1 float unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp31(1.00e+00);
+
+DROP PROCEDURE sp31;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp32;
+
+delimiter //
+CREATE PROCEDURE sp32( f1 float zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp32(1.00e+00);
+
+DROP PROCEDURE sp32;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp33;
+
+delimiter //
+CREATE PROCEDURE sp33( f1 float(0))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp33(1.00e+00);
+
+DROP PROCEDURE sp33;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp34;
+
+delimiter //
+CREATE PROCEDURE sp34( f1 float(0) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp34(1.00e+00);
+
+DROP PROCEDURE sp34;
+
+delimiter //
+CREATE PROCEDURE sp35( f1 float(0) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp35(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp36;
+
+delimiter //
+CREATE PROCEDURE sp36( f1 float(0) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp36(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp37;
+
+delimiter //
+CREATE PROCEDURE sp37( f1 float(23))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp37(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp38;
+
+delimiter //
+CREATE PROCEDURE sp38( f1 float(23) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp38(1.00e+00);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp39;
+
+
+delimiter //
+CREATE PROCEDURE sp39( f1 float(23) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp39(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp40;
+
+
+delimiter //
+CREATE PROCEDURE sp40( f1 float(23) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp40(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp41;
+
+
+delimiter //
+CREATE PROCEDURE sp41( f1 float(24))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp41(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp42;
+
+
+delimiter //
+CREATE PROCEDURE sp42( f1 float(24) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp42(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp43;
+
+
+delimiter //
+CREATE PROCEDURE sp43( f1 float(24) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp43(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp44;
+
+
+delimiter //
+CREATE PROCEDURE sp44( f1 float(24) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp44(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp45;
+
+
+delimiter //
+CREATE PROCEDURE sp45( f1 float(53))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp45(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp46;
+
+
+delimiter //
+CREATE PROCEDURE sp46( f1 float(53) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp46(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp47;
+
+
+delimiter //
+CREATE PROCEDURE sp47( f1 float(53) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp47(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp48;
+
+
+delimiter //
+CREATE PROCEDURE sp48( f1 float(53) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp48(1.00e+00);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp49;
+
+
+delimiter //
+CREATE PROCEDURE sp49( f1 int)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp49(-2.15e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp50;
+
+
+delimiter //
+CREATE PROCEDURE sp50( f1 int unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp50(4.29e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp51;
+
+
+delimiter //
+CREATE PROCEDURE sp51( f1 int unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp51(4.29e+09);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp52;
+
+
+delimiter //
+CREATE PROCEDURE sp52( f1 int zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp52(2.15e+08);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp53;
+
+
+delimiter //
+CREATE PROCEDURE sp53( f1 mediumint)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp53(-8388600);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp54;
+
+
+delimiter //
+CREATE PROCEDURE sp54( f1 mediumint unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp54(16777201);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp55;
+
+
+delimiter //
+CREATE PROCEDURE sp55( f1 mediumint unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp55(16777210);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp56;
+
+
+delimiter //
+CREATE PROCEDURE sp56( f1 mediumint zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp56(-8388601);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp57;
+
+
+delimiter //
+CREATE PROCEDURE sp57( f1 numeric)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp57(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp58;
+
+
+delimiter //
+CREATE PROCEDURE sp58( f1 numeric (0))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp58(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp59;
+
+
+delimiter //
+CREATE PROCEDURE sp59( f1 numeric (0) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp59(9999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp60;
+
+
+delimiter //
+CREATE PROCEDURE sp60( f1 numeric (0) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp60(99999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp61;
+
+
+delimiter //
+CREATE PROCEDURE sp61( f1 numeric (0) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp61(-99999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp62;
+
+
+delimiter //
+CREATE PROCEDURE sp62( f1 numeric (0, 0))
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp62(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp63;
+
+
+delimiter //
+CREATE PROCEDURE sp63( f1 numeric (0, 0) unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp63(9999999999);
+
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp64;
+
+
+delimiter //
+CREATE PROCEDURE sp64( f1 numeric (0, 0) unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp64(99999999);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp65;
+
+
+delimiter //
+CREATE PROCEDURE sp65( f1 numeric (0, 0) zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp65(-99999999);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp66_n;
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp74;
+
+
+delimiter //
+CREATE PROCEDURE sp74( f1 numeric unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp74(999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp75;
+
+
+delimiter //
+CREATE PROCEDURE sp75( f1 numeric unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp75(999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp76;
+
+
+delimiter //
+CREATE PROCEDURE sp76( f1 numeric zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp76(-999999999);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp77;
+
+
+delimiter //
+CREATE PROCEDURE sp77( f1 real)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp77(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp78;
+
+
+delimiter //
+CREATE PROCEDURE sp78( f1 real unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp78(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp79;
+
+
+delimiter //
+CREATE PROCEDURE sp79( f1 real unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp79(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp80;
+
+
+delimiter //
+CREATE PROCEDURE sp80( f1 real zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp80(1.1);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp81;
+
+
+delimiter //
+CREATE PROCEDURE sp81( f1 smallint)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp81(-32701);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp82;
+
+
+delimiter //
+CREATE PROCEDURE sp82( f1 smallint unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp82(65531);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp83;
+
+
+delimiter //
+CREATE PROCEDURE sp83( f1 smallint unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp83(65531);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp84;
+
+
+delimiter //
+CREATE PROCEDURE sp84( f1 smallint zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp84(-32601);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp85;
+
+
+delimiter //
+CREATE PROCEDURE sp85( f1 tinyint)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp85(-115);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp86;
+
+
+delimiter //
+CREATE PROCEDURE sp86( f1 tinyint unsigned)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp86(251);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp87;
+
+
+delimiter //
+CREATE PROCEDURE sp87( f1 tinyint unsigned zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp87(201);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp88;
+
+
+delimiter //
+CREATE PROCEDURE sp88( f1 tinyint zerofill)
+BEGIN
+   set f1 = (f1 / 2); set f1 = (f1 * 2); set f1 = (f1 - 10); set f1 = (f1 + 10);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_OUT_OF_RANGE
+CALL sp88(-101);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp89;
+
+
+delimiter //
+CREATE PROCEDURE sp89( f1 enum('1enum', '2enum'))
+BEGIN
+ IF f1 = '1enum' THEN set f1 = '2enum'; ELSE  set f1 = '1enum'; END IF;
+END//
+delimiter ;
+
+CALL sp89( '1enum');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp90;
+
+
+delimiter //
+CREATE PROCEDURE sp90( f1 set('1set', '2set'))
+BEGIN
+ IF f1 = '1set' THEN  set f1 = '2set';  ELSE set f1 = '1set'; END IF;
+END//
+delimiter ;
+
+CALL sp90( '1set');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp91;
+
+
+delimiter //
+CREATE PROCEDURE sp91( f1 date)
+BEGIN
+  set f1 = adddate(f1, interval 31 day);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp91( '1997-12-31');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp92;
+
+
+delimiter //
+CREATE PROCEDURE sp92( f1 time)
+BEGIN
+  set f1 = addtime(f1, '02:00:00.999998');
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp92( '23:59:59.999999');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp93;
+
+
+delimiter //
+CREATE PROCEDURE sp93( f1 datetime)
+BEGIN
+  set f1 = addtime(f1, '1 1:1:1.000002');
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp93('1997-12-31 23:59:59.999999');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp94;
+
+
+delimiter //
+CREATE PROCEDURE sp94( f1 char)
+BEGIN
+  set f1 = concat('a', f1);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_TOO_LONG
+CALL sp94( 'h');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp95;
+
+# delimiter //
+# CREATE PROCEDURE sp95( f1 char ascii)
+# BEGIN
+#   set f1 = concat('a', f1);
+#   SELECT f1;
+# END//
+# delimiter ;
+# 
+# --error ER_DATA_TOO_LONG
+# CALL sp95( 'h');
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp96;
+
+
+delimiter //
+CREATE PROCEDURE sp96( f1 char binary)
+BEGIN
+  set f1 = concat('a', f1);
+  SELECT f1;
+END//
+delimiter ;
+
+--error ER_DATA_TOO_LONG
+CALL sp96( 'h');
+
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp97;
+
+
+delimiter //
+CREATE PROCEDURE sp97( f1 longtext)
+BEGIN
+  set f1 = concat('hello', f1);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp97( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp98;
+
+
+delimiter //
+CREATE PROCEDURE sp98( f1 mediumtext)
+BEGIN
+  set f1 = concat('hello', f1);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp98( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp99;
+
+
+delimiter //
+CREATE PROCEDURE sp99( f1 text)
+BEGIN
+  set f1 = concat('hello', f1);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp99( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp100;
+
+
+delimiter //
+CREATE PROCEDURE sp100( f1 tinytext)
+BEGIN
+  set f1 = concat('hello', f1);
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp100( 'world');
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp101;
+
+
+delimiter //
+CREATE PROCEDURE sp101( f1 year)
+BEGIN
+  set f1 = f1 + 10;
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp101(51);
+
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp102;
+
+
+delimiter //
+CREATE PROCEDURE sp102( f1 year)
+BEGIN
+  set f1 = f1 + 51;
+  SELECT f1;
+END//
+delimiter ;
+
+CALL sp102(1982);
+
+--disable_warnings ER_SP_DOES_NOT_EXIST ONCE
+DROP PROCEDURE IF EXISTS sp107;
+
+
+delimiter //
+CREATE PROCEDURE sp107( f1 timestamp)
+BEGIN
+  set f1 = now() + 0 + f1;
+  SELECT f1;
+END//
+delimiter ;
+
+# FIXME(udf): Error 1105 (HY000): cannot convert datum from double to type timestamp
+# It should be ER_TRUNCATED_WRONG_VALUE.
+--error ER_UNKNOWN_ERROR
+CALL sp107(2.00e+13);
+
+DROP DATABASE db1;
+
+# ==============================================================================
+# test plan section: 4.5 - parameter checks - multiple data types in stored procedure and functions
+# ==============================================================================
+
+CREATE DATABASE db1;
+USE db1;
+
+--disable_warnings
+DROP PROCEDURE IF EXISTS sp1;
+delimiter //
+CREATE PROCEDURE sp1( in f1 year, inout f2 year, out f3 year, in f4 year,
+                     inout f5 year, out f6 year, in f7 year(4), inout f8 year(4),
+                     out f9 year(4), in f10 year(4), inout f11 year(4), out f12 year(4))
+BEGIN
+  set f1 = f1 + 10; set f2 = f2 + 10; set f3 = f2 + 10;
+  set f4 = f4 + 10; set f5 = f5 + 10; set f6 = f5 + 10;
+  set f7 = f7 + 51; set f8 = f8 + 51; set f9 = f8 + 51;
+  set f10 = f10 + 51; set f11 = f11 + 51; set f12 = f11 + 51;
+  SELECT f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS spexecute01;
+delimiter //
+CREATE PROCEDURE spexecute01()
+BEGIN
+  declare var1 year;
+  declare var2 year;
+  declare var3 year;
+  declare var4 year;
+  declare var5 year(4);
+  declare var6 year(4);
+  declare var7 year(4);
+  declare var8 year(4);
+  set var1 = 51;
+  set var3 = 51;
+  set var5 = 1982;
+  set var7 = 1982;
+  CALL sp1(51, var1, var2, 51, var3, var4, 1982, var5, var6, 1982, var7, var8);
+  SELECT var1, var2, var3, var4, var5, var6, var7, var8;
+END//
+delimiter ;
+
+CALL spexecute01();
+DROP PROCEDURE spexecute01;
+DROP PROCEDURE sp1;
+
+
+DROP PROCEDURE IF EXISTS sp2;
+delimiter //
+CREATE PROCEDURE sp2( in f1 text, inout f2 text, out f3 text, in f4 text, inout f5 text,
+                     out f6 text, in f7 tinytext, inout f8 tinytext, out f9 tinytext,
+                     in f10 tinytext, inout f11 tinytext, out f12 tinytext)
+BEGIN
+  set f1 = concat('hello', f1); set f2 = concat('hello', f2); set f3 = concat('hello', f2);
+  set f4 = concat('hello', f4); set f5 = concat('hello', f5); set f6 = concat('hello', f5);
+  set f7 = concat('hello', f7); set f8 = concat('hello', f8); set f9 = concat('hello', f8);
+  set f10 = concat('hello', f10); set f11 = concat('hello', f11); set f12 = concat('hello', f11);
+  SELECT f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS spexecute02;
+delimiter //
+CREATE PROCEDURE spexecute02()
+BEGIN
+  declare var1 text;
+  declare var2 text;
+  declare var3 text;
+  declare var4 text;
+  declare var5 tinytext;
+  declare var6 tinytext;
+  declare var7 tinytext;
+  declare var8 tinytext;
+  set var1 =  'world';
+  set var3 =  'world';
+  set var5 =  'world';
+  set var7 =  'world';
+  CALL sp2( 'world', var1, var2, 'world', var3, var4, 'world', var5, var6, 'world', var7, var8);
+  SELECT var1, var2, var3, var4, var5, var6, var7, var8;
+END//
+delimiter ;
+
+CALL spexecute02();
+DROP PROCEDURE spexecute02;
+DROP PROCEDURE sp2;
+
+
+DROP PROCEDURE IF EXISTS sp3;
+delimiter //
+CREATE PROCEDURE sp3( in f1 char, inout f2 char, out f3 char, in f4 char ascii,
+                     inout f5 char ascii, out f6 char ascii, in f7 longtext,
+                     inout f8 longtext, out f9 longtext, in f10 mediumtext,
+                     inout f11 mediumtext, out f12 mediumtext)
+BEGIN
+  set f1 = concat('a', f1); set f2 = concat('a', f2); set f3 = concat('a', f1);
+  set f4 = concat('a', f4); set f5 = concat('a', f5); set f6 = concat('a', f4);
+  set f7 = concat('hello', f7); set f8 = concat('hello', f8); set f9 = concat('hello', f9);
+  set f10 = concat('hello', f10); set f11 = concat('hello', f11); set f12 = concat('hello', f11);
+  SELECT f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12;
+END//
+delimiter ;
+
+DROP PROCEDURE IF EXISTS spexecute03;
+delimiter //
+CREATE PROCEDURE spexecute03()
+BEGIN
+  declare var1 char;
+  declare var2 char;
+  declare var3 char ascii;
+  declare var4 char ascii;
+  declare var5 longtext;
+  declare var6 longtext;
+  declare var7 mediumtext;
+  declare var8 mediumtext;
+  set var1 =  'h';
+  set var3 =  'h';
+  set var5 =  'world';
+  set var7 =  'world';
+  CALL sp3( 'h', var1, var2, 'h', var3, var4, 'world', var5, var6, 'world', var7, var8);
+  SELECT var1, var2, var3, var4, var5, var6, var7, var8;
+END//
+delimiter ;
+
+--error ER_DATA_TOO_LONG
+CALL spexecute03();
+
+DROP PROCEDURE spexecute03;
+DROP PROCEDURE sp3;

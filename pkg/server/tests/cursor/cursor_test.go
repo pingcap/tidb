@@ -545,9 +545,24 @@ func TestCursorExceedQuota(t *testing.T) {
 	require.NoError(t, err)
 	stmt := rawStmt.(mysqlcursor.Statement)
 
-	_, err = stmt.QueryContext(context.Background(), nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Out Of Quota For Local Temporary Space!")
+	rows, err := stmt.QueryContext(context.Background(), nil)
+	if err != nil {
+		require.Contains(t, err.Error(), "Out Of Quota For Local Temporary Space!")
+		if rows != nil {
+			require.NoError(t, rows.Close())
+		}
+	} else {
+		dest := make([]driver.Value, 1)
+		for {
+			err = rows.Next(dest)
+			if err != nil {
+				break
+			}
+		}
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Out Of Quota For Local Temporary Space!")
+		require.NoError(t, rows.Close())
+	}
 
 	require.NoError(t, conn.Close())
 

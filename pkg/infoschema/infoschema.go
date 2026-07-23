@@ -21,6 +21,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -71,11 +72,19 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+
+	// triggerTableMap records the mapping from (schema, trigger_name) to its owning table.
+	// The schema and trigger name are in lower case.
+	triggerTableMap map[schemaAndTriggerName]triggerTable
 }
 
 type infoSchemaMisc struct {
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
+
+	// routineMap stores all stored procedure/function metadata.
+	// schemaName(lowercase) => (routineType + ":" + routineName(lowercase) => *model.ProcedureInfo)
+	routineMap map[string]map[string]*model.ProcedureInfo
 
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
@@ -96,6 +105,16 @@ type infoSchemaMisc struct {
 type SchemaAndTableName struct {
 	schema string
 	table  string
+}
+
+type schemaAndTriggerName struct {
+	schema  string
+	trigger string
+}
+
+type triggerTable struct {
+	tableName pmodel.CIStr
+	tableID   int64
 }
 
 // MockInfoSchema only serves for test.
@@ -120,8 +139,9 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 			return true
 		})
 		tb.DBID = dbInfo.ID
+		result.addTriggers(dbInfo.Name, tb)
 		tbl := table.MockTableFromMeta(tb)
-		tableNames.tables[tb.Name.L] = tbl
+		tableNames.tables[tb.NameAsID()] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
@@ -151,8 +171,9 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.addSchema(tableNames)
 	for _, tb := range tables {
 		tb.DBID = mysqlDBInfo.ID
+		result.addTriggers(mysqlDBInfo.Name, tb)
 		tbl := table.MockTableFromMeta(tb)
-		tableNames.tables[tb.Name.L] = tbl
+		tableNames.tables[tb.NameAsID()] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
@@ -176,8 +197,9 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.addSchema(tableNames)
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
+		result.addTriggers(dbInfo.Name, tb)
 		tbl := table.MockTableFromMeta(tb)
-		tableNames.tables[tb.Name.L] = tbl
+		tableNames.tables[tb.NameAsID()] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
@@ -199,6 +221,7 @@ func (is *infoSchema) base() *infoSchema {
 func newInfoSchema() *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
+			routineMap:       map[string]map[string]*model.ProcedureInfo{},
 			policyMap:        map[string]*model.PolicyInfo{},
 			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
 			ruleBundleMap:    map[int64]*placement.Bundle{},
@@ -207,11 +230,25 @@ func newInfoSchema() *infoSchema {
 		schemaID2Name:         map[int64]string{},
 		sortedTablesBuckets:   make([]sortedTables, bucketCount),
 		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		triggerTableMap:       make(map[schemaAndTriggerName]triggerTable),
 	}
 }
 
+// TableByTriggerName returns the table name and table ID by trigger name.
+// The schema and trigger name are case-insensitive.
+func TableByTriggerName(is InfoSchema, schema, trigger pmodel.CIStr) (pmodel.CIStr, int64, bool) {
+	if is == nil {
+		return pmodel.CIStr{}, 0, false
+	}
+	base := is.base()
+	if base == nil {
+		return pmodel.CIStr{}, 0, false
+	}
+	return base.tableByTriggerName(schema, trigger)
+}
+
 func (is *infoSchema) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok bool) {
-	return is.schemaByName(schema.L)
+	return is.schemaByName(model.NameAsID(schema))
 }
 
 func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
@@ -223,17 +260,17 @@ func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
 }
 
 func (is *infoSchema) SchemaExists(schema pmodel.CIStr) bool {
-	_, ok := is.schemaMap[schema.L]
+	_, ok := is.schemaMap[model.NameAsID(schema)]
 	return ok
 }
 
 func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (t table.Table, err error) {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if t, ok = tbNames.tables[table.L]; ok {
+	if tbNames, ok := is.schemaMap[model.NameAsID(schema)]; ok {
+		if t, ok = tbNames.tables[model.NameAsID(table)]; ok {
 			return
 		}
 	}
-	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
+	return nil, ErrTableNotExists.FastGenByArgs(pmodel.NewCIStr(model.NameAsID(schema)), table)
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
@@ -261,8 +298,8 @@ func TableIsSequence(is InfoSchema, schema, table pmodel.CIStr) bool {
 }
 
 func (is *infoSchema) TableExists(schema, table pmodel.CIStr) bool {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if _, ok = tbNames.tables[table.L]; ok {
+	if tbNames, ok := is.schemaMap[model.NameAsID(schema)]; ok {
+		if _, ok = tbNames.tables[model.NameAsID(table)]; ok {
 			return true
 		}
 	}
@@ -315,6 +352,35 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
+func routineKey(routineType, routineNameLower string) string {
+	return strings.ToUpper(routineType) + ":" + routineNameLower
+}
+
+// RoutineByName implements InfoSchema.RoutineByName.
+func (is *infoSchema) RoutineByName(schema, name pmodel.CIStr, routineType string) (*model.ProcedureInfo, bool) {
+	if is.routineMap == nil {
+		return nil, false
+	}
+	routines, ok := is.routineMap[schema.L]
+	if !ok {
+		return nil, false
+	}
+	routine, ok := routines[routineKey(routineType, name.L)]
+	return routine, ok
+}
+
+// SchemaRoutines implements InfoSchema.SchemaRoutines.
+func (is *infoSchema) SchemaRoutines(schema pmodel.CIStr) []*model.ProcedureInfo {
+	if is.routineMap == nil {
+		return nil
+	}
+	routines, ok := is.routineMap[schema.L]
+	if !ok {
+		return nil
+	}
+	return slices.Collect(maps.Values(routines))
+}
+
 // TableItemByID implements InfoSchema.TableItemByID.
 func (is *infoSchema) TableItemByID(id int64) (TableItem, bool) {
 	tbl, ok := is.TableByID(stdctx.Background(), id)
@@ -344,7 +410,7 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 
 // SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
-	schemaTables, ok := is.schemaMap[schema.L]
+	schemaTables, ok := is.schemaMap[model.NameAsID(schema)]
 	if !ok {
 		return nil, nil
 	}
@@ -357,7 +423,7 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema pmodel.CIStr) 
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
 func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error) {
-	schemaTables, ok := is.schemaMap[schema.L]
+	schemaTables, ok := is.schemaMap[model.NameAsID(schema)]
 	if !ok {
 		return nil, nil
 	}
@@ -451,12 +517,13 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 // addSchema is used to add a schema to the infoSchema, it will overwrite the old
 // one if it already exists.
 func (is *infoSchema) addSchema(st *schemaTables) {
-	is.schemaMap[st.dbInfo.Name.L] = st
-	is.schemaID2Name[st.dbInfo.ID] = st.dbInfo.Name.L
+	dbName := st.dbInfo.NameAsID()
+	is.schemaMap[dbName] = st
+	is.schemaID2Name[st.dbInfo.ID] = dbName
 }
 
 func (is *infoSchema) delSchema(di *model.DBInfo) {
-	delete(is.schemaMap, di.Name.L)
+	delete(is.schemaMap, di.NameAsID())
 	delete(is.schemaID2Name, di.ID)
 }
 
@@ -481,7 +548,7 @@ func GetSequenceByName(is InfoSchema, schema, sequence pmodel.CIStr) (util.Seque
 	return tbl.(util.SequenceTable), nil
 }
 
-func init() {
+func init2() {
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
@@ -630,11 +697,13 @@ func (is *infoSchema) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.
 		if fk.Version < model.FKVersion1 {
 			continue
 		}
-		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
+		refer := SchemaAndTableName{schema: model.NameAsID(fk.RefSchema), table: model.NameAsID(fk.RefTable)}
 		referredFKList := is.referredForeignKeyMap[refer]
 		found := false
 		for _, referredFK := range referredFKList {
-			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+			if model.NameEqual(referredFK.ChildSchema, schema) &&
+				model.NameEqual(referredFK.ChildTable, tbInfo.Name) &&
+				model.NameEqual(referredFK.ChildFKName, fk.Name) {
 				referredFK.Cols = fk.RefCols
 				found = true
 				break
@@ -653,13 +722,15 @@ func (is *infoSchema) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.
 			ChildFKName: fk.Name,
 		})
 		sort.Slice(newReferredFKList, func(i, j int) bool {
-			if newReferredFKList[i].ChildSchema.L != newReferredFKList[j].ChildSchema.L {
-				return newReferredFKList[i].ChildSchema.L < newReferredFKList[j].ChildSchema.L
+			leftSchema, rightSchema := model.NameAsID(newReferredFKList[i].ChildSchema), model.NameAsID(newReferredFKList[j].ChildSchema)
+			if leftSchema != rightSchema {
+				return leftSchema < rightSchema
 			}
-			if newReferredFKList[i].ChildTable.L != newReferredFKList[j].ChildTable.L {
-				return newReferredFKList[i].ChildTable.L < newReferredFKList[j].ChildTable.L
+			leftTable, rightTable := model.NameAsID(newReferredFKList[i].ChildTable), model.NameAsID(newReferredFKList[j].ChildTable)
+			if leftTable != rightTable {
+				return leftTable < rightTable
 			}
-			return newReferredFKList[i].ChildFKName.L < newReferredFKList[j].ChildFKName.L
+			return model.NameAsID(newReferredFKList[i].ChildFKName) < model.NameAsID(newReferredFKList[j].ChildFKName)
 		})
 		is.referredForeignKeyMap[refer] = newReferredFKList
 	}
@@ -670,14 +741,16 @@ func (is *infoSchema) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *mod
 		if fk.Version < model.FKVersion1 {
 			continue
 		}
-		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
+		refer := SchemaAndTableName{schema: model.NameAsID(fk.RefSchema), table: model.NameAsID(fk.RefTable)}
 		referredFKList := is.referredForeignKeyMap[refer]
 		if len(referredFKList) == 0 {
 			continue
 		}
 		newReferredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKList)-1)
 		for _, referredFK := range referredFKList {
-			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+			if model.NameEqual(referredFK.ChildSchema, schema) &&
+				model.NameEqual(referredFK.ChildTable, tbInfo.Name) &&
+				model.NameEqual(referredFK.ChildFKName, fk.Name) {
 				continue
 			}
 			newReferredFKList = append(newReferredFKList, referredFK)
@@ -686,9 +759,41 @@ func (is *infoSchema) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *mod
 	}
 }
 
+func (is *infoSchema) addTriggers(schema pmodel.CIStr, tbInfo *model.TableInfo) {
+	if len(tbInfo.Triggers) == 0 {
+		return
+	}
+	for _, trigger := range tbInfo.Triggers {
+		is.triggerTableMap[schemaAndTriggerName{schema: schema.L, trigger: trigger.Name.L}] = triggerTable{
+			tableName: tbInfo.Name,
+			tableID:   tbInfo.ID,
+		}
+	}
+}
+
+func (is *infoSchema) deleteTriggers(schema pmodel.CIStr, tbInfo *model.TableInfo) {
+	if len(tbInfo.Triggers) == 0 {
+		return
+	}
+	for _, trigger := range tbInfo.Triggers {
+		delete(is.triggerTableMap, schemaAndTriggerName{schema: schema.L, trigger: trigger.Name.L})
+	}
+}
+
+func (is *infoSchema) tableByTriggerName(schema, trigger pmodel.CIStr) (pmodel.CIStr, int64, bool) {
+	if len(is.triggerTableMap) == 0 {
+		return pmodel.CIStr{}, 0, false
+	}
+	val, ok := is.triggerTableMap[schemaAndTriggerName{schema: schema.L, trigger: trigger.L}]
+	if !ok {
+		return pmodel.CIStr{}, 0, false
+	}
+	return val.tableName, val.tableID, true
+}
+
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
-	name := SchemaAndTableName{schema: schema, table: table}
+func (is *infoSchema) GetTableReferredForeignKeys(schema, table pmodel.CIStr) []*model.ReferredFKInfo {
+	name := SchemaAndTableName{schema: model.NameAsID(schema), table: model.NameAsID(table)}
 	return is.referredForeignKeyMap[name]
 }
 
@@ -711,8 +816,8 @@ func NewSessionTables() *SessionTables {
 
 // TableByName get table by name
 func (is *SessionTables) TableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (table.Table, bool) {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if t, ok := tbNames.tables[table.L]; ok {
+	if tbNames, ok := is.schemaMap[model.NameAsID(schema)]; ok {
+		if t, ok := tbNames.tables[model.NameAsID(table)]; ok {
 			return t, true
 		}
 	}
@@ -735,7 +840,7 @@ func (is *SessionTables) TableByID(id int64) (tbl table.Table, ok bool) {
 func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	schemaTables := is.ensureSchema(db)
 	tblMeta := tbl.Meta()
-	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
+	if _, ok := schemaTables.tables[tblMeta.NameAsID()]; ok {
 		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
 	}
 
@@ -744,7 +849,7 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	}
 	intest.Assert(db.ID == tbl.Meta().DBID)
 
-	schemaTables.tables[tblMeta.Name.L] = tbl
+	schemaTables.tables[tblMeta.NameAsID()] = tbl
 	is.idx2table[tblMeta.ID] = tbl
 
 	return nil
@@ -757,15 +862,16 @@ func (is *SessionTables) RemoveTable(schema, table pmodel.CIStr) (exist bool) {
 		return false
 	}
 
-	oldTable, exist := tbls.tables[table.L]
+	tblName := model.NameAsID(table)
+	oldTable, exist := tbls.tables[tblName]
 	if !exist {
 		return false
 	}
 
-	delete(tbls.tables, table.L)
+	delete(tbls.tables, tblName)
 	delete(is.idx2table, oldTable.Meta().ID)
 	if len(tbls.tables) == 0 {
-		delete(is.schemaMap, schema.L)
+		delete(is.schemaMap, model.NameAsID(schema))
 	}
 	return true
 }
@@ -787,12 +893,12 @@ func (is *SessionTables) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func (is *SessionTables) ensureSchema(db *model.DBInfo) *schemaTables {
-	if tbls, ok := is.schemaMap[db.Name.L]; ok {
+	if tbls, ok := is.schemaMap[db.NameAsID()]; ok {
 		return tbls
 	}
 
 	tbls := &schemaTables{dbInfo: db, tables: make(map[string]table.Table)}
-	is.schemaMap[db.Name.L] = tbls
+	is.schemaMap[db.NameAsID()] = tbls
 	return tbls
 }
 
@@ -801,7 +907,7 @@ func (is *SessionTables) schemaTables(schema pmodel.CIStr) *schemaTables {
 		return nil
 	}
 
-	if tbls, ok := is.schemaMap[schema.L]; ok {
+	if tbls, ok := is.schemaMap[model.NameAsID(schema)]; ok {
 		return tbls
 	}
 

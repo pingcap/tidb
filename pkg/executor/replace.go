@@ -232,3 +232,8 @@ func (e *ReplaceExec) GetFKCascades() []*FKCascadeExec {
 func (e *ReplaceExec) HasFKCascades() bool {
 	return len(e.fkCascades) > 0
 }
+
+// GetTriggerExec implements WithTriggerSupport interface.
+func (e *ReplaceExec) GetTriggerExec() *TriggerExec {
+	return e.triggerExec
+}

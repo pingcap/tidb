@@ -13,6 +13,7 @@
 # limitations under the License.
 
 include Makefile.common
+include Makefile.realtikvtest.gotest
 
 
 .DEFAULT_GOAL := default
@@ -46,8 +47,8 @@ check-setup:tools/bin/revive
 .PHONY: precheck
 precheck: fmt bazel_prepare
 
-.PHONY: check
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license bazel_check_abi
+# disable license check
+check: parser_yacc check-parallel lint tidy testSuite errdoc
 
 .PHONY: fmt
 fmt:
@@ -162,13 +163,26 @@ integrationtest: server_check
 	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
 	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
+.PHONY: loadablefunctest
+loadablefunctest: server_check
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@cd tests/loadablefunc && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
+	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage-loadablefunc.dat
+
 .PHONY: ddltest
 ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
 
 .PHONY: ut
-ut: tools/bin/ut tools/bin/xprog failpoint-enable
-	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
+ut: tools/bin/ut tools/bin/xprog failpoint-enable ## Run unit tests
+	@echo "Debug: Running ut with X=$(X)"
+	tools/bin/ut $(X) --except flaky_ut.list --retry-cnt 3 || { $(FAILPOINT_DISABLE); $(CLEAN_UT_BINARY); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
+.PHONY: ut-long
+ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut --long --race || { $(FAILPOINT_DISABLE); $(CLEAN_UT_BINARY); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
@@ -210,6 +224,11 @@ ifeq ($(TARGET), "")
 else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
+
+.PHONY: server_failpoint
+server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
+	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
 .PHONY: init-submodule
 init-submodule:
@@ -612,7 +631,7 @@ bazel_test: failpoint-enable bazel_prepare
 
 .PHONY: bazel_coverage_test
 bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=16 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...

@@ -255,11 +255,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 			Name: p.Index.Name.O,
 		}
 		for _, idxCol := range p.Index.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
-			}
+			index.Cols = append(index.Cols, p.Index.GetIndexColumnDisplayString(p.Table, idxCol))
 		}
 		res.Indexes = []IndexAccess{index}
 	}
@@ -288,11 +284,7 @@ func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 			Name: p.AnnIndexExtra.IndexInfo.Name.O,
 		}
 		for _, idxCol := range p.AnnIndexExtra.IndexInfo.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
-			}
+			index.Cols = append(index.Cols, p.AnnIndexExtra.IndexInfo.GetIndexColumnDisplayString(p.Table, idxCol))
 		}
 		res.Indexes = []IndexAccess{index}
 	}
@@ -329,11 +321,7 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 			IsClusteredIndex: p.IndexInfo.Primary && p.TblInfo.IsCommonHandle,
 		}
 		for _, idxCol := range p.IndexInfo.Columns {
-			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
-			}
+			index.Cols = append(index.Cols, p.IndexInfo.GetIndexColumnDisplayString(p.TblInfo, idxCol))
 		}
 		res.Indexes = []IndexAccess{index}
 	}
@@ -366,11 +354,7 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 			IsClusteredIndex: p.IndexInfo.Primary && p.TblInfo.IsCommonHandle,
 		}
 		for _, idxCol := range p.IndexInfo.Columns {
-			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
-			}
+			index.Cols = append(index.Cols, p.IndexInfo.GetIndexColumnDisplayString(p.TblInfo, idxCol))
 		}
 		res.Indexes = []IndexAccess{index}
 	}

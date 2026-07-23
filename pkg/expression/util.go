@@ -563,8 +563,9 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				tmpArgForCollCheck[idx] = newFuncExpr
 				newCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
 				if err != nil {
-					logutil.BgLogger().Warn("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"), zap.Error(err))
-					return false, failed, v
+					// The substituted arguments may be invalid under collation rules;
+					// treat it as an unsafe substitution.
+					return false, true, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
 					if newFuncExpr.GetType(ctx.GetEvalCtx()).GetCollate() == arg.GetType(ctx.GetEvalCtx()).GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
@@ -1978,7 +1979,8 @@ func ExprHasSetVarOrSleep(expr Expression) bool {
 	if !isScalaFunc {
 		return false
 	}
-	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep ||
+		scalaFunc.FuncName.L == ast.SetProcedureVar {
 		return true
 	}
 	for _, arg := range scalaFunc.GetArgs() {

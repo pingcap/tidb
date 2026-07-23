@@ -289,6 +289,59 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 	require.NotEqual(t, versionP1, rows[1][0].(string))
 }
 
+func TestTruncatePartitionedTableAfterPruneModeSwitchUpdatesStatsVersionForGC(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	defer testKit.MustExec("set global tidb_partition_prune_mode = 'static'")
+
+	testKit.MustExec("use test")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11)
+		)
+	`)
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2)")
+	testKit.MustExec("analyze table t")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	require.NotNil(t, tableInfo.Partition)
+	oldStatsIDs := []int64{
+		tableInfo.ID,
+		tableInfo.Partition.Definitions[0].ID,
+		tableInfo.Partition.Definitions[1].ID,
+	}
+	oldVersions := statsMetaVersions(t, testKit, oldStatsIDs)
+
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustExec("set global tidb_partition_prune_mode = 'static'")
+	testKit.MustExec("truncate table t")
+	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
+	require.NoError(t, err)
+
+	for _, id := range oldStatsIDs {
+		require.NotEqual(t, oldVersions[id], statsMetaVersion(t, testKit, id), "table ID %d", id)
+	}
+}
+
 func TestDDLHistogram(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1357,6 +1410,59 @@ func TestDropSchema(t *testing.T) {
 	require.NotEqual(t, version, rows[0][0].(string))
 }
 
+func TestDropSchemaAfterPruneModeSwitchUpdatesPartitionedStatsVersionForGC(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	defer tk.MustExec("set global tidb_partition_prune_mode = 'static'")
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11)
+		)
+	`)
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	tk.MustExec("insert into t values (1,2),(2,2),(6,2)")
+	tk.MustExec("analyze table t")
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	require.NotNil(t, tableInfo.Partition)
+	oldStatsIDs := []int64{
+		tableInfo.ID,
+		tableInfo.Partition.Definitions[0].ID,
+		tableInfo.Partition.Definitions[1].ID,
+	}
+	oldVersions := statsMetaVersions(t, tk, oldStatsIDs)
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("set global tidb_partition_prune_mode = 'static'")
+	tk.MustExec("drop database test")
+	dropSchemaEvent := findEvent(h.DDLEventCh(), model.ActionDropSchema)
+	err = statstestutil.HandleDDLEventWithTxn(h, dropSchemaEvent)
+	require.NoError(t, err)
+
+	for _, id := range oldStatsIDs {
+		require.NotEqual(t, oldVersions[id], statsMetaVersion(t, tk, id), "table ID %d", id)
+	}
+}
+
 func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {
 	// Find the target event.
 	for {
@@ -1365,6 +1471,22 @@ func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.Actio
 			return event
 		}
 	}
+}
+
+func statsMetaVersion(t *testing.T, tk *testkit.TestKit, tableID int64) string {
+	t.Helper()
+	rows := tk.MustQuery("select version from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, rows, 1)
+	return rows[0][0].(string)
+}
+
+func statsMetaVersions(t *testing.T, tk *testkit.TestKit, tableIDs []int64) map[int64]string {
+	t.Helper()
+	versions := make(map[int64]string, len(tableIDs))
+	for _, id := range tableIDs {
+		versions[id] = statsMetaVersion(t, tk, id)
+	}
+	return versions
 }
 
 func TestExchangePartition(t *testing.T) {

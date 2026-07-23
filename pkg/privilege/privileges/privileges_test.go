@@ -83,6 +83,22 @@ func TestCheckDBPrivilege(t *testing.T) {
 	require.True(t, pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv))
 }
 
+func TestCheckPointGetDBPrivilege(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'tester'@'localhost';`)
+	rootTk.MustExec(`GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
+	rootTk.MustExec(`create database test2`)
+	rootTk.MustExec(`create table test2.t(id int, v int, primary key(id))`)
+	rootTk.MustExec(`insert into test2.t(id, v) values(1, 1)`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`use test;`)
+	tk.MustGetErrCode(`select * from test2.t where id = 1`, errno.ErrColumnaccessDenied)
+	tk.MustGetErrCode(`update test2.t set v = 2 where id = 1`, errno.ErrColumnaccessDenied)
+}
+
 func TestCheckTablePrivilege(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -711,26 +727,37 @@ func TestUseDB(t *testing.T) {
 func TestConfigPrivilege(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
+	rootTk := testkit.NewTestKit(t, store)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`DROP USER IF EXISTS tcd1`)
-	tk.MustExec(`CREATE USER tcd1`)
-	tk.MustExec(`GRANT ALL ON *.* to tcd1`)
-	tk.MustExec(`DROP USER IF EXISTS tcd2`)
-	tk.MustExec(`CREATE USER tcd2`)
-	tk.MustExec(`GRANT ALL ON *.* to tcd2`)
-	tk.MustExec(`REVOKE CONFIG ON *.* FROM tcd2`)
+	rootTk.MustExec(`DROP USER IF EXISTS tcd1`)
+	rootTk.MustExec(`CREATE USER tcd1`)
+	rootTk.MustExec(`GRANT ALL ON *.* to tcd1`)
+	rootTk.MustExec(`DROP USER IF EXISTS tcd2`)
+	rootTk.MustExec(`CREATE USER tcd2`)
+	rootTk.MustExec(`DROP USER IF EXISTS tcd3`)
+	rootTk.MustExec(`CREATE USER tcd3`)
+	rootTk.MustExec(`GRANT CONFIG_VIEW ON *.* TO tcd3`)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil, nil))
-	tk.MustExec(`SHOW CONFIG`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`SHOW CONFIG`)
 	tk.MustExec(`SET CONFIG TIKV testkey="testval"`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil, nil))
-	err := tk.ExecToErr(`SHOW CONFIG`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthUsername: "tcd2", AuthHostname: "%"}, nil, nil, nil))
+	err := tk.QueryToErr(`SHOW CONFIG`)
 	require.Error(t, err)
-	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG or CONFIG_VIEW privilege\\(s\\) for this operation$", err.Error())
 	err = tk.ExecToErr(`SET CONFIG TIKV testkey="testval"`)
 	require.Error(t, err)
 	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
-	tk.MustExec(`DROP USER tcd1, tcd2`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd3", Hostname: "localhost", AuthUsername: "tcd3", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`SHOW CONFIG`)
+	err = tk.ExecToErr(`SET CONFIG TIKV testkey="testval"`)
+	require.Error(t, err)
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
+	tk.MustQuery(`SHOW GRANTS`).Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tcd3'@'%'",
+		"GRANT CONFIG_VIEW ON *.* TO 'tcd3'@'%'",
+	))
+	rootTk.MustExec(`DROP USER tcd1, tcd2, tcd3`)
 }
 
 func TestShowCreateTable(t *testing.T) {
@@ -973,7 +1000,8 @@ func TestAdminCommand(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil, nil))
 	err := tk.ExecToErr("ADMIN SHOW DDL JOBS")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSpecificAccessDenied))
+	require.Regexp(t, "you need \\(at least one of\\) the SUPER or ADMIN_VIEW privilege\\(s\\) for this operation$", err.Error())
 	err = tk.ExecToErr("ADMIN CHECK TABLE t")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
@@ -1068,6 +1096,7 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT INSERT(c) on test.t_load to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
 
+	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path), mysql.ErrTableaccessDenied)
 	tk.MustExec(`GRANT DELETE on *.* to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path))
@@ -2138,7 +2167,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.ErrorContains(t, err, "Access denied")
 }
 
-func TestNilHandleInConnectionVerification(t *testing.T) {
+func TestNilHandleInSkipWithGrant(t *testing.T) {
 	config.GetGlobalConfig().Security.SkipGrantTable = true
 	privileges.SkipWithGrant = true
 	defer func() {
@@ -2147,12 +2176,14 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// check ConnectionVerification
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
 	pm := privilege.GetPrivilegeManager(tk.Session())
 	require.Empty(t, pm.(interface{ GetEncodedPassword(string, string) string }).GetEncodedPassword("root", `%`))
 	maxUserConnections, err := pm.GetUserResources("root", `%`)
 	require.NoError(t, err)
 	require.Zero(t, maxUserConnections)
+	require.Nil(t, pm.GetSecurityLabelCache())
 }
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
@@ -2182,6 +2213,137 @@ func TestShowGrantsSQLMode(t *testing.T) {
 		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
 		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
 	})
+}
+
+// group is the synonyms of role.
+func TestGroupPrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'linpin'@'%'`)
+	rootTk.MustExec("CREATE DATABASE michael")
+	rootTk.MustExec("USE michael")
+	rootTk.MustExec("CREATE TABLE t1 (a int)")
+	rootTk.MustExec("Create GROUP group1")
+	rootTk.MustExec("GRANT SELECT ON michael.* TO group1")
+	defer rootTk.MustExec("DROP DATABASE michael")
+
+	tk := testkit.NewTestKit(t, store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "linpin", Hostname: "%"}, nil, nil, nil))
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	require.False(t, pc.RequestVerification(activeRoles, "michael", "", "", mysql.SelectPriv))
+
+	// grant group to user, check privileges.
+	rootTk.MustExec(`grant group1 to 'linpin'@'%'`)
+	tk.MustExec("set role group1")
+	activeRoles = tk.Session().GetSessionVars().ActiveRoles
+	require.True(t, pc.RequestVerification(activeRoles, "michael", "", "", mysql.SelectPriv))
+
+	// set default group ...
+	tk.MustExec("set default group all to 'linpin'@'%'")
+
+	// revoke privilges from group, check privilges.
+	rootTk.MustExec("REVOKE SELECT ON michael.* FROM group1")
+	activeRoles = tk.Session().GetSessionVars().ActiveRoles
+	require.False(t, pc.RequestVerification(activeRoles, "michael", "", "", mysql.SelectPriv))
+
+	rootTk.MustExec("drop group group1")
+}
+
+func TestSetRoutinePrivileges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'test'@'%'`)
+	// global Privileges
+	tk.MustExec(`grant create routine on *.* to test`)
+	tk.MustQuery("select Create_routine_priv from mysql.user where User = 'test'").Check(testkit.Rows("Y"))
+	tk.MustExec(`grant alter routine on *.* to test`)
+	tk.MustQuery("select Alter_routine_priv from mysql.user where User = 'test'").Check(testkit.Rows("Y"))
+	tk.MustExec(`grant execute on *.* to test`)
+	tk.MustQuery("select Execute_priv from mysql.user where User = 'test'").Check(testkit.Rows("Y"))
+	tk.MustQuery("select Create_routine_priv,Alter_routine_priv,Execute_priv from mysql.user where User = 'test'").Check(testkit.Rows("Y Y Y"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery("show grants for 'test'").Check(testkit.Rows("GRANT EXECUTE,CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'test'@'%'"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery("show grants ").Check(testkit.Rows("GRANT EXECUTE,CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'test'@'%'"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustExec(`drop USER 'test'@'%'`)
+	// db Privileges
+	tk.MustExec(`CREATE USER 'test'@'%'`)
+	tk.MustExec(`grant create routine on test.* to test`)
+	tk.MustQuery("select Create_routine_priv from mysql.db where User = 'test'").Check(testkit.Rows("Y"))
+	tk.MustExec(`grant alter routine on test.* to test`)
+	tk.MustQuery("select Alter_routine_priv from mysql.db where User = 'test'").Check(testkit.Rows("Y"))
+	tk.MustExec(`grant execute on test.* to test`)
+	tk.MustQuery("select Execute_priv from mysql.db where User = 'test'").Check(testkit.Rows("Y"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery("show grants ").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test'@'%'", "GRANT CREATE ROUTINE,ALTER ROUTINE,EXECUTE ON `test`.* TO 'test'@'%'"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustExec(`drop USER 'test'@'%'`)
+	// routine Privileges
+	tk.MustExec(`CREATE USER 'test'@'%'`)
+	tk.MustGetErrCode(`grant create routine on procedure test.t1 to test`, 1144)
+	tk.MustGetErrCode(`grant alter routine on procedure test.t1 to test`, 1305)
+	tk.MustExec(`set global tidb_enable_procedure = ON`)
+	tk.MustExec(`CREATE procedure test.t1() begin select 1; end;`)
+	tk.MustExec(`CREATE procedure test.t2() begin select 1; end;`)
+	tk.MustExec(`grant alter routine on procedure test.t1 to test`)
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test'").Check(testkit.Rows("t1 PROCEDURE root@% Alter Routine"))
+	tk.MustExec(`revoke alter routine on procedure test.t1 from test`)
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test'").Check(testkit.Rows())
+	tk.MustExec(`grant usage on procedure test.t1 to test`)
+	tk.MustExec(`grant alter routine on procedure test.t1 to test with GRANT OPTION`)
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test'").Check(testkit.Rows("t1 PROCEDURE root@% Alter Routine,Grant"))
+	tk.MustExec(`revoke grant OPTION on procedure test.t1 from test`)
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test'").Check(testkit.Rows("t1 PROCEDURE root@% Alter Routine"))
+	tk.MustExec(`grant execute on procedure test.t1 to test`)
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test'").Check(testkit.Rows("t1 PROCEDURE root@% Execute,Alter Routine"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery("show grants ").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test'@'%'", "GRANT ALTER ROUTINE,EXECUTE ON PROCEDURE `test`.`t1` TO 'test'@'%'"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustExec(`drop USER 'test'@'%'`)
+	tk.MustExec(`CREATE USER 'test'@'%'`)
+	tk.MustExec(`grant ALL on procedure test.t1 to test`)
+	tk.MustQuery("show grants for test").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test'@'%'", "GRANT ALTER ROUTINE,EXECUTE ON PROCEDURE `test`.`t1` TO 'test'@'%'"))
+	tk.MustExec(`grant execute on procedure test.t2 to test`)
+	tk.MustQuery("show grants for test").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test'@'%'", "GRANT ALTER ROUTINE,EXECUTE ON PROCEDURE `test`.`t1` TO 'test'@'%'", "GRANT EXECUTE ON PROCEDURE `test`.`t2` TO 'test'@'%'"))
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test'").Check(testkit.Rows("t1 PROCEDURE root@% Execute,Alter Routine", "t2 PROCEDURE root@% Execute"))
+	tk.MustExec(`drop USER 'test'@'%'`)
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test'").Check(testkit.Rows())
+	tk.MustExec(`CREATE role 'test2'@'%'`)
+	tk.MustExec(`CREATE USER 'test'@'%'`)
+	tk.MustExec(`grant execute on procedure test.t2 to test2`)
+	tk.MustQuery("select Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv where User = 'test2'").Check(testkit.Rows("t2 PROCEDURE root@% Execute"))
+	tk.MustExec(`grant test2 to test`)
+	tk.MustQuery("show grants for test").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test'@'%'", "GRANT 'test2'@'%' TO 'test'@'%'"))
+	tk.MustExec(`drop USER 'test'@'%'`)
+	tk.MustExec(`CREATE USER 'test'@'%'`)
+	// test grant procedure Privileges
+	tk.MustExec(`grant execute on procedure test.t2 to test with grant OPTION`)
+	tk.MustExec(`CREATE USER 'test3'@'%'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustExec(`grant execute on procedure test.t2 to test3`)
+	tk.MustGetErrCode(`grant execute on procedure test.t3 to test3`, 8121)
+	tk.MustGetErrCode(`grant alter routine on procedure test.t2 to test3`, 8121)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery("show grants for test3").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test3'@'%'", "GRANT EXECUTE ON PROCEDURE `test`.`t2` TO 'test3'@'%'"))
+	tk.MustExec(`drop USER 'test'@'%'`)
+	tk.MustExec(`drop USER 'test3'@'%'`)
+	tk.MustExec(`CREATE USER 'test'@'%'`)
+	tk.MustExec(`grant execute on procedure test.t2 to test`)
+	tk.MustExec(`CREATE USER 'test3'@'%'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustGetErrCode(`grant execute on procedure test.t2 to test3`, 8121)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+
+	tk.MustExec(`CREATE USER 'test_func'@'%'`)
+	tk.MustExec(`CREATE FUNCTION test.fn_visible() returns int return 1`)
+	tk.MustExec(`grant execute on function test.fn_visible to test_func`)
+	tk.MustQuery("show grants for test_func").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test_func'@'%'", "GRANT EXECUTE ON FUNCTION `test`.`fn_visible` TO 'test_func'@'%'"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_func", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`show databases like 'test'`).Check(testkit.Rows("test"))
+	tk.MustExec(`use test`)
+	tk.MustQuery(`select fn_visible()`).Check(testkit.Rows("1"))
 }
 
 func TestProtectUserAndRoleWithRestrictedPrivileges(t *testing.T) {
@@ -2340,6 +2502,7 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustGetErrCode(`SELECT test.t1.a FROM test.t1 JOIN test.t2 USING (a)`, errno.ErrColumnaccessDenied)
 	// `Select` column privilege in ON and ORDER BY clause is needed
 	userTk.MustGetErrCode(`SELECT a FROM test.t1 NATURAL JOIN test.t4`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`SELECT * FROM test.t1 NATURAL JOIN test.t4`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT test.t1.a FROM test.t1 JOIN test.t2 ON test.t1.a = test.t2.a`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT test.t2.c FROM test.t2 ORDER BY a`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(a) ON test.t2 TO 'testuser'@'localhost';`)
@@ -2428,6 +2591,9 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	userTk.MustGetErrCode(`INSERT INTO test.t1 VALUES (1, 2)`, errno.ErrTableaccessDenied)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1 SET b = 1`, errno.ErrColumnaccessDenied)
+	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
+	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`INSERT INTO test.t1(b) SELECT a FROM test.t2;`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = 2;`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT INSERT(b) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = 2;`)
@@ -2437,9 +2603,6 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	// userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = a * 2;`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(a) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = a * 2;`)
-
-	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
-	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
 }
 
 func TestUpdateColumnPrivilege(t *testing.T) {
@@ -2453,7 +2616,6 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	userTk := testkit.NewTestKit(t, store)
 	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-
 	userTk.MustGetErrCode(`UPDATE test.t1 SET a = 2`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT UPDATE(a) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`UPDATE test.t1 SET a = 2;`)
@@ -2480,6 +2642,40 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT SELECT(c,d) ON test.t2 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`)
 	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
+}
+
+func TestUserGroupMisc(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE GROUP analyticsteam`)
+	rootTk.MustExec("GRANT SELECT ON test.* TO analyticsteam")
+	rootTk.MustExec("CREATE USER jennifer")
+	rootTk.MustExec("GRANT analyticsteam TO jennifer")
+	defer rootTk.MustExec("DROP USER jennifer")
+	defer rootTk.MustExec("DROP GROUP analyticsteam")
+
+	tk := testkit.NewTestKit(t, store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "jennifer", Hostname: "%"}, nil, nil, nil))
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	require.False(t, pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv))
+
+	tk.MustQuery("SHOW GRANTS").Sort().Check(testkit.Rows(`GRANT 'analyticsteam'@'%' TO 'jennifer'@'%'`, `GRANT USAGE ON *.* TO 'jennifer'@'%'`))
+
+	tk.QueryToErr("SHOW TABLES in test")
+	tk.MustExec("SET GROUP analyticsteam")
+	res := tk.MustQuery("SHOW GRANTS")
+	require.Equal(t, len(res.Rows()), 3)
+	tk.MustExec("SHOW TABLES in test")
+
+	rootTk.MustExec("CREATE USER michael")
+	rootTk.MustExec("GRANT analyticsteam TO michael")
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "michael", Hostname: "%"}, nil, nil, nil))
+	err := tk2.QueryToErr("SHOW TABLES in test")
+	require.Error(t, err)
+	res = tk2.MustQuery("SHOW GRANTS")
+	require.Equal(t, len(res.Rows()), 2)
 }
 
 func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
@@ -2673,4 +2869,81 @@ func TestColumnPrivilege4TraceAndExplain(t *testing.T) {
 
 	userTk.MustQuery(traceSQL).CheckNotContain("session.RollbackTxn")
 	userTk.MustQuery(explainSQL)
+}
+
+func TestInvokerViewCrossDatabaseWithAlias(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+
+	// Setup: two databases with tables in db_data, view in db_view
+	rootTk.MustExec("CREATE DATABASE db_data")
+	rootTk.MustExec("CREATE DATABASE db_view")
+	rootTk.MustExec("CREATE TABLE db_data.t1 (id int, name varchar(50))")
+	rootTk.MustExec("CREATE TABLE db_data.t2 (id int, value int)")
+	rootTk.MustExec("INSERT INTO db_data.t1 VALUES (1, 'alice')")
+	rootTk.MustExec("INSERT INTO db_data.t2 VALUES (1, 100)")
+
+	// Create INVOKER views in db_view referencing tables in db_data
+	rootTk.MustExec(`CREATE DEFINER='root'@'%' SQL SECURITY INVOKER VIEW db_view.v_simple
+		AS SELECT id, name FROM db_data.t1`)
+	rootTk.MustExec(`CREATE DEFINER='root'@'%' SQL SECURITY INVOKER VIEW db_view.v_join
+		AS SELECT t1.id, t1.name, t2.value FROM db_data.t1 t1 JOIN db_data.t2 t2 ON t1.id = t2.id`)
+	rootTk.MustExec(`CREATE DEFINER='root'@'%' SQL SECURITY INVOKER VIEW db_view.v_expr
+		AS SELECT t1.id AS uid, IFNULL(t2.value, 0) AS val, (SELECT name FROM db_data.t1 WHERE id = t1.id) AS nm
+		FROM db_data.t1 t1 LEFT JOIN db_data.t2 t2 ON t1.id = t2.id`)
+
+	// Create user with table-level SELECT on underlying tables and view
+	rootTk.MustExec("CREATE USER 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_data.t1 TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_data.t2 TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_simple TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_join TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_expr TO 'viewuser'@'localhost'")
+
+	userTk := testkit.NewTestKit(t, store)
+	require.NoError(t, userTk.Session().Auth(&auth.UserIdentity{
+		Username: "viewuser", Hostname: "localhost"}, nil, nil, nil))
+
+	// Without alias — should work
+	userTk.MustQuery("SELECT * FROM db_view.v_simple LIMIT 1").Check(testkit.Rows("1 alice"))
+	userTk.MustQuery("SELECT * FROM db_view.v_join LIMIT 1").Check(testkit.Rows("1 alice 100"))
+	userTk.MustQuery("SELECT * FROM db_view.v_expr LIMIT 1").Check(testkit.Rows("1 100 alice"))
+
+	// With alias — this was the bug: column-level privilege check used (view_db, underlying_table)
+	// which is an invalid combination when view and tables are in different databases
+	userTk.MustQuery("SELECT * FROM db_view.v_simple t1 LIMIT 1").Check(testkit.Rows("1 alice"))
+	userTk.MustQuery("SELECT * FROM db_view.v_join t1 LIMIT 1").Check(testkit.Rows("1 alice 100"))
+	userTk.MustQuery("SELECT * FROM db_view.v_expr t1 LIMIT 1").Check(testkit.Rows("1 100 alice"))
+
+	// With alias and specific column reference
+	userTk.MustQuery("SELECT t1.id, t1.name FROM db_view.v_simple t1 LIMIT 1").Check(testkit.Rows("1 alice"))
+	userTk.MustQuery("SELECT t1.uid FROM db_view.v_expr t1 LIMIT 1").Check(testkit.Rows("1"))
+
+	// Verify that privilege enforcement still works — user without underlying table access should fail
+	rootTk.MustExec("CREATE USER 'nopriv'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_simple TO 'nopriv'@'localhost'")
+	noprivTk := testkit.NewTestKit(t, store)
+	require.NoError(t, noprivTk.Session().Auth(&auth.UserIdentity{
+		Username: "nopriv", Hostname: "localhost"}, nil, nil, nil))
+	// INVOKER view requires the invoker to have privileges on underlying tables
+	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple", mysql.ErrViewInvalid)
+	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", mysql.ErrViewInvalid)
+
+	// Column-level privilege on underlying tables should also work with view alias
+	rootTk.MustExec("CREATE USER 'coluser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT(id) ON db_data.t1 TO 'coluser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_simple TO 'coluser'@'localhost'")
+	colTk := testkit.NewTestKit(t, store)
+	require.NoError(t, colTk.Session().Auth(&auth.UserIdentity{
+		Username: "coluser", Hostname: "localhost"}, nil, nil, nil))
+	// Has column privilege on t1.id but not t1.name — SELECT * should fail
+	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple", mysql.ErrViewInvalid)
+	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", mysql.ErrViewInvalid)
+
+	// Cleanup
+	rootTk.MustExec("DROP DATABASE db_data")
+	rootTk.MustExec("DROP DATABASE db_view")
+	rootTk.MustExec("DROP USER 'viewuser'@'localhost'")
+	rootTk.MustExec("DROP USER 'nopriv'@'localhost'")
+	rootTk.MustExec("DROP USER 'coluser'@'localhost'")
 }

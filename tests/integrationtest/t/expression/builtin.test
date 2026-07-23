@@ -699,7 +699,7 @@ select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsign
 -- error 1690
 select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);
 select 1 / '2007' div 1;
-set sql_mode=default
+set sql_mode=default;
 
 # TestFuncREPEAT
 DROP TABLE IF EXISTS table_string;

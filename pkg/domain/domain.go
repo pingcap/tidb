@@ -49,7 +49,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
@@ -226,6 +228,8 @@ type Domain struct {
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 
+	loadableFunctionReconcileNeeded atomic.Bool
+
 	statsOwner owner.Manager
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn
@@ -334,6 +338,9 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		do.infoCache.Insert(is, schemaTs)
 
 		if !isV1V2Switch {
+			if err := do.reconcileLoadableFunctionsIfNeeded(isSnapshot, false); err != nil {
+				return nil, false, currentSchemaVersion, nil, err
+			}
 			return is, true, 0, nil, nil
 		}
 	}
@@ -347,11 +354,14 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
 	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, startTS)
+		is, relatedChanges, diffTypes, forceLoadableFunctionReconcile, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, isSnapshot, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
 			do.infoCache.Insert(is, schemaTs)
+			if err := do.reconcileLoadableFunctionsIfNeeded(isSnapshot, forceLoadableFunctionReconcile); err != nil {
+				return nil, false, currentSchemaVersion, nil, err
+			}
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
@@ -425,7 +435,30 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	} else {
 		do.infoCache.Insert(is, schemaTs)
 	}
+	if err := do.reconcileLoadableFunctionsIfNeeded(isSnapshot, true); err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (do *Domain) reconcileLoadableFunctionsIfNeeded(isSnapshot bool, force bool) error {
+	if isSnapshot {
+		return nil
+	}
+	if !force && !do.loadableFunctionReconcileNeeded.Load() {
+		return nil
+	}
+	reconciled, err := infoschema.ReloadLoadableFunctions(do.sysFacHack)
+	if err != nil {
+		do.loadableFunctionReconcileNeeded.Store(true)
+		return err
+	}
+	if reconciled {
+		do.loadableFunctionReconcileNeeded.Store(false)
+	} else {
+		do.loadableFunctionReconcileNeeded.Store(true)
+	}
+	return nil
 }
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
@@ -617,13 +650,13 @@ func shouldUseV2(enableV2 bool, old infoschema.InfoSchema, isSnapshot bool) (use
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newVersion int64, isSnapshot bool, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, bool, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
@@ -639,15 +672,15 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 		switch val.(string) {
 		case "exchangepartition":
 			if diffs[0].Type == model.ActionExchangeTablePartition {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				failpoint.Return(nil, nil, nil, false, errors.New("mock error"))
 			}
 		case "renametable":
 			if diffs[0].Type == model.ActionRenameTable {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				failpoint.Return(nil, nil, nil, false, errors.New("mock error"))
 			}
 		case "dropdatabase":
 			if diffs[0].Type == model.ActionDropSchema {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				failpoint.Return(nil, nil, nil, false, errors.New("mock error"))
 			}
 		}
 	})
@@ -655,13 +688,14 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 	err := builder.InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 
 	builder.WithStore(do.store).SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
+	forceLoadableFunctionReconcile := false
 	for _, diff := range diffs {
 		if do.schemaFilter != nil && do.schemaFilter.SkipLoadDiff(diff, do.infoCache.GetLatest()) {
 			// We still need to advance the schema version even if we skip applying
@@ -670,11 +704,15 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 			continue
 		}
 		if diff.RegenerateSchemaMap {
-			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
+			return nil, nil, nil, false, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
+		}
+		switch diff.Type {
+		case model.ActionCreateProcedure, model.ActionDropProcedure, model.ActionAlterProcedure:
+			forceLoadableFunctionReconcile = true
 		}
 		ids, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
@@ -690,7 +728,7 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions
-	return is, &relatedChange, diffTypes, nil
+	return is, &relatedChange, diffTypes, forceLoadableFunctionReconcile, nil
 }
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
@@ -807,12 +845,26 @@ func (do *Domain) Reload() error {
 	defer do.m.Unlock()
 
 	startTime := time.Now()
-	ver, err := do.store.CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return err
+	var version uint64
+	if pkdbrepl.IsStandbyMode() {
+		realStore, ok := do.store.(kv.StorageWithPD)
+		if !ok {
+			return errors.New("standby replication requires pd client")
+		}
+		ts, _, err := realStore.GetPDHTTPClient().GetMinResolvedTSByStoresIDs(context.Background(), nil)
+		if err != nil {
+			return err
+		}
+		version = ts
+	} else {
+		ver, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			return err
+		}
+
+		version = ver.Ver
 	}
 
-	version := ver.Ver
 	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version, false)
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
@@ -853,7 +905,7 @@ func (do *Domain) Reload() error {
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
-	if sub > (lease/2) && lease > 0 {
+	if sub > (lease/2) && lease > 0 && !pkdbrepl.IsStandbyMode() {
 		logutil.BgLogger().Warn("loading schema takes a long time", zap.Duration("take time", sub))
 	}
 
@@ -1053,6 +1105,291 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 }
 
+type securityEventInfo struct {
+	info string
+}
+
+func (e *securityEventInfo) SecurityInfo() string {
+	return e.info
+}
+
+func (e *securityEventInfo) User() string { return "" }
+
+func (e *securityEventInfo) Host() string { return "" }
+
+func (e *securityEventInfo) OriginalText() string { return "" }
+
+func (e *securityEventInfo) RedactedText() string { return "" }
+
+func auditServerInfos(last, cur []infoschema.ServerInfo, label string) string {
+	var res []string
+	lastMap, curMap := make(map[string]any, len(last)), make(map[string]any, len(cur))
+	// add
+	for _, s := range last {
+		lastMap[s.Address] = nil
+	}
+	for _, s := range cur {
+		curMap[s.Address] = nil
+	}
+
+	for _, s := range last {
+		k := s.Address
+		_, ok := curMap[k]
+		if ok {
+			delete(lastMap, k)
+			delete(curMap, k)
+		}
+	}
+	if len(lastMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Remove %d %s node(s): ", len(lastMap), label))
+		for addr := range lastMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	if len(curMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Add %d %s node(s): ", len(curMap), label))
+		for addr := range curMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	return strings.Join(res, ". ")
+}
+
+func auditStoresStat(last, cur *pdhttp.StoresInfo) string {
+	var res []string
+	lastMap, curMap := make(map[string]string, len(last.Stores)), make(map[string]string, len(cur.Stores))
+	// add
+	for _, s := range last.Stores {
+		lastMap[s.Store.Address] = s.Store.StateName
+	}
+	for _, s := range cur.Stores {
+		curMap[s.Store.Address] = s.Store.StateName
+	}
+
+	for _, s := range last.Stores {
+		k := s.Store.Address
+		_, ok := curMap[k]
+		if ok {
+			// audit if its state has changed
+			if cv, lv := curMap[k], lastMap[k]; cv != lv {
+				if cv == "Up" {
+					res = append(res, fmt.Sprintf("Store node %s state change (%s -> %s, data consistency checked)", k, lv, cv))
+				} else {
+					res = append(res, fmt.Sprintf("Store node %s state change (%s -> %s)", k, lv, cv))
+				}
+			}
+			delete(lastMap, k)
+			delete(curMap, k)
+		}
+	}
+	if len(lastMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Remove %d store node(s): ", len(lastMap)))
+		for addr := range lastMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	if len(curMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Add %d store node(s): ", len(curMap)))
+		for addr := range curMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		sb.WriteString(" (data consistency checked)")
+		res = append(res, sb.String())
+	}
+
+	return strings.Join(res, ". ")
+}
+
+func getEarliestStartComponents(tidbs, pds []infoschema.ServerInfo, tikvs *pdhttp.StoresInfo) int64 {
+	earliestTime := time.Now().Unix()
+	for _, tidb := range tidbs {
+		if tidb.StartTimestamp < earliestTime {
+			earliestTime = tidb.StartTimestamp
+		}
+	}
+	for _, pd := range pds {
+		if pd.StartTimestamp < earliestTime {
+			earliestTime = pd.StartTimestamp
+		}
+	}
+	if tikvs != nil {
+		for _, node := range tikvs.Stores {
+			if strings.ToUpper(node.Store.StateName) == "UP" {
+				if node.Store.StartTimestamp < earliestTime {
+					earliestTime = node.Store.StartTimestamp
+				}
+			}
+		}
+	}
+	return earliestTime
+}
+
+// checkClusterRestart Check whether all components in the current cluster restart within `times` minutes.
+// If the restart occurs, the audit log is printed only once within `times` minutes.
+func ifClusterRestartRecent(tidbs, pds []infoschema.ServerInfo, tikvs *pdhttp.StoresInfo, times int64) bool {
+	earliestTime := getEarliestStartComponents(tidbs, pds, tikvs)
+	return time.Now().Unix()-times*60 < earliestTime
+}
+
+// ifTikvClusterRunning CheckTikvClusterRunStatus check whether tikv cluster can normal execution.
+func ifTikvClusterRunning(tikvs *pdhttp.StoresInfo) bool {
+	if len(tikvs.Stores) <= 0 {
+		return false
+	}
+	upNum := 0
+	for _, node := range tikvs.Stores {
+		if strings.ToUpper(node.Store.StateName) == "UP" {
+			upNum++
+		}
+	}
+	return (upNum * 2) > tikvs.Count
+}
+
+func (do *Domain) auditComponentsLoop() {
+	ticker := time.Tick(2 * time.Second)
+	e, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().Warn("get extensions failed", zap.Error(err))
+		return
+	}
+	extensions := e.NewSessionExtensions()
+
+	var (
+		lastTiDBs, lastPDs            []infoschema.ServerInfo
+		lastStoresInfo                *pdhttp.StoresInfo
+		failOnPDNodes                 = false
+		failOnTiDBNodes               = false
+		failOnTikvNodes               = false
+		failOnMostTikvNodeUnavailable = false
+		ifClusterRestartInLast5min    = false
+	)
+
+	for {
+		select {
+		case <-do.exit:
+			logutil.BgLogger().Info("Domain stop auditing components")
+			return
+		case <-ticker:
+		}
+		se, err := do.sysSessionPool.Get()
+		if err != nil {
+			logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+			if se != nil {
+				do.sysSessionPool.Put(se)
+			}
+			continue
+		}
+
+		//failOnAllNodes := true
+		// 1. TiDB
+		curTiDBs, err := infoschema.GetTiDBServerInfo(se.(sessionctx.Context))
+		if err == nil {
+			failOnTiDBNodes = false
+			if lastTiDBs != nil {
+				info := auditServerInfos(lastTiDBs, curTiDBs, "tidb")
+				if len(info) > 0 {
+					extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+						info: info,
+					})
+				}
+			}
+			lastTiDBs = curTiDBs
+		} else if !failOnTiDBNodes {
+			failOnTiDBNodes = true
+			extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+				info: "the cluster is unavailable because tidb nodes information cannot be obtained",
+			})
+		}
+
+		// 2. PD
+		curPDs, err := infoschema.GetPDServerInfo(se.(sessionctx.Context))
+		if err == nil {
+			failOnPDNodes = false
+			if lastPDs != nil {
+				info := auditServerInfos(lastPDs, curPDs, "pd")
+				if len(info) > 0 {
+					extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+						info: info,
+					})
+				}
+			}
+			lastPDs = curPDs
+		} else if !failOnPDNodes {
+			failOnPDNodes = true
+			extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+				info: "the cluster is unavailable because pd nodes information cannot be obtained",
+			})
+		}
+
+		// 3. TiKV
+		tikvStore, ok := se.(sessionctx.Context).GetStore().(helper.Storage)
+		if ok {
+			tikvHelper := &helper.Helper{
+				Store:       tikvStore,
+				RegionCache: tikvStore.GetRegionCache(),
+			}
+			var curStoresStat *pdhttp.StoresInfo
+			pdCli, err := tikvHelper.TryGetPDHTTPClient()
+			if err == nil {
+				curStoresStat, err = pdCli.GetStores(context.Background())
+			}
+			if err == nil {
+				failOnTikvNodes = false
+				if lastStoresInfo != nil {
+					info := auditStoresStat(lastStoresInfo, curStoresStat)
+					if len(info) > 0 {
+						extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+							info: info,
+						})
+					}
+				}
+				if !ifTikvClusterRunning(curStoresStat) {
+					if !failOnMostTikvNodeUnavailable {
+						failOnMostTikvNodeUnavailable = true
+						extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+							info: "the cluster is unavailable because most tikv nodes are unavailable",
+						})
+					}
+				} else {
+					failOnMostTikvNodeUnavailable = false
+				}
+				lastStoresInfo = curStoresStat
+			} else if !failOnTikvNodes {
+				failOnTikvNodes = true
+				extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+					info: "the cluster is unavailable because tikv nodes information cannot be obtained",
+				})
+			}
+		}
+		if ifClusterRestartRecent(curTiDBs, curPDs, lastStoresInfo, 5) {
+			if !ifClusterRestartInLast5min {
+				ifClusterRestartInLast5min = true
+				extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+					info: "the cluster has restarted in last 5 minutes",
+				})
+			}
+		} else {
+			ifClusterRestartInLast5min = false
+		}
+		do.sysSessionPool.Put(se)
+	}
+}
+
 func (do *Domain) mdlCheckLoop() {
 	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
@@ -1157,6 +1494,11 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
 			do.deferFn.check()
+		case <-pkdbrepl.StandbyInfoSchemaReloadTickCh:
+			err := do.Reload()
+			if err != nil {
+				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+			}
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
@@ -1374,6 +1716,7 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
 	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	do.loadableFunctionReconcileNeeded.Store(true)
 	return do
 }
 
@@ -1449,6 +1792,12 @@ func (do *Domain) Init(
 		do.ddl = checker
 		do.ddlExecutor = checker
 	}
+
+	// special step for log replication. Must use correct standby mode before any
+	// actions, because TiKV may have inconsistent data and we must use min resolved
+	// TS to read inside standby mode even for the first read.
+	pkdbrepl.InitStandby(do.ctx, do.etcdClient)
+	go pkdbrepl.WatchRestart(do.etcdClient, do.exit, do)
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
@@ -1551,7 +1900,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
 	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
+	do.wg.Run(do.auditComponentsLoop, "auditComponentsLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
+	do.wg.Run(func() {
+		pkdbrepl.WatchStandby(do.ctx, do.etcdClient)
+	}, "WatchStandby")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
@@ -2005,6 +2358,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case <-time.After(duration):
 				event.All = true
 				event = do.batchReadMoreData(watchCh, event)
+			case <-pkdbrepl.StandbyUserReloadTickCh:
+				event.All = true
 			}
 
 			// All events are from this TiDB-Server, skip them
@@ -2217,6 +2572,10 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					bindHandle.CaptureBaselines()
 				}
 			case <-gcBindTicker.C:
+				// GCBinding deletes rows from mysql.bind_info and should be skipped in standby mode.
+				if pkdbrepl.IsStandbyMode() {
+					continue
+				}
 				if !owner.IsOwner() {
 					continue
 				}
@@ -2821,6 +3180,9 @@ func (do *Domain) gcStatsWorker() {
 			do.gcStatsWorkerExitPreprocessing()
 			return
 		case <-gcStatsTicker.C:
+			if pkdbrepl.IsStandbyMode() {
+				continue
+			}
 			if !do.statsOwner.IsOwner() {
 				continue
 			}
@@ -2897,6 +3259,7 @@ func (do *Domain) autoAnalyzeWorker() {
 	for {
 		select {
 		case <-analyzeTicker.C:
+			pkdbrepl.CheckStandbyBlocking(do.ctx)
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			} else if !variable.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {

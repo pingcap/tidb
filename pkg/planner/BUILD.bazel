@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "planner",
@@ -29,6 +29,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hint",
         "//pkg/util/intest",
@@ -37,6 +38,21 @@ go_library(
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "planner_test",
+    srcs = ["optimize_test.go"],
+    embed = [":planner"],
+    deps = [
+        "//pkg/planner/core",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/dbterror/exeerrors",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
     ],
 )

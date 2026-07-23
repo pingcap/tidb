@@ -49,9 +49,12 @@ type DeleteExec struct {
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
 	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
-	fkCascades map[int64][]*FKCascadeExec
+	fkCascades  map[int64][]*FKCascadeExec
+	triggerExec *TriggerExec
 
 	ignoreErr bool
+
+	lbacGuard *lbacDMLGuard
 }
 
 // Next implements the Executor Next interface.
@@ -77,6 +80,16 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 		return err
 	}
 	return nil
+}
+
+func (e *DeleteExec) initLBACGuard() (err error) {
+	if !variable.EnableLBAC.Load() || e.IsMultiTable || len(e.tblColPosInfos) == 0 {
+		return nil
+	}
+	colPosInfo := &e.tblColPosInfos[0]
+	tbl := e.tblID2Table[colPosInfo.TblID]
+	e.lbacGuard, err = newLBACDMLGuard(e.Ctx(), tbl.Meta())
+	return err
 }
 
 func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
@@ -141,6 +154,12 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				if ignored {
 					datumRow = datumRow[:0]
 					continue
+				}
+			}
+			if e.lbacGuard != nil {
+				labelDatum := datumRow[e.lbacGuard.labelColOffset]
+				if err := e.lbacGuard.CheckRowLabelAccess(labelDatum); err != nil {
+					return err
 				}
 			}
 			err = e.deleteOneRow(tbl, colPosInfo, isExtraHandle, datumRow)
@@ -268,10 +287,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) (err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
+	}
+
+	if ts, ok := ctx.GetTableCtx().GetTriggerSupport(); ok {
+		if err := ts.OnDeleteBefore(t.Meta(), data); err != nil {
+			return err
+		}
+		defer func() {
+			if err == nil {
+				err = ts.OnDeleteAfter(t.Meta(), data)
+			}
+		}()
 	}
 
 	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesRowLayout)
@@ -341,6 +371,11 @@ func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
 // HasFKCascades implements WithForeignKeyTrigger interface.
 func (e *DeleteExec) HasFKCascades() bool {
 	return len(e.fkCascades) > 0
+}
+
+// GetTriggerExec implements WithTriggerSupport interface.
+func (e *DeleteExec) GetTriggerExec() *TriggerExec {
+	return e.triggerExec
 }
 
 type handleInfoPair struct {

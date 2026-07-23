@@ -48,8 +48,8 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id) ON UPDATE RESTRICT ON DELETE CASCADE)")
 	tb1Info := getTableInfo(t, dom, "test", "t1")
 	tb2Info := getTableInfo(t, dom, "test2", "t2")
-	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t2"))))
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
 	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
@@ -82,8 +82,8 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("create table t3 (id int, b int, index idx_b(b), foreign key fk_b(b) references t2(id) ON UPDATE SET NULL ON DELETE NO ACTION)")
 	tb2Info = getTableInfo(t, dom, "test2", "t2")
 	tb3Info := getTableInfo(t, dom, "test2", "t3")
-	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t2"))))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t3"))))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
 	require.Equal(t, 1, len(tb2ReferredFKs))
@@ -114,7 +114,7 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 
 	tk.MustExec("create table t5 (id int key, a int, b int, foreign key (a) references t5(id));")
 	tb5Info := getTableInfo(t, dom, "test2", "t5")
-	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t5"))))
 	require.Equal(t, 1, len(tb5Info.ForeignKeys))
 	tb5ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t5")
 	require.Equal(t, 1, len(tb5ReferredFKs))
@@ -149,16 +149,16 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(partialSafeInfo.Indices))
 	require.Equal(t, "safe_pid", partialSafeInfo.Indices[0].Name.L)
 
-	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
-	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
-	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t2"))))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t3"))))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t5"))))
 
 	tk.MustExec("set @@global.tidb_enable_foreign_key=0")
 	tk.MustExec("drop database test2")
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t2"))))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t3"))))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test2"), pmodel.NewCIStr("t5"))))
 }
 
 func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
@@ -324,14 +324,14 @@ func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	err := tk2.ExecToErr("create table t2 (a int, foreign key fk(a) references t1(id));")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't1'", err.Error())
+	require.Equal(t, "[planner:1143]REFERENCES command denied to user 'u1'@'%' for column 'id' in table 't1'", err.Error())
 
 	tk.MustExec("grant references on test.t1 to 'u1'@'%';")
 	tk2.MustExec("create table t2 (a int, foreign key fk(a) references t1(id));")
 	tk2.MustExec("create table t3 (id int key)")
 	err = tk2.ExecToErr("create table t4 (a int, foreign key fk(a) references t1(id), foreign key (a) references t3(id));")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't3'", err.Error())
+	require.Equal(t, "[planner:1143]REFERENCES command denied to user 'u1'@'%' for column 'id' in table 't3'", err.Error())
 
 	tk.MustExec("grant references on test.t3 to 'u1'@'%';")
 	tk2.MustExec("create table t4 (a int, foreign key fk(a) references t1(id), foreign key (a) references t3(id));")
@@ -350,7 +350,7 @@ func TestAlterTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 	tk2.MustExec("create table t2 (a int)")
 	err := tk2.ExecToErr("alter table t2 add foreign key (a) references t1 (id) on update cascade")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't1'", err.Error())
+	require.Equal(t, "[planner:1143]REFERENCES command denied to user 'u1'@'%' for column 'id' in table 't1'", err.Error())
 	tk.MustExec("grant references on test.t1 to 'u1'@'%';")
 	tk2.MustExec("alter table t2 add foreign key (a) references t1 (id) on update cascade")
 }
@@ -984,7 +984,7 @@ func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableI
 func getTableInfoReferredForeignKeys(t *testing.T, dom *domain.Domain, db, tb string) []*model.ReferredFKInfo {
 	err := dom.Reload()
 	require.NoError(t, err)
-	return dom.InfoSchema().GetTableReferredForeignKeys(db, tb)
+	return dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr(db), pmodel.NewCIStr(tb))
 }
 
 func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
@@ -1156,7 +1156,7 @@ func TestAddForeignKey(t *testing.T) {
 	require.Equal(t, "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t1`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t2` (`id`) ON DELETE CASCADE)", err.Error())
 	tbl1Info := getTableInfo(t, dom, "test", "t1")
 	require.Equal(t, 0, len(tbl1Info.ForeignKeys))
-	referredFKs := dom.InfoSchema().GetTableReferredForeignKeys("test", "t2")
+	referredFKs := dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.Equal(t, 0, len(referredFKs))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
@@ -1174,7 +1174,7 @@ func TestAddForeignKey(t *testing.T) {
 	require.Equal(t, "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t1`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t2` (`id`) ON DELETE CASCADE)", err.Error())
 	tbl1Info = getTableInfo(t, dom, "test", "t1")
 	require.Equal(t, 0, len(tbl1Info.ForeignKeys))
-	referredFKs = dom.InfoSchema().GetTableReferredForeignKeys("test", "t2")
+	referredFKs = dom.InfoSchema().GetTableReferredForeignKeys(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.Equal(t, 0, len(referredFKs))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) NOT NULL,\n" +

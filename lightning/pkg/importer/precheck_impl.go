@@ -80,6 +80,9 @@ func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAv
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
+		if engine.IsReplicatorHTTPResp(&store.Store) {
+			continue
+		}
 		if engine.IsTiFlashHTTPResp(&store.Store) {
 			tiflashAvail += uint64(avail)
 		} else {
@@ -295,7 +298,7 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 			if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 				continue
 			}
-			if engine.IsTiFlashHTTPResp(&store.Store) {
+			if engine.IsTiFlashHTTPResp(&store.Store) || engine.IsReplicatorHTTPResp(&store.Store) {
 				continue
 			}
 			if regionCnt > errorThrehold {
@@ -358,7 +361,7 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		if engine.IsTiFlashHTTPResp(&store.Store) || engine.IsReplicatorHTTPResp(&store.Store) {
 			continue
 		}
 		stores = append(stores, &store)
@@ -1021,7 +1024,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 	// get columns name from data file.
 	dataFileMeta := dataFile.FileMeta
 
-	if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
+	if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet && tp != mydump.SourceTypeORC {
 		msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
 		return msgs, nil
 	}

@@ -58,6 +58,7 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+	crossKS  bool
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -87,6 +88,11 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionDropResourceGroup:
 		return applyDropResourceGroup(b, m, diff), nil
+	case model.ActionCreateProcedure, model.ActionDropProcedure, model.ActionAlterProcedure:
+		if err := b.reloadRoutines(); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -582,7 +588,7 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.NameAsID())
 	oldTableID, newTableID, err := b.getTableIDs(m, diff)
 	if err != nil {
 		return nil, err
@@ -682,7 +688,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m meta.Reader, diff *model.
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.NameAsID())
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -699,7 +705,7 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m meta.Reader, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.NameAsID())
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
 	return nil
 }
@@ -710,6 +716,9 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 		return nil
 	}
 	b.infoSchema.delSchema(di)
+	if b.infoSchema.routineMap != nil {
+		delete(b.infoSchema.routineMap, di.Name.L)
+	}
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
@@ -768,6 +777,8 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
+		// Keep the allocator routing logic in sync with the current TableInfo.
+		allocs.SepAutoInc = tblInfo.SepAutoInc()
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIDCache)
@@ -791,6 +802,9 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 				newAlloc := autoid.NewAllocator(b.Requirement, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 				allocs = allocs.Append(newAlloc)
 			}
+			allocs = pkdbMaybeAdjustAllocsAfterAutoIncrementEnabled(b.Requirement, dbInfo, tblInfo, allocs, tblVer)
+		case model.ActionMultiSchemaChange:
+			allocs = pkdbMaybeAdjustAllocsAfterAutoIncrementEnabled(b.Requirement, dbInfo, tblInfo, allocs, tblVer)
 		}
 		return allocs
 	}
@@ -853,8 +867,8 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 	}
 
 	if !b.enableV2 {
-		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
-		tableNames.tables[tblInfo.Name.L] = tbl
+		tableNames := b.infoSchema.schemaMap[dbInfo.NameAsID()]
+		tableNames.tables[tblInfo.NameAsID()] = tbl
 	}
 	b.addTable(schemaVersion, dbInfo, tblInfo, tbl)
 
@@ -912,8 +926,9 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 	if idx == -1 {
 		return affected
 	}
+	tblInfo := sortedTbls[idx].Meta()
+	b.infoSchema.deleteTriggers(dbInfo.Name, tblInfo)
 	if tableNames, ok := b.infoSchema.schemaMap[dbInfo.Name.L]; ok {
-		tblInfo := sortedTbls[idx].Meta()
 		delete(tableNames.tables, tblInfo.Name.L)
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
@@ -963,6 +978,17 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	return b.infoSchema
 }
 
+func cloneRoutineMap(src map[string]map[string]*model.ProcedureInfo) map[string]map[string]*model.ProcedureInfo {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]map[string]*model.ProcedureInfo, len(src))
+	for schemaName, routines := range src {
+		dst[schemaName] = maps.Clone(routines)
+	}
+	return dst
+}
+
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
@@ -985,6 +1011,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
+	b.infoSchema.routineMap = cloneRoutineMap(oldIS.routineMap)
+	b.infoSchema.triggerTableMap = maps.Clone(oldIS.triggerTableMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil
@@ -1071,7 +1099,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.sortAllTablesByID()
 
-	return nil
+	return b.reloadRoutines()
 }
 
 func tableFromMeta(alloc autoid.Allocators, factory func() (pools.Resource, error), tblInfo *model.TableInfo) (table.Table, error) {
@@ -1109,7 +1137,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 
-		schTbls.tables[t.Name.L] = tbl
+		schTbls.tables[t.NameAsID()] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
 		if len(di.TableName2ID) > 0 {
 			delete(di.TableName2ID, t.Name.L)
@@ -1151,6 +1179,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 }
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
+	b.infoSchema.addTriggers(di.Name, tblInfo)
 	if b.enableV2 {
 		b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
 		b.infoData.add(tableItem{
@@ -1198,6 +1227,12 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 // WithStore attaches the given store to builder.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
 	b.store = s
+	return b
+}
+
+// WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
+func (b *Builder) WithCrossKS(crossKS bool) *Builder {
+	b.crossKS = crossKS
 	return b
 }
 

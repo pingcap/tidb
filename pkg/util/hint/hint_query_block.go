@@ -220,21 +220,21 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 }
 
 // HandleUnusedViewHints handle the unused view hints.
-func (p *QBHintHandler) HandleUnusedViewHints(state *QBHintBuildState, warn []string) []string {
+func (p *QBHintHandler) HandleUnusedViewHints(state *QBHintBuildState) []string {
 	if state == nil {
-		return warn
+		return nil
 	}
 
-	warn = warn[:0]
+	var warns []string
 	if p.ViewQBNameToTable != nil {
 		for qbName := range p.ViewQBNameToTable {
 			_, ok := state.ViewQBNameUsed[qbName]
 			if !ok && p.warnHandler != nil {
-				warn = append(warn, fmt.Sprintf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
+				warns = append(warns, fmt.Sprintf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
 			}
 		}
 	}
-	return warn
+	return warns
 }
 
 const (

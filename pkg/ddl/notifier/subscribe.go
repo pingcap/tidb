@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -156,6 +157,7 @@ func (n *DDLNotifier) start() {
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {
+		pkdbrepl.CheckStandbyBlocking(ctx)
 		select {
 		case <-ctx.Done():
 			return

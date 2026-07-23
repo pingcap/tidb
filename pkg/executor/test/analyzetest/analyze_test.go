@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -127,6 +128,114 @@ PARTITION BY RANGE ( a ) (
 			}
 		}
 	})
+}
+
+// TestAnalyzeRefreshesOnlyPersistedStats verifies that ANALYZE only refreshes
+// physical or global stats IDs whose save path completed successfully. Each
+// subtest seeds stale global stats behind the cache-wide max version, caches a
+// pseudo global entry, analyzes one partition, and checks whether the global
+// entry is refreshed according to the global merge result.
+func TestAnalyzeRefreshesOnlyPersistedStats(t *testing.T) {
+	testCases := []struct {
+		name                     string
+		partitionPruneMode       string
+		makeGlobalStatsMergeFail bool
+		expectGlobalStatsRefresh bool
+	}{
+		{
+			name:               "static partition analyze",
+			partitionPruneMode: "static",
+		},
+		{
+			name:                     "successful dynamic global stats merge",
+			partitionPruneMode:       "dynamic",
+			expectGlobalStatsRefresh: true,
+		},
+		{
+			name:                     "failed dynamic global stats merge",
+			partitionPruneMode:       "dynamic",
+			makeGlobalStatsMergeFail: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@session.tidb_analyze_version = 2")
+			tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+			tk.MustExec("set @@session.tidb_enable_async_merge_global_stats = ON")
+			tk.MustExec(`create table t(a int) partition by range(a) (
+				partition p0 values less than (10),
+				partition p1 values less than (20)
+			)`)
+			tk.MustExec("insert into t values (1), (11)")
+			analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
+			tk.MustExec("analyze table t")
+			if testCase.makeGlobalStatsMergeFail {
+				// Add a predicate column after the initial analyze so p1 has no stats for
+				// it. With missing-partition skipping disabled, analyzing p0 makes the
+				// global merge fail before it writes the old global row.
+				tk.MustExec("alter table t add column b int")
+				analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
+				tk.MustExec("set @@session.tidb_skip_missing_partition_stats = 0")
+			}
+
+			table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+			require.NoError(t, err)
+			tableInfo := table.Meta()
+			partitionInfo := tableInfo.GetPartitionInfo()
+			require.NotNil(t, partitionInfo)
+			p0ID := partitionInfo.Definitions[0].ID
+
+			// Reproduce the cache state from the regression: the persisted global row
+			// is stale, its cache entry is pseudo, and another stats update has moved
+			// the cache-wide max version past the global row.
+			const (
+				staleGlobalVersion  uint64 = 100
+				cacheWideMaxVersion uint64 = 200
+			)
+			tk.MustExec("update mysql.stats_meta set version = ? where table_id = ?", staleGlobalVersion, tableInfo.ID)
+			handle := dom.StatsHandle()
+			handle.Clear()
+			globalStats := handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+			require.True(t, globalStats.Pseudo)
+			handle.UpdateStatsCache(statstypes.CacheUpdate{
+				Updated: []*statistics.Table{
+					{
+						HistColl: statistics.HistColl{PhysicalID: tableInfo.ID + 1000},
+						Version:  cacheWideMaxVersion,
+					},
+				},
+			})
+			require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+
+			if testCase.makeGlobalStatsMergeFail {
+				tk.MustExec("insert into t values (2, 2), (3, 3)")
+			} else {
+				tk.MustExec("insert into t values (2), (3)")
+			}
+			tk.MustExec("set @@session.tidb_partition_prune_mode = ?", testCase.partitionPruneMode)
+			tk.MustExec("analyze table t partition p0")
+			if testCase.makeGlobalStatsMergeFail {
+				// The merge error is intentionally non-fatal to ANALYZE; verify the test
+				// exercised that path before checking the cache refresh result.
+				warnings := fmt.Sprint(tk.MustQuery("show warnings").Rows())
+				require.Contains(t, warnings, "Build global-level stats failed")
+			}
+
+			partitionStats := handle.GetPhysicalTableStats(p0ID, tableInfo)
+			require.False(t, partitionStats.Pseudo)
+			globalStats = handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+			if testCase.expectGlobalStatsRefresh {
+				require.False(t, globalStats.Pseudo)
+			} else {
+				require.True(t, globalStats.Pseudo)
+			}
+			require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+		})
+	}
 }
 
 func TestAnalyzeReplicaReadFollower(t *testing.T) {
@@ -253,7 +362,7 @@ func TestAnalyzeRestrict(t *testing.T) {
 		if earlyDone {
 			t.Fatalf("analyze finished before kill query, err=%v", earlyErr)
 		}
-		tkKiller.MustExec(fmt.Sprintf("kill query %d", connID))
+		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
 
 		select {
 		case err := <-done:
@@ -2009,21 +2118,25 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	}
 }
 
-func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string, timeLimit int64) {
+func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string) {
 	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
 	require.Equal(t, 1, len(rows), comment)
 	require.Equal(t, jobInfo, rows[0][3], comment)
 	require.Equal(t, status, rows[0][7], comment)
 	require.Equal(t, failReason, rows[0][8], comment)
-	if timeLimit <= 0 {
-		return
+}
+
+func getMockKillAutoAnalyzeFailpoint(status string) string {
+	switch status {
+	case "pending":
+		return "github.com/pingcap/tidb/pkg/executor/mockKillPending"
+	case "running":
+		return "github.com/pingcap/tidb/pkg/executor/mockKillRunning"
+	case "finished":
+		return "github.com/pingcap/tidb/pkg/executor/mockKillFinished"
+	default:
+		return ""
 	}
-	const layout = time.DateTime
-	startTime, err := time.Parse(layout, rows[0][5].(string))
-	require.NoError(t, err, comment)
-	endTime, err := time.Parse(layout, rows[0][6].(string))
-	require.NoError(t, err, comment)
-	require.Less(t, endTime.Sub(startTime), time.Duration(timeLimit)*time.Second, comment)
 }
 
 func testKillAutoAnalyze(t *testing.T, ver int) {
@@ -2071,11 +2184,12 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			tk.MustExec("delete from mysql.analyze_jobs")
-			mockAnalyzeStatus := "github.com/pingcap/tidb/pkg/executor/mockKill" + strings.Title(status)
+			mockAnalyzeStatus := getMockKillAutoAnalyzeFailpoint(status)
 			if status == "running" {
 				mockAnalyzeStatus += "V" + strconv.Itoa(ver)
 			}
 			mockAnalyzeStatus += "AnalyzeJob"
+			require.NotEmpty(t, mockAnalyzeStatus)
 			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
 			defer func() {
 				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
@@ -2092,12 +2206,11 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
-				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
-				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 10)
+				// The start_time may or may not be recorded before the job is killed.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -2145,12 +2258,13 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			tk.MustExec("delete from mysql.analyze_jobs")
-			mockAnalyzeStatus := "github.com/pingcap/tidb/pkg/executor/mockKill" + strings.Title(status)
+			mockAnalyzeStatus := getMockKillAutoAnalyzeFailpoint(status)
 			if status == "running" {
 				mockAnalyzeStatus += "AnalyzeIndexJob"
 			} else {
 				mockAnalyzeStatus += "AnalyzeJob"
 			}
+			require.NotEmpty(t, mockAnalyzeStatus)
 			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
 			defer func() {
 				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
@@ -2166,12 +2280,11 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
-				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
-				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 10)
+				// The start_time may or may not be recorded before the job is killed.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -2467,8 +2580,12 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 0, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
 	// Static partition analyze may flush pending partition deltas into the
 	// logical/global stats_meta row, but it must not build a global column
-	// histogram. In that meta-only global stats case, the global column is absent.
-	require.Nil(t, tbl.GetCol(tableInfo.Columns[0].ID))
+	// histogram. The global column may be absent or be a meta-only placeholder.
+	if globalCol := tbl.GetCol(tableInfo.Columns[0].ID); globalCol != nil {
+		require.False(t, globalCol.StatsAvailable())
+		require.Equal(t, 0, len(globalCol.Buckets))
+		require.Nil(t, globalCol.TopN)
+	}
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -3454,4 +3571,28 @@ func TestIssue66918(t *testing.T) {
 
 	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, tblStats.GetIdx(tblInfo.Indices[0].ID).IsAnalyzed())
+}
+
+func TestAnalyzeTableWithVarcharShardIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+
+	tk.MustExec(`create table t_varchar_shard (
+		id int primary key,
+		a varchar(32) collate utf8mb4_general_ci,
+		unique key uk ((tidb_shard(a)), a)
+	)`)
+	tk.MustExec(`insert into t_varchar_shard values (1, 'FT00001')`)
+	tk.MustExec("analyze table t_varchar_shard")
+
+	h := dom.StatsHandle()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_varchar_shard"))
+	require.NoError(t, err)
+
+	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.NotNil(t, tblStats)
+	require.True(t, tblStats.IsAnalyzed())
+	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
 }

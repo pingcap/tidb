@@ -649,6 +649,9 @@ const (
 	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
 	TiDBEnableIndexMerge = "tidb_enable_index_merge"
 
+	// TiDBEnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
+	TiDBEnableNoBackslashEscapesInLike = "tidb_enable_no_backslash_escapes_in_like"
+
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
 
@@ -816,6 +819,8 @@ const (
 
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
+	// TiDBOptEnableSelectedPartitionStats indicates whether to use selected partition stats under dynamic partition pruning.
+	TiDBOptEnableSelectedPartitionStats = "tidb_opt_enable_selected_partition_stats"
 
 	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
 	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
@@ -1053,10 +1058,18 @@ const (
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
 
+	// TiDBPlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
+	TiDBPlanCacheMaxDecimalParamNums = "tidb_plan_cache_max_decimal_param_nums"
+
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
 
+	// TiDBEnableUDVSubstitute indicates whether to enable user defined variable substitute.
+	TiDBEnableUDVSubstitute = "tidb_enable_udv_substitute"
+
+	// TiDBEnableSPParamSubstitute indicates whether to enable stored procedure parameter substitute.
+	TiDBEnableSPParamSubstitute = "tidb_enable_sp_param_substitute"
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 )
@@ -1292,6 +1305,20 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
+	// TiDBEnableLabelSecurity is use to enable or disable label security on TiDB.
+	TiDBEnableLabelSecurity = "tidb_enable_label_security"
+	// TiDBEnableLoginHistory indicates whether tidb need enable the login-history.
+	TiDBEnableLoginHistory = "tidb_enable_login_history"
+	// TiDBLoginHistoryRetainDuration indicates the duration of retaining the record in mysql.log_history.
+	TiDBLoginHistoryRetainDuration = "tidb_login_history_retain_duration"
+	// TiDBEnableProcedure if enable store procedure
+	TiDBEnableProcedure = "tidb_enable_procedure"
+	// TiDBEnableProcedureAstCache indicates whether tidb need enable or disable ast cache.
+	TiDBEnableProcedureAstCache = "tidb_enable_sp_ast_cache"
+	//TiDBProcedureLastErrorSQL procedure last hander SQL warning/error.
+	TiDBProcedureLastErrorSQL = "sp_last_error_sql"
+	// TiDBEnableDutySeparationMode indicates if enable the mode of duty separation.
+	TiDBEnableDutySeparationMode = "tidb_enable_duty_separation_mode"
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
@@ -1505,6 +1532,7 @@ const (
 	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
+	DefTiDBOptEnableSelectedPartitionStats            = false
 	DefTiDBRegardNULLAsPoint                          = true
 	DefEnablePlacementCheck                           = true
 	DefTimestamp                                      = "0"
@@ -1518,6 +1546,7 @@ const (
 	DefTiDBCapturePlanBaseline                        = Off
 	DefTiDBIgnoreInlistPlanDigest                     = true
 	DefTiDBEnableIndexMerge                           = true
+	DefTiDBEnableNoBackslashEscapesInLike             = true
 	DefEnableLegacyInstanceScope                      = true
 	DefTiDBTableCacheLease                            = 3 // 3s
 	DefTiDBPersistAnalyzeOptions                      = true
@@ -1688,6 +1717,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBPlanCacheMaxDecimalParamNums               = -1
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBLoadBindingTimeout                         = 200
 	DefEnableCachePrepareStmt                         = false
@@ -1805,6 +1835,7 @@ var (
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
 	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
+	MaxUserConnectionsCount         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
@@ -1888,6 +1919,14 @@ func serverMemoryLimitDefaultValue() string {
 		return "80%"
 	}
 	return "0"
+}
+
+// SetDefServerMemoryLimit sets the default server memory limit.
+func SetDefServerMemoryLimit(v string) {
+	DefTiDBServerMemoryLimit = v
+	if sysVars != nil {
+		SetSysVar(TiDBServerMemoryLimit, v)
+	}
 }
 
 func mustParseDuration(str string) time.Duration {

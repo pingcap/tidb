@@ -115,8 +115,15 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		// Update the job state when all affairs done.
 		job.SchemaState = model.StateWriteReorganization
-		job.MarkNonRevertible()
+		pkdbOnAddColumnEnterWriteReorg(job, columnInfo)
 	case model.StateWriteReorganization:
+		// AUTO_INCREMENT needs backfill before we can create a unique key/PK on it.
+		shouldReturn, ver1, err1 := pkdbMaybeHandleAddAutoIncrementColumnWriteReorg(jobCtx, w, job, tblInfo, columnInfo)
+		if shouldReturn {
+			return ver1, err1
+		}
+		ver = ver1
+
 		// reorganization -> public
 		// Adjust table column offset.
 		failpoint.InjectCall("onAddColumnStateWriteReorg")
@@ -147,7 +154,7 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 }
 
 func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
-	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
+	err := checkUnsupportedColumnConstraint(ctx, specNewColumn, ti)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,11 +180,16 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	return CreateNewColumn(ctx, schema, spec, t, specNewColumn)
 }
 
-func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
+func checkUnsupportedColumnConstraint(ctx sessionctx.Context, col *ast.ColumnDef, ti ast.Ident) error {
 	for _, constraint := range col.Options {
 		switch constraint.Tp {
 		case ast.ColumnOptionAutoIncrement:
-			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+			// Adding an AUTO_INCREMENT column is only allowed as part of a multi-schema change
+			// where the column will be made a key in the same statement (e.g. ADD PRIMARY KEY).
+			// Otherwise existing rows would remain 0/NULL and violate AUTO_INCREMENT expectations.
+			if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+				return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+			}
 		case ast.ColumnOptionPrimaryKey:
 			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		case ast.ColumnOptionUniqKey:
@@ -536,6 +548,9 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
+			case ast.ColumnOptionSecuredWith:
+				label := pmodel.NewCIStr(v.StrValue)
+				col.SecurityLabel = &label
 			case ast.ColumnOptionGenerated:
 				sb.Reset()
 				err = v.Expr.Restore(restoreCtx)
@@ -571,6 +586,12 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 					}
 					constraints = append(constraints, constraint)
 				}
+			case ast.ColumnOptionEncryption:
+				enableEncryption := strings.ToUpper(v.StrValue) == "Y"
+				if enableEncryption && !variable.EnableEAL.Load() {
+					return nil, nil, errEALIsOff
+				}
+				col.Encryption = enableEncryption
 			}
 		}
 	}
@@ -626,6 +647,23 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 	return hasDefaultValue, nil
 }
 
+// allowedDateFormatSpecifiers holds the set of format strings that are permitted
+// within a DEFAULT value expression for the DATE_FORMAT function.
+var allowedDateFormatSpecifiers = map[string]struct{}{
+	"%Y-%m":             {},
+	"%Y-%m-%d":          {},
+	"%y%m%d":            {},
+	"%Y-%m-%d %H.%i.%s": {},
+	"%Y-%m-%d %H:%i:%s": {},
+}
+
+// isAllowedDateFormatSpecifier checks if the given format specifier
+// is in the whitelist of formats allowed for default value expressions.
+func isAllowedDateFormatSpecifier(specifier string) bool {
+	_, ok := allowedDateFormatSpecifiers[specifier]
+	return ok
+}
+
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (any, bool, error) {
 	switch expr.FnName.L {
@@ -664,27 +702,34 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
-		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
-		nowFunc, ok := expr.Args[0].(*ast.FuncCallExpr)
-		if ok && nowFunc.FnName.L == ast.Now {
-			if err := expression.VerifyArgsWrapper(nowFunc.FnName.L, len(nowFunc.Args)); err != nil {
+
+		switch arg0 := expr.Args[0].(type) {
+		case *ast.FuncCallExpr:
+			if arg0.FnName.L != ast.Now {
+				return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+					fmt.Sprintf("%s with disallowed function %s", expr.FnName.String(), arg0.FnName.String()))
+			}
+			if err := expression.VerifyArgsWrapper(arg0.FnName.L, len(arg0.Args)); err != nil {
 				return nil, false, errors.Trace(err)
 			}
-			valExpr, isValue := expr.Args[1].(ast.ValueExpr)
-			if !isValue || (valExpr.GetString() != "%Y-%m" && valExpr.GetString() != "%Y-%m-%d" &&
-				valExpr.GetString() != "%Y-%m-%d %H.%i.%s" && valExpr.GetString() != "%Y-%m-%d %H:%i:%s") {
-				return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
-			}
-			str, err := restoreFuncCall(expr)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			col.DefaultIsExpr = true
-			return str, false, nil
+		case ast.ValueExpr:
+			// A literal string like '2025-08-08 13:13:13' is a deterministic value and is allowed.
+		default:
+			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+				fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
-			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
+
+		valExpr, isValue := expr.Args[1].(ast.ValueExpr)
+		if !isValue || !isAllowedDateFormatSpecifier(valExpr.GetString()) {
+			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
+		}
+
+		str, err := restoreFuncCall(expr)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		return str, false, nil
 	case ast.Replace:
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)

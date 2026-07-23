@@ -46,7 +46,7 @@ func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
 	return cloned
 }
 
-// CloneCIStrs uses ast.CIStr.Clone to clone a slice of ast.CIStr.
+// CloneCIStrs clones a slice of pmodel.CIStr.
 func CloneCIStrs(strs []pmodel.CIStr) []pmodel.CIStr {
 	if strs == nil {
 		return nil

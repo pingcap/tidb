@@ -19,6 +19,7 @@ go_library(
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor/execute",
+        "//pkg/domain/pkdb_repl",
         "//pkg/lightning/log",
         "//pkg/metrics",
         "//pkg/sessionctx/variable",

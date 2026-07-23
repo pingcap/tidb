@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	kv "github.com/pingcap/tidb/pkg/lightning/tikv"

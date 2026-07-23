@@ -640,5 +640,56 @@
       "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
       "explain format = 'brief' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix"
     ]
+  },
+  {
+    "name": "TestParamSubstituteInSP",
+    "cases": [
+      "select b from t where a = pa",
+      "select b from t1 where a = pa",
+      "select count(*) from t1 where a between 1 and pa",
+      "select /*+ hash_agg() */ a, sum(c) from t where a = pa group by a",
+      "select /*+ stream_agg() */ a, sum(c) from t where a = pa group by a",
+      "select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > pa",
+      "select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > pa",
+      "select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > pa",
+      "select * from t3 where a = pa and b = 1",
+      "select * from t1 where t1.a in (select t2.a from t2 where t1.a = t2.a and t2.a > pa)",
+      "select /*+ merge_join(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.a = t2.a and t2.a > pa)",
+      "select /*+ use_index_merge(t2, a, b) */ * from t2 where a > pa and b > 2"
+    ]
+  },
+  {
+    "name": "TestUDVSubstituteInSP",
+    "cases": [
+      "select b from t where a = @a",
+      "select b from t1 where a = @a",
+      "select count(*) from t1 where a between 1 and @a",
+      "select /*+ hash_agg() */ a, sum(c) from t where a = @a group by a",
+      "select /*+ stream_agg() */ a, sum(c) from t where a = @a group by a",
+      "select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > @a",
+      "select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > @a",
+      "select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > @a",
+      "select * from t3 where a = @a and b = 1",
+      "select * from t1 where t1.a in (select t2.a from t2 where t1.a = t2.a and t2.a > @a)",
+      "select /*+ merge_join(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.a = t2.a and t2.a > @a)",
+      "select /*+ use_index_merge(t2, a, b) */ * from t2 where a > @a and b > 2"
+    ]
+  },
+  {
+    "name": "TestUDVSubstituteInSPWithPrepare",
+    "cases": [
+      "select b from t where a = @a",
+      "select b from t1 where a = @a",
+      "select count(*) from t1 where a between 1 and @a",
+      "select /*+ hash_agg() */ a, sum(c) from t where a = @a group by a",
+      "select /*+ stream_agg() */ a, sum(c) from t where a = @a group by a",
+      "select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > @a",
+      "select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > @a",
+      "select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.a > @a",
+      "select * from t3 where a = @a and b = 1",
+      "select * from t1 where t1.a in (select t2.a from t2 where t1.a = t2.a and t2.a > @a)",
+      "select /*+ merge_join(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.a = t2.a and t2.a > @a)",
+      "select /*+ use_index_merge(t2, a, b) */ * from t2 where a > @a and b > 2"
+    ]
   }
 ]

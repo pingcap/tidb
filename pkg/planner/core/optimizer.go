@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -148,6 +149,72 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 				return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
 			return v.err
+		}
+	}
+	return nil
+}
+
+type lbacLabelKey struct {
+	policyName string
+	labelName  string
+	accessType ast.SecurityLabelAccessType
+}
+
+// CheckLBACColumnAccess validates label-based access for referenced columns.
+func CheckLBACColumnAccess(ctx base.PlanContext, pm privilege.Manager, vs []ColumnVisitInfo) error {
+	if !variable.EnableLBAC.Load() || len(vs) == 0 {
+		return nil
+	}
+	lbacCache := pm.GetSecurityLabelCache()
+	if lbacCache == nil {
+		return errors.Trace(lbac.ErrLBACCacheUnavailable)
+	}
+	sessVars := ctx.GetSessionVars()
+	currentUser := sessVars.User
+	if currentUser == nil {
+		return nil
+	}
+	activeRoles := sessVars.ActiveRoles
+	if pm.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+		return nil
+	}
+
+	userName, hostName := auth.GetUserAndHostName(currentUser)
+	accessCheckers := make(map[ast.SecurityLabelAccessType]*lbac.SecurityLabelAccessChecker)
+	getAccessChecker := func(accessType ast.SecurityLabelAccessType) (*lbac.SecurityLabelAccessChecker, error) {
+		if checker := accessCheckers[accessType]; checker != nil {
+			return checker, nil
+		}
+		checker, err := lbac.NewSecurityLabelAccessChecker(lbacCache, userName, hostName, accessType)
+		if err != nil {
+			return nil, err
+		}
+		accessCheckers[accessType] = checker
+		return checker, nil
+	}
+
+	seen := make(map[lbacLabelKey]struct{}, len(vs))
+	for _, info := range vs {
+		if info.PolicyName == "" || info.LabelName == "" {
+			continue
+		}
+		accessType := info.AccessType
+		key := lbacLabelKey{
+			policyName: info.PolicyName,
+			labelName:  info.LabelName,
+			accessType: accessType,
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		accessChecker, err := getAccessChecker(accessType)
+		if err != nil {
+			return err
+		}
+		allowed, err := accessChecker.CheckLabelName(info.PolicyName, info.LabelName)
+		if err != nil || !allowed {
+			return plannererrors.ErrColumnaccessDenied.FastGenByArgs(accessType.String(), userName, hostName, info.Column, info.Table)
 		}
 	}
 	return nil
@@ -808,6 +875,9 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
+		helper.updateTarget(window, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
+	case *PhysicalOrderedWindow:
 		helper.updateTarget(window, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSort:

@@ -455,15 +455,40 @@ Error 1470 (HY000): String 'some_user_name@host_1234567890abcdefghij1234567890ab
 DROP USER ru6@localhost;
 DROP USER ru3;
 DROP USER 'ru1'@'localhost';
-CREATE USER ccnobody, ccconfig, ccprocess;
+CREATE USER ccnobody, ccconfig, ccconfigview, ccprocess;
 GRANT CONFIG ON *.* TO ccconfig;
+GRANT CONFIG_VIEW ON *.* TO ccconfigview;
 GRANT Process ON *.* TO ccprocess;
 SHOW GRANTS;
 Grants for User
 GRANT USAGE ON *.* TO 'ccnobody'@'%'
+SHOW CONFIG WHERE type='__no_such_type__';
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG or CONFIG_VIEW privilege(s) for this operation
 SELECT * FROM information_schema.cluster_config;
-Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG or CONFIG_VIEW privilege(s) for this operation
 SELECT * FROM information_schema.cluster_hardware;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG or CONFIG_VIEW privilege(s) for this operation
+SET CONFIG xxx log.level='info';
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+SELECT * FROM information_schema.cluster_info;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_load;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_systeminfo;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SHOW GRANTS;
+Grants for User
+GRANT USAGE ON *.* TO 'ccconfigview'@'%'
+GRANT CONFIG_VIEW ON *.* TO 'ccconfigview'@'%'
+SHOW CONFIG WHERE type='__no_such_type__';
+Type	Instance	Name	Value
+SELECT * FROM information_schema.cluster_config limit 0;
+TYPE	INSTANCE	KEY	VALUE
+SELECT * FROM information_schema.cluster_hardware limit 0;
+TYPE	INSTANCE	DEVICE_TYPE	DEVICE_NAME	NAME	VALUE
+SET CONFIG xxx log.level='info';
 Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
 SELECT * FROM information_schema.cluster_info;
 Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
@@ -476,10 +501,14 @@ Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privil
 SHOW GRANTS;
 Grants for User
 GRANT CONFIG ON *.* TO 'ccconfig'@'%'
+SHOW CONFIG WHERE type='__no_such_type__';
+Type	Instance	Name	Value
 SELECT * FROM information_schema.cluster_config limit 0;
 TYPE	INSTANCE	KEY	VALUE
 SELECT * FROM information_schema.cluster_HARDWARE limit 0;
 TYPE	INSTANCE	DEVICE_TYPE	DEVICE_NAME	NAME	VALUE
+SET CONFIG xxx log.level='info';
+Error 1105 (HY000): unknown type xxx
 SELECT * FROM information_schema.cluster_INFO;
 Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
 SELECT * FROM information_schema.cluster_LOAD;
@@ -500,9 +529,10 @@ TYPE	INSTANCE	SYSTEM_TYPE	SYSTEM_NAME	NAME	VALUE
 SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%';
 TIME	TYPE	INSTANCE	LEVEL	MESSAGE
 SELECT * FROM information_schema.CLUSTER_config;
-Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG or CONFIG_VIEW privilege(s) for this operation
 SELECT * FROM information_schema.CLUSTER_hardware;
-Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG or CONFIG_VIEW privilege(s) for this operation
+DROP USER ccnobody, ccconfig, ccconfigview, ccprocess;
 CREATE USER 'superuser';
 CREATE USER 'nobodyuser';
 GRANT ALL ON *.* TO 'superuser';
@@ -636,9 +666,9 @@ Error 8121 (HY000): privilege check for 'Super' fail
 admin check index privilege__privileges.admin idx_a;
 Error 8121 (HY000): privilege check for 'Super' fail
 admin show ddl jobs;
-Error 8121 (HY000): privilege check for 'Super' fail
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ADMIN_VIEW privilege(s) for this operation
 admin show ddl job queries 10;
-Error 8121 (HY000): privilege check for 'Super' fail
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ADMIN_VIEW privilege(s) for this operation
 ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
 Error 8121 (HY000): privilege check for 'Super' fail
 ADMIN SHOW SLOW RECENT 3;
@@ -663,6 +693,20 @@ update privilege__privileges.tt1 inner join t_f
 set t_f.fullname=t_f.fullname
 where tt1.id=t_f.id;
 Error 1288 (HY000): The target table t_f of the UPDATE is not updatable
+drop user if exists test_permission@'%';
+CREATE USER test_permission;
+set sql_require_primary_key = 0;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
+set sql_require_primary_key = 1;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
+set global sql_require_primary_key = 0;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
+set global sql_require_primary_key = 1;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
+GRANT SUPER ON *.* TO test_permission;
+set global sql_require_primary_key = 1;
+set global sql_require_primary_key = 0;
+drop user test_permission@'%';
 drop user if exists u1;
 create user u1;
 create role 'aa@bb';

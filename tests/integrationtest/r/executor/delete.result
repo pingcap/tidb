@@ -114,14 +114,14 @@ delete from t where cast(id as unsigned) = 1;
 Error 1690 (22003): BIGINT value is out of range in '18446744073709551616'
 update t set id = '1' where cast(id as unsigned) = 1;
 Error 1690 (22003): BIGINT value is out of range in '18446744073709551616'
-set sql_mode=''
+set sql_mode='';
 delete from t where cast(id as unsigned) = 1;
 Level	Code	Message
 Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
 update t set id = '1' where cast(id as unsigned) = 1;
 Level	Code	Message
 Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
-set sql_mode=DEFAULT
+set sql_mode=DEFAULT;
 drop table if exists parent, child;
 create table parent (a int primary key);
 create table child (a int, foreign key (a) references parent(a));

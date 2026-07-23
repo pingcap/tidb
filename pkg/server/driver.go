@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -27,7 +28,7 @@ import (
 // IDriver opens IContext.
 type IDriver interface {
 	// OpenCtx opens an IContext with connection id, client capability, collation, dbname and optionally the tls state.
-	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error)
+	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, tlcpState *tlcp.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error)
 }
 
 // PreparedStatement is the interface to use a prepared statement.

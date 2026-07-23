@@ -42,6 +42,7 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
 	tkRoot.MustExec("create table t2(c1 int, c2 int)")
 	tkRoot.MustExec("create user tu@'%'")
+	tkRoot.MustExec("grant select on test.t2 to tu@'%'")
 	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tkUser.Session().Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
@@ -84,8 +85,23 @@ func TestExplainFor(t *testing.T) {
 	check()
 	tkRoot.MustQuery("explain analyze select * from t1;")
 	check()
+	// Explaining the current user's own connection should still work without extra privileges.
+	tkUser.MustQuery("select * from test.t2;")
+	tkUserProcess := tkUser.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkRootProcess, tkUserProcess}
+	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkUser.MustQuery(fmt.Sprintf("explain for connection %d", tkUserProcess.ID))
+	// Cross-user access should require either PROCESS or SUPER.
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-	require.True(t, plannererrors.ErrAccessDenied.Equal(err))
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PROCESS privilege(s) for this operation")
+	tkRoot.MustExec("grant process on *.* to tu@'%'")
+	tkUser.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+	tkRoot.MustExec("revoke process on *.* from tu@'%'")
+	err = tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PROCESS privilege(s) for this operation")
+	tkRoot.MustExec("grant super on *.* to tu@'%'")
+	tkUser.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	err = tkUser.ExecToErr("explain for connection 42")
 	require.True(t, plannererrors.ErrNoSuchThread.Equal(err))
 

@@ -83,6 +83,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &PhysicalUnionScan{}
 	_ base.PhysicalPlan = &PhysicalWindow{}
+	_ base.PhysicalPlan = &PhysicalOrderedWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
@@ -159,6 +160,9 @@ type PhysicalTableReader struct {
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 }
 
 // LoadTableStats loads the stats of the table read by this plan.
@@ -289,6 +293,7 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 		Columns:        sg.Source.TblCols,
 		ColumnNames:    sg.Source.OutputNames(),
 	}
+	reader.TableSplit = sg.Source.TableSplit
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
@@ -307,6 +312,7 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	cloned.StoreType = p.StoreType
 	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	if cloned.tablePlan, err = p.tablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
@@ -375,6 +381,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	return cloned, err
 }
 
@@ -532,6 +539,7 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 	if cloned.tablePlan, err = p.tablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	if p.ExtraHandleCol != nil {
 		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
 	}
@@ -1029,6 +1037,8 @@ type PhysicalTableScan struct {
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
@@ -1059,6 +1069,7 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
 	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
 	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(ts.LateMaterializationFilterCondition)
+	clonedScan.PlanPartInfo = ts.PlanPartInfo.Clone()
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
@@ -1725,6 +1736,8 @@ type PhysicalIndexJoin struct {
 	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
 	// Apply outer/inner order after decorrelation.
 	FromDecorrelatedApply bool
+	// DecorrelatedApplyID identifies the Apply that produced this IndexJoin.
+	DecorrelatedApplyID int
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1749,6 +1762,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
 	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
+	cloned.DecorrelatedApplyID = p.DecorrelatedApplyID
 	return cloned, nil
 }
 
@@ -1759,7 +1773,8 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer +
+		size.SizeOfBool + size.SizeOfInt
 	if p.innerPlan != nil {
 		sum += p.innerPlan.MemoryUsage()
 	}
@@ -2611,6 +2626,17 @@ type PhysicalWindow struct {
 	storeTp kv.StoreType
 }
 
+// PhysicalOrderedWindow is a window operator for inputs that are already ordered
+// by the window partition/order keys. It is only valid when the child plan can
+// provide that property by itself, for example from an ordered index scan.
+//
+// Unlike PhysicalWindow, this operator must not rely on a Sort enforcer. If a
+// sort is needed to satisfy the window property, the optimizer should use the
+// regular PhysicalWindow path instead.
+type PhysicalOrderedWindow struct {
+	PhysicalWindow
+}
+
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
@@ -2660,6 +2686,34 @@ func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 		cloned.Frame = p.Frame.Clone()
 	}
 
+	return cloned, nil
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalOrderedWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalOrderedWindow)
+	*cloned = *p
+	cloned.SetSCtx(newCtx)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
+	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
+	for _, it := range p.OrderBy {
+		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
+	}
+	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
+	for _, it := range p.WindowFuncDescs {
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+	}
+	if p.Frame != nil {
+		cloned.Frame = p.Frame.Clone()
+	}
 	return cloned, nil
 }
 

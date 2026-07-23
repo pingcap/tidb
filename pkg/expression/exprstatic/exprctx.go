@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -303,6 +304,11 @@ func (ctx *ExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConverti
 // This method always returns false for simplicity, ensuring the safest behavior across all scenarios.
 func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
 	return false
+}
+
+// LoadStoredFunction implements the `exprctx.BuildContext.LoadStoredFunction` interface.
+func (ctx *ExprContext) LoadStoredFunction(schema, funcName string) (*exprctx.StoredFuncInfo, error) {
+	return nil, errors.New("LoadStoredFunction is unsupported in static expr context")
 }
 
 // MakeExprContextStatic converts the `exprctx.StaticConvertibleExprContext` to `ExprContext`.

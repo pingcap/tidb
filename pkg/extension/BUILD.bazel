@@ -14,7 +14,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/extension",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",

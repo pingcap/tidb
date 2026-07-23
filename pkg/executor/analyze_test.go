@@ -217,8 +217,9 @@ func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_enable_extended_stats=off")
 	tk.MustExec("set @@tidb_build_sampling_stats_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
+	tk.MustExec("set @@tidb_analyze_skip_column_types=''")
 	tk.MustExec("drop table if exists t_mem_release")
 	tk.MustExec("create table t_mem_release(a text collate utf8mb4_general_ci)")
 	tk.MustExec(fmt.Sprintf("insert into t_mem_release values (repeat('a', %d))", valueLen))
@@ -230,21 +231,26 @@ func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
 	var afterBytes atomic.Int64
 	var beforeCollectorMem atomic.Int64
 	var afterCollectorMem atomic.Int64
+	var beforeSeen atomic.Bool
+	var afterSeen atomic.Bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildBeforeReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
-		if beforeBytes.CompareAndSwap(0, bytesConsumed) {
+		if beforeSeen.CompareAndSwap(false, true) {
+			beforeBytes.Store(bytesConsumed)
 			beforeCollectorMem.Store(collectorMemSize)
 		}
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildAfterReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
-		if afterBytes.CompareAndSwap(0, bytesConsumed) {
+		if afterSeen.CompareAndSwap(false, true) {
+			afterBytes.Store(bytesConsumed)
 			afterCollectorMem.Store(collectorMemSize)
 		}
 	})
 
 	tk.MustExec("analyze table t_mem_release with 1.0 samplerate")
 
-	require.NotZero(t, beforeBytes.Load())
-	require.NotZero(t, afterBytes.Load())
+	require.True(t, beforeSeen.Load())
+	require.True(t, afterSeen.Load())
+	require.NotZero(t, beforeCollectorMem.Load())
 	require.Equal(t, beforeCollectorMem.Load(), afterCollectorMem.Load())
-	require.Equal(t, beforeCollectorMem.Load(), beforeBytes.Load()-afterBytes.Load())
+	require.Equal(t, beforeBytes.Load()-beforeCollectorMem.Load(), afterBytes.Load())
 }

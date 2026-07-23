@@ -46,6 +46,7 @@ import (
 
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
 type WithForeignKeyTrigger interface {
+	WithTriggerSupport
 	GetFKChecks() []*FKCheckExec
 	GetFKCascades() []*FKCascadeExec
 	HasFKCascades() bool

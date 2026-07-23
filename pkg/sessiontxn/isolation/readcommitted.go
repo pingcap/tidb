@@ -61,22 +61,26 @@ type PessimisticRCTxnContextProvider struct {
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
 func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRCTxnContextProvider {
-	provider := &PessimisticRCTxnContextProvider{
-		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
-			baseTxnContextProvider: baseTxnContextProvider{
-				sctx:                  sctx,
-				causalConsistencyOnly: causalConsistencyOnly,
-				onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-					txnCtx.IsPessimistic = true
-					txnCtx.Isolation = ast.ReadCommitted
-				},
-				onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
-					txn.SetOption(kv.Pessimistic, true)
-				},
+	base := basePessimisticTxnContextProvider{
+		baseTxnContextProvider: baseTxnContextProvider{
+			sctx:                  sctx,
+			causalConsistencyOnly: causalConsistencyOnly,
+			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+				txnCtx.IsPessimistic = true
+				txnCtx.Isolation = ast.ReadCommitted
+			},
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
 	}
+	return newPessimisticRCTxnContextProvider(base)
+}
 
+func newPessimisticRCTxnContextProvider(base basePessimisticTxnContextProvider) *PessimisticRCTxnContextProvider {
+	provider := &PessimisticRCTxnContextProvider{
+		basePessimisticTxnContextProvider: base,
+	}
 	provider.onTxnActiveFunc = func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 		txn.SetOption(kv.Pessimistic, true)
 		provider.latestOracleTS = txn.StartTS()
@@ -85,6 +89,23 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 	provider.getStmtReadTSFunc = provider.getStmtTS
 	provider.getStmtForUpdateTSFunc = provider.getStmtTS
 	return provider
+}
+
+// NewPessimisticRCTxnContextProviderFromRR returns a new rc provider from rr.
+func NewPessimisticRCTxnContextProviderFromRR(rr *PessimisticRRTxnContextProvider) (sessiontxn.TxnContextProvider, error) {
+	txn, err := rr.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+	base := rr.basePessimisticTxnContextProvider
+	base.onInitializeTxnCtx = func(txnCtx *variable.TransactionContext) {
+		txnCtx.IsPessimistic = true
+		txnCtx.Isolation = ast.ReadCommitted
+	}
+	base.onInitializeTxnCtx(rr.sctx.GetSessionVars().TxnCtx)
+	provider := newPessimisticRCTxnContextProvider(base)
+	provider.onTxnActiveFunc(txn, sessiontxn.EnterNewTxnDefault)
+	return provider, nil
 }
 
 // OnStmtStart is the hook that should be called when a new statement started

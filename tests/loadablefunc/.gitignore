@@ -1,0 +1,5 @@
+/lib/*.so
+/lib/*.dylib
+/loadablefunc-test.out
+/loadablefunc_tidb-server
+

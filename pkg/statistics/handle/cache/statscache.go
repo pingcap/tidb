@@ -122,15 +122,14 @@ func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, 
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
 	onlyForAnalyzedTables := len(tableAndPartitionIDs) > 0
 	start := time.Now()
-	lastVersion := s.GetNextCheckVersionWithOffset()
 	var (
 		skipMoveForwardStatsCache bool
 		rows                      []chunk.Row
 		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
-		args := []any{lastVersion}
+		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta "
+		args := make([]any, 0, 2)
 
 		if onlyForAnalyzedTables {
 			// When updating specific tables, we skip incrementing the max stats version to avoid missing
@@ -144,8 +143,14 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			for _, tableID := range tableAndPartitionIDs {
 				tableStringIDs = append(tableStringIDs, strconv.FormatInt(tableID, 10))
 			}
-			query += "and table_id in (%?) "
+			// The specific-table update is used after ANALYZE and must reload the requested tables even if
+			// another table has already moved the cache-wide max stats version past their stats_meta version.
+			query += "where table_id in (%?) "
 			args = append(args, tableStringIDs)
+		} else {
+			lastVersion := s.GetNextCheckVersionWithOffset()
+			query += "where version > %? "
+			args = append(args, lastVersion)
 		}
 		query += "order by version"
 		rows, _, err = util.ExecRows(sctx, query, args...)

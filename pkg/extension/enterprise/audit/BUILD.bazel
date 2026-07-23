@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "audit",
+    srcs = [
+        "pkdb_entry.go",
+        "pkdb_filter.go",
+        "pkdb_logger.go",
+        "pkdb_manager.go",
+        "pkdb_register.go",
+        "pkdb_util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/extension/enterprise/audit",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/extension",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "//pkg/util/stringutil",
+        "//pkg/util/table-filter",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@in_gopkg_natefinch_lumberjack_v2//:lumberjack_v2",
+        "@io_etcd_go_etcd_api_v3//mvccpb",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "audit_test",
+    timeout = "short",
+    srcs = ["pkdb_util_test.go"],
+    embed = [":audit"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/parser",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)

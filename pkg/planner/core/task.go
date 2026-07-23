@@ -142,6 +142,7 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	markAlternativeLogicalPlanSameOrderIndexJoin(&p.PhysicalIndexJoin)
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
@@ -155,6 +156,7 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	markAlternativeLogicalPlanSameOrderIndexJoin(&p.PhysicalIndexJoin)
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
@@ -168,9 +170,7 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
-	if p.FromDecorrelatedApply {
-		p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSameOrderIndexJoin()
-	}
+	markAlternativeLogicalPlanSameOrderIndexJoin(p)
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
@@ -179,6 +179,13 @@ func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	t := &RootTask{}
 	t.SetPlan(p)
 	return t
+}
+
+func markAlternativeLogicalPlanSameOrderIndexJoin(p *PhysicalIndexJoin) {
+	if !p.FromDecorrelatedApply {
+		return
+	}
+	p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSameOrderIndexJoin(p.DecorrelatedApplyID)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
@@ -2519,6 +2526,15 @@ func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
 func (p *PhysicalWindow) Attach2Task(tasks ...base.Task) base.Task {
 	if mpp, ok := tasks[0].Copy().(*MppTask); ok && p.storeTp == kv.TiFlash {
 		return p.attach2TaskForMPP(mpp)
+	}
+	t := tasks[0].ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p.Self, t)
+}
+
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalOrderedWindow) Attach2Task(tasks ...base.Task) base.Task {
+	if cop, ok := tasks[0].(*CopTask); ok && cop.indexPlan != nil && cop.tablePlan != nil {
+		return base.InvalidTask
 	}
 	t := tasks[0].ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p.Self, t)

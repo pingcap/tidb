@@ -158,6 +158,17 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	originalState := colInfo.State
 	switch colInfo.State {
+	case model.StateWriteReorganization:
+		// Rolling back an ADD COLUMN job may enter here (the new column is in WriteReorg).
+		// DropColumn's state machine doesn't normally start from WriteReorg, so treat it as the
+		// "public -> write only" transition to begin dropping.
+		colInfo.State = model.StateWriteOnly
+		setIndicesState(idxInfos, model.StateWriteOnly)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	case model.StatePublic:
 		// public -> write only
 		colInfo.State = model.StateWriteOnly
@@ -558,11 +569,10 @@ func (w *worker) updatePhysicalTableRow(
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
 				// Expected
+			case model.ActionModifyColumn:
+				workType = typeUpdateColumnWorker
 			default:
-				// workType = typeUpdateColumnWorker
-				// TODO: Support Modify Column on partitioned table
-				// https://github.com/pingcap/tidb/issues/38297
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Unsupported job Type.")
 			}
 			err := w.writePhysicalTableRecord(ctx, w.sessPool, p, workType, reorgInfo)
 			if err != nil {
@@ -596,20 +606,13 @@ func (w *worker) modifyTableColumn(
 		// Job is cancelled. So it can't be done.
 		failpoint.Return(dbterror.ErrCancelledDDLJob)
 	})
-	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if _, ok := t.(table.PartitionedTable); ok {
-		// TODO: remove when modify column of partitioned table is supported
-		// https://github.com/pingcap/tidb/issues/38297
-		return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
-	}
 	return nil
 }
 

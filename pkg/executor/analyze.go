@@ -313,13 +313,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	tableAndPartitionIDs := make([]int64, 0, len(tasks))
+	// Analyze results are persisted under their physical statistics IDs. A partitioned
+	// table's logical ID is appended later only when global stats are actually written.
+	statsIDsToRefresh := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
-		tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.TableID)
-		if tableID.IsPartitionTable() {
-			tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.PartitionID)
-		}
+		statsIDsToRefresh = append(statsIDsToRefresh, tableID.GetStatisticsID())
 	}
 
 	// Get the min number of goroutines for parallel execution.
@@ -412,10 +411,7 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
-		err = e.handleGlobalStats(statsHandle, globalStatsMap)
-		if err != nil {
-			return err
-		}
+		statsIDsToRefresh = append(statsIDsToRefresh, e.handleGlobalStats(statsHandle, globalStatsMap)...)
 	}
 
 	if intest.InTest {
@@ -435,7 +431,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
+	return statsHandle.Update(ctx, infoSchema, statsIDsToRefresh...)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
@@ -738,25 +734,22 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	killer := &e.Ctx().GetSessionVars().SQLKiller
+	killCh := killer.GetKillEventChan()
 	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
+		select {
+		case <-ctx.Done():
+		case <-killCh:
 			status := killer.GetKillSignal()
+			// resetKillEvent may close killCh when the statement is reset even though no real
+			// kill signal was recorded, so ignore that synthetic wake-up here.
 			if status == sqlkiller.UnspecifiedKillSignal {
-				continue
+				return
 			}
 			err := killer.HandleSignal()
 			if err == nil {
 				err = exeerrors.ErrQueryInterrupted
 			}
 			cancel(err)
-			return
 		}
 	}()
 	return ctx, func() {

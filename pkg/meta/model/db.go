@@ -56,3 +56,8 @@ func (db *DBInfo) Copy() *DBInfo {
 func LessDBInfo(a *DBInfo, b *DBInfo) int {
 	return strings.Compare(a.Name.L, b.Name.L)
 }
+
+// NameAsID returns the database name according to the lower_case_table_names setting.
+func (db *DBInfo) NameAsID() string {
+	return NameAsID(db.Name)
+}

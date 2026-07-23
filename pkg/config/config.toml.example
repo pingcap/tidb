@@ -188,6 +188,21 @@ ssl-cert = ""
 # Path of file that contains X509 key in PEM format for connection with mysql client.
 ssl-key = ""
 
+# Path of file that contains trusted TLCP CA for connection with mysql client.
+tlcp-ca = ""
+
+# Path of file that contains X509 TLCP signature certificate for connection with mysql client.
+tlcp-sig-cert = ""
+
+# Path of file that contains X509 TLCP signature key for connection with mysql client.
+tlcp-sig-key = ""
+
+# Path of file that contains X509 TLCP encryption certificate for connection with mysql client.
+tlcp-enc-cert = ""
+
+# Path of file that contains X509 TLCP encryption key for connection with mysql client.
+tlcp-enc-key = ""
+
 # Path of file that contains list of trusted SSL CAs for connection with cluster components.
 cluster-ssl-ca = ""
 
@@ -215,6 +230,9 @@ tls-version = ""
 
 # The RSA Key size for automatic generated RSA keys
 rsa-key-size = 4096
+
+# IP whitelist for client access.
+enable-whitelist-plugin = false
 
 [status]
 # If enable status report HTTP service.

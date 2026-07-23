@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/hex"
 	"slices"
 	"time"
 	"unsafe"
@@ -37,6 +38,7 @@ import (
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -200,6 +202,9 @@ type TableReaderExecutor struct {
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// tableSplit stores the TABLESPLIT('start', 'end') clause provided in SELECT queries.
+	tableSplit *ast.TableSplit
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -223,6 +228,21 @@ func (e *TableReaderExecutor) memUsage() int64 {
 	res += int64(e.dagPB.Size())
 	// TODO: add more statistics
 	return res
+}
+
+func (e *TableReaderExecutor) tableSplitRange() (start, end []byte, ok bool, err error) {
+	if e.tableSplit == nil {
+		return nil, nil, false, nil
+	}
+	start, err = hex.DecodeString(e.tableSplit.Start)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	end, err = hex.DecodeString(e.tableSplit.End)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return start, end, true, nil
 }
 
 // Open initializes necessary variables for using this executor.
@@ -503,6 +523,10 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	if err != nil {
 		return nil, err
 	}
+	start, end, hasTableSplit, err := e.tableSplitRange()
+	if err != nil {
+		return nil, err
+	}
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
@@ -510,6 +534,9 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		}
 		var builder distsql.RequestBuilder
 		reqBuilder := builder.SetKeyRanges(kvRange)
+		if hasTableSplit {
+			reqBuilder.Request.KeyRanges.Intersect(start, end)
+		}
 		kvReq, err := reqBuilder.
 			SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
@@ -529,6 +556,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		if err != nil {
 			return nil, err
 		}
+		e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		kvReqs = append(kvReqs, kvReq)
 	}
 	return kvReqs, nil
@@ -539,8 +567,18 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
+	start, end, hasTableSplit, err := e.tableSplitRange()
+	if err != nil {
+		return nil, err
+	}
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
 	for i, kvRange := range kvRanges {
+		if hasTableSplit {
+			keyRanges := kv.NewNonPartitionedKeyRanges(kvRange)
+			keyRanges.Intersect(start, end)
+			kvRange = keyRanges.FirstPartitionRange()
+		}
+		e.kvRanges = append(e.kvRanges, kvRange...)
 		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
 			ID:        pids[i],
 			KeyRanges: kvRange,
@@ -584,6 +622,13 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
+	}
+	start, end, hasTableSplit, err := e.tableSplitRange()
+	if err != nil {
+		return nil, err
+	}
+	if hasTableSplit {
+		reqBuilder.Request.KeyRanges.Intersect(start, end)
 	}
 	if e.table != nil && e.table.Type().IsClusterTable() {
 		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)

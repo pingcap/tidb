@@ -262,8 +262,10 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 		}
 	case ast.RegexpReplace:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1], args[2])
-	case ast.Locate, ast.Instr, ast.Position, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr:
+	case ast.Locate, ast.Instr, ast.LabelAceesible, ast.LBACDominates, ast.Position, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
+	case ast.Seclabel, ast.SeclabelToChar:
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1])
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp:
 		// if compare type is string, we should determine which collation should be used.
 		if argTps[0] == types.ETString {
@@ -326,7 +328,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 			}
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, fieldArgs...)
 		}
-	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion, ast.CurrentResourceGroup:
+	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion, ast.CurrentResourceGroup, ast.DataOperationAudit:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
 	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2, ast.SM3:
@@ -584,7 +586,7 @@ func isUnicodeCollation(ch string) bool {
 func isBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationGBKBin || collate == charset.CollationUTF8MB40900Bin
+		collate == charset.CollationGBKBin || collate == charset.CollationGB18030Bin || collate == charset.CollationUTF8MB40900Bin
 }
 
 // getBinCollation get binary collation by charset
@@ -596,6 +598,8 @@ func getBinCollation(cs string) string {
 		return charset.CollationUTF8MB4
 	case charset.CharsetGBK:
 		return charset.CollationGBKBin
+	case charset.CharsetGB18030:
+		return charset.CollationGB18030Bin
 	}
 
 	logutil.BgLogger().Error("unexpected charset " + cs)

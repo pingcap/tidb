@@ -53,7 +53,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, job *model.Job) (ver int
 	}
 	switch job.SchemaState {
 	case model.StateNone:
-		err = checkAddForeignKeyValidInOwner(jobCtx.infoCache, job.SchemaName, tblInfo, fkInfo, fkCheck)
+		err = checkAddForeignKeyValidInOwner(jobCtx.infoCache, job.GetSchemaName(), tblInfo, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -69,7 +69,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, job *model.Job) (ver int
 		return ver, nil
 	case model.StateWriteOnly:
 		delayForAsyncCommit()
-		err = checkForeignKeyConstrain(jobCtx.stepCtx, w, job.SchemaName, tblInfo.Name.L, fkInfo, fkCheck)
+		err = checkForeignKeyConstrain(jobCtx.stepCtx, w, job.GetSchemaName(), tblInfo.Name, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, err
@@ -149,7 +149,7 @@ func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
 	return tblInfo.MaxForeignKeyID
 }
 
-func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
+func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema pmodel.CIStr, tbInfo *model.TableInfo) error {
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
@@ -164,7 +164,7 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 		}
 	}
 
-	referredFKInfos := is.GetTableReferredForeignKeys(schema, tbInfo.Name.L)
+	referredFKInfos := is.GetTableReferredForeignKeys(schema, tbInfo.Name)
 	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for _, referredFK := range referredFKInfos {
 		childTable, err := is.TableByName(ctx, referredFK.ChildSchema, referredFK.ChildTable)
@@ -183,9 +183,10 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	return nil
 }
 
-func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+func checkTableForeignKeyValid(is infoschema.InfoSchema, schema pmodel.CIStr, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	var referTblInfo *model.TableInfo
-	if fk.RefSchema.L == schema && fk.RefTable.L == tbInfo.Name.L {
+	if model.NameEqual(fk.RefSchema, schema) &&
+		model.NameEqual(fk.RefTable, tbInfo.Name) {
 		same := true
 		for i, col := range fk.Cols {
 			if col.L != fk.RefCols[i].L {
@@ -239,7 +240,7 @@ func checkTableForeignKeyValidInOwner(jobCtx *jobContext, job *model.Job, tbInfo
 			return false, err
 		}
 	}
-	referredFKInfos := is.GetTableReferredForeignKeys(job.SchemaName, tbInfo.Name.L)
+	referredFKInfos := is.GetTableReferredForeignKeys(job.GetSchemaName(), tbInfo.Name)
 	for _, referredFK := range referredFKInfos {
 		childTable, err := is.TableByName(jobCtx.stepCtx, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
@@ -298,7 +299,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	return nil
 }
 
-func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName pmodel.CIStr, tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
 	if newCol.GetType() == originalCol.GetType() && newCol.GetFlen() == originalCol.GetFlen() && newCol.GetDecimal() == originalCol.GetDecimal() {
 		return nil
 	}
@@ -326,7 +327,7 @@ func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName 
 			}
 		}
 	}
-	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name)
 	for _, referredFK := range referredFKs {
 		for i, col := range referredFK.Cols {
 			if col.L == originalCol.Name.L {
@@ -378,7 +379,7 @@ func isAcceptableForeignKeyColumnChange(newCol, originalCol, relatedCol *model.C
 	return true
 }
 
-func checkTableHasForeignKeyReferred(is infoschemactx.MetaOnlyInfoSchema, schema, tbl string, ignoreTables []ast.Ident, fkCheck bool) *model.ReferredFKInfo {
+func checkTableHasForeignKeyReferred(is infoschemactx.MetaOnlyInfoSchema, schema, tbl pmodel.CIStr, ignoreTables []ast.Ident, fkCheck bool) *model.ReferredFKInfo {
 	if !fkCheck {
 		return nil
 	}
@@ -406,7 +407,7 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 		return nil
 	}
 	objectIdents, fkCheck := args.Identifiers, args.FKCheck
-	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, objectIdents, fkCheck)
+	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.GetSchemaName(), job.GetTableName(), objectIdents, fkCheck)
 	if err != nil {
 		return err
 	}
@@ -419,7 +420,7 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 }
 
 func checkTruncateTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, job *model.Job, tblInfo *model.TableInfo, fkCheck bool) error {
-	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, []ast.Ident{{Name: tblInfo.Name, Schema: pmodel.NewCIStr(job.SchemaName)}}, fkCheck)
+	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.GetSchemaName(), job.GetTableName(), []ast.Ident{{Name: tblInfo.Name, Schema: job.GetSchemaName()}}, fkCheck)
 	if err != nil {
 		return err
 	}
@@ -431,7 +432,7 @@ func checkTruncateTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCa
 	return nil
 }
 
-func checkTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, schema, tbl string, ignoreTables []ast.Ident, fkCheck bool) (_ *model.ReferredFKInfo, _ error) {
+func checkTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, schema, tbl pmodel.CIStr, ignoreTables []ast.Ident, fkCheck bool) (_ *model.ReferredFKInfo, _ error) {
 	if !variable.EnableForeignKey.Load() {
 		return nil, nil
 	}
@@ -440,8 +441,8 @@ func checkTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, sch
 	return referredFK, nil
 }
 
-func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
-	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName pmodel.CIStr, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name)
 	if len(tbInfo.ForeignKeys) == 0 && len(referredFKs) == 0 {
 		return nil
 	}
@@ -487,7 +488,7 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 	return nil
 }
 
-func checkIndexNeededInForeignKeyInOwner(infoCache *infoschema.InfoCache, job *model.Job, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+func checkIndexNeededInForeignKeyInOwner(infoCache *infoschema.InfoCache, job *model.Job, dbName pmodel.CIStr, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
@@ -500,7 +501,7 @@ func checkIndexNeededInForeignKeyInOwner(infoCache *infoschema.InfoCache, job *m
 	return nil
 }
 
-func checkDropColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, colName string) error {
+func checkDropColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName pmodel.CIStr, tbInfo *model.TableInfo, colName string) error {
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		for _, col := range fkInfo.Cols {
 			if col.L == colName {
@@ -508,7 +509,7 @@ func checkDropColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName st
 			}
 		}
 	}
-	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name)
 	for _, referredFK := range referredFKs {
 		for _, col := range referredFK.Cols {
 			if col.L == colName {
@@ -524,7 +525,7 @@ func checkDropColumnWithForeignKeyConstraintInOwner(infoCache *infoschema.InfoCa
 		return nil
 	}
 	is := infoCache.GetLatest()
-	err := checkDropColumnWithForeignKeyConstraint(is, job.SchemaName, tbInfo, colName)
+	err := checkDropColumnWithForeignKeyConstraint(is, job.GetSchemaName(), tbInfo, colName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
@@ -593,7 +594,7 @@ func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoS
 		tableNames[i] = ast.Ident{Schema: schema, Name: tableNameInfos[i].Name}
 	}
 	for _, tbl := range tableNameInfos {
-		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Name.L, tableNames, fkCheck); referredFK != nil {
+		if referredFK := checkTableHasForeignKeyReferred(is, schema, tbl.Name, tableNames, fkCheck); referredFK != nil {
 			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Name, referredFK.ChildFKName, referredFK.ChildTable))
 		}
 	}
@@ -630,7 +631,7 @@ func checkFKDupName(tbInfo *model.TableInfo, fkName pmodel.CIStr) error {
 	return nil
 }
 
-func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+func checkAddForeignKeyValid(is infoschema.InfoSchema, schema pmodel.CIStr, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
@@ -641,7 +642,7 @@ func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *mo
 	return nil
 }
 
-func checkAddForeignKeyValidInOwner(infoCache *infoschema.InfoCache, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+func checkAddForeignKeyValidInOwner(infoCache *infoschema.InfoCache, schema pmodel.CIStr, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	err := checkFKDupName(tbInfo, fk.Name)
 	if err != nil {
 		return err
@@ -670,7 +671,7 @@ func checkAddForeignKeyValidInOwner(infoCache *infoschema.InfoCache, schema stri
 func checkForeignKeyConstrain(
 	ctx context.Context,
 	w *worker,
-	schema, table string,
+	schema, table pmodel.CIStr,
 	fkInfo *model.FKInfo,
 	fkCheck bool,
 ) error {
@@ -691,7 +692,7 @@ func checkForeignKeyConstrain(
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
 	paramsList := make([]any, 0, 4+len(fkInfo.Cols)*2)
-	paramsList = append(paramsList, schema, table)
+	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range fkInfo.Cols {
 		if i == 0 {
 			buf.WriteString("%n is not null")
@@ -732,7 +733,7 @@ func checkForeignKeyConstrain(
 	}
 	rowCount := len(rows)
 	if rowCount != 0 {
-		return dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema, table))
+		return dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema.L, table.L))
 	}
 	return nil
 }

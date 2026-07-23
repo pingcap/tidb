@@ -38,6 +38,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -93,6 +94,10 @@ type ownerListener struct {
 	ddlExecutor  *executor
 
 	scheduler *jobScheduler
+
+	unsafeDestroyMgr        *unsafeDestroyMgr
+	tiflashPlacementSyncMgr *tiflashPlacementSyncMgr
+	logReplJobManager       *tidbWaitJobManager
 }
 
 var _ owner.Listener = (*ownerListener)(nil)
@@ -121,6 +126,29 @@ func (l *ownerListener) OnBecomeOwner() {
 	}
 	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
+	l.unsafeDestroyMgr = newUnsafeDestroyMgr(
+		ctx,
+		l.ddl.sessPool,
+		l.ddl.minJobIDRefresher,
+		l.ddl.store,
+	)
+	l.unsafeDestroyMgr.start()
+	l.tiflashPlacementSyncMgr = newTiFlashPlacementSyncMgr(
+		ctx,
+		l.ddl.infoCache,
+	)
+	l.tiflashPlacementSyncMgr.start()
+	// in unistore, there's no etcdCli.
+	if l.ddl.etcdCli != nil {
+		l.logReplJobManager = newTiDBWaitJobManager(
+			ctx,
+			l.ddl.store,
+			l.ddl.etcdCli,
+		)
+		l.logReplJobManager.start()
+	}
+
+	pkdbrepl.TryResolveLocksIfNeeded(ctx, l.ddl.store, l.ddl.etcdCli)
 }
 
 func (l *ownerListener) OnRetireOwner() {
@@ -128,6 +156,14 @@ func (l *ownerListener) OnRetireOwner() {
 		return
 	}
 	l.scheduler.close()
+	// rely on scheduler's close to cancel the context of unsafeDestroyMgr
+	l.unsafeDestroyMgr.close()
+	if l.tiflashPlacementSyncMgr != nil {
+		l.tiflashPlacementSyncMgr.close()
+	}
+	if l.logReplJobManager != nil {
+		l.logReplJobManager.close()
+	}
 }
 
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
@@ -504,6 +540,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 			// job is already moved to history.
 			failpoint.InjectCall("beforeRefreshJob", jobW.Job)
 			for {
+				pkdbrepl.CheckStandbyBlocking(s.schCtx)
 				jobW, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
 				failpoint.InjectCall("mockGetJobByIDFail", &err)
 				if err == nil {

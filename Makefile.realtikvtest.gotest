@@ -1,0 +1,74 @@
+# Go test targets for real TiKV test suites.
+# These run against the classic real TiKV test cluster.
+
+.PHONY: gotest_brietest
+gotest_brietest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/brietest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_pessimistictest
+gotest_pessimistictest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/pessimistictest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_sessiontest
+gotest_sessiontest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/sessiontest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_statisticstest
+gotest_statisticstest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/statisticstest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_txntest
+gotest_txntest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/txntest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_pushdowntest
+gotest_pushdowntest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/pushdowntest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_addindextest
+gotest_addindextest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/addindextest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_addindextest1
+gotest_addindextest1: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/addindextest1 --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_addindextest2
+gotest_addindextest2: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/addindextest2 --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_addindextest3
+gotest_addindextest3: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/addindextest3 --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_addindextest4
+gotest_addindextest4: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/addindextest4 --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_importintotest
+gotest_importintotest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/importintotest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_importintotest2
+gotest_importintotest2: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/importintotest2 --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_importintotest3
+gotest_importintotest3: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/importintotest3 --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_importintotest4
+gotest_importintotest4: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/importintotest4 --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_pipelineddmltest
+gotest_pipelineddmltest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/pipelineddmltest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_flashbacktest
+gotest_flashbacktest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/flashbacktest --retry-cnt 3 --real-tikv
+
+.PHONY: gotest_ddltest
+gotest_ddltest: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut run tests/realtikvtest/ddltest --retry-cnt 3 --real-tikv

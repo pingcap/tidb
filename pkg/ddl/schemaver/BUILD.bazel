@@ -12,6 +12,7 @@ go_library(
         "//pkg/ddl/logutil",
         "//pkg/ddl/util",
         "//pkg/domain/infosync",
+        "//pkg/domain/pkdb_repl",
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/util",

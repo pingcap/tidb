@@ -213,6 +213,8 @@ type TxnManager interface {
 	GetCurrentStmt() ast.StmtNode
 	// SetOptionsBeforeCommit is called after execution and before commit, which sets necessary options for the transaction.
 	SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error
+	// ChangeIsolationInTxn is called when the transaction isolation level is changed within the txn.
+	ChangeIsolationInTxn()
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:

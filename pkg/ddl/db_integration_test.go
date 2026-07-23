@@ -476,6 +476,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
 
 	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t charset gb18030", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t charset ''", errno.ErrUnknownCharacterSet)
 
 	tk.MustGetErrCode("alter table t charset utf8mb4 collate '' collate utf8mb4_bin;", errno.ErrUnknownCollation)
@@ -1229,7 +1230,8 @@ func TestAlterColumn(t *testing.T) {
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	require.Equal(t, expected, createSQL)
 
-	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
+	// Dropping or keeping auto_increment is allowed, and enabling it again is supported
+	// when the column is already a NONCLUSTERED PRIMARY KEY.
 	tk.MustExec("drop table if exists mc")
 	tk.MustExec("create table mc(a int key nonclustered auto_increment, b int)")
 	tk.MustExec("alter table mc modify column a bigint auto_increment") // Keeps auto_increment
@@ -1246,7 +1248,16 @@ func TestAlterColumn(t *testing.T) {
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	require.Equal(t, expected, createSQL)
 
-	err = tk.ExecToErr("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
+	tk.MustExec("alter table mc modify column a bigint auto_increment") // Enables auto_increment again on existing PK.
+	result = tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	require.Equal(t, expected, createSQL)
+
+	// But enabling auto_increment without a (nonclustered) PRIMARY KEY is still unsupported.
+	tk.MustExec("drop table if exists mc2")
+	tk.MustExec("create table mc2(a bigint not null, b int)")
+	err = tk.ExecToErr("alter table mc2 modify column a bigint not null auto_increment")
 	require.Error(t, err)
 
 	tk.MustExec("drop table if exists t")
@@ -1695,6 +1706,51 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	tk.MustExec(sql)
 	tk.MustExec("insert into t2(c) values (4);")
 	tk.MustQuery("select c3 from t2").Check(testkit.Rows(nowStr, nowStr, nowStr, nowStr))
+}
+
+// TestDateFormatAsDefaultValue tests the usage of the DATE_FORMAT function
+// as a column's default value. It covers successful cases for both NOW() and
+// literal strings, as well as expected failure scenarios.
+func TestDateFormatAsDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Clean up any tables from previous test runs.
+	tk.MustExec("drop table if exists t_int_success, t_varchar_success, t_int_fail, t_unsupported_format, t_invalid_date_literal")
+
+	// ## SCENARIO 1: Successful conversion of DATE_FORMAT(NOW(), '%y%m%d') to an INT column.
+	// This is the original successful test case. The format '%y%m%d' generates a string
+	// like '250905', which is a valid integer and can be implicitly converted.
+	tk.MustExec("create table t_int_success (id int default (DATE_FORMAT(now(), '%y%m%d')), note VARCHAR(255));")
+	tk.MustExec("insert into t_int_success (note) values ('now_to_int_ok');")
+	// Prepare the expected ID based on the current time. The format "060102" in Go corresponds to "YYMMDD".
+	expectedID := time.Now().Format("060102")
+	tk.MustQuery("select * from t_int_success").Check(testkit.Rows(expectedID + " now_to_int_ok"))
+
+	// ## SCENARIO 2: Successful use of DATE_FORMAT with a literal string as the first argument.
+	// This tests the refactored logic that allows ast.ValueExpr as the first argument.
+	// The result '2025-08' is stored in a VARCHAR column.
+	tk.MustExec("create table t_varchar_success (id varchar(7) default (DATE_FORMAT('2025-08-08 13:13:13', '%Y-%m')), note VARCHAR(255));")
+	tk.MustExec("insert into t_varchar_success (note) values ('literal_to_varchar_ok');")
+	tk.MustQuery("select * from t_varchar_success").Check(testkit.Rows("2025-08 literal_to_varchar_ok"))
+
+	// ## SCENARIO 3: Failed conversion of a non-numeric date format string to an INT column.
+	// This test ensures that data truncation errors are still correctly thrown when the format
+	// string (e.g., '%Y-%m-%d %H:%i:%s') contains non-numeric characters.
+	tk.MustExec("create table t_int_fail (id int default (DATE_FORMAT(now(), '%Y-%m-%d %H:%i:%s')), note VARCHAR(255));")
+	tk.MustGetErrCode("insert into t_int_fail (note) values ('truncation_error')", errno.ErrTruncatedWrongValue)
+
+	// ## SCENARIO 4: Failed table creation due to a format specifier not in the whitelist.
+	// This verifies that the table-driven whitelist for format strings is working correctly.
+	// The DDL itself should fail because the parser rejects the disallowed default expression.
+	tk.MustGetErrCode("create table t_unsupported_format (id varchar(20) default (DATE_FORMAT(now(), '%Y year')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+
+	// ## SCENARIO 5: Failed insert due to an invalid date string literal in DATE_FORMAT.
+	// This test confirms that while the table creation is successful, the validation
+	// of the literal date string occurs at INSERT time, causing an "Incorrect datetime value" error.
+	tk.MustExec("create table t_invalid_date_literal (id varchar(7) default (DATE_FORMAT('abcd', '%Y-%m')), note VARCHAR(255));")
+	tk.MustGetErrCode("insert into t_invalid_date_literal (note) values ('invalid_date_literal')", errno.ErrTruncatedWrongValue)
 }
 
 func TestChangingDBCharset(t *testing.T) {
@@ -3147,4 +3203,47 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("create table t(id int, a json DEFAULT NULL, b varchar(2) DEFAULT NULL);")
 	tk.MustGetErrMsg("CREATE INDEX idx_test on t ((cast(a as char(2000) array)),b);", "[ddl:1071]Specified key was too long (2000 bytes); max key length is 1000 bytes")
+}
+
+func TestCaseSensitiveNames(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.LowerCaseTableNamesOnFirstBootstrap = 0
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show variables like \"%lower_case_table_names%\";").Check(testkit.Rows("lower_case_table_names 0"))
+	tk.MustExec("use test;")
+	tk.MustExec("create table tt (a int);")
+	tk.MustExec("create table TT (b int);")
+	tk.MustQuery("show tables;").Check(testkit.Rows("TT", "tt"))
+	tk.MustExec("insert into tt values (1111);")
+	tk.MustExec("insert into TT values (2222);")
+	tk.MustQuery("select * from tt;").Check(testkit.Rows("1111"))
+	tk.MustQuery("select * from TT;").Check(testkit.Rows("2222"))
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("alter table tt modify column a tinyint;")
+	tk.MustQuery("select * from tt;").Check(testkit.Rows("127"))
+	tk.MustQuery("select * from TT;").Check(testkit.Rows("2222"))
+}
+
+func TestCaseInsensitiveNames1(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.LowerCaseTableNamesOnFirstBootstrap = 1
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table tt (a int);")
+	tk.MustGetErrMsg("create table TT (b int);", "[schema:1050]Table 'test.TT' already exists")
+}
+
+func TestCaseInsensitiveNames2(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.LowerCaseTableNamesOnFirstBootstrap = 2
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table tt (a int);")
+	tk.MustGetErrMsg("create table TT (b int);", "[schema:1050]Table 'test.TT' already exists")
 }

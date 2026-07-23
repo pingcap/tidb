@@ -17,6 +17,7 @@ package mydump
 import (
 	"context"
 	"io"
+	"reflect"
 	"strings"
 	"time"
 
@@ -438,6 +439,19 @@ func (pp *ParquetParser) Close() error {
 		}
 	}
 	return nil
+}
+
+func getDatumLen(v reflect.Value) int {
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return 0
+		}
+		return getDatumLen(v.Elem())
+	}
+	if v.Kind() == reflect.String {
+		return len(v.String())
+	}
+	return 8
 }
 
 // ReadRow reads a row in the parquet file by the parser.

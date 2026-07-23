@@ -321,7 +321,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_ft_min_token_size", Value: "3"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_write_set_extraction", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_blob_write_batch_bytes", Value: ""},
-	{Scope: ScopeGlobal, Name: "automatic_sp_privileges", Value: "1"},
 	{Scope: ScopeGlobal, Name: "innodb_flush_sync", Value: ""},
 	{Scope: ScopeNone, Name: "performance_schema_events_statements_history_long_size", Value: "10000"},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_disable", Value: ""},
@@ -469,7 +468,6 @@ var noopSysVars = []*SysVar{
 		IsHintUpdatableVerified: true,
 	},
 	{Scope: ScopeNone, Name: "innodb_read_io_threads", Value: "4"},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxSpRecursionDepth, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 255},
 	{Scope: ScopeNone, Name: "ignore_builtin_innodb", Value: "0"},
 	{Scope: ScopeGlobal, Name: "slow_query_log_file", Value: "/usr/local/mysql/data/localhost-slow.log"},
 	{Scope: ScopeGlobal, Name: "innodb_thread_sleep_delay", Value: "10000"},
@@ -629,7 +627,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "information_schema_stats_expiry", Value: "86400"},
 	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64},
 	{Scope: ScopeNone, Name: "lower_case_file_system", Value: "1"},
-	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
 
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.

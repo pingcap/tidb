@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -30,6 +32,16 @@ func Vectorizable(exprs []Expression) bool {
 		if HasGetSetVarFunc(expr) {
 			return false
 		}
+	}
+	// Stored functions reuse session-scoped routine / transaction state while evaluating rows,
+	// so they must not be driven by parallel projection workers.
+	if slices.ContainsFunc(exprs, HasStoredFunc) {
+		return false
+	}
+	// Loadable functions keep mutable C runtime state in the expression and the
+	// same expression is shared by parallel projection workers.
+	if slices.ContainsFunc(exprs, HasLoadableFunc) {
+		return false
 	}
 	return checkSequenceFunction(exprs)
 }
@@ -76,12 +88,42 @@ func HasGetSetVarFunc(expr Expression) bool {
 	if scalaFunc.FuncName.L == ast.GetVar {
 		return true
 	}
+	if scalaFunc.FuncName.L == ast.SetProcedureVar {
+		return true
+	}
+	if scalaFunc.FuncName.L == ast.GetProcedureVar {
+		return true
+	}
 	for _, arg := range scalaFunc.GetArgs() {
 		if HasGetSetVarFunc(arg) {
 			return true
 		}
 	}
 	return false
+}
+
+// HasStoredFunc checks whether an expression contains a stored function.
+func HasStoredFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if _, ok := scalaFunc.Function.(*storedFuncSig); ok {
+		return true
+	}
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasStoredFunc)
+}
+
+// HasLoadableFunc checks whether an expression contains a loadable function.
+func HasLoadableFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if _, ok := scalaFunc.Function.(*loadableFuncSig); ok {
+		return true
+	}
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasLoadableFunc)
 }
 
 // HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value

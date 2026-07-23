@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -36,9 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -632,4 +636,52 @@ func TestExchangeSenderResolveIndices(t *testing.T) {
 
 	// after resolving, the partition col in two different exchange sender should have different index
 	require.NotEqual(t, exchangeSender1.HashCols[0].Col.Index, exchangeSender2.HashCols[0].Col.Index)
+}
+
+func TestSPParamSubstituteInJoinOnClause(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key idx_a(a))")
+	tk.MustExec("create table t2(a int, key idx_a(a))")
+
+	sctx := tk.Session().(sessionctx.Context)
+	sctx.GetSessionVars().SetInCallProcedure()
+	procCtx := variable.NewProcedureContext(variable.BLOCKLABEL)
+	procCtx.Vars = append(procCtx.Vars, variable.NewProcedureVars("pa", types.NewFieldType(mysql.TypeLong)))
+	require.NoError(t, sctx.GetSessionVars().SetProcedureContext(procCtx))
+	require.NoError(t, core.UpdateVariableVar("pa", types.NewDatum(1), sctx.GetSessionVars()))
+
+	sql := "explain format='brief' select * from t1 join t2 on t2.a = pa where t1.a = pa"
+	tk.MustExec("set @@session.tidb_enable_sp_param_substitute = 0")
+	require.Contains(t, fmt.Sprint(tk.MustQuery(sql).Rows()), "getprocedurevar")
+
+	tk.MustExec("set @@session.tidb_enable_sp_param_substitute = 1")
+	require.NotContains(t, fmt.Sprint(tk.MustQuery(sql).Rows()), "getprocedurevar")
+}
+
+func TestSPParamSubstituteInHavingClause(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key idx_a(a))")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+
+	sctx := tk.Session().(sessionctx.Context)
+	sctx.GetSessionVars().SetInCallProcedure()
+	procCtx := variable.NewProcedureContext(variable.BLOCKLABEL)
+	procCtx.Vars = append(procCtx.Vars, variable.NewProcedureVars("pa", types.NewFieldType(mysql.TypeLong)))
+	require.NoError(t, sctx.GetSessionVars().SetProcedureContext(procCtx))
+	require.NoError(t, core.UpdateVariableVar("pa", types.NewDatum(1), sctx.GetSessionVars()))
+
+	sql := "explain format='brief' select a, sum(b) from t group by a having a = pa and sum(b) > pa"
+	tk.MustExec("set @@session.tidb_enable_sp_param_substitute = 0")
+	require.Contains(t, fmt.Sprint(tk.MustQuery(sql).Rows()), "getprocedurevar")
+
+	tk.MustExec("set @@session.tidb_enable_sp_param_substitute = 1")
+	require.NotContains(t, fmt.Sprint(tk.MustQuery(sql).Rows()), "getprocedurevar")
+
+	tk.MustQuery("select a as pa, sum(b) from t group by a having pa = 2").Check(testkit.Rows("2 20"))
 }

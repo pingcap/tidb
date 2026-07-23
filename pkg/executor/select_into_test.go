@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -301,4 +302,219 @@ func TestYearType(t *testing.T) {
 
 	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' optionally enclosed by '\"' lines terminated by '\\n';", outfile))
 	cmpAndRm("2010\n2011\n2012\n2030\n", outfile, t)
+}
+
+func TestSelectIntoUDVErrorMessage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	// udv and column number not match
+	tk.MustGetErrMsg("select a into @c, @d from t", "ERROR 1222 (21000): The used SELECT statements have a different number of columns")
+	tk.MustGetErrMsg("select a, b into @c from t", "ERROR 1222 (21000): The used SELECT statements have a different number of columns")
+	tk.MustGetErrMsg("select a, c into @c from t", "[planner:1054]Unknown column 'c' in 'field list'")
+	// empty result
+	tk.MustExec("select a into @c from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1329 No data - zero rows fetched, selected, or processed"))
+	// result more than one row
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustGetErrMsg("select a into @c from t", "ERROR 1172 (42000): Result consisted of more than one row")
+}
+
+func TestSelectIntoVarsPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create user u1@localhost")
+	tk.MustExec("grant select on test.* to u1@localhost")
+
+	userTK := testkit.NewTestKit(t, store)
+	require.NoError(t, userTK.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	userTK.MustExec("use test")
+	userTK.MustExec("select 1 into @a")
+	userTK.MustQuery("select @a").Check(testkit.Rows("1"))
+	userTK.MustExec("select 2 into @b from dual")
+	userTK.MustQuery("select @b").Check(testkit.Rows("2"))
+
+	outfile := randomSelectFilePath("TestSelectIntoVarsPrivilege")
+	err := userTK.ExecToErr(fmt.Sprintf("select 1 into outfile %q", outfile))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FILE")
+}
+
+func TestSelectIntoUpperCaseUserVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("select 1 into @A")
+	dt, ok := tk.Session().GetSessionVars().GetUserVarVal("A")
+	require.True(t, ok)
+	require.Equal(t, int64(1), dt.GetInt64())
+
+	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+	tk.MustQuery("select @A").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @B = 2")
+	tp, ok := tk.Session().GetSessionVars().GetUserVarType("B")
+	require.True(t, ok)
+	require.Equal(t, mysql.TypeLonglong, tp.GetType())
+}
+
+func TestSelectIntoType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	cases := []struct {
+		tp        string
+		insertVal string
+		selectVal string
+	}{
+		{"int", "1", "1"},
+		{"int", "-1", "-1"},
+		{"bigint", "1", "1"},
+		{"double", "1.1", "1.1"},
+		{"double", "-1.23456789", "-1.23456789"},
+		{"decimal(10, 2)", "1.1", "1.10"},
+		{"date", "2023-01-01", "2023-01-01"},
+		{"time", "01:01:01", "01:01:01"},
+		{"datetime", "2023-01-01 00:00:00", "2023-01-01 00:00:00"},
+		{"timestamp", "2023-01-01 00:00:00", "2023-01-01 00:00:00"},
+		{"year", "2023", "2023"},
+		{"char(10)", "abc", "abc"},
+		{"varchar(10)", "abc", "abc"},
+		{"binary(3)", "abc", "abc"},
+		{"blob", "abc", "abc"},
+		{"text", "abc", "abc"},
+		{"enum('1', '2', '3')", "1", "1"},
+		{"set('1', '2', '3')", "1,2", "1,2"},
+		{"bool", "1", "1"},
+	}
+	// into udv
+	for _, testCase := range cases {
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", testCase.tp))
+		tk.MustExec(fmt.Sprintf("insert into t values('%s')", testCase.insertVal))
+		tk.MustExec("select a into @c from t")
+		tk.MustQuery("select @c").Check(testkit.Rows(testCase.selectVal))
+		tk.MustExec("drop table t")
+	}
+	// into sp local var
+	tk.InProcedure()
+	for _, testCase := range cases {
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", testCase.tp))
+		tk.MustExec(fmt.Sprintf("insert into t values('%s')", testCase.insertVal))
+		tk.MustExec(fmt.Sprintf("create PROCEDURE sp(out p1 %s) begin select a into p1 from t; end;", testCase.tp))
+		tk.MustExec("call sp(@c)")
+		tk.MustQuery("select @c").Check(testkit.Rows(testCase.selectVal))
+		tk.ClearProcedureRes()
+		tk.MustExec("drop procedure sp")
+		tk.MustExec("drop table t")
+	}
+}
+
+func TestSelectIntoUserVarsDetachChunkData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, name varchar(20), balance decimal(15,2))")
+	tk.MustExec("insert into t values (1, 'alice', 10000.00), (2, 'bob', 5000.00)")
+
+	tk.MustExec("set @a = null")
+	tk.MustExec("set @b = null")
+	tk.MustExec("select balance into @a from t where id = 1")
+	tk.MustExec("select balance into @b from t where id = 2")
+	tk.MustQuery("select @a, @b").Check(testkit.Rows("10000.00 5000.00"))
+
+	tk.MustExec("set @s1 = null")
+	tk.MustExec("set @s2 = null")
+	tk.MustExec("select name into @s1 from t where id = 1")
+	tk.MustExec("select name into @s2 from t where id = 2")
+	tk.MustQuery("select @s1, @s2").Check(testkit.Rows("alice bob"))
+}
+
+func TestSelectIntoVarsAtEndOfSelectFrom(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_report")
+	tk.MustExec("create table test_report(id int)")
+	tk.MustExec("insert into test_report values (3), (7)")
+	tk.MustExec(`
+create procedure sp_select_into_at_end(out p_end int, out p_before int)
+begin
+	declare v_end int default -1;
+	declare v_before int default -1;
+	select ifnull(max(id), 0) from test_report into v_end;
+	select ifnull(min(id), 0) into v_before from test_report;
+	set p_end = v_end;
+	set p_before = v_before;
+end`)
+	tk.MustExec("call sp_select_into_at_end(@p_end, @p_before)")
+	tk.MustQuery("select @p_end, @p_before").Check(testkit.Rows("7 3"))
+	tk.ClearProcedureRes()
+
+	tk.MustExec("select id from test_report where id = 7 into @selected_id")
+	tk.MustQuery("select @selected_id").Check(testkit.Rows("7"))
+}
+
+func TestSelectIntoInSubqueryIsRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("insert into t1 values (1)")
+
+	tk.MustGetErrMsg(
+		"SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a",
+		"[parser:1221]Incorrect usage of INTO and subquery",
+	)
+}
+
+func TestSelectIntoSPVarErrorMessage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	// undefined sp var
+	tk.MustGetErrMsg("create PROCEDURE sp4() begin select a into sp1 from t; end;", "[planner:1327]Undeclared variable: sp1")
+	tk.ClearProcedureRes()
+	// sp var and column number not match
+	tk.MustExec("create PROCEDURE sp1(in p1 int, in p2 int) begin select a into p1, p2 from t; end;")
+	tk.MustGetErrMsg("call sp1(1, 1)", "ERROR 1222 (21000): The used SELECT statements have a different number of columns")
+	tk.MustExec("create PROCEDURE sp2(in p1 int) begin select a, b into p1 from t; end;")
+	tk.MustGetErrMsg("call sp2(1)", "ERROR 1222 (21000): The used SELECT statements have a different number of columns")
+	tk.ClearProcedureRes()
+	// empty result
+	tk.MustExec("create PROCEDURE sp3(in p1 int) begin select a into p1 from t; end;")
+	tk.MustExec("call sp3(1)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1329 No data - zero rows fetched, selected, or processed"))
+	tk.ClearProcedureRes()
+	// result more than one row
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustGetErrMsg("call sp3(1)", "ERROR 1172 (42000): Result consisted of more than one row")
+	tk.ClearProcedureRes()
+}
+
+func TestSelectIntoInPrepareStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec("prepare stmt from 'select a into @p from t'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has user-defined variables is un-cacheable"))
+	tk.MustExec("execute stmt")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @p").Check(testkit.Rows("1"))
 }

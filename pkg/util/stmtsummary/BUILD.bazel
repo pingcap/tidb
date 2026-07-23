@@ -50,6 +50,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/chunk",
         "//pkg/util/execdetails",
         "//pkg/util/hack",
         "//pkg/util/plancodec",
