@@ -134,8 +134,6 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		lockSelectCtxStack: make([]lockSelectCtx, 0),
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
-		varsMutable:        make(map[string]struct{}),
-		varsReadonly:       make(map[string]struct{}),
 		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
@@ -451,12 +449,18 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// different plans: only the latter would be converted to constant for index range.
 		nameLower := strings.ToLower(node.Name)
 		if node.Value != nil {
+			if p.varsMutable == nil {
+				p.varsMutable = make(map[string]struct{})
+			}
 			p.varsMutable[nameLower] = struct{}{}
 			delete(p.varsReadonly, nameLower)
 		} else if p.stmtTp == TypeSelect {
 			// Only check the variable in select statement.
 			_, ok := p.varsMutable[nameLower]
 			if !ok {
+				if p.varsReadonly == nil {
+					p.varsReadonly = make(map[string]struct{})
+				}
 				p.varsReadonly[nameLower] = struct{}{}
 			}
 		}
