@@ -107,4 +107,22 @@ IndexMerge	5555.56	root		type: union
 ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tt, index:idx1(a)	range:(10,+inf], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tt, index:idx2(b)	range:(10,+inf], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	5555.56	cop[tikv]	table:tt	keep order:false, stats:pseudo
+drop table if exists t3;
+create table t3(id int primary key, a int not null, b int not null, index pi(b) where a < 3);
+insert into t3 values (1, 0, 1), (2, 1, 2), (3, 2, 3), (4, 3, 4), (5, 10, 5);
+select id, a, b from t3 where a >= 0 order by b limit 5;
+id	a	b
+1	0	1
+2	1	2
+3	2	3
+4	3	4
+5	10	5
+select id, a, b from t3 ignore index(pi) where a >= 0 order by b limit 5;
+id	a	b
+1	0	1
+2	1	2
+3	2	3
+4	3	4
+5	10	5
+drop table t3;
 drop table t, tt;
