@@ -565,7 +565,10 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 //
 // t1 has a primary key (id), so `select ... where id=1` qualifies for the
 // TryFastPlan point-get. t2 has no PK, so its SELECT is non-point-get and
-// the flag must not redirect it.
+// the flag must not redirect it. Point-gets inside an explicit transaction,
+// under SELECT FOR UPDATE, or via stale read must keep the runStmt path even
+// with the flag on: the shortcut invalidates the session txn before rows are
+// drained, which those cases cannot tolerate.
 func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
@@ -597,6 +600,44 @@ func TestNonPreparedPointGetExecShortcut(t *testing.T) {
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustQuery("select * from t2 where id=1").Check(testkit.Rows("1"))
 	})
+
+	// The shortcut invalidates the session txn before the lazy recordSet is
+	// drained, so it must not fire inside an explicit transaction: the
+	// point-get has to observe the transaction's own uncommitted writes and
+	// leave the transaction usable. These stay on the runStmt path even with
+	// the flag on.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (3, 30)")
+	doWithCheckPath(t, se, normalPathRecords, func() {
+		tk.MustQuery("select * from t1 where id=3").Check(testkit.Rows("3 30"))
+	})
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1 where id=3").Check(testkit.Rows("3 30"))
+
+	// A point-get SELECT FOR UPDATE in a pessimistic transaction acquires its
+	// lock through the session txn during Next; the shortcut must not fire.
+	tk.MustExec("begin pessimistic")
+	doWithCheckPath(t, se, normalPathRecords, func() {
+		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 10"))
+	})
+	tk.MustExec("update t1 set v=11 where id=1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 11"))
+	tk.MustExec("update t1 set v=10 where id=1")
+
+	// Stale reads must not use the shortcut either (the short path asserts
+	// non-staleness and skips stale-read handling). The snapshot infoschema
+	// may differ from the current one, so drop the assert key for this case.
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
+	tk.MustExec("do sleep(0.1)")
+	tk.MustExec("set @a=now(6)")
+	tk.MustExec("do sleep(0.1)")
+	tk.MustExec("update t1 set v=12 where id=1")
+	doWithCheckPath(t, se, normalPathRecords, func() {
+		tk.MustQuery("select * from t1 as of timestamp @a where id=1").Check(testkit.Rows("1 10"))
+	})
+	tk.MustExec("update t1 set v=10 where id=1")
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
 
 	// Turning the flag off restores the legacy path for the point-get.
 	tk.MustExec("set @@tidb_enable_point_get_exec_shortcut = OFF")
