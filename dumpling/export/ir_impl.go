@@ -258,6 +258,7 @@ type tableMeta struct {
 	database         string
 	table            string
 	colTypes         []*sql.ColumnType
+	sourceColTypes   []*sql.ColumnType
 	selectedField    string
 	selectedLen      int
 	specCmts         []string
@@ -287,19 +288,35 @@ func (tm *tableMeta) ColumnInfos() []*ColumnInfo {
 }
 
 func (tm *tableMeta) ColumnTypes() []string {
-	colTypes := make([]string, len(tm.colTypes))
-	for i, ct := range tm.colTypes {
-		colTypes[i] = ct.DatabaseTypeName()
-	}
-	return colTypes
+	return columnTypes(tm.colTypes)
 }
 
 func (tm *tableMeta) ColumnNames() []string {
-	colNames := make([]string, len(tm.colTypes))
-	for i, ct := range tm.colTypes {
-		colNames[i] = ct.Name()
+	return columnNames(tm.colTypes)
+}
+
+func (tm *tableMeta) SourceColumnTypes() []string {
+	return columnTypes(tm.sourceColTypes)
+}
+
+func (tm *tableMeta) SourceColumnNames() []string {
+	return columnNames(tm.sourceColTypes)
+}
+
+func columnTypes(colTypes []*sql.ColumnType) []string {
+	types := make([]string, len(colTypes))
+	for i, ct := range colTypes {
+		types[i] = ct.DatabaseTypeName()
 	}
-	return colNames
+	return types
+}
+
+func columnNames(colTypes []*sql.ColumnType) []string {
+	names := make([]string, len(colTypes))
+	for i, ct := range colTypes {
+		names[i] = ct.Name()
+	}
+	return names
 }
 
 func (tm *tableMeta) DatabaseName() string {

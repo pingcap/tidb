@@ -4,6 +4,8 @@ package export
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/docker/go-units"
@@ -54,6 +56,113 @@ func TestGetConfTables(t *testing.T) {
 	actualDBTables, err := GetConfTables(tablesList)
 	require.NoError(t, err)
 	require.Equal(t, expectedDBTables, actualDBTables)
+}
+
+func TestColumnSelectors(t *testing.T) {
+	selectors := &ColumnSelectors{
+		Mode: ColumnSelectorModeExclude,
+		Selectors: []ColumnSelector{
+			{Matcher: []string{"db1.t1"}, Columns: []string{"C1", "c2"}},
+			{Matcher: []string{"db1.t2"}, Columns: []string{"c3"}},
+		},
+	}
+	require.NoError(t, selectors.compile(false))
+
+	selectedFields, err := selectors.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c3"}, selectedFields)
+
+	selectedFields, err = selectors.applyToColumns("db2", "t1", []string{"c1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1"}, selectedFields)
+
+	selectedFields, err = selectors.applyToColumns("db1", "t2", []string{"c1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1"}, selectedFields)
+
+	selectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
+		ColumnSelector{Matcher: []string{"db1.t1"}},
+	)
+	selectedFields, err = selectors.applyToColumns("db1", "t1", []string{"c1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1"}, selectedFields)
+}
+
+func TestParseColumnSelectorsFile(t *testing.T) {
+	path := writeColumnSelectorsFileForTest(t, `{
+		"mode": "include",
+		"columnSelectors": [
+			{"matcher": ["db1.t1", "db2.t2"], "columns": ["c1", "C2"]}
+		]
+	}`)
+	selectors, err := ParseColumnSelectorsFile(path, false)
+	require.NoError(t, err)
+	require.Equal(t, ColumnSelectorModeInclude, selectors.Mode)
+	selectedFields, err := selectors.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1", "C2"}, selectedFields)
+
+	selectors, err = ParseColumnSelectorsFile(path, true)
+	require.NoError(t, err)
+	selectedFields, err = selectors.applyToColumns("DB1", "T1", []string{"c1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1"}, selectedFields)
+
+	_, err = ParseColumnSelectorsFile("", false)
+	require.NoError(t, err)
+
+	path = writeColumnSelectorsFileForTest(t, `{"mode": "REWRITE", "columnSelectors": [{"matcher": ["db.t"], "columns": ["c"]}]}`)
+	_, err = ParseColumnSelectorsFile(path, false)
+	require.ErrorContains(t, err, "mode must be INCLUDE or EXCLUDE")
+
+	path = writeColumnSelectorsFileForTest(t, `{"mode": "INCLUDE", "columnSelectors": [{"matcher": ["db.t"], "columns": ["c", "C"]}]}`)
+	_, err = ParseColumnSelectorsFile(path, false)
+	require.ErrorContains(t, err, "duplicate column")
+}
+
+func TestParseColumnSelectorsFileFlag(t *testing.T) {
+	path := writeColumnSelectorsFileForTest(t, `{
+		"mode": "EXCLUDE",
+		"columnSelectors": [
+			{"matcher": ["db1.t1"], "columns": ["c1", "c2"]},
+			{"matcher": ["db2.t2"], "columns": ["c3"]}
+		]
+	}`)
+	conf := parseConfigFromArgsForTest(t,
+		"--no-schemas",
+		"--column-selectors-file", path,
+	)
+	selectedFields, err := conf.ColumnSelectors.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c3"}, selectedFields)
+
+	_, err = parseConfigFromArgsForTestWithErr(t, "--column-selectors-file", path)
+	require.ErrorContains(t, err, "--column-selectors-file requires --no-schemas/-m")
+
+	conf = parseConfigFromArgsForTest(t,
+		"--no-schemas",
+		"--column-selectors-file", path,
+		"--sql", "select * from t",
+	)
+	require.Equal(t, "select * from t", conf.SQL)
+	require.NotNil(t, conf.ColumnSelectors)
+}
+
+func writeColumnSelectorsFileForTest(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "column-selectors.json")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+func newColumnSelectorsForTest(t *testing.T, mode ColumnSelectorMode, selectors ...ColumnSelector) *ColumnSelectors {
+	t.Helper()
+	columnSelectors := &ColumnSelectors{
+		Mode:      mode,
+		Selectors: selectors,
+	}
+	require.NoError(t, columnSelectors.compile(false))
+	return columnSelectors
 }
 
 func TestParseParquetDefaultFlags(t *testing.T) {

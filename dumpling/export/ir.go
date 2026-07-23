@@ -29,6 +29,8 @@ type TableMeta interface {
 	ColumnCount() uint
 	ColumnTypes() []string
 	ColumnNames() []string
+	SourceColumnTypes() []string
+	SourceColumnNames() []string
 	SelectedField() string
 	SelectedLen() int
 	SpecialComments() StringIter
@@ -105,9 +107,10 @@ func setTableMetaFromRows(serverType version.ServerType, rows *sql.Rows) (TableM
 		nms[i] = wrapBackTicks(nms[i])
 	}
 	return &tableMeta{
-		colTypes:      tps,
-		selectedField: strings.Join(nms, ","),
-		selectedLen:   len(nms),
-		specCmts:      getSpecialComments(serverType),
+		colTypes:       tps,
+		sourceColTypes: tps,
+		selectedField:  strings.Join(nms, ","),
+		selectedLen:    len(nms),
+		specCmts:       getSpecialComments(serverType),
 	}, nil
 }

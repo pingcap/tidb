@@ -212,6 +212,14 @@ func (m *mockTableIR) ColumnNames() []string {
 	return m.colNames
 }
 
+func (m *mockTableIR) SourceColumnTypes() []string {
+	return m.colTypes
+}
+
+func (m *mockTableIR) SourceColumnNames() []string {
+	return m.colNames
+}
+
 func (m *mockTableIR) SelectedField() string {
 	return m.selectedField
 }

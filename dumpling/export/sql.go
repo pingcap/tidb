@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -626,7 +627,7 @@ func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta Ta
 	if err != nil {
 		return nil, nil, err
 	}
-	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
+	colName2Type := string2Map(meta.SourceColumnNames(), meta.SourceColumnTypes())
 	colTypes = make([]string, len(colNames))
 	for i, colName := range colNames {
 		colTypes[i] = colName2Type[colName]
@@ -657,7 +658,7 @@ func GetPrimaryKeyColumns(tctx *tcontext.Context, db *BaseConn, database, table 
 // primary key with multi cols is before unique key with single col because we will sort result by primary keys
 func getNumericIndex(tctx *tcontext.Context, db *BaseConn, meta TableMeta) (string, error) {
 	database, table := meta.DatabaseName(), meta.TableName()
-	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
+	colName2Type := string2Map(meta.SourceColumnNames(), meta.SourceColumnTypes())
 	keyQuery := fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", escapeString(database), escapeString(table))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"NON_UNIQUE", "SEQ_IN_INDEX", "KEY_NAME", "COLUMN_NAME", "CARDINALITY"}, keyQuery)
 	if err != nil {
@@ -1058,15 +1059,29 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 	return conn, nil
 }
 
+type selectFieldInfo struct {
+	outputFieldSQL    string
+	outputColumnCount int
+	sourceFieldSQL    string
+}
+
 // buildSelectField returns the selecting fields' string(joined by comma(`,`)),
 // and the number of writable fields.
 func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
-	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
-	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
+	info, err := buildSelectFieldInfo(tctx, db, dbName, tableName, completeInsert, nil)
 	if err != nil {
 		return "", 0, err
 	}
-	availableFields := make([]string, 0)
+	return info.outputFieldSQL, info.outputColumnCount, nil
+}
+
+func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnSelectors *ColumnSelectors) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
+	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
+	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
+	if err != nil {
+		return selectFieldInfo{}, err
+	}
+	sourceColumns := make([]string, 0)
 	hasGenerateColumn := false
 	for _, oneRow := range results {
 		fieldName, extra := oneRow[0], oneRow[1]
@@ -1075,12 +1090,37 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			hasGenerateColumn = true
 			continue
 		}
-		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
+		sourceColumns = append(sourceColumns, fieldName)
 	}
-	if completeInsert || hasGenerateColumn {
-		return strings.Join(availableFields, ","), len(availableFields), nil
+	selectedColumns := sourceColumns
+	if columnSelectors != nil {
+		selectedColumns, err = columnSelectors.applyToColumns(dbName, tableName, sourceColumns)
+		if err != nil {
+			return selectFieldInfo{}, err
+		}
 	}
-	return "*", len(availableFields), nil
+	selectedFields := columnNamesToSelectFields(selectedColumns)
+	info := selectFieldInfo{
+		outputColumnCount: len(selectedFields),
+	}
+	if !slices.Equal(sourceColumns, selectedColumns) {
+		sourceFields := columnNamesToSelectFields(sourceColumns)
+		info.outputFieldSQL = strings.Join(selectedFields, ",")
+		info.sourceFieldSQL = strings.Join(sourceFields, ",")
+	} else if completeInsert || hasGenerateColumn {
+		info.outputFieldSQL = strings.Join(selectedFields, ",")
+	} else {
+		info.outputFieldSQL = "*"
+	}
+	return info, nil
+}
+
+func columnNamesToSelectFields(columns []string) []string {
+	fields := make([]string, 0, len(columns))
+	for _, column := range columns {
+		fields = append(fields, wrapBackTicks(escapeString(column)))
+	}
+	return fields
 }
 
 func buildWhereClauses(handleColNames []string, handleVals [][]string) []string {

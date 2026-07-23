@@ -1336,12 +1336,14 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	selectField, selectLen, err := buildSelectField(tctx, conn, db, tbl, conf.CompleteInsert)
+	selectFieldInfo, err := buildSelectFieldInfo(tctx, conn, db, tbl, conf.CompleteInsert, conf.ColumnSelectors)
 	if err != nil {
 		return nil, err
 	}
+	outputFieldSQL, outputColumnCount := selectFieldInfo.outputFieldSQL, selectFieldInfo.outputColumnCount
 	var (
 		colTypes         []*sql.ColumnType
+		sourceColTypes   []*sql.ColumnType
 		hasImplicitRowID bool
 	)
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
@@ -1353,14 +1355,21 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 
 	// If all columns are generated
 	if table.Type == TableTypeBase {
-		if selectField == "" {
+		if outputFieldSQL == "" {
 			colTypes, err = GetColumnTypes(tctx, conn, "*", db, tbl)
 		} else {
-			colTypes, err = GetColumnTypes(tctx, conn, selectField, db, tbl)
+			colTypes, err = GetColumnTypes(tctx, conn, outputFieldSQL, db, tbl)
 		}
 	}
 	if err != nil {
 		return nil, err
+	}
+	sourceColTypes = colTypes
+	if table.Type == TableTypeBase && selectFieldInfo.sourceFieldSQL != "" {
+		sourceColTypes, err = GetColumnTypes(tctx, conn, selectFieldInfo.sourceFieldSQL, db, tbl)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	meta := &tableMeta{
@@ -1368,8 +1377,9 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		database:         db,
 		table:            tbl,
 		colTypes:         colTypes,
-		selectedField:    selectField,
-		selectedLen:      selectLen,
+		sourceColTypes:   sourceColTypes,
+		selectedField:    outputFieldSQL,
+		selectedLen:      outputColumnCount,
 		hasImplicitRowID: hasImplicitRowID,
 		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}

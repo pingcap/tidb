@@ -4,6 +4,7 @@ go_library(
     name = "export",
     srcs = [
         "block_allow_list.go",
+        "column_selector.go",
         "config.go",
         "conn.go",
         "consistency.go",

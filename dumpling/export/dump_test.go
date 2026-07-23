@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -659,6 +660,59 @@ func TestDumpTableMeta(t *testing.T) {
 		require.Equal(t, "", meta.ShowCreateTable())
 		require.Equal(t, hasImplicitRowID, meta.HasImplicitRowID())
 	}
+}
+
+func TestDumpTableMetaWithColumnSelectorsKeepsSourceColumnsForSplit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
+
+	columnSelectors := newColumnSelectorsForTest(t, ColumnSelectorModeInclude,
+		ColumnSelector{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
+	)
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.ColumnSelectors = columnSelectors
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `name` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+		).AddRow("alice"))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`name` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+		).AddRow(1, "alice"))
+
+	meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
+	require.NoError(t, err)
+	require.Equal(t, "`name`", meta.SelectedField())
+	require.Equal(t, []string{"name"}, meta.ColumnNames())
+	require.Equal(t, []string{"VARCHAR"}, meta.ColumnTypes())
+
+	require.Equal(t, []string{"id", "name"}, meta.SourceColumnNames())
+	require.Equal(t, []string{"INT", "VARCHAR"}, meta.SourceColumnTypes())
+
+	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
+		WillReturnRows(sqlmock.NewRows(showIndexHeaders).
+			AddRow(table, 0, "PRIMARY", 1, "id", "A", 1, nil, nil, "", "BTREE", "", ""))
+	field, err := getNumericIndex(tctx, baseConn, meta)
+	require.NoError(t, err)
+	require.Equal(t, "id", field)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestGetListTableTypeByConf(t *testing.T) {
