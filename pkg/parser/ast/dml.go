@@ -4139,6 +4139,7 @@ type SplitIndexOption struct {
 type SplitOption struct {
 	stmtNode
 
+	Auto       bool
 	Lower      []ExprNode
 	Upper      []ExprNode
 	Num        int64

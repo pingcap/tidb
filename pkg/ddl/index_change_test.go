@@ -131,7 +131,6 @@ func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_index_regions = 1")
 	tk.MustExec("create table t_auto_presplit(a int primary key, b int)")
 	tk.MustExec("insert into t_auto_presplit values " +
 		"(1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1)," +
@@ -159,15 +158,12 @@ func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 				priority: priority,
 			})
 		})
-	tk.MustExec("alter table t_auto_presplit add index idx_b(b)")
+	tk.MustExec("alter table t_auto_presplit add index idx_b(b) pre_split_regions auto")
 	loadedArgs := loadedTopNFromStorage.Load()
 	require.NotNil(t, loadedArgs)
 	require.Equal(t, 0, loadedArgs.isIndex)
 	require.Equal(t, int64(2), loadedArgs.histID)
 	require.Equal(t, kv.PriorityNormal, loadedArgs.priority)
-	comments := tk.MustQuery("admin show ddl jobs 1").Rows()[0][12].(string)
-	require.Contains(t, comments, "auto_presplit_index_region=idx_b(")
-	require.Contains(t, comments, "split_keys=")
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {

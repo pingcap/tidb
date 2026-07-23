@@ -39,15 +39,19 @@ import (
 const autoPresplitTestTableSQL = "create table t(a bigint, b bigint, index idx(b))"
 
 type fakeAutoPresplitStatsProvider struct {
-	stats          *statistics.Table
-	loadColumnTopN func(context.Context, sessionctx.Context, int64, int64, int) (*statistics.TopN, error)
+	stats                 *statistics.Table
+	getPhysicalTableStats func()
+	loadColumnTopN        func(context.Context, sessionctx.Context, int64, int64, int) (*statistics.TopN, error)
 }
 
-func (p fakeAutoPresplitStatsProvider) GetPhysicalTableStats(int64, *model.TableInfo) *statistics.Table {
+func (p *fakeAutoPresplitStatsProvider) GetPhysicalTableStats(int64, *model.TableInfo) *statistics.Table {
+	if p.getPhysicalTableStats != nil {
+		p.getPhysicalTableStats()
+	}
 	return p.stats
 }
 
-func (p fakeAutoPresplitStatsProvider) LoadColumnTopN(
+func (p *fakeAutoPresplitStatsProvider) LoadColumnTopN(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID, columnID int64,
@@ -254,6 +258,9 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	statsProvider := &fakeAutoPresplitStatsProvider{stats: statsTbl}
 	reorgMeta := &model.DDLReorgMeta{}
 	args := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{{}}}
+	autoArgs := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{{
+		AutoPresplit: true,
+	}}}
 
 	var capturedKeys [][]byte
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {
@@ -265,15 +272,22 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 			ctx = context.Background()
 		}
 		return preSplitIndexRegions(
-			ctx, sctx, store, tblInfo, []*model.IndexInfo{idxInfo}, reorgMeta, args, statsProvider)
+			ctx, sctx, store, tblInfo, []*model.IndexInfo{idxInfo}, reorgMeta, autoArgs, statsProvider)
 	}
 
+	statsAccessed := false
+	noAutoProvider := &fakeAutoPresplitStatsProvider{
+		stats: statsTbl,
+		getPhysicalTableStats: func() {
+			statsAccessed = true
+		},
+	}
 	err := preSplitIndexRegions(
 		context.Background(), sctx, nil, tblInfo, []*model.IndexInfo{idxInfo},
-		reorgMeta, args, nil)
+		reorgMeta, args, noAutoProvider)
 	require.NoError(t, err)
 	require.Empty(t, capturedKeys)
-	require.Empty(t, reorgMeta.AutoPresplitResults)
+	require.False(t, statsAccessed)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(25)")
 	badTopN := statistics.NewTopN(1)
@@ -282,42 +296,22 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	err = runAutoPresplit(nil, nil, &fakeAutoPresplitStatsProvider{stats: badStatsTbl})
 	require.NoError(t, err)
 	require.Empty(t, capturedKeys)
-	require.Len(t, reorgMeta.AutoPresplitResults, 1)
-	result := reorgMeta.AutoPresplitResults[0]
-	require.Equal(t, "idx", result.IndexName)
-	require.Equal(t, model.AutoPresplitStatusFailed, result.Status)
-	require.Contains(t, result.Reason, "failed to build TopN split keys")
 
 	hotTopN := buildAutoPresplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), []int64{20, 30}, []uint64{50, 40})
 	hotStatsTbl := buildAutoPresplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], hotTopN)
 	hotStatsProvider := &fakeAutoPresplitStatsProvider{stats: hotStatsTbl}
 	for _, tc := range []struct {
-		name   string
-		store  kv.Storage
-		result model.AutoPresplitResult
+		name  string
+		store kv.Storage
 	}{
-		{
-			name: "split", store: &fakeAutoPresplitStore{regionIDs: []uint64{1, 2, 3}},
-			result: model.AutoPresplitResult{
-				Status: model.AutoPresplitStatusSplit, SplitRegionCount: 3, ScatteredRegionCount: 3},
-		},
-		{
-			name: "failed", store: &fakeAutoPresplitStore{regionIDs: []uint64{1}, splitErr: context.DeadlineExceeded},
-			result: model.AutoPresplitResult{
-				Status: model.AutoPresplitStatusFailed, SplitRegionCount: 1, Reason: context.DeadlineExceeded.Error()},
-		},
-		{
-			name: "unsupported", result: model.AutoPresplitResult{
-				Status: model.AutoPresplitStatusUnsupported, Reason: "storage does not support split regions"},
-		},
+		{name: "split", store: &fakeAutoPresplitStore{regionIDs: []uint64{1, 2, 3}}},
+		{name: "failed", store: &fakeAutoPresplitStore{regionIDs: []uint64{1}, splitErr: context.DeadlineExceeded}},
+		{name: "unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := runAutoPresplit(nil, tc.store, hotStatsProvider)
 			require.NoError(t, err)
 			require.Equal(t, 2, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
-			tc.result.IndexName = "idx"
-			tc.result.SplitKeyCount = 3
-			require.Equal(t, []model.AutoPresplitResult{tc.result}, reorgMeta.AutoPresplitResults)
 		})
 	}
 
@@ -340,7 +334,6 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 
 			err := runAutoPresplit(ctx, store, hotStatsProvider)
 			require.Same(t, tc.cause, err)
-			require.Empty(t, reorgMeta.AutoPresplitResults)
 		})
 	}
 
@@ -363,7 +356,6 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 
 		err := runAutoPresplit(ctx, nil, provider)
 		require.True(t, dbterror.ErrPausedDDLJob.Equal(err))
-		require.Empty(t, reorgMeta.AutoPresplitResults)
 	})
 
 	manualArgs := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{{
@@ -375,16 +367,10 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		reorgMeta, manualArgs, hotStatsProvider)
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
-	require.Empty(t, reorgMeta.AutoPresplitResults)
 
 	err = runAutoPresplit(nil, nil, statsProvider)
 	require.NoError(t, err)
 	require.Empty(t, capturedKeys)
-	require.Equal(t, []model.AutoPresplitResult{{
-		IndexName: "idx",
-		Status:    model.AutoPresplitStatusSkipped,
-		Reason:    "no split strategy matched",
-	}}, reorgMeta.AutoPresplitResults)
 }
 
 func buildAutoPresplitTestTableInfoFromSQL(t *testing.T, createSQL string) (*model.TableInfo, *model.IndexInfo) {

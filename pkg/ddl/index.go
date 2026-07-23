@@ -1213,9 +1213,11 @@ SwitchIndexState:
 			return ver, err
 		}
 		var statsProvider autoPresplitStatsProvider
-		if val, ok := job.GetSystemVars(vardef.TiDBDDLEnableAutoSplitIndexRegions); ok &&
-			variable.TiDBOptOn(val) && w.ddlCtx.statsHandle != nil {
-			statsProvider = w.ddlCtx.statsHandle
+		for _, idxArg := range args.IndexArgs {
+			if idxArg.AutoPresplit {
+				statsProvider = w.ddlCtx.statsHandle
+				break
+			}
 		}
 		err = preSplitIndexRegions(
 			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
