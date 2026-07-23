@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -717,7 +718,7 @@ func (s *AzureBlobStorage) URI() string {
 const azblobChunkSize = 64 * 1024 * 1024
 
 // Create implements the StorageWriter interface.
-func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
+func (s *AzureBlobStorage) Create(ctx context.Context, name string, wo *storeapi.WriterOption) (objectio.Writer, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	uploader := &azblobUploader{
 		blobClient: client,
@@ -730,7 +731,18 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *storeapi.Wr
 		cpkInfo:  s.cpkInfo,
 	}
 
-	uploaderWriter := objectio.NewBufferedWriter(uploader, azblobChunkSize, compressedio.NoCompression, nil)
+	chunkSize := azblobChunkSize
+	if wo != nil && wo.Concurrency > 1 {
+		if wo.PartSize > 0 {
+			chunkSize = int(wo.PartSize)
+		}
+		eg, egCtx := errgroup.WithContext(ctx)
+		eg.SetLimit(wo.Concurrency)
+		uploader.eg = eg
+		uploader.egCtx = egCtx
+	}
+
+	uploaderWriter := objectio.NewBufferedWriter(uploader, chunkSize, compressedio.NoCompression, nil)
 	return uploaderWriter, nil
 }
 
@@ -889,28 +901,73 @@ type azblobUploader struct {
 
 	cpkScope *blob.CPKScopeInfo
 	cpkInfo  *blob.CPKInfo
+
+	// eg is set only when concurrent upload is requested through WriterOption.
+	// When it is nil, Write stages blocks synchronously, which stays the default
+	// path for callers that pass no option. egCtx cancels the in-flight stagers
+	// as soon as one of them fails.
+	eg    *errgroup.Group
+	egCtx context.Context
 }
 
-func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
+func newBlockID() (string, error) {
 	generatedUUID, err := uuid.NewUUID()
 	if err != nil {
-		return 0, errors.Annotate(err, "Fail to generate uuid")
+		return "", errors.Annotate(err, "Fail to generate uuid")
 	}
-	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
+	// A block ID must be a fixed-length string within a single commit; the
+	// canonical UUID is always 36 chars, so its base64 form is always 48.
+	return base64.StdEncoding.EncodeToString([]byte(generatedUUID.String())), nil
+}
 
-	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), &blockblob.StageBlockOptions{
+func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []byte) error {
+	_, err := u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), &blockblob.StageBlockOptions{
 		CPKScopeInfo: u.cpkScope,
 		CPKInfo:      u.cpkInfo,
 	})
 	if err != nil {
-		return 0, errors.Annotate(err, "Failed to upload block to azure blob")
+		return errors.Annotate(err, "Failed to upload block to azure blob")
 	}
-	u.blockIDList = append(u.blockIDList, blockID)
+	return nil
+}
 
+func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
+	blockID, err := newBlockID()
+	if err != nil {
+		return 0, err
+	}
+
+	if u.eg == nil {
+		if err := u.stageBlock(ctx, blockID, data); err != nil {
+			return 0, err
+		}
+		u.blockIDList = append(u.blockIDList, blockID)
+		return len(data), nil
+	}
+
+	// Write is called serially by the buffered writer, so appending here keeps
+	// blockIDList in file order; the background stagers never touch it.
+	u.blockIDList = append(u.blockIDList, blockID)
+	// The buffered writer reuses its backing array once Write returns, so copy
+	// before staging on a background goroutine. SetLimit bounds the in-flight
+	// uploads, so Go blocks here once the pool is full.
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	u.eg.Go(func() error {
+		return u.stageBlock(u.egCtx, blockID, buf)
+	})
 	return len(data), nil
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
+	if u.eg != nil {
+		if err := u.eg.Wait(); err != nil {
+			// Staged but uncommitted blocks are garbage-collected by Azure, so
+			// skip CommitBlockList and surface the failure instead.
+			return err
+		}
+	}
+
 	// the encryption scope and the access tier can not be both in the HTTP headers
 	options := &blockblob.CommitBlockListOptions{
 		CPKScopeInfo: u.cpkScope,
