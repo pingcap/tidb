@@ -1364,6 +1364,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-tablecodec"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-txnkv",
+]
+
+[[package]]
 name = "tidb-txnkv"
 version = "0.0.0"
 dependencies = [

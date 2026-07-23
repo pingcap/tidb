@@ -52,13 +52,16 @@ pub fn get_key_kind(key: &[u8]) -> KeyKind {
 
 /// Decodes a table ID from a legacy `t[table_id]...` key.
 ///
-/// This is the dependency-closed part of `tablecodec.DecodeTableID`: the
-/// table prefix is followed by TiDB's eight-byte ascending mem-comparable
-/// signed integer. API-V2 keyspace-prefix decoding is intentionally not part
-/// of this crate yet, so non-legacy, short, or malformed keys return the same
-/// observable zero fallback as Go's function.
+/// The table prefix is followed by TiDB's eight-byte ascending mem-comparable
+/// signed integer. API V2 keys carry the four-byte `x + keyspace ID` prefix,
+/// which is removed before applying the same decoder.
 #[must_use]
 pub fn decode_table_id(key: &[u8]) -> i64 {
+    let key = if key.first() == Some(&b'x') && key.len() >= 4 {
+        &key[4..]
+    } else {
+        key
+    };
     if key.first() != Some(&TABLE_PREFIX) {
         return 0;
     }

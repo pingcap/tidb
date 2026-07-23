@@ -21,6 +21,7 @@ members = [
     "crates/tidb-stats",
     "crates/tidb-codec",
     "crates/tidb-txnkv",
+    "crates/tidb-tablecodec",
     "crates/tidb-expr",
     "crates/tidb-exec",
     "crates/tidb-server",

@@ -24,10 +24,11 @@ rust/
 | `tidb-error` | error identity and MySQL error mapping | parser terror/MySQL errors and shared error packages |
 | `tidb-mysql` | MySQL constants, charset, privileges, types | `pkg/parser/mysql` |
 | `tidb-datatype` | SQL scalar values, charset, and collation | `pkg/parser/charset`, `pkg/util/collate`, `pkg/types` |
-| `tidb-codec` | row, key, and comparable encodings | `pkg/util/codec` and row codecs |
+| `tidb-codec` | dependency-leaf scalar, datum-key, rowcodec, and table-key framing | `pkg/util/codec` and shared table-key wire framing |
 | `tidb-proto` | checked protocol definitions | kvproto/tipb inputs |
 | `tidb-protocol` | MySQL packet and command framing | server packet/protocol packages |
 | `tidb-txnkv` | PD/region/TiKV transport and transaction primitives | `pkg/kv`, `pkg/store`, client-go, pd-client |
+| `tidb-tablecodec` | table row/index formats using canonical KV handles | `pkg/tablecodec` |
 | `tidb-distsql` | coprocessor request/response lifecycle | `pkg/distsql` |
 | `tidb-expr` | expression construction and evaluation | `pkg/expression` |
 | `tidb-planner` | resolution and logical/physical planning | `pkg/planner` |
@@ -46,6 +47,11 @@ datatypes. Planner consumes parser/AST, datatypes, statistics contracts, and
 catalog interfaces without depending on the server. Executor consumes plans,
 expressions, datatypes, DistSQL, and transaction interfaces. Server owns
 network lifecycle and delegates SQL behavior rather than reimplementing it.
+
+Tablecodec follows the Go dependency direction: `tidb-codec` supplies wire
+encodings, `tidb-txnkv` owns the single runtime `Handle` type, and
+`tidb-tablecodec` combines both. Shared table-key framing stays below
+`tidb-txnkv` so transaction error diagnostics do not create a dependency cycle.
 
 Storage has one production authority for PD access, region routing, TiKV
 transport, retries, lock resolution, and transaction state. Session state has

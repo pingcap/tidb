@@ -37,6 +37,8 @@ const ID_LEN: usize = 8;
 const PREFIX_LEN: usize = 1 + ID_LEN + 2;
 /// Encoded byte length of a table record key with an integer handle.
 pub const RECORD_ROW_KEY_LEN: usize = PREFIX_LEN + ID_LEN;
+/// Encoded byte length of `t{table_id}`, used as the table split key.
+pub const TABLE_SPLIT_KEY_LEN: usize = 1 + ID_LEN;
 const HASH_DATA_FLAG: u64 = b'h' as u64;
 
 /// Structural failure while decoding a TiDB table or metadata key.
@@ -50,6 +52,19 @@ pub enum TableKeyError {
     InvalidIndexKey,
     /// The key does not follow TiDB's encoded metadata-key layout.
     InvalidMetaKey,
+}
+
+impl TableKeyError {
+    /// MySQL error number used by Go's `dbterror.ClassXEval` mapping.
+    #[must_use]
+    pub const fn mysql_error_code(&self) -> u16 {
+        match self {
+            Self::InvalidKey => 8221,
+            Self::InvalidRecordKey => 8045,
+            Self::InvalidIndexKey => 8222,
+            Self::InvalidMetaKey => 1105,
+        }
+    }
 }
 
 impl fmt::Display for TableKeyError {
@@ -82,13 +97,23 @@ pub enum KeyHead {
     },
 }
 
-/// Row handle decoded from a table record key.
+/// Wire-level row handle decoded from a table record key.
+///
+/// Runtime SQL/KV code uses `tidb_txnkv::Handle`; this closed representation
+/// keeps dependency-leaf key diagnostics independent of the transaction crate.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecordHandle {
     /// Signed integer row handle.
     Int(i64),
     /// Canonically encoded sequence of Datum values forming a common handle.
     Common(Vec<u8>),
+    /// Physical partition ID paired with its underlying row handle.
+    Partition {
+        /// Physical partition identifier.
+        partition_id: i64,
+        /// Underlying integer or common handle.
+        handle: Box<RecordHandle>,
+    },
 }
 
 impl fmt::Display for RecordHandle {
@@ -108,6 +133,89 @@ impl fmt::Display for RecordHandle {
                 }
                 f.write_str("}")
             }
+            Self::Partition {
+                partition_id,
+                handle,
+            } => write!(f, "partition:{partition_id},{handle}"),
+        }
+    }
+}
+
+impl RecordHandle {
+    /// Constructs a partition-aware handle.
+    #[must_use]
+    pub fn partition(partition_id: i64, handle: Self) -> Self {
+        Self::Partition {
+            partition_id,
+            handle: Box::new(handle),
+        }
+    }
+
+    /// Returns whether the underlying handle is an integer.
+    #[must_use]
+    pub const fn is_int(&self) -> bool {
+        match self {
+            Self::Int(_) => true,
+            Self::Common(_) => false,
+            Self::Partition { handle, .. } => handle.is_int(),
+        }
+    }
+
+    /// Returns the underlying integer value.
+    #[must_use]
+    pub const fn int_value(&self) -> Option<i64> {
+        match self {
+            Self::Int(value) => Some(*value),
+            Self::Common(_) => None,
+            Self::Partition { handle, .. } => handle.int_value(),
+        }
+    }
+
+    /// Returns the physical partition ID when present.
+    #[must_use]
+    pub const fn partition_id(&self) -> Option<i64> {
+        match self {
+            Self::Partition { partition_id, .. } => Some(*partition_id),
+            _ => None,
+        }
+    }
+
+    /// Returns the underlying non-partition handle.
+    #[must_use]
+    pub const fn inner(&self) -> &Self {
+        match self {
+            Self::Partition { handle, .. } => handle.inner(),
+            other => other,
+        }
+    }
+
+    /// Returns the source handle's persisted encoding.
+    #[must_use]
+    pub fn encoded(&self) -> Vec<u8> {
+        encode_handle(self)
+    }
+
+    /// Returns encoded component columns for a common handle.
+    pub fn encoded_columns(&self) -> Result<Vec<Vec<u8>>, TableKeyError> {
+        match self.inner() {
+            Self::Int(value) => {
+                let mut encoded = Vec::with_capacity(ID_LEN + 1);
+                encoded.push(INT_FLAG);
+                encode_int(&mut encoded, *value);
+                Ok(vec![encoded])
+            }
+            Self::Common(encoded) => {
+                let mut columns = Vec::new();
+                let mut remaining = encoded.as_slice();
+                while !remaining.is_empty() {
+                    let (column, tail) =
+                        crate::cut_one(remaining).map_err(|_| TableKeyError::InvalidRecordKey)?;
+                    columns.push(column.to_vec());
+                    remaining = tail;
+                }
+                Ok(columns)
+            }
+            Self::Partition { .. } => unreachable!("inner removes partition wrappers"),
         }
     }
 }
@@ -155,11 +263,14 @@ pub fn get_table_handle_key_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
 }
 
 /// Appends a source handle to an already encoded table-record prefix.
-///
-/// Partition-handle prefix substitution remains outside this dependency-closed
-/// handle representation and is recorded as a residual.
 #[must_use]
 pub fn encode_record_key(record_prefix: &[u8], handle: &RecordHandle) -> Vec<u8> {
+    let record_prefix = match handle {
+        RecordHandle::Partition { partition_id, .. } => {
+            return encode_row_key(*partition_id, &encode_handle(handle));
+        }
+        _ => record_prefix,
+    };
     let encoded = encode_handle(handle);
     let mut key = Vec::with_capacity(record_prefix.len() + encoded.len());
     key.extend_from_slice(record_prefix);
@@ -181,6 +292,16 @@ pub fn encode_index_seek_key(table_id: i64, index_id: i64, encoded_values: &[u8]
     let mut key = encode_table_index_prefix(table_id, index_id);
     key.extend_from_slice(encoded_values);
     key
+}
+
+/// Extracts the index ID without validating the rest of the index key.
+pub fn decode_index_id(key: &[u8]) -> Result<i64, TableKeyError> {
+    let bytes = key
+        .get(PREFIX_LEN..)
+        .ok_or(TableKeyError::InvalidIndexKey)?;
+    decode_int(bytes)
+        .map(|(_, index_id)| index_id)
+        .map_err(|_| TableKeyError::InvalidIndexKey)
 }
 
 /// Encodes one entry key of a non-unique secondary index over an integer handle.
@@ -257,7 +378,30 @@ pub fn decode_record_key(key: &[u8]) -> Result<(i64, RecordHandle), TableKeyErro
 
 /// Decodes only the row handle portion of a table record key.
 pub fn decode_row_key(key: &[u8]) -> Result<RecordHandle, TableKeyError> {
-    decode_record_key(key).map(|(_, handle)| handle)
+    // Rust `tidb-rs` is a standalone SQL node, so API V2 transaction keys are
+    // always decoded at this boundary. Go makes the same removal through
+    // `rowcodec.RemoveKeyspacePrefix` when next-generation keyspace mode or
+    // test mode is active.
+    let key = if key.first() == Some(&b'x') && key.len() >= 4 {
+        &key[4..]
+    } else {
+        key
+    };
+    if key.len() < RECORD_ROW_KEY_LEN
+        || key.first() != Some(&b't')
+        || key.get(9..11) != Some(RECORD_PREFIX)
+    {
+        return Err(TableKeyError::InvalidKey);
+    }
+    let encoded = &key[PREFIX_LEN..];
+    if encoded.len() == ID_LEN {
+        let (remaining, handle) = decode_int(encoded).map_err(|_| TableKeyError::InvalidKey)?;
+        if remaining.is_empty() {
+            return Ok(RecordHandle::Int(handle));
+        }
+    }
+    validate_common_handle(encoded).map_err(|_| TableKeyError::InvalidKey)?;
+    Ok(RecordHandle::Common(encoded.to_vec()))
 }
 
 /// Decodes a table index key into table/index IDs and SQL-rendered values.
@@ -267,7 +411,12 @@ pub fn decode_index_key(key: &[u8]) -> Result<(i64, i64, Vec<String>), TableKeyE
     else {
         return Err(TableKeyError::InvalidIndexKey);
     };
-    let mut values = &key[PREFIX_LEN + ID_LEN..];
+    let values = decode_values_bytes_to_strings(&key[PREFIX_LEN + ID_LEN..])?;
+    Ok((table_id, index_id, values))
+}
+
+/// Decodes a complete datum-key stream into source SQL strings.
+pub fn decode_values_bytes_to_strings(mut values: &[u8]) -> Result<Vec<String>, TableKeyError> {
     let mut decoded = Vec::new();
     while !values.is_empty() {
         let (remain, datum) = decode_one(values).map_err(|_| TableKeyError::InvalidIndexKey)?;
@@ -278,7 +427,7 @@ pub fn decode_index_key(key: &[u8]) -> Result<(i64, i64, Vec<String>), TableKeyE
         );
         values = remain;
     }
-    Ok((table_id, index_id, decoded))
+    Ok(decoded)
 }
 
 /// Decodes a hash-data metadata key into its metadata key and field bytes.
@@ -294,6 +443,33 @@ pub fn decode_meta_key(key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TableKeyError> 
     // Go DecodeMetaKey deliberately ignores bytes after the encoded field.
     let (_, field) = decode_bytes(tail).map_err(|_| TableKeyError::InvalidMetaKey)?;
     Ok((meta_key, field))
+}
+
+/// Encodes a structure hash-data metadata key and field.
+#[must_use]
+pub fn encode_meta_key(key: &[u8], field: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(
+        META_PREFIX.len()
+            + crate::encoded_bytes_len(key.len())
+            + ID_LEN
+            + crate::encoded_bytes_len(field.len()),
+    );
+    encoded.extend_from_slice(META_PREFIX);
+    crate::encode_bytes(&mut encoded, key);
+    crate::encode_uint(&mut encoded, HASH_DATA_FLAG);
+    crate::encode_bytes(&mut encoded, field);
+    encoded
+}
+
+/// Encodes the prefix shared by every field of one structure hash-data key.
+#[must_use]
+pub fn encode_meta_key_prefix(key: &[u8]) -> Vec<u8> {
+    let mut encoded =
+        Vec::with_capacity(META_PREFIX.len() + crate::encoded_bytes_len(key.len()) + ID_LEN);
+    encoded.extend_from_slice(META_PREFIX);
+    crate::encode_bytes(&mut encoded, key);
+    crate::encode_uint(&mut encoded, HASH_DATA_FLAG);
+    encoded
 }
 
 /// Returns the encoded record-handle bytes after the table record prefix.
@@ -330,6 +506,7 @@ fn encode_handle(handle: &RecordHandle) -> Vec<u8> {
             encoded
         }
         RecordHandle::Common(encoded) => encoded.clone(),
+        RecordHandle::Partition { handle, .. } => encode_handle(handle),
     }
 }
 

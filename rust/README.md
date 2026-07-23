@@ -32,6 +32,7 @@ but does not replace reading or translating the source.
 | `crates/tidb-datatype` | SQL scalar representation, charset, and collation | `pkg/parser/charset`, `pkg/util/collate`, `pkg/types/**`, later extracted TiKV query datatypes |
 | `crates/tidb-codec` | byte-compatible comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
 | `crates/tidb-txnkv` | source-backed KV key/range/version foundation; future TiKV transaction client | `pkg/kv/**`, then client-go transaction protocols |
+| `crates/tidb-tablecodec` | table row/index formats above codecs and canonical KV handles | `pkg/tablecodec` |
 | `crates/tidb-expr` | expression construction/evaluation | `pkg/expression/**` |
 | `crates/tidb-exec` | seed session/catalog executor | `pkg/session/**`, `pkg/executor/**` |
 | `difftests` | differential infrastructure | Go helpers and checked corpora |
@@ -43,8 +44,11 @@ but does not replace reading or translating the source.
 The seed executor and evaluator are migration scaffolding, not a parity claim.
 `tidb-txnkv` currently delivers key/range/version plus source-backed
 `Int`/`Common`/`Partition` handles and a portable handle map. `tidb-codec`
-provides their real comparable key encoding dependency. Neither crate yet
-contains RPC, MVCC, locks, retries, or commit protocols.
+provides their real comparable key encoding dependency. `tidb-tablecodec`
+then combines those foundations without redefining handle ownership. The
+dependency-leaf table-key framing remains in `tidb-codec` because transaction
+diagnostics also decode those keys. Neither foundation crate yet contains RPC,
+MVCC, locks, retries, or commit protocols.
 Unsupported behavior must fail before mutation. It must not be approximated
 with a locally convenient rule just to make a golden pass.
 

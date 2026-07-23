@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Executable equivalents of every benchmark in `pkg/util/codec/bench_test.go`.
+//! Executable equivalents of every benchmark in `pkg/util/codec` and
+//! `pkg/util/rowcodec`.
 
 use std::hint::black_box;
 use std::time::Instant;
