@@ -274,6 +274,19 @@ func TestCancelImportJobWithoutDXFTask(t *testing.T) {
 		Check(testkit.Rows("cancelled cancelled by user"))
 	assertNoDXFTask(jobID)
 
+	backgroundJobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	assertNoDXFTask(backgroundJobID)
+
+	// The KILL path enters the helper with a fresh background context.
+	require.NoError(t, executor.CancelAndWaitImportJobForTest(context.Background(), backgroundJobID))
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", backgroundJobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(backgroundJobID)
+
 	err = tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID))
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidOperation)
 	require.ErrorContains(t, err, "The current job status cannot perform the operation. CANCEL")
