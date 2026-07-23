@@ -6,6 +6,10 @@ The binary format is deliberately trivial and host-independent:
 * ``general_ci_u16_le.bin``: 65,536 little-endian u16 weights.
 * ``unicode_0400_u64_le.bin``: 65,536 little-endian u64 weights.
 * ``unicode_0400_long_u64_le.bin``: sorted ``<u32,u64,u64>`` records.
+* ``unicode_0900_u64_le.bin``: 183,969 little-endian u64 weights.
+* ``unicode_0900_long_u64_le.bin``: sorted ``<u32,u64,u64>`` records.
+* ``gbk_chinese_ci_u16_le.bin``: 65,536 little-endian u16 weights.
+* ``gb18030_chinese_ci_u32_le.bin``: 1,114,112 little-endian u32 weights.
 
 Do not edit those files by hand. This program also checks the generated UCA
 4.0 data against TiDB's retained original test fixture, preserving
@@ -27,6 +31,9 @@ OUTPUT = CRATE / "src/collation_data"
 GENERAL_GO = ROOT / "pkg/util/collate/general_ci.go"
 UCA_GO = ROOT / "pkg/util/collate/ucadata/unicode_ci_data_generated.go"
 UCA_ORIGINAL_GO = ROOT / "pkg/util/collate/ucadata/unicode_ci_data_original_test.go"
+UCA_0900_GO = ROOT / "pkg/util/collate/ucadata/unicode_0900_ai_ci_data_generated.go"
+GBK_GO = ROOT / "pkg/util/collate/gbk_chinese_ci_data.go"
+GB18030_DATA = ROOT / "pkg/util/collate/gb18030_weight.data"
 
 
 def numeric_values(source: str) -> list[int]:
@@ -66,7 +73,9 @@ def parse_general_ci() -> list[int]:
     return [planes[codepoint >> 8][codepoint & 0xFF] if codepoint >> 8 in planes else codepoint for codepoint in range(65536)]
 
 
-def parse_long_map(source: str, start: str, end: str) -> list[tuple[int, int, int]]:
+def parse_long_map(
+    source: str, start: str, end: str, expected_count: int
+) -> list[tuple[int, int, int]]:
     body = between(source, start, end)
     rows = [
         (int(rune, 16), int(first, 16), int(second, 16))
@@ -74,8 +83,10 @@ def parse_long_map(source: str, start: str, end: str) -> list[tuple[int, int, in
             r"0x([0-9A-Fa-f]+)\s*:\s*\{0x([0-9A-Fa-f]+),\s*0x([0-9A-Fa-f]+)\}", body
         )
     ]
-    if len(rows) != 22:
-        raise ValueError(f"UCA 4.0 long-rune map has {len(rows)} rows, expected 22")
+    if len(rows) != expected_count:
+        raise ValueError(
+            f"long-rune map has {len(rows)} rows, expected {expected_count}"
+        )
     if len({row[0] for row in rows}) != len(rows):
         raise ValueError("UCA 4.0 long-rune map has duplicate runes")
     if len({row[1:] for row in rows}) != len(rows):
@@ -88,7 +99,9 @@ def parse_uca_generated() -> tuple[list[int], list[tuple[int, int, int]]]:
     table = numeric_values(between(source, "MapTable4: [65536]uint64{", "},\n\tLongRuneMap:"))
     if len(table) != 65536:
         raise ValueError(f"generated UCA 4.0 table has {len(table)} values, expected 65536")
-    long_map = parse_long_map(source, "LongRuneMap: map[rune][2]uint64{", "\n\t},\n}")
+    long_map = parse_long_map(
+        source, "LongRuneMap: map[rune][2]uint64{", "\n\t},\n}", 22
+    )
     markers = {index for index, value in enumerate(table) if value == 0xFFFD}
     long_runes = {row[0] for row in long_map}
     if markers != long_runes:
@@ -108,14 +121,61 @@ def verify_original(generated: list[int], generated_long: list[tuple[int, int, i
             f"generated UCA 4.0 table differs from original at {mismatch:#x}: "
             f"{generated[mismatch]:#x} != {original[mismatch]:#x}"
         )
-    original_long = parse_long_map(source, "longRuneMap = map[rune][]uint64{", "\n\t}\n)")
+    original_long = parse_long_map(
+        source, "longRuneMap = map[rune][]uint64{", "\n\t}\n)", 22
+    )
     if generated_long != original_long:
         raise ValueError("generated UCA 4.0 long-rune map differs from original")
+
+
+def parse_uca_0900() -> tuple[list[int], list[tuple[int, int, int]]]:
+    source = UCA_0900_GO.read_text()
+    table = numeric_values(
+        between(source, "MapTable4: [183969]uint64{", "},\n\tLongRuneMap:")
+    )
+    if len(table) != 183969:
+        raise ValueError(
+            f"generated UCA 9.0 table has {len(table)} values, expected 183969"
+        )
+    long_map = parse_long_map(
+        source, "LongRuneMap: map[rune][2]uint64{", "\n\t},\n}", 27
+    )
+    markers = {index for index, value in enumerate(table) if value == 0xFFFD}
+    long_runes = {row[0] for row in long_map}
+    surrogate_markers = set(range(0xD800, 0xE000))
+    if markers != long_runes | surrogate_markers:
+        raise ValueError(
+            "UCA 9.0 long-rune markers and expansion records differ: "
+            f"missing={sorted(markers - long_runes - surrogate_markers)}, "
+            f"extra={sorted(long_runes - markers)}"
+        )
+    return table, long_map
+
+
+def parse_gbk() -> list[int]:
+    source = GBK_GO.read_text()
+    table = numeric_values(
+        between(
+            source,
+            "gbkChineseCISortKeyTable = [0xFFFF + 1]uint16{",
+            "\n\t}\n)",
+        )
+    )
+    if len(table) != 65536:
+        raise ValueError(f"GBK CI table has {len(table)} values, expected 65536")
+    return table
 
 
 def encoded_files() -> dict[Path, bytes]:
     general = parse_general_ci()
     uca, long_map = parse_uca_generated()
+    uca_0900, long_map_0900 = parse_uca_0900()
+    gbk = parse_gbk()
+    gb18030 = GB18030_DATA.read_bytes()
+    if len(gb18030) != 0x110000 * 4:
+        raise ValueError(
+            f"GB18030 CI table has {len(gb18030)} bytes, expected {0x110000 * 4}"
+        )
     verify_original(uca, long_map)
     return {
         OUTPUT / "general_ci_u16_le.bin": b"".join(struct.pack("<H", value) for value in general),
@@ -123,6 +183,17 @@ def encoded_files() -> dict[Path, bytes]:
         OUTPUT / "unicode_0400_long_u64_le.bin": b"".join(
             struct.pack("<IQQ", rune, first, second) for rune, first, second in long_map
         ),
+        OUTPUT / "unicode_0900_u64_le.bin": b"".join(
+            struct.pack("<Q", value) for value in uca_0900
+        ),
+        OUTPUT / "unicode_0900_long_u64_le.bin": b"".join(
+            struct.pack("<IQQ", rune, first, second)
+            for rune, first, second in long_map_0900
+        ),
+        OUTPUT / "gbk_chinese_ci_u16_le.bin": b"".join(
+            struct.pack("<H", value) for value in gbk
+        ),
+        OUTPUT / "gb18030_chinese_ci_u32_le.bin": gb18030,
     }
 
 
@@ -136,7 +207,10 @@ def main() -> int:
         if failures:
             print("collation images are stale: " + ", ".join(failures), file=sys.stderr)
             return 1
-        print("collation images match Go sources: 65536 general_ci, 65536 UCA 4.0, 22 long-rune rows")
+        print(
+            "collation images match Go sources: 65536 general_ci, "
+            "65536 UCA 4.0, 183969 UCA 9.0, GBK, and GB18030"
+        )
         return 0
 
     OUTPUT.mkdir(parents=True, exist_ok=True)

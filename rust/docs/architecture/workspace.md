@@ -23,7 +23,7 @@ rust/
 | `tidb-parser` | grammar and parser-level helpers | `pkg/parser` |
 | `tidb-error` | error identity and MySQL error mapping | parser terror/MySQL errors and shared error packages |
 | `tidb-mysql` | MySQL constants, charset, privileges, types | `pkg/parser/mysql` |
-| `tidb-datatype` | SQL scalar values and type metadata | `pkg/types` |
+| `tidb-datatype` | SQL scalar values, charset, and collation | `pkg/parser/charset`, `pkg/util/collate`, `pkg/types` |
 | `tidb-codec` | row, key, and comparable encodings | `pkg/util/codec` and row codecs |
 | `tidb-proto` | checked protocol definitions | kvproto/tipb inputs |
 | `tidb-protocol` | MySQL packet and command framing | server packet/protocol packages |

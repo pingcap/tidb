@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Core TiDB SQL data types."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
 
 [lints]
 workspace = true
@@ -18,3 +20,11 @@ tidb-error = { path = "../tidb-error" }
 
 [dev-dependencies]
 sha2 = { workspace = true }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[bench]]
+name = "collate"
+harness = false

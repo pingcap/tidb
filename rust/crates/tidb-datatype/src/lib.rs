@@ -80,6 +80,16 @@ pub use charset::{
     get_supported_collations, remove_charset, valid_charset_and_collation, Charset, CharsetError,
     CharsetInfo, Collation, CollationInfo, PAD_NONE, PAD_SPACE,
 };
+pub use collation::{
+    binary_collation_name, binary_collator, collation_id_to_name, collation_name_to_id,
+    collation_to_proto, compatible_collate, get_binary_collator, get_binary_collator_slice,
+    get_collator, get_collator_by_id, get_collator_with_mode, get_supported_collation_by_name,
+    is_bin_collation, is_ci_collation, is_default_collation_for_utf8mb4, is_pad_space_collation,
+    new_collation_enabled, proto_to_collation, restore_collation_id_if_needed,
+    rewrite_new_collation_id_if_needed, set_new_collation_enabled,
+    substitute_missing_collation_to_default, supported_collations, CollationError, Collator,
+    WildcardPattern, DEFAULT_LEN,
+};
 pub use config_duration::{parse_config_duration, ConfigDurationError, ParseFloatErrorKind};
 pub use conversion_context::{
     ConversionContext, ConversionFlags, ConversionLocation, ConversionWarningAppender,

@@ -278,20 +278,7 @@ fn max_bytes_per_character(collation: Collation) -> u32 {
 }
 
 fn collation_id(collation: Collation) -> u16 {
-    // IDs come directly from `pkg/parser/charset/charset.go`'s registry.
-    match collation {
-        Collation::Binary => 63,
-        Collation::AsciiBin => 65,
-        Collation::Latin1Bin => 47,
-        Collation::Utf8Bin => 83,
-        Collation::Utf8GeneralCi => 33,
-        Collation::Utf8UnicodeCi => 192,
-        Collation::Utf8Mb4Bin => 46,
-        Collation::Utf8Mb4GeneralCi => 45,
-        Collation::Utf8Mb4UnicodeCi => 224,
-        Collation::GbkBin => 87,
-        Collation::Gb18030Bin => 249,
-    }
+    u16::try_from(collation.id()).expect("supported collation IDs fit u16")
 }
 
 fn default_field_length(code: FieldTypeCode) -> u32 {

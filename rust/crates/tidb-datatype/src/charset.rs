@@ -18,6 +18,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{OnceLock, RwLock};
 
+#[cfg(test)]
+pub(crate) static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Trailing spaces are insignificant.
 pub const PAD_SPACE: &str = "PAD SPACE";
 /// Trailing spaces are significant.
@@ -111,15 +114,47 @@ pub enum Collation {
     Utf8Mb4GeneralCi,
     /// UTF8MB4 Unicode CI collation.
     Utf8Mb4UnicodeCi,
+    /// UTF8MB4 Unicode 9.0 accent-insensitive/case-insensitive collation.
+    Utf8Mb40900AiCi,
+    /// UTF8MB4 Unicode 9.0 binary collation.
+    Utf8Mb40900Bin,
+    /// TiDB's reserved pinyin collation stub.
+    Utf8Mb4ZhPinyinTiDbAsCs,
     /// GBK binary collation.
     GbkBin,
+    /// GBK Chinese case-insensitive collation.
+    GbkChineseCi,
     /// GB18030 binary collation.
     Gb18030Bin,
+    /// GB18030 Chinese case-insensitive collation.
+    Gb18030ChineseCi,
 }
 
 impl Collation {
     /// TiDB's default collation.
     pub const DEFAULT: Self = Self::Utf8Mb4Bin;
+
+    /// Returns the source parser registry ID.
+    pub const fn id(self) -> i32 {
+        match self {
+            Self::Binary => 63,
+            Self::AsciiBin => 65,
+            Self::Latin1Bin => 47,
+            Self::Utf8Bin => 83,
+            Self::Utf8GeneralCi => 33,
+            Self::Utf8UnicodeCi => 192,
+            Self::Utf8Mb4Bin => 46,
+            Self::Utf8Mb4GeneralCi => 45,
+            Self::Utf8Mb4UnicodeCi => 224,
+            Self::Utf8Mb40900AiCi => 255,
+            Self::Utf8Mb40900Bin => 309,
+            Self::Utf8Mb4ZhPinyinTiDbAsCs => 2048,
+            Self::GbkBin => 87,
+            Self::GbkChineseCi => 28,
+            Self::Gb18030Bin => 249,
+            Self::Gb18030ChineseCi => 248,
+        }
+    }
 
     /// Returns the canonical name.
     pub const fn name(self) -> &'static str {
@@ -133,8 +168,13 @@ impl Collation {
             Self::Utf8Mb4Bin => "utf8mb4_bin",
             Self::Utf8Mb4GeneralCi => "utf8mb4_general_ci",
             Self::Utf8Mb4UnicodeCi => "utf8mb4_unicode_ci",
+            Self::Utf8Mb40900AiCi => "utf8mb4_0900_ai_ci",
+            Self::Utf8Mb40900Bin => "utf8mb4_0900_bin",
+            Self::Utf8Mb4ZhPinyinTiDbAsCs => "utf8mb4_zh_pinyin_tidb_as_cs",
             Self::GbkBin => "gbk_bin",
+            Self::GbkChineseCi => "gbk_chinese_ci",
             Self::Gb18030Bin => "gb18030_bin",
+            Self::Gb18030ChineseCi => "gb18030_chinese_ci",
         }
     }
 
@@ -145,9 +185,14 @@ impl Collation {
             Self::AsciiBin => Charset::Ascii,
             Self::Latin1Bin => Charset::Latin1,
             Self::Utf8Bin | Self::Utf8GeneralCi | Self::Utf8UnicodeCi => Charset::Utf8,
-            Self::Utf8Mb4Bin | Self::Utf8Mb4GeneralCi | Self::Utf8Mb4UnicodeCi => Charset::Utf8Mb4,
-            Self::GbkBin => Charset::Gbk,
-            Self::Gb18030Bin => Charset::Gb18030,
+            Self::Utf8Mb4Bin
+            | Self::Utf8Mb4GeneralCi
+            | Self::Utf8Mb4UnicodeCi
+            | Self::Utf8Mb40900AiCi
+            | Self::Utf8Mb40900Bin
+            | Self::Utf8Mb4ZhPinyinTiDbAsCs => Charset::Utf8Mb4,
+            Self::GbkBin | Self::GbkChineseCi => Charset::Gbk,
+            Self::Gb18030Bin | Self::Gb18030ChineseCi => Charset::Gb18030,
         }
     }
 
@@ -163,8 +208,13 @@ impl Collation {
             "utf8mb4_bin" => Some(Self::Utf8Mb4Bin),
             "utf8mb4_general_ci" => Some(Self::Utf8Mb4GeneralCi),
             "utf8mb4_unicode_ci" => Some(Self::Utf8Mb4UnicodeCi),
+            "utf8mb4_0900_ai_ci" => Some(Self::Utf8Mb40900AiCi),
+            "utf8mb4_0900_bin" => Some(Self::Utf8Mb40900Bin),
+            "utf8mb4_zh_pinyin_tidb_as_cs" => Some(Self::Utf8Mb4ZhPinyinTiDbAsCs),
             "gbk_bin" => Some(Self::GbkBin),
+            "gbk_chinese_ci" => Some(Self::GbkChineseCi),
             "gb18030_bin" => Some(Self::Gb18030Bin),
+            "gb18030_chinese_ci" => Some(Self::Gb18030ChineseCi),
             _ => None,
         }
     }
@@ -364,6 +414,43 @@ fn registry() -> &'static RwLock<Registry> {
     REGISTRY.get_or_init(|| RwLock::new(Registry::source()))
 }
 
+pub(crate) fn set_new_collation_defaults(enabled: bool) {
+    let mut guard = registry().write().expect("charset registry lock poisoned");
+    for (charset_name, binary, chinese_ci) in [
+        ("gbk", "gbk_bin", "gbk_chinese_ci"),
+        ("gb18030", "gb18030_bin", "gb18030_chinese_ci"),
+    ] {
+        let default = if enabled { chinese_ci } else { binary };
+        if let Some(charset) = guard.supported.get_mut(charset_name) {
+            charset.default_collation = default.to_owned();
+            for collation in charset.collations.values_mut() {
+                collation.is_default = collation.name == default;
+            }
+        }
+        if let Some(charset) = guard.known.get_mut(charset_name) {
+            charset.default_collation = default.to_owned();
+            for collation in charset.collations.values_mut() {
+                collation.is_default = collation.name == default;
+            }
+        }
+        for collation in guard.collations_by_name.values_mut() {
+            if collation.charset_name == charset_name {
+                collation.is_default = collation.name == default;
+            }
+        }
+        for collation in guard.collations_by_id.values_mut() {
+            if collation.charset_name == charset_name {
+                collation.is_default = collation.name == default;
+            }
+        }
+        for collation in &mut guard.supported_collations {
+            if collation.charset_name == charset_name {
+                collation.is_default = collation.name == default;
+            }
+        }
+    }
+}
+
 fn utf8_alias(name: &str) -> &str {
     match name {
         "utf8mb3_bin" => "utf8_bin",
@@ -526,6 +613,9 @@ mod tests {
 
     #[test]
     fn source_registry_vectors() {
+        let _guard = REGISTRY_TEST_LOCK
+            .lock()
+            .expect("charset test lock poisoned");
         for (charset, collation, expected) in [
             ("utf8", "utf8_general_ci", true),
             ("", "utf8_general_ci", true),
@@ -554,6 +644,9 @@ mod tests {
 
     #[test]
     fn source_custom_charset_mutation() {
+        let _guard = REGISTRY_TEST_LOCK
+            .lock()
+            .expect("charset test lock poisoned");
         add_charset(blank_charset("custom", "custom_collation", "Custom", 4));
         add_collation(CollationInfo {
             id: 99_999,
