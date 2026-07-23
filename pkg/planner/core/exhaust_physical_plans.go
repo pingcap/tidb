@@ -938,6 +938,10 @@ func constructDS2TableScanTask(
 	// For CommonHandle, this requires matching ALL primary key columns with equality conditions.
 	// For prefix scans (e.g., only matching first column of a composite PK), we trust the statistical estimation.
 	if maxOneRow && probeCardinality.countAfterAccess > 1 {
+		// Scale all stages together so the unique lookup is capped at one row while
+		// preserving the selectivity of residual index/table filters. The final
+		// filtered cardinality may still be below one because those filters can
+		// reject the row returned by the unique lookup.
 		ratio := 1 / probeCardinality.countAfterAccess
 		probeCardinality.countAfterAccess = 1
 		probeCardinality.countAfterIndex *= ratio
@@ -1216,6 +1220,8 @@ func constructDS2IndexScanTask(
 	if maxOneRow && probeCardinality.countAfterAccess > 1 {
 		// Theoretically, the join row-count estimate should not exceed 1.0. It can be larger
 		// with pseudo statistics, which do not reflect the unique constraint in their NDV.
+		// Scale all stages together to enforce the unique lookup bound without discarding
+		// the selectivity of residual index/table filters; countAfterFilter can be below one.
 		ratio := 1 / probeCardinality.countAfterAccess
 		probeCardinality.countAfterAccess = 1
 		probeCardinality.countAfterIndex *= ratio
