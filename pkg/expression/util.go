@@ -1934,7 +1934,11 @@ func ExecBinaryParam(typectx types.Context, binaryParams []param.BinaryParam) (p
 	)
 
 	params = make([]Expression, len(binaryParams))
-	args := make([]types.Datum, len(binaryParams))
+	var singleArg [1]types.Datum
+	args := singleArg[:]
+	if len(binaryParams) != 1 {
+		args = make([]types.Datum, len(binaryParams))
+	}
 	for i := range args {
 		tp := binaryParams[i].Tp
 		isUnsigned := binaryParams[i].IsUnsigned
