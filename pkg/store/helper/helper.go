@@ -20,8 +20,11 @@ import (
 	"cmp"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -113,6 +116,17 @@ func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
 	}
 	h.pdHTTPCli = cli.WithCallerID("tidb-store-helper")
 	return h.pdHTTPCli, nil
+}
+
+// GetRegions fetches regions for the current store. In keyspace-aware mode, it
+// restricts the scan to the current keyspace to avoid mixing regions from other keyspaces.
+func (h *Helper) GetRegions(ctx context.Context) (*pd.RegionsInfo, error) {
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	startKey, endKey := h.Store.GetCodec().EncodeRegionRange(nil, nil)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), -1)
 }
 
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
@@ -660,14 +674,16 @@ func (t TableInfoWithKeyRange) GetStartKey() string { return t.StartKey }
 // GetEndKey implements `withKeyRange` interface.
 func (t TableInfoWithKeyRange) GetEndKey() string { return t.EndKey }
 
-// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
-func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, nil)
+// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table with the specified codec.
+// It is exported only for test.
+func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec)
 }
 
-// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
-func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, index)
+// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index with the specified codec.
+// It is exported only for test.
+func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec)
 }
 
 // FilterMemDBs filters memory databases in the input schemas.
@@ -696,7 +712,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.
 	return tableInfos
 }
 
-func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo) TableInfoWithKeyRange {
+func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
 	var sk, ek []byte
 	if partition == nil && index == nil {
 		sk, ek = tablecodec.GetTableHandleKeyRange(table.ID)
@@ -707,8 +723,9 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 	} else {
 		sk, ek = tablecodec.GetTableIndexKeyRange(partition.ID, index.ID)
 	}
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	encodedSk, encodedEk := regionKeyCodec.EncodeRegionRange(sk, ek)
+	startKey := bytesKeyToHex(encodedSk)
+	endKey := bytesKeyToHex(encodedEk)
 	return TableInfoWithKeyRange{
 		&TableInfo{
 			DB:          db,
@@ -724,29 +741,33 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
-func (*Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
+func (h *Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
 	dbInfos := is.AllSchemas()
 	if filter != nil {
 		dbInfos = filter(dbInfos)
+	}
+	regionKeyCodec := tikv.NewCodecV1(tikv.ModeTxn)
+	if h.Store != nil {
+		regionKeyCodec = h.Store.GetCodec()
 	}
 	for _, db := range dbInfos {
 		tableInfos, _ := is.SchemaTableInfos(context.Background(), db.Name)
 		for _, table := range tableInfos {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil, regionKeyCodec))
 				}
 			} else {
-				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil))
+				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec))
 			}
 			for _, index := range table.Indices {
 				if table.Partition == nil || index.Global {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec))
 					continue
 				}
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index, regionKeyCodec))
 				}
 			}
 		}
@@ -798,7 +819,7 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs, err := etcd.EtcdAddrs()
+	pdAddrs, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, err
 	}
@@ -823,8 +844,7 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey = kv.Key(startKey).PrefixNext()
 	}
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
+	startKey, endKey = h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
 
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
@@ -880,9 +900,9 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 	return nil
 }
 
-// CollectTiFlashStatus query sync status of one table from TiFlash store.
-// `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
-func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+// CollectTiFlashStatusWithCtx queries sync status of one table from a TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
+func CollectTiFlashStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
 	// The new query schema is like: http://<host>/tiflash/sync-status/keyspace/<keyspaceID>/table/<tableID>.
 	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
 	// The query URL is like: http://<host>/sync-status/keyspace/<NullspaceID>/table/<tableID>
@@ -894,7 +914,11 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 		keyspaceID,
 		tableID,
 	)
-	resp, err := util.InternalHTTPClient().Get(statURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -911,6 +935,12 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// CollectTiFlashStatus queries sync status of one table from a TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
+func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+	return CollectTiFlashStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, regionReplica)
 }
 
 // SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
@@ -934,4 +964,64 @@ func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, 
 		logutil.BgLogger().Error("close body failed", zap.Error(err))
 	}
 	return nil
+}
+
+// ColumnarStatusResp is the response from the TiKV's status API
+type ColumnarStatusResp struct {
+	Ready            uint `json:"ready"`
+	VectorIndexReady uint `json:"vector-index-ready"`
+	Total            uint `json:"total"`
+}
+
+// CollectColumnarStatusWithCtx collects the columnar status from the TiKV status API.
+func CollectColumnarStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+	statURL := fmt.Sprintf("%s://%s/kvengine/columnar_status?keyspace_id=%d&table_id=%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	if indexID != nil {
+		statURL += fmt.Sprintf("&index_id=%d", *indexID)
+	}
+	var columnarStatus ColumnarStatusResp
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return columnarStatus, errors.Errorf("TiKV columnar status API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	err = json.Unmarshal(body, &columnarStatus)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	if columnarStatus.Ready != columnarStatus.Total {
+		logutil.BgLogger().Info("columnar status not ready", zap.Uint("ready", columnarStatus.Ready), zap.Uint("total", columnarStatus.Total))
+	}
+
+	return columnarStatus, nil
+}
+
+// CollectColumnarStatus collects the columnar status from the TiKV status API.
+func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+	return CollectColumnarStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, indexID)
 }

@@ -40,13 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -60,9 +58,6 @@ import (
 )
 
 var (
-	// addingDDLJobNotifyKey is the key in etcd to notify DDL scheduler that there
-	// is a new DDL job.
-	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 	schedulerLoopRetryInterval  = time.Second
 )
@@ -210,15 +205,6 @@ func (s *jobScheduler) close() {
 	failpoint.InjectCall("afterSchedulerClose")
 }
 
-func hasSysDB(job *model.Job) bool {
-	for _, info := range job.GetInvolvingSchemaInfo() {
-		if metadef.IsSystemRelatedDB(info.Database) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
 	if s.serverStateSyncer.IsUpgradingState() {
 		if job.IsPaused() {
@@ -226,7 +212,7 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 		}
 		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
 		// and stop the reorganization workers
-		if job.IsPausing() || hasSysDB(job) {
+		if job.IsPausing() || util.HasSysDB(job) {
 			return true, nil
 		}
 		var errs []error
@@ -251,6 +237,9 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 	}
 
 	if job.IsPausedBySystem() {
+		if job.HasPauseReason(model.JobPauseReasonKVDiskFull) {
+			return false, nil
+		}
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 && errs[0] != nil {
@@ -301,7 +290,7 @@ func (s *jobScheduler) schedule() error {
 	se := sess.NewSession(sessCtx)
 	var notifyDDLJobByEtcdCh clientv3.WatchChan
 	if s.etcdCli != nil {
-		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
+		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, util.AddingDDLJobNotifyKey)
 	}
 	if err := s.checkAndUpdateClusterState(true); err != nil {
 		return errors.Trace(err)
@@ -331,8 +320,8 @@ func (s *jobScheduler) schedule() error {
 		case <-ticker.C:
 		case _, ok := <-notifyDDLJobByEtcdCh:
 			if !ok {
-				logutil.DDLLogger().Warn("start worker watch channel closed", zap.String("watch key", addingDDLJobNotifyKey))
-				notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
+				logutil.DDLLogger().Warn("start worker watch channel closed", zap.String("watch key", util.AddingDDLJobNotifyKey))
+				notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, util.AddingDDLJobNotifyKey)
 				time.Sleep(time.Second)
 				continue
 			}
@@ -698,29 +687,6 @@ func (s *jobScheduler) workerPoolExhausted() bool {
 	return s.generalDDLWorkerPool.available() == 0 &&
 		s.reorgWorkerPool.available() == 0 &&
 		s.bgJobWorkerPool.available() == 0
-}
-
-func getTableByTxn(ctx context.Context, store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
-	var tbl table.Table
-	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		var err1 error
-		dbInfo, err1 = t.GetDatabase(schemaID)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		tblInfo, err1 := getTableInfo(t, tableID, schemaID)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		// This tableInfo should never interact with the autoid allocator,
-		// so we can use the autoid.Allocators{} here.
-		// TODO(tangenta): Use model.TableInfo instead of tables.Table.
-		tbl, err1 = table.TableFromMeta(autoid.Allocators{}, tblInfo)
-		return errors.Trace(err1)
-	})
-	return dbInfo, tbl, err
 }
 
 func updateDDLJob2Table(

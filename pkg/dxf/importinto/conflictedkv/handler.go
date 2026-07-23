@@ -21,9 +21,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -44,6 +46,14 @@ var (
 	BufferedHandleLimit = 256
 )
 
+// TrafficRecorder records the best-effort traffic between TiDB and TiKV.
+// It's used to report metering data for conflict handling without introducing
+// a dependency on the metering package.
+type TrafficRecorder interface {
+	IncClusterReadBytes(uint64)
+	IncClusterWriteBytes(uint64)
+}
+
 // Handler is the conflict KV Handler, either collecting info about those KVs or
 // delete those KVs from the cluster.
 type Handler interface {
@@ -51,7 +61,7 @@ type Handler interface {
 	// if it failed, Close still need to be called.
 	PreRun() error
 	// Run processes the conflicted KV pairs from the channel.
-	Run(context.Context, chan *external.KVPair) error
+	Run(context.Context, chan *simplesst.KVPair) error
 	// Close must be called regardless of PreRun/Run result.
 	Close(context.Context) error
 }
@@ -59,7 +69,7 @@ type Handler interface {
 // KVHandler handles a single conflict KV pair.
 // exported for test.
 type KVHandler interface {
-	Handle(context.Context, *external.KVPair) error
+	Handle(context.Context, *simplesst.KVPair) error
 }
 
 // EncodedRowHandler handles the re-encoded row from conflict KV.
@@ -76,6 +86,7 @@ type BaseHandler struct {
 	targetTable table.Table
 	kvGroup     string
 	encoder     *importer.TableKVEncoder
+	collector   execute.Collector
 	logger      *zap.Logger
 	EncodedRowHandler
 
@@ -88,12 +99,17 @@ func NewBaseHandler(
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
 	encodedRowHdl EncodedRowHandler,
+	collector execute.Collector,
 	logger *zap.Logger,
 ) *BaseHandler {
+	if collector == nil {
+		collector = &execute.NoopCollector{}
+	}
 	return &BaseHandler{
 		targetTable:       targetTable,
 		kvGroup:           kvGroup,
 		encoder:           encoder,
+		collector:         collector,
 		logger:            logger,
 		EncodedRowHandler: encodedRowHdl,
 	}
@@ -105,11 +121,13 @@ func (*BaseHandler) PreRun() error {
 }
 
 // Run implements Handler interface.
-func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) error {
+func (h *BaseHandler) Run(ctx context.Context, pairCh chan *simplesst.KVPair) error {
 	for kvPair := range pairCh {
 		if err := h.Handle(ctx, kvPair); err != nil {
 			return errors.Trace(err)
 		}
+		// Each item in pairCh is one conflict KV pair.
+		h.collector.Processed(1, 0)
 	}
 	return nil
 }
@@ -129,7 +147,7 @@ func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
 	handle tidbkv.Handle, val []byte) (err error) {
 	tblMeta := h.targetTable.Meta()
 	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx.GetExprCtx(),
-		tblMeta, handle, h.targetTable.Cols(), val)
+		h.targetTable, handle, h.targetTable.Cols(), val)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -168,7 +186,7 @@ func NewDataKVHandler(base *BaseHandler) *DataKVHandler {
 }
 
 // Handle implements KVHandler interface.
-func (h *DataKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
+func (h *DataKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
 	key, err := stripKeyspacePrefix(kv.Key)
 	if err != nil {
 		return err
@@ -215,7 +233,7 @@ func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filte
 
 // PreRun implements Handler interface.
 func (h *IndexKVHandler) PreRun() error {
-	indexID, err := external.KVGroup2IndexID(h.kvGroup)
+	indexID, err := globalsort.KVGroup2IndexID(h.kvGroup)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -235,7 +253,7 @@ func (h *IndexKVHandler) PreRun() error {
 }
 
 // Handle implements KVHandler interface.
-func (h *IndexKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
+func (h *IndexKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
 	key, err := stripKeyspacePrefix(kv.Key)
 	if err != nil {
 		return err
@@ -274,9 +292,6 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 		rowKeys2Handle[string(rowKey)] = hdl.handle
 	}
 
-	if err := h.snapshot.refreshAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 	res, err := h.snapshot.BatchGet(ctx, rowKeys)
 	if err != nil {
 		return errors.Trace(err)
@@ -305,13 +320,15 @@ type LazyRefreshedSnapshot struct {
 	tidbkv.Snapshot
 	store           tidbkv.Storage
 	lastRefreshTime time.Time
+	trafficRec      TrafficRecorder
 }
 
 // NewLazyRefreshedSnapshot creates a new LazyRefreshedSnapshot.
 // exported for test.
-func NewLazyRefreshedSnapshot(store tidbkv.Storage) *LazyRefreshedSnapshot {
+func NewLazyRefreshedSnapshot(store tidbkv.Storage, rec TrafficRecorder) *LazyRefreshedSnapshot {
 	return &LazyRefreshedSnapshot{
-		store: store,
+		store:      store,
+		trafficRec: rec,
 	}
 }
 
@@ -334,6 +351,29 @@ func (s *LazyRefreshedSnapshot) refreshAsNeeded() error {
 	s.Snapshot = s.store.GetSnapshot(ver)
 	s.lastRefreshTime = time.Now()
 	return nil
+}
+
+// BatchGet implements Snapshot interface.
+func (s *LazyRefreshedSnapshot) BatchGet(
+	ctx context.Context,
+	keys []tidbkv.Key,
+	options ...tidbkv.BatchGetOption,
+) (map[string]tidbkv.ValueEntry, error) {
+	if err := s.refreshAsNeeded(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	res, err := s.Snapshot.BatchGet(ctx, keys, options...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if s.trafficRec != nil {
+		var readBytes uint64
+		for k, v := range res {
+			readBytes += uint64(len(k) + len(v.Value))
+		}
+		s.trafficRec.IncClusterReadBytes(readBytes)
+	}
+	return res, nil
 }
 
 // the encoded key is prepended with keyspace prefix before store to object

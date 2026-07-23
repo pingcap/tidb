@@ -167,7 +167,8 @@ const (
 	// version79 adds the mysql.table_cache_meta table
 	version79 = 79
 	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
-	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
+	// It initializes a missing tidb_analyze_version during upgrade. Earlier bootstrap logic used 1
+	// for compatibility, but the only supported version is 2.
 	version80 = 80
 	// version81 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
 	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
@@ -478,6 +479,46 @@ const (
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
+
+	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
+	version255 = 255
+	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
+	version256 = 256
+
+	// ...
+	// [version257, version276] is the version range reserved for release-nextgen-202603.
+	// ...
+
+	// version277
+	// Add tidb_enable_no_backslash_escapes_in_like global variable.
+	version277 = 277
+
+	// version278
+	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
+	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
+	version278 = 278
+
+	// version279
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version279 = 279
+
+	// Add mysql.tidb_masking_policy table.
+	version280 = 280
+
+	// version281
+	// Backfill tidb_default_string_match_selectivity for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	version281 = 281
+
+	// version282 refreshes mysql.bind_info SQL digests after binding
+	// normalization starts skipping redundant parentheses for
+	// https://github.com/pingcap/tidb/issues/67363.
+	version282 = 282
+
+	// version283 backfills analyze default bucket and TopN global variables.
+	version283 = 283
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -491,7 +532,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version254
+var currentBootstrapVersion int64 = version283
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -670,6 +711,15 @@ var (
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
+		{version: version255, fn: upgradeToVer255},
+		{version: version256, fn: upgradeToVer256},
+		{version: version277, fn: upgradeToVer277},
+		{version: version278, fn: upgradeToVer278},
+		{version: version279, fn: upgradeToVer279},
+		{version: version280, fn: upgradeToVer280},
+		{version: version281, fn: upgradeToVer281},
+		{version: version282, fn: upgradeToVer282},
+		{version: version283, fn: upgradeToVer283},
 	}
 )
 
@@ -1349,9 +1399,10 @@ func upgradeToVer79(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer80(s sessionapi.Session, _ int64) {
-	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
-	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 1)
+	// Check whether tidb_analyze_version exists in mysql.global_variables.
+	// If it is missing, initialize it to 2. Earlier bootstrap logic used 1 for compatibility,
+	// but the supported write version is now 2 after the legacy analyze version 1 write path was removed.
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 2)
 }
 
 // For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
@@ -2048,4 +2099,178 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 func upgradeToVer254(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer255(s sessionapi.Session, _ int64) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBAnalyzeVersion)
+	terror.MustNil(err)
+	// The value should normally never be null, but check defensively to avoid a potential panic.
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return
+	}
+
+	oldValue := rows[0].GetString(0)
+	if oldValue != "1" {
+		return
+	}
+
+	// The current default value of tidb_analyze_version is 2.
+	newValue := strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
+	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue))
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
+}
+
+func upgradeToVer256(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
+}
+
+func upgradeToVer277(s sessionapi.Session, _ int64) {
+	// Keep old behavior for upgraded clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNoBackslashEscapesInLike, vardef.Off)
+}
+
+func upgradeToVer278(s sessionapi.Session, _ int64) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBDistSQLScanConcurrency)
+	terror.MustNil(err)
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return
+	}
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
+}
+
+func upgradeToVer279(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
+}
+
+func upgradeToVer280(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
+}
+
+func upgradeToVer281(s sessionapi.Session, _ int64) {
+	// the prior default behavior is "0.8", keep it for compatibility for old clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
+}
+
+type bindingDigestUpdate struct {
+	rowID       int64
+	originalSQL string
+	sqlDigest   string
+	duplicate   bool
+}
+
+type bindingDigestPair struct {
+	sqlDigest  string
+	planDigest string
+}
+
+func upgradeToVer282(s sessionapi.Session, _ int64) {
+	// Refresh persisted binding digests after the #67363 normalization change.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	// Duplicate detection keeps the first row scanned for each target digest
+	// pair, so scan newest bindings first.
+	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, bind_sql, default_db, charset, collation, plan_digest
+		FROM mysql.bind_info
+		WHERE source != 'builtin'
+		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer282 error", zap.Error(err))
+	}
+
+	req := rs.NewChunk(nil)
+	updates := make([]bindingDigestUpdate, 0)
+	invalidBindingRowIDs := make([]int64, 0)
+	seenDigestPair := make(map[bindingDigestPair]struct{})
+	p := parser.New()
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer282 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := range req.NumRows() {
+			row := req.GetRow(i)
+			rowID := row.GetInt64(0)
+			bindingSQL := row.GetString(1)
+			defaultDB := row.GetString(2)
+			charset := row.GetString(3)
+			collation := row.GetString(4)
+			planDigest := ""
+			planDigestNotNull := !row.IsNull(5)
+			if planDigestNotNull {
+				planDigest = row.GetString(5)
+			}
+
+			update := bindingDigestUpdate{rowID: rowID}
+			stmt, parseErr := p.ParseOneStmt(bindingSQL, charset, collation)
+			if parseErr != nil {
+				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
+					zap.String("bind_sql", bindingSQL), zap.Error(parseErr))
+				if planDigestNotNull {
+					invalidBindingRowIDs = append(invalidBindingRowIDs, rowID)
+				}
+				continue
+			}
+			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, defaultDB, false)
+			if originalSQL == "" || sqlDigest == "" {
+				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
+					zap.String("bind_sql", bindingSQL))
+				if planDigestNotNull {
+					invalidBindingRowIDs = append(invalidBindingRowIDs, rowID)
+				}
+				continue
+			}
+			update.originalSQL = originalSQL
+			update.sqlDigest = sqlDigest
+
+			updateIdx := len(updates)
+			updates = append(updates, update)
+			if planDigestNotNull {
+				// Avoid duplicated key error on the unique index (plan_digest, sql_digest).
+				key := bindingDigestPair{sqlDigest: update.sqlDigest, planDigest: planDigest}
+				if _, ok := seenDigestPair[key]; ok {
+					updates[updateIdx].duplicate = true
+				} else {
+					seenDigestPair[key] = struct{}{}
+				}
+			}
+		}
+		req.Reset()
+	}
+	if closeErr := rs.Close(); closeErr != nil {
+		logutil.BgLogger().Fatal("upgradeToVer282 error", zap.Error(closeErr))
+	}
+
+	// Update rows independently to avoid one large bootstrap transaction.
+	for _, rowID := range invalidBindingRowIDs {
+		// Set invalid bindings' plan_digest to null to avoid duplicated key error in unique index (sql_digest, plan_digest).
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET plan_digest=NULL WHERE _tidb_rowid=%?", rowID)
+	}
+	// Set all duplicated rows to NULL to avoid duplicated key error on the unique index (plan_digest, sql_digest).
+	for _, update := range updates {
+		if !update.duplicate {
+			continue
+		}
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET status=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
+			bindinfo.StatusDeleted, update.rowID)
+	}
+	// Actually update the original_sql and sql_digest for non-duplicated rows.
+	for _, update := range updates {
+		if update.duplicate || update.originalSQL == "" {
+			continue
+		}
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
+			update.originalSQL, update.sqlDigest, update.rowID)
+	}
+}
+
+func upgradeToVer283(s sessionapi.Session, _ int64) {
+	// Fresh clusters materialize these rows during bootstrap, but upgraded clusters can miss them.
+	// Backfill only absent rows so @@global reads use defaults while preserving user-set values.
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumBuckets, vardef.DefTiDBAnalyzeDefaultNumBuckets)
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumTopN, vardef.DefTiDBAnalyzeDefaultNumTopN)
 }

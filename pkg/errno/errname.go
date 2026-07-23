@@ -913,6 +913,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexOnField:                                mysql.Message("Expression index on a column is not supported. Consider using a regular index instead", nil),
 	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   mysql.Message("Expression of expression index '%s' cannot refer to a row value", nil),
+	ErrInvalidLateralJoin:                                    mysql.Message("Invalid use of LATERAL: %s", nil),
 	ErrNonBooleanExprForCheckConstraint:                      mysql.Message("An expression of non-boolean type specified to a check constraint '%s'.", nil),
 	ErrColumnCheckConstraintReferencesOtherColumn:            mysql.Message("Column check constraint '%s' references other column.", nil),
 	ErrCheckConstraintNamedFunctionIsNotAllowed:              mysql.Message("An expression of a check constraint '%s' contains disallowed function: %s.", nil),
@@ -945,6 +946,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDependentByCheckConstraint:                            mysql.Message("Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.", nil),
 	ErrEngineAttributeNotSupported:                           mysql.Message("Storage engine does not support ENGINE_ATTRIBUTE.", nil),
 	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
+	// Dual-password errors — text matches MySQL 8.0
+	// share/messages_to_clients.txt (length-bounded %-.64s is a TiDB convention
+	// for user/host identifiers).
+	ErrSecondPasswordCannotBeEmpty:            mysql.Message("Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.", nil),
+	ErrPasswordCannotBeRetainedOnPluginChange: mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.", nil),
+	ErrCurrentPasswordCannotBeRetained:        mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
@@ -1149,6 +1156,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
 	ErrMaskingPolicyExists:             mysql.Message("masking policy already exists", nil),
 	ErrMaskingPolicyNotExists:          mysql.Message("masking policy doesn't exist", nil),
+	ErrMaskingPolicyExprInvalidColumn:  mysql.Message("masking policy expression can only reference the target column '%-.64s'", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
@@ -1167,6 +1175,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrStorageClassInvalidSpec:                  mysql.Message("Invalid storage class: %s", nil),
 	ErrModifyColumnReferencedByPartialCondition: mysql.Message("Cannot drop, change or modify column '%s': it is referenced in partial index '%s'", nil),
 	ErrCheckPartialIndexWithoutFastCheck:        mysql.Message("Validation of partial indexes requires tidb_enable_fast_table_check=ON", nil),
+	ErrMaxKeysReadExceeded:                      mysql.Message("tidb_max_keys_read limit exceeded", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),
@@ -1192,10 +1201,13 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
 	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
 	ErrBDRRestrictedDDL:   mysql.Message("The operation is not allowed while the bdr role of this cluster is set to %s.", nil),
+	ErrDDLAutoPausedByKVDiskFull: mysql.Message(
+		"Job [%v] has been paused by TiDB because a storage node does not have enough disk space: %s", nil),
 
 	ErrGlobalIndexNotExplicitlySet: mysql.Message("Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption", nil),
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
+	ErrUserPrefixMismatch:                 mysql.Message("User name prefix does not match the assigned keyspace.", nil),
 }

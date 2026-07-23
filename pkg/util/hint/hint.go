@@ -111,6 +111,8 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
+	// HintUsePlanCache is a hint to enforce using plan cache.
+	HintUsePlanCache = "use_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
 	// HintMerge is a hint which can switch turning inline for the CTE.
@@ -228,7 +230,9 @@ type StmtHints struct {
 	ResourceGroup string
 	// Do not store plan in either plan cache.
 	IgnorePlanCache bool
-	WriteSlowLog    bool
+	// Use plan cache under strategy that requires explicit hints.
+	UsePlanCache bool
+	WriteSlowLog bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -276,6 +280,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
 		IgnorePlanCache:                sh.IgnorePlanCache,
+		UsePlanCache:                   sh.UsePlanCache,
 		WriteSlowLog:                   sh.WriteSlowLog,
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
@@ -308,6 +313,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
 	stmtHints.QueryHasHints = len(hints) != 0
+	hints, restrictedHintWarns := filterRestrictedHints(hints, shouldWarnRestrictedHintInParseStmtHints)
+	warns = append(warns, restrictedHintWarns...)
 
 	if len(hints) == 0 {
 		return
@@ -409,6 +416,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			setVarsOffs = append(setVarsOffs, i)
 		case HintIgnorePlanCache:
 			stmtHints.IgnorePlanCache = true
+		case HintUsePlanCache:
+			stmtHints.UsePlanCache = true
 		case HintWriteSlowLog:
 			stmtHints.WriteSlowLog = true
 		}
@@ -534,6 +543,56 @@ func isStmtHint(h *ast.TableOptimizerHint) bool {
 	default:
 		return false
 	}
+}
+
+// shouldWarnRestrictedHintInParseStmtHints checks whether ParseStmtHints is the
+// right owner for the restricted-hint warning. Some hints, like STRAIGHT_JOIN,
+// are still filtered here but warned from ParsePlanHints because subquery
+// occurrences only reliably reach that path.
+func shouldWarnRestrictedHintInParseStmtHints(h *ast.TableOptimizerHint) bool {
+	switch h.HintName.L {
+	case HintMemoryQuota, "resource_group", HintUseToja, "use_cascades",
+		HintNoIndexMerge, "read_consistent_replica", HintMaxExecutionTime,
+		"nth_plan", "hypo_index", "set_var",
+		HintIgnorePlanCache, HintUsePlanCache, HintWriteSlowLog:
+		return true
+	default:
+		return false
+	}
+}
+
+// RestrictedHintChecker returns a non-nil warning when the lower-case hint name
+// is restricted and should be stripped.
+type RestrictedHintChecker func(hintNameLower string) error
+
+var restrictedHintChecker RestrictedHintChecker
+
+// RegisterRestrictedHintChecker registers the checker used by ParseStmtHints
+// and ParsePlanHints.
+func RegisterRestrictedHintChecker(checker RestrictedHintChecker) {
+	restrictedHintChecker = checker
+}
+
+func filterRestrictedHints(
+	hints []*ast.TableOptimizerHint,
+	shouldWarn func(*ast.TableOptimizerHint) bool,
+) ([]*ast.TableOptimizerHint, []error) {
+	if len(hints) == 0 || restrictedHintChecker == nil {
+		return hints, nil
+	}
+
+	filtered := make([]*ast.TableOptimizerHint, 0, len(hints))
+	var warns []error
+	for _, h := range hints {
+		if err := restrictedHintChecker(h.HintName.L); err != nil {
+			if shouldWarn == nil || shouldWarn(h) {
+				warns = append(warns, err)
+			}
+			continue
+		}
+		filtered = append(filtered, h)
+	}
+	return filtered, warns
 }
 
 // IndexJoinHints stores hint information about index nested loop join.
@@ -769,6 +828,13 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 	hintProcessor *QBHintHandler, straightJoinOrder bool,
 	handlingInSubquery, handlingExistsSubquery, notHandlingSubquery bool,
 	warnHandler hintWarnHandler) (p *PlanHints, subQueryHintFlags uint64, err error) {
+	hints, restrictedHintWarns := filterRestrictedHints(hints, func(h *ast.TableOptimizerHint) bool {
+		return !shouldWarnRestrictedHintInParseStmtHints(h)
+	})
+	for _, warn := range restrictedHintWarns {
+		warnHandler.SetHintWarningFromError(warn)
+	}
+
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []HintedTable
 		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []HintedTable

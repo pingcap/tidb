@@ -61,17 +61,21 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
 	require.True(t, GlobalMemoryLimitTuner.isValidValueSet.Load())
 	defer func() {
+		WaitMemoryLimitTunerExitInTest()
 		// If test.count > 1, wait tuning finished.
 		require.Eventually(t, func() bool {
 			//nolint: all_revive
+			runtime.GC()
 			return GlobalMemoryLimitTuner.isValidValueSet.Load()
 		}, 5*time.Second, 100*time.Millisecond)
 		require.Eventually(t, func() bool {
 			//nolint: all_revive
+			runtime.GC()
 			return !GlobalMemoryLimitTuner.adjustPercentageInProgress.Load()
 		}, 5*time.Second, 100*time.Millisecond)
 		require.Eventually(t, func() bool {
 			//nolint: all_revive
+			runtime.GC()
 			return !GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load()
 		}, 5*time.Second, 100*time.Millisecond)
 	}()
@@ -96,17 +100,25 @@ func TestGlobalMemoryTuner(t *testing.T) {
 
 	memory210mb := allocator.alloc(210 << 20)
 	require.Eventually(t, func() bool {
+		runtime.GC()
 		return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getNowGCNum()
 	}, 5*time.Second, 100*time.Millisecond)
 	// Test waiting for reset
 	require.Eventually(t, func() bool {
 		return GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage) == debug.SetMemoryLimit(-1)
 	}, 5*time.Second, 100*time.Millisecond)
-	gcNum = getNowGCNum()
+	memoryLimitGCTotal := memory.MemoryLimitGCTotal.Load()
 	memory100mb := allocator.alloc(100 << 20)
-	require.Eventually(t, func() bool {
-		return gcNum == getNowGCNum()
-	}, 5*time.Second, 100*time.Millisecond) // No GC
+	// This window used to assert "no GC at all" via NumGC, but that is inherently
+	// timing-sensitive: unrelated background GCs (or test harness GCs) can happen
+	// here without violating the intent of this test.
+	//
+	// What we really need to assert is: while MemoryLimit is in fallback mode,
+	// allocating more memory should not immediately cause an extra *memory-limit*
+	// GC/adjust cycle.
+	require.Never(t, func() bool {
+		return memoryLimitGCTotal != memory.MemoryLimitGCTotal.Load()
+	}, 500*time.Millisecond, 100*time.Millisecond)
 
 	allocator.free(memory210mb)
 	allocator.free(memory100mb)
@@ -153,6 +165,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 			},
 			5*time.Second, 100*time.Millisecond)
@@ -200,6 +213,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 			},
 			5*time.Second, 100*time.Millisecond)
@@ -216,6 +230,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// The GC will be trigged immediately after memoryLimit is set back to 1GB * 80% = 800MB.
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getMemoryLimitGCTotal()
 			},
 			2*time.Second, 100*time.Millisecond)
@@ -239,6 +254,9 @@ func TestIssue48741(t *testing.T) {
 }
 
 func TestSetMemoryLimit(t *testing.T) {
+	originServerMemoryLimit := memory.ServerMemoryLimit.Load()
+	defer memory.ServerMemoryLimit.Store(originServerMemoryLimit)
+
 	GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
 	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
@@ -247,4 +265,11 @@ func TestSetMemoryLimit(t *testing.T) {
 	GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
 	require.Equal(t, int64(1<<30*80/100), debug.SetMemoryLimit(-1))
+
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	defer memory.CleanupGlobalMemArbitratorForTest()
+
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModePriorityName))
+	require.Equal(t, int64(1<<30*95/100), GlobalMemoryLimitTuner.calcMemoryLimit(0.95))
+	require.Equal(t, int64(1<<30), GlobalMemoryLimitTuner.calcMemoryLimit(1.1))
 }

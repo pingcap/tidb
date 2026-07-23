@@ -28,16 +28,19 @@ var (
 
 // Metrics
 var (
-	PacketIOCounter            *prometheus.CounterVec
-	QueryDurationHistogram     *prometheus.HistogramVec
-	QueryRPCHistogram          *prometheus.HistogramVec
-	QueryProcessedKeyHistogram *prometheus.HistogramVec
-	QueryTotalCounter          *prometheus.CounterVec
-	ConnGauge                  *prometheus.GaugeVec
-	DisconnectionCounter       *prometheus.CounterVec
-	PreparedStmtGauge          prometheus.Gauge
-	ExecuteErrorCounter        *prometheus.CounterVec
-	CriticalErrorCounter       prometheus.Counter
+	PacketIOCounter                 *prometheus.CounterVec
+	QueryDurationHistogram          *prometheus.HistogramVec
+	QueryRPCHistogram               *prometheus.HistogramVec
+	QueryProcessedKeyHistogram      *prometheus.HistogramVec
+	IARemoteReadSegmentCount        *prometheus.CounterVec
+	IARemoteReadSegmentSize         *prometheus.CounterVec
+	IARemoteReadSegmentWaitDuration *prometheus.HistogramVec
+	QueryTotalCounter               *prometheus.CounterVec
+	ConnGauge                       *prometheus.GaugeVec
+	DisconnectionCounter            *prometheus.CounterVec
+	PreparedStmtGauge               prometheus.Gauge
+	ExecuteErrorCounter             *prometheus.CounterVec
+	CriticalErrorCounter            prometheus.Counter
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -60,6 +63,7 @@ var (
 	TotalCopProcHistogram           *prometheus.HistogramVec
 	TotalCopWaitHistogram           *prometheus.HistogramVec
 	CopMVCCRatioHistogram           *prometheus.HistogramVec
+	SlowQueryCounter                *prometheus.CounterVec
 	MaxProcs                        prometheus.Gauge
 	GOGC                            prometheus.Gauge
 	ConnIdleDurationHistogram       *prometheus.HistogramVec
@@ -117,6 +121,31 @@ func InitServerMetrics() {
 			Name:      "query_statement_processed_keys",
 			Help:      "Bucketed histogram of processed key count during the scan of handled query statements.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 32),
+		}, []string{LblSQLType, LblDb})
+
+	IARemoteReadSegmentCount = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_remote_read_segment_count",
+			Help:      "Counter of IA remote read segments observed by TiDB.",
+		}, []string{LblSQLType, LblDb})
+
+	IARemoteReadSegmentSize = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_remote_read_segment_size_bytes",
+			Help:      "Counter of IA remote read segment bytes observed by TiDB.",
+		}, []string{LblSQLType, LblDb})
+
+	IARemoteReadSegmentWaitDuration = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_remote_read_segment_wait_duration_seconds",
+			Help:      "Bucketed histogram of IA remote read segment wait time observed by TiDB.",
+			Buckets:   prometheus.ExponentialBuckets(0.00005, 2, 20), // 50us ~ 26s
 		}, []string{LblSQLType, LblDb})
 
 	QueryTotalCounter = metricscommon.NewCounterVec(
@@ -293,6 +322,14 @@ func InitServerMetrics() {
 			Name:      "slow_query_cop_mvcc_ratio",
 			Help:      "Bucketed histogram of all cop total keys / processed keys in slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.5, 2, 21), // 0.5 ~ 262144
+		}, []string{LblSQLType})
+
+	SlowQueryCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_total",
+			Help:      "Counter of slow queries.",
 		}, []string{LblSQLType})
 
 	MaxProcs = metricscommon.NewGauge(

@@ -84,7 +84,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	// auto-analyze uses the table-level options
 	tk.MustExec("insert into t values (10,10,10)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.Nil(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -427,7 +427,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 
 	tk.MustExec("insert into t values (5,5,5),(6,6,6)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.Nil(t, h.Update(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
 	h.HandleAutoAnalyze()

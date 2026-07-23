@@ -35,7 +35,7 @@
 - `pkg/executor/grant_test.go` - executor: Tests grant global.
 - `pkg/executor/historical_stats_test.go` - executor: Tests record history stats after analyze.
 - `pkg/executor/hot_regions_history_table_test.go` - executor: Tests TiDB hot regions history.
-- `pkg/executor/import_into_test.go` - executor: Tests security enhanced mode.
+- `pkg/executor/import_into_test.go` - executor: Tests security enhanced mode and import cancellation without a DXF task.
 - `pkg/executor/infoschema_cluster_table_test.go` - executor: Tests skip empty IP nodes for TiDB-type coprocessor.
 - `pkg/executor/infoschema_reader_bench_test.go` - executor: Tests infoschema tables.
 - `pkg/executor/infoschema_reader_internal_test.go` - executor: Tests set data from check constraints.
@@ -52,7 +52,7 @@
 - `pkg/executor/partition_table_test.go` - executor: Tests point get with range and list partition table.
 - `pkg/executor/pkg_test.go` - executor: Tests nested loop apply.
 - `pkg/executor/point_get_test.go` - executor: Tests select check visibility.
-- `pkg/executor/prepared_test.go` - executor: Tests prepared null param.
+- `pkg/executor/prepared_test.go` - executor: Tests core prepared-statement behavior plus the plan-cache cases that still depend on root-package testdata or domain/TiFlash setup.
 - `pkg/executor/recover_test.go` - executor: Tests recover table.
 - `pkg/executor/resource_tag_test.go` - executor: Tests resource group tag.
 - `pkg/executor/revoke_test.go` - executor: Tests revoke global.
@@ -387,7 +387,7 @@
 
 ### Tests
 - `pkg/executor/test/plancache/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/executor/test/plancache/plan_cache_test.go` - executor/test/plancache: Tests point get prepared plan.
+- `pkg/executor/test/plancache/plan_cache_test.go` - executor/test/plancache: Tests prepared plan cache fast paths and grouped regressions for plan selection, session interactions, clustered indexes, and operator families.
 
 ## pkg/executor/test/planreplayer
 
@@ -399,7 +399,7 @@
 
 ### Tests
 - `pkg/executor/test/seqtest/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/executor/test/seqtest/prepared_test.go` - executor/test/seqtest: Tests prepared.
+- `pkg/executor/test/seqtest/prepared_test.go` - executor/test/seqtest: Tests sequential prepared-statement semantics, DML, deallocate, and server-side execution paths.
 - `pkg/executor/test/seqtest/seq_executor_test.go` - executor/test/seqtest: Tests early close.
 
 ## pkg/executor/test/showtest

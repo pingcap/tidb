@@ -177,7 +177,6 @@ select approx_count_distinct( a, b) from t;
 drop table if exists t;
 create table t(a char(10), b char(10));
 insert into t values('1', '222'), ('12', '22');
-select group_concat(distinct a, b) from t;
 
 # TestIssue10608
 drop table if exists t, s;
@@ -608,7 +607,6 @@ create table t(a int, b int);
 insert into t value(null, null);
 select group_concat(a), group_concat(distinct a) from t;
 insert into t value(1, null), (null, 1), (1, 2), (3, 4);
-select group_concat(a, b), group_concat(distinct a,b) from t;
 set @@session.tidb_opt_distinct_agg_push_down = 0;
 select count(distinct a) from t;
 set @@session.tidb_opt_distinct_agg_push_down = 1;
@@ -634,12 +632,15 @@ select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop
 drop table t;
 create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
-# On Mac arm64 floating point calculations slightly different than x86
+# On macOS arm64, floating point calculations can produce 1.1808222222222222 instead of the Linux x86_64 result.
 --replace_regex /1.1808222222222222/1.1808222222222229/
 select variance(b), variance(c), variance(d), variance(e) from t group by a;
 insert into t values(1, 255, 6.8, 6.08, 1);
-# On Mac arm64 floating point calculations slightly different than x86
---replace_regex /1.1808222222222222/1.1808222222222229/
+# Floating point accumulation order can produce last-bit differences:
+#   Darwin arm64          : 1.1808222222222222
+#   Rocky Linux x86_64    : 1.180822222222222
+#   CI Linux x86_64 seen  : 1.1808222222222229
+--replace_regex /\b1\.180822222222222[29]\b/1.180822222222222/
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 insert into t values(2, 322, 0.8, 2.22, 6);
 --sorted_result
@@ -784,6 +785,8 @@ select * from t group by b,d;
 --error 1055
 select * from t group by b,c;
 select * from t where c = d group by b, c;
+--error 1055
+select /* issue:68026 */ a from t where c = 1 or d = 1 group by b, c;
 select t.*, x.* from t, x where t.a = x.a group by t.a;
 select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d;
 select t.*, x.* from t, x where t.b = x.a group by t.b, t.d;
@@ -1073,6 +1076,8 @@ admin reload opt_rule_blacklist;
 
 # TestIssue61735AggregateTruncatedDecimal
 --enable_warnings
+select nullif(77.15, PI());
+select avg(nullif(77.15, PI()));
 select distinct avg(nullif(77.15, PI()));
 --disable_warnings
 

@@ -144,11 +144,12 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	// Fix issue 9836
 	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                1,
+		User:              "root",
+		Host:              "127.0.0.1",
+		Command:           mysql.ComQuery,
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -232,6 +233,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
@@ -245,6 +247,7 @@ func TestSomeTables(t *testing.T) {
 		Info:              strings.Repeat("x", 101),
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                3,
@@ -259,6 +262,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           se2.GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg3",
 		SessionAlias:      "中文alias",
+		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
@@ -307,6 +311,7 @@ func TestSomeTables(t *testing.T) {
 		ResourceGroupName: "rg2",
 		SessionAlias:      "alias3",
 		StmtCtx:           se2.GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
@@ -445,6 +450,9 @@ func TestSlowQuery(t *testing.T) {
 			"10",
 			"10",
 			"100",
+			"0",
+			"0",
+			"0",
 			"test",
 			"",
 			"0",
@@ -491,10 +499,13 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
 			"update t set i = 2;",
+			"null",
 			"select * from t_slim;",
 		},
 		{"2021-09-08 14:39:54.506967",
@@ -524,6 +535,9 @@ func TestSlowQuery(t *testing.T) {
 			"624",
 			"172064",
 			"60",
+			"0",
+			"0",
+			"0",
 			"0",
 			"0",
 			"0",
@@ -584,10 +598,13 @@ func TestSlowQuery(t *testing.T) {
 			"0.021",
 			"1",
 			"1",
+			"0",
 			"",
 			"",
 			"",
 			"",
+			"",
+			"null",
 			"INSERT INTO ...;",
 		},
 	}
@@ -799,6 +816,44 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
+	tk.MustQuery(`
+		SELECT table_name, column_name
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_REMOTE_READ_SEGMENT_COUNT',
+			'MAX_IA_REMOTE_READ_SEGMENT_COUNT'
+		)
+		ORDER BY table_name, column_name
+	`).Check(testkit.Rows(
+		"CLUSTER_STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+	))
+	tk.MustQuery(`
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_READ_SEGMENT_COUNT',
+			'MAX_IA_READ_SEGMENT_COUNT'
+		)
+	`).Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -883,9 +938,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_8            \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -905,9 +960,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_8            \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+			"\tIndexLookUp_7            \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -953,9 +1008,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_8            \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1439,12 +1494,14 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 
 	var tmp string
 	var ok bool
+	const expectedSQLDigest = "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b"
+	const expectedSQLText = "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a"
 	var beginTime = time.Now().Format(types.TimeFormat)
-	err = tk.QueryToErr("explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a")
-	var endTime = time.Now().Format(types.TimeFormat)
+	err = tk.QueryToErr(expectedSQLText)
 	require.NotNil(t, err)
 	// Check Memory Table
 	rows := tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE").Rows()
+	memoryUsageReadTime := time.Now().Format(types.TimeFormat)
 	require.Len(t, rows, 1)
 	row := rows[0]
 	require.Len(t, row, 11)
@@ -1463,20 +1520,27 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 		require.Fail(t, "CURRENT_OPS get wrong value")
 	}
 	require.GreaterOrEqual(t, row[5], beginTime) // SESSION_KILL_LAST
-	require.LessOrEqual(t, row[5], endTime)
+	require.LessOrEqual(t, row[5], memoryUsageReadTime)
 	require.Greater(t, row[6], "0")              // SESSION_KILL_TOTAL
 	require.GreaterOrEqual(t, row[7], beginTime) // GC_LAST
-	require.LessOrEqual(t, row[7], endTime)
+	require.LessOrEqual(t, row[7], memoryUsageReadTime)
 	require.Greater(t, row[8], "0") // GC_TOTAL
 	require.Equal(t, row[9], "0")   // DISK_USAGE
 	require.Equal(t, row[10], "0")  // QUERY_FORCE_DISK
 
 	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
+	opsHistoryReadTime := time.Now().Format(types.TimeFormat)
 	require.Greater(t, len(rows), 0)
-	row = rows[len(rows)-1]
+	row = nil
+	for _, historyRow := range rows {
+		if historyRow[10] == expectedSQLDigest && historyRow[11] == expectedSQLText {
+			row = historyRow
+		}
+	}
+	require.NotNil(t, row)
 	require.Len(t, row, 12)
 	require.GreaterOrEqual(t, row[0], beginTime) // TIME
-	require.LessOrEqual(t, row[0], endTime)
+	require.LessOrEqual(t, row[0], opsHistoryReadTime)
 	require.Equal(t, row[1], "SessionKill") // OPS
 	require.Equal(t, row[2], "536870912")   // MEMORY_LIMIT
 	tmp, ok = row[3].(string)               // MEMORY_CURRENT
@@ -1485,14 +1549,14 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
 
-	require.Greater(t, row[4], "0")                                                                                              // PROCESSID
-	require.Greater(t, row[5], "0")                                                                                              // MEM
-	require.Equal(t, row[6], "0")                                                                                                // DISK
-	require.Equal(t, row[7], "")                                                                                                 // CLIENT
-	require.Equal(t, row[8], "test")                                                                                             // DB
-	require.Equal(t, row[9], "")                                                                                                 // USER
-	require.Equal(t, row[10], "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b")                                // SQL_DIGEST
-	require.Equal(t, row[11], "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a") // SQL_TEXT
+	require.Greater(t, row[4], "0")              // PROCESSID
+	require.Greater(t, row[5], "0")              // MEM
+	require.Equal(t, row[6], "0")                // DISK
+	require.Equal(t, row[7], "")                 // CLIENT
+	require.Equal(t, row[8], "test")             // DB
+	require.Equal(t, row[9], "")                 // USER
+	require.Equal(t, row[10], expectedSQLDigest) // SQL_DIGEST
+	require.Equal(t, row[11], expectedSQLText)   // SQL_TEXT
 }
 
 func TestAddFieldsForBinding(t *testing.T) {

@@ -18,8 +18,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -47,6 +50,16 @@ var GetEtcdClient = store.NewEtcdCli
 //
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionctx.Context) error {
+	return e.checkRequirements(ctx, se, true)
+}
+
+// CheckRequirementsBeforeInitDataFiles checks requirements that don't depend on
+// discovered data files, and is used by async-prepare submit path.
+func (e *LoadDataController) CheckRequirementsBeforeInitDataFiles(ctx context.Context, se sessionctx.Context) error {
+	return e.checkRequirements(ctx, se, false)
+}
+
+func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionctx.Context, checkTotalFileSize bool) error {
 	conn := se.GetSQLExecutor()
 	if e.DataSourceType == DataSourceTypeFile {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
@@ -56,8 +69,10 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 		if cnt > 0 {
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
 		}
-		if err := e.checkTotalFileSize(); err != nil {
-			return err
+		if checkTotalFileSize {
+			if err := e.CheckImportDataSize(); err != nil {
+				return err
+			}
 		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
@@ -74,14 +89,32 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 	return nil
 }
 
-func (e *LoadDataController) checkTotalFileSize() error {
+// CheckImportDataSize checks whether source data files were discovered and are
+// within configured size limits.
+func (e *LoadDataController) CheckImportDataSize() error {
 	if e.TotalFileSize == 0 {
 		// this happens when:
 		// 1. no file matched when using wildcard
 		// 2. all matched file is empty(with or without wildcard)
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("No file matched, or the file is empty. Please provide a valid file location.")
 	}
-	return nil
+	return e.checkStarterMaxImportDataSize()
+}
+
+func (e *LoadDataController) checkStarterMaxImportDataSize() error {
+	if !deploymode.IsStarter() {
+		return nil
+	}
+	maxImportDataSize := tidb.GetGlobalConfig().StarterParams.MaxImportDataSize
+	if maxImportDataSize == 0 || e.TotalRealSize <= 0 || uint64(e.TotalRealSize) <= uint64(maxImportDataSize) {
+		return nil
+	}
+	return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf(
+		"total real import data size %s exceeds maximum import size limit %s (total file size %s)",
+		units.BytesSize(float64(e.TotalRealSize)),
+		units.BytesSize(float64(maxImportDataSize)),
+		units.BytesSize(float64(e.TotalFileSize)),
+	))
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {
@@ -134,7 +167,6 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.
 
 func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) error {
 	// we need read/put/delete/list privileges on global sort store.
-	// only support S3 now.
 	target := "cloud storage"
 	cloudStorageURL, err3 := objstore.ParseRawURL(e.Plan.CloudStorageURI)
 	if err3 != nil {
@@ -145,8 +177,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
-	if b.GetS3() == nil && b.GetGcs() == nil {
-		// we only support S3 now, but in test we are using GCS.
+	if !isSupportedCloudStorageBackend(b) {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 

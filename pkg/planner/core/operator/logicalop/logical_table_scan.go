@@ -94,15 +94,26 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := false
+	if ts.Source != nil {
+		hasTiFlash = ts.Source.HasTiFlash() && ts.SCtx().GetSessionVars().IsMPPAllowed()
+	}
+	ts.hasTiFlash = hasTiFlash
 	if ts.HandleCols != nil {
 		cols := make([]*expression.Column, ts.HandleCols.NumCols())
 		for i, c := range ts.HandleCols.IterColumns2() {
 			cols[i] = c
 		}
-		return [][]*expression.Column{cols}
+		return &base.PossiblePropertiesInfo{
+			Orders:     [][]*expression.Column{cols},
+			HasTiFlash: ts.hasTiFlash,
+		}
 	}
-	return nil
+	return &base.PossiblePropertiesInfo{
+		Orders:     nil,
+		HasTiFlash: ts.hasTiFlash,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.<14th> implementation.

@@ -37,7 +37,6 @@ drop binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3);
 
 
 # TestExplain
-set tidb_cost_model_version=2;
 drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
@@ -53,7 +52,6 @@ explain format='plan_tree' SELECT * from t1 use index(index_id) union SELECT * f
 create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1;
 explain format='plan_tree' SELECT * from t1 union SELECT * from t1;
 drop global binding for SELECT * from t1 union SELECT * from t1;
-set tidb_cost_model_version=default;
 
 # TestBindSemiJoinRewrite
 drop table if exists t1;

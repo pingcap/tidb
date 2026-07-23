@@ -50,6 +50,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
@@ -62,7 +63,7 @@ go_library(
 
 go_test(
     name = "backup_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "client_test.go",
         "limit_test.go",

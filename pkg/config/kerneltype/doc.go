@@ -33,4 +33,8 @@
 // designed for cloud-native infrastructure. It adopts a shared-storage architecture
 // for the data plane, typically using object storage solutions like Amazon S3 as
 // the single source of truth for data storage.
+//
+// methods inside this package is chosen based on compile time build tag for
+// different kernel type. So different kernel type will have different binary,
+// and we don't support deploying components with different kernel types.
 package kerneltype
