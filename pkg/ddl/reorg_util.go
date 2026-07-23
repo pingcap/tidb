@@ -49,14 +49,11 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 
 	var setReorgParam bool
 	var setDistTaskParam bool
-	var captureAutoPresplit bool
-	var enableAutoPresplit bool
 
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		setReorgParam = true
 		setDistTaskParam = true
-		captureAutoPresplit = true
 	case model.ActionModifyColumn:
 		setReorgParam = true
 		setDistTaskParam = job.NeedReorg
@@ -70,7 +67,6 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			case model.ActionAddIndex, model.ActionAddPrimaryKey:
 				setReorgParam = true
 				setDistTaskParam = true
-				captureAutoPresplit = true
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
@@ -84,17 +80,6 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	default:
 		return nil
-	}
-	if captureAutoPresplit {
-		if job.SessionVars == nil {
-			job.SessionVars = make(map[string]string, 1)
-		}
-		value := variable.BoolToOnOff(vardef.DefTiDBDDLEnableAutoSplitIndexRegions)
-		if sessionValue, ok := sessVars.GetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions); ok {
-			value = sessionValue
-		}
-		job.AddSystemVars(vardef.TiDBDDLEnableAutoSplitIndexRegions, value)
-		enableAutoPresplit = variable.TiDBOptOn(value)
 	}
 	var tableSizeInBytes int64
 	var cpuNum int
@@ -185,7 +170,6 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.Stringer("jobType", job.Type),
 		zap.Bool("enableDistTask", m.IsDistReorg),
 		zap.Bool("enableFastReorg", m.IsFastReorg),
-		zap.Bool("enableAutoPresplit", enableAutoPresplit),
 		zap.String("targetScope", m.TargetScope),
 		zap.Int("maxNodeCount", m.MaxNodeCount),
 		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),

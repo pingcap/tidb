@@ -1004,8 +1004,6 @@ type SubJob struct {
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
 	AnalyzeState int8            `json:"analyze_state"`
-	// AutoPresplitResults records per-subjob ADD INDEX and ADD PRIMARY KEY auto presplit summaries.
-	AutoPresplitResults []AutoPresplitResult `json:"auto_presplit_results,omitempty"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -1034,8 +1032,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.ReorgTp = sub.ReorgTp
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
-		reorgMeta.AutoPresplitResults = append(
-			[]AutoPresplitResult(nil), sub.AutoPresplitResults...)
 	}
 	return Job{
 		Version:         parentJob.Version,
@@ -1089,8 +1085,6 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
 		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
-		sub.AutoPresplitResults = append(
-			[]AutoPresplitResult(nil), proxyJob.ReorgMeta.AutoPresplitResults...)
 	}
 }
 
@@ -1109,8 +1103,6 @@ func (sub *SubJob) FillArgs(jobVer JobVersion) {
 func (sub *SubJob) Clone() *SubJob {
 	clonedSubJob := *sub
 	clonedSubJob.args = nil
-	clonedSubJob.AutoPresplitResults = append(
-		[]AutoPresplitResult(nil), sub.AutoPresplitResults...)
 	return &clonedSubJob
 }
 

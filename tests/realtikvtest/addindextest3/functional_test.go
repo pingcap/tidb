@@ -298,7 +298,6 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(10)")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off")
 	tk.MustExec("set @@global.tidb_enable_dist_task = off")
-	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_index_regions = on")
 	tk.MustExec("create table t (a int primary key, b int)")
 	for i := range 40 {
 		b := i
@@ -313,7 +312,7 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	tk.MustExec("alter table t add index idx(b)")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions auto")
 	rows := tk.MustQuery("show table t index idx regions").Rows()
 	require.Greater(t, len(rows), 1)
 	tk.MustExec("admin check table t")
