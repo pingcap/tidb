@@ -3204,7 +3204,17 @@ func (du *baseDateArithmetical) addDate(ctx EvalContext, date types.Time, year, 
 	// fix https://github.com/pingcap/tidb/issues/11329
 	if goTime.Year() == 0 {
 		hour, minute, second := goTime.Clock()
-		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()/1000))
+		// Year/month intervals (day == 0 && nano == 0) do calendar arithmetic, so when
+		// they drive the year down to 0 MySQL keeps the month and day, e.g.
+		// DATE_SUB('1000-01-01', INTERVAL 1000 YEAR) -> 0000-01-01 (issue #59789).
+		// Day/time intervals instead underflow past the minimum datetime and yield a
+		// zero date with the wrapped time, e.g.
+		// DATE_ADD('0001-01-01 00:00:00', INTERVAL -2 HOUR) -> 0000-00-00 22:00:00 (issue #11329).
+		if day == 0 && nano == 0 {
+			date.SetCoreTime(types.FromDate(0, int(goTime.Month()), goTime.Day(), hour, minute, second, goTime.Nanosecond()/1000))
+		} else {
+			date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()/1000))
+		}
 		return date, false, nil
 	}
 
