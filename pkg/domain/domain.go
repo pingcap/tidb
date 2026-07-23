@@ -225,6 +225,8 @@ type Domain struct {
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 
+	loadableFunctionReconcileNeeded atomic.Bool
+
 	statsOwner owner.Manager
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn
@@ -333,6 +335,9 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		do.infoCache.Insert(is, schemaTs)
 
 		if !isV1V2Switch {
+			if err := do.reconcileLoadableFunctionsIfNeeded(isSnapshot, false); err != nil {
+				return nil, false, currentSchemaVersion, nil, err
+			}
 			return is, true, 0, nil, nil
 		}
 	}
@@ -346,11 +351,14 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
 	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, isSnapshot, startTS)
+		is, relatedChanges, diffTypes, forceLoadableFunctionReconcile, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, isSnapshot, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
 			do.infoCache.Insert(is, schemaTs)
+			if err := do.reconcileLoadableFunctionsIfNeeded(isSnapshot, forceLoadableFunctionReconcile); err != nil {
+				return nil, false, currentSchemaVersion, nil, err
+			}
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
@@ -403,8 +411,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// Not adding snapshot schema to history can avoid such cases.
 		data = infoschema.NewData()
 	}
-	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2).
-		WithLoadableFunctionReload(!isSnapshot)
+	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -425,7 +432,30 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	} else {
 		do.infoCache.Insert(is, schemaTs)
 	}
+	if err := do.reconcileLoadableFunctionsIfNeeded(isSnapshot, true); err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (do *Domain) reconcileLoadableFunctionsIfNeeded(isSnapshot bool, force bool) error {
+	if isSnapshot {
+		return nil
+	}
+	if !force && !do.loadableFunctionReconcileNeeded.Load() {
+		return nil
+	}
+	reconciled, err := infoschema.ReloadLoadableFunctions(do.sysFacHack)
+	if err != nil {
+		do.loadableFunctionReconcileNeeded.Store(true)
+		return err
+	}
+	if reconciled {
+		do.loadableFunctionReconcileNeeded.Store(false)
+	} else {
+		do.loadableFunctionReconcileNeeded.Store(true)
+	}
+	return nil
 }
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
@@ -605,13 +635,13 @@ func shouldUseV2(enableV2 bool, old infoschema.InfoSchema, isSnapshot bool) (use
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newVersion int64, isSnapshot bool, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newVersion int64, isSnapshot bool, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, bool, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
@@ -627,37 +657,41 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 		switch val.(string) {
 		case "exchangepartition":
 			if diffs[0].Type == model.ActionExchangeTablePartition {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				failpoint.Return(nil, nil, nil, false, errors.New("mock error"))
 			}
 		case "renametable":
 			if diffs[0].Type == model.ActionRenameTable {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				failpoint.Return(nil, nil, nil, false, errors.New("mock error"))
 			}
 		case "dropdatabase":
 			if diffs[0].Type == model.ActionDropSchema {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				failpoint.Return(nil, nil, nil, false, errors.New("mock error"))
 			}
 		}
 	})
 
-	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2).
-		WithLoadableFunctionReload(!isSnapshot)
+	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 	err := builder.InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 
 	builder.WithStore(do.store).SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
+	forceLoadableFunctionReconcile := false
 	for _, diff := range diffs {
 		if diff.RegenerateSchemaMap {
-			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
+			return nil, nil, nil, false, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
+		}
+		switch diff.Type {
+		case model.ActionCreateProcedure, model.ActionDropProcedure, model.ActionAlterProcedure:
+			forceLoadableFunctionReconcile = true
 		}
 		ids, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
@@ -673,7 +707,7 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions
-	return is, &relatedChange, diffTypes, nil
+	return is, &relatedChange, diffTypes, forceLoadableFunctionReconcile, nil
 }
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
@@ -1660,6 +1694,7 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
 	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	do.loadableFunctionReconcileNeeded.Store(true)
 	return do
 }
 
