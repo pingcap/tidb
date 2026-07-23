@@ -474,7 +474,7 @@ func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error 
 
 func annotatePartLimit(err error) error {
 	if err != nil && errors.ErrorEqual(err, storeapi.ErrExceedMaxUploadParts) {
-		limit := units.BytesSize(float64(csvUploadPartSize) * float64(storeapi.MaxUploadParts))
+		limit := units.BytesSize(float64(uploadPartSize) * float64(storeapi.MaxUploadParts))
 		return errors.Annotatef(err, "a single output file exceeds the object store's per-object limit of ~%s; specify --filesize (-F) to split the output into multiple files", limit)
 	}
 	return err

@@ -19,11 +19,11 @@ import (
 )
 
 const (
-	// csvUploadConcurrency and csvUploadPartSize configure the concurrent
-	// multipart upload of CSV data files. 5 MiB is the object store's minimum
-	// part size (S3/GCS).
-	csvUploadConcurrency = 4
-	csvUploadPartSize    = 5 * units.MiB
+	// uploadConcurrency and uploadPartSize configure the concurrent multipart
+	// upload of data files. 5 MiB is the object store's minimum part size
+	// (S3/GCS).
+	uploadConcurrency = 4
+	uploadPartSize    = 5 * units.MiB
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -256,7 +256,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 
 	var wo *storeapi.WriterOption
 	if format == FileFormatCSV || format == FileFormatSQLText {
-		wo = &storeapi.WriterOption{Concurrency: csvUploadConcurrency, PartSize: csvUploadPartSize}
+		wo = &storeapi.WriterOption{Concurrency: uploadConcurrency, PartSize: uploadPartSize}
 	}
 
 	somethingIsWritten := false
