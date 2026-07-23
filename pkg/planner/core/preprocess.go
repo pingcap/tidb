@@ -132,8 +132,6 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
-		varsMutable:        make(map[string]struct{}),
-		varsReadonly:       make(map[string]struct{}),
 		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
@@ -439,12 +437,18 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inAnalyze
 	case *ast.VariableExpr:
 		if node.Value != nil {
+			if p.varsMutable == nil {
+				p.varsMutable = make(map[string]struct{})
+			}
 			p.varsMutable[node.Name] = struct{}{}
 			delete(p.varsReadonly, node.Name)
 		} else if p.stmtTp == TypeSelect {
 			// Only check the variable in select statement.
 			_, ok := p.varsMutable[node.Name]
 			if !ok {
+				if p.varsReadonly == nil {
+					p.varsReadonly = make(map[string]struct{})
+				}
 				p.varsReadonly[node.Name] = struct{}{}
 			}
 		}
