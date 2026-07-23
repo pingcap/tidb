@@ -1076,21 +1076,9 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 }
 
 func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnSelectors *ColumnSelectors) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
-	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
-	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
+	sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
 	if err != nil {
 		return selectFieldInfo{}, err
-	}
-	sourceColumns := make([]string, 0)
-	hasGenerateColumn := false
-	for _, oneRow := range results {
-		fieldName, extra := oneRow[0], oneRow[1]
-		switch extra {
-		case "STORED GENERATED", "VIRTUAL GENERATED":
-			hasGenerateColumn = true
-			continue
-		}
-		sourceColumns = append(sourceColumns, fieldName)
 	}
 	selectedColumns := sourceColumns
 	if columnSelectors != nil {
@@ -1113,6 +1101,26 @@ func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableNam
 		info.outputFieldSQL = "*"
 	}
 	return info, nil
+}
+
+func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
+	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
+	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
+	if err != nil {
+		return nil, false, err
+	}
+	sourceColumns := make([]string, 0)
+	hasGenerateColumn := false
+	for _, oneRow := range results {
+		fieldName, extra := oneRow[0], oneRow[1]
+		switch extra {
+		case "STORED GENERATED", "VIRTUAL GENERATED":
+			hasGenerateColumn = true
+			continue
+		}
+		sourceColumns = append(sourceColumns, fieldName)
+	}
+	return sourceColumns, hasGenerateColumn, nil
 }
 
 func columnNamesToSelectFields(columns []string) []string {

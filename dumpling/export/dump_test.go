@@ -715,6 +715,60 @@ func TestDumpTableMetaWithColumnSelectorsKeepsSourceColumnsForSplit(t *testing.T
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestValidateColumnSelectors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
+
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.ColumnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
+		ColumnSelector{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
+	)
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	require.NoError(t, validateColumnSelectors(tctx, conf, baseConn))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateColumnSelectorsFailsOnMissingIncludedColumns(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
+
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.ColumnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeInclude,
+		ColumnSelector{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
+	)
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
+	err = validateColumnSelectors(tctx, conf, baseConn)
+	require.ErrorContains(t, err, "included columns missing do not exist in writable columns")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestGetListTableTypeByConf(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	cases := []struct {

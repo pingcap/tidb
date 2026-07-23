@@ -262,6 +262,13 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return rebuildMetaConn(conn, updateMeta)
 	}
 
+	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
+	if conf.SQL == "" && conf.ColumnSelectors != nil {
+		if err = validateColumnSelectors(tctx, conf, baseConn); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	chanSize := defaultTaskChannelCapacity
 	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
@@ -316,7 +323,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
 	})
-	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
@@ -490,6 +496,24 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 				if err != nil {
 					return errors.Trace(err)
 				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateColumnSelectors(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			sourceColumns, _, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			if _, err = conf.ColumnSelectors.applyToColumns(dbName, table.Name, sourceColumns); err != nil {
+				return err
 			}
 		}
 	}
