@@ -7,6 +7,7 @@
 resolver = "2"
 members = [
     "crates/tidb-error",
+    "crates/tidb-hack",
     "crates/tidb-hash",
     "crates/tidb-util",
     "crates/tidb-lexer",
@@ -101,6 +102,15 @@ chrono-tz = "0.10"
 flate2 = "1"
 zstd = "0.13"
 crc32fast = "1"
+# `pkg/util/hack` reaches into Go's private Swiss-map ABI to account for the
+# allocation behind a map. Rust's standard HashMap deliberately hides that
+# layout. Pin hashbrown, the table implementation, so the Rust transcreation
+# can account for its allocation without guessing at std internals.
+hashbrown = "=0.15.5"
+# Hashbrown's own seedable builder lets `MockSeedForTest` alter the real hash
+# distribution, rather than storing a test-only marker disconnected from map
+# behavior.
+foldhash = "=0.1.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"        # Phase 0 is safe Rust end-to-end.

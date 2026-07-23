@@ -1,0 +1,25 @@
+[package]
+name = "tidb-hack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Complete transcreation of TiDB's intentionally unsafe pkg/util/hack."
+
+[lints.rust]
+missing_docs = "warn"
+# `GetBytesFromPtr` is the package's explicit raw-pointer compatibility seam.
+# Keep this exception inside the owning crate; the workspace remains `forbid`.
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+foldhash.workspace = true
+hashbrown.workspace = true
+
+[[bench]]
+name = "hack"
+harness = false
