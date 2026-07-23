@@ -36,4 +36,13 @@ explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.b
 explain format='brief' select /*+ use_index_merge(t, idx1, idx2) */ * from t where (a > 10) or (b > 10);
 explain format='brief' select /*+ use_index_merge(tt, idx1, idx2) */ * from tt where (a > 10) or (b > 10);
 
+# TestPartialIndexImplicationCheck
+# a >= 0 does NOT imply a < 3, partial index pi should NOT be used.
+drop table if exists t3;
+create table t3(id int primary key, a int not null, b int not null, index pi(b) where a < 3);
+insert into t3 values (1, 0, 1), (2, 1, 2), (3, 2, 3), (4, 3, 4), (5, 10, 5);
+select id, a, b from t3 where a >= 0 order by b limit 5;
+select id, a, b from t3 ignore index(pi) where a >= 0 order by b limit 5;
+drop table t3;
+
 drop table t, tt;
