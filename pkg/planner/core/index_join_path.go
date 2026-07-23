@@ -86,16 +86,17 @@ func (mr *mutableIndexJoinRange) Rebuild(sctx planctx.PlanContext) error {
 
 // indexJoinPathResult records necessary information if we build IndexJoin on this chosen access path (or index).
 type indexJoinPathResult struct {
-	chosenPath     *util.AccessPath        // the chosen access path (or index)
-	candidate      *candidatePath          // the candidate representation of the chosen path, used for SkylinePruning
-	chosenAccess   []expression.Expression // expressions used to access this index
-	chosenRemained []expression.Expression // remaining expressions after accessing this index
-	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
-	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
-	eqUsedColsNDV  float64                 // the estimated NDV of the EQ used columns on this index, the NDV of `t1(a, b)`, a,b are in EQ constraint.
-	lastColIsRange bool                    // whether the last used index column is accessed by a non-point range
-	idxOff2KeyOff  []int
-	lastColManager *physicalop.ColWithCmpFuncManager
+	chosenPath            *util.AccessPath        // the chosen access path (or index)
+	candidate             *candidatePath          // the candidate representation of the chosen path, used for SkylinePruning
+	chosenAccess          []expression.Expression // expressions used to access this index
+	chosenRemained        []expression.Expression // remaining expressions after accessing this index
+	chosenRanges          ranger.MutableRanges    // the ranges used to access this index
+	usedColsLen           int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
+	eqUsedColsNDV         float64                 // the estimated NDV of the EQ used columns on this index, the NDV of `t1(a, b)`, a,b are in EQ constraint.
+	eqUsedColsNDVReliable bool                    // whether eqUsedColsNDV can be used to estimate the average rows of an IndexJoin probe
+	lastColIsRange        bool                    // whether the last used index column is accessed by a non-point range
+	idxOff2KeyOff         []int
+	lastColManager        *physicalop.ColWithCmpFuncManager
 }
 
 // indexJoinPathInfo records necessary information to build IndexJoin.
@@ -409,6 +410,7 @@ func indexJoinPathConstructResult(
 	lastColIsRange bool,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
+	eqUsedColsNDVReliable := false
 	if stats := indexJoinInfo.innerTableStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
 		// NOTE: use the original table's stats (DataSource.TableStats) to estimate NDV instead of stats
 		// AFTER APPLYING ALL FILTERS (DataSource.stats). Because here we'll use the NDV to measure how many
@@ -418,23 +420,74 @@ func indexJoinPathConstructResult(
 		if lastColIsRange {
 			eqUsedColsLen--
 		}
-		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(
-			sctx, path.IdxCols[:eqUsedColsLen], indexJoinInfo.innerSchema, stats)
+
+		innerNDV, eqUsedColsNDVReliable = estimateEqUsedColsNDV(sctx, indexJoinInfo, path, eqUsedColsLen, stats)
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
 	return &indexJoinPathResult{
-		chosenPath:     path,
-		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
-		usedColsLen:    len(ranges.Range()[0].LowVal),
-		eqUsedColsNDV:  innerNDV,
-		lastColIsRange: lastColIsRange,
-		chosenRanges:   ranges,
-		chosenAccess:   accesses,
-		chosenRemained: remained,
-		idxOff2KeyOff:  idxOff2KeyOff,
-		lastColManager: lastColManager,
+		chosenPath:            path,
+		candidate:             getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
+		usedColsLen:           len(ranges.Range()[0].LowVal),
+		eqUsedColsNDV:         innerNDV,
+		eqUsedColsNDVReliable: eqUsedColsNDVReliable,
+		lastColIsRange:        lastColIsRange,
+		chosenRanges:          ranges,
+		chosenAccess:          accesses,
+		chosenRemained:        remained,
+		idxOff2KeyOff:         idxOff2KeyOff,
+		lastColManager:        lastColManager,
 	}
+}
+
+func estimateEqUsedColsNDV(
+	sctx planctx.PlanContext,
+	indexJoinInfo *indexJoinPathInfo,
+	path *util.AccessPath,
+	eqUsedColsLen int,
+	stats *property.StatsInfo,
+) (float64, bool) {
+	if eqUsedColsLen <= 0 {
+		return 1.0, false
+	}
+
+	cols := path.IdxCols[:eqUsedColsLen]
+	isOrdinaryPath := path.Index == nil ||
+		(!path.Index.HasCondition() && !path.Index.MVIndex)
+
+	if isOrdinaryPath {
+		// Prefer the chosen index's NDV when all its declared columns are used.
+		// This also handles a single-column prefix index because the index NDV
+		// describes its truncated keys.
+		if path.Index != nil && eqUsedColsLen == len(path.Index.Columns) {
+			idxStats := stats.HistColl.GetIdx(path.Index.ID)
+			if idxStats != nil &&
+				idxStats.IsStatsInitialized() &&
+				idxStats.NDV > 0 {
+				return float64(idxStats.NDV), true
+			}
+		}
+
+		// For one non-prefix column, return the verified column NDV directly
+		// instead of allowing an unrelated GroupNDV to override it.
+		if eqUsedColsLen == 1 &&
+			path.IdxColLens[0] == types.UnspecifiedLength {
+			colStats := stats.HistColl.GetCol(cols[0].UniqueID)
+			colNDV, exists := stats.ColNDVs[cols[0].UniqueID]
+			if exists && colNDV > 0 &&
+				colStats != nil &&
+				colStats.IsStatsInitialized() &&
+				colStats.NDV > 0 {
+				return colNDV, true
+			}
+		}
+	}
+
+	// Preserve the original approximate NDV for path comparison, but don't use
+	// it to derive probe cardinality.
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(
+		sctx, cols, indexJoinInfo.innerSchema, stats)
+	return ndv, false
 }
 
 // estimateIndexJoinProbeCountAfterAccess estimates how many rows the chosen inner ranges match for
@@ -446,7 +499,8 @@ func estimateIndexJoinProbeCountAfterAccess(
 	result *indexJoinPathResult,
 	innerJoinKeyCount int,
 ) (float64, bool) {
-	if result == nil || result.lastColIsRange || result.eqUsedColsNDV <= 0 ||
+	// TODO: We can remove `result.lastColIsRange` by estimating the selectivity of the last range condition.
+	if result == nil || result.lastColIsRange || !result.eqUsedColsNDVReliable || result.eqUsedColsNDV <= 0 ||
 		ds.TableStats == nil || ds.TableStats.RowCount <= 0 {
 		return 0, false
 	}

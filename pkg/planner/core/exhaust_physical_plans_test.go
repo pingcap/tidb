@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -350,6 +351,158 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	}
 	for i, tt := range tests {
 		testAnalyzeLookUpFilters(t, indexJoinCtx, &tt, fmt.Sprintf("test case: %v", i))
+	}
+	testEstimateEqUsedColsNDV(t)
+}
+
+func testEstimateEqUsedColsNDV(t *testing.T) {
+	columns := []*expression.Column{
+		{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{UniqueID: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+	schema := expression.NewSchema(columns...)
+
+	tests := []struct {
+		name              string
+		eqUsedColsLen     int
+		indexColCount     int
+		indexNDV          int64
+		partialIndex      bool
+		mvIndex           bool
+		idxColLens        []int
+		colNDVs           map[int64]float64
+		groupNDVs         []property.GroupNDV
+		initializedColNDV int64
+		expectedNDV       float64
+		expectedReliable  bool
+	}{
+		{
+			name:             "empty equality prefix",
+			eqUsedColsLen:    0,
+			indexColCount:    2,
+			colNDVs:          map[int64]float64{1: 10, 2: 20},
+			expectedNDV:      1,
+			expectedReliable: false,
+		},
+		{
+			name:             "complete composite index",
+			eqUsedColsLen:    2,
+			indexColCount:    2,
+			indexNDV:         80,
+			colNDVs:          map[int64]float64{1: 10, 2: 20},
+			expectedNDV:      80,
+			expectedReliable: true,
+		},
+		{
+			name:             "partial index",
+			eqUsedColsLen:    2,
+			indexColCount:    2,
+			indexNDV:         80,
+			partialIndex:     true,
+			colNDVs:          map[int64]float64{1: 10, 2: 20},
+			expectedNDV:      20,
+			expectedReliable: false,
+		},
+		{
+			name:             "multi-valued index",
+			eqUsedColsLen:    2,
+			indexColCount:    2,
+			indexNDV:         80,
+			mvIndex:          true,
+			colNDVs:          map[int64]float64{1: 10, 2: 20},
+			expectedNDV:      20,
+			expectedReliable: false,
+		},
+		{
+			name:          "multi-column GroupNDV stays heuristic",
+			eqUsedColsLen: 2,
+			indexColCount: 3,
+			colNDVs:       map[int64]float64{1: 10, 2: 20, 3: 30},
+			groupNDVs: []property.GroupNDV{
+				{Cols: []int64{1, 2}, NDV: 80},
+			},
+			expectedNDV:      80,
+			expectedReliable: false,
+		},
+		{
+			name:              "single column uses verified column NDV",
+			eqUsedColsLen:     1,
+			indexColCount:     2,
+			colNDVs:           map[int64]float64{1: 40, 2: 20},
+			groupNDVs:         []property.GroupNDV{{Cols: []int64{1}, NDV: 5}},
+			initializedColNDV: 20,
+			expectedNDV:       40,
+			expectedReliable:  true,
+		},
+		{
+			name:              "prefix-length column",
+			eqUsedColsLen:     1,
+			indexColCount:     2,
+			idxColLens:        []int{3, types.UnspecifiedLength},
+			colNDVs:           map[int64]float64{1: 40, 2: 20},
+			initializedColNDV: 20,
+			expectedNDV:       40,
+			expectedReliable:  false,
+		},
+		{
+			name:             "single column without initialized stats",
+			eqUsedColsLen:    1,
+			indexColCount:    2,
+			colNDVs:          map[int64]float64{1: 40, 2: 20},
+			expectedNDV:      40,
+			expectedReliable: false,
+		},
+	}
+
+	for _, tt := range tests {
+		idxInfo := &model.IndexInfo{
+			ID:      1,
+			MVIndex: tt.mvIndex,
+			Columns: make([]*model.IndexColumn, tt.indexColCount),
+		}
+		if tt.partialIndex {
+			idxInfo.ConditionExprString = "a > 0"
+		}
+		for i := range idxInfo.Columns {
+			idxInfo.Columns[i] = &model.IndexColumn{Offset: i, Length: types.UnspecifiedLength}
+		}
+
+		idxColLens := tt.idxColLens
+		if idxColLens == nil {
+			idxColLens = make([]int, tt.indexColCount)
+			for i := range idxColLens {
+				idxColLens[i] = types.UnspecifiedLength
+			}
+		}
+		path := &util.AccessPath{
+			Index:      idxInfo,
+			IdxCols:    columns[:tt.indexColCount],
+			IdxColLens: idxColLens,
+		}
+		histColl := statistics.NewHistColl(1, 100, 0, len(columns), 1)
+		if tt.indexNDV > 0 {
+			histColl.SetIdx(idxInfo.ID, &statistics.Index{
+				Histogram:         *statistics.NewHistogram(idxInfo.ID, tt.indexNDV, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				Info:              idxInfo,
+				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			})
+		}
+		if tt.initializedColNDV > 0 {
+			histColl.SetCol(columns[0].UniqueID, &statistics.Column{
+				Histogram:         *statistics.NewHistogram(columns[0].UniqueID, tt.initializedColNDV, 0, 0, columns[0].RetType, 0, 0),
+				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			})
+		}
+		stats := &property.StatsInfo{
+			RowCount:  100,
+			ColNDVs:   tt.colNDVs,
+			HistColl:  histColl,
+			GroupNDVs: tt.groupNDVs,
+		}
+		ndv, reliable := estimateEqUsedColsNDV(nil, &indexJoinPathInfo{innerSchema: schema}, path, tt.eqUsedColsLen, stats)
+		require.Equal(t, tt.expectedNDV, ndv, tt.name)
+		require.Equal(t, tt.expectedReliable, reliable, tt.name)
 	}
 }
 
