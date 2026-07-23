@@ -50,7 +50,7 @@
 - `pkg/executor/metrics_reader_test.go` - executor: Tests stmt label.
 - `pkg/executor/parallel_apply_test.go` - executor: Tests parallel apply plan.
 - `pkg/executor/partition_table_test.go` - executor: Tests point get with range and list partition table.
-- `pkg/executor/pkg_test.go` - executor: Tests nested loop apply and adaptive LIMIT eligibility, starvation-driven Cop limiting, and oversized DistSQL chunks.
+- `pkg/executor/pkg_test.go` - executor: Tests nested loop apply and adaptive LIMIT eligibility/oversized DistSQL chunks.
 - `pkg/executor/point_get_test.go` - executor: Tests select check visibility.
 - `pkg/executor/prepared_test.go` - executor: Tests core prepared-statement behavior plus the plan-cache cases that still depend on root-package testdata or domain/TiFlash setup.
 - `pkg/executor/recover_test.go` - executor: Tests recover table.
@@ -157,7 +157,7 @@
 ## pkg/executor/internal/exec
 
 ### Tests
-- `pkg/executor/internal/exec/adaptive_limit_controller_test.go` - executor/internal/exec: Tests adaptive LIMIT feedback, paired one-to-many output, progress-gated growth, soft lookup-task admission, starvation growth, and stop.
+- `pkg/executor/internal/exec/adaptive_limit_controller_test.go` - executor/internal/exec: Tests adaptive LIMIT feedback, paired one-to-many output, progress-gated growth, admission, and stop.
 - `pkg/executor/internal/exec/indexusage_test.go` - executor/internal/exec: Tests index usage reporter.
 
 ## pkg/executor/internal/mpp

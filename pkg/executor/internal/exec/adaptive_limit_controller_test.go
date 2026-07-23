@@ -36,13 +36,6 @@ func reserveLookupForTest(t testing.TB, controller *AdaptiveLimitController, max
 	return reserved, ok
 }
 
-func reserveLookupTaskForTest(t testing.TB, controller *AdaptiveLimitController, minRows, maxRows int) (int, bool) {
-	t.Helper()
-	reserved, ok, err := controller.ReserveLookupTask(context.Background(), minRows, maxRows)
-	require.NoError(t, err)
-	return reserved, ok
-}
-
 func TestAdaptiveLimitControllerUsesCurrentExecutionYield(t *testing.T) {
 	controller := NewAdaptiveLimitController(1000, 32, 100000, 32, 100000)
 
@@ -329,7 +322,7 @@ func TestAdaptiveLimitControllerBoundsLookupAndScanAdmission(t *testing.T) {
 	require.Equal(t, uint64(64), snapshot.LookupWindow)
 	require.Equal(t, uint64(32), snapshot.LookupHandles)
 	require.Equal(t, uint64(1), snapshot.LookupRows)
-	batchSize := controller.SuggestedBatchSize(1, 1000)
+	batchSize := controller.SuggestedBatchSize(1000)
 	require.Equal(t, 64, batchSize)
 	require.Equal(t, 2, controller.SuggestedScanConcurrency(15))
 
@@ -388,61 +381,6 @@ func TestAdaptiveLimitControllerBoundsLookupAndScanAdmission(t *testing.T) {
 	require.Zero(t, snapshot.LookupReserved)
 	require.Equal(t, uint64(10), snapshot.LookupHandles)
 	require.Equal(t, uint64(5), snapshot.LookupRows)
-
-	softAdmissionController := NewAdaptiveLimitController(1000, 32, 100000, 32, 100000)
-	softAdmissionController.mu.Lock()
-	softAdmissionController.lookupWindow = 4
-	softAdmissionController.mu.Unlock()
-	reserved, ok = reserveLookupTaskForTest(t, softAdmissionController, 16, 64)
-	require.True(t, ok)
-	require.Equal(t, 16, reserved)
-	require.Equal(t, uint64(16), softAdmissionController.Snapshot().LookupReserved)
-	softAdmissionController.AbortLookup(reserved)
-
-	fragmentedWindowController := NewAdaptiveLimitController(1000, 32, 100000, 32, 100000)
-	fragmentedWindowController.mu.Lock()
-	fragmentedWindowController.lookupWindow = 20
-	fragmentedWindowController.mu.Unlock()
-	reserved, ok = reserveLookupTaskForTest(t, fragmentedWindowController, 16, 16)
-	require.True(t, ok)
-	require.Equal(t, 16, reserved)
-
-	type lookupTaskReservation struct {
-		rows     int
-		admitted bool
-		err      error
-	}
-	blockedTask := make(chan lookupTaskReservation, 1)
-	go func() {
-		reserved, admitted, err := fragmentedWindowController.ReserveLookupTask(context.Background(), 16, 64)
-		blockedTask <- lookupTaskReservation{rows: reserved, admitted: admitted, err: err}
-	}()
-	select {
-	case <-blockedTask:
-		require.Fail(t, "a minimum lookup task bypassed existing outstanding work")
-	case <-time.After(20 * time.Millisecond):
-	}
-	fragmentedWindowController.AbortLookup(16)
-	select {
-	case result := <-blockedTask:
-		require.NoError(t, result.err)
-		require.True(t, result.admitted)
-		require.Equal(t, 20, result.rows)
-	case <-time.After(time.Second):
-		require.Fail(t, "draining lookup work did not admit one minimum task")
-	}
-
-	starvationController := NewAdaptiveLimitController(1000, 32, 100000, 32, 100000)
-	require.Equal(t, 1, starvationController.SuggestedScanConcurrency(15))
-	require.True(t, starvationController.ObserveLookupConsumerBlocked())
-	require.Equal(t, 2, starvationController.SuggestedScanConcurrency(15))
-	require.False(t, starvationController.ObserveLookupConsumerBlocked())
-	require.Equal(t, 2, starvationController.SuggestedScanConcurrency(15))
-	reserved, ok = reserveLookupForTest(t, starvationController, 32)
-	require.True(t, ok)
-	starvationController.CompleteLookup(reserved, reserved, reserved)
-	require.True(t, starvationController.ObserveLookupConsumerBlocked())
-	require.Equal(t, 4, starvationController.SuggestedScanConcurrency(15))
 }
 
 func BenchmarkAdaptiveLimitControllerObserveJoinProgress(b *testing.B) {

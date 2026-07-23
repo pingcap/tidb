@@ -91,9 +91,6 @@ type AdaptiveLimitController struct {
 	lookupNoOutputRows    uint64
 	lookupInNoOutputPhase bool
 
-	scanConcurrencyFloor          uint64
-	scanGrewSinceLookupCompletion bool
-
 	stopped       bool
 	outerChanged  chan struct{}
 	lookupChanged chan struct{}
@@ -113,17 +110,16 @@ func NewAdaptiveLimitController(
 		initialLookupWindow = demandRows
 	}
 	c := &AdaptiveLimitController{
-		demandRows:           demandRows,
-		initialOuterWindow:   initialOuterWindow,
-		maxOuterWindow:       maxOuterWindow,
-		outerWindow:          initialOuterWindow,
-		initialLookupWindow:  initialLookupWindow,
-		maxLookupWindow:      maxLookupWindow,
-		lookupWindow:         initialLookupWindow,
-		scanConcurrencyFloor: 1,
-		outerChanged:         make(chan struct{}, 1),
-		lookupChanged:        make(chan struct{}, 1),
-		stopCh:               make(chan struct{}),
+		demandRows:          demandRows,
+		initialOuterWindow:  initialOuterWindow,
+		maxOuterWindow:      maxOuterWindow,
+		outerWindow:         initialOuterWindow,
+		initialLookupWindow: initialLookupWindow,
+		maxLookupWindow:     maxLookupWindow,
+		lookupWindow:        initialLookupWindow,
+		outerChanged:        make(chan struct{}, 1),
+		lookupChanged:       make(chan struct{}, 1),
+		stopCh:              make(chan struct{}),
 	}
 	if demandRows == 0 {
 		c.stopLocked()
@@ -138,7 +134,7 @@ func (c *AdaptiveLimitController) Reset() {
 	if !c.stopped && c.outputRows == 0 && c.outerFetched == 0 && c.outerConsumed == 0 &&
 		c.outerReserved == 0 && c.lookupReserved == 0 && c.lookupHandles == 0 && c.lookupRows == 0 &&
 		c.outerOutstandingAtStop == 0 && c.lookupOutstandingAtStop == 0 && c.outerWindow == c.initialOuterWindow &&
-		c.lookupWindow == c.initialLookupWindow && c.scanConcurrencyFloor == 1 && !c.scanGrewSinceLookupCompletion {
+		c.lookupWindow == c.initialLookupWindow {
 		c.mu.Unlock()
 		return
 	}
@@ -161,8 +157,6 @@ func (c *AdaptiveLimitController) Reset() {
 	c.lookupWindow = c.initialLookupWindow
 	c.lookupGrowthProgress = 0
 	c.lookupOutstandingAtStop = 0
-	c.scanConcurrencyFloor = 1
-	c.scanGrewSinceLookupCompletion = false
 	c.stopped = false
 	c.outerChanged = make(chan struct{}, 1)
 	c.lookupChanged = make(chan struct{}, 1)
@@ -177,32 +171,23 @@ func (c *AdaptiveLimitController) Reset() {
 // pipeline. The bool is false after LIMIT completion; context cancellation is
 // returned as an error.
 func (c *AdaptiveLimitController) ReserveOuter(ctx context.Context, maxRows int) (int, bool, error) {
-	return c.reserve(ctx, 0, maxRows, true)
+	return c.reserve(ctx, maxRows, true)
 }
 
 // ReserveLookup bounds handles admitted to the double-read table lookup stage.
 // The bool is false after LIMIT completion; context cancellation is returned as
 // an error.
 func (c *AdaptiveLimitController) ReserveLookup(ctx context.Context, maxRows int) (int, bool, error) {
-	return c.reserve(ctx, 0, maxRows, false)
+	return c.reserve(ctx, maxRows, false)
 }
 
-// ReserveLookupTask admits a lookup task between minRows and maxRows when the
-// lookup pipeline is drained. minRows is a soft floor: it may exceed the
-// logical lookup window for at most one task, but never bypasses outstanding
-// lookup work.
-func (c *AdaptiveLimitController) ReserveLookupTask(ctx context.Context, minRows, maxRows int) (int, bool, error) {
-	return c.reserve(ctx, minRows, maxRows, false)
-}
-
-func (c *AdaptiveLimitController) reserve(ctx context.Context, minRows, maxRows int, outer bool) (int, bool, error) {
+func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, outer bool) (int, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, false, err
 	}
 	if maxRows <= 0 {
 		return 0, true, nil
 	}
-	minRows = min(max(minRows, 0), maxRows)
 	for {
 		c.mu.Lock()
 		if err := ctx.Err(); err != nil {
@@ -223,21 +208,13 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, minRows, maxRows 
 		}
 		if outstanding < window {
 			rows := min(uint64(maxRows), window-outstanding)
-			if !outer && outstanding == 0 {
-				rows = min(uint64(maxRows), max(rows, uint64(minRows)))
+			if outer {
+				c.outerReserved += rows
+			} else {
+				c.lookupReserved += rows
 			}
-			// Do not create a sub-floor lookup task merely because another task
-			// leaves a small fragment of the logical window unused. Wait for
-			// progress; the soft floor is allowed only after the pipeline drains.
-			if outer || outstanding == 0 || rows >= uint64(minRows) {
-				if outer {
-					c.outerReserved += rows
-				} else {
-					c.lookupReserved += rows
-				}
-				c.mu.Unlock()
-				return int(rows), true, nil
-			}
+			c.mu.Unlock()
+			return int(rows), true, nil
 		}
 		stopCh := c.stopCh
 		c.mu.Unlock()
@@ -332,7 +309,6 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 	c.lookupReserved -= uint64(reserved)
 	c.lookupHandles = saturatingAdd(c.lookupHandles, uint64(handles))
 	c.lookupRows = saturatingAdd(c.lookupRows, uint64(rows))
-	c.scanGrewSinceLookupCompletion = false
 	if rows > 0 {
 		c.recentLookupYield.add(uint64(handles), uint64(rows))
 		c.lookupNoOutputRows = 0
@@ -348,21 +324,6 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 	}
 	c.notifyLocked(c.lookupChanged)
 	c.mu.Unlock()
-}
-
-// ObserveLookupConsumerBlocked records that the lookup consumer found no task
-// ready to consume. It raises the scan-concurrency floor at most once until a
-// lookup task completes, keeping the pipeline work-conserving without letting
-// a wait loop jump directly to the user concurrency ceiling.
-func (c *AdaptiveLimitController) ObserveLookupConsumerBlocked() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.stopped || c.scanGrewSinceLookupCompletion {
-		return false
-	}
-	c.scanConcurrencyFloor = growAdaptiveWindow(c.scanConcurrencyFloor, ^uint64(0))
-	c.scanGrewSinceLookupCompletion = true
-	return true
 }
 
 // AbortLookup releases lookup admission without using the task as a yield
@@ -392,24 +353,21 @@ func (c *AdaptiveLimitController) SuggestedScanConcurrency(ceiling int) int {
 	}
 	window := c.lookupWindow
 	initialWindow := c.initialLookupWindow
-	concurrencyFloor := c.scanConcurrencyFloor
 	c.mu.Unlock()
-	concurrency := max(divideAndRoundUp(window, initialWindow), concurrencyFloor)
+	concurrency := divideAndRoundUp(window, initialWindow)
 	return min(max(int(min(concurrency, uint64(ceiling))), 1), ceiling)
 }
 
 // SuggestedBatchSize returns the lookup-handle window bounded by the caller's
-// efficient batch floor and configured batch ceiling.
-func (c *AdaptiveLimitController) SuggestedBatchSize(minimum, ceiling int) int {
+// configured batch ceiling.
+func (c *AdaptiveLimitController) SuggestedBatchSize(ceiling int) int {
 	if ceiling < 1 {
 		return 1
 	}
 	c.mu.Lock()
 	window := c.lookupWindow
-	initialWindow := c.initialLookupWindow
 	c.mu.Unlock()
-	minimum = min(max(minimum, 1), ceiling, int(min(initialWindow, uint64(ceiling))))
-	return min(max(int(min(window, uint64(ceiling))), minimum), ceiling)
+	return min(max(int(min(window, uint64(ceiling))), 1), ceiling)
 }
 
 // Stop prevents future admission and wakes all blocked producers.
@@ -493,7 +451,7 @@ func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
 	// from this LIMIT and the configured batch ceiling, not a fixed row threshold.
 	var grew bool
 	c.lookupWindow, grew = adjustAdaptiveWindow(
-		target, c.lookupWindow, 1, c.maxLookupWindow,
+		target, c.lookupWindow, c.initialLookupWindow, c.maxLookupWindow,
 		c.lookupHandles > c.lookupGrowthProgress,
 	)
 	if grew {
