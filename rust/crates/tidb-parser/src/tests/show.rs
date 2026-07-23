@@ -386,7 +386,7 @@ fn show_columns_restore_and_scope() {
     );
     assert_eq!(
         r("show columns from t from test"),
-        "SHOW COLUMNS IN `test`.`t`"
+        "SHOW COLUMNS IN `t` IN `test`"
     );
     assert_eq!(
         r("show columns in t like id"),
@@ -422,6 +422,17 @@ fn show_columns_restore_and_scope() {
         &show.filter,
         Some(tidb_ast::ShowColumnsFilter::Where(_))
     ));
+
+    let stmt = parse("show columns from t from test")
+        .expect("SHOW COLUMNS with a separate database parses");
+    let tidb_ast::Stmt::Admin(admin) = stmt else {
+        panic!("expected Admin envelope");
+    };
+    let tidb_ast::AdminStmt::ShowColumns(show) = admin.as_ref() else {
+        panic!("expected ShowColumns");
+    };
+    assert_eq!(show.table, vec!["t".to_string()]);
+    assert_eq!(show.database.as_deref(), Some("test"));
 
     assert!(parse("show columns t").is_err());
 }
