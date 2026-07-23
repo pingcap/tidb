@@ -39,6 +39,7 @@ import (
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
+<<<<<<< HEAD
 func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -49,6 +50,14 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
+=======
+// idxCols is used when index statistics are invalid (coll may not have index info), and to recognize
+// virtual columns inside expBackoffEstimation. It can be nil, in which case both usages are skipped.
+// When exp-backoff cannot estimate a virtual column, prefer the composite-index estimate as a fallback.
+// This may improve estimation but remains subject to encoded index histogram interpolation accuracy.
+func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxCols []*expression.Column) (result statistics.RowEstimate, err error) {
+	var count, maxCount float64
+>>>>>>> 81530defef6 (planner: fall back to index stats when col has no stats (#69154))
 	sc := sctx.GetSessionVars().StmtCtx
 	idx := coll.GetIdx(idxID)
 	colNames := make([]string, 0, 8)
@@ -91,7 +100,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
-		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
+		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, idxCols, realtimeCnt, modifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
@@ -126,7 +135,12 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
+<<<<<<< HEAD
 			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
+=======
+			rowEstimate, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, nil, realtimeCnt, modifyCount)
+			count := rowEstimate.Est
+>>>>>>> 81530defef6 (planner: fall back to index stats when col has no stats (#69154))
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -224,7 +238,11 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
+<<<<<<< HEAD
 func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
+=======
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, idxCols []*expression.Column, realtimeRowCount, modifyCount int64) (totalCount statistics.RowEstimate, err error) {
+>>>>>>> 81530defef6 (planner: fall back to index stats when col has no stats (#69154))
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -302,8 +320,13 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
 		if rangePosition := getOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= statistics.Version2 && coll != nil {
+<<<<<<< HEAD
 			var expBackoffSel float64
 			expBackoffSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
+=======
+			var expBackoffSel, minSel, maxSel float64
+			expBackoffSel, minSel, maxSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange, idxCols)
+>>>>>>> 81530defef6 (planner: fall back to index stats when col has no stats (#69154))
 			if err != nil {
 				return 0, err
 			}
@@ -525,6 +548,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
+<<<<<<< HEAD
 func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, success bool, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -537,6 +561,9 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
+=======
+func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, minSel float64, maxSel float64, success bool, err error) {
+>>>>>>> 81530defef6 (planner: fall back to index stats when col has no stats (#69154))
 	tmpRan := []*ranger.Range{
 		{
 			LowVal:    make([]types.Datum, 1),
@@ -590,6 +617,16 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			}
 		}
 		if !foundStats {
+			// A virtual column never has column statistics, so skipping it would
+			// drop what may be the most selective column of the index. Fall back
+			// to the index-stats-based estimation instead, provided the index has
+			// statistics. See https://github.com/pingcap/tidb/issues/69134.
+			// Any other column lacking statistics keeps the existing behavior:
+			// skip it and estimate from the remaining columns.
+			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil &&
+				(idx.Histogram.Len() > 0 || idx.TopN.Num() > 0) {
+				return 0, 0, 0, false, nil
+			}
 			continue
 		}
 		if err != nil {
