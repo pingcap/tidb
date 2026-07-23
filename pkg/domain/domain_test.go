@@ -283,9 +283,10 @@ func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 	require.NotNil(t, stmtSummarySysVar)
 	wrappedStmtSummarySysVar := *stmtSummarySysVar
 	originalSetGlobal := wrappedStmtSummarySysVar.SetGlobal
-	appliedValues := make([]string, 0, 2)
+	appliedCount := 0
 	wrappedStmtSummarySysVar.SetGlobal = func(ctx context.Context, vars *variable.SessionVars, val string) error {
-		appliedValues = append(appliedValues, val)
+		require.Equal(t, vardef.Off, val)
+		appliedCount++
 		return originalSetGlobal(ctx, vars, val)
 	}
 	variable.RegisterSysVar(&wrappedStmtSummarySysVar)
@@ -295,13 +296,13 @@ func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 
 	require.NoError(t, dom.LoadSysVarCacheLoop(ctx))
 	require.False(t, stmtsummaryv2.EnabledInternal())
-	require.Equal(t, []string{vardef.Off}, appliedValues)
+	require.Equal(t, 1, appliedCount)
 
 	// The persisted and local values both remain OFF. A second rebuild must still
 	// invoke the callback, which runs the internal-summary cleanup path again.
 	require.NoError(t, dom.rebuildSysVarCache(ctx))
 	require.False(t, stmtsummaryv2.EnabledInternal())
-	require.Equal(t, []string{vardef.Off, vardef.Off}, appliedValues)
+	require.Equal(t, 2, appliedCount)
 }
 
 func sysMockFactory(*Domain) (pools.Resource, error) {

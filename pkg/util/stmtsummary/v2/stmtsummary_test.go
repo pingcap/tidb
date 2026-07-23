@@ -45,30 +45,29 @@ func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
 	return m.GetCounter().GetValue()
 }
 
-type persistedWindowSnapshot struct {
-	recordCount int
-	execCount   int64
-}
-
 type snapshotStmtStorage struct {
-	persisted chan persistedWindowSnapshot
+	persisted chan int64
 }
 
 func (s *snapshotStmtStorage) persist(w *stmtWindow, _ time.Time) {
-	values := w.lru.Values()
-	snapshot := persistedWindowSnapshot{recordCount: len(values)}
-	for _, value := range values {
-		record := value.(*lockedStmtRecord)
-		record.Lock()
-		snapshot.execCount += record.ExecCount
-		record.Unlock()
-	}
-	s.persisted <- snapshot
+	record := w.lru.Values()[0].(*lockedStmtRecord)
+	record.Lock()
+	execCount := record.ExecCount
+	record.Unlock()
+	s.persisted <- execCount
 }
 
 func (*snapshotStmtStorage) logEvicted([]*StmtRecord) {}
 
 func (*snapshotStmtStorage) sync() error { return nil }
+
+func windowLockHeld(ss *StmtSummary) bool {
+	if ss.windowLock.TryLock() {
+		ss.windowLock.Unlock()
+		return false
+	}
+	return true
+}
 
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
@@ -124,27 +123,15 @@ func TestStmtWindow(t *testing.T) {
 			return digests
 		}
 
-		before := lruDigests()
+		require.Equal(t, []string{"digest_1", "digest_0", "mixed_digest", "pure_internal_digest", "digest_3", "digest_2"}, lruDigests())
 		require.NoError(t, ss.SetEnableInternalQuery(false))
-		expected := make([]string, 0, len(before)-1)
-		for _, digest := range before {
-			if digest != pureInternal.Digest {
-				expected = append(expected, digest)
-			}
-		}
-		require.Equal(t, expected, lruDigests())
-		require.NotContains(t, lruDigests(), pureInternal.Digest)
-		require.Contains(t, lruDigests(), mixedInternal.Digest)
+		require.Equal(t, []string{"digest_1", "digest_0", "mixed_digest", "digest_3", "digest_2"}, lruDigests())
 
 		for _, digest := range []string{"new_digest_0", "new_digest_1", "new_digest_2"} {
 			ss.Add(GenerateStmtExecInfo4Test(digest))
 		}
 
-		require.Contains(t, lruDigests(), "digest_0")
-		require.Contains(t, lruDigests(), "digest_1")
-		require.Contains(t, lruDigests(), mixedInternal.Digest)
-		require.NotContains(t, lruDigests(), "digest_2")
-		require.NotContains(t, lruDigests(), "digest_3")
+		require.Equal(t, []string{"new_digest_2", "new_digest_1", "new_digest_0", "digest_1", "digest_0", "mixed_digest"}, lruDigests())
 		require.Equal(t, 2, ss.window.evicted.count())
 		require.Equal(t, int64(2), ss.window.evicted.other.ExecCount)
 	})
@@ -161,58 +148,28 @@ func TestStmtWindow(t *testing.T) {
 		values := ss.window.lru.Values()
 		require.Len(t, values, 1)
 		record := values[0].(*lockedStmtRecord)
-		record.Lock()
-		recordLocked := true
-		defer func() {
-			if recordLocked {
-				record.Unlock()
-			}
-		}()
-
-		addDone := make(chan struct{})
-		go func() {
-			ss.Add(GenerateStmtExecInfo4Test(internal.Digest))
-			close(addDone)
-		}()
-
-		// Add must keep the window locked while waiting for the record lock, so
-		// ClearInternal cannot detach the record before Add marks it non-internal.
-		require.Eventually(t, func() bool {
-			if ss.windowLock.TryLock() {
-				ss.windowLock.Unlock()
-				return false
-			}
-			return true
-		}, time.Second, time.Millisecond)
-
 		clearDone := make(chan struct{})
-		go func() {
-			ss.ClearInternal()
-			close(clearDone)
+		func() {
+			record.Lock()
+			defer record.Unlock()
+			go ss.Add(GenerateStmtExecInfo4Test(internal.Digest))
+
+			// Add must keep the window locked while waiting for the record lock, so
+			// ClearInternal cannot detach the record before Add marks it non-internal.
+			require.Eventually(t, func() bool { return windowLockHeld(ss) }, time.Second, time.Millisecond)
+			go func() {
+				ss.ClearInternal()
+				close(clearDone)
+			}()
 		}()
 
-		record.Unlock()
-		recordLocked = false
-		require.Eventually(t, func() bool {
-			select {
-			case <-addDone:
-				return true
-			default:
-				return false
-			}
-		}, time.Second, time.Millisecond)
-		require.Eventually(t, func() bool {
-			select {
-			case <-clearDone:
-				return true
-			default:
-				return false
-			}
-		}, time.Second, time.Millisecond)
+		select {
+		case <-clearDone:
+		case <-time.After(time.Second):
+			t.Fatal("ClearInternal did not finish")
+		}
 
-		values = ss.window.lru.Values()
-		require.Len(t, values, 1)
-		record = values[0].(*lockedStmtRecord)
+		require.Equal(t, 1, ss.window.lru.Size())
 		record.Lock()
 		defer record.Unlock()
 		require.False(t, record.IsInternal)
@@ -220,7 +177,7 @@ func TestStmtWindow(t *testing.T) {
 	})
 
 	t.Run("concurrent add completes before rotated window persistence", func(t *testing.T) {
-		storage := &snapshotStmtStorage{persisted: make(chan persistedWindowSnapshot, 1)}
+		storage := &snapshotStmtStorage{persisted: make(chan int64, 1)}
 		ss := NewStmtSummary4Test(1)
 		ss.storage = storage
 		defer ss.Close()
@@ -230,53 +187,24 @@ func TestStmtWindow(t *testing.T) {
 		values := ss.window.lru.Values()
 		require.Len(t, values, 1)
 		record := values[0].(*lockedStmtRecord)
-		record.Lock()
-		recordLocked := true
-		defer func() {
-			if recordLocked {
-				record.Unlock()
-			}
-		}()
+		func() {
+			record.Lock()
+			defer record.Unlock()
+			go ss.Add(info)
 
-		addDone := make(chan struct{})
-		go func() {
-			ss.Add(info)
-			close(addDone)
-		}()
-
-		// Add must hold windowLock until it owns the record lock. This prevents
-		// rotate from handing the old window to persistence before Add can update it.
-		require.Eventually(t, func() bool {
-			if ss.windowLock.TryLock() {
+			// Add must hold windowLock until it owns the record lock. This prevents
+			// rotate from handing the old window to persistence before Add can update it.
+			require.Eventually(t, func() bool { return windowLockHeld(ss) }, time.Second, time.Millisecond)
+			go func() {
+				ss.windowLock.Lock()
+				ss.rotate(timeNow())
 				ss.windowLock.Unlock()
-				return false
-			}
-			return true
-		}, time.Second, time.Millisecond)
-
-		rotateDone := make(chan struct{})
-		go func() {
-			ss.windowLock.Lock()
-			ss.rotate(timeNow())
-			ss.windowLock.Unlock()
-			close(rotateDone)
+			}()
 		}()
 
-		record.Unlock()
-		recordLocked = false
 		select {
-		case <-addDone:
-		case <-time.After(time.Second):
-			t.Fatal("Add did not finish")
-		}
-		select {
-		case <-rotateDone:
-		case <-time.After(time.Second):
-			t.Fatal("rotate did not finish")
-		}
-		select {
-		case snapshot := <-storage.persisted:
-			require.Equal(t, persistedWindowSnapshot{recordCount: 1, execCount: 2}, snapshot)
+		case execCount := <-storage.persisted:
+			require.Equal(t, int64(2), execCount)
 		case <-time.After(time.Second):
 			t.Fatal("rotated window was not persisted")
 		}
