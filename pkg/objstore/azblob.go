@@ -941,12 +941,7 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 		return len(data), nil
 	}
 
-	// Write is called serially by the buffered writer, so appending here keeps
-	// blockIDList in file order; the background stagers never touch it.
 	u.blockIDList = append(u.blockIDList, blockID)
-	// The buffered writer reuses its backing array once Write returns, so copy
-	// before staging on a background goroutine. SetLimit bounds the in-flight
-	// uploads, so Go blocks here once the pool is full.
 	buf := make([]byte, len(data))
 	copy(buf, data)
 	u.eg.Go(func() error {
