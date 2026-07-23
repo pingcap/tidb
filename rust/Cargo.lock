@@ -1392,6 +1392,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-util"
+version = "0.0.0"
+
+[[package]]
 name = "tokio"
 version = "1.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

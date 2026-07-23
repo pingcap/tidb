@@ -1,0 +1,11 @@
+[package]
+name = "tidb-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Complete TiDB utility package transcreations shared by the Rust SQL node."
+
+[lints]
+workspace = true
