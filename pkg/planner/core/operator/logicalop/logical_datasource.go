@@ -620,8 +620,9 @@ func (ds *DataSource) HasV0NewCollationStringHandle() bool {
 
 // HandleColsToAppend returns the clustered-handle columns (and their lengths) that TiKV
 // physically appends to a non-unique secondary index's key beyond its declared columns,
-// or nil when no append applies. declaredCols are the resolved declared index columns
-// (the result of util.IndexInfo2Cols for this index).
+// or nil when no append applies. declaredCols are the declared index columns (the result
+// of util.IndexInfo2Cols for this index); nil entries mark unresolved columns and
+// suppress the append.
 //
 // This is the single source of truth for that layout, shared by fillIndexPath — which
 // mutates the path so ranger turns predicates on these columns into scan ranges — and by
@@ -633,6 +634,12 @@ func (ds *DataSource) HasV0NewCollationStringHandle() bool {
 func (ds *DataSource) HandleColsToAppend(path *util.AccessPath, declaredCols []*expression.Column) ([]*expression.Column, []int) {
 	if path.Index == nil || path.Index.Unique || path.Index.Primary ||
 		len(path.Index.Columns) != len(declaredCols) {
+		return nil, nil
+	}
+	// A nil entry means an index column could not be resolved to a schema column
+	// (util.IndexInfo2FullCols leaves such placeholders). The physical key layout past
+	// that point is unknowable, so no append applies.
+	if slices.Contains(declaredCols, nil) {
 		return nil, nil
 	}
 	if ds.TableInfo != nil && ds.TableInfo.IsCommonHandle {
