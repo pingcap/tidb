@@ -195,22 +195,28 @@ func (w *GCSWriter) Close() error {
 	close(w.chunkCh)
 	w.wg.Wait()
 
+	// A failed part upload or a cancelled context leaves the initiated upload
+	// and its already-staged parts behind; abort it so they don't linger.
 	if err := w.err.Load(); err != nil {
-		return err
+		return w.abort(err)
 	}
 
 	if len(w.xmlMPUParts) == 0 {
 		return nil
 	}
-	err := w.finalizeXMLMPU()
-	if err == nil {
-		return nil
+	if err := w.finalizeXMLMPU(); err != nil {
+		return w.abort(err)
 	}
-	errC := w.cancel()
-	if errC != nil {
-		return fmt.Errorf("failed to finalize multipart upload: %s, Failed to cancel multipart upload: %s", err, errC)
+	return nil
+}
+
+// abort cancels the multipart upload and returns cause, folding in any
+// cancellation failure.
+func (w *GCSWriter) abort(cause error) error {
+	if errC := w.cancel(); errC != nil {
+		return fmt.Errorf("%s; failed to cancel multipart upload: %s", cause, errC)
 	}
-	return fmt.Errorf("failed to finalize multipart upload: %s", err)
+	return cause
 }
 
 const (
