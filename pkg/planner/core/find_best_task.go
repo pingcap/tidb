@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"maps"
@@ -1560,13 +1561,19 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 	}
 
+	// Some top-level AND filters have already been used to build every chosen partial path.
+	// For example, `a = 1 AND (b = 2 OR c = 3)` for index (a,b) and (a,c) doesn't need any global Selection.
+	// Remove them after the alternatives are fixed, so the global Selection only keeps predicates that are not
+	// guaranteed by all partial paths.
+	tableFilters := removeCoveredIndexMergeTopLevelFilters(ds, path.TableFilters, determinedIndexPartialPaths)
+
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
 		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
-		TableFilters:       path.TableFilters,
+		TableFilters:       tableFilters,
 		NoncacheableReason: notCachableReason,
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
@@ -1590,6 +1597,70 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		return indexMergePath, partialPathMatchResults, useAdvisorySortItems, property.PropNotMatched
 	}
 	return indexMergePath, partialPathMatchResults, useAdvisorySortItems, property.PropMatched
+}
+
+func removeCoveredIndexMergeTopLevelFilters(
+	ds *logicalop.DataSource,
+	filters []expression.Expression,
+	partialPaths []*util.AccessPath,
+) []expression.Expression {
+	if len(filters) == 0 || len(partialPaths) == 0 {
+		return filters
+	}
+	remaining := make([]expression.Expression, 0, len(filters))
+	for _, filter := range filters {
+		if indexMergeTopLevelFilterCovered(ds, filter, partialPaths) {
+			continue
+		}
+		remaining = append(remaining, filter)
+	}
+	return remaining
+}
+
+func indexMergeTopLevelFilterCovered(
+	ds *logicalop.DataSource,
+	filter expression.Expression,
+	partialPaths []*util.AccessPath,
+) bool {
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), filter) {
+		return false
+	}
+	for _, path := range partialPaths {
+		if !indexMergePartialPathCoversFilter(ds, path, filter) {
+			return false
+		}
+	}
+	return true
+}
+
+func indexMergePartialPathCoversFilter(
+	ds *logicalop.DataSource,
+	partialPath *util.AccessPath,
+	filter expression.Expression,
+) bool {
+	filterHash := filter.HashCode()
+	// Be conservative: only remove a filter when a normal index partial path
+	// carries the exact predicate in AccessConds. Filters handled by table/MV
+	// paths or by residual TableFilters still need the global Selection.
+	if partialPath == nil || partialPath.IsTablePath() || isMVIndexPath(partialPath) {
+		return false
+	}
+	if !ds.IsIndexCoveringCondition(filter, partialPath.FullIdxCols, partialPath.FullIdxColLens) {
+		return false
+	}
+	if expressionContainsHash(partialPath.TableFilters, filterHash) {
+		return false
+	}
+	return expressionContainsHash(partialPath.AccessConds, filterHash)
+}
+
+func expressionContainsHash(exprs []expression.Expression, hash []byte) bool {
+	for _, expr := range exprs {
+		if bytes.Equal(expr.HashCode(), hash) {
+			return true
+		}
+	}
+	return false
 }
 
 func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) ([]property.PhysicalPropMatchResult, property.PhysicalPropMatchResult) {

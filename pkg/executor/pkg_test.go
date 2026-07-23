@@ -32,6 +32,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// CancelAndWaitImportJobForTest exposes cancelAndWaitImportJob to external package tests.
+func CancelAndWaitImportJobForTest(ctx context.Context, jobID int64) error {
+	return cancelAndWaitImportJob(ctx, jobID)
+}
+
 func TestNestedLoopApply(t *testing.T) {
 	ctx := context.Background()
 	sctx := mock.NewContext()

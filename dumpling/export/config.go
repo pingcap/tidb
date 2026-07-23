@@ -656,7 +656,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if dialect != "" && conf.FileType != "csv" {
+	if dialect != "" && !strings.EqualFold(conf.FileType, FileFormatCSVString) {
 		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
 	}
 	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
@@ -877,7 +877,7 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 
 // ParseOutputDialect parses output dialect string to Dialect
 func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
-	switch outputDialect {
+	switch strings.ToLower(outputDialect) {
 	case "", "default":
 		return CSVDialectDefault, nil
 	case "snowflake":

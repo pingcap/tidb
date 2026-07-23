@@ -230,6 +230,15 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	sessVars := sctx.GetSessionVars()
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	// ExtractTableHintsFromStmtNode does not recurse into ExplainStmt, but
+	// MatchSQLBinding unwraps it (see NormalizeStmtForBinding) so the binding
+	// is applied to the inner stmt and rewrites its /*+ ... */ hints. Capture
+	// the inner stmt's hints up-front so the "binding overrides hints" warning
+	// below still fires for `EXPLAIN SELECT /*+ ... */ ...`.
+	var wrappedInnerHints []*ast.TableOptimizerHint
+	if explain, ok := node.Node.(*ast.ExplainStmt); ok && explain.Stmt != nil {
+		wrappedInnerHints = hint.ExtractTableHintsFromStmtNode(explain.Stmt, sessVars.StmtCtx)
+	}
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
 		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
@@ -339,7 +348,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
-			if originStmtHints.QueryHasHints {
+			if originStmtHints.QueryHasHints || len(wrappedInnerHints) > 0 {
 				sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
@@ -611,6 +620,12 @@ func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
+func shouldTrySemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanSemiJoinRewrite &&
+		!sessVars.EnableSemiJoinRewrite
+}
+
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
@@ -655,6 +670,17 @@ var alternativeRounds = [...]alternativeRound{
 		},
 		cleanup: func(sv *variable.SessionVars) {
 			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
+	{
+		name:    "semi-join-rewrite",
+		enabled: shouldTrySemiJoinRewriteRound,
+		setup: func(sv *variable.SessionVars) {
+			sv.EnableSemiJoinRewrite = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			// This round is enabled only when the original value is false.
+			sv.EnableSemiJoinRewrite = false
 		},
 	},
 	{
@@ -784,7 +810,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
-			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+			if testRoundAndSQL, ok := val.(string); ok &&
+				testRoundAndSQL == round.name+":"+node.Node.OriginalText() {
 				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
 			}
 		})

@@ -20,21 +20,51 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	schmock "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
+
+func newSessionPoolForStore(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
+	t.Helper()
+
+	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+		se := utilmock.NewContext()
+		se.Store = sessionStore
+		return se, nil
+	}, nil, nil, nil)
+	t.Cleanup(sePool.Close)
+	return sePool
+}
+
+func newMockRuntime(
+	ctrl *gomock.Controller,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	if sePool != nil {
+		runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
+	}
+	return runtime
+}
 
 func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager, ctrl *gomock.Controller) *BaseScheduler {
 	ctx := context.Background()
@@ -47,6 +77,38 @@ func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager,
 		allocatedSlots: allocatedSlots,
 	})
 	return sch
+}
+
+func TestBaseSchedulerInitChecksTaskRuntime(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	task := &proto.Task{TaskBase: proto.TaskBase{
+		ID:       1,
+		Key:      "task",
+		Type:     proto.TaskTypeExample,
+		Keyspace: "task_ks",
+	}}
+
+	taskStore := &storeWithKS{ks: task.Keyspace}
+	sch := NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(ctrl, taskStore, newSessionPoolForStore(t, taskStore)),
+	})
+	require.NoError(t, sch.Init())
+
+	sch = NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
+	})
+	require.ErrorContains(t, sch.Init(), "store keyspace mismatch with task")
+
+	sch = NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(
+			ctrl,
+			taskStore,
+			newSessionPoolForStore(t, &storeWithKS{ks: "session_ks"}),
+		),
+	})
+	require.ErrorContains(t, sch.Init(), "invalid task runtime with mismatched keyspace")
 }
 
 func TestSchedulerOnNextStage(t *testing.T) {
@@ -188,6 +250,128 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 			state: 1,
 		}))
 	}
+}
+
+func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	taskErr := errdef.ErrKVDiskFull.GenWithStack("store 1 disk full")
+	taskErr2 := errdef.ErrKVDiskFull.GenWithStack("store 2 disk full")
+	task := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStateRunning,
+			Step:  proto.StepOne,
+			ExtraParams: proto.ExtraParams{
+				PauseOnKVDiskFull: true,
+			},
+		},
+	}
+	sch := createScheduler(&task, true, taskMgr, ctrl)
+
+	schExt := schmock.NewMockExtension(ctrl)
+	sch.Extension = schExt
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePending: 1,
+		proto.SubtaskStateRunning: 1,
+	}, nil)
+	schExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return()
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStateRunning, sch.GetTask().State)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 2,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr, taskErr2}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, task.State, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, proto.TaskStatePausing, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePaused: 1,
+	}, nil)
+	taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePaused, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	tests := []struct {
+		name        string
+		cntByState  map[proto.SubtaskState]int64
+		subTaskErrs []error
+	}{
+		{
+			name: "canceled subtasks present",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed:   1,
+				proto.SubtaskStateCanceled: 1,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+		{
+			name: "mixed error types",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr, errors.New("network error")},
+		},
+		{
+			name: "failed count and error count mismatch",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.False(t, shouldPauseOnKVDiskFull(&task, test.cntByState, test.subTaskErrs))
+		})
+	}
+
+	missingErrTask := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    2,
+			State: proto.TaskStateRunning,
+			Step:  proto.StepOne,
+			ExtraParams: proto.ExtraParams{
+				PauseOnKVDiskFull: true,
+			},
+		},
+	}
+	missingErrSch := createScheduler(&missingErrTask, true, taskMgr, ctrl)
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), missingErrTask.ID, missingErrTask.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), missingErrTask.ID).Return(nil, nil)
+	taskMgr.EXPECT().RevertTask(gomock.Any(), missingErrTask.ID, proto.TaskStateRunning, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ int64, _ proto.TaskState, err error) error {
+			require.ErrorContains(t, err, "without error")
+			return nil
+		})
+	require.NoError(t, missingErrSch.onRunning())
+	require.Equal(t, proto.TaskStateReverting, missingErrSch.GetTask().State)
+	require.ErrorContains(t, missingErrSch.GetTask().Error, "without error")
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestSchedulerNotAllocateSlots(t *testing.T) {
@@ -688,16 +872,76 @@ func TestOnTaskFinished(t *testing.T) {
 		return values
 	}
 	onTaskFinished(proto.TaskStateSucceed, nil)
-	require.EqualValues(t, map[string]int{"all": 1, "succeed": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 1, "succeed": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateReverted, nil)
-	require.EqualValues(t, map[string]int{"all": 2, "succeed": 1, "failed": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 2, "succeed": 1, "failed": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateReverted, errors.New("some err"))
-	require.EqualValues(t, map[string]int{"all": 3, "succeed": 1, "failed": 2}, collectMetricsFn())
-	onTaskFinished(proto.TaskStateReverted, errors.New(taskCancelMsg))
-	require.EqualValues(t, map[string]int{"all": 4, "succeed": 1, "failed": 2, "cancelled": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 3, "succeed": 1, "failed": 2}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New(storage.TaskCancelMessage))
+	require.EqualValues(t, map[string]int{metricStateAll: 4, "succeed": 1, "failed": 2, "cancelled": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateFailed, errors.New("some err"))
-	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	valueConversionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0 at offset 0: " +
+		"Value conversion failed for column 'event_id'. Expected type: bigint, received value: ?. " +
+		"Reason: [types:1292]Truncated incorrect DOUBLE value: '?'."
+	onTaskFinished(proto.TaskStateReverted, errors.New(valueConversionErr))
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 6, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 1,
+	}, collectMetricsFn())
+	datetimeConversionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0 at offset 0: " +
+		"Value conversion failed for column 'created_at'. Expected type: datetime, received value: invalid. " +
+		"Reason: [types:1292]Incorrect datetime value: 'invalid' for column 'created_at' at row 1."
+	onTaskFinished(proto.TaskStateReverted, errors.New(datetimeConversionErr))
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 7, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 2,
+	}, collectMetricsFn())
+	roundTripImportCastErr := func(column, columnType, value, reason string) error {
+		castErr := common.ErrCastValue.FastGenByArgs(column, columnType, value, reason)
+		encodeErr := common.ErrEncodeKV.Wrap(castErr).FastGenByArgs("data.csv", 0)
+		serializedErr := errors.Normalize(errors.GetErrStackMsg(encodeErr),
+			errors.RFCCodeText(string(common.ErrEncodeKV.RFCCode())),
+			errors.MySQLErrorCode(int(common.ErrEncodeKV.Code())))
+		errBytes, err := serializedErr.MarshalJSON()
+		require.NoError(t, err)
+		restoredErr := errors.Normalize("")
+		require.NoError(t, restoredErr.UnmarshalJSON(errBytes))
+		return restoredErr
+	}
+	dataTooLongErr := roundTripImportCastErr("name", "varchar(3)", "abcd",
+		"[types:1406]Data Too Long, field len 3, data len 4")
+	require.NotContains(t, dataTooLongErr.Error(), "ErrCastValue")
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, dataTooLongErr))
+	notNullErr := roundTripImportCastErr("name", "varchar(10)", "NULL",
+		"[table:1048]Column 'name' cannot be null")
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, notNullErr))
+	checkConstraintErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file data.csv:0 at offset 0: " +
+		"Check constraint 'positive_id' is violated."
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, errors.New(checkConstraintErr)))
+	noPartitionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file data.csv:0 at offset 0: " +
+		"Table has no partition for value 42"
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, errors.New(noPartitionErr)))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
+		errors.New("[executor:8167]Duplicate key conflict found. Please resolve conflicts in the input dataset")))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
+		errors.New("[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table t")))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
+		errors.New("[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table t")))
+	parseErr := "[Lightning:Restore:ErrEncodeKV]encode kv error in file data.csv:0 at offset 0: " +
+		"column count mismatch, expected 3, got 2"
+	require.Equal(t, proto.TaskStateFailed.String(), getMetricState(proto.TaskStateReverted, errors.New(parseErr)))
+	require.Equal(t, proto.TaskStateFailed.String(), getMetricState(proto.TaskStateReverted,
+		errors.New("Value conversion failed for column 'name'")))
+	onTaskFinished(proto.TaskStateReverted, errors.New("[kv:1062]Duplicate entry '1' for key 't.idx'"))
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3,
+	}, collectMetricsFn())
 	// noop for non-finished state.
 	onTaskFinished(proto.TaskStateRunning, nil)
-	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3,
+	}, collectMetricsFn())
 }

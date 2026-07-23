@@ -218,6 +218,13 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 				zap.Int64("databaseID", dbInfo.ID))
 		}
 
+		// Clean up masking policies for all tables in the dropped database.
+		if err := w.dropMaskingPoliciesByDBName(jobCtx, job.SchemaName); err != nil {
+			logutil.DDLLogger().Warn("failed to delete masking policies for database, but operation will continue",
+				zap.Error(err),
+				zap.String("dbName", job.SchemaName))
+		}
+
 		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)

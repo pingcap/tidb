@@ -17,17 +17,17 @@ package scheduler
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
+	// GetTopUnfinishedTasks returns unfinished tasks, limited by GetMaxConcurrentTask()*2,
 	// to make sure low ranking tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
@@ -40,7 +40,8 @@ type TaskManager interface {
 	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
-	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
+	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
+	GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
@@ -60,6 +61,8 @@ type TaskManager interface {
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// PauseTaskOnError updates task state to pausing and records the task error.
+	PauseTaskOnError(ctx context.Context, taskID int64, taskState proto.TaskState, step proto.Step, taskErr error) error
 	// PausedTask updated task state to 'paused'.
 	PausedTask(ctx context.Context, taskID int64) error
 	// ResumedTask updated task state from resuming to running.
@@ -98,6 +101,8 @@ type TaskManager interface {
 	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error)
 	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
+	// GetSubtaskStateCntAndErrorsByStep returns the subtask count by state and failed/canceled errors of some step.
+	GetSubtaskStateCntAndErrorsByStep(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, []error, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error
@@ -182,17 +187,15 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
-	// TaskStore is the store for task.Keyspace. It equals the instance store in
-	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
-	// it from the task keyspace.
-	TaskStore kv.Storage
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
+func NewParamForTest(taskMgr TaskManager, runtime sqlsvrapi.Runtime) Param {
 	return Param{
-		taskMgr:   taskMgr,
-		TaskStore: store,
+		taskMgr:     taskMgr,
+		TaskRuntime: runtime,
 	}
 }
 
@@ -243,6 +246,24 @@ type CleanUpRoutine interface {
 	// task.Meta can be updated here, such as redacting some sensitive info.
 	CleanUp(ctx context.Context, task *proto.Task) error
 }
+
+// BatchCleanUpRoutine optionally extends CleanUpRoutine with batched cleanup.
+// For these routines, the scheduler calls CleanUpBatch instead of CleanUp. In
+// each cleanup pass, it calls one routine instance with a non-empty group of
+// tasks that all have the same task type. When CleanUpBatch returns nil, the
+// scheduler submits every task in the group together in the subsequent
+// history-table transfer. When it returns an error, no task in the group is
+// transferred in that pass.
+//
+// The scheduler provides no atomicity or rollback across cleanup side effects
+// and the history-table transfer. Implementations must be idempotent and safe
+// to retry after a partial cleanup failure or after cleanup succeeds but the
+// history-table transfer fails.
+type BatchCleanUpRoutine interface {
+	CleanUpRoutine
+	CleanUpBatch(ctx context.Context, tasks []*proto.Task) error
+}
+
 type cleanUpFactoryFn func() CleanUpRoutine
 
 var cleanUpFactoryMap = struct {

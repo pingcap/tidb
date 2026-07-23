@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -28,10 +29,15 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
+
+var errIndexInfoNotFound = errors.New("index info not found")
+
+func isIndexInfoNotFoundErr(err error) bool {
+	return errors.Cause(err) == errIndexInfoNotFound
+}
 
 // Version constants for BackfillTaskMeta.
 const (
@@ -130,22 +136,12 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
-	store := s.TaskStore
-	sessPool := ddlObj.sessPool
-	taskKS := s.task.Keyspace
-	if ddlObj.store.GetKeyspace() != taskKS {
-		if err := s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
-			svr := se.GetSQLServer()
-			sp, err := svr.GetKSSessPool(taskKS)
-			sessPool = sess.NewSessionPool(sp)
-			return err
-		}); err != nil {
-			return nil, err
-		}
-	}
-	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
+	store := s.TaskRuntime.Store()
+	sessPool := sess.NewSessionPool(s.TaskRuntime.SysSessionPool())
+	// TODO This is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := getTableByTxn(ddlObj.ctx, store, jobMeta.SchemaID, jobMeta.TableID)
+	failpoint.InjectCall("beforeGetUserTableForBackfillStep", jobMeta)
+	tblIface, err := getUserTableFromTaskStore(ddlObj.ctx, store, jobMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +154,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 			logutil.DDLIngestLogger().Warn("index info not found",
 				zap.Int64("table ID", tbl.Meta().ID),
 				zap.Int64("index ID", eid))
-			return nil, errors.Errorf("index info not found: %d", eid)
+			return nil, errors.Annotatef(errIndexInfoNotFound,
+				"eid: %d, table ID: %d, job ID: %d",
+				eid, tbl.Meta().ID, jobMeta.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
@@ -240,6 +238,9 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
+	if isIndexInfoNotFoundErr(err) {
+		return false
+	}
 	return common.IsRetryableError(err) || isRetryableError(err, true)
 }
 

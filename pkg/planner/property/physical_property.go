@@ -353,6 +353,23 @@ func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
 	return true, p.SortItems[0].Desc
 }
 
+const emptyPartialOrderInfoSize = int64(unsafe.Sizeof(PartialOrderInfo{}))
+
+// MemoryUsage returns the memory usage of PartialOrderInfo.
+func (p *PartialOrderInfo) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPartialOrderInfoSize + int64(cap(p.SortItems))*size.SizeOfPointer
+	for _, item := range p.SortItems {
+		if item != nil {
+			sum += item.MemoryUsage()
+		}
+	}
+	return
+}
+
 // PartialOrderMatchResult records the result of matching partial order property with an access path.
 // It is stored in candidatePath to allow each path to have its own match result.
 type PartialOrderMatchResult struct {
@@ -368,6 +385,21 @@ type PartialOrderMatchResult struct {
 
 	// PrefixLen is the prefix length in bytes for prefix index, only used for executor part
 	PrefixLen int
+}
+
+const emptyPartialOrderMatchResultSize = int64(unsafe.Sizeof(PartialOrderMatchResult{}))
+
+// MemoryUsage returns the memory usage of PartialOrderMatchResult.
+func (p *PartialOrderMatchResult) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPartialOrderMatchResultSize
+	if p.PrefixCol != nil {
+		sum += p.PrefixCol.MemoryUsage()
+	}
+	return
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -729,6 +761,9 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 	}
 	for _, sortItem := range p.AdvisorySortItems {
 		sum += sortItem.MemoryUsage()
+	}
+	if p.PartialOrderInfo != nil {
+		sum += p.PartialOrderInfo.MemoryUsage()
 	}
 	return
 }

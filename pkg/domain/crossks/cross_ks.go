@@ -26,9 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -37,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -48,7 +52,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const crossKSSessPoolSize = 5
+const (
+	crossKSSessPoolSize         = 5
+	crossKSRuntimeIdleTimeout   = 30 * time.Minute
+	crossKSRuntimeSweepInterval = time.Minute
+)
 
 type runtimeEntry struct {
 	sessMgr       *SessionManager
@@ -273,6 +281,13 @@ func (*Manager) createSessionManager(
 	if err = schemaVerSyncer.Init(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
+	serverStateSyncer := serverstate.NewEtcdSyncer(etcdCli, ddlutil.ServerGlobalState)
+	// The submit-only DDL path refreshes server state synchronously before
+	// enqueue. Seed the cache here without Init, because Init starts an etcd
+	// watch/session that this runtime does not need or drain.
+	if _, err = serverStateSyncer.GetGlobalState(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
 	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
 	isSyncer := issyncer.NewCrossKSSyncer(store, infoCache, vardef.GetSchemaLease(), sessPool, isValidator, ks)
 	isSyncer.InitRequiredFields(
@@ -286,23 +301,33 @@ func (*Manager) createSessionManager(
 		return nil, errors.Trace(err)
 	}
 
-	sysTblMgr := systable.NewManager(sess.NewSessionPool(sessPool))
+	ddlSessPool := sess.NewSessionPool(sessPool)
+	sysTblMgr := systable.NewManager(ddlSessPool)
 	minJobIDRefresher := systable.NewMinJobIDRefresher(sysTblMgr)
 	isSyncer.SetMinJobIDRefresher(minJobIDRefresher)
+	ddlClient := newDDLClient(etcdCli, jobsubmit.SubmitOptions{
+		Store:             store,
+		SessPool:          ddlSessPool,
+		SysTblMgr:         sysTblMgr,
+		MinJobIDRefresher: minJobIDRefresher,
+		ServerStateSyncer: serverStateSyncer,
+	})
 
 	mgr := &SessionManager{
-		ctx:             ctx,
-		cancel:          cancel,
-		exitCh:          make(chan struct{}),
-		store:           store,
-		etcdCli:         etcdCli,
-		schemaVerSyncer: schemaVerSyncer,
-		infoCache:       infoCache,
-		isSyncer:        isSyncer,
-		sessPool:        sessPool,
-		coordinator:     coordinator,
-		isValidator:     isValidator,
-		svrInfoSyncer:   svrInfoSyncer,
+		ctx:               ctx,
+		cancel:            cancel,
+		exitCh:            make(chan struct{}),
+		store:             store,
+		etcdCli:           etcdCli,
+		schemaVerSyncer:   schemaVerSyncer,
+		serverStateSyncer: serverStateSyncer,
+		infoCache:         infoCache,
+		isSyncer:          isSyncer,
+		sessPool:          sessPool,
+		coordinator:       coordinator,
+		isValidator:       isValidator,
+		svrInfoSyncer:     svrInfoSyncer,
+		ddlClient:         ddlClient,
 	}
 
 	mgr.wg.RunWithLog(func() {
@@ -326,7 +351,7 @@ func (*Manager) createSessionManager(
 
 // release releases the runtime handle for the specified keyspace and holderID.
 // the resources will be cleaned up if there is no active holder after enough
-// time. we will impl this part later.
+// time.
 func (m *Manager) release(targetKS string, holderID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -343,6 +368,59 @@ func (m *Manager) release(targetKS string, holderID string) {
 		zap.String("targetKS", targetKS),
 		zap.String("holderID", holderID),
 		zap.Int("activeHolderCount", len(entry.activeHolders)))
+}
+
+// RunSystemKSGCLoop periodically evicts idle cross keyspace runtimes.
+// as the name noted, this loop only runs in SYSTEM keyspace, user keyspace
+// only access the SYSTEM ks, and will be kept alive.
+// Note: there are raw caller to GetOrCreate which conflicts with the GC loop.
+// we will make the API more clear in the future after we can refactor those
+// callers to use Acquire instead of GetOrCreate directly.
+func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
+	interval := crossKSRuntimeSweepInterval
+	idleTimeout := crossKSRuntimeIdleTimeout
+	failpoint.InjectCall("mockRuntimeGCLoopConfig", &interval, &idleTimeout)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.sweepIdleRuntimes(idleTimeout)
+		}
+	}
+}
+
+func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
+	type evictedRuntime struct {
+		targetKS string
+		entry    *runtimeEntry
+	}
+
+	evicted := make([]evictedRuntime, 0, 1)
+	now := time.Now()
+	m.mu.Lock()
+	for targetKS, entry := range m.runtimes {
+		if len(entry.activeHolders) > 0 || entry.lastReleaseAt.IsZero() {
+			continue
+		}
+		if now.Sub(entry.lastReleaseAt) < idleTimeout {
+			continue
+		}
+		delete(m.runtimes, targetKS)
+		evicted = append(evicted, evictedRuntime{targetKS: targetKS, entry: entry})
+	}
+	m.mu.Unlock()
+
+	for _, item := range evicted {
+		logutil.BgLogger().Info("evict idle cross keyspace runtime",
+			zap.String("targetKS", item.targetKS),
+			zap.Duration("idleTimeout", idleTimeout),
+			zap.Time("lastReleaseAt", item.entry.lastReleaseAt))
+		item.entry.sessMgr.close()
+	}
 }
 
 // Close closes all session managers and their associated resources.
@@ -375,8 +453,12 @@ func (h *runtimeHandle) Store() kv.Storage {
 	return h.entry.sessMgr.Store()
 }
 
-func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
-	return h.entry.sessMgr.SessPool()
+func (h *runtimeHandle) SysSessionPool() util.DestroyableSessionPool {
+	return h.entry.sessMgr.SysSessionPool()
+}
+
+func (h *runtimeHandle) AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
+	return h.entry.sessMgr.alterTableMode(ctx, target)
 }
 
 func (h *runtimeHandle) Release() {
@@ -387,19 +469,21 @@ func (h *runtimeHandle) Release() {
 
 // SessionManager manages sessions for a specific keyspace.
 type SessionManager struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              util.WaitGroupWrapper
-	exitCh          chan struct{}
-	store           kv.Storage
-	etcdCli         *clientv3.Client
-	schemaVerSyncer schemaver.Syncer
-	infoCache       *infoschema.InfoCache
-	isSyncer        *issyncer.Syncer
-	sessPool        util.DestroyableSessionPool
-	coordinator     *schemaCoordinator
-	isValidator     validatorapi.Validator
-	svrInfoSyncer   *serverinfo.Syncer
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                util.WaitGroupWrapper
+	exitCh            chan struct{}
+	store             kv.Storage
+	etcdCli           *clientv3.Client
+	schemaVerSyncer   schemaver.Syncer
+	serverStateSyncer serverstate.Syncer
+	infoCache         *infoschema.InfoCache
+	isSyncer          *issyncer.Syncer
+	sessPool          util.DestroyableSessionPool
+	coordinator       *schemaCoordinator
+	isValidator       validatorapi.Validator
+	svrInfoSyncer     *serverinfo.Syncer
+	ddlClient         *ddlClient
 }
 
 // Store returns the kv.Storage instance used by the session manager.
@@ -412,9 +496,13 @@ func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 	return m.infoCache
 }
 
-// SessPool returns the session pool used by the session manager.
-func (m *SessionManager) SessPool() util.DestroyableSessionPool {
+// SysSessionPool returns the session pool used by the session manager.
+func (m *SessionManager) SysSessionPool() util.DestroyableSessionPool {
 	return m.sessPool
+}
+
+func (m *SessionManager) alterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
+	return m.ddlClient.alterTableMode(ctx, target)
 }
 
 // Coordinator returns the InfoSchemaCoordinator used by the session manager.

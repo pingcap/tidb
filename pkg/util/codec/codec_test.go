@@ -807,7 +807,7 @@ func TestJSON(t *testing.T) {
 	}
 
 	buf := make([]byte, 0, 4096)
-	buf, err := encode(nil, buf, originalDatums, false)
+	buf, err := EncodeValue(nil, buf, originalDatums...)
 	require.NoError(t, err)
 
 	decodedDatums, err := Decode(buf, 2)

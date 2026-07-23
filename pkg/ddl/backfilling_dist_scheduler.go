@@ -40,13 +40,16 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -141,7 +144,8 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
-	tbl, err := getUserTableFromTaskStore(ctx, sch.d, sch.TaskStore, job)
+	store := sch.TaskRuntime.Store()
+	tbl, err := getUserTableFromTaskStore(ctx, store, job)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -151,7 +155,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(&task.TaskBase, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, sch.TaskStore, tbl, job, sch.GlobalSort, nodeCnt, logger)
+		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
 	case proto.BackfillStepMergeSort:
 		metaBytes, err2 := generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, logger)
 		if err2 != nil {
@@ -174,7 +178,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				sch.TaskStore.(kv.StorageWithPD),
+				store.(kv.StorageWithPD),
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
@@ -182,7 +186,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		}
 		return nil, nil
 	case proto.BackfillStepMergeTempIndex:
-		return generateMergeTempIndexPlan(ctx, sch.TaskStore, tbl, nodeCnt, backfillMeta.EleIDs, logger)
+		return generateMergeTempIndexPlan(ctx, store, tbl, nodeCnt, backfillMeta.EleIDs, logger)
 	default:
 		return nil, nil
 	}
@@ -190,7 +194,6 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 
 func getUserTableFromTaskStore(
 	ctx context.Context,
-	d *ddl,
 	taskStore kv.Storage,
 	job *model.Job,
 ) (table.Table, error) {
@@ -198,7 +201,18 @@ func getUserTableFromTaskStore(
 	if err != nil {
 		return nil, err
 	}
-	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
+	// we don't touch table data during add-index, a fake Allocators is enough.
+	defaultUseNewCollate := collate.NewCollationEnabled()
+	failpoint.Inject("overrideDefaultUseNewCollateForBackfillStep", func(val failpoint.Value) {
+		defaultUseNewCollate = val.(bool)
+	})
+	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
+	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
+	tbl, err := tables.TableFromMetaWithCollate(
+		useNewCollate,
+		autoid.NewAllocators(tblInfo.SepAutoInc()),
+		tblInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +352,7 @@ func generatePlanForPhysicalTable(
 		return nil, errors.Trace(err)
 	}
 
-	subTaskMetas := make([][]byte, 0, 4)
+	var subTaskMetas [][]byte
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
@@ -350,7 +364,8 @@ func generatePlanForPhysicalTable(
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := recordRegionMetas[0]
 		for _, m := range recordRegionMetas[1:] {
@@ -360,11 +375,15 @@ func generatePlanForPhysicalTable(
 			}
 			cur = m
 		}
+		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
 
 		if shouldRetry {
-			return true, nil
+			return true, errors.New("regions are not continuous")
 		}
 
+		attemptMetas := make([][]byte, 0, 4)
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
 		logger.Info("calculate region batch",
 			zap.Int("totalRegionCnt", len(recordRegionMetas)),
@@ -377,7 +396,7 @@ func generatePlanForPhysicalTable(
 			// It should be different for each subtask to determine if there are duplicate entries.
 			importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
 			if err != nil {
-				return true, nil
+				return true, err
 			}
 			end := min(i+regionBatch, len(recordRegionMetas))
 			batch := recordRegionMetas[i:end]
@@ -397,8 +416,9 @@ func generatePlanForPhysicalTable(
 			if err != nil {
 				return false, err
 			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
+			attemptMetas = append(attemptMetas, metaBytes)
 		}
+		subTaskMetas = attemptMetas
 		return false, nil
 	})
 	if err != nil {
@@ -523,6 +543,11 @@ func generateGlobalSortIngestPlan(
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
+	failpoint.Inject("mockAllocNewTSError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(0, errors.New("mock alloc new TS error"))
+		}
+	})
 	pdCli := store.GetPDClient()
 	p, l, err := pdCli.GetTS(ctx)
 	if err != nil {
@@ -876,7 +901,7 @@ func genMergeTempPlanForOneIndex(
 	pid := tbl.GetPhysicalID()
 	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
 
-	subTaskMetas := make([][]byte, 0, 4)
+	var subTaskMetas [][]byte
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
@@ -888,7 +913,8 @@ func genMergeTempPlanForOneIndex(
 			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := regionMetas[0]
 		for _, m := range regionMetas[1:] {
@@ -898,11 +924,15 @@ func genMergeTempPlanForOneIndex(
 			}
 			cur = m
 		}
+		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
 
 		if shouldRetry {
-			return true, nil
+			return true, errors.New("regions are not continuous")
 		}
 
+		attemptMetas := make([][]byte, 0, 4)
 		regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
 		logger.Info("calculate temp index region batch",
 			zap.Int64("physicalTableID", pid),
@@ -931,8 +961,9 @@ func genMergeTempPlanForOneIndex(
 			if err != nil {
 				return false, err
 			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
+			attemptMetas = append(attemptMetas, metaBytes)
 		}
+		subTaskMetas = attemptMetas
 		return false, nil
 	})
 	if err != nil {

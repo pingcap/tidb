@@ -256,7 +256,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskRuntime.Store().(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToImportMode(ctx)
@@ -264,7 +264,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.TaskStore, taskID: task.ID, logger: sch.GetLogger()})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.TaskRuntime.Store(), taskID: task.ID, logger: sch.GetLogger()})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -278,7 +278,7 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 
 func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
 	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, taskMeta.Plan.TableInfo)
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskRuntime.Store(), se, taskMeta.Plan.TableInfo)
 		if err2 != nil {
 			return err2
 		}
@@ -318,6 +318,9 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
+	if err := sch.checkImportJobNotCancelled(ctx, sch.GetLogger(), taskMeta); err != nil {
+		return err
+	}
 	if err := sch.startJob(ctx, sch.GetLogger(), taskMeta, importer.JobStepPreparing); err != nil {
 		return err
 	}
@@ -339,7 +342,7 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	if err = controller.CheckImportDataSize(); err != nil {
 		return err
 	}
-	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {
+	if err = controller.CalResourceParams(ctx, sch.TaskRuntime.Store().GetCodec().GetKeyspace()); err != nil {
 		return err
 	}
 	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta.JobID, controller.Plan); err != nil {
@@ -402,9 +405,15 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("node-count", nodeCnt),
+		zap.String("db-name", taskMeta.Plan.DBName),
+		zap.String("table-name", taskMeta.Plan.TableInfo.Name.O),
+		zap.Int64("db-id", taskMeta.Plan.DBID),
 		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
 	)
 	logger.Info("on next subtasks batch")
+	if err = sch.checkImportJobNotCancelled(ctx, logger, taskMeta); err != nil {
+		return nil, err
+	}
 
 	// Check table emptiness again after the task is started.
 	if kerneltype.IsClassic() && task.Step == proto.StepInit {
@@ -515,7 +524,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      nodeCnt,
-		Store:                sch.TaskStore,
+		Store:                sch.TaskRuntime.Store(),
 		ThreadCnt:            task.GetRuntimeSlots(),
 	}
 	logicalPlan := &LogicalPlan{Logger: logger}
@@ -556,7 +565,7 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	if task.State == proto.TaskStateReverting {
 		errMsg := ""
 		if task.Error != nil {
-			if scheduler.IsCancelledErr(task.Error) {
+			if storage.IsCancelledErr(task.Error) {
 				return sch.cancelJob(ctx, task, taskMeta, logger)
 			}
 			errMsg = task.Error.Error()
@@ -652,7 +661,7 @@ func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *pro
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskRuntime.Store().(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToNormalMode(ctx)
@@ -793,6 +802,49 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 	)
 }
 
+func (sch *importScheduler) checkImportJobNotCancelled(
+	ctx context.Context,
+	logger *zap.Logger,
+	taskMeta *TaskMeta,
+) error {
+	if kerneltype.IsClassic() {
+		// Classic creates the import job and DXF task in the same transaction, so
+		// there is no dangling import job to catch here. CANCEL IMPORT JOB moves
+		// the DXF task to cancelling, and the framework cancellation path handles it.
+		return nil
+	}
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			retryable := true
+			err := taskManager.WithNewSession(func(se sessionctx.Context) error {
+				job, err := importer.GetJob(ctx, se.GetSQLExecutor(), taskMeta.JobID, "", true)
+				if err != nil {
+					// shouldn't happen in normal path unless other clients delete
+					// it from the system table, just sanity check.
+					if goerrors.Is(err, exeerrors.ErrLoadDataJobNotFound) {
+						retryable = false
+					}
+					return err
+				}
+				// in next-gen, the import job might be taken as a dangling job
+				// and canceled directly as DXF task might be submitted in another
+				// transaction.
+				if job.IsCancelled() {
+					retryable = false
+					return errors.Errorf("import job %d cancelled by user", job.ID)
+				}
+				return nil
+			})
+			return retryable, err
+		},
+	)
+}
+
 func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *zap.Logger, jobID int64, plan *importer.Plan) error {
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
@@ -905,17 +957,8 @@ func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskMan
 		return sch.taskKSTaskMgr, nil
 	}
 
-	if kv.IsUserKS(sch.TaskStore) {
-		var taskKSSessPool util.SessionPool
-		taskKS := sch.GetTask().Keyspace
-		if err := sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
-			var err2 error
-			taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(taskKS)
-			return err2
-		}); err != nil {
-			return nil, errors.Annotatef(errGetCrossKSSessionPool, "keyspace %s", taskKS)
-		}
-		sch.taskKSTaskMgr = storage.NewTaskManager(taskKSSessPool)
+	if kv.IsUserKS(sch.TaskRuntime.Store()) {
+		sch.taskKSTaskMgr = storage.NewTaskManager(sch.TaskRuntime.SysSessionPool())
 	} else {
 		sch.taskKSTaskMgr = sch.GetTaskMgr()
 	}

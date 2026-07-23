@@ -17,11 +17,17 @@ package s3store
 import (
 	"context"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestS3TidbRetryerNeverExhaustTokens(t *testing.T) {
@@ -53,4 +59,47 @@ func TestRetryerIsInstanceMetadataError(t *testing.T) {
 	retry := newRetryer()
 	require.False(t, retry.IsErrorRetryable(errors.Annotate(context.DeadlineExceeded, "169.254.169.254")))
 	require.True(t, retry.IsErrorRetryable(errors.Annotate(context.DeadlineExceeded, "normal err")))
+}
+
+func TestIsBucketRegionRedirectError(t *testing.T) {
+	newHTTPAPIError := func(code string, statusCode int) error {
+		return &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{
+				Response: &http.Response{StatusCode: statusCode},
+			},
+			Err: &smithy.GenericAPIError{Code: code, Message: "test error", Fault: smithy.FaultUnknown},
+		}
+	}
+
+	require.True(t, isBucketRegionRedirectError(newHTTPAPIError("MovedPermanently", http.StatusMovedPermanently)))
+	require.True(t, isBucketRegionRedirectError(newHTTPAPIError("PermanentRedirect", http.StatusMovedPermanently)))
+
+	require.False(t, isBucketRegionRedirectError(newHTTPAPIError("MovedPermanently", http.StatusForbidden)))
+	require.False(t, isBucketRegionRedirectError(newHTTPAPIError("AccessDenied", http.StatusMovedPermanently)))
+	require.False(t, isBucketRegionRedirectError(&smithy.GenericAPIError{Code: "MovedPermanently", Message: "missing response"}))
+}
+
+func TestBucketRegionDetectionRetryerSuppressesOnlyExpectedRedirectWarning(t *testing.T) {
+	err := &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{
+			Response: &http.Response{StatusCode: http.StatusMovedPermanently},
+		},
+		Err: &smithy.GenericAPIError{Code: "MovedPermanently", Message: "test error", Fault: smithy.FaultUnknown},
+	}
+
+	core, recorded := observer.New(zap.WarnLevel)
+	restore := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{
+			Core:  core,
+			Level: zap.NewAtomicLevelAt(zap.WarnLevel),
+		},
+	)
+	defer restore()
+
+	_ = newBucketRegionDetectionRetryer().IsErrorRetryable(err)
+	require.Empty(t, recorded.FilterMessage("failed to request s3, checking whether we can retry").All())
+
+	_ = newRetryer().IsErrorRetryable(err)
+	require.Len(t, recorded.FilterMessage("failed to request s3, checking whether we can retry").All(), 1)
 }

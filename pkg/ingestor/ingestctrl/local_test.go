@@ -2107,6 +2107,83 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
+
+	t.Run("context canceled before import completes", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipStartWorker", "return()")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectVariables", "return()")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		oldJobToWorkerCh := testJobToWorkerCh
+		oldJobWg := testJobWg
+		oldFakeRegionJobs := fakeRegionJobs
+		t.Cleanup(func() {
+			testJobToWorkerCh = oldJobToWorkerCh
+			testJobWg = oldJobWg
+			fakeRegionJobs = oldFakeRegionJobs
+		})
+
+		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
+		data := &Engine{}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{{
+					keyRange:   jobRange,
+					ingestData: data,
+					region:     dummyRegionInfo,
+				}},
+			},
+		}
+		testJobToWorkerCh = make(chan *regionJob, 1)
+
+		mockEngine := &mockEngineWithData{
+			data:   data,
+			ranges: []engineapi.Range{jobRange},
+		}
+		local := &Backend{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(1),
+			},
+		}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				mockEngine,
+				[][]byte{jobRange.Start, jobRange.End},
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		var job *regionJob
+		select {
+		case job = <-testJobToWorkerCh:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for a dispatched region job")
+		}
+		cancel()
+		job.done(testJobWg)
+
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for doImport to return")
+		}
+	})
+
+	t.Run("dispatcher propagates context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		dispatcher := &dispatcher{workerCtx: ctx}
+		require.ErrorIs(t, dispatcher.run(), context.Canceled)
+	})
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
@@ -2433,6 +2510,29 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+
+	store = &http.StoreInfo{
+		Store:  http.MetaStore{Address: "127.0.0.1:20160"},
+		Status: http.StoreStatus{Capacity: "100 GB", Available: "5 GB"},
+	}
+	err = checkDiskAvail(ctx, store)
+	require.ErrorIs(t, err, errdef.ErrKVDiskFull)
+	require.Contains(t, err.Error(), "TiKV(127.0.0.1:20160)")
+	require.Contains(t, err.Error(), "increase the storage capacity of TiKV")
+
+	store = &http.StoreInfo{
+		Store: http.MetaStore{
+			Address: "127.0.0.1:3930",
+			Labels: []http.StoreLabel{
+				{Key: "engine", Value: "tiflash"},
+			},
+		},
+		Status: http.StoreStatus{Capacity: "100 GB", Available: "5 GB"},
+	}
+	err = checkDiskAvail(ctx, store)
+	require.ErrorIs(t, err, errdef.ErrKVDiskFull)
+	require.Contains(t, err.Error(), "TiFlash(127.0.0.1:3930)")
+	require.Contains(t, err.Error(), "increase the storage capacity of TiFlash")
 }
 
 func TestBackendCloseWithoutTiKVClient(t *testing.T) {
@@ -2468,11 +2568,18 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	}()
 
 	var pdClientCalls, safePointKVCalls, rpcClientCalls, kvStoreCalls int
+	var routerClientEnabled bool
 	inputPDCli := &mockPdClient{}
 	tikvPDCli := &mockPdClient{}
-	newPDClient = func(_ context.Context, apiContext pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+	newPDClient = func(_ context.Context, apiContext pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
 		pdClientCalls++
 		require.Equal(t, pd.NewAPIContextV1(), apiContext)
+		option := opt.NewOption()
+		option.SetEnableRouterClient(true)
+		for _, clientOpt := range opts {
+			clientOpt(option)
+		}
+		routerClientEnabled = option.GetEnableRouterClient()
 		return tikvPDCli, nil
 	}
 	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
@@ -2494,6 +2601,9 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 		pdAddrs:   []string{"127.0.0.1:2379"},
 		tls:       &common.TLS{},
 		tikvCodec: keyspace.CodecV1,
+		BackendConfig: BackendConfig{
+			DisablePDClientRouterClient: true,
+		},
 	}
 
 	dupeController, err := b.GetDupeController(context.Background(), 1, nil)
@@ -2503,6 +2613,29 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	require.Equal(t, 1, safePointKVCalls)
 	require.Equal(t, 1, rpcClientCalls)
 	require.Equal(t, 1, kvStoreCalls)
+	require.False(t, routerClientEnabled)
+	require.False(t, inputPDCli.closed)
+	require.True(t, tikvPDCli.closed)
+	require.Nil(t, b.tikvCli)
+
+	pdClientCalls, safePointKVCalls, rpcClientCalls, kvStoreCalls = 0, 0, 0, 0
+	routerClientEnabled = false
+	inputPDCli = &mockPdClient{}
+	tikvPDCli = &mockPdClient{}
+	b = &Backend{
+		pdCli:     inputPDCli,
+		pdAddrs:   []string{"127.0.0.1:2379"},
+		tls:       &common.TLS{},
+		tikvCodec: keyspace.CodecV1,
+	}
+	dupeController, err = b.GetDupeController(context.Background(), 1, nil)
+	require.Nil(t, dupeController)
+	require.ErrorContains(t, err, "mock kv store error")
+	require.Equal(t, 1, pdClientCalls)
+	require.Equal(t, 1, safePointKVCalls)
+	require.Equal(t, 1, rpcClientCalls)
+	require.Equal(t, 1, kvStoreCalls)
+	require.True(t, routerClientEnabled)
 	require.False(t, inputPDCli.closed)
 	require.True(t, tikvPDCli.closed)
 	require.Nil(t, b.tikvCli)
@@ -2935,6 +3068,67 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	// The key verification: after all jobs are done, the ref count should be 0
 	// But importantly, we verified during processing that it wasn't cleaned early
 	require.True(t, data.GetRefCount() == 0, "ref count should be 0 after all jobs are done")
+}
+
+func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	local := &Backend{}
+	local.WorkerConcurrency.Store(1)
+
+	data := &refCountIngestData{
+		mockIngestData: mockIngestData{
+			{[]byte("b"), []byte("b")},
+			{[]byte("c"), []byte("c")},
+			{[]byte("d"), []byte("d")},
+			{[]byte("e"), []byte("e")},
+		},
+	}
+	jobs := []*regionJob{
+		{keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")}, ingestData: data, region: dummyRegionInfo},
+		{keyRange: engineapi.Range{Start: []byte("b"), End: []byte("c")}, ingestData: data, region: dummyRegionInfo},
+		{keyRange: engineapi.Range{Start: []byte("c"), End: []byte("d")}, ingestData: data, region: dummyRegionInfo},
+		{keyRange: engineapi.Range{Start: []byte("d"), End: []byte("e")}, ingestData: data, region: dummyRegionInfo},
+	}
+	jobRange := engineapi.Range{Start: []byte("a"), End: []byte("e")}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"a", "e"}: {
+			jobs: jobs,
+		},
+	}
+	t.Cleanup(func() {
+		fakeRegionJobs = nil
+	})
+
+	mockEngine := &mockEngineWithData{
+		data:   data,
+		ranges: []engineapi.Range{jobRange},
+	}
+	jobToWorkerCh := make(chan *regionJob)
+	var jobWg sync.WaitGroup
+	firstJobDone := make(chan struct{})
+
+	go func() {
+		job := <-jobToWorkerCh
+		job.done(&jobWg)
+		cancel()
+		close(firstJobDone)
+	}()
+
+	err := local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
+	require.NoError(t, err)
+	<-firstJobDone
+
+	require.Eventually(t, func() bool {
+		return data.GetRefCount() == 0
+	}, 10*time.Second, 10*time.Millisecond, "ref'd jobs after the canceled send path must all be marked done")
+	jobWg.Wait()
+	require.Equal(t, int64(0), data.GetRefCount())
 }
 
 // mockEngineWithData is a mock engine that implements engineapi.Engine

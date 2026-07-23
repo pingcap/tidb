@@ -638,7 +638,7 @@ found data conflict records in table %s, primary key is '%s', row data is '%s'
 
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
-found duplicate key '%s', value '%s'
+found duplicate key '%x', value '%x'
 '''
 
 ["Lightning:Restore:ErrFoundIndexConflictRecords"]
@@ -1661,6 +1661,11 @@ error = '''
 Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
 '''
 
+["ddl:8276"]
+error = '''
+Job [%v] has been paused by TiDB because a storage node does not have enough disk space: %s
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
@@ -1849,6 +1854,21 @@ Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_
 ["executor:3638"]
 error = '''
 Cannot use these credentials for '%s@%s' because they contradict the password history policy.
+'''
+
+["executor:3878"]
+error = '''
+Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.
+'''
+
+["executor:3894"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.
+'''
+
+["executor:3895"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.
 '''
 
 ["executor:3929"]
@@ -2349,6 +2369,11 @@ masking policy already exists
 ["meta:8269"]
 error = '''
 masking policy doesn't exist
+'''
+
+["meta:8275"]
+error = '''
+masking policy expression can only reference the target column '%-.64s'
 '''
 
 ["planner:1044"]

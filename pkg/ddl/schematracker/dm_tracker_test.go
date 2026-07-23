@@ -103,10 +103,151 @@ func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	require.NoError(t, err)
 }
 
+func execDDL(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	switch stmt := stmt.(type) {
+	case *ast.CreateTableStmt:
+		execCreate(t, tracker, sql)
+		return
+	case *ast.AlterTableStmt:
+		execAlter(t, tracker, sql)
+		return
+	case *ast.CreateIndexStmt:
+		sctx := mock.NewContext()
+		err = tracker.CreateIndex(sctx, stmt)
+	default:
+		require.Failf(t, "unsupported DDL", "%T", stmt)
+	}
+	require.NoError(t, err)
+}
+
 func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, table string) *model.TableInfo {
 	tblInfo, err := tracker.TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
 	require.NoError(t, err)
 	return tblInfo
+}
+
+func TestSchemaTrackerAddPartitionRebuildsStorageClass(t *testing.T) {
+	tests := []struct {
+		name         string
+		create       string
+		alter        string
+		expectedTier string
+	}{
+		{
+			name: "range expression",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"300"}}'
+partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`,
+			alter:        `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+			expectedTier: model.StorageClassTierIA,
+		},
+		{
+			name: "range expression out of scope",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"200"}}'
+partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`,
+			alter:        `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+			expectedTier: model.StorageClassTierStandard,
+		},
+		{
+			name: "list expression",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["4"]}}'
+partition by list (id) (partition p0 values in (1, 2))`,
+			alter:        `alter table test.t add partition (partition p1 values in (2 + 2))`,
+			expectedTier: model.StorageClassTierIA,
+		},
+		{
+			name: "list expression out of scope",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["5"]}}'
+partition by list (id) (partition p0 values in (1, 2))`,
+			alter:        `alter table test.t add partition (partition p1 values in (2 + 2))`,
+			expectedTier: model.StorageClassTierStandard,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracker := schematracker.NewSchemaTracker(2)
+			tracker.CreateTestDB(nil)
+			execCreate(t, tracker, tt.create)
+			execAlter(t, tracker, tt.alter)
+
+			tblInfo := mustTableByName(t, tracker, "test", "t")
+			require.Equal(t, tt.expectedTier, tblInfo.Partition.Definitions[len(tblInfo.Partition.Definitions)-1].StorageClassTier)
+		})
+	}
+
+	t.Run("show create propagates invalid storage class engine attribute", func(t *testing.T) {
+		tracker := schematracker.NewSchemaTracker(2)
+		tracker.CreateTestDB(nil)
+		execCreate(t, tracker, "create table test.t (id int)")
+
+		tblInfo := mustTableByName(t, tracker, "test", "t")
+		tblInfo.EngineAttribute = `{"storage_class":`
+		checkShowCreateTableError(t, tblInfo, "unexpected end of JSON input")
+	})
+}
+
+func requireExpressionIndexHiddenColumnsPublic(t *testing.T, tblInfo *model.TableInfo) {
+	t.Helper()
+
+	found := false
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		for _, idxCol := range idx.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			if !col.Hidden || !col.IsGenerated() {
+				continue
+			}
+			found = true
+			require.Equal(t, model.StatePublic, col.State)
+		}
+	}
+	require.True(t, found, "table %s should contain at least one public expression index hidden column", tblInfo.Name.O)
+}
+
+func TestExpressionIndexHiddenColumnState(t *testing.T) {
+	cases := []struct {
+		name string
+		ddls []string
+	}{
+		{
+			name: "create table",
+			ddls: []string{
+				"create table test.t (id int primary key, name varchar(64), unique key uk_lower_name ((lower(name))))",
+			},
+		},
+		{
+			name: "create index",
+			ddls: []string{
+				"create table test.t (id int primary key, name varchar(64))",
+				"create unique index uk_lower_name on test.t ((lower(name)))",
+			},
+		},
+		{
+			name: "alter table add index",
+			ddls: []string{
+				"create table test.t (id int primary key, name varchar(64))",
+				"alter table test.t add unique key uk_lower_name ((lower(name)))",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := schematracker.NewSchemaTracker(2)
+			tracker.CreateTestDB(nil)
+			for _, ddl := range tc.ddls {
+				execDDL(t, tracker, ddl)
+			}
+
+			tblInfo := mustTableByName(t, tracker, "test", "t")
+			requireExpressionIndexHiddenColumnsPublic(t, tblInfo)
+		})
+	}
 }
 
 func TestAlterPK(t *testing.T) {
@@ -173,6 +314,14 @@ func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected strin
 	require.Equal(t, expected, result.String())
 }
 
+func checkShowCreateTableError(t *testing.T, tblInfo *model.TableInfo, expectedErr string) {
+	sctx := mock.NewContext()
+
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	require.ErrorContains(t, err, expectedErr)
+}
+
 func TestIndexLength(t *testing.T) {
 	// copy TestIndexLength in db_integration_test.go
 	sql := "create table test.t(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));"
@@ -219,11 +368,14 @@ func TestCreateTableWithIndex(t *testing.T) {
 
 	sql = "alter table test.t rename index idx_1 to idx_1_1"
 	execAlter(t, tracker, sql)
+	sql = "alter table test.t add index idx_1 ((cast(col_1 as char(64) array)))"
+	execAlter(t, tracker, sql)
 
 	tblInfo := mustTableByName(t, tracker, "test", "t")
 	expected := "CREATE TABLE `t` (\n" +
 		"  `col_1` json DEFAULT NULL,\n" +
-		"  KEY `idx_1_1` ((cast(`col_1` as char(64) array)))\n" +
+		"  KEY `idx_1_1` ((cast(`col_1` as char(64) array))),\n" +
+		"  KEY `idx_1` ((cast(`col_1` as char(64) array)))\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 }
