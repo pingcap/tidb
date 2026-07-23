@@ -1213,12 +1213,13 @@ func constructDS2IndexScanTask(
 		probeCardinality.countAfterIndex = math.Min(probeCardinality.countAfterIndex, rowCountUpperBound)
 		probeCardinality.countAfterFilter = math.Min(probeCardinality.countAfterFilter, rowCountUpperBound)
 	}
-	if maxOneRow {
+	if maxOneRow && probeCardinality.countAfterAccess > 1 {
 		// Theoretically, the join row-count estimate should not exceed 1.0. It can be larger
 		// with pseudo statistics, which do not reflect the unique constraint in their NDV.
-		probeCardinality.countAfterAccess = math.Min(probeCardinality.countAfterAccess, 1.0)
-		probeCardinality.countAfterIndex = math.Min(probeCardinality.countAfterIndex, 1.0)
-		probeCardinality.countAfterFilter = math.Min(probeCardinality.countAfterFilter, 1.0)
+		ratio := 1 / probeCardinality.countAfterAccess
+		probeCardinality.countAfterAccess = 1
+		probeCardinality.countAfterIndex *= ratio
+		probeCardinality.countAfterFilter *= ratio
 	}
 	tmpPath := &util.AccessPath{
 		IndexFilters:        pushDownIndexConds,
