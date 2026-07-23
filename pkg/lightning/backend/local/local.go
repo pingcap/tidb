@@ -1626,7 +1626,13 @@ func (local *Backend) doImport(
 	retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 	workGroup.Go(func() error {
 		retryer.run()
-		return nil
+		// below worker pool and job generation routine returns wctx.OperatorErr
+		// which reports only business errors. Its context is also canceled on
+		// normal exit, so reporting parent-context cancellation there would require
+		// distinguishing cancellation sources. the dispatcher doesn't always
+		// notify parent context error. to make sure the error group can return
+		// context error when parent context canceled, we return it here.
+		return ctx.Err()
 	})
 
 	// dispatcher sends done jobs to retryer or marks them done.
