@@ -171,6 +171,8 @@ type clientConn struct {
 	alloc        arena.Allocator         // an memory allocator for reducing memory allocation.
 	chunkAlloc   chunk.Allocator
 	lastPacket   []byte // latest sql query string, currently used for logging error.
+
+	connectionAliveChecker func() bool
 	// ShowProcess() and mysql.ComChangeUser both visit this field, ShowProcess() read information through
 	// the TiDBContext and mysql.ComChangeUser re-create it, so a lock is required here.
 	ctx struct {
@@ -2476,6 +2478,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 
 func (cc *clientConn) setConn(conn net.Conn) {
 	cc.bufReadConn = util2.NewBufferedReadConn(conn)
+	bufReadConn := cc.bufReadConn
+	cc.connectionAliveChecker = func() bool {
+		return bufReadConn.IsAlive() != 0
+	}
 	if cc.pkt == nil {
 		cc.pkt = internal.NewPacketIO(cc.bufReadConn)
 	} else {

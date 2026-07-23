@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
@@ -232,13 +233,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 
-	fn := func() bool {
-		if cc.bufReadConn != nil {
-			return cc.bufReadConn.IsAlive() != 0
-		}
-		return true
-	}
-	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
+	cc.setConnectionAliveChecker(&cc.ctx.GetSessionVars().SQLKiller)
 	defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 
 	//nolint:forcetypeassert
@@ -273,6 +268,15 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	}
 	return err
 }
+
+func (cc *clientConn) setConnectionAliveChecker(killer *sqlkiller.SQLKiller) {
+	if cc.connectionAliveChecker == nil {
+		cc.connectionAliveChecker = alwaysConnectionAlive
+	}
+	killer.IsConnectionAlive.Store(&cc.connectionAliveChecker)
+}
+
+func alwaysConnectionAlive() bool { return true }
 
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
