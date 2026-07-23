@@ -566,11 +566,12 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-// TestNonPreparedPointGetExecShortcut covers the streamline3 phase 1 change:
-// when tidb_enable_point_get_exec_shortcut is on, a non-prepared point-get
-// SELECT should follow the same simplified execution path as the prepared
-// shortcut (assertTxnManagerInShortPointGetPlan fires, runStmt does not).
-// When the variable is off the legacy runStmt path is preserved.
+// TestNonPreparedPointGetExecShortcut covers the non-prepared point-get
+// execution shortcut gated by tidb_enable_point_get_exec_shortcut: when the
+// variable is on, a non-prepared point-get SELECT should follow the same
+// simplified execution path as the prepared shortcut
+// (assertTxnManagerInShortPointGetPlan fires, runStmt does not). When the
+// variable is off the legacy runStmt path is preserved.
 //
 // t1 has a primary key (id), so `select ... where id=1` qualifies for the
 // TryFastPlan point-get. t2 has no PK, so its SELECT is non-point-get and
