@@ -195,9 +195,12 @@ func (w *GCSWriter) Close() (err error) {
 	close(w.chunkCh)
 	w.wg.Wait()
 
+	// GCS bills staged parts until the upload is aborted, so abort on any error.
 	defer func() {
 		if err != nil {
-			err = w.abort(err)
+			if errC := w.cancel(); errC != nil {
+				err = fmt.Errorf("%w; failed to cancel multipart upload: %w", err, errC)
+			}
 		}
 	}()
 
@@ -207,14 +210,10 @@ func (w *GCSWriter) Close() (err error) {
 	if len(w.xmlMPUParts) == 0 {
 		return nil
 	}
-	return w.finalizeXMLMPU()
-}
-
-func (w *GCSWriter) abort(cause error) error {
-	if errC := w.cancel(); errC != nil {
-		return fmt.Errorf("%s; failed to cancel multipart upload: %s", cause, errC)
+	if err = w.finalizeXMLMPU(); err != nil {
+		return fmt.Errorf("failed to finalize multipart upload: %w", err)
 	}
-	return cause
+	return nil
 }
 
 const (
