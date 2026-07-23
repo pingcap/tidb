@@ -975,17 +975,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
-	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle()
 	switch vardef.OOMAction.Load() {
 	case vardef.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}
-		action.SetLogHook(logOnQueryExceedMemQuota)
+		action.SetLogHookHandler(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	case vardef.OOMActionLog:
 		fallthrough
 	default:
 		action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
-		action.SetLogHook(logOnQueryExceedMemQuota)
+		action.SetLogHookHandler(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	}
 	sc.MemTracker.SessionID.Store(vars.ConnectionID)

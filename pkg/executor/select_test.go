@@ -20,18 +20,94 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkResetContextOfStmt(b *testing.B) {
-	stmt := &ast.SelectStmt{}
-	ctx := mock.NewContext()
-	ctx.BindDomain(&domain.Domain{})
-	for i := 0; i < b.N; i++ {
-		executor.ResetContextOfStmt(ctx, stmt)
+	const pointSelectSQL = "SELECT c FROM sbtest1 WHERE id = ?"
+
+	parsePointSelect := func(b *testing.B) ast.StmtNode {
+		stmt, err := parser.New().ParseOneStmt(pointSelectSQL, "", "")
+		require.NoError(b, err)
+		return stmt
+	}
+	preparedPointSelect := func(b *testing.B, stmtText string) ast.StmtNode {
+		stmt := parsePointSelect(b)
+		normalizedSQL, digest := parser.NormalizeDigest(pointSelectSQL)
+		return &ast.ExecuteStmt{
+			PrepStmt: &plannercore.PlanCacheStmt{
+				PreparedAst:   &ast.Prepared{Stmt: stmt},
+				NormalizedSQL: normalizedSQL,
+				SQLDigest:     digest,
+				StmtText:      stmtText,
+			},
+		}
+	}
+
+	cases := []struct {
+		name      string
+		stmt      func(*testing.B) ast.StmtNode
+		configure func(*variable.SessionVars)
+	}{
+		{
+			name: "prepared-point-select",
+			stmt: func(b *testing.B) ast.StmtNode {
+				return preparedPointSelect(b, pointSelectSQL)
+			},
+		},
+		{
+			name: "unprepared-point-select",
+			stmt: parsePointSelect,
+		},
+		{
+			name: "retry-prepared-point-select",
+			stmt: func(b *testing.B) ast.StmtNode {
+				return preparedPointSelect(b, pointSelectSQL)
+			},
+			configure: func(vars *variable.SessionVars) {
+				vars.TxnCtx.CouldRetry = true
+			},
+		},
+		{
+			name: "cursor-prepared-point-select",
+			stmt: func(b *testing.B) ast.StmtNode {
+				return preparedPointSelect(b, pointSelectSQL)
+			},
+			configure: func(vars *variable.SessionVars) {
+				vars.SetStatusFlag(mysql.ServerStatusCursorExists, true)
+			},
+		},
+		{
+			name: "prepared-empty-stmt-text",
+			stmt: func(b *testing.B) ast.StmtNode {
+				return preparedPointSelect(b, "")
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		b.Run(testCase.name, func(b *testing.B) {
+			ctx := mock.NewContext()
+			ctx.BindDomain(&domain.Domain{})
+			stmt := testCase.stmt(b)
+			if testCase.configure != nil {
+				testCase.configure(ctx.GetSessionVars())
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := executor.ResetContextOfStmt(ctx, stmt); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

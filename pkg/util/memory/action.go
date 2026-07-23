@@ -111,17 +111,53 @@ const (
 	DefRateLimitPriority
 )
 
+// MemQuotaLogHook handles logging when a query exceeds its memory quota.
+type MemQuotaLogHook interface {
+	LogOnQueryExceedMemQuota(uint64)
+}
+
+type memQuotaLogHookFunc func(uint64)
+
+func (f memQuotaLogHookFunc) LogOnQueryExceedMemQuota(connID uint64) {
+	f(connID)
+}
+
+// memQuotaLogHookDone replaces the old acted field without growing the actions
+// into a larger allocation size class.
+type memQuotaLogHookDone struct{}
+
+func (memQuotaLogHookDone) LogOnQueryExceedMemQuota(uint64) {}
+
+func isMemQuotaLogHookDone(hook MemQuotaLogHook) bool {
+	_, ok := hook.(memQuotaLogHookDone)
+	return ok
+}
+
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
-	logHook func(uint64)
+	logHook MemQuotaLogHook
 	BaseOOMAction
 	ConnID uint64
 	mutex  sync.Mutex // For synchronization.
-	acted  bool
 }
 
 // SetLogHook sets a hook for LogOnExceed.
 func (a *LogOnExceed) SetLogHook(hook func(uint64)) {
+	if isMemQuotaLogHookDone(a.logHook) {
+		return
+	}
+	if hook == nil {
+		a.logHook = nil
+		return
+	}
+	a.logHook = memQuotaLogHookFunc(hook)
+}
+
+// SetLogHookHandler sets a hook handler for LogOnExceed.
+func (a *LogOnExceed) SetLogHookHandler(hook MemQuotaLogHook) {
+	if isMemQuotaLogHookDone(a.logHook) {
+		return
+	}
 	a.logHook = hook
 }
 
@@ -129,14 +165,15 @@ func (a *LogOnExceed) SetLogHook(hook func(uint64)) {
 func (a *LogOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	if !a.acted {
-		a.acted = true
-		if a.logHook == nil {
+	if !isMemQuotaLogHookDone(a.logHook) {
+		hook := a.logHook
+		a.logHook = memQuotaLogHookDone{}
+		if hook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
 				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 			return
 		}
-		a.logHook(a.ConnID)
+		hook.LogOnQueryExceedMemQuota(a.ConnID)
 	}
 }
 
@@ -148,15 +185,29 @@ func (*LogOnExceed) GetPriority() int64 {
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	Killer  *sqlkiller.SQLKiller
-	logHook func(uint64)
+	logHook MemQuotaLogHook
 	BaseOOMAction
 	ConnID uint64
 	mutex  sync.Mutex // For synchronization.
-	acted  bool
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
 func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
+	if isMemQuotaLogHookDone(a.logHook) {
+		return
+	}
+	if hook == nil {
+		a.logHook = nil
+		return
+	}
+	a.logHook = memQuotaLogHookFunc(hook)
+}
+
+// SetLogHookHandler sets a hook handler for PanicOnExceed.
+func (a *PanicOnExceed) SetLogHookHandler(hook MemQuotaLogHook) {
+	if isMemQuotaLogHookDone(a.logHook) {
+		return
+	}
 	a.logHook = hook
 }
 
@@ -166,15 +217,16 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	defer func() {
 		a.mutex.Unlock()
 	}()
-	if !a.acted {
-		if a.logHook == nil {
+	if !isMemQuotaLogHookDone(a.logHook) {
+		hook := a.logHook
+		if hook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
 				zap.Uint64("conn", t.SessionID.Load()), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 		} else {
-			a.logHook(a.ConnID)
+			hook.LogOnQueryExceedMemQuota(a.ConnID)
 		}
+		a.logHook = memQuotaLogHookDone{}
 	}
-	a.acted = true
 	a.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
 	if err := a.Killer.HandleSignal(); err != nil {
 		panic(err)
