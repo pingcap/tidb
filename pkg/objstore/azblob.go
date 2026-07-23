@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/spf13/pflag"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -902,10 +903,11 @@ type azblobUploader struct {
 	cpkScope *blob.CPKScopeInfo
 	cpkInfo  *blob.CPKInfo
 
-	// eg/egCtx are non-nil only for concurrent upload; otherwise Write stages
-	// blocks synchronously. egCtx cancels in-flight stagers on the first failure.
+	// eg/egCtx drive concurrent upload; nil means Write stages blocks
+	// synchronously. err records the first stage failure on either path.
 	eg    *errgroup.Group
 	egCtx context.Context
+	err   atomic.Error
 }
 
 func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []byte) error {
@@ -914,7 +916,9 @@ func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []
 		CPKInfo:      u.cpkInfo,
 	})
 	if err != nil {
-		return errors.Annotate(err, "Failed to upload block to azure blob")
+		err = errors.Annotate(err, "Failed to upload block to azure blob")
+		u.err.CompareAndSwap(nil, err)
+		return err
 	}
 	return nil
 }
@@ -925,31 +929,31 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 		return 0, errors.Annotate(err, "Fail to generate uuid")
 	}
 	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
+	u.blockIDList = append(u.blockIDList, blockID)
 
-	if u.eg == nil {
-		if err := u.stageBlock(ctx, blockID, data); err != nil {
-			return 0, err
-		}
-		u.blockIDList = append(u.blockIDList, blockID)
+	if u.eg != nil {
+		buf := make([]byte, len(data))
+		copy(buf, data)
+		u.eg.Go(func() error {
+			return u.stageBlock(u.egCtx, blockID, buf)
+		})
 		return len(data), nil
 	}
 
-	u.blockIDList = append(u.blockIDList, blockID)
-	buf := make([]byte, len(data))
-	copy(buf, data)
-	u.eg.Go(func() error {
-		return u.stageBlock(u.egCtx, blockID, buf)
-	})
+	if err := u.stageBlock(ctx, blockID, data); err != nil {
+		return 0, err
+	}
 	return len(data), nil
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
 	if u.eg != nil {
-		if err := u.eg.Wait(); err != nil {
-			// Uncommitted blocks are garbage-collected by Azure after a week, so
-			// skip CommitBlockList and surface the failure instead.
-			return err
-		}
+		_ = u.eg.Wait()
+	}
+	if err := u.err.Load(); err != nil {
+		// Uncommitted blocks are garbage-collected by Azure after a week, so
+		// skip CommitBlockList and surface the failure instead.
+		return err
 	}
 
 	// the encryption scope and the access tier can not be both in the HTTP headers
