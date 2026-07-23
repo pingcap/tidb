@@ -75,7 +75,7 @@ func featureExtractionEndpoint(configured, model string) (string, error) {
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid HuggingFace API base URL: %w", err)
+		return "", base.NewRedactedError("invalid HuggingFace API base URL", err)
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("invalid HuggingFace API base URL: absolute HTTP(S) URL is required")
@@ -87,7 +87,7 @@ func featureExtractionEndpoint(configured, model string) (string, error) {
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/models/" + strings.Join(modelParts, "/") + "/pipeline/feature-extraction"
 	path, err := url.PathUnescape(escapedPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid HuggingFace API base URL path: %w", err)
+		return "", base.NewRedactedError("invalid HuggingFace API base URL path", err)
 	}
 	u.Path = path
 	u.RawPath = escapedPath
@@ -145,7 +145,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, base.NewProviderRequestError(ctx, "HuggingFace", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -153,7 +153,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, base.NewProviderRequestError(ctx, "HuggingFace", err)
 	}
 	defer resp.Body.Close()
 

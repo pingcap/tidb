@@ -27,6 +27,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestGeminiEmbedder_Success(t *testing.T) {
 	// Mock successful response from Gemini API
 	mockResponse := `{
@@ -377,4 +383,20 @@ func TestGeminiEmbedderMismatchedResponseLength(t *testing.T) {
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"a", "b"}, nil)
 	require.Nil(t, embeddings)
 	require.ErrorContains(t, err, "response embeddings length 1 does not match input texts length 2")
+}
+
+func TestGeminiEmbedderTransportErrorRedaction(t *testing.T) {
+	const secret = "super-secret"
+	embedder := NewGeminiEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "https://internal.example/v1beta/models?token=" + secret },
+	})
+	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, assert.AnError
+	})
+
+	_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"test"}, nil)
+	require.EqualError(t, err, "Gemini request failed")
+	require.NotContains(t, err.Error(), secret)
+	require.ErrorIs(t, err, assert.AnError)
 }

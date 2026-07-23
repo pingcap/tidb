@@ -21,7 +21,7 @@ go_test(
     srcs = ["nvidia_test.go"],
     embed = [":nvidia"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 15,
     deps = [
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

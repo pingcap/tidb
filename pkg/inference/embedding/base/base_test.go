@@ -15,8 +15,11 @@
 package base
 
 import (
+	"context"
 	"encoding/base64"
+	"errors"
 	"math"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -128,4 +131,26 @@ func TestSanitizeErrorText(t *testing.T) {
 	require.NotContains(t, sanitized, longKey[:maxSanitizedErrorTextBytes/2])
 	require.Contains(t, sanitized, "[REDACTED]")
 	require.LessOrEqual(t, len(sanitized), maxSanitizedErrorTextBytes+len("...[truncated]"))
+}
+
+func TestRedactedErrors(t *testing.T) {
+	const secretURL = "http://internal.example/embed?token=super-secret"
+	cause := &url.Error{Op: "Post", URL: secretURL, Err: errors.New("connection failed")}
+
+	err := NewRedactedError("invalid provider endpoint", cause)
+	require.EqualError(t, err, "invalid provider endpoint")
+	require.NotContains(t, err.Error(), secretURL)
+	require.ErrorIs(t, err, cause)
+
+	err = NewProviderRequestError(context.Background(), "test provider", cause)
+	require.EqualError(t, err, "test provider request failed")
+	require.NotContains(t, err.Error(), secretURL)
+	require.ErrorIs(t, err, cause)
+
+	customCause := errors.New("caller stopped request")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(customCause)
+	err = NewProviderRequestError(ctx, "test provider", cause)
+	require.ErrorIs(t, err, customCause)
+	require.Equal(t, customCause, err)
 }

@@ -26,6 +26,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestCohereEmbedder_Success(t *testing.T) {
 	// Mock successful response from real Cohere API
 	mockResponse := `{
@@ -95,12 +101,13 @@ func TestCohereEmbedder_WithOptions(t *testing.T) {
 		assert.JSONEq(t, `{
 			"model": "embed-v4.0",
 			"texts": ["test"],
-			"input_type": "classification"
+			"input_type": "classification",
+			"embedding_types": ["float"]
 		}`, string(body))
 
 		mockResponse := `{
-			"response_type": "embeddings_floats",
-			"embeddings": [[0.1, 0.2, 0.3]],
+			"response_type": "embeddings_by_type",
+			"embeddings": {"float": [[0.1, 0.2, 0.3]]},
 			"id": "test-id",
 			"texts": ["test"]
 		}`
@@ -117,14 +124,44 @@ func TestCohereEmbedder_WithOptions(t *testing.T) {
 	})
 
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "embed-v4.0", []string{"test"}, map[string]any{
-		"input_type": "classification",
-		"model":      "must-not-override",
-		"texts":      []string{"must-not-override"},
+		"input_type":      "classification",
+		"embedding_types": []string{"float"},
+		"model":           "must-not-override",
+		"texts":           []string{"must-not-override"},
 	})
 
 	require.NoError(t, err)
 	require.Len(t, embeddings, 1)
 	require.Equal(t, embeddings[0], []float32{0.1, 0.2, 0.3})
+}
+
+func TestCohereEmbedderEmbeddingTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{name: "non-float", value: []string{"int8"}},
+		{name: "multiple", value: []string{"float", "int8"}},
+		{name: "not an array", value: "float"},
+		{name: "non-string element", value: []any{"float", 8}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := NewCohereEmbedder(EmbedderConfig{
+				GetAPIKey:  func() string { panic("request validation should happen before reading the API key") },
+				GetBaseURL: func() string { panic("invalid options must not issue a request") },
+			})
+			embeddings, err := embedder.CreateEmbeddings(context.Background(), "embed-v4.0", []string{"test"}, map[string]any{
+				"embedding_types": tt.value,
+			})
+			require.Nil(t, embeddings)
+			require.EqualError(t, err, `Cohere embedding_types must be exactly ["float"]`)
+		})
+	}
+
+	_, err := decodeEmbeddings([]byte(`{"int8":[[1,2,3]]}`))
+	require.EqualError(t, err, "Cohere response does not contain float embeddings")
 }
 
 func TestCohereEmbedder_NoAPIKey(t *testing.T) {
@@ -282,4 +319,20 @@ func TestCohereEmbedderMismatchedResponseLength(t *testing.T) {
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "embed-v4.0", []string{"a", "b"}, nil)
 	require.Nil(t, embeddings)
 	require.ErrorContains(t, err, "response embeddings length 1 does not match input texts length 2")
+}
+
+func TestCohereEmbedderTransportErrorRedaction(t *testing.T) {
+	const secret = "super-secret"
+	embedder := NewCohereEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "https://internal.example/v1/embed?token=" + secret },
+	})
+	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, assert.AnError
+	})
+
+	_, err := embedder.CreateEmbeddings(context.Background(), "embed-v4.0", []string{"test"}, nil)
+	require.EqualError(t, err, "Cohere request failed")
+	require.NotContains(t, err.Error(), secret)
+	require.ErrorIs(t, err, assert.AnError)
 }

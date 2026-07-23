@@ -74,12 +74,24 @@ func embeddingsEndpoint(configured string) (string, error) {
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("invalid NVIDIA NIM API base URL: %w", err)
+		return "", base.NewRedactedError("invalid NVIDIA NIM API base URL", err)
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("invalid NVIDIA NIM API base URL: absolute HTTP(S) URL is required")
 	}
 	return u.String(), nil
+}
+
+func validateEmbeddingType(opts map[string]any) error {
+	value, ok := opts["embedding_type"]
+	if !ok {
+		return nil
+	}
+	embeddingType, ok := value.(string)
+	if !ok || embeddingType != "float" {
+		return fmt.Errorf(`NVIDIA NIM embedding_type must be "float"`)
+	}
+	return nil
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
@@ -91,6 +103,9 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 	if model == "" {
 		return nil, fmt.Errorf("model name is required")
+	}
+	if err := validateEmbeddingType(opts); err != nil {
+		return nil, err
 	}
 	var apiKey string
 	if e.cfg.GetAPIKey != nil {
@@ -121,7 +136,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, base.NewProviderRequestError(ctx, "NVIDIA NIM", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -129,7 +144,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, base.NewProviderRequestError(ctx, "NVIDIA NIM", err)
 	}
 	defer resp.Body.Close()
 
@@ -139,8 +154,8 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// NVIDIA endpoints may return the error message in either the documented
-		// detail field or a separate error field, so accept both variants.
+		// NVIDIA endpoints use different error schemas across hosted and
+		// self-hosted versions, so accept all known message fields.
 		var errResp ErrorResponse
 		message := ""
 		var parseErr error
@@ -148,6 +163,8 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			parseErr = err
 		} else if errResp.Detail != "" {
 			message = base.SanitizeErrorText(errResp.Detail, apiKey)
+		} else if errResp.Message != "" {
+			message = base.SanitizeErrorText(errResp.Message, apiKey)
 		} else if errResp.Error != "" {
 			message = base.SanitizeErrorText(errResp.Error, apiKey)
 		}
@@ -159,11 +176,11 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
 		logutil.BgLogger().Error("NVIDIA NIM API request failed", logFields...)
-		if resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
-			return nil, fmt.Errorf("NVIDIA NIM returns status forbidden, check API key")
+			return nil, fmt.Errorf("NVIDIA NIM returns status %s, check API key", strings.ToLower(http.StatusText(resp.StatusCode)))
 		}
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, fmt.Errorf("NVIDIA NIM model '%s' does not exist or is not available", model)

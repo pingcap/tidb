@@ -74,12 +74,70 @@ func embeddingsEndpoint(configured string) (string, error) {
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("invalid Cohere API base URL: %w", err)
+		return "", base.NewRedactedError("invalid Cohere API base URL", err)
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("invalid Cohere API base URL: absolute HTTP(S) URL is required")
 	}
 	return u.String(), nil
+}
+
+func validateEmbeddingTypes(opts map[string]any) error {
+	value, ok := opts["embedding_types"]
+	if !ok {
+		return nil
+	}
+
+	var embeddingTypes []string
+	switch types := value.(type) {
+	case []string:
+		embeddingTypes = types
+	case []any:
+		embeddingTypes = make([]string, len(types))
+		for i, item := range types {
+			var ok bool
+			embeddingTypes[i], ok = item.(string)
+			if !ok {
+				return fmt.Errorf(`Cohere embedding_types must be exactly ["float"]`)
+			}
+		}
+	default:
+		return fmt.Errorf(`Cohere embedding_types must be exactly ["float"]`)
+	}
+
+	if len(embeddingTypes) != 1 || embeddingTypes[0] != "float" {
+		return fmt.Errorf(`Cohere embedding_types must be exactly ["float"]`)
+	}
+	return nil
+}
+
+func decodeEmbeddings(raw json.RawMessage) ([][]float32, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("Cohere response does not contain embeddings")
+	}
+
+	switch trimmed[0] {
+	case '[':
+		var embeddings [][]float32
+		if err := json.Unmarshal(trimmed, &embeddings); err != nil {
+			return nil, fmt.Errorf("unexpected unmarshal response embeddings error: %w", err)
+		}
+		return embeddings, nil
+	case '{':
+		var embeddingsByType struct {
+			Float [][]float32 `json:"float"`
+		}
+		if err := json.Unmarshal(trimmed, &embeddingsByType); err != nil {
+			return nil, fmt.Errorf("unexpected unmarshal typed response embeddings error: %w", err)
+		}
+		if embeddingsByType.Float == nil {
+			return nil, fmt.Errorf("Cohere response does not contain float embeddings")
+		}
+		return embeddingsByType.Float, nil
+	default:
+		return nil, fmt.Errorf("unexpected Cohere embeddings response format")
+	}
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
@@ -93,6 +151,9 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 	if model == "" {
 		return nil, fmt.Errorf("model name is required")
+	}
+	if err := validateEmbeddingTypes(opts); err != nil {
+		return nil, err
 	}
 
 	var apiKey string
@@ -124,7 +185,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, base.NewProviderRequestError(ctx, "Cohere", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -132,7 +193,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, base.NewProviderRequestError(ctx, "Cohere", err)
 	}
 	defer resp.Body.Close()
 
@@ -174,9 +235,13 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if err := json.Unmarshal(body, &respObj); err != nil {
 		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
 	}
-	if len(respObj.Embeddings) != len(texts) {
-		return nil, fmt.Errorf("response embeddings length %d does not match input texts length %d", len(respObj.Embeddings), len(texts))
+	embeddings, err := decodeEmbeddings(respObj.Embeddings)
+	if err != nil {
+		return nil, err
+	}
+	if len(embeddings) != len(texts) {
+		return nil, fmt.Errorf("response embeddings length %d does not match input texts length %d", len(embeddings), len(texts))
 	}
 
-	return respObj.Embeddings, nil
+	return embeddings, nil
 }

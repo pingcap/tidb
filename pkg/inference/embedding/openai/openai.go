@@ -78,7 +78,7 @@ func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
 func embeddingsEndpoint(baseURL string) (string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid OpenAI API base URL: %w", err)
+		return "", base.NewRedactedError("invalid OpenAI API base URL", err)
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("invalid OpenAI API base URL: absolute URL is required")
@@ -90,7 +90,7 @@ func embeddingsEndpoint(baseURL string) (string, error) {
 	}
 	path, err := url.PathUnescape(escapedPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid OpenAI API base URL path: %w", err)
+		return "", base.NewRedactedError("invalid OpenAI API base URL path", err)
 	}
 	u.Path = path
 	u.RawPath = escapedPath
@@ -138,7 +138,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, base.NewProviderRequestError(ctx, "OpenAI", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -146,7 +146,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, base.NewProviderRequestError(ctx, "OpenAI", err)
 	}
 	defer resp.Body.Close()
 

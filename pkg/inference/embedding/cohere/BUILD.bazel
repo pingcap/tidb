@@ -21,7 +21,7 @@ go_test(
     srcs = ["cohere_test.go"],
     embed = [":cohere"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 13,
     deps = [
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

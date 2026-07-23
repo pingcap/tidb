@@ -27,6 +27,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestNvidiaEmbedder_Success(t *testing.T) {
 	// Mock successful response from Nvidia NIM API
 	mockResponse := `
@@ -125,6 +131,7 @@ func TestNvidiaEmbedder_WithOptions(t *testing.T) {
 			"model": "baai/bge-m3",
 			"input": ["test"],
 			"encoding_format": "base64",
+			"embedding_type": "float",
 			"input_type": "query"
 		}`, string(body))
 
@@ -158,6 +165,7 @@ func TestNvidiaEmbedder_WithOptions(t *testing.T) {
 
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"test"}, map[string]any{
 		"input_type":      "query",
+		"embedding_type":  "float",
 		"model":           "must-not-override",
 		"input":           []string{"must-not-override"},
 		"encoding_format": "float",
@@ -168,6 +176,20 @@ func TestNvidiaEmbedder_WithOptions(t *testing.T) {
 	require.Equal(t, embeddings[0], []float32{
 		0.5165501, 0.16796638, 0.60452324, 0.2851341, -0.07298655, 0.26138917, 0.06126004, 0.24445628, -0.33593276, -0.09055198,
 	})
+}
+
+func TestNvidiaEmbedderEmbeddingType(t *testing.T) {
+	for _, value := range []any{"int8", "uint8", "binary", 1} {
+		embedder := NewNvidiaEmbedder(EmbedderConfig{
+			GetAPIKey:  func() string { panic("request validation should happen before reading the API key") },
+			GetBaseURL: func() string { panic("invalid options must not issue a request") },
+		})
+		embeddings, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"test"}, map[string]any{
+			"embedding_type": value,
+		})
+		require.Nil(t, embeddings)
+		require.EqualError(t, err, `NVIDIA NIM embedding_type must be "float"`)
+	}
 }
 
 func TestNvidiaEmbedder_ResponseIndexValidation(t *testing.T) {
@@ -249,30 +271,25 @@ func TestNvidiaEmbedder_ResponseIndexValidation(t *testing.T) {
 }
 
 func TestNvidiaEmbedder_UnauthorizedAPIKey(t *testing.T) {
-	mockResponse := `{
-    "status": 403,
-    "title": "Forbidden",
-    "detail": "Authorization failed"
-}`
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"detail":"Authorization failed"}`))
+			}))
+			defer server.Close()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
+			embedder := NewNvidiaEmbedder(EmbedderConfig{
+				GetAPIKey:  func() string { return "invalid-api-key" },
+				GetBaseURL: func() string { return server.URL },
+			})
 
-	embedder := NewNvidiaEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "invalid-api-key" },
-		GetBaseURL: func() string { return server.URL },
-	})
-
-	texts := []string{"hello world"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", texts, nil)
-
-	require.Nil(t, embeddings)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "check API key")
+			embeddings, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"hello world"}, nil)
+			require.Nil(t, embeddings)
+			require.EqualError(t, err, "NVIDIA NIM returns status "+strings.ToLower(http.StatusText(status))+", check API key")
+		})
+	}
 }
 
 func TestNvidiaEmbedder_InvalidModel(t *testing.T) {
@@ -298,8 +315,10 @@ func TestNvidiaEmbedder_InvalidModel(t *testing.T) {
 
 func TestNvidiaEmbedder_BadRequest(t *testing.T) {
 	mockResponse := `{
-    "error": "The model expects an input_type from one of 'passage' or 'query' but none was provided."
-}`
+	    "object": "error",
+	    "message": "The model expects an input_type from one of 'passage' or 'query' but none was provided.",
+	    "type": "validation_error"
+	}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -356,21 +375,25 @@ func TestNvidiaEmbedder_MissingAPIKey(t *testing.T) {
 
 func TestNvidiaEmbedder_CustomUnauthorizedError(t *testing.T) {
 	customErr := fmt.Errorf("custom unauthorized error")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"detail": "Authorization failed"}`))
-	}))
-	defer server.Close()
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"detail": "Authorization failed"}`))
+			}))
+			defer server.Close()
 
-	embedder := NewNvidiaEmbedder(EmbedderConfig{
-		GetAPIKey:       func() string { return "invalid-key" },
-		GetBaseURL:      func() string { return server.URL },
-		ErrUnauthorized: customErr,
-	})
+			embedder := NewNvidiaEmbedder(EmbedderConfig{
+				GetAPIKey:       func() string { return "invalid-key" },
+				GetBaseURL:      func() string { return server.URL },
+				ErrUnauthorized: customErr,
+			})
 
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"test"}, nil)
-	require.Nil(t, embeddings)
-	require.Equal(t, customErr, err)
+			embeddings, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"test"}, nil)
+			require.Nil(t, embeddings)
+			require.Equal(t, customErr, err)
+		})
+	}
 }
 
 func TestNvidiaEmbedderEndpoint(t *testing.T) {
@@ -419,4 +442,20 @@ func TestNvidiaEmbedderErrorRedaction(t *testing.T) {
 	_, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"test"}, nil)
 	require.EqualError(t, err, "NVIDIA NIM: invalid api key: [REDACTED]")
 	require.NotContains(t, err.Error(), apiKey)
+}
+
+func TestNvidiaEmbedderTransportErrorRedaction(t *testing.T) {
+	const secret = "super-secret"
+	embedder := NewNvidiaEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "https://internal.example/v1/embeddings?token=" + secret },
+	})
+	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, assert.AnError
+	})
+
+	_, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"test"}, nil)
+	require.EqualError(t, err, "NVIDIA NIM request failed")
+	require.NotContains(t, err.Error(), secret)
+	require.ErrorIs(t, err, assert.AnError)
 }

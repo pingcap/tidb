@@ -69,7 +69,7 @@ func NewTiDBCloudFreeEmbedder(cfg EmbedderConfig) *Embedder {
 func embeddingsEndpoint(configured, billingID string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(configured))
 	if err != nil {
-		return "", fmt.Errorf("invalid TiDB Cloud Inference base URL: %w", err)
+		return "", base.NewRedactedError("invalid TiDB Cloud Inference base URL", err)
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("invalid TiDB Cloud Inference base URL: absolute HTTP(S) URL is required")
@@ -77,7 +77,7 @@ func embeddingsEndpoint(configured, billingID string) (string, error) {
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/api/v1/inference/embeddings/" + escapePathSegment(billingID)
 	path, err := url.PathUnescape(escapedPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid TiDB Cloud Inference base URL path: %w", err)
+		return "", base.NewRedactedError("invalid TiDB Cloud Inference base URL path", err)
 	}
 	u.Path = path
 	u.RawPath = escapedPath
@@ -148,7 +148,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		logRequestError(apiKey, err)
+		logRequestError(apiKey, base.NewProviderRequestError(ctx, "TiDB Cloud Inference", err))
 		// Do not return error directly to users to avoid exposing URLs
 		return nil, fmt.Errorf("failed to request TiDB Cloud Inference Service")
 	}
@@ -158,7 +158,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		logRequestError(apiKey, err)
+		logRequestError(apiKey, base.NewProviderRequestError(ctx, "TiDB Cloud Inference", err))
 		if ctx.Err() != nil {
 			return nil, context.Cause(ctx)
 		}

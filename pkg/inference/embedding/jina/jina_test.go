@@ -26,6 +26,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestJinaEmbedder_Success(t *testing.T) {
 	// Mock successful response from real Jina API
 	mockResponse := `{
@@ -354,4 +360,20 @@ func TestJinaEmbedderErrorRedaction(t *testing.T) {
 	_, err := embedder.CreateEmbeddings(context.Background(), "jina-embeddings-v3", []string{"test"}, nil)
 	require.EqualError(t, err, "JinaAI: invalid api key: [REDACTED]")
 	require.NotContains(t, err.Error(), apiKey)
+}
+
+func TestJinaEmbedderTransportErrorRedaction(t *testing.T) {
+	const secret = "super-secret"
+	embedder := NewJinaEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "https://internal.example/v1/embeddings?token=" + secret },
+	})
+	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, assert.AnError
+	})
+
+	_, err := embedder.CreateEmbeddings(context.Background(), "jina-embeddings-v3", []string{"test"}, nil)
+	require.EqualError(t, err, "JinaAI request failed")
+	require.NotContains(t, err.Error(), secret)
+	require.ErrorIs(t, err, assert.AnError)
 }

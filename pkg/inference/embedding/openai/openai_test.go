@@ -16,6 +16,7 @@ package openai
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -29,6 +30,12 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 type capturedHTTPRequest struct {
 	path          string
@@ -498,4 +505,21 @@ func TestOpenAIEmbedder_NoModel(t *testing.T) {
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "", []string{"test"}, nil)
 	require.Nil(t, embeddings)
 	require.Error(t, err)
+}
+
+func TestOpenAIEmbedderTransportErrorRedaction(t *testing.T) {
+	const secret = "super-secret"
+	transportErr := errors.New("transport failed")
+	embedder := NewOpenAIEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "https://internal.example/v1?token=" + secret },
+	})
+	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, transportErr
+	})
+
+	_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{"test"}, nil)
+	require.EqualError(t, err, "OpenAI request failed")
+	require.NotContains(t, err.Error(), secret)
+	require.ErrorIs(t, err, transportErr)
 }

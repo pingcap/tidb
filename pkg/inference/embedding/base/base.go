@@ -71,6 +71,36 @@ type Embedder interface {
 	CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error)
 }
 
+type redactedError struct {
+	message string
+	cause   error
+}
+
+func (e *redactedError) Error() string {
+	return e.message
+}
+
+func (e *redactedError) Unwrap() error {
+	return e.cause
+}
+
+// NewRedactedError returns an error with a safe user-facing message while
+// preserving cause for errors.Is and errors.As. It is intended for errors
+// whose original text may contain configured endpoints or credentials.
+func NewRedactedError(message string, cause error) error {
+	return &redactedError{message: message, cause: cause}
+}
+
+// NewProviderRequestError redacts endpoint details from request and transport
+// errors. If the caller's context has completed, its cause is returned so
+// cancellation and deadline errors remain recognizable to callers.
+func NewProviderRequestError(ctx context.Context, provider string, cause error) error {
+	if contextCause := context.Cause(ctx); contextCause != nil {
+		return contextCause
+	}
+	return NewRedactedError(provider+" request failed", cause)
+}
+
 // DecodeFloat32ArrayBytes decodes bytes of an float32 array in little endian into a float32 slice.
 func DecodeFloat32ArrayBytes(item []byte) ([]float32, error) {
 	if len(item)%4 != 0 {

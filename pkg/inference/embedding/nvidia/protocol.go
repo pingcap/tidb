@@ -38,8 +38,11 @@ type Response struct {
 
 // ErrorResponse is the model for Nvidia NIM embeddings API response when an error occurs.
 type ErrorResponse struct {
-	Status int    `json:"status"`
-	Title  string `json:"title"`
-	Detail string `json:"detail"`
-	Error  string `json:"error"`
+	Object  string `json:"object"`
+	Status  int    `json:"status"`
+	Title   string `json:"title"`
+	Detail  string `json:"detail"`
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Error   string `json:"error"`
 }

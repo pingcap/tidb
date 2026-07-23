@@ -27,6 +27,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestHuggingFaceEmbedder_Success(t *testing.T) {
 	// Mock successful response from real HuggingFace API
 	mockResponse := `[
@@ -310,4 +316,20 @@ func TestHuggingFaceEmbedderErrorRedaction(t *testing.T) {
 	_, err := embedder.CreateEmbeddings(context.Background(), "org/model", []string{"test"}, nil)
 	require.EqualError(t, err, "HuggingFace: invalid api key: [REDACTED]")
 	require.NotContains(t, err.Error(), apiKey)
+}
+
+func TestHuggingFaceEmbedderTransportErrorRedaction(t *testing.T) {
+	const secret = "super-secret"
+	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "https://internal.example/inference?token=" + secret },
+	})
+	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, assert.AnError
+	})
+
+	_, err := embedder.CreateEmbeddings(context.Background(), "org/model", []string{"test"}, nil)
+	require.EqualError(t, err, "HuggingFace request failed")
+	require.NotContains(t, err.Error(), secret)
+	require.ErrorIs(t, err, assert.AnError)
 }

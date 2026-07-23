@@ -74,7 +74,7 @@ func embeddingsEndpoint(configured string) (string, error) {
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("invalid Jina AI API base URL: %w", err)
+		return "", base.NewRedactedError("invalid Jina AI API base URL", err)
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("invalid Jina AI API base URL: absolute HTTP(S) URL is required")
@@ -121,7 +121,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, base.NewProviderRequestError(ctx, "JinaAI", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -129,7 +129,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, base.NewProviderRequestError(ctx, "JinaAI", err)
 	}
 	defer resp.Body.Close()
 

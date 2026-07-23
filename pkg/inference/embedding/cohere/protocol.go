@@ -14,9 +14,11 @@
 
 package cohere
 
+import "encoding/json"
+
 // Response is the model for Cohere embeddings API response.
 type Response struct {
-	Embeddings [][]float32 `json:"embeddings"`
+	Embeddings json.RawMessage `json:"embeddings"`
 }
 
 // ErrorResponse is the model for Cohere embeddings API response when an error occurs.

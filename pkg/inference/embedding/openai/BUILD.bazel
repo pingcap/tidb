@@ -21,7 +21,7 @@ go_test(
     srcs = ["openai_test.go"],
     embed = [":openai"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
