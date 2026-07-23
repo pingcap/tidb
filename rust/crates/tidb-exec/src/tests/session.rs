@@ -935,6 +935,7 @@ fn sysvar_readback() {
     assert_eq!(step(&mut db, "select @@global.autocommit"), "RS:1");
     assert_eq!(step(&mut db, "select @@time_zone"), "RS:SYSTEM");
     assert_eq!(step(&mut db, "select @@global.time_zone"), "RS:SYSTEM");
+    assert!(step(&mut db, "select @@instance.autocommit").starts_with("Eval("));
 
     // `SET autocommit`/`SET time_zone` change ONLY the session-scoped
     // readback -- `@@GLOBAL.*` stays at its fixed default regardless

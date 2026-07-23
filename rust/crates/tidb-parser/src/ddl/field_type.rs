@@ -15,7 +15,7 @@
 //! Field-type parsing shared by CREATE and ALTER column definitions.
 
 use tidb_ast::{ColumnType, ColumnTypeArg};
-use tidb_lexer::TokenKind;
+use tidb_lexer::{canonical_charset, TokenKind};
 
 use crate::{decode_string, PResult, Parser};
 
@@ -51,12 +51,18 @@ impl Parser {
             } else if self.is_kw("DOUBLE") || self.is_kw("FLOAT8") {
                 ("DOUBLE", false, false, false)
             } else if self.is_kw("REAL") {
-                // `REAL_AS_FLOAT` is a session SQL-mode concern. The parser's
-                // default mode, like Go's default `parseFieldType` branch,
-                // canonicalizes REAL to DOUBLE.
-                ("DOUBLE", false, false, false)
-            } else if self.is_kw("VARCHAR") {
-                ("VARCHAR", false, false, false)
+                (
+                    if self.real_as_float {
+                        "FLOAT"
+                    } else {
+                        "DOUBLE"
+                    },
+                    false,
+                    false,
+                    false,
+                )
+            } else if self.is_kw("VARCHAR") || self.is_kw("VARCHARACTER") {
+                ("VARCHAR", false, false, true)
             } else if self.is_kw("NVARCHAR") {
                 // Go's NVARCHAR alias is a mandatory-length VARCHAR.
                 ("VARCHAR", false, false, true)
@@ -232,73 +238,69 @@ impl Parser {
         // the generic numeric-literal parser a second enum/set path.
         if name == "ENUM" || name == "SET" {
             self.expect_op("(")?;
-            loop {
-                let token = self.peek().clone();
-                let value = match token.kind {
-                    TokenKind::Str => {
-                        self.bump();
-                        ColumnTypeArg::text(decode_string(&token.text).trim_end_matches(' '))
+            if !self.is_op(")") {
+                loop {
+                    let token = self.peek().clone();
+                    let value = match token.kind {
+                        TokenKind::Str => {
+                            self.bump();
+                            ColumnTypeArg::text(decode_string(&token.text).trim_end_matches(' '))
+                        }
+                        TokenKind::HexLit | TokenKind::BitLit => {
+                            self.bump();
+                            ColumnTypeArg::Bytes(
+                                decode_enum_set_binary_literal(&token.text, token.kind)
+                                    .ok_or_else(|| {
+                                        self.err_here("invalid binary literal in ENUM/SET")
+                                    })?,
+                            )
+                        }
+                        _ => return Err(self.err_here("expected a string literal in ENUM/SET")),
+                    };
+                    args.push(value);
+                    if !self.is_op(",") {
+                        break;
                     }
-                    TokenKind::HexLit | TokenKind::BitLit => {
-                        self.bump();
-                        ColumnTypeArg::Bytes(
-                            decode_enum_set_binary_literal(&token.text, token.kind).ok_or_else(
-                                || self.err_here("invalid binary literal in ENUM/SET"),
-                            )?,
-                        )
-                    }
-                    _ => return Err(self.err_here("expected a string literal in ENUM/SET")),
-                };
-                args.push(value);
-                if !self.is_op(",") {
-                    break;
+                    self.bump();
                 }
-                self.bump();
             }
             self.expect_op(")")?;
         } else if boolean_alias {
             // Go's BOOL/BOOLEAN branch materializes TINYINT(1), and unlike
             // the ordinary integer branch does not accept a display width.
             args.push(ColumnTypeArg::text("1"));
-        } else if matches!(
-            name,
-            "JSON"
-                | "TINYBLOB"
-                | "MEDIUMBLOB"
-                | "LONGBLOB"
-                | "TINYTEXT"
-                | "MEDIUMTEXT"
-                | "LONGTEXT"
-        ) && self.is_op("(")
-        {
-            return Err(self.err_here("column type does not allow type arguments"));
-        } else if name == "VECTOR" && self.is_op("(") {
-            self.bump();
-            args.push(ColumnTypeArg::text(self.parse_type_arg()?));
-            self.expect_op(")")?;
-        } else if self.is_op("(") {
-            self.bump();
-            args.push(ColumnTypeArg::text(self.parse_type_arg()?));
-            if !matches!(name, "BINARY" | "VARBINARY") {
-                while self.is_op(",") {
-                    self.bump();
-                    args.push(ColumnTypeArg::text(self.parse_type_arg()?));
+        } else {
+            match name {
+                // Only FLOAT/DOUBLE/DECIMAL own Go's `(M[,D])` production.
+                "FLOAT" | "DOUBLE" | "DECIMAL" => {
+                    self.parse_optional_precision_scale(&mut args)?;
                 }
+                // These families own exactly one optional length/FSP/dimension.
+                "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "CHAR" | "BINARY"
+                | "BLOB" | "TEXT" | "DATETIME" | "TIMESTAMP" | "TIME" | "YEAR" | "BIT"
+                | "VECTOR" => {
+                    self.parse_optional_single_type_arg(&mut args)?;
+                }
+                // VARCHAR/VARBINARY and promoted CHAR VARYING spellings own
+                // exactly one mandatory length.
+                "VARCHAR" | "VARBINARY" => {
+                    if !self.parse_optional_single_type_arg(&mut args)? {
+                        return Err(self.err_here("column type requires a length"));
+                    }
+                }
+                // Every remaining concrete Go branch is argument-free.
+                "DATE" | "JSON" | "GEOMETRY" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB"
+                | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" => {
+                    if self.is_op("(") {
+                        return Err(self.err_here("column type does not allow type arguments"));
+                    }
+                }
+                _ => debug_assert!(uuid_type || requires_type_arg),
             }
-            self.expect_op(")")?;
-        } else if requires_type_arg || name == "VARBINARY" {
-            // TiDB's field-type grammar requires a declared length for
-            // VARBINARY and CHAR/CHARACTER VARYING, unlike BINARY and
-            // ordinary CHAR whose length is optional.
-            return Err(self.err_here("column type requires a length"));
-        } else if name == "BIT" {
-            // A bare `BIT` (no explicit length) defaults to `BIT(1)` —
-            // confirmed via `godump restore`: `BIT` alone restores as
-            // `BIT(1)`, the default length materialized explicitly into
-            // the AST rather than left implicit, unlike every other
-            // type here (whose own missing-`(...)` case just stays an
-            // empty `args`).
-            args.push(ColumnTypeArg::text("1"));
+            if name == "BIT" && args.is_empty() {
+                // A bare BIT defaults to BIT(1) in Go's parser AST.
+                args.push(ColumnTypeArg::text("1"));
+            }
         }
         if uuid_type {
             // Go's UUID branch sets the fixed CHAR(36) length itself and does
@@ -313,6 +315,13 @@ impl Parser {
         // the shared field-type boundary used by CREATE and ALTER.
         if name == "DOUBLE" && args.len() == 1 {
             return Err(self.err_here("DOUBLE requires precision and scale"));
+        }
+        if year_type
+            && args.first().is_some_and(
+                |argument| !matches!(argument, ColumnTypeArg::Text(value) if value == "4"),
+            )
+        {
+            return Err(self.err_here("[parser:1818]Supports only YEAR or YEAR(4) column"));
         }
         let supports_numeric_options = matches!(
             name,
@@ -383,6 +392,32 @@ impl Parser {
             Err(self.err_here("expected integer type argument"))
         }
     }
+
+    /// Parses Go's `OptFieldLen`/FSP/vector-dimension shape: zero or one
+    /// parenthesized integer, never a generic comma list.
+    fn parse_optional_single_type_arg(&mut self, args: &mut Vec<ColumnTypeArg>) -> PResult<bool> {
+        if !self.is_op("(") {
+            return Ok(false);
+        }
+        self.bump();
+        args.push(ColumnTypeArg::text(self.parse_type_arg()?));
+        self.expect_op(")")?;
+        Ok(true)
+    }
+
+    /// Parses Go's `FloatOpt`/`DecimalOpt`: `(M)` or `(M,D)` only.
+    fn parse_optional_precision_scale(&mut self, args: &mut Vec<ColumnTypeArg>) -> PResult<()> {
+        if !self.is_op("(") {
+            return Ok(());
+        }
+        self.bump();
+        args.push(ColumnTypeArg::text(self.parse_type_arg()?));
+        if self.is_op(",") {
+            self.bump();
+            args.push(ColumnTypeArg::text(self.parse_type_arg()?));
+        }
+        self.expect_op(")")
+    }
 }
 
 /// Decodes the binary/hex member forms accepted by Go's
@@ -404,9 +439,6 @@ fn decode_enum_set_binary_literal(text: &str, kind: TokenKind) -> Option<Vec<u8>
             .or_else(|| text.strip_prefix("B'").and_then(|s| s.strip_suffix('\'')))?,
         _ => return None,
     };
-    if digits.is_empty() {
-        return None;
-    }
     let bytes = if kind == TokenKind::HexLit {
         let digits = if digits.len() % 2 == 0 {
             digits.to_owned()
@@ -460,6 +492,17 @@ pub(super) fn type_rejects_charset(name: &str) -> bool {
             | "MEDIUMBLOB"
             | "LONGBLOB"
     )
+}
+
+/// The supported half of Go `charset.GetCharsetInfo`: TiDB recognizes many
+/// MySQL charset names lexically, but field DDL accepts only these seven.
+pub(super) fn canonical_field_charset(name: &str) -> Option<&'static str> {
+    match canonical_charset(name)? {
+        charset @ ("utf8" | "utf8mb4" | "ascii" | "latin1" | "binary" | "gbk" | "gb18030") => {
+            Some(charset)
+        }
+        _ => None,
+    }
 }
 
 /// Go's geometry aliases are lexed as ordinary identifiers (except the

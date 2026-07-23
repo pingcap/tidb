@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, is_reserved, PResult, Parser};
+use crate::{decode_string, PResult, Parser};
 
 type StringOptionConstructor = fn(String) -> PlacementOption;
 
@@ -104,16 +104,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_placement_policy_name(&mut self) -> PResult<String> {
-        let token = self.peek().clone();
-        match token.kind {
-            TokenKind::Str => {
-                self.bump();
-                Ok(decode_string(&token.text))
-            }
-            TokenKind::Ident => Ok(self.bump().text),
-            TokenKind::Keyword if !is_reserved(&token.text) => Ok(self.bump().text),
-            _ => Err(self.err_here("expected placement policy name")),
-        }
+        self.parse_ident_like_name()
     }
 
     fn parse_placement_options(&mut self) -> PResult<Vec<PlacementOption>> {
@@ -128,6 +119,9 @@ impl Parser {
     }
 
     pub(crate) fn parse_placement_option(&mut self) -> PResult<Option<PlacementOption>> {
+        if self.peek().kind != TokenKind::Keyword {
+            return Ok(None);
+        }
         let name = self.peek().text.to_ascii_uppercase();
         let string_constructor: Option<StringOptionConstructor> = match name.as_str() {
             "PRIMARY_REGION" => Some(PlacementOption::PrimaryRegion),

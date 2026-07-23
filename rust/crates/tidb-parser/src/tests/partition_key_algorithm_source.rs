@@ -25,11 +25,16 @@ fn partition_key_algorithm_source_rows() {
         r("CREATE TABLE t (c1 integer,c2 integer) PARTITION BY LINEAR KEY ALGORITHM = 1 (c1,c2) PARTITIONS 4"),
         "CREATE TABLE `t` (`c1` INT,`c2` INT) PARTITION BY LINEAR KEY ALGORITHM = 1 (`c1`,`c2`) PARTITIONS 4",
     );
+    assert_eq!(
+        r("CREATE TABLE t (c1 integer) PARTITION BY KEY ALGORITHM := 2 (c1)"),
+        "CREATE TABLE `t` (`c1` INT) PARTITION BY KEY ALGORITHM = 2 (`c1`) PARTITIONS 1",
+    );
 
     for sql in [
         "CREATE TABLE t (c1 integer,c2 integer) PARTITION BY LINEAR KEY ALGORITHM = -1 (c1,c2) PARTITIONS 4",
         "CREATE TABLE t (c1 integer,c2 integer) PARTITION BY LINEAR KEY ALGORITHM = 0 (c1,c2) PARTITIONS 4",
         "CREATE TABLE t (c1 integer,c2 integer) PARTITION BY LINEAR KEY ALGORITHM = 3 (c1,c2) PARTITIONS 4",
+        "CREATE TABLE t (c1 integer) PARTITION BY KEY ALGORITHM 1 (c1)",
     ] {
         assert!(parse(sql).is_err(), "{sql}");
     }

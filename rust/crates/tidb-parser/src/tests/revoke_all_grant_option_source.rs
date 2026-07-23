@@ -47,7 +47,7 @@ fn revoke_all_grant_option_has_typed_global_level() {
     assert_eq!(revoke.privileges.len(), 2);
     assert_eq!(revoke.privileges[0].name, "ALL");
     assert_eq!(revoke.privileges[1].name, "GRANT OPTION");
-    assert_eq!(revoke.users[0].user, "ss1");
+    assert_eq!(revoke.users[0].user.user, "ss1");
 }
 
 #[test]

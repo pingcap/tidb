@@ -375,12 +375,22 @@ fn source_zero_values_name_slots_and_list_boundaries_remain_visible() {
         r("drop placement policy `placement`"),
         "DROP PLACEMENT POLICY `placement`"
     );
+    assert_eq!(
+        r("create placement policy @p followers=1"),
+        "CREATE PLACEMENT POLICY `p` FOLLOWERS = 1"
+    );
+    assert_eq!(
+        r("alter placement policy @'p' voters=0"),
+        "ALTER PLACEMENT POLICY `p` VOTERS = 0"
+    );
 
     for sql in [
         "create placement policy p , followers=1",
         "create placement policy p followers=1,,",
         "create placement policy p followers",
         "create placement policy p primary_region",
+        "create placement policy p `primary_region`='cn'",
+        "create placement policy p `followers`=1",
         "create placement policy p followers=18446744073709551616",
         "alter placement policy p followers=0",
     ] {

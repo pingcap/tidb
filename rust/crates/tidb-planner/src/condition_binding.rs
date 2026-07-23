@@ -225,6 +225,7 @@ fn collect_known_columns(
         | Expr::Cast(tidb_ast::CastExpr { expr, .. })
         | Expr::ConvertUsing { expr, .. }
         | Expr::Collate { expr, .. }
+        | Expr::CharsetBinary { value: expr, .. }
         | Expr::Extract { value: expr, .. }
         | Expr::Assign { value: expr, .. } => {
             collect_known_columns(expr, schema, bindings, opaque_shapes)?;

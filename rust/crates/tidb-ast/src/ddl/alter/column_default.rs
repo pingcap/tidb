@@ -24,8 +24,8 @@ use crate::Expr;
 /// A default-value change for an existing column.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlterColumnDefault {
-    /// Existing column name.
-    pub name: String,
+    /// Existing column name, including optional table/schema qualifiers.
+    pub name: Vec<String>,
     /// New default expression, or `None` for `DROP DEFAULT`.
     pub default_value: Option<Expr>,
 }

@@ -30,7 +30,7 @@ use tidb_ast::{
     ShowStatsHistogramsStmt, ShowStatsLockedFilter, ShowStatsLockedStmt, ShowStatsTopNFilter,
     ShowStatsTopNStmt, ShowStatusFilter, ShowStatusStmt, ShowTableNextRowIdStmt,
     ShowTablePlacementKind, ShowTablePlacementStmt, ShowTableStatusFilter, ShowTableStatusStmt,
-    ShowTablesFilter, ShowTablesStmt, ShowWarningsFilter, ShowWarningsStmt,
+    ShowTablesFilter, ShowTablesStmt, ShowVariablesStmt, ShowWarningsFilter, ShowWarningsStmt,
 };
 use tidb_lexer::TokenKind;
 
@@ -61,7 +61,7 @@ impl Parser {
         }
         if self.is_kw("MASTER") {
             self.bump();
-            self.expect_kw("STATUS")?;
+            self.expect_keyword_or_ident("STATUS")?;
             return Ok(AdminStmt::ShowMasterStatus);
         }
         if self.is_kw("PRIVILEGES") {
@@ -157,7 +157,7 @@ impl Parser {
         if let Some(show) = self.parse_show_open_tables()? {
             return Ok(AdminStmt::ShowOpenTables(Box::new(show)));
         }
-        if self.is_kw("TABLE") && self.is_kw_at(1, "STATUS") {
+        if self.is_kw("TABLE") && self.keyword_or_ident_is_at(1, "STATUS") {
             return Ok(AdminStmt::ShowTableStatus(Box::new(
                 self.parse_show_table_status()?,
             )));
@@ -175,7 +175,279 @@ impl Parser {
         if self.is_kw("INDEX") || self.is_kw("INDEXES") || self.is_kw("KEYS") {
             return Ok(AdminStmt::ShowIndex(Box::new(self.parse_show_index()?)));
         }
+        if let Some(statement) = self.parse_show_ident_based_fallback()? {
+            return Ok(statement);
+        }
         Err(self.err_here("unsupported SHOW statement"))
+    }
+
+    /// Direct translation of `parseShowIdentBased`, reached only after the
+    /// dedicated SHOW token arms declined the current token. Go dispatches on
+    /// the decoded `isIdentLike` literal, so quoted and single-@ spellings are
+    /// intentionally valid here.
+    fn parse_show_ident_based_fallback(&mut self) -> PResult<Option<AdminStmt>> {
+        if !crate::is_ident_like_name(self.peek()) {
+            return Ok(None);
+        }
+        let head = crate::token_literal_text(self.peek()).to_ascii_uppercase();
+
+        let generic = match head.as_str() {
+            "TRIGGERS" => Some((ShowInspectionKind::Triggers, true, true)),
+            "EVENTS" => Some((ShowInspectionKind::Events, true, true)),
+            "PLUGINS" => Some((ShowInspectionKind::Plugins, false, true)),
+            "STATS_EXTENDED" => Some((ShowInspectionKind::StatsExtended, false, true)),
+            "STATS_META" => Some((ShowInspectionKind::StatsMeta, false, true)),
+            "STATS_HEALTHY" => Some((ShowInspectionKind::StatsHealthy, false, true)),
+            "HISTOGRAMS_IN_FLIGHT" => Some((ShowInspectionKind::HistogramsInFlight, false, true)),
+            "COLUMN_STATS_USAGE" => Some((ShowInspectionKind::ColumnStatsUsage, false, true)),
+            "BACKUPS" => Some((ShowInspectionKind::Backups, false, true)),
+            "RESTORES" => Some((ShowInspectionKind::Restores, false, true)),
+            "IMPORTS" => Some((ShowInspectionKind::Imports, false, true)),
+            "CONFIG" => Some((ShowInspectionKind::Config, false, true)),
+            "PROFILES" => Some((ShowInspectionKind::Profiles, false, false)),
+            "SESSION_STATES" => Some((ShowInspectionKind::SessionStates, false, false)),
+            "AFFINITY" => Some((ShowInspectionKind::Affinity, false, true)),
+            _ => None,
+        };
+        if let Some((kind, with_database, with_filter)) = generic {
+            self.bump();
+            let database = if with_database {
+                self.parse_show_database_name_opt()
+            } else {
+                None
+            };
+            let filter = if with_filter {
+                self.parse_inspection_filter()?
+            } else {
+                None
+            };
+            return Ok(Some(AdminStmt::ShowInspection(Box::new(
+                ShowInspectionStmt {
+                    kind,
+                    full: false,
+                    database,
+                    filter,
+                },
+            ))));
+        }
+
+        match head.as_str() {
+            "DATABASES" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => Some(ShowDatabasesFilter::Like(expr)),
+                    Some(ShowInspectionFilter::Where(expr)) => {
+                        Some(ShowDatabasesFilter::Where(expr))
+                    }
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowDatabases(Box::new(
+                    ShowDatabasesStmt { filter },
+                ))))
+            }
+            "ENGINES" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => Some(ShowEnginesFilter::Like(expr)),
+                    Some(ShowInspectionFilter::Where(expr)) => Some(ShowEnginesFilter::Where(expr)),
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowEngines(Box::new(ShowEnginesStmt {
+                    filter,
+                }))))
+            }
+            "COLLATION" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => Some(ShowCollationFilter::Like(expr)),
+                    Some(ShowInspectionFilter::Where(expr)) => {
+                        Some(ShowCollationFilter::Where(expr))
+                    }
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowCollation(Box::new(
+                    ShowCollationStmt { filter },
+                ))))
+            }
+            "ERRORS" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => Some(ShowErrorsFilter::Like(expr)),
+                    Some(ShowInspectionFilter::Where(expr)) => Some(ShowErrorsFilter::Where(expr)),
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowErrors(Box::new(ShowErrorsStmt {
+                    count_only: false,
+                    filter,
+                }))))
+            }
+            "CHARSET" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => Some(ShowCharsetFilter::Like(expr)),
+                    Some(ShowInspectionFilter::Where(expr)) => Some(ShowCharsetFilter::Where(expr)),
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowCharset(Box::new(ShowCharsetStmt {
+                    filter,
+                }))))
+            }
+            "PRIVILEGES" => {
+                self.bump();
+                Ok(Some(AdminStmt::ShowPrivileges))
+            }
+            "BUILTINS" => {
+                self.bump();
+                Ok(Some(AdminStmt::ShowBuiltins))
+            }
+            "STATS_LOCKED" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => {
+                        Some(ShowStatsLockedFilter::Like(expr))
+                    }
+                    Some(ShowInspectionFilter::Where(expr)) => {
+                        Some(ShowStatsLockedFilter::Where(expr))
+                    }
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowStatsLocked(Box::new(
+                    ShowStatsLockedStmt { filter },
+                ))))
+            }
+            "STATS_BUCKETS" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => {
+                        Some(ShowStatsBucketsFilter::Like(expr))
+                    }
+                    Some(ShowInspectionFilter::Where(expr)) => {
+                        Some(ShowStatsBucketsFilter::Where(expr))
+                    }
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowStatsBuckets(Box::new(
+                    ShowStatsBucketsStmt { filter },
+                ))))
+            }
+            "STATS_HISTOGRAMS" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => {
+                        Some(ShowStatsHistogramsFilter::Like(expr))
+                    }
+                    Some(ShowInspectionFilter::Where(expr)) => {
+                        Some(ShowStatsHistogramsFilter::Where(expr))
+                    }
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowStatsHistograms(Box::new(
+                    ShowStatsHistogramsStmt { filter },
+                ))))
+            }
+            "STATS_TOPN" => {
+                self.bump();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => Some(ShowStatsTopNFilter::Like(expr)),
+                    Some(ShowInspectionFilter::Where(expr)) => {
+                        Some(ShowStatsTopNFilter::Where(expr))
+                    }
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowStatsTopN(Box::new(
+                    ShowStatsTopNStmt { filter },
+                ))))
+            }
+            "OPEN" => {
+                self.bump();
+                self.expect_kw("TABLES")?;
+                let database = self.parse_show_database_name_opt();
+                let filter = self.parse_inspection_filter()?;
+                Ok(Some(AdminStmt::ShowOpenTables(Box::new(
+                    ShowOpenTablesStmt { database, filter },
+                ))))
+            }
+            "TABLE" if self.keyword_or_ident_is_at(1, "STATUS") => {
+                self.bump();
+                self.bump();
+                let database = self.parse_show_database_name_opt();
+                let filter = match self.parse_inspection_filter()? {
+                    Some(ShowInspectionFilter::Like(expr)) => {
+                        Some(ShowTableStatusFilter::Like(expr))
+                    }
+                    Some(ShowInspectionFilter::Where(expr)) => {
+                        Some(ShowTableStatusFilter::Where(expr))
+                    }
+                    None => None,
+                };
+                Ok(Some(AdminStmt::ShowTableStatus(Box::new(
+                    ShowTableStatusStmt { database, filter },
+                ))))
+            }
+            "PLACEMENT" => {
+                self.bump();
+                let target = if self.token_literal_is_at(0, "LABELS") {
+                    self.bump();
+                    ShowPlacementTarget::Labels
+                } else {
+                    ShowPlacementTarget::All
+                };
+                let filter = self.parse_inspection_filter()?;
+                Ok(Some(AdminStmt::ShowPlacement(Box::new(
+                    ShowPlacementStmt { target, filter },
+                ))))
+            }
+            "BINDING_CACHE" if self.keyword_or_ident_is_at(1, "STATUS") => {
+                self.bump();
+                self.bump();
+                Ok(Some(AdminStmt::ShowInspection(Box::new(
+                    ShowInspectionStmt {
+                        kind: ShowInspectionKind::BindingCacheStatus,
+                        full: false,
+                        database: None,
+                        filter: None,
+                    },
+                ))))
+            }
+            "PROFILE" => {
+                self.bump();
+                Ok(Some(self.parse_show_profile_tail()?))
+            }
+            "EXTENDED" => {
+                self.bump();
+                let full = if self.keyword_or_ident_is_at(0, "FULL") {
+                    self.bump();
+                    true
+                } else {
+                    false
+                };
+                if !(self.keyword_or_ident_is_at(0, "COLUMNS")
+                    || self.keyword_or_ident_is_at(0, "FIELDS"))
+                {
+                    return Ok(None);
+                }
+                // The tail's ordinary keyword check is bypassed only for the
+                // source's literal-driven COLUMNS/FIELDS word.
+                let column_word = self.bump();
+                let mut statement = self.parse_show_columns_after_head(full, true)?;
+                statement.extended = true;
+                let _ = column_word;
+                Ok(Some(AdminStmt::ShowColumns(Box::new(statement))))
+            }
+            "SLAVE" if self.keyword_or_ident_is_at(1, "STATUS") => {
+                self.bump();
+                self.bump();
+                Ok(Some(AdminStmt::ShowInspection(Box::new(
+                    ShowInspectionStmt {
+                        kind: ShowInspectionKind::ReplicaStatus,
+                        full: false,
+                        database: None,
+                        filter: None,
+                    },
+                ))))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn parse_show_charset(&mut self) -> PResult<Option<ShowCharsetStmt>> {
@@ -222,12 +494,7 @@ impl Parser {
         }
         self.bump();
         self.expect_kw("TABLES")?;
-        let database = if self.is_kw("IN") || self.is_kw("FROM") {
-            self.bump();
-            Some(self.parse_name()?)
-        } else {
-            None
-        };
+        let database = self.parse_show_database_name_opt();
         let filter = self.parse_inspection_filter()?;
         Ok(Some(ShowOpenTablesStmt { database, filter }))
     }
@@ -270,9 +537,9 @@ impl Parser {
         let mut full = false;
         let (kind, words, allow_database, allow_filter) = if self.is_kw("TRIGGERS") {
             (ShowInspectionKind::Triggers, 1, true, true)
-        } else if self.is_kw("PROCEDURE") && self.is_kw_at(1, "STATUS") {
+        } else if self.is_kw("PROCEDURE") && self.keyword_or_ident_is_at(1, "STATUS") {
             (ShowInspectionKind::ProcedureStatus, 2, false, true)
-        } else if self.is_kw("FUNCTION") && self.is_kw_at(1, "STATUS") {
+        } else if self.is_kw("FUNCTION") && self.keyword_or_ident_is_at(1, "STATUS") {
             (ShowInspectionKind::FunctionStatus, 2, false, true)
         } else if self.is_kw("EVENTS") {
             (ShowInspectionKind::Events, 1, true, true)
@@ -288,9 +555,9 @@ impl Parser {
             (ShowInspectionKind::HistogramsInFlight, 1, false, true)
         } else if self.is_kw("COLUMN_STATS_USAGE") {
             (ShowInspectionKind::ColumnStatsUsage, 1, false, true)
-        } else if self.is_kw("BINDING_CACHE") && self.is_kw_at(1, "STATUS") {
+        } else if self.is_kw("BINDING_CACHE") && self.keyword_or_ident_is_at(1, "STATUS") {
             (ShowInspectionKind::BindingCacheStatus, 2, false, false)
-        } else if self.is_kw("ANALYZE") && self.is_kw_at(1, "STATUS") {
+        } else if self.is_kw("ANALYZE") && self.keyword_or_ident_is_at(1, "STATUS") {
             (ShowInspectionKind::AnalyzeStatus, 2, false, true)
         } else if self.is_kw("BACKUPS") {
             (ShowInspectionKind::Backups, 1, false, true)
@@ -300,9 +567,14 @@ impl Parser {
             (ShowInspectionKind::Imports, 1, false, true)
         } else if self.is_kw("CONFIG") {
             (ShowInspectionKind::Config, 1, false, true)
-        } else if (self.is_kw("REPLICA") || self.is_kw("SLAVE")) && self.is_kw_at(1, "STATUS") {
+        } else if (self.is_kw("REPLICA") || self.is_kw("SLAVE"))
+            && self.keyword_or_ident_is_at(1, "STATUS")
+        {
             (ShowInspectionKind::ReplicaStatus, 2, false, false)
-        } else if self.is_kw("BINARY") && self.is_kw_at(1, "LOG") && self.is_kw_at(2, "STATUS") {
+        } else if self.is_kw("BINARY")
+            && self.token_literal_is_at(1, "LOG")
+            && self.keyword_or_ident_is_at(2, "STATUS")
+        {
             (ShowInspectionKind::BinaryLogStatus, 3, false, false)
         } else if self.is_kw("PROFILES") {
             (ShowInspectionKind::Profiles, 1, false, false)
@@ -321,9 +593,8 @@ impl Parser {
         for _ in 0..words {
             self.bump();
         }
-        let database = if allow_database && (self.is_kw("FROM") || self.is_kw("IN")) {
-            self.bump();
-            Some(self.parse_name()?)
+        let database = if allow_database {
+            self.parse_show_database_name_opt()
         } else {
             None
         };
@@ -423,20 +694,14 @@ impl Parser {
         };
         self.bump();
         let job_id = if singular {
-            let token = self.bump();
-            if token.kind != TokenKind::IntLit {
-                return Err(self.err_here("expected distribution job ID"));
+            match self.parse_expr(prec::NONE)? {
+                tidb_ast::Expr::Int(value) => value.parse::<i64>().ok(),
+                _ => None,
             }
-            Some(
-                token
-                    .text
-                    .parse::<i64>()
-                    .map_err(|_| self.err_here("expected distribution job ID"))?,
-            )
         } else {
             None
         };
-        let filter = if !singular {
+        let filter = if job_id.is_none() {
             self.parse_inspection_filter()?
         } else {
             None
@@ -448,22 +713,26 @@ impl Parser {
 
     fn parse_show_placement(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("PLACEMENT")?;
-        let target = if self.is_kw("LABELS") {
+        self.parse_show_placement_tail()
+    }
+
+    fn parse_show_placement_tail(&mut self) -> PResult<AdminStmt> {
+        let target = if self.token_literal_is_at(0, "LABELS") {
             self.bump();
             ShowPlacementTarget::Labels
         } else if self.is_kw("FOR") {
             self.bump();
             if self.is_kw("DATABASE") || self.is_kw("SCHEMA") {
                 self.bump();
-                ShowPlacementTarget::Database(self.parse_name()?)
+                ShowPlacementTarget::Database(self.parse_non_string_ident_like_name()?)
             } else if self.is_kw("TABLE") {
                 self.bump();
-                let table = self.parse_name_path()?;
+                let table = self.parse_table_name()?;
                 if self.is_kw("PARTITION") {
                     self.bump();
                     ShowPlacementTarget::Partition {
                         table,
-                        partition: self.parse_name()?,
+                        partition: self.parse_non_string_ident_like_name()?,
                     }
                 } else {
                     ShowPlacementTarget::Table(table)
@@ -490,7 +759,12 @@ impl Parser {
 
     fn parse_show_profile(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("PROFILE")?;
+        self.parse_show_profile_tail()
+    }
+
+    fn parse_show_profile_tail(&mut self) -> PResult<AdminStmt> {
         let mut types = Vec::new();
+        let mut type_required = false;
         loop {
             let kind = if self.is_kw("CPU") {
                 Some((ShowProfileType::Cpu, 1))
@@ -514,6 +788,9 @@ impl Parser {
                 None
             };
             let Some((kind, words)) = kind else {
+                if type_required {
+                    return Err(self.err_here("expected SHOW PROFILE type after comma"));
+                }
                 break;
             };
             for _ in 0..words {
@@ -522,6 +799,7 @@ impl Parser {
             types.push(kind);
             if self.is_op(",") {
                 self.bump();
+                type_required = true;
             } else {
                 break;
             }
@@ -559,7 +837,7 @@ impl Parser {
         self.expect_kw("MASKING")?;
         self.expect_kw("POLICIES")?;
         self.expect_kw("FOR")?;
-        let table = self.parse_name_path()?;
+        let table = self.parse_table_name()?;
         let where_clause = if self.is_kw("WHERE") {
             self.bump();
             Some(self.parse_expr(prec::NONE)?)
@@ -594,7 +872,7 @@ impl Parser {
                 count_only: true,
                 filter,
             })))
-        } else if self.is_kw("ERRORS") {
+        } else if self.token_literal_is_at(0, "ERRORS") {
             self.bump();
             let filter = if self.is_kw("LIKE") {
                 self.bump();
@@ -616,6 +894,24 @@ impl Parser {
 
     fn parse_show_create(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("CREATE")?;
+        if self.ident_like_literal_is_at(0, "PLACEMENT") {
+            self.bump();
+            self.expect_token_literal("POLICY")?;
+            return Ok(AdminStmt::ShowCreate {
+                kind: ShowCreateKind::PlacementPolicy,
+                if_not_exists: false,
+                name: vec![self.parse_any_token_name()],
+            });
+        }
+        if self.ident_like_literal_is_at(0, "RESOURCE") {
+            self.bump();
+            self.expect_token_literal("GROUP")?;
+            return Ok(AdminStmt::ShowCreate {
+                kind: ShowCreateKind::ResourceGroup,
+                if_not_exists: false,
+                name: vec![self.parse_any_token_name()],
+            });
+        }
         let kind = if self.is_kw("TABLE") {
             ShowCreateKind::Table
         } else if self.is_kw("VIEW") {
@@ -626,12 +922,6 @@ impl Parser {
             ShowCreateKind::Database
         } else if self.is_kw("PROCEDURE") {
             ShowCreateKind::Procedure
-        } else if self.is_kw("PLACEMENT") && self.is_kw_at(1, "POLICY") {
-            self.bump();
-            ShowCreateKind::PlacementPolicy
-        } else if self.is_kw("RESOURCE") && self.is_kw_at(1, "GROUP") {
-            self.bump();
-            ShowCreateKind::ResourceGroup
         } else {
             return Err(self.err_here("unsupported SHOW CREATE object"));
         };
@@ -645,10 +935,15 @@ impl Parser {
         } else {
             false
         };
+        let name = if kind == ShowCreateKind::Database {
+            vec![self.parse_any_token_name()]
+        } else {
+            self.parse_table_name()?
+        };
         Ok(AdminStmt::ShowCreate {
             kind,
             if_not_exists,
-            name: self.parse_name_path()?,
+            name,
         })
     }
 
@@ -665,12 +960,7 @@ impl Parser {
         self.expect_kw("VARIABLES")?;
         let like = if self.is_kw("LIKE") {
             self.bump();
-            let token = self.peek().clone();
-            if token.kind != TokenKind::Str {
-                return Err(self.err_here("expected a string pattern after LIKE"));
-            }
-            self.bump();
-            Some(decode_string(&token.text))
+            Some(self.parse_expr(prec::UNARY)?)
         } else {
             None
         };
@@ -680,11 +970,11 @@ impl Parser {
         } else {
             None
         };
-        Ok(AdminStmt::ShowVariables {
+        Ok(AdminStmt::ShowVariables(Box::new(ShowVariablesStmt {
             global,
             like,
             where_clause,
-        })
+        })))
     }
 
     /// Parses Go's unscoped and scoped `SHOW STATUS` forms. Go restores the
@@ -745,10 +1035,8 @@ impl Parser {
         } else {
             return Err(self.err_here("expected FROM or IN"));
         }
-        let mut table = self.parse_name_path()?;
-        if self.is_kw("FROM") || self.is_kw("IN") {
-            self.bump();
-            let database = self.parse_name()?;
+        let mut table = self.parse_table_name()?;
+        if let Some(database) = self.parse_show_database_name_opt() {
             let object = table
                 .pop()
                 .ok_or_else(|| self.err_here("expected table name"))?;
@@ -775,12 +1063,7 @@ impl Parser {
             false
         };
         self.expect_kw("TABLES")?;
-        let database = if self.is_kw("FROM") || self.is_kw("IN") {
-            self.bump();
-            Some(self.parse_name()?)
-        } else {
-            None
-        };
+        let database = self.parse_show_database_name_opt();
         let filter = if self.is_kw("LIKE") {
             self.bump();
             Some(ShowTablesFilter::Like(self.parse_expr(prec::UNARY)?))
@@ -801,13 +1084,8 @@ impl Parser {
     /// accepts an optional database and the shared LIKE/WHERE filter grammar.
     fn parse_show_table_status(&mut self) -> PResult<ShowTableStatusStmt> {
         self.expect_kw("TABLE")?;
-        self.expect_kw("STATUS")?;
-        let database = if self.is_kw("FROM") || self.is_kw("IN") {
-            self.bump();
-            Some(self.parse_name()?)
-        } else {
-            None
-        };
+        self.expect_keyword_or_ident("STATUS")?;
+        let database = self.parse_show_database_name_opt();
         let filter = if self.is_kw("LIKE") {
             self.bump();
             Some(ShowTableStatusFilter::Like(self.parse_expr(prec::UNARY)?))
@@ -824,7 +1102,7 @@ impl Parser {
     /// form admits only a table path followed immediately by NEXT_ROW_ID.
     fn parse_show_table_inspection(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("TABLE")?;
-        let table = self.parse_name_path()?;
+        let table = self.parse_table_name()?;
         if self.is_kw("NEXT_ROW_ID") {
             self.bump();
             return Ok(AdminStmt::ShowTableNextRowId(Box::new(
@@ -836,7 +1114,7 @@ impl Parser {
             self.bump();
             self.expect_op("(")?;
             loop {
-                partitions.push(self.parse_name()?);
+                partitions.push(self.parse_non_string_ident_like_name()?);
                 if self.is_op(",") {
                     self.bump();
                 } else {
@@ -847,7 +1125,7 @@ impl Parser {
         }
         let index = if self.is_kw("INDEX") {
             self.bump();
-            Some(self.parse_name()?)
+            Some(self.parse_non_string_ident_like_name()?)
         } else {
             None
         };
@@ -855,15 +1133,17 @@ impl Parser {
             self.bump();
             ShowTablePlacementKind::Regions
         } else if self.is_kw("DISTRIBUTIONS") {
-            if index.is_some() {
-                return Err(self.err_here("DISTRIBUTIONS does not accept INDEX"));
-            }
             self.bump();
             ShowTablePlacementKind::Distributions
         } else {
             return Err(self.err_here("expected NEXT_ROW_ID, REGIONS, or DISTRIBUTIONS"));
         };
-        let filter = self.parse_inspection_filter()?;
+        let filter = if self.is_kw("WHERE") {
+            self.bump();
+            Some(ShowInspectionFilter::Where(self.parse_expr(prec::NONE)?))
+        } else {
+            None
+        };
         Ok(AdminStmt::ShowTablePlacement(Box::new(
             ShowTablePlacementStmt {
                 table,
@@ -953,24 +1233,29 @@ impl Parser {
                 break;
             }
         }
+        self.parse_show_columns_tail(full, extended)
+    }
+
+    fn parse_show_columns_tail(&mut self, full: bool, extended: bool) -> PResult<ShowColumnsStmt> {
         if !(self.is_kw("COLUMNS") || self.is_kw("FIELDS")) {
             return Err(self.err_here("expected COLUMNS or FIELDS"));
         }
         self.bump();
+        self.parse_show_columns_after_head(full, extended)
+    }
+
+    fn parse_show_columns_after_head(
+        &mut self,
+        full: bool,
+        extended: bool,
+    ) -> PResult<ShowColumnsStmt> {
         if self.is_kw("FROM") || self.is_kw("IN") {
             self.bump();
         } else {
             return Err(self.err_here("expected FROM or IN"));
         }
-        let mut table = self.parse_name_path()?;
-        if self.is_kw("FROM") || self.is_kw("IN") {
-            self.bump();
-            let database = self.parse_name()?;
-            let object = table
-                .pop()
-                .ok_or_else(|| self.err_here("expected table name"))?;
-            table = vec![database, object];
-        }
+        let table = self.parse_table_name()?;
+        let database = self.parse_show_database_name_opt();
         let filter = if self.is_kw("LIKE") {
             self.bump();
             Some(ShowColumnsFilter::Like(self.parse_expr(prec::UNARY)?))
@@ -984,7 +1269,19 @@ impl Parser {
             full,
             extended,
             table,
+            database,
             filter,
         })
+    }
+
+    /// Go consumes an optional `FROM|IN` even when the following token is
+    /// EOF, but its empty DBName restores as no clause.
+    fn parse_show_database_name_opt(&mut self) -> Option<String> {
+        if !(self.is_kw("FROM") || self.is_kw("IN")) {
+            return None;
+        }
+        self.bump();
+        let database = self.parse_any_token_name();
+        (!database.is_empty()).then_some(database)
     }
 }

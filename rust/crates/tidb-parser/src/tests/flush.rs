@@ -31,9 +31,11 @@ fn flush_tables_restore_and_shape_match_go() {
             "flush tables db1.t1, t2 with read lock",
             "FLUSH TABLES `db1`.`t1`, `t2` WITH READ LOCK",
         ),
-        ("flush tables read", "FLUSH TABLES `read`"),
     ] {
         assert_eq!(r(sql), restored, "{sql}");
+    }
+    for sql in ["flush tables read", "flush tables select"] {
+        assert!(parse(sql).is_err(), "Go rejects reserved table name: {sql}");
     }
 
     let statement = parse("flush tables t1,t2 with read lock").expect("FLUSH TABLES parses");

@@ -9,8 +9,8 @@ use crate::{
     ShowInspectionStmt, ShowMaskingPoliciesStmt, ShowOpenTablesStmt, ShowPlacementStmt,
     ShowProfileStmt, ShowStatsBucketsStmt, ShowStatsHistogramsStmt, ShowStatsLockedStmt,
     ShowStatsTopNStmt, ShowStatusStmt, ShowTableNextRowIdStmt, ShowTablePlacementStmt,
-    ShowTableStatusStmt, ShowTablesStmt, ShowWarningsStmt, SplitRegionStmt, StatsLockStmt, Stmt,
-    TrafficStmt, UserSpec,
+    ShowTableStatusStmt, ShowTablesStmt, ShowVariablesStmt, ShowWarningsStmt, SplitRegionStmt,
+    StatsLockStmt, Stmt, TrafficStmt, UserSpec,
 };
 
 #[path = "admin/ddl_job_alter.rs"]
@@ -174,14 +174,7 @@ pub enum AdminStmt {
     /// so it stays separate from the other `SHOW CREATE` object kinds.
     ShowCreateUser(UserSpec),
     /// `SHOW [SESSION | GLOBAL] VARIABLES [LIKE <expr> | WHERE <expr>]`.
-    ShowVariables {
-        /// `GLOBAL` scope; `false` is session scope.
-        global: bool,
-        /// The decoded `LIKE` pattern.
-        like: Option<String>,
-        /// Optional full-expression filter, mutually exclusive with `LIKE`.
-        where_clause: Option<Expr>,
-    },
+    ShowVariables(Box<ShowVariablesStmt>),
     /// `SHOW [GLOBAL | SESSION] STATUS [LIKE <expr> | WHERE <expr>]`.
     ///
     /// Status variables have an independent Go AST kind and session/global
@@ -439,25 +432,7 @@ impl AdminStmt {
             }
             Self::ShowImportJobs(show) => show.restore_into(out),
             Self::ShowImportGroups(show) => show.restore_into(out),
-            Self::ShowVariables {
-                global,
-                like,
-                where_clause,
-            } => {
-                out.push_str(if *global {
-                    "SHOW GLOBAL VARIABLES"
-                } else {
-                    "SHOW SESSION VARIABLES"
-                });
-                if let Some(pattern) = like {
-                    out.push_str(" LIKE ");
-                    out.push_str(&crate::restore_string_literal(pattern));
-                }
-                if let Some(where_clause) = where_clause {
-                    out.push_str(" WHERE ");
-                    where_clause.restore_into(out);
-                }
-            }
+            Self::ShowVariables(show) => show.restore_into(out),
             Self::ShowStatus(show) => show.restore_into(out),
             Self::ShowWarnings(show) => show.restore_into(out),
             Self::ShowErrors(show) => show.restore_into(out),
@@ -929,7 +904,7 @@ pub struct RevokeStmt {
     /// Scope from which the privileges are revoked.
     pub level: GrantLevel,
     /// Accounts in their written order.
-    pub users: Vec<crate::UserSpec>,
+    pub users: Vec<crate::CreateUserSpec>,
 }
 
 impl RevokeStmt {
@@ -998,7 +973,7 @@ impl DropStatsStmt {
             out.push_str(" PARTITION ");
             for (index, partition) in self.partitions.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    out.push(',');
                 }
                 out.push_str(&crate::util::back_quote(partition));
             }
@@ -1566,19 +1541,11 @@ impl crate::Visitable for AdminStmt {
                 }
                 let _ = field_0;
             }
-            Self::ShowVariables {
-                global,
-                like,
-                where_clause,
-            } => {
-                if let Some(value) = where_clause.as_mut() {
-                    if !crate::Visitable::accept(value, visitor) {
-                        return false;
-                    }
+            Self::ShowVariables(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
                 }
-                let _ = global;
-                let _ = like;
-                let _ = where_clause;
+                let _ = field_0;
             }
             Self::ShowStatus(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {

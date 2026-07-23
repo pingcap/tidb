@@ -73,9 +73,18 @@ impl Parser {
                 ctas: None,
             });
         }
+        let mut parenthesized_like = None;
         let (columns, table_constraints) = if self.is_op("(") {
             self.bump();
-            let elements = self.parse_table_element_list()?;
+            if self.is_kw("LIKE") {
+                self.bump();
+                parenthesized_like = Some(self.parse_name_path()?);
+            }
+            let elements = if parenthesized_like.is_some() {
+                (Vec::new(), Vec::new())
+            } else {
+                self.parse_table_element_list()?
+            };
             self.expect_op(")")?;
             elements
         } else {
@@ -113,7 +122,7 @@ impl Parser {
             on_commit_delete,
             if_not_exists,
             name,
-            like_table: None,
+            like_table: parenthesized_like,
             columns,
             table_constraints,
             table_options,
@@ -137,6 +146,12 @@ impl Parser {
             self.bump();
             path.push(self.parse_create_table_name_segment()?);
         }
+        if path.len() > 1 && path[0].trim().is_empty() {
+            return Err(self.err_here(&format!(
+                "[parser:1102]Incorrect database name '{}'",
+                path[0]
+            )));
+        }
         Ok(path)
     }
 
@@ -144,7 +159,7 @@ impl Parser {
         let token = self.peek();
         if token.kind == TokenKind::Keyword
             && is_builtin_function_keyword(&token.text)
-            && token.end_offset == self.peek_n(1).offset
+            && (token.end_offset == self.peek_n(1).offset || self.ignore_space)
             && self.is_op_at(1, "(")
         {
             return Err(self.err_here("builtin function cannot be a bare table name"));

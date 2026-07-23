@@ -143,7 +143,7 @@ impl Parser {
             self.bump();
             self.eat_int_suffix();
             Ok(CastType::Unsigned)
-        } else if self.is_kw("CHAR") {
+        } else if self.is_kw("CHAR") || self.is_kw("CHARACTER") {
             self.bump();
             let len = self.parse_optional_paren_uint()?;
             // Go's `Char OptFieldLen OptBinary` production accepts a bare
@@ -203,12 +203,14 @@ impl Parser {
             self.bump();
             Ok(CastType::Double)
         } else if self.is_kw("REAL") {
-            // A bare synonym for `DOUBLE` — like `DOUBLE` itself, `REAL`
-            // takes no parenthesized argument at all as a CAST target
-            // (confirmed via `godump restore`: `REAL(5)` is a genuine
-            // `ParseError`, unlike `FLOAT`'s own precision argument).
+            // REAL follows the same SQL-mode switch as field types. It still
+            // takes no parenthesized CAST argument in either mode.
             self.bump();
-            Ok(CastType::Double)
+            Ok(if self.real_as_float {
+                CastType::Float
+            } else {
+                CastType::Double
+            })
         } else if self.is_kw("FLOAT") {
             self.bump();
             self.parse_float_cast_type()

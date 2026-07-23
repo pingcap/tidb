@@ -27,6 +27,10 @@ fn alter_rename_index_testddl_rows_match_go_restore() {
             "ALTER TABLE t RENAME INDEX a TO b",
             "ALTER TABLE `t` RENAME INDEX `a` TO `b`",
         ),
+        (
+            "ALTER TABLE t RENAME INDEX 'a' TO @b",
+            "ALTER TABLE `t` RENAME INDEX `a` TO `b`",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }

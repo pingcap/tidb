@@ -15,6 +15,30 @@
 
 use super::*;
 
+/// Complete name-token boundary from
+/// `admin_query_parser.go::parseCallStmt`: exactly two name components,
+/// permissive first identifier-like tokens, and an intentionally unchecked
+/// token after the qualifier dot.
+#[test]
+fn call_name_grammar_matches_go_hand_parser() {
+    for (sql, expected) in [
+        ("call p", "CALL `p`()"),
+        ("call s.p", "CALL `s`.`p`()"),
+        ("call 'x'()", "CALL `x`()"),
+        ("call @x()", "CALL `x`()"),
+        ("call @@x()", "CALL `@@x`()"),
+        ("call s.select()", "CALL `s`.`select`()"),
+        ("call s.1()", "CALL `s`.`1`()"),
+        ("call s.@@x()", "CALL `s`.`@@x`()"),
+        ("call s.-()", "CALL `s`.`-`()"),
+    ] {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+    for sql in ["call select()", "call a.b.c()", "call s.()"] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+}
+
 /// `pkg/parser/ast/dml_test.go::TestDMLVisitorCover`.
 #[test]
 fn test_dml_visitor_cover() {
@@ -226,6 +250,43 @@ fn batch_dml_preserves_the_go_nontransactional_wrapper() {
         "batch limit x delete from t",
     ] {
         assert!(parse(invalid).is_err(), "must reject {invalid}");
+    }
+}
+
+/// Complete table from Go `pkg/parser/parser_test.go`'s
+/// `TestNonTransactionalDML`.
+#[test]
+fn nontransactional_dml_source_table() {
+    let operations = [
+        (
+            "delete from t where c = 10",
+            "DELETE FROM `t` WHERE `c`=10",
+        ),
+        ("update t set c = 10", "UPDATE `t` SET `c`=10"),
+        (
+            "insert into t1 select * from t2 where c = 10",
+            "INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10",
+        ),
+        (
+            "insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val",
+            "INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`",
+        ),
+    ];
+    let modes = [
+        ("", ""),
+        ("dry run ", "DRY RUN "),
+        ("dry run query ", "DRY RUN QUERY "),
+    ];
+    for (operation, restored_operation) in operations {
+        for (on_column, restored_on_column) in [("on c ", "ON `c` "), ("", "")] {
+            for (mode, restored_mode) in modes {
+                let sql = format!("batch {on_column}limit 10 {mode}{operation}");
+                let expected = format!(
+                    "BATCH {restored_on_column}LIMIT 10 {restored_mode}{restored_operation}"
+                );
+                assert_eq!(r(&sql), expected, "source SQL: {sql}");
+            }
+        }
     }
 }
 

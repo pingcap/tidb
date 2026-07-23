@@ -14,15 +14,20 @@
 
 //! Partition DDL execution boundary.
 
-use tidb_ast::{AlterPartitionAction, AlterTableAction};
+use tidb_ast::{AlterPartitionAction, AlterTableAction, TableOption};
 
 /// Returns the pre-mutation error for every partition action unsupported by
 /// this seed catalog. A future partition catalog changes this single boundary
 /// rather than leaving mismatched checks in both DDL dispatch layers.
 pub(crate) fn unsupported_alter_action(action: &AlterTableAction) -> Option<&'static str> {
     match action {
-        AlterTableAction::Partition(AlterPartitionAction::SetPlacementPolicy { .. }) => {
+        AlterTableAction::Partition(AlterPartitionAction::SetOptions { options, .. })
+            if matches!(options.as_slice(), [TableOption::PlacementPolicy(_)]) =>
+        {
             Some("ALTER TABLE PARTITION PLACEMENT POLICY")
+        }
+        AlterTableAction::Partition(AlterPartitionAction::SetOptions { .. }) => {
+            Some("ALTER TABLE PARTITION OPTIONS")
         }
         AlterTableAction::Partition(AlterPartitionAction::Add { .. }) => {
             Some("ALTER TABLE ADD PARTITION")

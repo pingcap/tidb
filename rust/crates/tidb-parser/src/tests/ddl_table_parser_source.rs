@@ -248,6 +248,97 @@ fn builtin_function_names_follow_create_table_ignore_space_boundary() {
     }
 }
 
+/// Complete function-name families from Go `TestBuiltinFuncAsIdentifier`.
+#[test]
+fn ignore_space_mode_promotes_the_complete_builtin_function_set() {
+    let mode = SqlMode {
+        ignore_space: true,
+        ..SqlMode::default()
+    };
+    for (name, args) in [
+        ("BIT_AND", "`c1`"),
+        ("BIT_OR", "`c1`"),
+        ("BIT_XOR", "`c1`"),
+        ("CAST", "1 AS FLOAT"),
+        ("COUNT", "1"),
+        ("CURDATE", ""),
+        ("CURTIME", ""),
+        (
+            "DATE_ADD",
+            "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND",
+        ),
+        (
+            "DATE_SUB",
+            "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND",
+        ),
+        ("EXTRACT", "SECOND FROM _UTF8MB4'2011-11-11 10:10:10'"),
+        ("GROUP_CONCAT", "`c2`, `c1` SEPARATOR ','"),
+        ("MAX", "`c1`"),
+        ("MID", "_UTF8MB4'Sakila', -5, 3"),
+        ("MIN", "`c1`"),
+        ("NOW", ""),
+        ("POSITION", "_UTF8MB4'bar' IN _UTF8MB4'foobarbar'"),
+        ("STDDEV_POP", "`c1`"),
+        ("STDDEV_SAMP", "`c1`"),
+        ("SUBSTR", "_UTF8MB4'Quadratically', 5"),
+        ("SUBSTRING", "_UTF8MB4'Quadratically', 5"),
+        ("SUM", "`c1`"),
+        ("SYSDATE", ""),
+        ("TRIM", "_UTF8MB4' foo '"),
+        ("VAR_POP", "`c1`"),
+        ("VAR_SAMP", "`c1`"),
+    ] {
+        assert_eq!(
+            r(&format!("select {name}({args})")),
+            format!("SELECT {name}({args})")
+        );
+        assert_eq!(
+            r(&format!("create table {name} (a int)")),
+            format!("CREATE TABLE `{name}` (`a` INT)")
+        );
+        assert!(parse(&format!("create table {name}(a int)")).is_err());
+
+        for sql in [
+            format!("select {name}({args})"),
+            format!("select {name} ({args})"),
+        ] {
+            parse(&sql).unwrap_or_else(|error| panic!("default mode {sql}: {error:?}"));
+            parse_with_sql_mode(&sql, mode).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        }
+        for sql in [
+            format!("create table {name} (a int)"),
+            format!("create table {name}(a int)"),
+        ] {
+            assert!(
+                parse_with_sql_mode(&sql, mode).is_err(),
+                "IGNORE_SPACE must reserve builtin table name: {sql}"
+            );
+        }
+    }
+
+    for (name, args) in [
+        (
+            "ADDDATE",
+            "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND",
+        ),
+        ("SESSION_USER", ""),
+        (
+            "SUBDATE",
+            "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND",
+        ),
+        ("SYSTEM_USER", ""),
+    ] {
+        for sql in [
+            format!("select {name}({args})"),
+            format!("select {name} ({args})"),
+            format!("create table {name} (a int)"),
+            format!("create table {name}(a int)"),
+        ] {
+            parse_with_sql_mode(&sql, mode).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        }
+    }
+}
+
 #[test]
 fn generated_restore_uses_general_column_qualifier_context_flags() {
     // The final `pkg/parser/ast/ddl_test.go:TestGeneratedRestore` case is
@@ -264,7 +355,8 @@ fn generated_restore_uses_general_column_qualifier_context_flags() {
     );
     assert_eq!(
         statement.restore_with_flags(
-            tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
+            tidb_ast::RestoreFlags::DEFAULT
+                | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
                 | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME,
         ),
         "CREATE TABLE `child` (`id` INT GENERATED ALWAYS AS(LOWER(`id`)) STORED)"
@@ -277,11 +369,15 @@ fn generated_restore_uses_general_column_qualifier_context_flags() {
         parse("create table child (id int generated always as(lower(db.child.id)) stored)")
             .expect("parse schema-qualified generated column expression");
     assert_eq!(
-        statement.restore_with_flags(tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME),
+        statement.restore_with_flags(
+            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
+        ),
         "CREATE TABLE `child` (`id` INT GENERATED ALWAYS AS(LOWER(`child`.`id`)) STORED)"
     );
     assert_eq!(
-        statement.restore_with_flags(tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME),
+        statement.restore_with_flags(
+            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+        ),
         "CREATE TABLE `child` (`id` INT GENERATED ALWAYS AS(LOWER(`db`.`id`)) STORED)"
     );
 }

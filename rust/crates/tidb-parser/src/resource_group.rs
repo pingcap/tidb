@@ -90,12 +90,7 @@ impl Parser {
     /// all three statement forms. Preserve that token-shaped name slot,
     /// including reserved words, quoted strings, and the empty EOF token.
     fn parse_resource_group_token_name(&mut self) -> String {
-        let token = self.bump();
-        if token.kind == TokenKind::Str {
-            decode_string(&token.text)
-        } else {
-            token.text
-        }
+        self.parse_any_token_name()
     }
 
     fn parse_resource_group_options(&mut self) -> PResult<Vec<ResourceGroupOption>> {
@@ -334,7 +329,7 @@ impl Parser {
             } else if self.is_kw("EXACT") {
                 self.bump();
                 RunawayWatchType::Exact
-            } else if self.is_kw("PLAN") {
+            } else if self.token_literal_is_at(0, "PLAN") {
                 self.bump();
                 RunawayWatchType::Plan
             } else {

@@ -25,7 +25,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{is_ident_like_name, PResult, Parser};
+use crate::{PResult, Parser};
 
 #[path = "admin/ddl_job_alter.rs"]
 mod ddl_job_alter;
@@ -88,7 +88,9 @@ impl Parser {
             self.expect_kw("ADMIN")?;
             self.expect_kw("CREATE")?;
             self.expect_kw("WORKLOAD")?;
-            self.expect_kw("SNAPSHOT")?;
+            if self.is_kw("SNAPSHOT") {
+                self.bump();
+            }
             return Ok(AdminStmt::CreateWorkloadSnapshot);
         }
         if self.is_kw_at(1, "PLUGINS") {
@@ -145,13 +147,19 @@ impl Parser {
             self.bump();
             true
         } else {
-            self.expect_kw("DISABLE")?;
+            // Go selects DISABLE for every non-ENABLE token and consumes
+            // that token without validating it, including EOF.
+            self.bump();
             false
         };
-        let mut plugins = vec![self.parse_name()?];
-        while self.is_op(",") {
-            self.bump();
-            plugins.push(self.parse_name()?);
+        let mut plugins = Vec::new();
+        while !self.at_eof() && !self.is_op(";") {
+            plugins.push(crate::table_name_token_text(self.bump()));
+            if self.is_op(",") {
+                self.bump();
+            } else {
+                break;
+            }
         }
         Ok(AdminStmt::Plugins { enable, plugins })
     }
@@ -164,10 +172,10 @@ impl Parser {
         self.expect_kw("CLEANUP")?;
         self.expect_kw("TABLE")?;
         self.expect_kw("LOCK")?;
-        let mut tables = vec![self.parse_name_path()?];
+        let mut tables = vec![self.parse_table_name()?];
         while self.is_op(",") {
             self.bump();
-            tables.push(self.parse_name_path()?);
+            tables.push(self.parse_table_name()?);
         }
         Ok(AdminCleanupTableLockStmt { tables })
     }
@@ -178,20 +186,20 @@ impl Parser {
         self.expect_kw("CHECK")?;
         if self.is_kw("TABLE") {
             self.bump();
-            let mut tables = vec![self.parse_name_path()?];
+            let mut tables = vec![self.parse_table_name()?];
             while self.is_op(",") {
                 self.bump();
-                tables.push(self.parse_name_path()?);
+                tables.push(self.parse_table_name()?);
             }
             return Ok(AdminCheckStmt::Table { tables });
         }
         if self.is_kw("INDEX") {
             self.bump();
-            let table = self.parse_name_path()?;
+            let table = self.parse_table_name()?;
             // Go's `parseName` is deliberately narrower than table-name
             // parsing: an index name must be an identifier, not an arbitrary
             // non-reserved keyword.
-            let index = self.parse_name()?;
+            let index = self.parse_name_or_keyword()?;
             let mut handle_ranges = Vec::new();
             if self.is_op("(") {
                 loop {
@@ -223,10 +231,10 @@ impl Parser {
         self.expect_kw("ADMIN")?;
         self.expect_kw("CHECKSUM")?;
         self.expect_kw("TABLE")?;
-        let mut tables = vec![self.parse_name_path()?];
+        let mut tables = vec![self.parse_table_name()?];
         while self.is_op(",") {
             self.bump();
-            tables.push(self.parse_name_path()?);
+            tables.push(self.parse_table_name()?);
         }
         Ok(AdminChecksumStmt { tables })
     }
@@ -240,8 +248,8 @@ impl Parser {
         self.expect_kw("ADMIN")?;
         self.expect_kw(operation)?;
         self.expect_kw("INDEX")?;
-        let table = self.parse_name_path()?;
-        let index = self.parse_name()?;
+        let table = self.parse_table_name()?;
+        let index = self.parse_name_or_keyword()?;
         Ok(AdminRecoverIndexStmt { table, index })
     }
 
@@ -257,7 +265,8 @@ impl Parser {
             false
         };
         self.expect_kw("BDR")?;
-        self.expect_kw("ROLE")?;
+        // Go consumes the noun token without checking that it spells ROLE.
+        self.bump();
         if !is_set {
             return Ok(AdminStmt::UnsetBdrRole);
         }
@@ -307,13 +316,12 @@ impl Parser {
             return Err(self.err_here("expected an ADMIN CHECK INDEX integer handle"));
         }
         self.bump();
-        let value: u64 = token
-            .text
-            .parse()
-            .map_err(|_| self.err_here("ADMIN CHECK INDEX handle is out of signed 64-bit range"))?;
-        value
-            .try_into()
-            .map_err(|_| self.err_here("ADMIN CHECK INDEX handle is out of signed 64-bit range"))
+        let value: u64 = token.text.parse().map_err(|_| {
+            self.err_here("ADMIN CHECK INDEX handle is out of range for signed 64-bit")
+        })?;
+        value.try_into().map_err(|_| {
+            self.err_here("ADMIN CHECK INDEX handle is out of range for signed 64-bit")
+        })
     }
 
     /// Parses `ADMIN SHOW SLOW {RECENT | TOP [INTERNAL | ALL]} count`.
@@ -321,6 +329,12 @@ impl Parser {
         self.expect_kw("ADMIN")?;
         self.expect_kw("SHOW")?;
         self.expect_kw("SLOW")?;
+        if self.at_eof() || self.is_op(";") {
+            return Ok(AdminShowSlowStmt {
+                mode: AdminShowSlowMode::Top(AdminShowSlowTopScope::Default),
+                count: 0,
+            });
+        }
         let mode = if self.is_kw("RECENT") {
             self.bump();
             AdminShowSlowMode::Recent
@@ -388,51 +402,50 @@ impl Parser {
         self.expect_kw("QUERIES")?;
         if self.is_kw("LIMIT") {
             self.bump();
-            let count = self.parse_admin_show_ddl_job_queries_limit_number()?;
-            let offset = if self.is_op(",") {
-                self.bump();
-                let offset = count;
-                let count = self.parse_admin_show_ddl_job_queries_limit_number()?;
-                return Ok(AdminShowDdlJobQueriesStmt::Limit { offset, count });
-            } else if self.is_kw("OFFSET") {
-                self.bump();
-                self.parse_admin_show_ddl_job_queries_limit_number()?
-            } else {
-                0
-            };
+            let mut count = 0;
+            let mut offset = 0;
+            if self.peek().kind == TokenKind::IntLit {
+                count =
+                    self.bump().text.parse().map_err(|_| {
+                        self.err_here("DDL job query LIMIT integer is out of range")
+                    })?;
+                if self.is_op(",") {
+                    self.bump();
+                    offset = count;
+                    if self.peek().kind == TokenKind::IntLit {
+                        count = self.bump().text.parse().map_err(|_| {
+                            self.err_here("DDL job query LIMIT integer is out of range")
+                        })?;
+                    }
+                } else if self.is_kw("OFFSET") {
+                    self.bump();
+                    if self.peek().kind == TokenKind::IntLit {
+                        offset = self.bump().text.parse().map_err(|_| {
+                            self.err_here("DDL job query LIMIT integer is out of range")
+                        })?;
+                    }
+                }
+            }
             return Ok(AdminShowDdlJobQueriesStmt::Limit { offset, count });
         }
 
-        let mut job_ids = vec![self.parse_admin_show_ddl_job_queries_job_id()?];
-        while self.is_op(",") {
-            self.bump();
-            job_ids.push(self.parse_admin_show_ddl_job_queries_job_id()?);
+        let mut job_ids = Vec::new();
+        loop {
+            if self.peek().kind == TokenKind::IntLit {
+                job_ids.push(
+                    self.bump()
+                        .text
+                        .parse()
+                        .map_err(|_| self.err_here("DDL job query ID is out of range"))?,
+                );
+            }
+            if self.is_op(",") {
+                self.bump();
+            } else {
+                break;
+            }
         }
         Ok(AdminShowDdlJobQueriesStmt::JobIds(job_ids))
-    }
-
-    fn parse_admin_show_ddl_job_queries_job_id(&mut self) -> PResult<i64> {
-        let token = self.peek().clone();
-        if token.kind != TokenKind::IntLit {
-            return Err(self.err_here("expected a DDL job query ID"));
-        }
-        self.bump();
-        token
-            .text
-            .parse()
-            .map_err(|_| self.err_here("DDL job query ID is out of signed 64-bit range"))
-    }
-
-    fn parse_admin_show_ddl_job_queries_limit_number(&mut self) -> PResult<u64> {
-        let token = self.peek().clone();
-        if token.kind != TokenKind::IntLit {
-            return Err(self.err_here("expected a DDL job query LIMIT integer"));
-        }
-        self.bump();
-        token
-            .text
-            .parse()
-            .map_err(|_| self.err_here("DDL job query LIMIT integer is out of range"))
     }
 
     /// Parses Go's value-less `ADMIN SHOW DDL` leaf after its typed JOBS and
@@ -450,12 +463,16 @@ impl Parser {
             return false;
         }
         let mut offset = 2;
-        if !is_ident_like_name(self.peek_n(offset)) {
-            return false;
-        }
-        offset += 1;
-        while self.is_op_at(offset, ".") && is_ident_like_name(self.peek_n(offset + 1)) {
-            offset += 2;
+        if self.is_op_at(offset, "*") && self.is_op_at(offset + 1, ".") {
+            offset += 3;
+        } else {
+            if !crate::is_table_name_first_token(self.peek_n(offset)) {
+                return false;
+            }
+            offset += 1;
+            if self.is_op_at(offset, ".") && !self.is_op_at(offset + 1, "*") {
+                offset += 2;
+            }
         }
         self.is_kw_at(offset, "NEXT_ROW_ID")
     }
@@ -465,7 +482,7 @@ impl Parser {
     fn parse_admin_show_next_row_id(&mut self) -> PResult<AdminShowNextRowIdStmt> {
         self.expect_kw("ADMIN")?;
         self.expect_kw("SHOW")?;
-        let table = self.parse_ident_like_name_path()?;
+        let table = self.parse_table_name()?;
         self.expect_kw("NEXT_ROW_ID")?;
         Ok(AdminShowNextRowIdStmt { table })
     }

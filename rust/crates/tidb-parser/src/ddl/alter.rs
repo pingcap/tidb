@@ -16,8 +16,6 @@
 
 #[path = "alter/auto_id_options.rs"]
 pub(super) mod auto_id_options;
-#[path = "alter/auto_increment.rs"]
-pub(super) mod auto_increment;
 #[path = "alter/cache.rs"]
 pub(super) mod cache;
 #[path = "alter/check.rs"]
@@ -40,7 +38,5 @@ pub(super) mod rename_column;
 pub(super) mod rename_index;
 #[path = "alter/repartition.rs"]
 pub(super) mod repartition;
-#[path = "alter/shard_row_id_bits.rs"]
-pub(super) mod shard_row_id_bits;
 #[path = "alter/ttl.rs"]
 pub(super) mod ttl;

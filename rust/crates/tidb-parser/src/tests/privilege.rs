@@ -37,6 +37,23 @@ fn grant_privileges_restore_with_typed_account_authentication() {
 }
 
 #[test]
+fn mariadb_binlog_monitor_alias_is_mode_gated() {
+    let sql = "GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'";
+    assert_eq!(
+        parse_with_mariadb(sql, true).unwrap().restore(),
+        "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"
+    );
+    assert!(parse_with_mariadb(sql, false).is_err());
+
+    let revoke = "REVOKE BINLOG MONITOR ON *.* FROM 'user1'@'localhost'";
+    assert_eq!(
+        parse_with_mariadb(revoke, true).unwrap().restore(),
+        "REVOKE REPLICATION CLIENT ON *.* FROM `user1`@`localhost`"
+    );
+    assert!(parse_with_mariadb(revoke, false).is_err());
+}
+
+#[test]
 fn revoke_standard_privileges_restore_and_reject_unowned_forms() {
     assert_eq!(
         r("revoke select(id), create user on db.t from u, 'v'@'LOCALHOST'"),

@@ -264,6 +264,14 @@ fn alter_table_extended_statistics_transcreate_all_go_ast_restore_rows() {
             "ALTER TABLE t drop stats_extended if exists s1",
             "ALTER TABLE `t` DROP STATS_EXTENDED IF EXISTS `s1`",
         ),
+        (
+            "ALTER TABLE t add stats_extended 's' cardinality ('a',@b)",
+            "ALTER TABLE `t` ADD STATS_EXTENDED `s` CARDINALITY(`a`, `b`)",
+        ),
+        (
+            "ALTER TABLE t drop stats_extended if exists 's'",
+            "ALTER TABLE `t` DROP STATS_EXTENDED IF EXISTS `s`",
+        ),
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
     }
@@ -542,7 +550,19 @@ fn split_region_grammar_uses_typed_admin_and_ddl_envelopes() {
     // `BY` requires one or more values in every tuple.  Empty bounds are a
     // separate Go-supported `BETWEEN` form, tested above.
     assert!(parse("split table t by ()").is_err());
-    assert!(parse("split table t between (1) and (2) regions -1").is_err());
+    assert_eq!(
+        r("split table t between (1) and (2) regions -1"),
+        "SPLIT TABLE `t` BETWEEN (1) AND (2) REGIONS -1"
+    );
+    assert_eq!(
+        r("split table t between (1) and (2) regions +2"),
+        "SPLIT TABLE `t` BETWEEN (1) AND (2) REGIONS 2"
+    );
+    assert_eq!(
+        r("split table t between (1) and (2) regions -9223372036854775808"),
+        "SPLIT TABLE `t` BETWEEN (1) AND (2) REGIONS -9223372036854775808"
+    );
+    assert!(parse("split table t between (1) and (2) regions 9223372036854775808").is_err());
 }
 
 #[test]
@@ -602,6 +622,7 @@ fn create_database_options_restore_and_scope() {
         "CREATE DATABASE IF NOT EXISTS `app`"
     );
     assert_eq!(r("create database app"), "CREATE DATABASE `app`");
+    assert_eq!(r("create database 'app'"), "CREATE DATABASE `app`");
     assert_eq!(
         r("create database if not exists `app``archive`"),
         "CREATE DATABASE IF NOT EXISTS `app``archive`"
@@ -613,6 +634,10 @@ fn create_database_options_restore_and_scope() {
     assert_eq!(
         r("create database app character set utf8 collate utf8_bin"),
         "CREATE DATABASE `app` CHARACTER SET = utf8 COLLATE = utf8_bin"
+    );
+    assert_eq!(
+        r("create database app char utf8 placement 123"),
+        "CREATE DATABASE `app` CHARACTER SET = utf8 PLACEMENT POLICY = `123`"
     );
     assert_eq!(
         r("create database app default charset = 'utf8mb4' default collate utf8mb4_roman_ci"),
@@ -631,11 +656,20 @@ fn create_database_options_restore_and_scope() {
         "CREATE DATABASE `app` SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"
     );
     assert!(parse("create database app character set uft8").is_err());
+    assert!(parse("create database app character set ucs2").is_err());
     assert!(parse("create database app default unsupported").is_err());
 }
 
 #[test]
 fn test_alter_database_restore() {
+    assert_eq!(
+        r("alter database 'db1' charset utf8"),
+        "ALTER DATABASE `db1` CHARACTER SET = utf8"
+    );
+    assert_eq!(
+        r("alter database character utf8 placement p"),
+        "ALTER DATABASE CHARACTER SET = utf8 PLACEMENT POLICY = `p`"
+    );
     assert_eq!(
         r("alter database db1 default character set = utf8 collate = utf8_bin"),
         "ALTER DATABASE `db1` CHARACTER SET = utf8 COLLATE = utf8_bin"
@@ -1972,15 +2006,15 @@ fn alter_table_multi_specs_preserve_go_order_and_separators() {
         "ALTER TABLE `t` ADD CONSTRAINT `c_1` CHECK(1+1) NOT ENFORCED, ADD UNIQUE(`a`)"
     );
 
-    // Commas owned by one spec remain inside its typed payload; only the
-    // comma left after that payload separates the following spec.
-    assert_eq!(
-        r("alter table t drop partition p0,p1, add column c int"),
-        "ALTER TABLE `t` DROP PARTITION `p0`,`p1`, ADD COLUMN `c` INT"
-    );
-    assert_eq!(
-        r("alter table t set tiflash replica 2 location labels 'a','b', add column c int"),
-        "ALTER TABLE `t` SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b', ADD COLUMN `c` INT"
+    // Go's `parseIdentList` owns every comma after DROP PARTITION. It consumes
+    // `ADD` as another partition name, then rejects the leftover COLUMN; this
+    // is not a valid multi-spec boundary.
+    assert!(parse("alter table t drop partition p0,p1, add column c int").is_err());
+    // The label list owns every following comma, so Go tries to parse ADD as
+    // another string label and rejects this as a multi-spec boundary.
+    assert!(
+        parse("alter table t set tiflash replica 2 location labels 'a','b', add column c int")
+            .is_err()
     );
 
     // REMOVE PARTITIONING is Go's terminal AlterTablePartitionOpt: no comma
@@ -2046,8 +2080,8 @@ fn alter_table_affinity_keeps_the_go_string_literal_boundary() {
     let alt = ddl_payload!(stmt, AlterTable);
     assert_eq!(
         only_alter_action(&alt),
-        AlterTableAction::SetAffinity {
-            level: "partition".to_string(),
+        AlterTableAction::SetTableOptions {
+            options: vec![TableOption::Affinity("partition".to_string())],
         }
     );
     for sql in [
@@ -2208,6 +2242,11 @@ fn alter_table_tiflash_replica_and_compact_are_typed_and_restore_like_go() {
         r("alter table t compact tikv"),
         "ALTER TABLE `t` COMPACT TIKV REPLICA"
     );
+    assert_eq!(
+        r("alter table t compact partition 'p'"),
+        "ALTER TABLE `t` COMPACT PARTITION `p`"
+    );
+    assert!(parse("alter table t compact partition select").is_err());
 }
 
 #[test]
@@ -2224,6 +2263,10 @@ fn alter_table_exchange_partition() {
     assert_eq!(
         r("alter table pt exchange partition p0 with table archive without validation"),
         "ALTER TABLE `pt` EXCHANGE PARTITION `p0` WITH TABLE `archive` WITHOUT VALIDATION"
+    );
+    assert_eq!(
+        r("alter table pt exchange partition 'p' with table a.1"),
+        "ALTER TABLE `pt` EXCHANGE PARTITION `p` WITH TABLE `a`.`1`"
     );
 
     let stmt = ddl_payload!(
@@ -2262,6 +2305,10 @@ fn alter_table_drop_partition() {
         r("alter table pt drop partition if exists p0"),
         "ALTER TABLE `pt` DROP PARTITION IF EXISTS `p0`"
     );
+    assert_eq!(
+        r("alter table pt drop partition 'p', @q"),
+        "ALTER TABLE `pt` DROP PARTITION `p`,`q`"
+    );
 
     let stmt = ddl_payload!(
         parse("alter table pt drop partition if exists p0, p1").unwrap(),
@@ -2276,6 +2323,7 @@ fn alter_table_drop_partition() {
     );
 
     assert!(parse("alter table pt drop partition").is_err());
+    assert!(parse("alter table pt drop partition p0, add column c int").is_err());
 }
 
 #[test]
@@ -2318,7 +2366,7 @@ fn alter_table_modify_change_column() {
         only_alter_action(&alt),
         AlterTableAction::ChangeColumn {
             if_exists: false,
-            old_name: "b".to_string(),
+            old_name: vec!["b".to_string()],
             column: ColumnDef {
                 qualifier: vec![],
                 name: "c".to_string(),
@@ -2353,6 +2401,15 @@ fn alter_table_rename() {
         r("alter table t rename as t2"),
         "ALTER TABLE `t` RENAME AS `t2`"
     );
+    assert_eq!(
+        r("alter table t rename to a.1"),
+        "ALTER TABLE `t` RENAME AS `a`.`1`"
+    );
+    assert_eq!(
+        r("alter table t rename to 'x'"),
+        "ALTER TABLE `t` RENAME AS `x`"
+    );
+    assert!(parse("alter table t rename to a.b.c").is_err());
     let stmt = parse("alter table t rename to t2").unwrap();
     let alt = ddl_payload!(stmt, AlterTable);
     assert_eq!(
@@ -2636,4 +2693,160 @@ fn enum_set_column_types() {
         r("create table t (a enum('a') binary)"),
         "CREATE TABLE `t` (`a` ENUM('a') BINARY)"
     );
+}
+
+/// `pkg/parser/ddl_alter_handlers.go` recoverable warnings.
+#[test]
+fn alter_table_source_warnings() {
+    for (sql, expected) in [
+        (
+            "ALTER TABLE t ADD PARTITION NO_WRITE_TO_BINLOG",
+            "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.",
+        ),
+        (
+            "ALTER TABLE t COALESCE PARTITION LOCAL 1",
+            "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.",
+        ),
+        (
+            "ALTER TABLE t LAST PARTITION LESS THAN (10) LOCAL",
+            "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.",
+        ),
+        (
+            "ALTER TABLE t CHECK PARTITION ALL",
+            "The CHECK PARTITIONING clause is parsed but not implement yet.",
+        ),
+        (
+            "ALTER TABLE t IMPORT TABLESPACE",
+            "The IMPORT TABLESPACE clause is parsed but ignored by all storage engines.",
+        ),
+        (
+            "ALTER TABLE t DISCARD PARTITION ALL TABLESPACE",
+            "The DISCARD PARTITION TABLESPACE clause is parsed but ignored by all storage engines.",
+        ),
+        (
+            "ALTER TABLE t SECONDARY_LOAD",
+            "The SECONDARY_LOAD clause is parsed but not implement yet.",
+        ),
+        (
+            "ALTER TABLE t SECONDARY_UNLOAD",
+            "The SECONDARY_UNLOAD VALIDATION clause is parsed but not implement yet.",
+        ),
+    ] {
+        let output = parse_with_warnings(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(
+            output
+                .warnings
+                .iter()
+                .map(|warning| warning.message.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected],
+            "{sql}"
+        );
+    }
+}
+
+/// `pkg/parser/ddl_alter_parser.go` identifier and lenient ALTER boundaries.
+#[test]
+fn alter_table_parser_source_boundaries() {
+    for (sql, expected) in [
+        (
+            "ALTER IGNORE TABLE t ADD COLUMN a INT",
+            "ALTER TABLE `t` ADD COLUMN `a` INT",
+        ),
+        (
+            "ALTER TABLE t CHANGE a.b c INT",
+            "ALTER TABLE `t` CHANGE COLUMN `a`.`b` `c` INT",
+        ),
+        (
+            "ALTER TABLE t MODIFY c INT AFTER @a",
+            "ALTER TABLE `t` MODIFY COLUMN `c` INT AFTER `a`",
+        ),
+        (
+            "ALTER TABLE t ORDER BY @a DESC",
+            "ALTER TABLE `t` ORDER BY `a` DESC",
+        ),
+        (
+            "ALTER TABLE t ADD PARTITION (PARTITION p VALUES LESS THAN (a AND b))",
+            "ALTER TABLE `t` ADD PARTITION (PARTITION `p` VALUES LESS THAN (`a` AND `b`))",
+        ),
+        (
+            "ALTER TABLE t ADD PARTITION (PARTITION p VALUES LESS THAN (1) (SUBPARTITION 's' COMMENT 'x'))",
+            "ALTER TABLE `t` ADD PARTITION (PARTITION `p` VALUES LESS THAN (1) (SUBPARTITION `s` COMMENT = 'x'))",
+        ),
+        (
+            "ALTER TABLE t SPLIT TABLE BY 1,2",
+            "ALTER TABLE `t` SPLIT BY (1),(2)",
+        ),
+        (
+            "ALTER TABLE t SPLIT INDEX @i BY (1)",
+            "ALTER TABLE `t` SPLIT INDEX `i` BY (1)",
+        ),
+        (
+            "ALTER TABLE t SPLIT REGION",
+            "ALTER TABLE `t` SPLIT BETWEEN () AND () REGIONS 0",
+        ),
+        (
+            "ALTER TABLE t ANALYZE PARTITION @p INDEX @i,@j WITH 1 TOPN,2 BUCKETS",
+            "ANALYZE TABLE `t` PARTITION `p` INDEX `i`,`j` WITH 1 TOPN, 2 BUCKETS",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+    assert!(parse("ALTER TABLE a.b.c ADD COLUMN d INT").is_err());
+    assert!(parse("ALTER TABLE t ADD PARTITION (PARTITION 'p' VALUES LESS THAN (1))").is_err());
+    assert!(
+        parse("ALTER TABLE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a', ADD COLUMN b INT").is_err()
+    );
+}
+
+/// `pkg/parser/ddl_drop_parser.go` broad source-owned name boundaries.
+#[test]
+fn drop_parser_source_boundaries() {
+    for (sql, expected) in [
+        ("DROP INDEX 1 ON 't'", "DROP INDEX `1` ON `t`"),
+        ("RENAME TABLE 'a' TO 'b'", "RENAME TABLE `a` TO `b`"),
+        ("DROP VIEW 'v' CASCADE", "DROP VIEW `v`"),
+        ("TRUNCATE 't'", "TRUNCATE TABLE `t`"),
+        (
+            "DROP PROCEDURE IF EXISTS 'db'.'p'",
+            "DROP PROCEDURE IF EXISTS `db`.`p`",
+        ),
+        (
+            "DROP STATS 't' PARTITION @p",
+            "DROP STATS `t` PARTITION `p`",
+        ),
+        (
+            "DROP STATS t PARTITION max",
+            "DROP STATS `t` PARTITION `max`",
+        ),
+        (
+            "ANALYZE TABLE 't' PARTITION 'p' INDEX 'i',@j WITH 1 TOPN",
+            "ANALYZE TABLE `t` PARTITION `p` INDEX `i`,`j` WITH 1 TOPN",
+        ),
+        (
+            "ANALYZE TABLE t COLUMNS @a,'b'",
+            "ANALYZE TABLE `t` COLUMNS `a`,`b`",
+        ),
+        (
+            "ANALYZE TABLE t UPDATE HISTOGRAM ON @a,'b'",
+            "ANALYZE TABLE `t` UPDATE HISTOGRAM ON `a`,`b`",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+
+    assert!(parse("DROP STATS t PARTITION 'p'").is_err());
+    for (sql, expected) in [
+        (
+            "DROP STATS t GLOBAL",
+            "'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead",
+        ),
+        (
+            "DROP STATS t PARTITION p",
+            "'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release.",
+        ),
+    ] {
+        let output = parse_with_warnings(sql).unwrap();
+        assert_eq!(output.warnings[0].message, expected, "{sql}");
+    }
 }

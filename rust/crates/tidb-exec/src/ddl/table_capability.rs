@@ -436,7 +436,6 @@ pub(super) fn executable_alter_action(
         AlterTableAction::SetTiFlashReplica { .. } => Some("ALTER TABLE SET TIFLASH REPLICA"),
         AlterTableAction::Compact { .. } => Some("ALTER TABLE COMPACT"),
         AlterTableAction::MaskingPolicy(_) => Some("ALTER TABLE MASKING POLICY"),
-        AlterTableAction::SetAffinity { .. } => Some("ALTER TABLE AFFINITY"),
         AlterTableAction::WithValidation | AlterTableAction::WithoutValidation => {
             Some("ALTER TABLE VALIDATION")
         }
@@ -479,6 +478,11 @@ pub(super) fn executable_alter_action(
             if matches!(options.as_slice(), [TableOption::PlacementPolicy(_)]) =>
         {
             Some("ALTER TABLE PLACEMENT POLICY")
+        }
+        AlterTableAction::SetTableOptions { options }
+            if matches!(options.as_slice(), [TableOption::Affinity(_)]) =>
+        {
+            Some("ALTER TABLE AFFINITY")
         }
         AlterTableAction::SetTableOptions { options }
             if options.iter().all(|option| {

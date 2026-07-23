@@ -31,6 +31,10 @@ fn alter_rename_column_testddl_rows_match_go_restore() {
             "ALTER TABLE t RENAME COLUMN `a` TO `b`",
             "ALTER TABLE `t` RENAME COLUMN `a` TO `b`",
         ),
+        (
+            "ALTER TABLE t RENAME COLUMN 'a' TO @b",
+            "ALTER TABLE `t` RENAME COLUMN `a` TO `b`",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }

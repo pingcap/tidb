@@ -412,11 +412,13 @@ pub(crate) fn resolve_windows(expr: &Expr, windows: &[(Expr, Vec<Datum>)], row_i
             expr,
             pattern,
             not,
+            ilike,
             escape,
         } => Expr::Like {
             expr: Box::new(resolve_windows(expr, windows, row_idx)),
             pattern: Box::new(resolve_windows(pattern, windows, row_idx)),
             not: *not,
+            ilike: *ilike,
             escape: *escape,
         },
         Expr::Regexp { expr, pattern, not } => Expr::Regexp {
@@ -660,11 +662,13 @@ fn rewrite_window_over(expr: &Expr, windows: &[(String, WindowDef)]) -> Result<E
             expr,
             pattern,
             not,
+            ilike,
             escape,
         } => Expr::Like {
             expr: Box::new(rewrite_window_over(expr, windows)?),
             pattern: Box::new(rewrite_window_over(pattern, windows)?),
             not: *not,
+            ilike: *ilike,
             escape: *escape,
         },
         Expr::Regexp { expr, pattern, not } => Expr::Regexp {

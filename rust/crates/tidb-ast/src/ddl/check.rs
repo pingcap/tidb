@@ -33,10 +33,10 @@ pub struct CheckConstraintDefinition {
 
 impl CheckConstraintDefinition {
     pub(super) fn restore_into(&self, out: &mut String) {
-        self.restore_into_with_context(out, RestoreContext::default());
+        self.restore_into_with_context(out, &RestoreContext::default());
     }
 
-    pub(super) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(super) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         if let Some(name) = &self.name {
             out.push_str("CONSTRAINT ");
             out.push_str(&back_quote(name));

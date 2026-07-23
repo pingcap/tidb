@@ -16,7 +16,7 @@
 
 use tidb_ast::{
     AdminStmt, BeginStmt, CompletionType, DdlStmt, DmlStmt, DropStatsStmt, Expr, LoadStatsStmt,
-    PrepareSource, QueryStmt, SessionStmt, Stmt, TransactionMode,
+    PrepareSource, SessionStmt, Stmt, TransactionMode,
 };
 use tidb_lexer::TokenKind;
 
@@ -25,17 +25,26 @@ use crate::{decode_at_name, decode_string, prec, PResult, Parser};
 impl Parser {
     // ---- statements ----
 
+    pub(crate) fn is_query_start_at(&self, offset: usize) -> bool {
+        self.is_kw_at(offset, "SELECT")
+            || self.is_kw_at(offset, "WITH")
+            || self.is_kw_at(offset, "TABLE")
+            || self.is_kw_at(offset, "VALUES")
+    }
+
     pub(crate) fn starts_parenthesized_query(&self) -> bool {
         let mut offset = 0;
         while self.peek_n(offset).kind == TokenKind::Op && self.peek_n(offset).text == "(" {
             offset += 1;
         }
-        offset > 0 && (self.is_kw_at(offset, "SELECT") || self.is_kw_at(offset, "WITH"))
+        offset > 0 && self.is_query_start_at(offset)
     }
 
     pub(crate) fn parse_statement(&mut self) -> PResult<Stmt> {
         self.skip_semicolons();
-        if self.is_kw("PLAN") && self.is_kw_at(1, "REPLAYER") {
+        if self.is_kw("SLOW") {
+            self.parse_slow_query_statement()
+        } else if self.is_kw("PLAN") && self.is_kw_at(1, "REPLAYER") {
             self.parse_plan_replayer_dump_explain()
         } else if self.is_kw("TRACE") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Trace(
@@ -69,7 +78,7 @@ impl Parser {
             self.bump();
             self.bump();
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-                AdminStmt::DropStatistics(self.parse_name_or_keyword()?),
+                AdminStmt::DropStatistics(crate::table_name_token_text(self.bump())),
             )))
         } else if self.is_kw("SET") && self.is_kw_at(1, "CONFIG") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::SetConfig(
@@ -103,18 +112,18 @@ impl Parser {
             // query, DML, or ALTER target remains an EXPLAIN wrapper even
             // when the source spelling was DESC or DESCRIBE.
             self.parse_explain_tail()
-        } else if self.is_kw("SELECT") || self.starts_parenthesized_query() {
+        } else if self.is_kw("SELECT")
+            || self.is_kw("TABLE")
+            || self.is_kw("VALUES")
+            || self.starts_parenthesized_query()
+        {
             Ok(Stmt::Query(tidb_ast::NodeBox::new(
                 self.parse_select_or_setopr()?,
             )))
-        } else if self.is_kw("TABLE") {
-            Ok(Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(
-                Box::new(self.parse_table_statement()?),
-            ))))
-        } else if self.is_kw("VALUES") {
-            Ok(Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(
-                Box::new(self.parse_values_statement()?),
-            ))))
+        } else if self.is_kw("CALL") {
+            Ok(Stmt::Dml(tidb_ast::NodeBox::new(DmlStmt::Call(Box::new(
+                self.parse_call()?,
+            )))))
         } else if self.is_kw("BATCH") {
             Ok(Stmt::Dml(tidb_ast::NodeBox::new(DmlStmt::Batch(Box::new(
                 self.parse_batch_dml()?,
@@ -137,13 +146,14 @@ impl Parser {
         } else if self.is_kw("DROP") && self.is_kw_at(1, "STATS") {
             self.bump();
             self.bump();
-            let mut tables = vec![self.parse_name_path()?];
+            let mut tables = vec![self.parse_table_name()?];
             while self.is_op(",") {
                 self.bump();
-                tables.push(self.parse_name_path()?);
+                tables.push(self.parse_table_name()?);
             }
             let global = if self.is_kw("GLOBAL") {
                 self.bump();
+                self.warn("'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead");
                 true
             } else {
                 false
@@ -151,11 +161,12 @@ impl Parser {
             let mut partitions = Vec::new();
             if self.is_kw("PARTITION") {
                 self.bump();
-                partitions.push(self.parse_name()?);
+                partitions.push(self.parse_non_string_ident_like_name()?);
                 while self.is_op(",") {
                     self.bump();
-                    partitions.push(self.parse_name()?);
+                    partitions.push(self.parse_non_string_ident_like_name()?);
                 }
+                self.warn("'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release.");
             }
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::DropStats(
                 Box::new(DropStatsStmt {
@@ -275,7 +286,11 @@ impl Parser {
                     Box::new(self.parse_revoke_privilege_stmt()?),
                 ))))
             }
-        } else if self.is_kw("ANALYZE") && self.is_kw_at(1, "INCREMENTAL") {
+        } else if self.is_kw("ANALYZE")
+            && (self.is_kw_at(1, "INCREMENTAL")
+                || ((self.is_kw_at(1, "NO_WRITE_TO_BINLOG") || self.is_kw_at(1, "LOCAL"))
+                    && self.is_kw_at(2, "INCREMENTAL")))
+        {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 AdminStmt::AnalyzeIncremental(Box::new(self.parse_analyze_incremental()?)),
             )))
@@ -295,11 +310,13 @@ impl Parser {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::OptimizeTable(
                 Box::new(self.parse_optimize_table()?),
             ))))
-        } else if self.is_kw("FLASHBACK")
-            && (self.is_kw_at(1, "DATABASE") || self.is_kw_at(1, "SCHEMA"))
-        {
+        } else if self.is_kw("RECOVER") && self.is_kw_at(1, "TABLE") {
+            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::RecoverTable(
+                Box::new(self.parse_recover_table()?),
+            ))))
+        } else if self.is_kw("FLASHBACK") {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
-                DdlStmt::FlashbackDatabase(Box::new(self.parse_flashback_database()?)),
+                self.parse_flashback_statement()?,
             )))
         } else if self.is_kw("ADMIN") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
@@ -380,7 +397,10 @@ impl Parser {
                 name,
                 options,
             })))
-        } else if self.is_kw("ALTER") && self.is_kw_at(1, "TABLE") {
+        } else if self.is_kw("ALTER")
+            && (self.is_kw_at(1, "TABLE")
+                || (self.is_kw_at(1, "IGNORE") && self.is_kw_at(2, "TABLE")))
+        {
             self.parse_alter_table_statement()
         } else if self.is_kw("ALTER") && self.is_kw_at(1, "INSTANCE") {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterInstance(
@@ -424,10 +444,13 @@ impl Parser {
             self.bump(); // DROP
             self.bump(); // VIEW
             let if_exists = self.parse_if_exists()?;
-            let mut names = vec![self.parse_name_path()?];
+            let mut names = vec![self.parse_table_name()?];
             while self.is_op(",") {
                 self.bump();
-                names.push(self.parse_name_path()?);
+                names.push(self.parse_table_name()?);
+            }
+            if self.is_kw("RESTRICT") || self.is_kw("CASCADE") {
+                self.bump();
             }
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::DropView {
                 if_exists,
@@ -447,7 +470,13 @@ impl Parser {
                 // TiDB and restored with a quoted name.  Keep this broad
                 // identifier-like slot local to DROP DATABASE rather than
                 // widening the stricter parse_name contract globally.
-                name: self.parse_ident_like_name()?,
+                name: {
+                    let token = self.bump();
+                    if token.kind == TokenKind::Eof {
+                        return Err(self.err_here("expected database name"));
+                    }
+                    crate::table_name_token_text(token)
+                },
             })))
         } else if self.is_kw("TRUNCATE") {
             // `TRUNCATE [TABLE] name` — the `TABLE` keyword is optional
@@ -457,7 +486,7 @@ impl Parser {
                 self.bump();
             }
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::TruncateTable(
-                Box::new(self.parse_name_path()?),
+                Box::new(self.parse_table_name()?),
             ))))
         } else if self.is_kw("USE") {
             // `USE dbname` — a single database identifier.
@@ -468,7 +497,7 @@ impl Parser {
                 // while reserved grammar words such as SELECT remain errors.
                 // Keep this broader slot local to USE rather than widening
                 // parse_name globally.
-                self.parse_name_or_keyword()?,
+                self.parse_ident_like_name()?,
             ))))
         } else if self.is_kw("PREPARE") {
             self.bump();
@@ -518,19 +547,22 @@ impl Parser {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 AdminStmt::ShowCreateUser(crate::user::parse_show_create_user(self)?),
             )))
-        } else if self.is_kw("SHOW") && self.is_kw_at(1, "GRANTS") {
+        } else if self.is_kw("SHOW") && self.ident_like_literal_is_at(1, "GRANTS") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::ShowGrants(
                 Box::new(self.parse_show_grants()?),
             ))))
         } else if self.is_kw("SHOW")
-            && (self.is_kw_at(1, "BINDINGS")
+            && (self.ident_like_literal_is_at(1, "BINDINGS")
                 || ((self.is_kw_at(1, "GLOBAL") || self.is_kw_at(1, "SESSION"))
-                    && self.is_kw_at(2, "BINDINGS")))
+                    && self.token_literal_is_at(2, "BINDINGS")))
         {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 AdminStmt::ShowBindings(Box::new(self.parse_show_bindings()?)),
             )))
-        } else if self.is_kw("SHOW") && (self.is_kw_at(1, "BR") || self.is_kw_at(1, "BACKUP")) {
+        } else if self.is_kw("SHOW")
+            && (self.ident_like_literal_is_at(1, "BR")
+                || self.ident_like_literal_is_at(1, "BACKUP"))
+        {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Brie(
                 Box::new(self.parse_show_brie()?),
             ))))

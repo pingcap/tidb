@@ -15,8 +15,8 @@
 
 use crate::util::push_name_path;
 use crate::{
-    DeleteStmt, DistributeTableStmt, ImportIntoStmt, InsertStmt, LoadDataStmt, UpdateStmt,
-    WithClause,
+    DeleteStmt, DistributeTableStmt, Expr, ImportIntoStmt, InsertStmt, LoadDataStmt,
+    RestoreContext, UpdateStmt, WithClause,
 };
 
 /// A statement that mutates table rows.
@@ -44,25 +44,56 @@ pub enum DmlStmt {
     Batch(Box<BatchDmlStmt>),
     /// A physical `DISTRIBUTE TABLE` request.
     DistributeTable(Box<DistributeTableStmt>),
+    /// A stored-procedure invocation.
+    Call(Box<CallStmt>),
 }
 
 impl DmlStmt {
     /// Appends the DML statement's canonical SQL to `out`.
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_with_context(out, &RestoreContext::default());
+    }
+
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             Self::With { with, statement } => {
-                with.restore_into(out);
+                let scoped = with.restore_into_with_context(out, context);
                 out.push(' ');
-                statement.restore_into(out);
+                statement.restore_into_with_context(out, &scoped);
             }
-            Self::Insert(insert) => insert.restore_into(out),
-            Self::Update(update) => update.restore_into(out),
-            Self::Delete(delete) => delete.restore_into(out),
+            Self::Insert(insert) => insert.restore_into_with_context(out, context),
+            Self::Update(update) => update.restore_into_with_context(out, context),
+            Self::Delete(delete) => delete.restore_into_with_context(out, context),
             Self::ImportInto(import) => import.restore_into(out),
             Self::LoadData(load) => load.restore_into(out),
             Self::Batch(batch) => batch.restore_into(out),
             Self::DistributeTable(distribute) => distribute.restore_into(out),
+            Self::Call(call) => call.restore_into(out),
         }
+    }
+}
+
+/// `CALL procedure[(arg, ...)]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallStmt {
+    /// Qualified procedure name.
+    pub name: Vec<String>,
+    /// Call arguments.
+    pub args: Vec<Expr>,
+}
+
+impl CallStmt {
+    fn restore_into(&self, out: &mut String) {
+        out.push_str("CALL ");
+        push_name_path(out, &self.name);
+        out.push('(');
+        for (index, arg) in self.args.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            arg.restore_into(out);
+        }
+        out.push(')');
     }
 }
 
@@ -202,6 +233,25 @@ impl crate::Visitable for DmlStmt {
                     return false;
                 }
                 let _ = field_0;
+            }
+            Self::Call(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CallStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        for arg in &mut self.args {
+            if !crate::Visitable::accept(arg, visitor) {
+                return false;
             }
         }
         visitor.leave(self)

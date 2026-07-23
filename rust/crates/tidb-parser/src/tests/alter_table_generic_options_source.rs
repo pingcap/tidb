@@ -29,6 +29,22 @@ fn alter_table_generic_options_match_go_restore() {
             "ALTER TABLE t PRE_SPLIT_REGIONS=6",
             "ALTER TABLE `t` PRE_SPLIT_REGIONS = 6",
         ),
+        (
+            "ALTER TABLE t AUTO_INCREMENT=1 COMMENT='x'",
+            "ALTER TABLE `t` AUTO_INCREMENT = 1 COMMENT = 'x'",
+        ),
+        (
+            "ALTER TABLE t AUTO_ID_CACHE=1 ROW_FORMAT=dynamic",
+            "ALTER TABLE `t` AUTO_ID_CACHE = 1 ROW_FORMAT = DYNAMIC",
+        ),
+        (
+            "ALTER TABLE t SHARD_ROW_ID_BITS=4 COMMENT='x'",
+            "ALTER TABLE `t` SHARD_ROW_ID_BITS = 4 COMMENT = 'x'",
+        ),
+        (
+            "ALTER TABLE t TTL=c + INTERVAL 1 DAY TTL_ENABLE='on' TTL_JOB_INTERVAL='1h'",
+            "ALTER TABLE `t` TTL = `c` + INTERVAL 1 DAY TTL_ENABLE = 'ON' TTL_JOB_INTERVAL = '1h'",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }

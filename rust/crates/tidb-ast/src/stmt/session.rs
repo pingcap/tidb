@@ -1,8 +1,8 @@
 use crate::{
     set::restore_set_charset,
     util::{back_quote, escape_string_literal},
-    BeginStmt, CharsetSetKind, CompletionType, Expr, PrepareSource, SetResourceGroupStmt,
-    SetSessionStatesStmt, SetStmt, SetUserVarStmt, UserSpec,
+    BeginStmt, CharsetSetKind, CompletionType, Expr, PrepareSource, SetItem, SetResourceGroupStmt,
+    SetSessionStatesStmt, SetStmt, SetUserVarStmt, SystemVariableAssignment, UserSpec,
 };
 
 /// Session-scoped statements, grouped behind [`crate::Stmt::Session`].
@@ -22,7 +22,11 @@ pub enum SessionStmt {
         charset: Option<String>,
         /// A `SET NAMES` collation, if one survives canonical restore.
         collation: Option<String>,
+        /// Additional comma-separated system-variable assignments.
+        assignments: Vec<SystemVariableAssignment>,
     },
+    /// A comma-separated SET list containing both charset directives and variables.
+    SetMixed(Vec<SetItem>),
     /// `SET PASSWORD [FOR user] = {'password' | PASSWORD('password')}
     /// [RETAIN CURRENT PASSWORD]`.
     ///
@@ -88,7 +92,23 @@ impl SessionStmt {
                 kind,
                 charset,
                 collation,
-            } => restore_set_charset(out, *kind, charset, collation),
+                assignments,
+            } => {
+                restore_set_charset(out, *kind, charset, collation);
+                for assignment in assignments {
+                    out.push_str(", ");
+                    assignment.restore_into(out);
+                }
+            }
+            Self::SetMixed(items) => {
+                out.push_str("SET ");
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    item.restore_into(out);
+                }
+            }
             Self::SetPassword(set_password) => set_password.restore_into(out),
             Self::SetRole(set_role) => set_role.restore_into(out),
             Self::SetDefaultRole(set_default_role) => set_default_role.restore_into(out),
@@ -349,6 +369,7 @@ impl crate::Visitable for SessionStmt {
                 kind,
                 charset,
                 collation,
+                assignments,
             } => {
                 if !crate::Visitable::accept(kind, visitor) {
                     return false;
@@ -356,6 +377,18 @@ impl crate::Visitable for SessionStmt {
                 let _ = kind;
                 let _ = charset;
                 let _ = collation;
+                for value in assignments.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+            }
+            Self::SetMixed(items) => {
+                for value in items.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
             }
             Self::SetPassword(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {

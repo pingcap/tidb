@@ -25,6 +25,51 @@ use crate::{decode_string, prec, select::parse_hint_comment, PResult, Parser};
 use tidb_lexer::TokenKind;
 
 impl Parser {
+    pub(crate) fn parse_call(&mut self) -> PResult<tidb_ast::CallStmt> {
+        self.expect_kw("CALL")?;
+        // Directly preserve `admin_query_parser.go::parseCallStmt` instead
+        // of reusing the generic three-part column/table path parser. CALL
+        // accepts at most `[schema.]procedure`; its first component is an
+        // identifier-like token, while the source deliberately consumes the
+        // token after `.` without validating its class.
+        let first = self.bump();
+        let first_name = match first.kind {
+            TokenKind::Ident => first.text,
+            TokenKind::Keyword if !crate::is_reserved(&first.text) => first.text,
+            TokenKind::Str => decode_string(&first.text),
+            TokenKind::UserVar if first.text.starts_with("@@") => first.text,
+            TokenKind::UserVar => crate::decode_at_name(&first.text),
+            _ => return Err(self.err_here("expected procedure name after CALL")),
+        };
+        let mut name = vec![first_name];
+        if self.is_op(".") {
+            self.bump();
+            if self.at_eof() {
+                return Err(self.err_here("expected procedure name after schema"));
+            }
+            let procedure = self.bump();
+            name.push(match procedure.kind {
+                TokenKind::Str => decode_string(&procedure.text),
+                TokenKind::UserVar if procedure.text.starts_with("@@") => procedure.text,
+                TokenKind::UserVar => crate::decode_at_name(&procedure.text),
+                _ => procedure.text,
+            });
+        }
+        let mut args = Vec::new();
+        if self.is_op("(") {
+            self.bump();
+            if !self.is_op(")") {
+                args.push(self.parse_expr(prec::NONE)?);
+                while self.is_op(",") {
+                    self.bump();
+                    args.push(self.parse_expr(prec::NONE)?);
+                }
+            }
+            self.expect_op(")")?;
+        }
+        Ok(tidb_ast::CallStmt { name, args })
+    }
+
     pub(crate) fn parse_distribute_table(&mut self) -> PResult<DistributeTableStmt> {
         self.expect_kw("DISTRIBUTE")?;
         self.expect_kw("TABLE")?;
@@ -94,7 +139,7 @@ impl Parser {
                     if name.starts_with('@') {
                         return Err(self.err_here("expected a single-@ IMPORT user variable"));
                     }
-                    columns.push(ColumnOrUserVar::UserVar(name.to_owned()));
+                    columns.push(ColumnOrUserVar::UserVar(crate::decode_at_name(&token.text)));
                 } else {
                     columns.push(ColumnOrUserVar::Column(self.parse_name_or_keyword()?));
                 }
@@ -393,6 +438,9 @@ impl Parser {
             // The parenthesized source was consumed at the table/column-list
             // boundary above. Only the trailing ON DUPLICATE clause remains.
         } else if self.is_kw("SET") {
+            if columns_specified {
+                return Err(self.err_here("INSERT column list cannot be followed by SET"));
+            }
             self.bump();
             set_syntax = true;
             let (set_cols, set_vals) = self.parse_set_assignment_list()?;
@@ -543,6 +591,11 @@ impl Parser {
         self.expect_op("(")?;
         let mut row = Vec::new();
         if !self.is_op(")") {
+            // Most INSERT rows are narrow. Reserve exactly the first slot so
+            // a one-value row does not pay Vec's default four-Expr growth;
+            // Expr is intentionally a rich AST enum, so that slack dominates
+            // the source allocation regression's 1,001-row workload.
+            row.reserve_exact(1);
             row.push(self.parse_insert_value()?);
             while self.is_op(",") {
                 self.bump();
@@ -661,7 +714,11 @@ impl Parser {
 
     pub(crate) fn parse_assignment(&mut self, allow_bare_default: bool) -> PResult<Assignment> {
         let col = self.parse_name_path()?;
-        self.expect_op("=")?;
+        if self.is_op("=") || self.is_op(":=") {
+            self.bump();
+        } else {
+            return Err(self.err_here("expected '=' or ':='"));
+        }
         let value = if allow_bare_default {
             self.parse_expr_or_default()?
         } else {
@@ -695,7 +752,8 @@ impl Parser {
             // from the same position, since it may carry an alias/hints).
             let save = self.pos;
             let _ = self.parse_name_path()?;
-            if self.is_op(",") || self.is_kw("USING") {
+            if self.is_op(",") || self.is_kw("USING") || (self.is_op(".") && self.is_op_at(1, "*"))
+            {
                 self.pos = save;
                 let targets = self.parse_delete_targets()?;
                 self.expect_kw("USING")?;
@@ -811,8 +869,10 @@ impl Parser {
     /// raw comment text, matching Go's shared `parseOptHints` call.
     fn parse_dml_hints(&mut self) -> PResult<Vec<Hint>> {
         if self.peek().kind == TokenKind::HintComment {
-            let text = self.bump().text;
-            parse_hint_comment(&text)
+            let token = self.bump();
+            let result = parse_hint_comment(&token.text, self.source_line(token.offset));
+            self.warnings.extend(result.diagnostics);
+            Ok(result.hints)
         } else {
             Ok(Vec::new())
         }

@@ -258,7 +258,7 @@ impl IndexOptions {
 
     /// Restores this option list with a statement-wide source-formatting
     /// context.
-    pub fn restore_with_context(&self, context: RestoreContext) -> String {
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
         let mut out = String::new();
         self.restore_into_with_context(&mut out, context);
         out
@@ -267,7 +267,7 @@ impl IndexOptions {
     /// Appends ordinary canonical index options and reports whether it wrote
     /// any bytes.
     pub(crate) fn restore_into(&self, out: &mut String) -> bool {
-        self.restore_into_with_context(out, RestoreContext::default())
+        self.restore_into_with_context(out, &RestoreContext::default())
     }
 
     /// Appends Go's fixed canonical option order under `context` and reports
@@ -275,7 +275,7 @@ impl IndexOptions {
     pub(crate) fn restore_into_with_context(
         &self,
         out: &mut String,
-        context: RestoreContext,
+        context: &RestoreContext,
     ) -> bool {
         let mut wrote = false;
         let mut push_separator = |out: &mut String| {
@@ -444,7 +444,7 @@ impl IndexConstraintDefinition {
     }
 
     /// Restores this Go constraint shape with `context`.
-    pub fn restore_with_context(&self, context: RestoreContext) -> String {
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
         let mut out = String::new();
         self.restore_into_with_context(&mut out, context);
         out
@@ -452,10 +452,10 @@ impl IndexConstraintDefinition {
 
     /// Appends the ordinary canonical constraint form.
     pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_into_with_context(out, RestoreContext::default());
+        self.restore_into_with_context(out, &RestoreContext::default());
     }
 
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         out.push_str(self.kind.sql());
         if self.if_not_exists && self.kind.supports_if_not_exists() {
             context.write_with_tidb_special_comment(out, FEATURE_TIDB, |out| {
@@ -575,17 +575,17 @@ impl ForeignKeyConstraintDefinition {
     }
 
     /// Restores this Go foreign-key constraint shape with `context`.
-    pub fn restore_with_context(&self, context: RestoreContext) -> String {
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
         let mut out = String::new();
         self.restore_into_with_context(&mut out, context);
         out
     }
 
     pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_into_with_context(out, RestoreContext::default());
+        self.restore_into_with_context(out, &RestoreContext::default());
     }
 
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         out.push_str("CONSTRAINT ");
         if let Some(name) = &self.name {
             out.push_str(&back_quote(name));

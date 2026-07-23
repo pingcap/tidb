@@ -29,6 +29,7 @@ mod charset;
 mod collation;
 mod escape;
 mod features;
+mod keyword_catalog;
 mod keywords;
 mod reader;
 mod reserved;
@@ -44,6 +45,7 @@ pub use features::{
     FEATURE_ID_GLOBAL_INDEX, FEATURE_ID_PLACEMENT, FEATURE_ID_PRESPLIT, FEATURE_ID_RESOURCE_GROUP,
     FEATURE_ID_SPLIT_REGION, FEATURE_ID_TIDB, FEATURE_ID_TTL,
 };
+pub use keyword_catalog::{Keyword, KEYWORDS};
 
 /// Canonicalizes the legacy charset-introducer subset accepted by Go's
 /// `charset.GetDefaultCollationLegacy`. The scanner intentionally recognizes
@@ -60,6 +62,25 @@ pub fn canonical_legacy_charset(name: &str) -> Option<&'static str> {
 }
 pub use reserved::is_reserved;
 pub use token::{Token, TokenKind};
+
+/// The converted value returned by [`Lexer::next_literal`], preserving the
+/// dynamic value classes exposed by Go's `Scanner.LexLiteral`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LiteralValue {
+    /// A non-negative integer fitting in `i64`.
+    Int(i64),
+    /// A non-negative integer requiring the full `u64` range.
+    UInt(u64),
+    /// An IEEE-754 floating-point literal.
+    Float(f64),
+    /// A fixed-point decimal spelling, normalized with a leading zero.
+    Decimal(String),
+    /// A Go string value represented as bytes so non-UTF-8 payloads remain
+    /// representable at the scanner boundary.
+    String(Vec<u8>),
+    /// A hexadecimal or bit literal decoded to its byte representation.
+    Bytes(Vec<u8>),
+}
 
 /// Returns whether `word` is one of TiDB's builtin-function keyword names.
 ///
@@ -83,10 +104,16 @@ use reader::Reader;
 /// TiDB's default SQL mode (escapes on, no ANSI quotes).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SqlMode {
+    /// `REAL_AS_FLOAT`: REAL is parsed as FLOAT instead of DOUBLE.
+    pub real_as_float: bool,
     /// `NO_BACKSLASH_ESCAPES`: backslash is an ordinary character in strings.
     pub no_backslash_escapes: bool,
     /// `ANSI_QUOTES`: double-quoted values are identifiers, not strings.
     pub ansi_quotes: bool,
+    /// `HIGH_NOT_PRECEDENCE`: keyword `NOT` binds like unary `!`.
+    pub high_not_precedence: bool,
+    /// `IGNORE_SPACE`: spaces before `(` do not stop builtin recognition.
+    pub ignore_space: bool,
 }
 
 /// The scanner. Construct with [`Lexer::new`], then pull tokens with
@@ -99,6 +126,9 @@ pub struct Lexer<'a> {
     /// use `.` as a grammar separator, unlike ordinary SQL user-variable
     /// references where it is part of the variable token.
     hint_mode: bool,
+    /// Preserve every optimizer-hint comment while normalizing SQL, matching
+    /// `Scanner.setKeepHint` in the Go parser.
+    keep_hint: bool,
     /// Whether window-function keywords (OVER, ROWS, ...) are recognized.
     support_window_func: bool,
     /// True when a `.` immediately follows the identifier just scanned; used to
@@ -112,6 +142,7 @@ pub struct Lexer<'a> {
     /// the scanner's `lastKeyword`/`lastKeyword2`/`lastKeyword3`, which gate
     /// optimizer-hint recognition.
     kw_hist: [Option<&'static str>; 3],
+    warnings: Vec<String>,
 }
 
 /// Keywords after which a `/*+ ... */` hint comment is recognized
@@ -134,10 +165,12 @@ impl<'a> Lexer<'a> {
             r: Reader::new(sql),
             sql_mode: SqlMode::default(),
             hint_mode: false,
+            keep_hint: false,
             support_window_func: true,
             identifier_dot: false,
             in_bang_comment: false,
             kw_hist: [None, None, None],
+            warnings: Vec::new(),
         }
     }
 
@@ -155,13 +188,24 @@ impl<'a> Lexer<'a> {
         self
     }
 
+    /// Preserves `/*+ ... */` comments regardless of their statement position.
+    pub fn with_keep_hint(mut self) -> Self {
+        self.keep_hint = true;
+        self
+    }
+
     /// Enables or disables window-function keyword recognition.
     pub fn set_support_window_func(&mut self, v: bool) {
         self.support_window_func = v;
     }
 
     /// Collects the entire token stream (including the terminal `Eof`).
-    pub fn tokenize(mut self) -> Vec<Token> {
+    pub fn tokenize(self) -> Vec<Token> {
+        self.tokenize_with_warnings().0
+    }
+
+    /// Collects tokens and recoverable scanner warnings.
+    pub fn tokenize_with_warnings(mut self) -> (Vec<Token>, Vec<String>) {
         let mut out = Vec::new();
         loop {
             let t = self.next_token();
@@ -171,7 +215,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        out
+        (out, self.warnings)
     }
 
     /// Returns the next token, applying keyword recognition and the scanner's
@@ -212,6 +256,45 @@ impl<'a> Lexer<'a> {
             offset: start,
             end_offset: end,
             text,
+        }
+    }
+
+    /// Scans and converts one literal using Go `Scanner.LexLiteral` semantics.
+    ///
+    /// Unlike [`next_token`](Self::next_token), this returns the token's
+    /// dynamic value: numeric literals become numbers/decimal spellings,
+    /// quoted strings are unescaped, hex and bit literals become bytes, and
+    /// all other tokens return their literal text as a byte string.
+    pub fn next_literal(&mut self) -> LiteralValue {
+        let token = self.next_token();
+        let raw = &self.r.src().as_bytes()[token.offset..token.end_offset];
+        match token.kind {
+            TokenKind::IntLit => {
+                let value = token
+                    .text
+                    .parse::<u64>()
+                    .expect("IntLit is validated while scanning");
+                i64::try_from(value).map_or(LiteralValue::UInt(value), LiteralValue::Int)
+            }
+            TokenKind::FloatLit => token
+                .text
+                .parse::<f64>()
+                .map_or_else(|_| LiteralValue::String(Vec::new()), LiteralValue::Float),
+            TokenKind::DecLit => LiteralValue::Decimal(if token.text.starts_with('.') {
+                format!("0{}", token.text)
+            } else {
+                token.text
+            }),
+            TokenKind::HexLit => LiteralValue::Bytes(decode_hex_literal(raw)),
+            TokenKind::BitLit => LiteralValue::Bytes(decode_bit_literal(raw)),
+            TokenKind::Str => LiteralValue::String(decode_quoted_string(
+                raw,
+                self.sql_mode.no_backslash_escapes,
+            )),
+            TokenKind::Keyword if raw == b"\\N" => LiteralValue::String(raw.to_vec()),
+            TokenKind::Invalid => LiteralValue::String(Vec::new()),
+            TokenKind::CharsetIntroducer => LiteralValue::String(token.text.into_bytes()),
+            _ => LiteralValue::String(token.text.into_bytes()),
         }
     }
 
@@ -289,23 +372,6 @@ impl<'a> Lexer<'a> {
         (kind, start, end, text)
     }
 
-    /// Whether a `/*+ ... */` at the current position is recognized as a hint,
-    /// per the scanner's `lastKeyword`/`lastKeyword2`/`lastKeyword3` gating.
-    fn hint_recognized(&self) -> bool {
-        let hinted =
-            matches!(self.kw_hist[0], Some(k) if HINTED_KEYWORDS.binary_search(&k).is_ok());
-        if !hinted {
-            return false;
-        }
-        // `... FOR UPDATE /*+ ... */` is ignored unless it is the
-        // `CREATE BINDING FOR UPDATE ...` case.
-        if self.kw_hist[1] == Some("FOR") {
-            self.kw_hist[2] == Some("BINDING")
-        } else {
-            true
-        }
-    }
-
     /// Decides whether the bare identifier `text` (starting at `start`) is a
     /// keyword, mirroring `Scanner.isTokenIdentifier`.
     fn try_keyword(&mut self, text: &str, start: usize) -> Option<()> {
@@ -330,8 +396,18 @@ impl<'a> Lexer<'a> {
 
         let upper = ascii_upper(text);
 
-        // Builtin function keywords only win when directly followed by '('.
-        let check_bt_func = self.r.peek() == b'(';
+        // Builtin function keywords normally require an adjacent `(`. Under
+        // IGNORE_SPACE, Go scans past whitespace for this one decision without
+        // consuming it from the input stream.
+        let check_bt_func = if self.sql_mode.ignore_space {
+            let mut offset = self.r.offset();
+            while is_space(self.r.byte_at(offset)) {
+                offset += 1;
+            }
+            self.r.byte_at(offset) == b'('
+        } else {
+            self.r.peek() == b'('
+        };
         if check_bt_func && keyword_in(keywords::BUILTIN_FUNC_KEYWORDS, &upper) {
             return Some(());
         }
@@ -445,8 +521,8 @@ impl<'a> Lexer<'a> {
         self.r.inc(); // '@'
         if self.r.peek() == b'@' {
             self.r.inc();
-            // optional global./session./local. prefix
-            for pfx in ["global.", "session.", "local."] {
+            // optional global./session./local./instance. prefix
+            for pfx in ["global.", "session.", "local.", "instance."] {
                 if self.r.starts_with_ci(pfx) {
                     self.r.inc_n(pfx.len());
                     break;
@@ -549,7 +625,7 @@ impl<'a> Lexer<'a> {
                     self.r.inc();
                     self.r.inc_as_long_as(|c| (b'0'..=b'7').contains(&c));
                 }
-                b'x' | b'X' => {
+                b'x' => {
                     self.r.inc();
                     let p1 = self.r.offset();
                     self.r.inc_as_long_as(is_hex_digit);
@@ -560,6 +636,10 @@ impl<'a> Lexer<'a> {
                     }
                     // Hex literal, unless trailing identifier chars glue on.
                     return self.finish_number(start, TokenKind::HexLit);
+                }
+                b'X' => {
+                    self.r.inc_as_long_as(is_ident_char);
+                    return (TokenKind::Invalid, start, self.r.offset());
                 }
                 b'b' => {
                     self.r.inc();
@@ -735,7 +815,26 @@ impl<'a> Lexer<'a> {
                 }
             }
             b'+' => {
-                is_hint = self.hint_recognized();
+                if self.keep_hint {
+                    is_hint = true;
+                } else {
+                    let hinted = matches!(self.kw_hist[0], Some(keyword) if HINTED_KEYWORDS.binary_search(&keyword).is_ok());
+                    if hinted
+                        && self.kw_hist[1] == Some("FOR")
+                        && self.kw_hist[2] != Some("BINDING")
+                    {
+                        let line = self.r.src().as_bytes()[..start]
+                            .iter()
+                            .filter(|byte| **byte == b'\n')
+                            .count()
+                            + 1;
+                        self.warnings.push(format!("near '/*+' at line {line}"));
+                    } else if hinted {
+                        is_hint = true;
+                    } else {
+                        self.warnings.push("[parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.".to_owned());
+                    }
+                }
             }
             _ => {}
         }
@@ -958,6 +1057,77 @@ fn unquote(raw: &str, quote: char) -> String {
         .unwrap_or(raw);
     let doubled: String = [quote, quote].iter().collect();
     inner.replace(&doubled, &quote.to_string())
+}
+
+fn decode_quoted_string(raw: &[u8], no_backslash_escapes: bool) -> Vec<u8> {
+    if raw.len() < 2 {
+        return Vec::new();
+    }
+    let quote = raw[0];
+    let mut out = Vec::with_capacity(raw.len() - 2);
+    let mut index = 1;
+    while index + 1 < raw.len() {
+        let byte = raw[index];
+        if byte == quote && raw.get(index + 1) == Some(&quote) {
+            out.push(quote);
+            index += 2;
+        } else if byte == b'\\' && !no_backslash_escapes {
+            index += 1;
+            if index + 1 > raw.len() {
+                break;
+            }
+            out.extend(unescape_char(raw[index]));
+            index += 1;
+        } else {
+            out.push(byte);
+            index += 1;
+        }
+    }
+    out
+}
+
+fn decode_hex_literal(raw: &[u8]) -> Vec<u8> {
+    let digits = if raw.len() >= 3 && (raw[0] == b'x' || raw[0] == b'X') && raw[1] == b'\'' {
+        &raw[2..raw.len() - 1]
+    } else if raw.len() >= 2 && raw[0] == b'0' && (raw[1] == b'x' || raw[1] == b'X') {
+        &raw[2..]
+    } else {
+        return Vec::new();
+    };
+    let mut padded = Vec::with_capacity(digits.len() + digits.len() % 2);
+    if digits.len() % 2 != 0 {
+        padded.push(b'0');
+    }
+    padded.extend_from_slice(digits);
+    padded
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).expect("hex digits are ASCII");
+            u8::from_str_radix(text, 16).expect("HexLit is validated while scanning")
+        })
+        .collect()
+}
+
+fn decode_bit_literal(raw: &[u8]) -> Vec<u8> {
+    let digits = if raw.len() >= 3 && (raw[0] == b'b' || raw[0] == b'B') && raw[1] == b'\'' {
+        &raw[2..raw.len() - 1]
+    } else if raw.len() >= 2 && raw[0] == b'0' && (raw[1] == b'b' || raw[1] == b'B') {
+        &raw[2..]
+    } else {
+        return Vec::new();
+    };
+    if digits.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![0; digits.len().div_ceil(8)];
+    let padding = out.len() * 8 - digits.len();
+    for (index, bit) in digits.iter().enumerate() {
+        if *bit == b'1' {
+            let position = index + padding;
+            out[position / 8] |= 1 << (7 - position % 8);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

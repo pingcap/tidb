@@ -25,9 +25,9 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     }
     parser.bump();
     parser.bump();
-    let from = parser.parse_name_or_keyword()?;
+    let from = parser.parse_ident_like_name()?;
     parser.expect_kw("TO")?;
-    let to = parser.parse_name_or_keyword()?;
+    let to = parser.parse_ident_like_name()?;
     Ok(Some(AlterTableAction::RenameColumn(RenameColumn {
         from,
         to,

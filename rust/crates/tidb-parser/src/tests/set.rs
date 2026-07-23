@@ -22,11 +22,13 @@ fn user_variable_assignments_restore_as_their_own_typed_set() {
     assert_eq!(r("set @x := 5"), "SET @`x`=5");
     assert_eq!(r("set @X = 1 + 2"), "SET @`X`=1+2");
     assert_eq!(r("set @x = @y"), "SET @`x`=@`y`");
+    assert_eq!(r("set @xx.xx = 666"), "SET @`xx.xx`=666");
     assert_eq!(
         r("set @a = 1, @b := @a + 2, @a = @b + 3"),
         "SET @`a`=1, @`b`=@`a`+2, @`a`=@`b`+3"
     );
     assert!(parse("set @a = 1, @@session.autocommit = 0").is_err());
+    assert!(parse("set xx.xx.xx = 666").is_err());
 }
 
 /// `SET PASSWORD` is a distinct typed session statement, rather than a
@@ -233,8 +235,10 @@ fn charset_commands_are_typed_and_canonical() {
     assert!(parse("set names unknown_charset").is_err());
     assert!(parse("set character utf8").is_err());
     assert!(parse("set charset utf8 collate utf8_general_ci").is_err());
-    // Go's mixed NAMES/system-variable list needs a wider typed AST contract.
-    assert!(parse("set names utf8, autocommit = 1").is_err());
+    assert_eq!(
+        r("set names utf8, autocommit = 1"),
+        "SET NAMES 'utf8', @@SESSION.`autocommit`=1"
+    );
     assert!(parse("set names utf8; set autocommit = 1").is_err());
 }
 
@@ -311,8 +315,9 @@ fn transaction_set_sugar_restores_as_system_variables() {
         assert_eq!(r(sql), expected, "{sql}");
     }
 
-    // GLOBAL transaction settings remain an explicit unsupported branch; the
-    // stale-read form is source-owned by `set_transaction_snapshot_source`.
-    assert!(parse("set global transaction isolation level repeatable read").is_err());
+    assert_eq!(
+        r("set global transaction isolation level repeatable read"),
+        "SET @@GLOBAL.`tx_isolation`=_UTF8MB4'REPEATABLE-READ'"
+    );
     assert!(parse("set transaction isolation level read committed, read only").is_err());
 }

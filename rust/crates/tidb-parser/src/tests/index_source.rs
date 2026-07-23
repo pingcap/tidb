@@ -54,6 +54,69 @@ fn assert_fragment_cases(
     }
 }
 
+/// Direct boundary cases from `ddl_index_parser.go`: every index name/part
+/// slot uses Go `isIdentLike`, references use an exact `[schema.]table`, and
+/// incomplete referential actions materialize the zero option instead of
+/// becoming a Rust-only hard error.
+#[test]
+fn hand_index_parser_identifier_and_reference_boundaries_match_go() {
+    for (sql, expected) in [
+        (
+            "create table t(a int, unique type (a), index ('a'))",
+            "CREATE TABLE `t` (`a` INT,UNIQUE `type`(`a`),INDEX(`a`))",
+        ),
+        (
+            "create table t(a int, constraint 'c' unique(a))",
+            "CREATE TABLE `t` (`a` INT,UNIQUE `c`(`a`))",
+        ),
+        (
+            "create table t(a int, foreign key(a) references x on delete)",
+            "CREATE TABLE `t` (`a` INT,CONSTRAINT FOREIGN KEY (`a`) REFERENCES `x`)",
+        ),
+        (
+            "create table t(a int, foreign key(a) references x on delete set)",
+            "CREATE TABLE `t` (`a` INT,CONSTRAINT FOREIGN KEY (`a`) REFERENCES `x`)",
+        ),
+        (
+            "create table t(a int, foreign key(a) references x match on delete cascade)",
+            "CREATE TABLE `t` (`a` INT,CONSTRAINT FOREIGN KEY (`a`) REFERENCES `x` ON DELETE CASCADE)",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+    assert!(parse("create table t(a int, foreign key(a) references db.t.extra)").is_err());
+
+    for (sql, expected) in [
+        ("create index on t(a)", "CREATE INDEX `` ON `t` (`a`)"),
+        ("create index 'i' on t(a)", "CREATE INDEX `i` ON `t` (`a`)"),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+    assert!(parse("create index i on db.t.extra(a)").is_err());
+}
+
+#[test]
+fn hand_index_parser_source_warnings_match_go() {
+    for (sql, expected) in [
+        (
+            "create table t(a int, foreign key(a) references x match full)",
+            "The MATCH clause is parsed but ignored by all storage engines.",
+        ),
+        (
+            "create table t(a int, foreign key(a) references x on delete set default)",
+            "The SET DEFAULT clause is parsed but ignored by all storage engines.",
+        ),
+        (
+            "create index i on t(a) with parser p",
+            "The WITH PARASER clause is parsed but ignored by all storage engines.",
+        ),
+    ] {
+        let output = parse_with_warnings(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(output.warnings.len(), 1, "source SQL: {sql}");
+        assert_eq!(output.warnings[0].message, expected, "source SQL: {sql}");
+    }
+}
+
 /// All rows from Go `ast/ddl_test.go:68 TestDDLIndexColNameRestore`.
 #[test]
 fn go_ast_test_ddl_index_col_name_restore() {

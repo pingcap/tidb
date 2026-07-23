@@ -29,7 +29,7 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     }
     parser.bump();
     parser.bump();
-    let name = parser.parse_name()?;
+    let name = parser.parse_ident_like_name()?;
     let visibility = if parser.is_kw("VISIBLE") {
         parser.bump();
         IndexVisibility::Visible

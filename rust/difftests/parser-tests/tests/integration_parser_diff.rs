@@ -16,12 +16,9 @@
 //!
 //! This is intentionally an evidence test, not a false all-green parity
 //! assertion: the seed Rust parser implements only a subset of TiDB grammar.
-//! It fails if the static oracle no longer names the exact checked input
-//! inventory, while reporting the complete Go/Rust outcome distribution for
-//! the current parser. It never starts Go; `integration_parser_golden --write`
-//! is the explicit regeneration operation.
-
-use std::process::{Command, Output};
+//! It reports the complete Go/Rust outcome distribution for the checked
+//! oracle. Normal tests only replay that executable oracle; source scanning
+//! and Go capture belong to the explicit regeneration command.
 
 use difftest::parser_oracle::{shared_golden, GoOutcome};
 
@@ -58,35 +55,8 @@ const EXPECTED_COUNTS: Counts = Counts {
     rust_accepted_go_restore_failure: 0,
 };
 
-fn run_difftest_check(binary: &str) -> Output {
-    Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-        .current_dir(
-            difftest::difftest_root()
-                .parent()
-                .expect("difftest lives below the Rust workspace"),
-        )
-        .args([
-            "run", "-q", "-p", "difftest", "--bin", binary, "--", "--check",
-        ])
-        .output()
-        .unwrap_or_else(|error| panic!("run difftest binary {binary}: {error}"))
-}
-
 #[test]
 fn integration_parser_static_go_oracle_reports_rust_outcomes() {
-    let source_inventory = run_difftest_check("integration_parser_inventory");
-    assert!(
-        source_inventory.status.success(),
-        "source parser inventory is stale:\n{}",
-        String::from_utf8_lossy(&source_inventory.stderr)
-    );
-    let output = run_difftest_check("integration_parser_golden");
-    assert!(
-        output.status.success(),
-        "integration parser golden is stale or malformed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
     let records = shared_golden().expect("parse checked integration parser oracle");
     let mut counts = Counts::default();
     for record in records.iter() {
@@ -108,7 +78,15 @@ fn integration_parser_static_go_oracle_reports_rust_outcomes() {
                 .map(|statement| statement.try_restore_bytes().map(|restore| vec![restore]))
         };
         match replay {
-            Err(_) => counts.rust_parse_failure += 1,
+            Err(error) => {
+                if record.outcome == GoOutcome::Accepted {
+                    eprintln!(
+                        "Rust parse failed for Go-accepted input {}:{}: {error:?}\n{}",
+                        record.input.path, record.input.start_line, record.input.sql
+                    );
+                }
+                counts.rust_parse_failure += 1;
+            }
             Ok(Err(_)) if record.outcome == GoOutcome::RestoreFailure => {
                 counts.rust_matched += 1;
             }

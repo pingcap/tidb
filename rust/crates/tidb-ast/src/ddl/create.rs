@@ -132,10 +132,10 @@ pub struct CreateTableStmt {
 impl CreateTableStmt {
     /// Appends the ordinary canonical SQL used by default restoration.
     pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_into_with_context(out, RestoreContext::default());
+        self.restore_into_with_context(out, &RestoreContext::default());
     }
 
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         out.push_str(match self.temporary {
             CreateTableTemporary::None => "CREATE TABLE ",
             CreateTableTemporary::Local => "CREATE TEMPORARY TABLE ",
@@ -238,7 +238,7 @@ impl CreateTableStmt {
     /// members to be valid UTF-8. Ordinary statements continue to use the
     /// existing String sink; this path is selected by the parser differential
     /// ring when it needs the Go AST's raw byte contract.
-    pub(crate) fn restore_into_bytes(&self, out: &mut Vec<u8>, context: RestoreContext) {
+    pub(crate) fn restore_into_bytes(&self, out: &mut Vec<u8>, context: &RestoreContext) {
         out.extend_from_slice(match self.temporary {
             CreateTableTemporary::None => b"CREATE TABLE ".as_slice(),
             CreateTableTemporary::Local => b"CREATE TEMPORARY TABLE ".as_slice(),

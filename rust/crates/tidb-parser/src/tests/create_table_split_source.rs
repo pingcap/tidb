@@ -31,6 +31,10 @@ fn create_table_split_source_selector_from_go_test_split_partition() {
             "create global temporary table t (id int) on commit delete rows split region table by (1)",
             "CREATE GLOBAL TEMPORARY TABLE `t` (`id` INT) SPLIT BY (1) ON COMMIT DELETE ROWS",
         ),
+        (
+            "create table t (id int) split index @idx by (1)",
+            "CREATE TABLE `t` (`id` INT) SPLIT INDEX `idx` BY (1)",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
@@ -42,6 +46,9 @@ fn create_table_split_partition_source_rejections() {
         "create table t (id int) split region primary (1)",
         "create table t (id int) split index 'idx' by (1)",
         "create table t (id int) split by ()",
+        "create table t (id int) split between () and () regions 0",
+        "create table t (id int) split by 1",
+        "create table t (id int) split between 1 and 2 regions 3",
     ] {
         assert!(parse(sql).is_err(), "{sql}");
     }

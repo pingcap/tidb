@@ -27,6 +27,14 @@ fn alter_merge_first_partition_restore_like_go() {
             "ALTER TABLE t2 MERGE FIRST PARTITION LESS THAN (60)",
             "ALTER TABLE `t2` MERGE FIRST PARTITION LESS THAN (60)",
         ),
+        (
+            "ALTER TABLE t DROP FIRST PARTITION LESS THAN (10)",
+            "ALTER TABLE `t` FIRST PARTITION LESS THAN (10)",
+        ),
+        (
+            "ALTER TABLE t DROP FIRST PARTITION LESS THAN (10) IF EXISTS FIRST PARTITION LESS THAN (20)",
+            "ALTER TABLE `t` MERGE FIRST PARTITION LESS THAN (20)",
+        ),
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
     }

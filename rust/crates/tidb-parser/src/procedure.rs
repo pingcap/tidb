@@ -96,7 +96,7 @@ impl Parser {
         };
         Ok(DropProcedureStmt {
             if_exists,
-            name: self.parse_name_path()?,
+            name: self.parse_table_name()?,
         })
     }
 

@@ -51,6 +51,18 @@ fn alter_column_default_testddl_rows_match_go_restore() {
             "ALTER TABLE t ALTER a DROP DEFAULT",
             "ALTER TABLE `t` ALTER COLUMN `a` DROP DEFAULT",
         ),
+        (
+            "ALTER TABLE t ALTER COLUMN a.b DROP DEFAULT",
+            "ALTER TABLE `t` ALTER COLUMN `a`.`b` DROP DEFAULT",
+        ),
+        (
+            "ALTER TABLE t ALTER COLUMN a.b.c SET DEFAULT 1",
+            "ALTER TABLE `t` ALTER COLUMN `a`.`b`.`c` SET DEFAULT 1",
+        ),
+        (
+            "ALTER TABLE t ALTER COLUMN @a DROP DEFAULT",
+            "ALTER TABLE `t` ALTER COLUMN `a` DROP DEFAULT",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
@@ -62,6 +74,7 @@ fn alter_column_default_preserves_go_literal_boundary() {
         "ALTER TABLE t ALTER COLUMN a SET DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE t ALTER COLUMN a SET DEFAULT NOW()",
         "ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1",
+        "ALTER TABLE t ALTER COLUMN a.b.c.d DROP DEFAULT",
     ] {
         assert!(parse(sql).is_err(), "{sql}");
     }

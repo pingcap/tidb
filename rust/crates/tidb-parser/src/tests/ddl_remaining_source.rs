@@ -32,9 +32,18 @@ fn test_admin_repair_table_restore() {
             "ADMIN REPAIR TABLE t CREATE TABLE t (a TINYINT UNSIGNED)",
             "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` TINYINT UNSIGNED)",
         ),
+        (
+            "ADMIN REPAIR TABLE 't' CREATE TABLE t (a int)",
+            "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` INT)",
+        ),
+        (
+            "ADMIN REPAIR TABLE a.1 CREATE TABLE t (a int)",
+            "ADMIN REPAIR TABLE `a`.`1` CREATE TABLE `t` (`a` INT)",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
+    assert!(parse("ADMIN REPAIR TABLE a.b.c CREATE TABLE t (a int)").is_err());
 }
 
 #[test]
@@ -52,9 +61,16 @@ fn test_admin_optimize_table_restore() {
         ("OPTIMIZE TABLE t1, t2", "OPTIMIZE TABLE `t1`, `t2`"),
         ("optimize table t1,t2", "OPTIMIZE TABLE `t1`, `t2`"),
         ("optimize tables t1, t2", "OPTIMIZE TABLE `t1`, `t2`"),
+        ("optimize table 't'", "OPTIMIZE TABLE `t`"),
+        ("optimize table @t", "OPTIMIZE TABLE `t`"),
+        ("optimize table _utf8", "OPTIMIZE TABLE `utf8`"),
+        ("optimize table a.1", "OPTIMIZE TABLE `a`.`1`"),
+        ("optimize table a.'x'", "OPTIMIZE TABLE `a`.`x`"),
+        ("optimize table a.select", "OPTIMIZE TABLE `a`.`select`"),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
+    assert!(parse("optimize table a.b.c").is_err());
 }
 
 #[test]
@@ -64,9 +80,19 @@ fn test_flash_back_database_restore() {
         ("flashback schema M", "FLASHBACK DATABASE `M`"),
         ("flashback database M to n", "FLASHBACK DATABASE `M` TO `n`"),
         ("flashback schema M to N", "FLASHBACK DATABASE `M` TO `N`"),
+        (
+            "flashback database 'M' to 123",
+            "FLASHBACK DATABASE `M` TO `123`",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
+
+    assert_eq!(
+        r("flashback table a,b to 'c'"),
+        "FLASHBACK TABLE `a` TO `c`"
+    );
+    assert!(parse("recover table a.b.c").is_err());
 }
 
 #[test]

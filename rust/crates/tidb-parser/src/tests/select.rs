@@ -352,6 +352,20 @@ fn subqueries() {
         r("select a from t where not exists (select 1 from t2)"),
         "SELECT `a` FROM `t` WHERE NOT EXISTS (SELECT 1 FROM `t2`)"
     );
+    // Go TestNotExistsSubquery checks the typed negation bit rather than
+    // restore text, so keep that source assertion explicit too.
+    let statement = parse("select * from t1 where not exists (select * from t2 where t1.a = t2.a)")
+        .expect("NOT EXISTS query parses");
+    let tidb_ast::Stmt::Query(query) = statement else {
+        panic!("expected query statement");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("expected SELECT statement");
+    };
+    assert!(matches!(
+        select.where_clause,
+        Some(Expr::Exists { not: true, .. })
+    ));
     assert_eq!(
         r("select (select max(x) from t2) as m from t"),
         "SELECT (SELECT MAX(`x`) FROM `t2`) AS `m` FROM `t`"
@@ -518,6 +532,53 @@ fn set_operations() {
         r("(select a from t1) union all (select a from t2) order by 1 limit 10"),
         "(SELECT `a` FROM `t1`) UNION ALL (SELECT `a` FROM `t2`) ORDER BY 1 LIMIT 10"
     );
+}
+
+#[test]
+fn union_order_by_ownership_matches_go_ast() {
+    fn collect(query: &tidb_ast::QueryStmt, order_by: &mut Vec<bool>) {
+        match query {
+            tidb_ast::QueryStmt::Select(select) => order_by.push(!select.order_by.is_empty()),
+            tidb_ast::QueryStmt::SetOpr(setopr) => {
+                for term in &setopr.terms {
+                    match &term.body {
+                        tidb_ast::SetOprTermBody::Select(select) => {
+                            order_by.push(!select.order_by.is_empty());
+                        }
+                        tidb_ast::SetOprTermBody::Nested(nested) => {
+                            collect(&tidb_ast::QueryStmt::SetOpr(nested.clone()), order_by);
+                        }
+                    }
+                }
+                order_by.push(!setopr.order_by.is_empty());
+            }
+        }
+    }
+
+    for (sql, expected) in [
+        (
+            "select 2 as a from dual union select 1 as b from dual order by a",
+            &[false, false, true][..],
+        ),
+        (
+            "select 2 as a from dual union (select 1 as b from dual order by a)",
+            &[false, true, false],
+        ),
+        (
+            "(select 2 as a from dual order by a) union select 1 as b from dual order by a",
+            &[true, false, true],
+        ),
+        ("select 1 a, 2 b from dual order by a", &[true]),
+        ("select 1 a, 2 b from dual", &[false]),
+    ] {
+        let statement = parse_with_window_functions(sql, false).unwrap();
+        let Stmt::Query(query) = statement else {
+            panic!("expected query for {sql}")
+        };
+        let mut actual = Vec::new();
+        collect(&query, &mut actual);
+        assert_eq!(actual, expected, "{sql}");
+    }
 }
 
 #[test]
@@ -801,6 +862,59 @@ fn window_functions() {
             r("select sum(v) over (partition by dept range between current row and unbounded following) from t"),
             "SELECT SUM(`v`) OVER (PARTITION BY `dept` RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM `t`"
         );
+}
+
+/// Exact visitor cases from Go `pkg/parser/parser_test.go`'s
+/// `TestVisitFrameBound` (pingcap/parser#51).
+#[test]
+fn window_frame_bound_visits_its_expression_and_interval_unit() {
+    use tidb_ast::{FrameBound, Visitable, Visitor};
+
+    #[derive(Default)]
+    struct FrameVisitor {
+        in_bound: bool,
+        expression_roots: usize,
+        unit: Option<String>,
+    }
+
+    impl Visitor for FrameVisitor {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if node.is::<FrameBound>() {
+                self.in_bound = true;
+            } else if self.in_bound && self.expression_roots == 0 {
+                if let Some(expr) = node.downcast_ref::<Expr>() {
+                    self.expression_roots += 1;
+                    if let Expr::Interval { unit, .. } = expr {
+                        self.unit = Some(unit.clone());
+                    }
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if node.is::<FrameBound>() {
+                self.in_bound = false;
+            }
+            true
+        }
+    }
+
+    for (sql, expression_roots, unit) in [
+        (
+            "SELECT AVG(val) OVER (RANGE INTERVAL 1+3 MINUTE_SECOND PRECEDING) FROM t",
+            1,
+            Some("MINUTE_SECOND"),
+        ),
+        ("SELECT AVG(val) OVER (RANGE 5 PRECEDING) FROM t", 1, None),
+        ("SELECT AVG(val) OVER () FROM t", 0, None),
+    ] {
+        let mut statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        let mut visitor = FrameVisitor::default();
+        assert!(statement.accept(&mut visitor));
+        assert_eq!(visitor.expression_roots, expression_roots, "{sql}");
+        assert_eq!(visitor.unit.as_deref(), unit, "{sql}");
+    }
 }
 
 /// `FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE` locking clauses, and
@@ -1278,6 +1392,20 @@ fn partition_hints() {
         r("select * from t partition (p0, p1)"),
         "SELECT * FROM `t` PARTITION(`p0`, `p1`)"
     );
+    // Go TestTablePartitionNameList inspects the AST payload directly.
+    let statement =
+        parse("select * from t partition (p0,p1)").expect("partition-qualified table parses");
+    let tidb_ast::Stmt::Query(query) = statement else {
+        panic!("expected query statement");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("expected SELECT statement");
+    };
+    let from = select.from.as_ref().expect("FROM clause");
+    let tidb_ast::JoinNode::Table(table) = &from.left else {
+        panic!("expected table source");
+    };
+    assert_eq!(table.partitions, ["p0", "p1"]);
     assert_eq!(
         r("select * from t partition (p0) where a = 1"),
         "SELECT * FROM `t` PARTITION(`p0`) WHERE `a`=1"

@@ -571,7 +571,8 @@ pub fn lower_prepared_write(
         DmlStmt::ImportInto(_)
         | DmlStmt::LoadData(_)
         | DmlStmt::Batch(_)
-        | DmlStmt::DistributeTable(_) => Err(unsupported(
+        | DmlStmt::DistributeTable(_)
+        | DmlStmt::Call(_) => Err(unsupported(
             UnsupportedPreparedWrite::UnsupportedDmlStatement,
         )),
     }

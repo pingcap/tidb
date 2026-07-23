@@ -46,7 +46,10 @@ impl Parser {
                 origin_position: 0,
             }
         } else {
-            self.parse_expr(prec::NONE)?
+            // Go's column DEFAULT grammar deliberately parses one prefix
+            // expression, not a full infix expression. This leaves the next
+            // `NOT NULL`/other column option for the option loop.
+            self.parse_prefix(prec::NONE)?
         };
 
         // `parseColumnOptions` rejects a bare identifier directly following

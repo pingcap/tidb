@@ -169,14 +169,14 @@ impl TableOption {
     /// and ALTER TABLE own their different option-list separators, while
     /// the Go `TableOption.Restore` text itself is shared.
     pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_into_with_context(out, RestoreContext::default());
+        self.restore_into_with_context(out, &RestoreContext::default());
     }
 
     /// Restores one option under the statement-wide formatting context.
     ///
     /// Most options have one spelling. AFFINITY is TiDB-only syntax, so Go
     /// wraps exactly that option in a feature-special comment when requested.
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             Self::Engine(v) if v.is_empty() => out.push_str("ENGINE = ''"),
             Self::Engine(v) => push_table_option_bare(out, "ENGINE", v),
@@ -530,7 +530,7 @@ mod tests {
 
     fn restore(option: TableOption, flags: RestoreFlags) -> String {
         let mut out = String::new();
-        option.restore_into_with_context(&mut out, RestoreContext::new(flags));
+        option.restore_into_with_context(&mut out, &RestoreContext::new(flags));
         out
     }
 

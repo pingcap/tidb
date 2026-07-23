@@ -16,7 +16,7 @@
 //! integration fixture.
 
 use super::*;
-use tidb_ast::{AdminStmt, AnalyzeIncrementalTarget, Stmt};
+use tidb_ast::{AdminStmt, AnalyzeTarget, Stmt};
 
 #[test]
 fn analyze_incremental_restores_original_go_parser_rows() {
@@ -28,6 +28,26 @@ fn analyze_incremental_restores_original_go_parser_rows() {
         (
             "analyze incremental table t index idx",
             "ANALYZE INCREMENTAL TABLE `t` INDEX `idx`",
+        ),
+        (
+            "analyze local incremental table 't' partition @p index @i,@j with 1 topn,2 buckets",
+            "ANALYZE NO_WRITE_TO_BINLOG INCREMENTAL TABLE `t` PARTITION `p` INDEX `i`,`j` WITH 1 TOPN, 2 BUCKETS",
+        ),
+        (
+            "analyze incremental table t all columns with 2 topn",
+            "ANALYZE INCREMENTAL TABLE `t` ALL COLUMNS WITH 2 TOPN",
+        ),
+        (
+            "analyze incremental table t predicate columns",
+            "ANALYZE INCREMENTAL TABLE `t` PREDICATE COLUMNS",
+        ),
+        (
+            "analyze incremental table t columns a,b with 1 buckets",
+            "ANALYZE INCREMENTAL TABLE `t` COLUMNS `a`,`b` WITH 1 BUCKETS",
+        ),
+        (
+            "analyze incremental table t update histogram on a with 1 buckets",
+            "ANALYZE INCREMENTAL TABLE `t` UPDATE HISTOGRAM ON `a` WITH 1 BUCKETS",
         ),
     ] {
         assert_eq!(r(sql), restored, "{sql}");
@@ -49,14 +69,9 @@ fn analyze_incremental_preserves_partition_target_and_index_payload() {
         panic!("expected typed incremental ANALYZE statement");
     };
     assert_eq!(
-        analyze.indexes.as_deref(),
-        Some(["idx".to_string()].as_slice())
-    );
-    assert_eq!(
         analyze.target,
-        AnalyzeIncrementalTarget::Partitions {
-            tables: vec![vec!["t".to_string()]],
-            partitions: vec!["p0".to_string()],
-        }
+        AnalyzeTarget::Index(vec!["idx".to_string()])
     );
+    assert_eq!(analyze.tables, vec![vec!["t".to_string()]]);
+    assert_eq!(analyze.partitions, vec!["p0".to_string()]);
 }

@@ -221,6 +221,93 @@ fn variables() {
     );
 }
 
+/// Exact AST cases from Go `pkg/parser/parser_test.go`'s
+/// `TestQuotedSystemVariables` and `TestDottedSystemVariableInExpr`.
+#[test]
+fn quoted_and_dotted_system_variables_match_go() {
+    let Stmt::Query(query) = parse(
+        "select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, \
+         @@session.'sql\\nmode', @@local.\"sql\\\"mode\", @@instance.sql_mode",
+    )
+    .unwrap() else {
+        panic!("expected query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("expected select")
+    };
+    let expected = [
+        (None, "sql_mode"),
+        (None, "sql_mode"),
+        (Some(tidb_ast::SysVarScope::Session), "sql_mode"),
+        (Some(tidb_ast::SysVarScope::Global), "s ql`mode"),
+        (Some(tidb_ast::SysVarScope::Session), "sql\nmode"),
+        (Some(tidb_ast::SysVarScope::Session), "sql\"mode"),
+        (Some(tidb_ast::SysVarScope::Instance), "sql_mode"),
+    ];
+    assert_eq!(select.fields.len(), expected.len());
+    for (field, expected) in select.fields.iter().zip(expected) {
+        let SelectField::Expr {
+            expr: Expr::SysVar { scope, name },
+            ..
+        } = field
+        else {
+            panic!("expected system variable")
+        };
+        assert_eq!((*scope, name.as_str()), expected);
+    }
+
+    let Stmt::Query(query) = parse("select @@validate_password.length").unwrap() else {
+        panic!("expected query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("expected select")
+    };
+    let SelectField::Expr {
+        expr: Expr::SysVar { scope, name },
+        ..
+    } = &select.fields[0]
+    else {
+        panic!("expected system variable")
+    };
+    assert_eq!(*scope, None);
+    assert_eq!(name, "validate_password.length");
+}
+
+/// Exact source-text cases from Go `pkg/parser/parser_test.go`'s
+/// `TestQuotedVariableColumnName` (pingcap/parser#95).
+#[test]
+fn quoted_variable_fields_keep_their_original_text() {
+    let sql = "select @abc, @`abc`, @'aBc', @\"AbC\", @6, @`6`, @'6', @\"6\", \
+               @@sql_mode, @@`sql_mode`, @";
+    let Stmt::Query(query) = parse(sql).unwrap() else {
+        panic!("expected query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("expected select")
+    };
+    let expected = [
+        "@abc",
+        "@`abc`",
+        "@'aBc'",
+        "@\"AbC\"",
+        "@6",
+        "@`6`",
+        "@'6'",
+        "@\"6\"",
+        "@@sql_mode",
+        "@@`sql_mode`",
+        "@",
+    ];
+    assert_eq!(select.fields.len(), expected.len());
+    for (index, expected) in expected.iter().enumerate() {
+        assert_eq!(
+            select.fields.text(index),
+            Some(expected.as_bytes()),
+            "field {index}"
+        );
+    }
+}
+
 /// `@name := value` — an inline user-variable assignment expression,
 /// usable anywhere an ordinary expression can appear. See
 /// `tidb_ast::Expr::Assign`'s own doc for the real MySQL/TiDB quirk this
@@ -288,6 +375,39 @@ fn keyword_implicit_alias() {
     assert!(parse("select 1 rank").is_err());
     assert!(parse("select 1 partition").is_err());
     assert!(parse("select 1 default").is_err());
+}
+
+/// Exact keyword-map sweep from Go `pkg/parser/parser_test.go`'s
+/// `TestWindowFunctionIdentifier`.
+#[test]
+fn window_function_keywords_follow_the_parser_switch() {
+    for keyword in [
+        "CUME_DIST",
+        "DENSE_RANK",
+        "FIRST_VALUE",
+        "GROUPS",
+        "LAG",
+        "LAST_VALUE",
+        "LEAD",
+        "NTH_VALUE",
+        "NTILE",
+        "OVER",
+        "PERCENT_RANK",
+        "RANK",
+        "ROW_NUMBER",
+        "WINDOW",
+    ] {
+        let sql = format!("select 1 {keyword}");
+        assert!(
+            parse_with_window_functions(&sql, true).is_err(),
+            "{keyword} must remain a keyword when window functions are enabled"
+        );
+        assert_eq!(
+            parse_with_window_functions(&sql, false).unwrap().restore(),
+            format!("SELECT 1 AS `{keyword}`"),
+            "{keyword} must become an identifier when window functions are disabled"
+        );
+    }
 }
 
 #[test]
@@ -688,8 +808,72 @@ fn group_concat() {
                 Expr::Column(vec!["b".to_string()])
             ],
             order_by: vec![],
-            separator: "-".to_string(),
+            separator: "-".to_string().into(),
         }
+    );
+}
+
+/// Exact metadata cases from Go
+/// `pkg/parser/parser_test.go:TestGroupConcatSeparatorCharsetCollation`.
+#[test]
+fn group_concat_separator_inherits_connection_charset_and_collation() {
+    for (sql, charset, collation, expected_separator) in [
+        ("select group_concat('x')", "latin1", "latin1_bin", ","),
+        (
+            "select group_concat('x' separator ';')",
+            "latin1",
+            "latin1_bin",
+            ";",
+        ),
+        (
+            "select group_concat('x')",
+            tidb_mysql::DefaultCharset,
+            tidb_mysql::DefaultCollationName,
+            ",",
+        ),
+    ] {
+        let Stmt::Query(query) = parse_with_connection(sql, charset, collation).unwrap() else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+            panic!("expected select")
+        };
+        let SelectField::Expr {
+            expr: Expr::GroupConcat { separator, .. },
+            ..
+        } = &select.fields[0]
+        else {
+            panic!("expected GROUP_CONCAT")
+        };
+        assert_eq!(separator.value, expected_separator);
+        assert_eq!(separator.charset, charset);
+        assert_eq!(separator.collation, collation);
+    }
+}
+
+/// Exact AST/restore contract from Go
+/// `pkg/parser/parser_test.go:TestHighNotPrecedenceMode`.
+#[test]
+fn high_not_precedence_sql_mode_matches_go() {
+    assert_eq!(
+        parse("SELECT NOT 1 BETWEEN -5 AND 5").unwrap().restore(),
+        "SELECT NOT 1 BETWEEN -5 AND 5"
+    );
+    assert_eq!(
+        parse("SELECT !1 BETWEEN -5 AND 5").unwrap().restore(),
+        "SELECT !1 BETWEEN -5 AND 5"
+    );
+    assert_eq!(
+        parse_with_sql_mode(
+            "SELECT NOT 1 BETWEEN -5 AND 5",
+            SqlMode {
+                high_not_precedence: true,
+                ..SqlMode::default()
+            },
+        )
+        .unwrap()
+        .restore(),
+        "SELECT !1 BETWEEN -5 AND 5"
     );
 }
 
@@ -819,19 +1003,9 @@ fn date_add_sub() {
     // genuine `ParseError`, and so is `INTERVAL ... + INTERVAL ...`.
     assert!(parse("select interval 5 day - '2020-01-01'").is_err());
     assert!(parse("select interval 5 day + interval 3 day").is_err());
-    // Real TiDB rejects a PARENTHESIZED INTERVAL operand outright
-    // (confirmed via `godump restore`: `(INTERVAL ...)` isn't a valid
-    // standalone expression there at all) -- a narrower, KNOWN,
-    // documented divergence this project does NOT replicate: here
-    // `Expr::Interval` parses as an ordinary primary expression, so a
-    // parenthesized one just isn't recognized as desugar-eligible and
-    // falls through to a plain (never-evaluable) `Expr::Binary` instead
-    // of erroring, since it never appeared in the real-TiDB corpus that
-    // surfaced this feature in the first place.
-    assert_eq!(
-        r("select '2020-01-01' + (interval 5 day)"),
-        "SELECT _UTF8MB4'2020-01-01'+(INTERVAL 5 DAY)"
-    );
+    assert!(parse("select '2020-01-01' + (interval 5 day)").is_err());
+    assert!(parse("select (interval 5 day) + '2020-01-01'").is_err());
+    assert!(parse("select (1, interval 5 day)").is_err());
 }
 
 #[test]
@@ -1363,16 +1537,57 @@ fn timestamp_arith_functions() {
         r("select get_format(datetime, 'iso')"),
         "SELECT GET_FORMAT(DATETIME, _UTF8MB4'iso')"
     );
-    // NOTE: real TiDB rejects `DATE_ADD('2008-01-34', 5)` (a bare, non-
-    // `INTERVAL` second argument — confirmed via `godump restore`: `!ERR`)
-    // — unlike `ADDDATE`/`SUBDATE`, `DATE_ADD`/`DATE_SUB` have NO
-    // bare-number shorthand. This crate does NOT yet replicate that
-    // rejection (`DATE_ADD`/`DATE_SUB` are still dispatched via the
-    // generic `is_scalar_kw_func` path, parsing ANY expression as the
-    // second argument with no `Expr::Interval` validation) — a genuine,
-    // narrow, PRE-EXISTING gap found while implementing `ADDDATE`/
-    // `SUBDATE`'s OWN validation, deliberately left for a dedicated
-    // future turn rather than bundled in here.
+    assert!(parse("select date_add('2008-01-34', 5)").is_err());
+    assert!(parse("select date_sub('2008-01-34', 5)").is_err());
+}
+
+#[test]
+fn timestampdiff_uses_go_single_unit_grammar() {
+    let statement = parse(
+        "SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(month,'2003-02-01','2003-05-01')",
+    )
+    .unwrap();
+    let Stmt::Query(query) = statement else {
+        panic!("expected query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("expected SELECT")
+    };
+    for field in &select.fields {
+        let SelectField::Expr {
+            expr: Expr::TimestampDiff { unit, .. },
+            ..
+        } = field
+        else {
+            panic!("expected TIMESTAMPDIFF")
+        };
+        assert_eq!(unit, "MONTH");
+    }
+
+    for unit in [
+        "SECOND_MICROSECOND",
+        "MINUTE_MICROSECOND",
+        "MINUTE_SECOND",
+        "HOUR_MICROSECOND",
+        "HOUR_SECOND",
+        "HOUR_MINUTE",
+        "DAY_MICROSECOND",
+        "DAY_SECOND",
+        "DAY_MINUTE",
+        "DAY_HOUR",
+        "YEAR_MONTH",
+    ] {
+        assert!(
+            parse(&format!(
+                "SELECT TIMESTAMPDIFF({unit},'2003-02-01','2003-05-01')"
+            ))
+            .is_err(),
+            "{unit}"
+        );
+    }
+
+    assert!(parse("SELECT TIMESTAMPADD(SQL_TSI_MICROSECOND,1,'2003-01-02')").is_err());
+    assert!(parse("SELECT TIMESTAMPADD(BOOLEAN,1,'2003-01-02')").is_err());
 }
 
 /// `ADDDATE`/`SUBDATE(date, interval_or_days)` — see
@@ -1565,13 +1780,9 @@ fn odbc_escape_literal() {
         r("select {date '2024-01-01'}"),
         "SELECT _UTF8MB4'2024-01-01'"
     );
-    // `d`/`t`/`ts` MUST be immediately followed by a string literal — any
-    // other inner expression is a genuine `ParseError` here (a narrower,
-    // deliberate divergence matching `parse_typed_literal`'s own existing
-    // scope, since real TiDB's own grammar technically accepts a full
-    // expression but the real-corpus this project measures coverage
-    // against never exercises anything but a plain string literal).
-    assert!(parse("select {d 1+1}").is_err());
+    assert_eq!(r("select {d 1+1}"), "SELECT DATE 1+1");
+    assert_eq!(r("select {t a}"), "SELECT TIME `a`");
+    assert_eq!(r("select {ts abs(-1)}"), "SELECT TIMESTAMP ABS(-1)");
 }
 
 /// Adjacent bare string-literal tokens concatenate into ONE value at parse

@@ -37,15 +37,11 @@ pub enum AlterPartitionAction {
         /// Attribute text, or `None` for `ATTRIBUTES=DEFAULT`.
         attributes: Option<String>,
     },
-    /// `PARTITION name PLACEMENT [POLICY] (SET DEFAULT | [=]
-    /// (DEFAULT|StringName))`. Go stores this as an
-    /// `AlterTablePartitionOptions` spec rather than a root table option, so
-    /// retain the partition target alongside its policy payload.
-    SetPlacementPolicy {
-        /// The partition whose policy changes.
+    /// `PARTITION name table_option...`. Go stores the shared table-option
+    /// list in an `AlterTablePartitionOptions` spec alongside its target.
+    SetOptions {
         partition: String,
-        /// Placement-policy name, or the canonical `DEFAULT` reset marker.
-        policy: String,
+        options: Vec<TableOption>,
     },
     /// `ADD PARTITION [IF NOT EXISTS] [NO_WRITE_TO_BINLOG]` plus its payload.
     Add {
@@ -128,7 +124,7 @@ pub enum AlterPartitionAction {
 pub(super) fn restore_alter_action(
     out: &mut String,
     action: &AlterPartitionAction,
-    context: crate::RestoreContext,
+    context: &crate::RestoreContext,
 ) {
     match action {
         AlterPartitionAction::Repartition(partitioning) => {
@@ -150,12 +146,15 @@ pub(super) fn restore_alter_action(
                 None => out.push_str("DEFAULT"),
             }
         }
-        AlterPartitionAction::SetPlacementPolicy { partition, policy } => {
+        AlterPartitionAction::SetOptions { partition, options } => {
+            let plain_context = context.without_flags(crate::RestoreFlags::TIDB_SPECIAL_COMMENT);
             context.write_with_tidb_special_comment(out, "placement", |out| {
                 out.push_str("PARTITION ");
                 out.push_str(&back_quote(partition));
-                out.push_str(" PLACEMENT POLICY = ");
-                out.push_str(&back_quote(policy));
+                for option in options {
+                    out.push(' ');
+                    option.restore_into_with_context(out, &plain_context);
+                }
             });
         }
         AlterPartitionAction::Add {
@@ -376,8 +375,8 @@ pub struct PartitionMethod {
     pub linear: bool,
     /// HASH/RANGE/LIST expression, when this is expression partitioning.
     pub expr: Option<Expr>,
-    /// KEY columns or RANGE/LIST `COLUMNS` names.
-    pub columns: Vec<String>,
+    /// KEY columns or RANGE/LIST `COLUMNS` name paths.
+    pub columns: Vec<Vec<String>>,
     /// Optional `ALGORITHM = n` for KEY methods.
     pub key_algorithm: Option<u64>,
     /// SYSTEM_TIME `INTERVAL expr <unit>` unit, retained separately so the
@@ -457,7 +456,7 @@ pub struct SubPartitionDefinition {
 }
 
 impl PartitionDefinition {
-    fn restore_into_with_context(&self, out: &mut String, context: crate::RestoreContext) {
+    fn restore_into_with_context(&self, out: &mut String, context: &crate::RestoreContext) {
         out.push_str("PARTITION ");
         out.push_str(&back_quote(&self.name));
         self.clause.restore_into(out);
@@ -479,7 +478,7 @@ impl PartitionDefinition {
 }
 
 impl SubPartitionDefinition {
-    fn restore_into_with_context(&self, out: &mut String, context: crate::RestoreContext) {
+    fn restore_into_with_context(&self, out: &mut String, context: &crate::RestoreContext) {
         out.push_str("SUBPARTITION ");
         out.push_str(&back_quote(&self.name));
         for option in &self.options {
@@ -493,17 +492,17 @@ impl TablePartitioning {
     pub(crate) fn restore_into_with_context(
         &self,
         out: &mut String,
-        context: crate::RestoreContext,
+        context: &crate::RestoreContext,
     ) {
         self.restore_with_prefix(out, " PARTITION BY ", context);
     }
 
     /// Restore this shared payload as a terminal `ALTER TABLE` action.
-    fn restore_after_alter_table(&self, out: &mut String, context: crate::RestoreContext) {
+    fn restore_after_alter_table(&self, out: &mut String, context: &crate::RestoreContext) {
         self.restore_with_prefix(out, "PARTITION BY ", context);
     }
 
-    fn restore_with_prefix(&self, out: &mut String, prefix: &str, context: crate::RestoreContext) {
+    fn restore_with_prefix(&self, out: &mut String, prefix: &str, context: &crate::RestoreContext) {
         out.push_str(prefix);
         self.method.restore_into(out);
         if self.method.count > 0 && self.definitions.is_empty() {
@@ -578,7 +577,7 @@ impl PartitionMethod {
                 if index > 0 {
                     out.push(',');
                 }
-                out.push_str(&back_quote(column));
+                push_name_path(out, column);
             }
             out.push(')');
         }
@@ -707,9 +706,14 @@ impl crate::Visitable for AlterPartitionAction {
                 let _ = partition;
                 let _ = attributes;
             }
-            Self::SetPlacementPolicy { partition, policy } => {
+            Self::SetOptions { partition, options } => {
+                for option in options.iter_mut() {
+                    if !crate::Visitable::accept(option, visitor) {
+                        return false;
+                    }
+                }
                 let _ = partition;
-                let _ = policy;
+                let _ = options;
             }
             Self::Add {
                 if_not_exists,

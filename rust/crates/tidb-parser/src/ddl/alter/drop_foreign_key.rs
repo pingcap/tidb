@@ -32,6 +32,6 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     parser.bump();
     parser.expect_kw("KEY")?;
     Ok(Some(AlterTableAction::DropForeignKey(DropForeignKey {
-        name: parser.parse_name_or_keyword()?,
+        name: parser.parse_ident_like_name()?,
     })))
 }

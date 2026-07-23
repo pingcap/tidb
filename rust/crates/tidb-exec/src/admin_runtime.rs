@@ -167,7 +167,7 @@ impl Database {
             AdminStmt::ShowCreate { .. } | AdminStmt::ShowCreateUser(_) => {
                 Err(ExecError::Unsupported("SHOW CREATE"))
             }
-            AdminStmt::ShowVariables { .. } => Err(ExecError::Unsupported("SHOW VARIABLES")),
+            AdminStmt::ShowVariables(_) => Err(ExecError::Unsupported("SHOW VARIABLES")),
             // Status variables come from TiDB's session/global instrumentation
             // registry. The seed owns neither registry nor result layout, so
             // reject before transaction mutation rather than synthesize rows.

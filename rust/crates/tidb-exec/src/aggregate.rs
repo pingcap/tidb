@@ -539,11 +539,13 @@ impl Database {
                 expr,
                 pattern,
                 not,
+                ilike,
                 escape,
             } => Expr::Like {
                 expr: Box::new(self.fold_group_aggregates(expr, group, cols, outer)?),
                 pattern: Box::new(self.fold_group_aggregates(pattern, group, cols, outer)?),
                 not: *not,
+                ilike: *ilike,
                 escape: *escape,
             },
             Expr::Regexp { expr, pattern, not } => Expr::Regexp {

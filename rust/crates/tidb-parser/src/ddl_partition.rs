@@ -18,8 +18,7 @@ use super::*;
 use tidb_ast::{
     AddPartitionSpec, AlterPartitionAction, Expr, NodeBox, PartitionDefinition,
     PartitionDefinitionClause, PartitionIndexUpdate, PartitionInterval, PartitionMaintenanceOp,
-    PartitionMethod, PartitionType, PartitionValue, SubPartitionDefinition, TableOption,
-    TablePartitioning,
+    PartitionMethod, PartitionType, PartitionValue, SubPartitionDefinition, TablePartitioning,
 };
 
 /// Direct source-shaped translation of Go's `parsePartitionOptions`.  CREATE
@@ -55,10 +54,10 @@ pub(super) fn parse_table_partitioning(parser: &mut Parser) -> PResult<TablePart
         if parser.is_op(")") {
             return Err(parser.err_here("partition definitions list cannot be empty"));
         }
-        definitions.push(parse_partition_definition(parser)?);
+        definitions.push(parse_partition_definition(parser, true)?);
         while parser.is_op(",") {
             parser.bump();
-            definitions.push(parse_partition_definition(parser)?);
+            definitions.push(parse_partition_definition(parser, true)?);
         }
         parser.expect_op(")")?;
     }
@@ -69,7 +68,7 @@ pub(super) fn parse_table_partitioning(parser: &mut Parser) -> PResult<TablePart
         parser.expect_kw("INDEXES")?;
         parser.expect_op("(")?;
         loop {
-            let name = parser.parse_name_or_keyword()?;
+            let name = parser.parse_ident_like_name()?;
             let global = if parser.is_kw("GLOBAL") {
                 parser.bump();
                 true
@@ -122,10 +121,6 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
     } else {
         return Err(parser.err_here("expected partition method"));
     };
-    if linear && !matches!(kind, PartitionType::Hash | PartitionType::Key) {
-        return Err(parser.err_here("LINEAR is valid only for HASH or KEY partitioning"));
-    }
-
     let mut method = PartitionMethod {
         kind,
         linear,
@@ -145,8 +140,10 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
         PartitionType::Key => {
             if parser.is_kw("ALGORITHM") {
                 parser.bump();
-                if parser.is_op("=") {
+                if parser.is_op("=") || parser.is_op(":=") {
                     parser.bump();
+                } else {
+                    return Err(parser.err_here("expected '=' or ':=' after KEY ALGORITHM"));
                 }
                 let algorithm = parse_partition_count(parser, "KEY ALGORITHM")?;
                 if !(1..=2).contains(&algorithm) {
@@ -168,8 +165,8 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                 parser.bump();
                 parser.expect_op("(")?;
                 let expr = parser.parse_expr(prec::NONE)?;
-                let unit = if parser.peek().kind == TokenKind::Keyword {
-                    Some(parser.bump().text.to_ascii_uppercase())
+                let unit = if !parser.is_op(")") {
+                    Some(parser.parse_bare_time_unit()?)
                 } else {
                     None
                 };
@@ -226,10 +223,7 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
             if parser.is_kw("INTERVAL") {
                 parser.bump();
                 method.expr = Some(parser.parse_expr(prec::NONE)?);
-                if parser.peek().kind != TokenKind::Keyword {
-                    return Err(parser.err_here("expected SYSTEM_TIME interval unit"));
-                }
-                method.unit = Some(parser.bump().text.to_ascii_uppercase());
+                method.unit = Some(parser.parse_bare_time_unit()?);
             }
             if parser.is_kw("LIMIT") {
                 parser.bump();
@@ -254,18 +248,21 @@ fn parse_partition_expr(parser: &mut Parser) -> PResult<Expr> {
         return Err(parser.err_here("invalid empty partition expression"));
     }
     let expr = parser.parse_expr(prec::NONE)?;
+    if !is_valid_partition_expr(&expr) {
+        return Err(parser.err_here("invalid partition expression"));
+    }
     parser.expect_op(")")?;
     Ok(expr)
 }
 
-fn parse_partition_columns(parser: &mut Parser, non_empty: bool) -> PResult<Vec<String>> {
+fn parse_partition_columns(parser: &mut Parser, non_empty: bool) -> PResult<Vec<Vec<String>>> {
     parser.expect_op("(")?;
     let mut columns = Vec::new();
     if !parser.is_op(")") {
-        columns.push(parser.parse_name_or_keyword()?);
+        columns.push(parser.parse_column_name_path()?);
         while parser.is_op(",") {
             parser.bump();
-            columns.push(parser.parse_name_or_keyword()?);
+            columns.push(parser.parse_column_name_path()?);
         }
     }
     parser.expect_op(")")?;
@@ -300,7 +297,7 @@ fn parse_partition_less_than_bound(parser: &mut Parser, position: &str) -> PResu
     parser.expect_kw("PARTITION")?;
     parser.expect_kw("LESS")?;
     parser.expect_kw("THAN")?;
-    parse_partition_expr(parser)
+    parse_parenthesized_partition_bound(parser)
 }
 
 fn parse_partition_less_than_bound_with_source(
@@ -312,7 +309,7 @@ fn parse_partition_less_than_bound_with_source(
     parser.expect_kw("PARTITION")?;
     parser.expect_kw("LESS")?;
     parser.expect_kw("THAN")?;
-    let expr = parse_partition_expr(parser)?;
+    let expr = parse_parenthesized_partition_bound(parser)?;
     let end = parser.peek().offset;
     let mut bound = NodeBox::new(expr);
     if end > start && end <= parser.source.len() {
@@ -320,6 +317,13 @@ fn parse_partition_less_than_bound_with_source(
     }
     bound.set_origin_text_position(start);
     Ok(bound)
+}
+
+fn parse_parenthesized_partition_bound(parser: &mut Parser) -> PResult<Expr> {
+    parser.expect_op("(")?;
+    let expr = parser.parse_expr(prec::NONE)?;
+    parser.expect_op(")")?;
+    Ok(expr)
 }
 
 fn validate_partitioning(
@@ -339,7 +343,14 @@ fn validate_partitioning(
         PartitionType::Range | PartitionType::List
             if method.interval.is_none() && definitions.is_empty() =>
         {
-            return Err(parser.err_here("RANGE/LIST partitions must be defined"));
+            let kind = match method.kind {
+                PartitionType::Range => "RANGE",
+                PartitionType::List => "LIST",
+                _ => unreachable!(),
+            };
+            return Err(parser.err_here(&format!(
+                "[ddl:1492]For {kind} partitions each partition must be defined"
+            )));
         }
         PartitionType::SystemTime if definitions.len() < 2 => {
             return Err(parser.err_here("SYSTEM_TIME requires HISTORY and CURRENT partitions"));
@@ -428,6 +439,29 @@ pub(super) fn parse_alter_partition_action(
     if let Some(action) = super::alter::repartition::parse(parser)? {
         return Ok(Some(action));
     }
+    if parser.is_kw("DROP") && parser.is_kw_at(1, "FIRST") {
+        parser.bump();
+        let start = parser.peek().offset;
+        let expr = parse_partition_less_than_bound_with_source(parser, "FIRST", start)?;
+        let if_exists = if parser.is_kw("IF") {
+            parser.bump();
+            parser.expect_kw("EXISTS")?;
+            true
+        } else {
+            false
+        };
+        if parser.is_kw("FIRST") {
+            let start = parser.peek().offset;
+            let expr = parse_partition_less_than_bound_with_source(parser, "FIRST", start)?;
+            return Ok(Some(AlterPartitionAction::MergeFirstPartitionLessThan {
+                expr,
+            }));
+        }
+        return Ok(Some(AlterPartitionAction::FirstPartitionLessThan {
+            expr,
+            if_exists,
+        }));
+    }
     if parser.is_kw("FIRST") {
         let start = parser.peek().offset;
         let expr = parse_partition_less_than_bound_with_source(parser, "FIRST", start)?;
@@ -447,6 +481,7 @@ pub(super) fn parse_alter_partition_action(
         let start = parser.peek().offset;
         let expr = parse_partition_less_than_bound_with_source(parser, "LAST", start)?;
         let no_write_to_binlog = parse_no_write_to_binlog(parser);
+        warn_no_write_to_binlog(parser, no_write_to_binlog);
         return Ok(Some(AlterPartitionAction::LastPartitionLessThan {
             expr,
             no_write_to_binlog,
@@ -465,7 +500,7 @@ pub(super) fn parse_alter_partition_action(
     // generic root table options must not claim this branch.
     if parser.is_kw("PARTITION") {
         parser.bump();
-        let partition = parser.parse_name()?;
+        let partition = parser.parse_ident_like_name()?;
         if parser.is_kw("ATTRIBUTES") {
             parser.bump();
             if parser.is_op("=") {
@@ -489,15 +524,16 @@ pub(super) fn parse_alter_partition_action(
                 attributes,
             }));
         }
-        if !parser.is_kw("PLACEMENT") {
-            return Err(parser.err_here("expected partition ATTRIBUTES or PLACEMENT POLICY"));
-        }
-        let Some(TableOption::PlacementPolicy(policy)) = parser.parse_table_option()? else {
-            unreachable!("PLACEMENT must parse as a placement-policy table option");
+        let Some(first_option) = parser.parse_table_option()? else {
+            return Err(parser.err_here("expected partition ATTRIBUTES or table option"));
         };
-        return Ok(Some(AlterPartitionAction::SetPlacementPolicy {
+        let mut options = vec![first_option];
+        while let Some(option) = parser.parse_table_option()? {
+            options.push(option);
+        }
+        return Ok(Some(AlterPartitionAction::SetOptions {
             partition,
-            policy,
+            options,
         }));
     }
     if parser.is_kw("ADD") && parser.is_kw_at(1, "PARTITION") {
@@ -512,6 +548,7 @@ pub(super) fn parse_alter_partition_action(
             false
         };
         let no_write_to_binlog = parse_no_write_to_binlog(parser);
+        warn_no_write_to_binlog(parser, no_write_to_binlog);
         let spec = if parser.is_kw("PARTITIONS") {
             parser.bump();
             let token = parser.peek().clone();
@@ -527,10 +564,10 @@ pub(super) fn parse_alter_partition_action(
             )
         } else if parser.is_op("(") {
             parser.bump();
-            let mut definitions = vec![parse_partition_definition(parser)?];
+            let mut definitions = vec![parse_partition_definition(parser, false)?];
             while parser.is_op(",") {
                 parser.bump();
-                definitions.push(parse_partition_definition(parser)?);
+                definitions.push(parse_partition_definition(parser, false)?);
             }
             parser.expect_op(")")?;
             AddPartitionSpec::Definitions(definitions)
@@ -564,10 +601,10 @@ pub(super) fn parse_alter_partition_action(
     if parser.is_kw("EXCHANGE") {
         parser.bump();
         parser.expect_kw("PARTITION")?;
-        let partition = parser.parse_name()?;
+        let partition = parser.parse_ident_like_name()?;
         parser.expect_kw("WITH")?;
         parser.expect_kw("TABLE")?;
-        let table = parser.parse_name_path()?;
+        let table = parser.parse_table_name()?;
         let with_validation = if parser.is_kw("WITHOUT") {
             parser.bump();
             parser.expect_kw("VALIDATION")?;
@@ -599,10 +636,10 @@ pub(super) fn parse_alter_partition_action(
         let names = parse_partition_name_list(parser)?;
         parser.expect_kw("INTO")?;
         parser.expect_op("(")?;
-        let mut definitions = vec![parse_partition_definition(parser)?];
+        let mut definitions = vec![parse_partition_definition(parser, false)?];
         while parser.is_op(",") {
             parser.bump();
-            definitions.push(parse_partition_definition(parser)?);
+            definitions.push(parse_partition_definition(parser, false)?);
         }
         parser.expect_op(")")?;
         return Ok(Some(AlterPartitionAction::Reorganize {
@@ -615,6 +652,7 @@ pub(super) fn parse_alter_partition_action(
         parser.bump();
         parser.expect_kw("PARTITION")?;
         let no_write_to_binlog = parse_no_write_to_binlog(parser);
+        warn_no_write_to_binlog(parser, no_write_to_binlog);
         let token = parser.peek().clone();
         if token.kind != TokenKind::IntLit {
             return Err(parser.err_here("expected partition count"));
@@ -650,6 +688,7 @@ pub(super) fn parse_alter_partition_action(
         } else {
             parse_partition_name_list(parser)?
         };
+        parser.warn("The CHECK PARTITIONING clause is parsed but not implement yet.");
         return Ok(Some(AlterPartitionAction::Check { all, names }));
     }
     if parser.is_kw("IMPORT") && parser.is_kw_at(1, "PARTITION") {
@@ -663,6 +702,9 @@ pub(super) fn parse_alter_partition_action(
             parse_partition_name_list(parser)?
         };
         parser.expect_kw("TABLESPACE")?;
+        parser.warn(
+            "The IMPORT PARTITION TABLESPACE clause is parsed but ignored by all storage engines.",
+        );
         return Ok(Some(AlterPartitionAction::ImportTablespace { all, names }));
     }
     if parser.is_kw("DISCARD") && parser.is_kw_at(1, "PARTITION") {
@@ -676,6 +718,9 @@ pub(super) fn parse_alter_partition_action(
             parse_partition_name_list(parser)?
         };
         parser.expect_kw("TABLESPACE")?;
+        parser.warn(
+            "The DISCARD PARTITION TABLESPACE clause is parsed but ignored by all storage engines.",
+        );
         return Ok(Some(AlterPartitionAction::DiscardTablespace { all, names }));
     }
     // `SPLIT PRIMARY KEY|INDEX ...` belongs to the region-splitting parser
@@ -730,9 +775,12 @@ pub(super) fn parse_alter_partition_action(
     Ok(None)
 }
 
-fn parse_partition_definition(parser: &mut Parser) -> PResult<PartitionDefinition> {
+fn parse_partition_definition(
+    parser: &mut Parser,
+    validate_partition_expr: bool,
+) -> PResult<PartitionDefinition> {
     parser.expect_kw("PARTITION")?;
-    let name = parser.parse_name_or_keyword()?;
+    let name = parser.parse_non_string_ident_like_name()?;
     let clause = if parser.is_kw("VALUES") {
         parser.bump();
         if parser.is_kw("LESS") {
@@ -743,24 +791,16 @@ fn parse_partition_definition(parser: &mut Parser) -> PResult<PartitionDefinitio
                 vec![PartitionValue::MaxValue]
             } else {
                 parser.expect_op("(")?;
-                let mut values = vec![if parser.is_kw("MAXVALUE") {
-                    parser.bump();
-                    PartitionValue::MaxValue
-                } else if parser.is_kw("DEFAULT") {
-                    return Err(parser.err_here("DEFAULT is not valid in VALUES LESS THAN"));
-                } else {
-                    PartitionValue::Expr(parser.parse_expr(prec::NONE)?)
-                }];
+                let mut values = vec![parse_partition_less_than_value(
+                    parser,
+                    validate_partition_expr,
+                )?];
                 while parser.is_op(",") {
                     parser.bump();
-                    values.push(if parser.is_kw("MAXVALUE") {
-                        parser.bump();
-                        PartitionValue::MaxValue
-                    } else if parser.is_kw("DEFAULT") {
-                        return Err(parser.err_here("DEFAULT is not valid in VALUES LESS THAN"));
-                    } else {
-                        PartitionValue::Expr(parser.parse_expr(prec::NONE)?)
-                    });
+                    values.push(parse_partition_less_than_value(
+                        parser,
+                        validate_partition_expr,
+                    )?);
                 }
                 parser.expect_op(")")?;
                 values
@@ -803,7 +843,7 @@ fn parse_partition_definition(parser: &mut Parser) -> PResult<PartitionDefinitio
         parser.bump();
         loop {
             parser.expect_kw("SUBPARTITION")?;
-            let name = parser.parse_name_or_keyword()?;
+            let name = parser.parse_ident_like_name()?;
             let mut options = Vec::new();
             while let Some(option) = parser.parse_table_option()? {
                 options.push(option);
@@ -824,13 +864,47 @@ fn parse_partition_definition(parser: &mut Parser) -> PResult<PartitionDefinitio
     })
 }
 
+fn parse_partition_less_than_value(
+    parser: &mut Parser,
+    validate_partition_expr: bool,
+) -> PResult<PartitionValue> {
+    if parser.is_kw("MAXVALUE") {
+        parser.bump();
+        return Ok(PartitionValue::MaxValue);
+    }
+    if parser.is_kw("DEFAULT") {
+        return Err(parser.err_here("DEFAULT is not valid in VALUES LESS THAN"));
+    }
+    let expr = parser.parse_expr(prec::NONE)?;
+    if validate_partition_expr && !is_valid_partition_expr(&expr) {
+        Err(parser.err_here("invalid expression in VALUES LESS THAN"))
+    } else {
+        Ok(PartitionValue::Expr(expr))
+    }
+}
+
+fn is_valid_partition_expr(expr: &Expr) -> bool {
+    !matches!(
+        expr,
+        Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, _)
+            | Expr::Binary(
+                tidb_ast::BinaryOp::LogicAnd
+                    | tidb_ast::BinaryOp::LogicOr
+                    | tidb_ast::BinaryOp::LogicXor,
+                _,
+                _
+            )
+            | Expr::In { .. }
+            | Expr::Is { .. }
+    )
+}
+
 pub(super) fn parse_partition_value(
     parser: &mut Parser,
     allow_default: bool,
 ) -> PResult<PartitionValue> {
     if parser.is_kw("MAXVALUE") {
-        parser.bump();
-        return Ok(PartitionValue::MaxValue);
+        return Err(parser.err_here("MAXVALUE is not valid in VALUES IN"));
     }
     if parser.is_kw("DEFAULT") {
         if !allow_default {
@@ -853,23 +927,21 @@ pub(super) fn parse_partition_value(
 }
 
 pub(super) fn parse_partition_name_list(parser: &mut Parser) -> PResult<Vec<String>> {
-    let mut names = vec![parser.parse_name()?];
-    // A comma belongs to this payload only when another identifier follows.
-    // Otherwise leave it for the outer AlterTableStmt spec loop (for example,
-    // `DROP PARTITION p0, ADD COLUMN c INT`).
-    while parser.is_op(",") && parser.peek_n(1).kind == TokenKind::Ident {
-        parser.bump();
-        names.push(parser.parse_name()?);
-    }
-    Ok(names)
+    parser.parse_ident_like_name_list()
 }
 
 pub(super) fn parse_no_write_to_binlog(parser: &mut Parser) -> bool {
-    if parser.is_kw("NO_WRITE_TO_BINLOG") {
+    if parser.is_kw("NO_WRITE_TO_BINLOG") || parser.is_kw("LOCAL") {
         parser.bump();
         true
     } else {
         false
+    }
+}
+
+fn warn_no_write_to_binlog(parser: &mut Parser, present: bool) {
+    if present {
+        parser.warn("The NO_WRITE_TO_BINLOG option is parsed but ignored for now.");
     }
 }
 

@@ -52,6 +52,7 @@ fn admin_show_bdr_role_restores_as_its_own_command() {
 /// and NEXT_ROW_ID forms, so only the mode/count grammar enters this slice.
 #[test]
 fn admin_show_slow_restore_and_scope() {
+    assert_eq!(r("admin show slow"), "ADMIN SHOW SLOW TOP 0");
     assert_eq!(r("admin show slow recent 3"), "ADMIN SHOW SLOW RECENT 3");
     assert_eq!(r("admin show slow top 3"), "ADMIN SHOW SLOW TOP 3");
     assert_eq!(
@@ -169,12 +170,7 @@ fn admin_show_ddl_job_queries_preserves_list_and_limit_alternatives() {
     ));
 
     for sql in [
-        "admin show ddl job queries",
         "admin show ddl job queries -1",
-        "admin show ddl job queries 1,",
-        "admin show ddl job queries limit",
-        "admin show ddl job queries limit 5,",
-        "admin show ddl job queries limit 5 offset",
         "admin show ddl job queries 1 limit 2",
     ] {
         assert!(parse(sql).is_err(), "outside this Go alternative: {sql}");
@@ -184,6 +180,30 @@ fn admin_show_ddl_job_queries_preserves_list_and_limit_alternatives() {
         Ok(tidb_ast::Stmt::Admin(admin))
             if matches!(admin.as_ref(), tidb_ast::AdminStmt::ShowDdlJobs(_))
     ));
+    assert_eq!(
+        r("admin show ddl job queries"),
+        "ADMIN SHOW DDL JOB QUERIES "
+    );
+    assert_eq!(
+        r("admin show ddl job queries 1,"),
+        "ADMIN SHOW DDL JOB QUERIES 1"
+    );
+    assert_eq!(
+        r("admin show ddl job queries ,1"),
+        "ADMIN SHOW DDL JOB QUERIES 1"
+    );
+    assert_eq!(
+        r("admin show ddl job queries limit"),
+        "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 0"
+    );
+    assert_eq!(
+        r("admin show ddl job queries limit 5,"),
+        "ADMIN SHOW DDL JOB QUERIES LIMIT 5, 5"
+    );
+    assert_eq!(
+        r("admin show ddl job queries limit 5 offset"),
+        "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 5"
+    );
 }
 
 #[test]
@@ -193,6 +213,20 @@ fn admin_show_next_row_id_restore_and_scope() {
         r("admin show database_name.table_name next_row_id"),
         "ADMIN SHOW `database_name`.`table_name` NEXT_ROW_ID"
     );
+    assert_eq!(
+        r("admin show 't' next_row_id"),
+        "ADMIN SHOW `t` NEXT_ROW_ID"
+    );
+    assert_eq!(r("admin show @t next_row_id"), "ADMIN SHOW `t` NEXT_ROW_ID");
+    assert_eq!(
+        r("admin show a.1 next_row_id"),
+        "ADMIN SHOW `a`.`1` NEXT_ROW_ID"
+    );
+    assert_eq!(
+        r("admin show *.t next_row_id"),
+        "ADMIN SHOW `*`.`t` NEXT_ROW_ID"
+    );
+    assert!(parse("admin show a.b.c next_row_id").is_err());
     assert!(parse("admin show t next_row_id extra").is_err());
 }
 
@@ -244,6 +278,15 @@ fn admin_check_checksum_and_recover_restore_and_shape() {
         r("admin cleanup index schema.t `idx_name`"),
         "ADMIN CLEANUP INDEX `schema`.`t` idx_name"
     );
+    assert_eq!(
+        r("admin check index 't' status"),
+        "ADMIN CHECK INDEX `t` status"
+    );
+    assert_eq!(
+        r("admin checksum table a.'t'"),
+        "ADMIN CHECKSUM TABLE `a`.`t`"
+    );
+    assert!(parse("admin checksum table a.b.c").is_err());
 }
 
 #[test]
@@ -253,6 +296,12 @@ fn admin_remaining_value_less_and_plugin_source_rows_restore_like_go() {
             "admin create workload snapshot",
             "ADMIN CREATE WORKLOAD SNAPSHOT",
         ),
+        ("admin create workload", "ADMIN CREATE WORKLOAD SNAPSHOT"),
+        ("admin plugins", "ADMIN PLUGINS DISABLE"),
+        ("admin plugins disable", "ADMIN PLUGINS DISABLE"),
+        ("admin plugins foo p1", "ADMIN PLUGINS DISABLE p1"),
+        ("admin plugins enable 'p'", "ADMIN PLUGINS ENABLE p"),
+        ("admin plugins enable select", "ADMIN PLUGINS ENABLE select"),
         (
             "admin plugins disable audit, whitelist",
             "ADMIN PLUGINS DISABLE audit, whitelist",
@@ -299,5 +348,10 @@ fn admin_bdr_role_commands_preserve_the_typed_contract() {
             if matches!(admin.as_ref(), tidb_ast::AdminStmt::UnsetBdrRole)
     ));
     assert_eq!(r("admin unset bdr role"), "ADMIN UNSET BDR ROLE");
+    assert_eq!(
+        r("admin set bdr ignored primary"),
+        "ADMIN SET BDR ROLE PRIMARY"
+    );
+    assert_eq!(r("admin unset bdr"), "ADMIN UNSET BDR ROLE");
     assert!(parse("admin set bdr role test_err").is_err());
 }

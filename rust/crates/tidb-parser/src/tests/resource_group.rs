@@ -17,6 +17,68 @@
 
 use super::*;
 
+/// `admin_query_parser.go` keeps DROP as a compatibility fallback distinct
+/// from the normal REMOVE grammar. Preserve the complete source branch,
+/// including its zero-valued bare form and narrower payload surface.
+#[test]
+fn query_watch_drop_fallback_matches_go() {
+    assert_eq!(r("query watch drop 7"), "QUERY WATCH REMOVE 7");
+    assert_eq!(r("query watch drop"), "QUERY WATCH REMOVE 0");
+    assert!(parse("query watch drop resource group rg").is_err());
+    assert_eq!(
+        r("query watch remove resource group rg"),
+        "QUERY WATCH REMOVE RESOURCE GROUP `rg`"
+    );
+}
+
+/// Zero-value branches in `parseQueryWatchOption` are observable Go grammar,
+/// not validation defaults: bare ACTION becomes DRYRUN and an omitted SQL
+/// TEXT match kind becomes NONE.
+#[test]
+fn query_watch_zero_value_options_match_go() {
+    assert_eq!(
+        r("query watch add action"),
+        "QUERY WATCH ADD ACTION = DRYRUN"
+    );
+    assert_eq!(
+        r("query watch add action ="),
+        "QUERY WATCH ADD ACTION = DRYRUN"
+    );
+    assert_eq!(
+        r("query watch add sql text to x"),
+        "QUERY WATCH ADD SQL TEXT NONE TO `x`"
+    );
+    assert!(parse("query watch add action unknown").is_err());
+    assert!(parse("query watch add sql text unknown to x").is_err());
+}
+
+/// QUERY WATCH uses Go's broad `expectIdentLike` boundary for its static
+/// resource-group and SWITCH_GROUP names, including quoted strings and the
+/// latter production's user-variable-as-name quirk.
+#[test]
+fn query_watch_ident_like_names_match_go() {
+    assert_eq!(
+        r("query watch add resource group 'rg'"),
+        "QUERY WATCH ADD RESOURCE GROUP `rg`"
+    );
+    assert_eq!(
+        r("query watch remove resource group 'rg'"),
+        "QUERY WATCH REMOVE RESOURCE GROUP `rg`"
+    );
+    assert_eq!(
+        r("query watch add action switch_group('x')"),
+        "QUERY WATCH ADD ACTION = SWITCH_GROUP(`x`)"
+    );
+    assert_eq!(
+        r("query watch add action switch_group(@x)"),
+        "QUERY WATCH ADD ACTION = SWITCH_GROUP(`x`)"
+    );
+    assert_eq!(
+        r("query watch add action switch_group(@@x)"),
+        "QUERY WATCH ADD ACTION = SWITCH_GROUP(`@@x`)"
+    );
+}
+
 fn assert_parser_case(sql: &str, expected: Option<&str>) {
     match expected {
         Some(expected) => assert_eq!(r(sql), expected, "source SQL: {sql}"),
@@ -843,6 +905,22 @@ fn source_zero_values_and_list_boundaries_remain_visible() {
         "DROP RESOURCE GROUP IF EXISTS `rg 1`"
     );
     assert_eq!(r("drop resource group 1"), "DROP RESOURCE GROUP `1`");
+    assert_eq!(
+        r("create resource group @rg ru_per_sec=1"),
+        "CREATE RESOURCE GROUP `rg` RU_PER_SEC = 1"
+    );
+    assert_eq!(
+        r("alter resource group rg query_limit=(action=switch_group(@slow))"),
+        "ALTER RESOURCE GROUP `rg` QUERY_LIMIT = (ACTION = SWITCH_GROUP(`slow`))"
+    );
+    assert_eq!(
+        r("create resource group rg query_limit=(watch=`plan`)"),
+        "CREATE RESOURCE GROUP `rg` QUERY_LIMIT = (WATCH = PLAN DURATION = UNLIMITED)"
+    );
+    assert_eq!(
+        r("create resource group rg query_limit=(watch='plan')"),
+        "CREATE RESOURCE GROUP `rg` QUERY_LIMIT = (WATCH = PLAN DURATION = UNLIMITED)"
+    );
     assert!(parse("drop resource group rg1, rg2").is_err());
 }
 

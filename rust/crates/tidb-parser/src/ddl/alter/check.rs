@@ -33,7 +33,7 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     // Go's `expectIdentLike` accepts identifier-class keywords such as
     // `unknown` here, so preserve that grammar boundary rather than using
     // the stricter ordinary-name parser.
-    let name = parser.parse_name_or_keyword()?;
+    let name = parser.parse_ident_like_name()?;
     let enforced = if parser.is_kw("ENFORCED") {
         parser.bump();
         true

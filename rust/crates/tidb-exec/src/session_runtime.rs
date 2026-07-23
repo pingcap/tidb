@@ -61,6 +61,7 @@ impl Database {
                 tidb_ast::CharsetSetKind::Names => Err(ExecError::Unsupported("SET NAMES")),
                 tidb_ast::CharsetSetKind::Charset => Err(ExecError::Unsupported("SET CHARSET")),
             },
+            SessionStmt::SetMixed(_) => Err(ExecError::Unsupported("mixed SET charset list")),
             // Password changes require an authenticated principal, privilege
             // checks, and user/dual-password metadata. This seed owns none of
             // that state, so reject before any transaction or catalog change.

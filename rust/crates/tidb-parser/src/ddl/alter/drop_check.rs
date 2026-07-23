@@ -29,6 +29,6 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     }
     parser.bump();
     Ok(Some(AlterTableAction::DropCheck(DropCheck {
-        name: parser.parse_name_or_keyword()?,
+        name: parser.parse_ident_like_name()?,
     })))
 }

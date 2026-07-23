@@ -108,6 +108,7 @@ mod alter_table_validation_source;
 mod analyze;
 mod analyze_incremental_source;
 mod binding;
+mod client_charset_source;
 mod collation_source;
 mod create_binding_with_dml_source;
 mod create_table_planner_issue_source;

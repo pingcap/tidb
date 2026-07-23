@@ -33,7 +33,7 @@ impl<const N: usize> Default for Bytes<N> {
 }
 
 #[test]
-fn generic_alloc_is_default_initialized_distinct_and_stable() {
+fn test_arena_alloc() {
     let arena = Arena::new();
     let mut first = alloc::<Point>(&arena);
     assert_eq!((first.x, first.y), (0, 0));
@@ -46,7 +46,7 @@ fn generic_alloc_is_default_initialized_distinct_and_stable() {
 }
 
 #[test]
-fn generic_slice_has_exact_length_defaults_and_zero_length_shape() {
+fn test_arena_alloc_slice() {
     let arena = Arena::new();
     let mut values = alloc_slice::<i64>(&arena, 10).expect("positive length is non-null");
     assert_eq!(values, vec![0; 10]);
@@ -58,7 +58,7 @@ fn generic_slice_has_exact_length_defaults_and_zero_length_shape() {
 }
 
 #[test]
-fn reset_preserves_live_generic_allocations_and_new_defaults() {
+fn test_arena_reset() {
     let mut arena = Arena::new();
     let mut old = alloc::<Bytes<1024>>(&arena);
     old.0[0] = 7;
@@ -69,7 +69,7 @@ fn reset_preserves_live_generic_allocations_and_new_defaults() {
 }
 
 #[test]
-fn generic_growth_and_oversized_values_keep_distinct_stable_storage() {
+fn test_arena_block_growth() {
     let arena = Arena::new();
     let values = (0..20)
         .map(|_| alloc::<Bytes<4096>>(&arena))
@@ -79,7 +79,11 @@ fn generic_growth_and_oversized_values_keep_distinct_stable_storage() {
         .map(|value| std::ptr::from_ref::<Bytes<4096>>(&**value).cast::<u8>() as usize)
         .collect::<HashSet<_>>();
     assert_eq!(identities.len(), values.len());
+}
 
+#[test]
+fn test_arena_oversized_alloc() {
+    let arena = Arena::new();
     let mut huge = alloc::<Bytes<{ DEFAULT_BLOCK_SIZE * 2 }>>(&arena);
     huge.0[0] = 0xff;
     huge.0[DEFAULT_BLOCK_SIZE * 2 - 1] = 0xfe;
@@ -97,7 +101,7 @@ struct ManagedNode {
 }
 
 #[test]
-fn typed_slab_handles_keep_managed_fields_alive_across_reset() {
+fn test_slab_alloc_gc_safety() {
     let mut slab = Slab::<ManagedNode>::default();
     let nodes = (0..100)
         .map(|index| {
@@ -114,7 +118,7 @@ fn typed_slab_handles_keep_managed_fields_alive_across_reset() {
 }
 
 #[test]
-fn typed_slab_allocates_distinct_slots_across_batch_boundary() {
+fn test_slab_alloc_distinct_pointers() {
     let mut slab = Slab::<ManagedNode>::default();
     let nodes = (0..SLAB_SIZE + 10)
         .map(|_| slab.alloc())

@@ -17,6 +17,7 @@
 use std::convert::Infallible;
 use std::fmt::{self, Write};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut, Not};
+use std::sync::Arc;
 
 use tidb_mysql::{to_lowercase as go_simple_lowercase, to_uppercase as go_simple_uppercase};
 
@@ -438,9 +439,11 @@ impl<W: RestoreWriter> RestoreCtx<W> {
 }
 
 /// Copyable restore policy passed through the existing AST restore tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RestoreContext {
     flags: RestoreFlags,
+    default_db: Arc<str>,
+    cte_names: Arc<Vec<String>>,
 }
 
 impl Default for RestoreContext {
@@ -451,18 +454,60 @@ impl Default for RestoreContext {
 
 impl RestoreContext {
     /// Creates a restore policy with the supplied flags.
-    pub const fn new(flags: RestoreFlags) -> Self {
-        Self { flags }
+    pub fn new(flags: RestoreFlags) -> Self {
+        Self {
+            flags,
+            default_db: Arc::from(""),
+            cte_names: Arc::new(Vec::new()),
+        }
+    }
+
+    /// Returns a context that qualifies unqualified table names with `database`.
+    pub fn with_default_db(mut self, database: impl Into<Arc<str>>) -> Self {
+        self.default_db = database.into();
+        self
+    }
+
+    /// Returns a nested context in which `name` resolves as a CTE table.
+    pub fn with_cte(&self, name: &str) -> Self {
+        let mut names = self.cte_names.as_ref().clone();
+        names.push(name.to_lowercase());
+        Self {
+            flags: self.flags,
+            default_db: Arc::clone(&self.default_db),
+            cte_names: Arc::new(names),
+        }
+    }
+
+    /// Returns the same restore policy with selected formatting flags removed.
+    pub fn without_flags(&self, flags: RestoreFlags) -> Self {
+        Self {
+            flags: self.flags.without(flags),
+            default_db: Arc::clone(&self.default_db),
+            cte_names: Arc::clone(&self.cte_names),
+        }
+    }
+
+    /// Database prefix for an unqualified table, following Go TableName.Restore.
+    pub fn default_db_for_table(&self, name: &str, is_alias: bool) -> Option<&str> {
+        (!self.flags.has_without_schema_name()
+            && !self.default_db.is_empty()
+            && !is_alias
+            && !self
+                .cte_names
+                .iter()
+                .any(|cte| cte.eq_ignore_ascii_case(name)))
+        .then_some(self.default_db.as_ref())
     }
 
     /// Returns the active restore flags.
-    pub const fn flags(self) -> RestoreFlags {
+    pub const fn flags(&self) -> RestoreFlags {
         self.flags
     }
 
     /// Writes `write` plainly or inside the source special-comment envelope.
     pub fn write_with_tidb_special_comment(
-        self,
+        &self,
         out: &mut String,
         feature_id: &str,
         write: impl FnOnce(&mut String),

@@ -106,8 +106,8 @@ pub use admin::{
     ShowImportGroupsStmt, ShowImportJobsStmt,
 };
 pub use analyze::{
-    AnalyzeIncrementalStmt, AnalyzeIncrementalTarget, AnalyzeOption, AnalyzeOptionKind,
-    AnalyzeTableStmt, AnalyzeTarget, HistogramOperation,
+    AnalyzeIncrementalStmt, AnalyzeOption, AnalyzeOptionKind, AnalyzeTableStmt, AnalyzeTarget,
+    HistogramOperation,
 };
 pub use base::{NodeBox, NodeText};
 pub use binding::{
@@ -122,7 +122,7 @@ pub use ddl_stmt::{
     OptimizeTableStmt, RecoverTableStmt, RenameUserPair, RepairTableStmt, TableLock,
 };
 pub use dml::*;
-pub use dml_stmt::{BatchDml, BatchDmlDryRun, BatchDmlStmt, DmlStmt};
+pub use dml_stmt::{BatchDml, BatchDmlDryRun, BatchDmlStmt, CallStmt, DmlStmt};
 pub use explain::{DescribeTableStmt, ExplainStmt, ExplainTarget, StatsLockStmt, StatsLockTable};
 pub use expr::*;
 pub use flush::{FlushLogType, FlushStmt, FlushTarget};
@@ -168,7 +168,7 @@ pub use session::{
     SetRoleSelection, SetRoleStmt,
 };
 pub use set::{
-    CharsetSetKind, SetResourceGroupStmt, SetSessionStatesStmt, SetStmt, SetVariableValue,
+    CharsetSetKind, SetItem, SetResourceGroupStmt, SetSessionStatesStmt, SetStmt, SetVariableValue,
     SystemVariableAssignment, SystemVariableScope,
 };
 pub use show::{
@@ -181,7 +181,8 @@ pub use show::{
     ShowStatsHistogramsFilter, ShowStatsHistogramsStmt, ShowStatsLockedFilter, ShowStatsLockedStmt,
     ShowStatsTopNFilter, ShowStatsTopNStmt, ShowStatusFilter, ShowStatusStmt,
     ShowTableNextRowIdStmt, ShowTablePlacementKind, ShowTablePlacementStmt, ShowTableStatusFilter,
-    ShowTableStatusStmt, ShowTablesFilter, ShowTablesStmt, ShowWarningsFilter, ShowWarningsStmt,
+    ShowTableStatusStmt, ShowTablesFilter, ShowTablesStmt, ShowVariablesStmt, ShowWarningsFilter,
+    ShowWarningsStmt,
 };
 pub use traffic::{
     RefreshStatsMode, RefreshStatsStmt, StatsObject, TrafficCaptureOption, TrafficReplayOption,
@@ -361,11 +362,11 @@ impl Stmt {
     /// Fallible canonical restoration matching Go's distinct `Restore` error
     /// boundary.
     pub fn try_restore(&self) -> Result<String, String> {
-        self.try_restore_with_context(RestoreContext::default())
+        self.try_restore_with_context(&RestoreContext::default())
     }
 
     /// Fallible canonical restoration with an explicit formatting context.
-    pub fn try_restore_with_context(&self, context: RestoreContext) -> Result<String, String> {
+    pub fn try_restore_with_context(&self, context: &RestoreContext) -> Result<String, String> {
         self.validate_restore()?;
         Ok(self.restore_with_context(context))
     }
@@ -401,7 +402,7 @@ impl Stmt {
 
     /// Restores this statement to canonical SQL.
     pub fn restore(&self) -> String {
-        self.restore_with_context(RestoreContext::default())
+        self.restore_with_context(&RestoreContext::default())
     }
 
     /// Restores this statement using an explicit source-formatting context.
@@ -410,7 +411,7 @@ impl Stmt {
     /// DDL fragments as `/*T![feature] ... */`, exactly as Go's
     /// `format.RestoreCtx` does.  Callers that need only a flag set can use
     /// [`Stmt::restore_with_flags`].
-    pub fn restore_with_context(&self, context: RestoreContext) -> String {
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
         let mut out = String::new();
         self.restore_into_with_context(&mut out, context);
         out
@@ -418,18 +419,18 @@ impl Stmt {
 
     /// Restores this statement using `flags`.
     pub fn restore_with_flags(&self, flags: RestoreFlags) -> String {
-        self.restore_with_context(RestoreContext::new(flags))
+        self.restore_with_context(&RestoreContext::new(flags))
     }
 
     /// Restores this statement into a byte-preserving buffer. This is the
     /// lossless counterpart to [`Stmt::restore`] for Go AST payloads such as
     /// GBK ENUM/SET members that are not valid UTF-8.
     pub fn restore_bytes(&self) -> Vec<u8> {
-        self.restore_bytes_with_context(RestoreContext::default())
+        self.restore_bytes_with_context(&RestoreContext::default())
     }
 
     /// Byte-preserving restore with an explicit formatting context.
-    pub fn restore_bytes_with_context(&self, context: RestoreContext) -> Vec<u8> {
+    pub fn restore_bytes_with_context(&self, context: &RestoreContext) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
             Stmt::Ddl(ddl) => ddl.restore_into_bytes(&mut out, context),
@@ -459,10 +460,10 @@ impl Stmt {
     /// Context-aware internal restore path.  Most statement families do not
     /// yet own a context-sensitive source feature, so they retain their
     /// existing narrow restore implementations until they do.
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
-            Stmt::Query(query) => query.restore_into(out),
-            Stmt::Dml(dml) => dml.restore_into(out),
+            Stmt::Query(query) => query.restore_into_with_context(out, context),
+            Stmt::Dml(dml) => dml.restore_into_with_context(out, context),
             Stmt::Ddl(ddl) => ddl.restore_into_with_context(out, context),
             Stmt::Admin(admin) => admin.restore_into(out),
             Stmt::Session(session) => session.restore_into(out),

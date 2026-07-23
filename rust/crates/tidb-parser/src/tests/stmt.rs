@@ -223,6 +223,64 @@ fn plan_replayer_dump_explain_query_restore_and_scope() {
         r("plan replayer load 'replayer.zip'"),
         "PLAN REPLAYER LOAD 'replayer.zip'"
     );
+
+    for (sql, expected_text, expected_analyze) in [
+        (
+            "PLAN REPLAYER DUMP EXPLAIN SELECT a FROM t",
+            "SELECT a FROM t",
+            false,
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT a FROM t",
+            "SELECT a FROM t",
+            true,
+        ),
+    ] {
+        let Stmt::Admin(admin) = parse(sql).expect("PLAN REPLAYER parses") else {
+            panic!("expected Admin envelope")
+        };
+        let tidb_ast::AdminStmt::PlanReplayer(replayer) = admin.as_ref() else {
+            panic!("expected PLAN REPLAYER")
+        };
+        let tidb_ast::PlanReplayerStmt::Dump {
+            analyze, target, ..
+        } = replayer.as_ref()
+        else {
+            panic!("expected PLAN REPLAYER DUMP")
+        };
+        let tidb_ast::PlanReplayerTarget::Statement(statement) = target.as_ref() else {
+            panic!("expected statement target")
+        };
+        assert_eq!(statement.node_text().text(), expected_text.as_bytes());
+        assert_eq!(*analyze, expected_analyze);
+    }
+
+    for (sql, expected_statements, expected_analyze) in [
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')",
+            vec!["SELECT * FROM t1", "SELECT * FROM t2"],
+            false,
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')",
+            vec!["SELECT * FROM t1"],
+            true,
+        ),
+    ] {
+        let Stmt::Admin(admin) = parse(sql).expect("PLAN REPLAYER list parses") else {
+            panic!("expected Admin envelope")
+        };
+        let tidb_ast::AdminStmt::PlanReplayer(replayer) = admin.as_ref() else {
+            panic!("expected PLAN REPLAYER")
+        };
+        assert!(matches!(
+            replayer.as_ref(),
+            tidb_ast::PlanReplayerStmt::Dump { analyze, target, .. }
+                if *analyze == expected_analyze
+                    && matches!(target.as_ref(), tidb_ast::PlanReplayerTarget::Statements(statements)
+                        if statements == &expected_statements)
+        ));
+    }
 }
 #[test]
 fn stats_lock_restore_and_scope() {
@@ -233,6 +291,16 @@ fn stats_lock_restore_and_scope() {
     assert_eq!(
         r("unlock stats t partition (p0, p1)"),
         "UNLOCK STATS `t` PARTITION(`p0`, `p1`)"
+    );
+    assert_eq!(r("lock stats a.1"), "LOCK STATS `a`.`1`");
+    assert_eq!(r("lock stats 'a'"), "LOCK STATS `a`");
+    assert_eq!(
+        r("lock stats t partition select,1"),
+        "LOCK STATS `t` PARTITION(`select`, `1`)"
+    );
+    assert_eq!(
+        r("lock stats t partition p,"),
+        "LOCK STATS `t` PARTITION(`p`, ``)"
     );
 }
 
@@ -297,6 +365,21 @@ fn explain_digest_and_explore_source_rows() {
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
+
+    let Stmt::Admin(admin) =
+        parse("explain explore replayer '/tmp/replayer.zip'").expect("EXPLAIN parses")
+    else {
+        panic!("expected Admin envelope")
+    };
+    let tidb_ast::AdminStmt::Explain(explain) = admin.as_ref() else {
+        panic!("expected EXPLAIN")
+    };
+    assert!(!explain.analyze);
+    assert!(matches!(
+        &explain.target,
+        tidb_ast::ExplainTarget::ExploreReplayer(file) if file == "/tmp/replayer.zip"
+    ));
+    assert!(explain.statement().is_none());
 }
 
 /// Go shares `parseExplainStmt` across EXPLAIN/DESC/DESCRIBE. A query target
@@ -369,7 +452,7 @@ fn drop_stats_restores_typed_scopes() {
     assert_eq!(r("drop stats t global"), "DROP STATS `t` GLOBAL");
     assert_eq!(
         r("drop stats t partition p0, p1"),
-        "DROP STATS `t` PARTITION `p0`, `p1`"
+        "DROP STATS `t` PARTITION `p0`,`p1`"
     );
 }
 /// `USE dbname` — a single database identifier, restored back-quoted
@@ -378,8 +461,13 @@ fn drop_stats_restores_typed_scopes() {
 fn use_statement() {
     assert_eq!(r("use test_db_3"), "USE `test_db_3`");
     assert_eq!(r("USE Issue32007"), "USE `Issue32007`");
-    // A name that lexes as a reserved keyword still round-trips.
+    assert_eq!(r("use 'db'"), "USE `db`");
+    assert_eq!(r("use @db"), "USE `db`");
+    assert_eq!(r("use @@db"), "USE `@@db`");
+    // Quoting makes a reserved spelling an ordinary identifier; the bare
+    // reserved token remains outside Go's isIdentLike boundary.
     assert_eq!(r("use `select`"), "USE `select`");
+    assert!(parse("use select").is_err());
 }
 
 /// `PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE` — prepared statements

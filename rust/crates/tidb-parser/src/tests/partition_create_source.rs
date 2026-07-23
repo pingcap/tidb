@@ -61,6 +61,30 @@ fn create_table_partition_source_rows() {
             "create table t1 (a int) partition by hash(a) (partition x) update indexes (idx global, idx2 local)",
             "CREATE TABLE `t1` (`a` INT) PARTITION BY HASH (`a`) (PARTITION `x`) UPDATE INDEXES (`idx` GLOBAL,`idx2` LOCAL)",
         ),
+        (
+            "create table t (a int) partition by key (x.y)",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY KEY (`x`.`y`) PARTITIONS 1",
+        ),
+        (
+            "create table t (a int) partition by range columns (x.y) (partition p values less than (1))",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY RANGE COLUMNS (`x`.`y`) (PARTITION `p` VALUES LESS THAN (1))",
+        ),
+        (
+            "create table t (a int) partition by hash(a) update indexes ('idx' global, @idx2 local)",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY HASH (`a`) PARTITIONS 1 UPDATE INDEXES (`idx` GLOBAL,`idx2` LOCAL)",
+        ),
+        (
+            "create table t (a int) partition by linear range(a) (partition p values less than (1))",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY LINEAR RANGE (`a`) (PARTITION `p` VALUES LESS THAN (1))",
+        ),
+        (
+            "create table t (a int) partition by linear list(a) (partition p values in (1))",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY LINEAR LIST (`a`) (PARTITION `p` VALUES IN (1))",
+        ),
+        (
+            "create table t (a int) partition by linear system_time (partition h history,partition c current)",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY LINEAR SYSTEM_TIME (PARTITION `h` HISTORY,PARTITION `c` CURRENT)",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }

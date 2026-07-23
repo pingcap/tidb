@@ -13,7 +13,7 @@
 
 //! Query statements and their shared restore boundary.
 
-use crate::{SelectStmt, SetOprStmt};
+use crate::{RestoreContext, SelectStmt, SetOprStmt};
 
 /// A statement that produces a result set.
 ///
@@ -31,9 +31,14 @@ pub enum QueryStmt {
 impl QueryStmt {
     /// Appends the query's canonical SQL to `out`.
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_with_context(out, &RestoreContext::default());
+    }
+
+    /// Appends the query using the caller's restore flags.
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
-            Self::Select(select) => select.restore_into(out),
-            Self::SetOpr(setopr) => setopr.restore_into(out),
+            Self::Select(select) => select.restore_into_with_context(out, context),
+            Self::SetOpr(setopr) => setopr.restore_into_with_context(out, context),
         }
     }
 }

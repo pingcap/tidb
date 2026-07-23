@@ -246,11 +246,13 @@ impl Database {
                 expr,
                 pattern,
                 not,
+                ilike,
                 escape,
             } => Expr::Like {
                 expr: Box::new(rec(expr)?),
                 pattern: Box::new(rec(pattern)?),
                 not: *not,
+                ilike: *ilike,
                 escape: *escape,
             },
             Expr::Regexp { expr, pattern, not } => Expr::Regexp {

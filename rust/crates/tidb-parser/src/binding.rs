@@ -17,8 +17,8 @@
 
 use tidb_ast::{
     BindingScope, BindingStatementTarget, BindingStatus, BindingValue, CreateBindingSource,
-    CreateBindingStmt, DmlStmt, DropBindingStmt, DropBindingTarget, SetBindingStmt,
-    SetBindingTarget, ShowBindingsFilter, ShowBindingsStmt, Stmt,
+    CreateBindingStmt, DropBindingStmt, DropBindingTarget, SetBindingStmt, SetBindingTarget,
+    ShowBindingsFilter, ShowBindingsStmt, Stmt,
 };
 use tidb_lexer::TokenKind;
 
@@ -44,10 +44,16 @@ impl Parser {
     /// computed expression would add a binding grammar form TiDB does not
     /// support.
     fn parse_binding_values(&mut self) -> PResult<Vec<BindingValue>> {
-        let mut values = vec![self.parse_binding_value()?];
-        while self.is_op(",") {
-            self.bump();
+        let mut values = Vec::new();
+        loop {
+            if !matches!(self.peek().kind, TokenKind::Str | TokenKind::UserVar) {
+                break;
+            }
             values.push(self.parse_binding_value()?);
+            if !self.is_op(",") {
+                break;
+            }
+            self.bump();
         }
         Ok(values)
     }
@@ -67,12 +73,9 @@ impl Parser {
         }
     }
 
-    /// Parses the statement payload owned by a SQL binding. TiDB's binding
-    /// preprocessor admits only SELECT/set-operation, INSERT/REPLACE,
-    /// UPDATE, and DELETE targets (`pkg/planner/core/preprocess.go`'s
-    /// `bindableStmtType`). Keep the same typed boundary here: otherwise a
-    /// newly added top-level command can accidentally become valid inside a
-    /// binding merely because the generic statement parser learnt it.
+    /// Parses the statement payload owned by a SQL binding. The Go parser
+    /// calls its ordinary statement parser here; semantic bindability checks
+    /// belong to preprocessing, not this grammar boundary.
     fn parse_binding_statement(&mut self) -> PResult<Box<Stmt>> {
         let start = self.peek().offset;
         let mut statement = self.parse_statement()?;
@@ -90,38 +93,7 @@ impl Parser {
                     .to_vec(),
             );
         }
-        match &statement {
-            Stmt::Query(_) => Ok(Box::new(statement)),
-            Stmt::Dml(dml)
-                if matches!(
-                    dml.as_ref(),
-                    DmlStmt::Insert(_) | DmlStmt::Update(_) | DmlStmt::Delete(_)
-                ) =>
-            {
-                Ok(Box::new(statement))
-            }
-            // Go attaches a leading CTE directly to UpdateStmt/DeleteStmt
-            // (`pkg/parser/ast/dml.go`), so those statements remain bindable
-            // under `bindableStmtType`.  The Rust AST keeps the same ownership
-            // explicit as a DmlStmt::With envelope; only admit envelopes whose
-            // inner statement is one of those bindable DML families.  Do not
-            // turn arbitrary WITH-prefixed commands into binding payloads.
-            Stmt::Dml(dml)
-                if matches!(
-                    dml.as_ref(),
-                    DmlStmt::With {
-                        statement,
-                        ..
-                    } if matches!(
-                        statement.as_ref(),
-                        DmlStmt::Insert(_) | DmlStmt::Update(_) | DmlStmt::Delete(_)
-                    )
-                ) =>
-            {
-                Ok(Box::new(statement))
-            }
-            _ => Err(self.err_here("unsupported SQL binding statement")),
-        }
+        Ok(Box::new(statement))
     }
 
     /// Direct translation of Go's `parseCreateBindingStmt` plus CREATE's
@@ -146,7 +118,7 @@ impl Parser {
             }
         } else if self.is_kw("FROM") {
             self.bump();
-            self.expect_kw("HISTORY")?;
+            self.bump(); // Go consumes the HISTORY slot without validating it.
             self.expect_kw("USING")?;
             // `PLAN` and `DIGEST` are optional keywords in Go's hand parser.
             if self.is_kw("PLAN") {
@@ -170,7 +142,10 @@ impl Parser {
                 },
             }
         } else {
-            return Err(self.err_here("expected FOR, FROM, or USING after BINDING"));
+            // The zero-value Go AST restores through its history branch.
+            CreateBindingSource::History {
+                plan_digests: Vec::new(),
+            }
         };
 
         Ok(CreateBindingStmt { scope, source })
@@ -182,21 +157,25 @@ impl Parser {
         self.expect_kw("DROP")?;
         let scope = self.parse_binding_scope();
         self.expect_kw("BINDING")?;
-        self.expect_kw("FOR")?;
-
-        let target = if self.is_kw("SQL") && self.is_kw_at(1, "DIGEST") {
+        let target = if self.is_kw("FOR") {
             self.bump();
-            self.bump();
-            DropBindingTarget::SqlDigests(self.parse_binding_values()?)
-        } else {
-            let origin = self.parse_binding_statement()?;
-            let hinted = if self.is_kw("USING") {
+            if self.is_kw("SQL") {
                 self.bump();
-                Some(self.parse_binding_statement()?)
+                self.bump(); // Go consumes the DIGEST slot without validating it.
+                DropBindingTarget::SqlDigests(self.parse_binding_values()?)
             } else {
-                None
-            };
-            DropBindingTarget::Statement(BindingStatementTarget { origin, hinted })
+                let origin = self.parse_binding_statement()?;
+                let hinted = if self.is_kw("USING") {
+                    self.bump();
+                    Some(self.parse_binding_statement()?)
+                } else {
+                    None
+                };
+                DropBindingTarget::Statement(BindingStatementTarget { origin, hinted })
+            }
+        } else {
+            // The zero-value Go AST restores as an empty SQL-digest target.
+            DropBindingTarget::SqlDigests(Vec::new())
         };
 
         Ok(DropBindingStmt { scope, target })
@@ -245,7 +224,7 @@ impl Parser {
     pub(crate) fn parse_show_bindings(&mut self) -> PResult<ShowBindingsStmt> {
         self.expect_kw("SHOW")?;
         let scope = self.parse_binding_scope();
-        self.expect_kw("BINDINGS")?;
+        self.expect_token_literal("BINDINGS")?;
         let filter = if self.is_kw("LIKE") {
             self.bump();
             Some(ShowBindingsFilter::Like(self.parse_expr(prec::UNARY)?))

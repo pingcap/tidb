@@ -247,9 +247,9 @@ impl Parser {
             // ORDER BY 1)`.
             SetOprTermBody::Nested(mut setopr) => {
                 let (order_by, limit, lock) = self.parse_order_limit_lock()?;
-                setopr.order_by = order_by;
-                setopr.limit = limit;
-                setopr.lock = lock;
+                setopr.outer_order_by = order_by;
+                setopr.outer_limit = limit;
+                setopr.outer_lock = lock;
                 setopr.is_in_braces = true;
                 Ok(QueryStmt::SetOpr(setopr))
             }
@@ -273,7 +273,10 @@ impl Parser {
             };
             self.expect_op(")")?;
             let body = match inner {
-                QueryStmt::Select(sel) => SetOprTermBody::Select(sel),
+                QueryStmt::Select(mut sel) => {
+                    sel.is_in_braces = false;
+                    SetOprTermBody::Select(sel)
+                }
                 QueryStmt::SetOpr(so) => SetOprTermBody::Nested(so),
             };
             Ok((true, body))
@@ -291,8 +294,13 @@ impl Parser {
                 false,
                 SetOprTermBody::Select(Box::new(self.parse_table_no_tail()?)),
             ))
+        } else if self.is_kw("VALUES") {
+            Ok((
+                false,
+                SetOprTermBody::Select(Box::new(self.parse_values_no_tail()?)),
+            ))
         } else {
-            Err(self.err_here("expected SELECT query term"))
+            Err(self.err_here("expected SELECT, TABLE, or VALUES query term"))
         }
     }
 
@@ -323,8 +331,10 @@ impl Parser {
         // dropped as an ordinary comment, not an error, since the lexer
         // itself never recognizes it as a hint in that position.
         let hints = if self.peek().kind == TokenKind::HintComment {
-            let text = self.bump().text;
-            parse_hint_comment(&text)?
+            let token = self.bump();
+            let result = parse_hint_comment(&token.text, self.source_line(token.offset));
+            self.warnings.extend(result.diagnostics);
+            result.hints
         } else {
             Vec::new()
         };
@@ -502,6 +512,7 @@ impl Parser {
                 on: None,
                 using: Vec::new(),
                 natural: false,
+                explicit_parens: false,
             }),
             where_clause: None,
             group_by: Vec::new(),
@@ -520,6 +531,16 @@ impl Parser {
     /// the required `ROW` leader, zero-length rows, and its own restore shape
     /// are all observable in Go's `SelectStmtKindValues` AST.
     pub(crate) fn parse_values_statement(&mut self) -> PResult<SelectStmt> {
+        let mut statement = self.parse_values_no_tail()?;
+        let (order_by, limit, lock) = self.parse_order_limit_lock()?;
+        statement.order_by = order_by;
+        statement.limit = limit;
+        statement.lock = lock;
+        statement.into_outfile = self.parse_opt_into_outfile()?;
+        Ok(statement)
+    }
+
+    fn parse_values_no_tail(&mut self) -> PResult<SelectStmt> {
         self.expect_kw("VALUES")?;
         let mut values = Vec::new();
         loop {
@@ -540,8 +561,6 @@ impl Parser {
             }
             self.bump();
         }
-        let (order_by, limit, lock) = self.parse_order_limit_lock()?;
-        let into_outfile = self.parse_opt_into_outfile()?;
         Ok(SelectStmt {
             kind: SelectStatementKind::Values,
             is_in_braces: false,
@@ -564,10 +583,10 @@ impl Parser {
             rollup: false,
             having: None,
             windows: Vec::new(),
-            order_by,
-            limit,
-            lock,
-            into_outfile,
+            order_by: Vec::new(),
+            limit: None,
+            lock: None,
+            into_outfile: None,
         })
     }
 
@@ -607,6 +626,10 @@ impl Parser {
         }
         let name = self.bump().text.to_ascii_uppercase();
         match name.as_str() {
+            "JOIN_FIXED_ORDER" if !self.is_op("(") => Ok(Hint {
+                name,
+                kind: HintKind::Nullary { qb_name: None },
+            }),
             "INL_JOIN"
             | "INL_HASH_JOIN"
             | "INL_MERGE_JOIN"
@@ -791,6 +814,32 @@ impl Parser {
                     kind: HintKind::Bool { qb_name, value },
                 })
             }
+            "WRITE_SLOW_LOG" => {
+                if !self.is_op("(") {
+                    return Ok(Hint {
+                        name,
+                        kind: HintKind::Nullary { qb_name: None },
+                    });
+                }
+                self.bump();
+                let value = if self.is_kw("TRUE") {
+                    self.bump();
+                    true
+                } else if self.is_kw("FALSE") {
+                    self.bump();
+                    false
+                } else {
+                    return Err(self.err_here("expected TRUE or FALSE"));
+                };
+                self.expect_op(")")?;
+                Ok(Hint {
+                    name,
+                    kind: HintKind::Bool {
+                        qb_name: None,
+                        value,
+                    },
+                })
+            }
             // `RESOURCE_GROUP(name)` — a single BARE identifier argument
             // (confirmed via `godump restore`: `RESOURCE_GROUP(default)`
             // parses, so `parse_charset_name` — which accepts any
@@ -930,7 +979,33 @@ impl Parser {
             // contract.
             "QB_NAME" => {
                 self.expect_op("(")?;
-                let qb_name = self.parse_charset_name()?;
+                let qb_name = match self.peek().kind {
+                    TokenKind::Ident | TokenKind::Keyword => self.bump().text,
+                    TokenKind::CharsetIntroducer => {
+                        let token = self.bump();
+                        self.source[token.offset..token.end_offset].to_owned()
+                    }
+                    TokenKind::BitLit
+                        if self.peek().text.to_ascii_lowercase().starts_with("0b") =>
+                    {
+                        self.bump().text
+                    }
+                    TokenKind::BitLit => {
+                        return Err(self.err_here("Cannot use bit-value literal"));
+                    }
+                    TokenKind::HexLit
+                        if self.peek().text.to_ascii_lowercase().starts_with("0x") =>
+                    {
+                        self.bump().text
+                    }
+                    TokenKind::HexLit => {
+                        return Err(self.err_here("Cannot use hexadecimal literal"));
+                    }
+                    TokenKind::DecLit | TokenKind::FloatLit => {
+                        return Err(self.err_here("Cannot use decimal number"));
+                    }
+                    _ => return Err(self.err_here("expected a query-block name")),
+                };
                 let mut views = Vec::new();
                 if self.is_op(",") {
                     self.bump();
@@ -1170,7 +1245,22 @@ impl Parser {
     fn parse_hint_value(&mut self) -> PResult<String> {
         match self.peek().kind {
             TokenKind::Str => Ok(decode_string(&self.bump().text)),
-            TokenKind::IntLit | TokenKind::DecLit | TokenKind::FloatLit => Ok(self.bump().text),
+            TokenKind::IntLit => {
+                let value = self.bump().text;
+                value
+                    .parse::<u64>()
+                    .map(|_| value)
+                    .map_err(|_| self.err_here("integer value is out of range"))
+            }
+            TokenKind::DecLit => {
+                let value = self.bump().text;
+                if !value.contains(['.', 'e', 'E']) && value.parse::<u64>().is_err() {
+                    Err(self.err_here("integer value is out of range"))
+                } else {
+                    Ok(value)
+                }
+            }
+            TokenKind::FloatLit => Ok(self.bump().text),
             TokenKind::Ident | TokenKind::Keyword => Ok(self.bump().text),
             TokenKind::Op if self.is_op("-") || self.is_op("+") => {
                 let sign = self.bump().text;
@@ -1239,6 +1329,28 @@ impl Parser {
             } else if self.is_kw("LIMIT") {
                 self.bump();
                 limit = Some(self.parse_limit()?);
+            } else if self.is_kw("FETCH") {
+                self.bump();
+                if self.is_kw("FIRST") || self.is_kw("NEXT") {
+                    self.bump();
+                } else {
+                    return Err(self.err_here("expected FIRST or NEXT after FETCH"));
+                }
+                let count = if self.is_kw("ROW") || self.is_kw("ROWS") {
+                    Expr::Int("1".to_owned())
+                } else {
+                    self.parse_expr(prec::NONE)?
+                };
+                if self.is_kw("ROW") || self.is_kw("ROWS") {
+                    self.bump();
+                } else {
+                    return Err(self.err_here("expected ROW or ROWS in FETCH clause"));
+                }
+                self.expect_kw("ONLY")?;
+                limit = Some(Limit {
+                    offset: None,
+                    count,
+                });
             } else if self.is_kw("FOR") || self.is_kw("LOCK") {
                 if lock.is_some() {
                     return Err(self.err_here("duplicate locking clause"));
@@ -1328,6 +1440,17 @@ impl Parser {
             self.bump();
             self.expect_kw("LOCKED")?;
             tidb_ast::LockWait::SkipLocked
+        } else if kind == tidb_ast::LockKind::Update && self.is_kw("WAIT") {
+            self.bump();
+            if !matches!(self.peek().kind, TokenKind::IntLit | TokenKind::DecLit) {
+                return Err(self.err_here("expected an unsigned integer after WAIT"));
+            }
+            let seconds = self
+                .bump()
+                .text
+                .parse::<u64>()
+                .map_err(|_| self.err_here("expected an unsigned integer after WAIT"))?;
+            tidb_ast::LockWait::Wait(seconds)
         } else {
             tidb_ast::LockWait::Default
         };
@@ -1355,7 +1478,7 @@ impl Parser {
             self.bump();
             true
         } else {
-            if self.is_kw("DISTINCT") {
+            if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
                 self.bump(); // DISTINCT is the default
             }
             false
@@ -1401,6 +1524,12 @@ impl Parser {
             // still has a real trailing statement-level tail after the
             // last one, not folded into it).
             let (term_order_by, term_limit, term_lock) = self.parse_order_limit_lock()?;
+            if in_braces
+                && (!term_order_by.is_empty() || term_limit.is_some())
+                && self.peek_set_op().is_some()
+            {
+                return Err(self.err_here("set operation cannot follow ORDER BY or LIMIT"));
+            }
             // A real, confirmed asymmetry (via `godump restore`, not
             // assumed uniform): `ORDER BY`/`LIMIT` after a NON-FIRST
             // term NEVER attach to that specific term, even when a
@@ -1449,6 +1578,9 @@ impl Parser {
             order_by,
             limit,
             lock,
+            outer_order_by: Vec::new(),
+            outer_limit: None,
+            outer_lock: None,
         })
     }
 
@@ -1655,6 +1787,20 @@ impl Parser {
         Ok(None)
     }
 
+    fn parse_opt_table_alias(&mut self) -> PResult<Option<String>> {
+        if self.is_kw("AS") {
+            self.bump();
+            if self.peek().kind == TokenKind::Str {
+                return Err(self.err_here("table alias must be an identifier"));
+            }
+            return Ok(Some(self.parse_alias_name()?));
+        }
+        if self.peek().kind != TokenKind::Str && self.can_be_alias_name() {
+            return Ok(Some(self.parse_alias_name()?));
+        }
+        Ok(None)
+    }
+
     /// Reports whether the CURRENT token is eligible as an alias name —
     /// shared by [`Parser::parse_opt_alias`]'s own `AS name` and bare
     /// `name` branches, see that function's own doc.
@@ -1673,7 +1819,7 @@ impl Parser {
             Ok(if name.kind == TokenKind::Str {
                 decode_string(&name.text)
             } else {
-                name.text
+                crate::normalize_identifier(name.text)
             })
         } else {
             Err(self.err_here("expected identifier"))
@@ -1702,7 +1848,7 @@ impl Parser {
             self.expect_kw("TIMESTAMP")?;
             (None, Some(Box::new(self.parse_expr(prec::NONE)?)))
         } else {
-            (self.parse_opt_alias()?, None)
+            (self.parse_opt_table_alias()?, None)
         };
         let mut hints = Vec::new();
         while self.is_kw("USE") || self.is_kw("FORCE") || self.is_kw("IGNORE") {
@@ -1897,6 +2043,7 @@ impl Parser {
                 on: None,
                 using: Vec::new(),
                 natural: false,
+                explicit_parens: false,
             },
         };
         let mut has_comma = false;
@@ -1912,6 +2059,7 @@ impl Parser {
                 on: None,
                 using: Vec::new(),
                 natural: false,
+                explicit_parens: false,
             };
         }
         Ok((refs, has_comma))
@@ -1925,11 +2073,9 @@ impl Parser {
         self.parse_join_tail(first)
     }
 
-    /// Continues a join chain from an already parsed left factor. This is
-    /// shared by a normal table factor and Go's special parenthesized form
-    /// `((SELECT ...) alias JOIN ...)`: the latter has already parsed its
-    /// derived-table left factor before it must continue the join chain inside
-    /// the outer structural parentheses.
+    /// Continues a join chain from an already parsed left factor. The right
+    /// side is parsed recursively so stacked `ON` clauses bind inside-out,
+    /// exactly like `pkg/parser/join_parser.go`.
     fn parse_join_tail(&mut self, mut node: JoinNode) -> PResult<JoinNode> {
         loop {
             // `NATURAL` may only precede a plain/`LEFT`/`RIGHT` join — an
@@ -1954,29 +2100,101 @@ impl Parser {
                 break;
             };
             self.consume_join_kind();
-            let right = self.parse_table_factor()?;
-            // `NATURAL` never takes an explicit `ON`/`USING` (confirmed
-            // via `godump restore`: both are genuine `ParseError`s there)
-            // — simply not attempting to parse either lets a stray `ON`/
-            // `USING` after a `NATURAL` join fall through to the same
-            // "unexpected trailing tokens" error real MySQL/TiDB gives,
-            // with no separate rejection code needed.
-            let (on, using) = if natural {
-                (None, Vec::new())
+            let right = if natural || straight {
+                self.parse_table_factor()?
             } else {
-                self.parse_join_cond()?
+                self.parse_join_rhs()?
             };
-            node = JoinNode::Join(Box::new(Join {
-                left: node,
-                right: Some(right),
-                tp,
-                straight,
-                on,
-                using,
-                natural,
-            }));
+            node = self.apply_join_condition(node, right, tp, natural, straight)?;
         }
         Ok(node)
+    }
+
+    /// Parses the recursive right side of a keyword join. Each recursion owns
+    /// one following `ON`/`USING`, yielding the same right-leaning tree as Go.
+    fn parse_join_rhs(&mut self) -> PResult<JoinNode> {
+        let first = self.parse_table_factor()?;
+        self.parse_join_tail(first)
+    }
+
+    fn apply_join_condition(
+        &mut self,
+        left: JoinNode,
+        right: JoinNode,
+        tp: JoinType,
+        natural: bool,
+        straight: bool,
+    ) -> PResult<JoinNode> {
+        if natural {
+            return Ok(JoinNode::Join(Box::new(Join {
+                left,
+                right: Some(right),
+                tp,
+                straight: false,
+                on: None,
+                using: Vec::new(),
+                natural: true,
+                explicit_parens: false,
+            })));
+        }
+        let (on, using) = self.parse_join_cond()?;
+        if on.is_none() && using.is_empty() {
+            if matches!(tp, JoinType::Left | JoinType::Right) {
+                return Err(self.err_here("LEFT/RIGHT JOIN requires ON or USING"));
+            }
+            if !straight {
+                return Ok(Self::make_cross_join(left, right));
+            }
+        }
+        Ok(JoinNode::Join(Box::new(Join {
+            left,
+            right: Some(right),
+            tp,
+            straight,
+            on,
+            using,
+            natural: false,
+            explicit_parens: false,
+        })))
+    }
+
+    /// Rotates an unqualified cross join into the left edge of an already
+    /// right-leaning subtree, transcreated from Go's `makeCrossJoin`.
+    fn make_cross_join(left: JoinNode, right: JoinNode) -> JoinNode {
+        fn insert_leftmost(mut join: Box<Join>, left: JoinNode) -> Box<Join> {
+            join.left = match join.left {
+                JoinNode::Join(child) if child.right.is_some() => {
+                    JoinNode::Join(insert_leftmost(child, left))
+                }
+                old_left => JoinNode::Join(Box::new(Join {
+                    left,
+                    right: Some(old_left),
+                    tp: JoinType::Cross,
+                    straight: false,
+                    on: None,
+                    using: Vec::new(),
+                    natural: false,
+                    explicit_parens: false,
+                })),
+            };
+            join
+        }
+
+        match right {
+            JoinNode::Join(join) if join.right.is_some() && !join.explicit_parens => {
+                JoinNode::Join(insert_leftmost(join, left))
+            }
+            right => JoinNode::Join(Box::new(Join {
+                left,
+                right: Some(right),
+                tp: JoinType::Cross,
+                straight: false,
+                on: None,
+                using: Vec::new(),
+                natural: false,
+                explicit_parens: false,
+            })),
+        }
     }
 
     /// Parses one table factor: a derived table `(SELECT ...) [AS] alias`
@@ -2046,7 +2264,7 @@ impl Parser {
             self.bump(); // structural outer `(`
             let grouped = self.parse_join_table()?;
             self.expect_op(")")?;
-            let grouped = match grouped {
+            let mut grouped = match grouped {
                 JoinNode::Join(join) => join,
                 leaf => Box::new(Join {
                     left: leaf,
@@ -2056,8 +2274,10 @@ impl Parser {
                     on: None,
                     using: Vec::new(),
                     natural: false,
+                    explicit_parens: false,
                 }),
             };
+            grouped.explicit_parens = true;
             return Ok(JoinNode::Join(grouped));
         }
         if self.looks_like_derived_table() {
@@ -2078,7 +2298,7 @@ impl Parser {
             // (SELECT 1)` alone, with no alias, parses and restores
             // unchanged) — the SAME `AS name`-or-bare-`name` grammar a
             // plain table reference already gets via `parse_table_ref`.
-            let alias = self.parse_opt_alias()?;
+            let alias = self.parse_opt_table_alias()?;
             return Ok(JoinNode::Derived {
                 subquery,
                 alias,
@@ -2105,8 +2325,9 @@ impl Parser {
         // single explicit-`JOIN` chain.
         if self.is_op("(") {
             self.bump();
-            let inner = self.parse_from()?;
+            let mut inner = self.parse_from()?;
             self.expect_op(")")?;
+            inner.explicit_parens = true;
             return Ok(JoinNode::Join(Box::new(inner)));
         }
         Ok(JoinNode::Table(self.parse_table_ref()?))
@@ -2119,19 +2340,11 @@ impl Parser {
     /// `(SELECT ...)` may instead be the first parenthesized term of a set
     /// operation, whose braces Go preserves.
     fn parse_derived_query_payload(&mut self) -> PResult<QueryStmt> {
-        let mut redundant_wrappers = 0;
-        while self.is_op("(") && self.is_op_at(1, "(") {
-            self.bump();
-            redundant_wrappers += 1;
-        }
         let mut query = if self.is_kw("WITH") {
             self.parse_with_select()?
         } else {
             self.parse_select_or_setopr()?
         };
-        for _ in 0..redundant_wrappers {
-            self.expect_op(")")?;
-        }
         clear_derived_query_outer_braces(&mut query);
         Ok(query)
     }
@@ -2202,7 +2415,8 @@ impl Parser {
         {
             return false;
         }
-        self.is_kw_at(alias_offset + 1, "JOIN")
+        self.is_op_at(alias_offset + 1, ")")
+            || self.is_kw_at(alias_offset + 1, "JOIN")
             || self.is_kw_at(alias_offset + 1, "INNER")
             || self.is_kw_at(alias_offset + 1, "CROSS")
             || self.is_kw_at(alias_offset + 1, "LEFT")
@@ -2276,11 +2490,12 @@ impl Parser {
     pub(crate) fn parse_query_subquery(&mut self) -> PResult<tidb_ast::NodeBox<QueryStmt>> {
         self.expect_op("(")?;
         let start = self.peek().offset;
-        let query = if self.is_kw("WITH") {
+        let mut query = if self.is_kw("WITH") {
             self.parse_with_select()?
         } else {
             self.parse_select_or_setopr()?
         };
+        clear_derived_query_outer_braces(&mut query);
         let end = self.peek().offset;
         let mut query = tidb_ast::NodeBox::new(query);
         if end > start {
@@ -2298,6 +2513,148 @@ fn clear_derived_query_outer_braces(query: &mut QueryStmt) {
     }
 }
 
+/// One warning or syntax error produced while parsing an optimizer-hint list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HintDiagnostic {
+    /// Source-compatible diagnostic text.
+    pub message: String,
+}
+
+/// Complete result of the standalone optimizer-hint parser.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HintParseResult {
+    /// Successfully parsed hints, in source order.
+    pub hints: Vec<Hint>,
+    /// Recoverable hint diagnostics, in source order.
+    pub diagnostics: Vec<HintDiagnostic>,
+}
+
+/// Parses one complete `/*+ ... */` optimizer-hint comment.
+///
+/// This is the Rust-native equivalent of `pkg/parser.ParseHint`: malformed or
+/// unsupported hint occurrences produce diagnostics and are skipped while
+/// later occurrences remain parseable. `ansi_quotes` mirrors the only SQL-mode
+/// bit consulted by the source hint scanner, and `initial_line` is retained in
+/// syntax diagnostics for callers embedding a comment in a larger statement.
+pub fn parse_hint(input: &str, ansi_quotes: bool, initial_line: usize) -> HintParseResult {
+    let Some(inner) = input
+        .strip_prefix("/*+")
+        .and_then(|value| value.strip_suffix("*/"))
+    else {
+        return HintParseResult {
+            hints: Vec::new(),
+            diagnostics: vec![hint_syntax_diagnostic(initial_line)],
+        };
+    };
+
+    let mut parser = Parser::new_hint_with_ansi_quotes(inner, ansi_quotes);
+    let mut hints = Vec::new();
+    let mut diagnostics = Vec::new();
+    while !parser.at_eof() {
+        let name = matches!(parser.peek().kind, TokenKind::Ident | TokenKind::Keyword)
+            .then(|| parser.peek().text.to_ascii_uppercase());
+
+        if let Some(name) = name.as_deref() {
+            let source_name = parser.peek().text.clone();
+            let unsupported = is_always_unsupported_hint_name(name)
+                || (name == "JOIN_FIXED_ORDER" && parser.peek_n(1).text == "(");
+            if unsupported {
+                parser.bump();
+                parser.skip_hint_args();
+                diagnostics.push(HintDiagnostic {
+                    message: format!(
+                        "[parser:8061]Optimizer hint {source_name} is not supported by TiDB and is ignored"
+                    ),
+                });
+            } else if !is_recognized_hint_token_name(name) {
+                parser.bump();
+                if parser.is_op("(") && parser.peek_n(1).text == ")" {
+                    parser.bump();
+                    parser.bump();
+                    diagnostics.push(hint_syntax_diagnostic(initial_line));
+                } else {
+                    parser.skip_hint_args();
+                    diagnostics.push(HintDiagnostic {
+                        message: format!(
+                            "[parser:8061]Optimizer hint {source_name} is not supported by TiDB and is ignored"
+                        ),
+                    });
+                }
+            } else {
+                parse_standalone_hint_occurrence(
+                    &mut parser,
+                    &mut hints,
+                    &mut diagnostics,
+                    initial_line,
+                );
+            }
+        } else {
+            parse_standalone_hint_occurrence(
+                &mut parser,
+                &mut hints,
+                &mut diagnostics,
+                initial_line,
+            );
+        }
+
+        if parser.is_op(",") {
+            parser.bump();
+        }
+    }
+
+    if hints.is_empty() && diagnostics.is_empty() {
+        diagnostics.push(hint_syntax_diagnostic(initial_line));
+    }
+    HintParseResult { hints, diagnostics }
+}
+
+fn parse_standalone_hint_occurrence(
+    parser: &mut Parser,
+    hints: &mut Vec<Hint>,
+    diagnostics: &mut Vec<HintDiagnostic>,
+    initial_line: usize,
+) {
+    let start = parser.pos;
+    match parser.parse_one_hint() {
+        Ok(Hint {
+            name,
+            kind: HintKind::ReadFromStorage { qb_name, groups },
+        }) => {
+            hints.extend(groups.into_iter().map(|group| Hint {
+                name: name.clone(),
+                kind: HintKind::ReadFromStorage {
+                    qb_name: qb_name.clone(),
+                    groups: vec![group],
+                },
+            }));
+        }
+        Ok(hint) => hints.push(hint),
+        Err(error) => {
+            if matches!(
+                error.message.as_str(),
+                "Cannot use decimal number"
+                    | "Cannot use bit-value literal"
+                    | "Cannot use hexadecimal literal"
+                    | "integer value is out of range"
+            ) {
+                diagnostics.push(HintDiagnostic {
+                    message: error.message,
+                });
+            }
+            diagnostics.push(hint_syntax_diagnostic(initial_line));
+            parser.pos = start;
+            parser.bump();
+            parser.skip_hint_args();
+        }
+    }
+}
+
+fn hint_syntax_diagnostic(initial_line: usize) -> HintDiagnostic {
+    HintDiagnostic {
+        message: format!("Optimizer hint syntax error at line {initial_line} "),
+    }
+}
+
 /// Parses a `/*+ ... */` hint comment token's own raw text (INCLUDING the
 /// `/*+`/`*/` delimiters, exactly as `tidb_lexer` emits it for a
 /// `TokenKind::HintComment` token) into its own hints. Re-lexes the inner
@@ -2311,59 +2668,8 @@ fn clear_derived_query_outer_braces(query: &mut QueryStmt) {
 /// real TiDB's own integration-test corpus) to account for the
 /// overwhelming majority of real-world hint usage — see
 /// [`tidb_ast::Hint`]'s own doc for the exact scope boundary.
-pub(crate) fn parse_hint_comment(text: &str) -> PResult<Vec<Hint>> {
-    let inner = text
-        .strip_prefix("/*+")
-        .and_then(|s| s.strip_suffix("*/"))
-        .expect("a HintComment token's text always has /*+ ... */ delimiters");
-    let mut hp = Parser::new_hint(inner);
-    let mut hints = Vec::new();
-    while !hp.at_eof() {
-        let name = matches!(hp.peek().kind, TokenKind::Ident | TokenKind::Keyword)
-            .then(|| hp.peek().text.to_ascii_uppercase());
-        if name.as_deref().is_some_and(|n| {
-            is_always_unsupported_hint_name(n) || !is_recognized_hint_token_name(n)
-        }) {
-            // A name real TiDB's own lexer doesn't recognize AT ALL
-            // (tokenizes as a generic `hintIdentifier`, `default:` case
-            // in `pkg/parser/hintparser.go`'s `parseOneHint`) — or one
-            // it DOES recognize but always routes to
-            // `parseUnsupportedHint` regardless of args (`NO_MERGE` and
-            // its own small, verified bucket, see
-            // `is_always_unsupported_hint_name`'s own doc) — is ALWAYS
-            // warn-and-dropped there, never carrying real content by
-            // construction (confirmed via `godump restore`:
-            // `unknown_hint(c1)` and, alongside a real `merge(q)` in the
-            // SAME comment, `no_merge(q1)` both vanish from restore
-            // entirely). Safe to skip HERE unconditionally — unlike the
-            // `USE_INDEX`-family branch above, there's no "empty args
-            // only" restriction, since NEITHER bucket here ever produces
-            // real content regardless of what's inside the parens.
-            hp.bump(); // name
-            hp.skip_hint_args();
-        } else {
-            let start = hp.pos;
-            match hp.parse_one_hint() {
-                Ok(hint) => hints.push(hint),
-                Err(_) => {
-                    // TiDB reports hint syntax through warnings and keeps the
-                    // enclosing SQL statement. Rewind to the occurrence,
-                    // discard its complete argument group, and continue with
-                    // later hints in the same comment.
-                    hp.pos = start;
-                    hp.bump();
-                    hp.skip_hint_args();
-                }
-            }
-        }
-        // A comma between hints is optional (confirmed via `godump
-        // restore`: both `/*+ A(x) B(y) */` and `/*+ A(x), B(y) */`
-        // parse and restore identically, always space-joined).
-        if hp.is_op(",") {
-            hp.bump();
-        }
-    }
-    Ok(hints)
+pub(crate) fn parse_hint_comment(text: &str, initial_line: usize) -> HintParseResult {
+    parse_hint(text, false, initial_line)
 }
 
 /// Whether `name` (already uppercased) is one of the ~85 hint names real

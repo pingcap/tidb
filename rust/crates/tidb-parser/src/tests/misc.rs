@@ -16,6 +16,23 @@
 
 use super::*;
 
+/// Exact rows from Go `pkg/parser/parser_test.go:TestSignedInt64OutOfRange`.
+#[test]
+fn signed_int64_fields_reject_uint64_only_values() {
+    for sql in [
+        "recover table by job 18446744073709551612",
+        "recover table t 18446744073709551612",
+        "admin check index t idx (0, 18446744073709551612)",
+        "create user abc@def with max_queries_per_hour 18446744073709551612",
+    ] {
+        let error = parse(sql).expect_err("signed field must reject a uint64-only value");
+        assert!(
+            error.message.contains("out of range"),
+            "source SQL: {sql}; error: {error:?}"
+        );
+    }
+}
+
 /// `pkg/parser/ast/misc_test.go::TestMiscVisitorCover`.
 #[test]
 fn test_misc_visitor_cover() {
@@ -156,6 +173,20 @@ fn remaining_misc_statement_restore_source_rows() {
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
+}
+
+#[test]
+fn statistics_zero_value_and_name_boundaries_match_go_source() {
+    assert_eq!(
+        r("create statistics 1 (bogus) on a.1(c)"),
+        "CREATE STATISTICS `1` (CARDINALITY) ON `a`.`1`(`c`)"
+    );
+    assert_eq!(
+        r("create statistics 'x' (dependency) on 't'(@c)"),
+        "CREATE STATISTICS `x` (DEPENDENCY) ON `t`(`c`)"
+    );
+    assert_eq!(r("drop statistics"), "DROP STATISTICS ``");
+    assert_eq!(r("drop statistics @x"), "DROP STATISTICS `x`");
 }
 
 #[test]
@@ -563,9 +594,36 @@ fn test_plan_replayer_stmt_restore() {
             "plan replayer dump explain analyze ('SELECT * FROM t1')",
             "PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')",
         ),
+        (
+            "plan replayer capture '123' '123'",
+            "PLAN REPLAYER CAPTURE '123' '123'",
+        ),
+        (
+            "plan replayer capture remove '123' '123'",
+            "PLAN REPLAYER CAPTURE REMOVE '123' '123'",
+        ),
+        (
+            "plan replayer load '/tmp/sdfaalskdjf.zip'",
+            "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'",
+        ),
     ] {
         assert_eq!(r(sql), expected, "{sql}");
     }
+}
+
+/// Top-level dispatch for the complete
+/// `admin_query_parser.go::parseSlowQueryStmt` production.
+#[test]
+fn top_level_slow_query_uses_plan_replayer_container() {
+    assert_eq!(r("slow query"), "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY");
+    assert_eq!(
+        r("slow query where a=1 order by b limit 2"),
+        "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE `a`=1 ORDER BY `b` LIMIT 2"
+    );
+    assert_eq!(
+        r("plan replayer dump explain slow query where a=1 order by b limit 2"),
+        "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE `a`=1 ORDER BY `b` LIMIT 2"
+    );
 }
 
 #[test]

@@ -118,7 +118,7 @@ fn test_at_leading_identifier() {
 }
 
 #[test]
-fn test_underscore_charset() {
+fn test_underscore_cs() {
     let mut lexer = Lexer::new("_utf8\"string\"");
     assert_eq!(lexer.next_token().kind, TokenKind::CharsetIntroducer);
     assert_eq!(lexer.next_token().kind, TokenKind::Str);
@@ -146,7 +146,7 @@ fn legacy_charset_introducer_registry_matches_go() {
 }
 
 #[test]
-fn test_literal_kinds_and_spans() {
+fn test_literal() {
     let cases = [
         ("'''a'''", TokenKind::Str),
         ("''a''", TokenKind::Str),
@@ -199,32 +199,69 @@ fn test_literal_kinds_and_spans() {
 }
 
 #[test]
-fn test_literal_raw_values_and_identifier_nul_boundary() {
-    // `Token` intentionally retains the source spelling; parser-level
-    // `decode_string` and numeric conversion own Go's Item/LexLiteral value
-    // contract.  Assert the raw spans here so no conversion is accidentally
-    // performed in the lexer layer.
-    for input in [
-        "'''a'''",
-        "''",
-        "\"\"",
-        "0.2314",
-        "1234567890123456789012345678901234567890",
-        "132.3e231",
-        "23416",
-        "0x3c26",
-        "x'13181C76734725455A'",
-        "0b01",
-    ] {
-        assert_eq!(first(input).text, input, "input={input:?}");
+fn test_literal_value() {
+    use LiteralValue::{Bytes, Decimal, Float, Int, String as Text};
+
+    let cases = [
+        ("'''a'''", Text(b"'a'".to_vec())),
+        ("''a''", Text(Vec::new())),
+        ("\"\"a\"\"", Text(Vec::new())),
+        (r#"\'a\'"#, Text(b"\\".to_vec())),
+        (r#"\"a\""#, Text(b"\\".to_vec())),
+        ("0.2314", Decimal("0.2314".to_string())),
+        (
+            "1234567890123456789012345678901234567890",
+            Decimal("1234567890123456789012345678901234567890".to_string()),
+        ),
+        ("132.313", Decimal("132.313".to_string())),
+        ("132.3e231", Float(1.323e233)),
+        ("132.3e-231", Float(1.323e-229)),
+        ("001e-12", Float(1e-12)),
+        ("23416", Int(23_416)),
+        ("123test", Text(b"123test".to_vec())),
+        ("123�xxx", Text("123�xxx".as_bytes().to_vec())),
+        ("0", Int(0)),
+        ("0x3c26", Bytes(vec![60, 38])),
+        (
+            "x'13181C76734725455A'",
+            Bytes(vec![19, 24, 28, 118, 115, 71, 37, 69, 90]),
+        ),
+        ("0b01", Bytes(vec![1])),
+        ("t1\0", Text(b"t1".to_vec())),
+        ("N'some text'", Text(b"utf8".to_vec())),
+        ("n'some text'", Text(b"utf8".to_vec())),
+        (r#"\N"#, Text(br"\N".to_vec())),
+        (".*", Text(b".".to_vec())),
+        (".1_t_1_x", Decimal("0.1".to_string())),
+        ("9e9e", Float(9_000_000_000.0)),
+        (".1e", Text(Vec::new())),
+        (".1e23", Float(1e22)),
+        (".123", Decimal("0.123".to_string())),
+        (".1*23", Decimal("0.1".to_string())),
+        (".1,23", Decimal("0.1".to_string())),
+        (".1 23", Decimal("0.1".to_string())),
+        (".1$23", Decimal("0.1".to_string())),
+        (".1a23", Decimal("0.1".to_string())),
+        (".1e23$23", Float(1e22)),
+        (".1e23a23", Float(1e22)),
+        (".1C23", Decimal("0.1".to_string())),
+        (".1\u{81}", Decimal("0.1".to_string())),
+        (".1Ｔ", Decimal("0.1".to_string())),
+        ("b''", Bytes(Vec::new())),
+        ("b'0101'", Bytes(vec![5])),
+        ("0b0101", Bytes(vec![5])),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(
+            Lexer::new(input).next_literal(),
+            expected,
+            "input={input:?}"
+        );
     }
-    assert_eq!(first("N'some text'").text, "utf8");
-    assert_eq!(first(r#"\N"#).text, "NULL");
-    assert_token("t1\0", TokenKind::Ident, "t1");
 }
 
 #[test]
-fn test_comments() {
+fn test_comment() {
     for (input, expected) in [
         ("-- select --\n1", vec![TokenKind::IntLit]),
         (
@@ -264,7 +301,7 @@ fn test_comments() {
 }
 
 #[test]
-fn test_scan_quoted_identifier() {
+fn test_scan_quoted_ident() {
     assert_token("`fk`", TokenKind::Ident, "fk");
     assert_token("`a``b`", TokenKind::Ident, "a`b");
     assert_eq!(first("`fk`").offset, 0);
@@ -272,7 +309,7 @@ fn test_scan_quoted_identifier() {
 }
 
 #[test]
-fn test_scan_string_and_no_backslash_escapes() {
+fn test_scan_string() {
     let cases = [
         ("' \\n\\tTest String'", "' \\n\\tTest String'"),
         ("'\\x\\B'", "'\\x\\B'"),
@@ -289,7 +326,10 @@ fn test_scan_string_and_no_backslash_escapes() {
     for (input, raw) in cases {
         assert_token(input, TokenKind::Str, raw);
     }
+}
 
+#[test]
+fn test_scan_string_with_no_backslash_escapes_mode() {
     let mode = SqlMode {
         no_backslash_escapes: true,
         ..SqlMode::default()
@@ -312,7 +352,7 @@ fn test_scan_string_and_no_backslash_escapes() {
 }
 
 #[test]
-fn test_identifier_unicode_and_numeric_fallbacks() {
+fn test_identifier() {
     for (input, expected) in [
         ("哈哈", "哈哈"),
         ("`numeric`", "numeric"),
@@ -337,7 +377,7 @@ fn test_identifier_unicode_and_numeric_fallbacks() {
 }
 
 #[test]
-fn test_special_comment_positions_and_literals() {
+fn test_special_comment() {
     let mut lexer = Lexer::new("/*!40101 select\n5*/");
     let first = lexer.next_token();
     assert_eq!(first.kind, TokenKind::Keyword);
@@ -384,7 +424,24 @@ fn test_feature_ids_comment() {
 }
 
 #[test]
-fn test_optimizer_hint_positions() {
+fn test_optimizer_hint() {
+    let tokens = tokens("SELECT /*+ BKA(t1) */ 0;");
+    assert_eq!(
+        tokens
+            .iter()
+            .map(|token| (token.kind, token.text.as_str(), token.offset))
+            .collect::<Vec<_>>(),
+        vec![
+            (TokenKind::Keyword, "SELECT", 0),
+            (TokenKind::HintComment, "/*+ BKA(t1) */", 7),
+            (TokenKind::IntLit, "0", 22),
+            (TokenKind::Op, ";", 23),
+        ]
+    );
+}
+
+#[test]
+fn test_optimizer_hint_after_certain_keyword_only() {
     let tests = [
         (
             "SELECT /*+ hint */ *",
@@ -447,7 +504,7 @@ fn test_optimizer_hint_positions() {
 }
 
 #[test]
-fn test_integer_values_after_lexing() {
+fn test_int() {
     for (input, expected) in [
         ("01000001783", 1_000_001_783_u64),
         ("00001783", 1_783),
@@ -494,7 +551,7 @@ fn assert_token_mode(sql: &str, mode: SqlMode, kind: TokenKind, text: &str) {
 }
 
 #[test]
-fn test_illegal_and_unterminated_inputs() {
+fn test_illegal() {
     for input in [
         "'",
         "'fu",
@@ -515,7 +572,7 @@ fn test_illegal_and_unterminated_inputs() {
 }
 
 #[test]
-fn test_version_digits_helper() {
+fn test_version_digits() {
     for (input, min, max, next) in [
         ("12345", 5, 5, 0),
         ("12345xyz", 5, 5, b'x'),
@@ -536,7 +593,7 @@ fn test_version_digits_helper() {
 }
 
 #[test]
-fn test_feature_ids_helper() {
+fn test_feature_ids() {
     for (input, expected, next) in [
         ("[feature]", Some(vec!["feature"]), 0),
         ("[feature] xx", Some(vec!["feature"]), b' '),

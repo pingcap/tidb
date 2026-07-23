@@ -28,6 +28,14 @@ fn interval_partition_source_rows_restore_like_go() {
             "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c2`) INTERVAL (1 MONTH)",
         ),
         (
+            "CREATE TABLE t (a int) PARTITION BY RANGE (a) INTERVAL (1 SQL_TSI_DAY)",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY RANGE (`a`) INTERVAL (1 DAY)",
+        ),
+        (
+            "CREATE TABLE t (a int) PARTITION BY SYSTEM_TIME INTERVAL 1 SQL_TSI_DAY (PARTITION h HISTORY,PARTITION c CURRENT)",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY SYSTEM_TIME INTERVAL 1 DAY (PARTITION `h` HISTORY,PARTITION `c` CURRENT)",
+        ),
+        (
             "CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE (c1) (partition p1 values less than (22))",
             "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c1`) (PARTITION `p1` VALUES LESS THAN (22))",
         ),
@@ -51,6 +59,14 @@ fn interval_partition_source_rows_restore_like_go() {
             "ALTER TABLE t first PARTITION LESS THAN (1000)",
             "ALTER TABLE `t` FIRST PARTITION LESS THAN (1000)",
         ),
+        (
+            "CREATE TABLE t (a int) PARTITION BY RANGE (a) INTERVAL (1) FIRST PARTITION LESS THAN (1 OR 0) LAST PARTITION LESS THAN (10)",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY RANGE (`a`) INTERVAL (1) FIRST PARTITION LESS THAN (1 OR 0) LAST PARTITION LESS THAN (10)",
+        ),
+        (
+            "ALTER TABLE t LAST PARTITION LESS THAN (1 OR 0)",
+            "ALTER TABLE `t` LAST PARTITION LESS THAN (1 OR 0)",
+        ),
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
     }
@@ -60,6 +76,8 @@ fn interval_partition_source_rows_restore_like_go() {
 fn interval_partition_source_rows_reject_like_go() {
     for sql in [
         "CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE COLUMNS (c2) INTERVAL (1 year) first partition less than (\"2022-02-01\")",
+        "CREATE TABLE t (a int) PARTITION BY RANGE (a) INTERVAL (1 SELECT)",
+        "CREATE TABLE t (a int) PARTITION BY SYSTEM_TIME INTERVAL 1 SELECT (PARTITION h HISTORY,PARTITION c CURRENT)",
         "ALTER TABLE t REORGANIZE MAX PARTITION INTO NEW LAST PARTITION LESS THAN (1000)",
         "ALTER TABLE t REORGANIZE MAX PARTITION INTO LAST PARTITION LESS THAN (1000)",
         "ALTER TABLE t REORGANIZE MAXVALUE PARTITION INTO NEW LAST PARTITION LESS THAN (1000)",

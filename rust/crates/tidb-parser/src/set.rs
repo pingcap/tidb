@@ -18,7 +18,7 @@
 //! settings without routing any of them through the generic assignment AST.
 
 use tidb_ast::{
-    CharsetSetKind, DefaultRoleSelection, Expr, RoleSpec, SessionStmt, SetDefaultRoleStmt,
+    CharsetSetKind, DefaultRoleSelection, Expr, RoleSpec, SessionStmt, SetDefaultRoleStmt, SetItem,
     SetPasswordStmt, SetResourceGroupStmt, SetRoleSelection, SetRoleStmt, SetSessionStatesStmt,
     SetStmt, SetUserVarStmt, SetVariableValue, SystemVariableAssignment, SystemVariableScope,
     UserVariableAssignment,
@@ -183,12 +183,10 @@ impl Parser {
 
     fn parse_set_uservar_assignment(&mut self) -> PResult<UserVariableAssignment> {
         let token = self.bump();
-        let name = token
-            .text
-            .strip_prefix('@')
-            .filter(|name| !name.starts_with(['@', '\'', '"', '`']))
-            .ok_or_else(|| self.err_here("malformed user variable"))?
-            .to_string();
+        if !token.text.starts_with('@') || token.text.starts_with("@@") {
+            return Err(self.err_here("malformed user variable"));
+        }
+        let name = crate::decode_at_name(&token.text);
         if self.is_op(":=") {
             self.bump();
         } else {
@@ -211,10 +209,59 @@ impl Parser {
                 self.parse_set_resource_group()?,
             )));
         }
+        if self.is_mixed_charset_set_statement() {
+            return self.parse_mixed_charset_set_statement();
+        }
         if self.is_set_charset_command() {
             return self.parse_set_charset_command();
         }
         Ok(SessionStmt::Set(Box::new(self.parse_set_stmt()?)))
+    }
+
+    fn is_mixed_charset_set_statement(&self) -> bool {
+        let mut offset = 1;
+        let mut item_start = true;
+        let mut has_comma = false;
+        let mut has_charset = false;
+        while self.peek_n(offset).kind != TokenKind::Eof && !self.is_op_at(offset, ";") {
+            if self.is_op_at(offset, ",") {
+                has_comma = true;
+                item_start = true;
+            } else if item_start {
+                has_charset |= self.is_kw_at(offset, "NAMES")
+                    || self.is_kw_at(offset, "CHARSET")
+                    || ((self.is_kw_at(offset, "CHARACTER") || self.is_kw_at(offset, "CHAR"))
+                        && self.is_kw_at(offset + 1, "SET"));
+                item_start = false;
+            }
+            offset += 1;
+        }
+        has_comma && has_charset
+    }
+
+    fn parse_mixed_charset_set_statement(&mut self) -> PResult<SessionStmt> {
+        self.expect_kw("SET")?;
+        let mut items = Vec::new();
+        loop {
+            if self.is_kw("NAMES")
+                || self.is_kw("CHARSET")
+                || ((self.is_kw("CHARACTER") || self.is_kw("CHAR")) && self.is_kw_at(1, "SET"))
+            {
+                let (kind, charset, collation) = self.parse_set_charset_item()?;
+                items.push(SetItem::Charset {
+                    kind,
+                    charset,
+                    collation,
+                });
+            } else {
+                items.push(SetItem::System(self.parse_system_variable_assignment()?));
+            }
+            if !self.is_op(",") {
+                break;
+            }
+            self.bump();
+        }
+        Ok(SessionStmt::SetMixed(items))
     }
 
     fn parse_set_stmt(&mut self) -> PResult<SetStmt> {
@@ -225,6 +272,14 @@ impl Parser {
         if self.is_kw("SESSION") && self.is_kw_at(1, "TRANSACTION") {
             self.bump();
             return self.parse_set_transaction(false);
+        }
+        if self.is_kw("GLOBAL") && self.is_kw_at(1, "TRANSACTION") {
+            self.bump();
+            let mut statement = self.parse_set_transaction(false)?;
+            for assignment in &mut statement.assignments {
+                assignment.scope = SystemVariableScope::Global;
+            }
+            return Ok(statement);
         }
         let mut assignments = Vec::new();
         loop {
@@ -285,6 +340,18 @@ impl Parser {
 
     fn parse_set_charset_command(&mut self) -> PResult<SessionStmt> {
         self.expect_kw("SET")?;
+        let (kind, charset, collation) = self.parse_set_charset_item()?;
+        Ok(SessionStmt::SetCharset {
+            kind,
+            charset,
+            collation,
+            assignments: Vec::new(),
+        })
+    }
+
+    fn parse_set_charset_item(
+        &mut self,
+    ) -> PResult<(CharsetSetKind, Option<String>, Option<String>)> {
         let kind = if self.is_kw("NAMES") {
             self.bump();
             CharsetSetKind::Names
@@ -313,11 +380,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(SessionStmt::SetCharset {
-            kind,
-            charset,
-            collation,
-        })
+        Ok((kind, charset, collation))
     }
 
     fn parse_set_charset_name(&mut self) -> PResult<String> {

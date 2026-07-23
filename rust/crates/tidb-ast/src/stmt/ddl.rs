@@ -326,7 +326,7 @@ pub enum DdlStmt {
 }
 
 impl DdlStmt {
-    pub(crate) fn restore_into_bytes(&self, out: &mut Vec<u8>, context: RestoreContext) {
+    pub(crate) fn restore_into_bytes(&self, out: &mut Vec<u8>, context: &RestoreContext) {
         match self {
             Self::CreateTable(table) => table.restore_into_bytes(out, context),
             _ => {
@@ -346,12 +346,12 @@ impl DdlStmt {
             Self::CreateIndex(index) => index.restore_into(out),
             Self::DropIndex(index) => index.restore_into(out),
             Self::AlterTable(table) => table.restore_into(out),
-            _ => self.restore_into_with_context(out, RestoreContext::default()),
+            _ => self.restore_into_with_context(out, &RestoreContext::default()),
         }
     }
 
     /// Appends this DDL statement using the shared AST restore context.
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             Self::CreateTable(table) => table.restore_into_with_context(out, context),
             Self::CreateView(view) => view.restore_into(out),

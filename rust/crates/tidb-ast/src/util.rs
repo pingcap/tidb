@@ -53,6 +53,7 @@ impl SelectStmt {
 impl SetOprStmt {
     fn is_read_only(&self) -> bool {
         self.lock.is_none()
+            && self.outer_lock.is_none()
             && self.terms.iter().all(|term| match &term.body {
                 SetOprTermBody::Select(select) => select.is_read_only(),
                 SetOprTermBody::Nested(set_operation) => set_operation.is_read_only(),
@@ -84,7 +85,7 @@ impl AdminStmt {
             | Self::ShowNextRowId(_)
             | Self::ShowCreate { .. }
             | Self::ShowCreateUser(_)
-            | Self::ShowVariables { .. }
+            | Self::ShowVariables(_)
             | Self::ShowStatus(_)
             | Self::ShowWarnings(_)
             | Self::ShowErrors(_)

@@ -1153,6 +1153,7 @@ dependencies = [
 name = "tidb-parser"
 version = "0.0.0"
 dependencies = [
+ "encoding_rs",
  "getrandom",
  "sha1",
  "sha2",

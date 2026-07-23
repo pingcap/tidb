@@ -30,8 +30,10 @@ fn parenthesized_setopr_keeps_statement_wrapper_and_tail() {
     };
     assert!(setopr.is_in_braces);
     assert_eq!(setopr.terms.len(), 2);
-    assert_eq!(setopr.order_by.len(), 1);
+    assert!(setopr.order_by.is_empty());
     assert_eq!(setopr.limit, None);
+    assert_eq!(setopr.outer_order_by.len(), 1);
+    assert_eq!(setopr.outer_limit, None);
     assert_eq!(restored, "(SELECT 1 UNION SELECT 2 ORDER BY 1)");
 }
 

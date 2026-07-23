@@ -28,6 +28,86 @@ fn restore_special(sql: &str) -> String {
         .restore_with_flags(RestoreFlags::DEFAULT | RestoreFlags::TIDB_SPECIAL_COMMENT)
 }
 
+/// Exact restore-flag rows from Go
+/// `pkg/parser/parser_test.go:TestWithoutCharsetFlags`.
+#[test]
+fn string_charset_omission_flags_match_go() {
+    let base = RestoreFlags::STRING_SINGLE_QUOTES
+        | RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | RestoreFlags::BRACKET_AROUND_BINARY_OPERATION
+        | RestoreFlags::NAME_BACK_QUOTES;
+    for (sql, flags, expected) in [
+        (
+            "select 'a'",
+            base | RestoreFlags::STRING_WITHOUT_CHARSET,
+            "SELECT 'a'",
+        ),
+        (
+            "select _utf8'a'",
+            base | RestoreFlags::STRING_WITHOUT_CHARSET,
+            "SELECT 'a'",
+        ),
+        (
+            "select _utf8mb4'a'",
+            base | RestoreFlags::STRING_WITHOUT_CHARSET,
+            "SELECT 'a'",
+        ),
+        (
+            "select _utf8 X'D0B1'",
+            base | RestoreFlags::STRING_WITHOUT_CHARSET,
+            "SELECT x'd0b1'",
+        ),
+        (
+            "select _utf8mb4'a'",
+            base | RestoreFlags::STRING_WITHOUT_DEFAULT_CHARSET,
+            "SELECT 'a'",
+        ),
+        (
+            "select _utf8'a'",
+            base | RestoreFlags::STRING_WITHOUT_DEFAULT_CHARSET,
+            "SELECT _utf8'a'",
+        ),
+        (
+            "select _utf8 X'D0B1'",
+            base | RestoreFlags::STRING_WITHOUT_DEFAULT_CHARSET,
+            "SELECT _utf8 x'd0b1'",
+        ),
+    ] {
+        assert_eq!(
+            parse(sql).unwrap().restore_with_flags(flags),
+            expected,
+            "source SQL: {sql}"
+        );
+    }
+}
+
+/// Exact rows from Go `pkg/parser/parser_test.go:TestRestoreBinOpWithBrackets`.
+#[test]
+fn binary_operation_bracket_restore_matches_go() {
+    let flags = RestoreFlags::STRING_SINGLE_QUOTES
+        | RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | RestoreFlags::BRACKET_AROUND_BINARY_OPERATION
+        | RestoreFlags::STRING_WITHOUT_CHARSET
+        | RestoreFlags::NAME_BACK_QUOTES;
+    for (sql, expected) in [
+        ("select mod(a+b, 4)+1", "SELECT (((`a` + `b`) % 4) + 1)"),
+        (
+            "SELECT MOD(10, 2 BETWEEN 0 and 5)",
+            "SELECT (10 % (2 BETWEEN 0 AND 5))",
+        ),
+        (
+            "select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1",
+            "SELECT (((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))) % 4) + 1)",
+        ),
+    ] {
+        assert_eq!(
+            parse(sql).unwrap().restore_with_flags(flags),
+            expected,
+            "source SQL: {sql}"
+        );
+    }
+}
+
 /// The AFFINITY branch in Go's `TableOption.Restore` uses
 /// `WriteWithSpecialComments(tidb.FeatureIDAffinity, ...)` for both CREATE
 /// and ALTER ownership paths.

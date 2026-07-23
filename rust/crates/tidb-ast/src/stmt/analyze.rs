@@ -20,7 +20,7 @@ use crate::util::{back_quote, push_name_path};
 #[path = "analyze/incremental.rs"]
 mod incremental;
 
-pub use incremental::{AnalyzeIncrementalStmt, AnalyzeIncrementalTarget};
+pub use incremental::AnalyzeIncrementalStmt;
 
 /// Go's `ANALYZE TABLE` AST payload.
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +96,22 @@ pub enum AnalyzeOptionKind {
     NdvRate,
 }
 
+impl AnalyzeOption {
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        out.push_str(&self.value);
+        out.push(' ');
+        out.push_str(match self.kind {
+            AnalyzeOptionKind::TopN => "TOPN",
+            AnalyzeOptionKind::Buckets => "BUCKETS",
+            AnalyzeOptionKind::CmSketchDepth => "CMSKETCH DEPTH",
+            AnalyzeOptionKind::CmSketchWidth => "CMSKETCH WIDTH",
+            AnalyzeOptionKind::Samples => "SAMPLES",
+            AnalyzeOptionKind::SampleRate => "SAMPLERATE",
+            AnalyzeOptionKind::NdvRate => "NDVRATE",
+        });
+    }
+}
+
 impl AnalyzeTableStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("ANALYZE ");
@@ -103,77 +119,83 @@ impl AnalyzeTableStmt {
             out.push_str("NO_WRITE_TO_BINLOG ");
         }
         out.push_str("TABLE ");
-        for (i, table) in self.tables.iter().enumerate() {
+        restore_analyze_body(
+            out,
+            &self.tables,
+            &self.partitions,
+            &self.target,
+            &self.options,
+        );
+    }
+}
+
+pub(crate) fn restore_analyze_body(
+    out: &mut String,
+    tables: &[Vec<String>],
+    partitions: &[String],
+    target: &AnalyzeTarget,
+    options: &[AnalyzeOption],
+) {
+    for (i, table) in tables.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        push_name_path(out, table);
+    }
+    if !partitions.is_empty() {
+        out.push_str(" PARTITION ");
+        for (i, partition) in partitions.iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
-            push_name_path(out, table);
+            out.push_str(&back_quote(partition));
         }
-        if !self.partitions.is_empty() {
-            out.push_str(" PARTITION ");
-            for (i, partition) in self.partitions.iter().enumerate() {
+    }
+    match target {
+        AnalyzeTarget::Default => {}
+        AnalyzeTarget::Index(indexes) => {
+            out.push_str(" INDEX");
+            if !indexes.is_empty() {
+                out.push(' ');
+                for (i, index) in indexes.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&back_quote(index));
+                }
+            }
+        }
+        AnalyzeTarget::AllColumns => out.push_str(" ALL COLUMNS"),
+        AnalyzeTarget::PredicateColumns => out.push_str(" PREDICATE COLUMNS"),
+        AnalyzeTarget::Columns(columns) => {
+            out.push_str(" COLUMNS ");
+            for (i, column) in columns.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                out.push_str(&back_quote(partition));
+                out.push_str(&back_quote(column));
             }
         }
-        match &self.target {
-            AnalyzeTarget::Default => {}
-            AnalyzeTarget::Index(indexes) => {
-                out.push_str(" INDEX");
-                if !indexes.is_empty() {
-                    out.push(' ');
-                    for (i, index) in indexes.iter().enumerate() {
-                        if i > 0 {
-                            out.push(',');
-                        }
-                        out.push_str(&back_quote(index));
-                    }
-                }
-            }
-            AnalyzeTarget::AllColumns => out.push_str(" ALL COLUMNS"),
-            AnalyzeTarget::PredicateColumns => out.push_str(" PREDICATE COLUMNS"),
-            AnalyzeTarget::Columns(columns) => {
-                out.push_str(" COLUMNS ");
-                for (i, column) in columns.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    out.push_str(&back_quote(column));
-                }
-            }
-            AnalyzeTarget::Histogram { operation, columns } => {
-                out.push_str(match operation {
-                    HistogramOperation::Update => " UPDATE HISTOGRAM ON ",
-                    HistogramOperation::Drop => " DROP HISTOGRAM ON ",
-                });
-                for (i, column) in columns.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    out.push_str(&back_quote(column));
-                }
-            }
-        }
-        if !self.options.is_empty() {
-            out.push_str(" WITH ");
-            for (i, option) in self.options.iter().enumerate() {
+        AnalyzeTarget::Histogram { operation, columns } => {
+            out.push_str(match operation {
+                HistogramOperation::Update => " UPDATE HISTOGRAM ON ",
+                HistogramOperation::Drop => " DROP HISTOGRAM ON ",
+            });
+            for (i, column) in columns.iter().enumerate() {
                 if i > 0 {
-                    out.push_str(", ");
+                    out.push(',');
                 }
-                out.push_str(&option.value);
-                out.push(' ');
-                out.push_str(match option.kind {
-                    AnalyzeOptionKind::TopN => "TOPN",
-                    AnalyzeOptionKind::Buckets => "BUCKETS",
-                    AnalyzeOptionKind::CmSketchDepth => "CMSKETCH DEPTH",
-                    AnalyzeOptionKind::CmSketchWidth => "CMSKETCH WIDTH",
-                    AnalyzeOptionKind::Samples => "SAMPLES",
-                    AnalyzeOptionKind::SampleRate => "SAMPLERATE",
-                    AnalyzeOptionKind::NdvRate => "NDVRATE",
-                });
+                out.push_str(&back_quote(column));
             }
+        }
+    }
+    if !options.is_empty() {
+        out.push_str(" WITH ");
+        for (i, option) in options.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            option.restore_into(out);
         }
     }
 }

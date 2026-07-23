@@ -6,6 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TiDB recursive-descent SQL parser (Rust port of the hand-written parser)."
+autotests = false
+autobenches = false
+build = "../../scripts/aggregate-tests.rs"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[bench]]
+name = "all"
+path = "benches/all.rs"
+harness = true
 
 [lints]
 workspace = true
@@ -14,6 +26,7 @@ workspace = true
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-mysql = { path = "../tidb-mysql" }
+encoding_rs.workspace = true
 getrandom.workspace = true
 sha1.workspace = true
 sha2.workspace = true

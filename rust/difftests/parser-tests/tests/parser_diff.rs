@@ -88,7 +88,7 @@ fn parse_restore_golden_preserves_embedded_cr_before_newline() {
 }
 
 #[test]
-fn parser_restore_matches_go() {
+fn test_differential() {
     let root = difftest::parser_oracle::repo_root();
     validate_executable_corpora(&root).expect("executable corpus contract");
     let (statements, golden_text) = load_corpus_dir(&corpus_dir());

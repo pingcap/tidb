@@ -389,6 +389,36 @@ impl ShowWarningsStmt {
     }
 }
 
+/// TiDB's `SHOW [GLOBAL | SESSION] VARIABLES` grammar form.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShowVariablesStmt {
+    /// `GLOBAL` scope; `false` represents the explicit or implicit session
+    /// scope that Go restores as `SESSION`.
+    pub global: bool,
+    /// `LIKE <simple expression>` payload.
+    pub like: Option<Expr>,
+    /// `WHERE <expression>` payload, mutually exclusive with `like`.
+    pub where_clause: Option<Expr>,
+}
+
+impl ShowVariablesStmt {
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        out.push_str(if self.global {
+            "SHOW GLOBAL VARIABLES"
+        } else {
+            "SHOW SESSION VARIABLES"
+        });
+        if let Some(pattern) = &self.like {
+            out.push_str(" LIKE ");
+            pattern.restore_into(out);
+        }
+        if let Some(where_clause) = &self.where_clause {
+            out.push_str(" WHERE ");
+            where_clause.restore_into(out);
+        }
+    }
+}
+
 /// TiDB's `SHOW [GLOBAL | SESSION] STATUS` grammar form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShowStatusStmt {
@@ -705,7 +735,8 @@ pub struct ShowTablePlacementStmt {
     pub table: Vec<String>,
     /// Optional partition list.
     pub partitions: Vec<String>,
-    /// Optional index, valid for REGIONS.
+    /// Optional index. Go parses it before either result kind, but restores it
+    /// only for `REGIONS`.
     pub index: Option<String>,
     /// Result family.
     pub kind: ShowTablePlacementKind,
@@ -727,9 +758,11 @@ impl ShowTablePlacementStmt {
             }
             out.push(')');
         }
-        if let Some(index) = &self.index {
-            out.push_str(" INDEX ");
-            push_name_path(out, std::slice::from_ref(index));
+        if self.kind == ShowTablePlacementKind::Regions {
+            if let Some(index) = &self.index {
+                out.push_str(" INDEX ");
+                push_name_path(out, std::slice::from_ref(index));
+            }
         }
         out.push_str(match self.kind {
             ShowTablePlacementKind::Regions => " REGIONS",
@@ -916,6 +949,9 @@ pub struct ShowColumnsStmt {
     pub extended: bool,
     /// The required table path after `FROM` or `IN`.
     pub table: Vec<String>,
+    /// Optional database written in a second `FROM`/`IN` clause. Go keeps
+    /// this separate from the table path for SHOW COLUMNS restore.
+    pub database: Option<String>,
     /// Optional filter over virtual column metadata rows.
     pub filter: Option<ShowColumnsFilter>,
 }
@@ -940,6 +976,10 @@ impl ShowColumnsStmt {
         }
         out.push_str("COLUMNS IN ");
         push_name_path(out, &self.table);
+        if let Some(database) = &self.database {
+            out.push_str(" IN ");
+            push_name_path(out, std::slice::from_ref(database));
+        }
         match &self.filter {
             None => {}
             Some(ShowColumnsFilter::Like(expr)) => {
@@ -1322,6 +1362,33 @@ impl crate::Visitable for ShowWarningsFilter {
                 let _ = field_0;
             }
         }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ShowVariablesStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            global,
+            like,
+            where_clause,
+        } = self;
+        if let Some(value) = like.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = where_clause.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = global;
+        let _ = like;
+        let _ = where_clause;
         visitor.leave(self)
     }
 }
@@ -1816,6 +1883,7 @@ impl crate::Visitable for ShowColumnsStmt {
             full,
             extended,
             table,
+            database,
             filter,
         } = self;
         if let Some(value) = filter.as_mut() {
@@ -1826,6 +1894,7 @@ impl crate::Visitable for ShowColumnsStmt {
         let _ = full;
         let _ = extended;
         let _ = table;
+        let _ = database;
         let _ = filter;
         visitor.leave(self)
     }

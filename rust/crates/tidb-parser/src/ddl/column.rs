@@ -20,11 +20,13 @@
 //! shared by CREATE and ALTER column definitions.
 
 use tidb_ast::{ColumnDef, ColumnOption, ColumnType, InlineKeyOption};
+use tidb_lexer::TokenKind;
 
-use crate::{PResult, Parser};
+use crate::{decode_string, PResult, Parser};
 
 use super::field_type::{
-    normalize_binary_charset, type_rejects_charset, type_supports_string_options,
+    canonical_field_charset, normalize_binary_charset, type_rejects_charset,
+    type_supports_string_options,
 };
 
 impl Parser {
@@ -93,6 +95,9 @@ impl Parser {
             self.bump();
             ty.charset = Some("LATIN1".to_owned());
             true
+        } else if supports_string_options && self.is_kw("UNICODE") {
+            self.bump();
+            return Err(self.err_here("[parser:1115]Unknown character set: 'ucs2'"));
         } else if supports_string_options && self.is_kw("BINARY") {
             self.bump();
             ty.binary = true;
@@ -105,7 +110,15 @@ impl Parser {
                 if !type_supports_string_options(&ty.name) || type_rejects_charset(&ty.name) {
                     return Err(self.err_here("column type does not allow CHARACTER SET"));
                 }
-                ty.charset = Some(self.parse_charset_name()?.to_ascii_uppercase());
+                let raw = if self.peek().kind == TokenKind::Str {
+                    decode_string(&self.bump().text)
+                } else {
+                    self.parse_charset_name()?
+                };
+                let charset = canonical_field_charset(&raw).ok_or_else(|| {
+                    self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+                })?;
+                ty.charset = Some(charset.to_ascii_uppercase());
                 if ty.charset.as_deref() == Some("BINARY") {
                     normalize_binary_charset(&mut ty);
                 }

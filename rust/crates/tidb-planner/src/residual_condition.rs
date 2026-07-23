@@ -205,6 +205,7 @@ pub fn classify_residual(expr: &Expr) -> ResidualPredicate {
         | Expr::String(_)
         | Expr::RawString(_)
         | Expr::CharsetString { .. }
+        | Expr::CharsetBinary { .. }
         | Expr::Null
         | Expr::Bool(_)
         | Expr::UserVar(_)
@@ -236,6 +237,7 @@ fn operand_shape(expr: &Expr) -> OperandShape {
         | Expr::String(_)
         | Expr::RawString(_)
         | Expr::CharsetString { .. }
+        | Expr::CharsetBinary { .. }
         | Expr::Null
         | Expr::Bool(_)
         | Expr::UserVar(_)
@@ -297,6 +299,7 @@ fn ast_variant_category(expr: &Expr) -> &'static str {
         | Expr::String(_)
         | Expr::RawString(_)
         | Expr::CharsetString { .. }
+        | Expr::CharsetBinary { .. }
         | Expr::Null
         | Expr::Bool(_)
         | Expr::UserVar(_)

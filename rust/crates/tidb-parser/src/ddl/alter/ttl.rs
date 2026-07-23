@@ -14,40 +14,17 @@
 
 //! Go-shaped ALTER TABLE TTL option and REMOVE TTL grammar.
 
-use tidb_ast::{AlterTableAction, AlterTableRemoveTtl, TableOption};
+use tidb_ast::{AlterTableAction, AlterTableRemoveTtl};
 
 use crate::{PResult, Parser};
 
-/// Parses the alter-only TTL branch. CREATE TABLE owns the same option payload
-/// through its separate option loop.
+/// Parses only the alter-only `REMOVE TTL` branch. Ordinary TTL options use
+/// the same table-option loop as CREATE TABLE and every adjacent ALTER option.
 pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
-    if parser.is_kw("REMOVE") {
-        if !parser.is_kw_at(1, "TTL") {
-            return Ok(None);
-        }
-        parser.bump();
-        parser.bump();
-        return Ok(Some(AlterTableAction::RemoveTtl(AlterTableRemoveTtl)));
-    }
-    if !matches!(
-        parser.peek().text.to_ascii_uppercase().as_str(),
-        "TTL" | "TTL_ENABLE" | "TTL_JOB_INTERVAL"
-    ) {
+    if !(parser.is_kw("REMOVE") && parser.is_kw_at(1, "TTL")) {
         return Ok(None);
     }
-    let mut options = Vec::new();
-    while let Some(option) = parser.parse_table_option()? {
-        if options.is_empty()
-            && !matches!(
-                option,
-                TableOption::Ttl { .. }
-                    | TableOption::TtlEnable(_)
-                    | TableOption::TtlJobInterval(_)
-            )
-        {
-            unreachable!("TTL parser prefix selected a non-TTL option");
-        }
-        options.push(option);
-    }
-    Ok(Some(AlterTableAction::SetTableOptions { options }))
+    parser.bump();
+    parser.bump();
+    Ok(Some(AlterTableAction::RemoveTtl(AlterTableRemoveTtl)))
 }

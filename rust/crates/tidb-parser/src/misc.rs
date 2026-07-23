@@ -176,28 +176,25 @@ impl Parser {
         self.expect_kw("CREATE")?;
         self.expect_kw("STATISTICS")?;
         let if_not_exists = self.parse_if_not_exists()?;
-        let name = self.parse_name_or_keyword()?;
+        let name = crate::table_name_token_text(self.bump());
         self.expect_op("(")?;
-        let stats_type = if self.is_kw("CARDINALITY") {
-            self.bump();
-            ExtendedStatsType::Cardinality
-        } else if self.is_kw("DEPENDENCY") {
-            self.bump();
+        let stats_type_token = self.bump();
+        let stats_type = if stats_type_token.text.eq_ignore_ascii_case("DEPENDENCY") {
             ExtendedStatsType::Dependency
-        } else if self.is_kw("CORRELATION") {
-            self.bump();
+        } else if stats_type_token.text.eq_ignore_ascii_case("CORRELATION") {
             ExtendedStatsType::Correlation
         } else {
-            return Err(self.err_here("expected extended statistics type"));
+            // Go leaves the zero-value enum (CARDINALITY) for every other token.
+            ExtendedStatsType::Cardinality
         };
         self.expect_op(")")?;
         self.expect_kw("ON")?;
-        let table = self.parse_name_path()?;
+        let table = self.parse_table_name()?;
         self.expect_op("(")?;
-        let mut columns = vec![self.parse_name_path()?];
+        let mut columns = vec![self.parse_column_name_path()?];
         while self.is_op(",") {
             self.bump();
-            columns.push(self.parse_name_path()?);
+            columns.push(self.parse_column_name_path()?);
         }
         self.expect_op(")")?;
         Ok(CreateStatisticsStmt {

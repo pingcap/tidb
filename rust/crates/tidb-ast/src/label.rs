@@ -52,6 +52,7 @@ impl DmlStmt {
             Self::Delete(_) => "Delete",
             Self::ImportInto(_) => "ImportInto",
             Self::LoadData(_) => "LoadData",
+            Self::Call(_) => "Call",
             Self::Batch(_) | Self::DistributeTable(_) => "other",
         }
     }
@@ -129,7 +130,7 @@ impl AdminStmt {
                 | Self::ShowNextRowId(_)
                 | Self::ShowCreate { .. }
                 | Self::ShowCreateUser(_)
-                | Self::ShowVariables { .. }
+                | Self::ShowVariables(_)
                 | Self::ShowStatus(_)
                 | Self::ShowWarnings(_)
                 | Self::ShowErrors(_)

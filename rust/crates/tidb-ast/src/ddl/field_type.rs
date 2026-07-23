@@ -164,7 +164,7 @@ impl ColumnType {
     /// Restores the canonical Go `FieldType` spelling for a column owner.
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str(&self.name);
-        if !self.args.is_empty() {
+        if !self.args.is_empty() || matches!(self.name.as_str(), "ENUM" | "SET") {
             out.push('(');
             if self.name == "ENUM" || self.name == "SET" {
                 for (index, value) in self.args.iter().enumerate() {
@@ -226,7 +226,7 @@ impl ColumnType {
     /// Appends this field type to a byte-preserving restore sink.
     pub(crate) fn restore_into_bytes(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.name.as_bytes());
-        if !self.args.is_empty() {
+        if !self.args.is_empty() || matches!(self.name.as_str(), "ENUM" | "SET") {
             out.push(b'(');
             if self.name == "ENUM" || self.name == "SET" {
                 for (index, value) in self.args.iter().enumerate() {

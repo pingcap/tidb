@@ -24,6 +24,17 @@ use tidb_lexer::TokenKind;
 use crate::{prec, PResult, Parser};
 
 impl Parser {
+    pub(super) fn parse_optional_index_name(&mut self) -> PResult<Option<String>> {
+        // Go consumes every `isIdentLike` token as the optional name first.
+        // Thus `INDEX TYPE (a)` names the index `type`; a method needs the
+        // unambiguous `INDEX USING BTREE (a)` or `INDEX TYPE TYPE BTREE (a)`.
+        if self.is_ident_like_name() {
+            Ok(Some(self.parse_ident_like_name()?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub(crate) fn parse_create_index(&mut self) -> PResult<CreateIndexStmt> {
         self.expect_kw("CREATE")?;
         let kind = if self.is_kw("UNIQUE") {
@@ -46,10 +57,14 @@ impl Parser {
         };
         self.expect_kw("INDEX")?;
         let if_not_exists = self.parse_if_not_exists()?;
-        let name = self.parse_name_or_keyword()?;
+        let name = if self.is_ident_like_name() {
+            self.parse_ident_like_name()?
+        } else {
+            String::new()
+        };
         let pre_index_type = self.parse_optional_index_type()?;
         self.expect_kw("ON")?;
-        let table = self.parse_name_path()?;
+        let table = self.parse_table_name()?;
         // Go accepts explicit ASC and restores it as the default.
         let parts = self.parse_index_parts()?;
         // Unlike the other DDL statement envelopes, standalone CREATE INDEX
@@ -137,7 +152,8 @@ impl Parser {
             } else if self.is_kw("WITH") {
                 self.bump();
                 self.expect_kw("PARSER")?;
-                options.parser_name = Some(self.parse_name_or_keyword()?);
+                options.parser_name = Some(self.parse_non_string_ident_like_name()?);
+                self.warn("The WITH PARASER clause is parsed but ignored by all storage engines.");
             } else if self.is_kw("VISIBLE") {
                 self.bump();
                 options.visibility = Some(IndexVisibility::Visible);
@@ -259,7 +275,9 @@ impl Parser {
         is_empty_index: bool,
         allows_pre_index_type: bool,
     ) -> PResult<IndexConstraintDefinition> {
-        let pre_index_type = if allows_pre_index_type {
+        let pre_index_type = if allows_pre_index_type
+            && (self.is_kw("USING") || (name.is_some() && self.is_kw("TYPE")))
+        {
             self.parse_optional_index_type()?
         } else {
             None
@@ -301,7 +319,7 @@ impl Parser {
     /// column's own `REFERENCES ...` option.
     pub(super) fn parse_foreign_key_reference(&mut self) -> PResult<ForeignKeyReference> {
         self.expect_kw("REFERENCES")?;
-        let table = Some(self.parse_name_path()?);
+        let table = Some(self.parse_table_name()?);
         let reference_parts = if self.is_op("(") {
             Some(self.parse_index_parts()?)
         } else {
@@ -309,7 +327,7 @@ impl Parser {
         };
         let match_type = if self.is_kw("MATCH") {
             self.bump();
-            if self.is_kw("FULL") {
+            let match_type = if self.is_kw("FULL") {
                 self.bump();
                 ForeignKeyMatch::Full
             } else if self.is_kw("PARTIAL") {
@@ -326,28 +344,34 @@ impl Parser {
                 // Preserve that source boundary instead of making the Rust
                 // parser stricter than TiDB's yacc grammar.
                 ForeignKeyMatch::None
-            }
+            };
+            self.warn("The MATCH clause is parsed but ignored by all storage engines.");
+            match_type
         } else {
             ForeignKeyMatch::None
         };
         let mut on_delete = None;
         let mut on_update = None;
-        while self.is_kw("ON") {
+        let mut has_on_delete = false;
+        let mut has_on_update = false;
+        while self.is_kw("ON") && (self.is_kw_at(1, "DELETE") || self.is_kw_at(1, "UPDATE")) {
             self.bump();
             if self.is_kw("DELETE") {
-                if on_delete.is_some() {
+                if has_on_delete {
                     return Err(self.err_here("duplicate ON DELETE"));
                 }
+                has_on_delete = true;
                 self.bump();
-                on_delete = Some(self.parse_referential_action()?);
+                let action = self.parse_referential_action()?;
+                on_delete = (action != ReferentialAction::NoOption).then_some(action);
             } else if self.is_kw("UPDATE") {
-                if on_update.is_some() {
+                if has_on_update {
                     return Err(self.err_here("duplicate ON UPDATE"));
                 }
+                has_on_update = true;
                 self.bump();
-                on_update = Some(self.parse_referential_action()?);
-            } else {
-                return Err(self.err_here("expected DELETE or UPDATE after ON"));
+                let action = self.parse_referential_action()?;
+                on_update = (action != ReferentialAction::NoOption).then_some(action);
             }
         }
         Ok(ForeignKeyReference {
@@ -365,10 +389,6 @@ impl Parser {
     /// indexes intentionally meet here so no CREATE TABLE route can erase
     /// index-part syntax that Go keeps in the AST.
     pub(super) fn parse_index_parts(&mut self) -> PResult<Vec<IndexPart>> {
-        self.parse_index_parts_with_asc(true)
-    }
-
-    fn parse_index_parts_with_asc(&mut self, allow_asc: bool) -> PResult<Vec<IndexPart>> {
         self.expect_op("(")?;
         let mut parts = Vec::new();
         loop {
@@ -378,7 +398,7 @@ impl Parser {
                 self.expect_op(")")?;
                 IndexPart::Expr { expr, desc: false }
             } else {
-                let name = self.parse_name_or_keyword()?;
+                let name = self.parse_ident_like_name()?;
                 let prefix_len = if self.is_op("(") {
                     self.bump();
                     let token = self.bump();
@@ -403,9 +423,6 @@ impl Parser {
                     IndexPart::Column { desc, .. } | IndexPart::Expr { desc, .. } => *desc = true,
                 }
             } else if self.is_kw("ASC") {
-                if !allow_asc {
-                    return Err(self.err_here("explicit ASC is outside CREATE INDEX scope"));
-                }
                 // Go parses ASC but restores the default direction silently.
                 self.bump();
             }
@@ -435,9 +452,10 @@ impl Parser {
                 Ok(ReferentialAction::SetNull)
             } else if self.is_kw("DEFAULT") {
                 self.bump();
+                self.warn("The SET DEFAULT clause is parsed but ignored by all storage engines.");
                 Ok(ReferentialAction::SetDefault)
             } else {
-                Err(self.err_here("expected NULL or DEFAULT after SET"))
+                Ok(ReferentialAction::NoOption)
             }
         } else if self.is_kw("NO") {
             self.bump();
@@ -448,7 +466,7 @@ impl Parser {
             }
             Ok(ReferentialAction::NoAction)
         } else {
-            Err(self.err_here("expected a referential action"))
+            Ok(ReferentialAction::NoOption)
         }
     }
 }

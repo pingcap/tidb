@@ -119,7 +119,7 @@ impl Parser {
                     if name.starts_with('@') {
                         return Err(self.err_here("expected a single-@ LOAD DATA user variable"));
                     }
-                    columns.push(ColumnOrUserVar::UserVar(name.to_owned()));
+                    columns.push(ColumnOrUserVar::UserVar(crate::decode_at_name(&token.text)));
                 } else {
                     columns.push(ColumnOrUserVar::Column(self.parse_name_or_keyword()?));
                 }
@@ -290,7 +290,9 @@ impl Parser {
 
     fn validate_load_field_separator(&self, value: &str) -> PResult<()> {
         if value != "\\" && value.len() > 1 {
-            return Err(self.err_here("LOAD DATA field separator must be one byte"));
+            return Err(self.err_here(
+                "[parser:1083]Field separator argument is not what is expected; check the manual",
+            ));
         }
         Ok(())
     }

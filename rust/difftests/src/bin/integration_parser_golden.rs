@@ -360,9 +360,7 @@ fn shared_golden_result() -> &'static Result<Arc<[GoldenRecord]>, String> {
 
 /// Borrows the process-wide checked Go parser oracle.
 ///
-/// Selector modules in one Cargo shard share this immutable allocation, so
-/// the 51k-row TSV is read and decoded once per test process instead of once
-/// per selector test.
+/// The 51k-row TSV is read and decoded once per test process.
 pub fn shared_golden() -> Result<&'static [GoldenRecord], &'static str> {
     match shared_golden_result() {
         Ok(records) => Ok(records),

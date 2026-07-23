@@ -408,6 +408,10 @@ fn go_test_sequence_restore_rows() {
 
 #[test]
 fn shared_table_options_and_invalid_state_boundaries() {
+    assert_eq!(r("create sequence 's'"), "CREATE SEQUENCE `s`");
+    assert_eq!(r("alter sequence @s restart"), "ALTER SEQUENCE `s` RESTART");
+    assert_eq!(r("drop sequence 's', @t"), "DROP SEQUENCE `s`, `t`");
+    assert!(parse("create sequence a.b.c").is_err());
     assert_eq!(
         r("create sequence db.s comment='hi' cycle engine=InnoDB row_format=compact"),
         "CREATE SEQUENCE `db`.`s` CYCLE COMMENT = 'hi' ENGINE = InnoDB ROW_FORMAT = COMPACT"
@@ -416,9 +420,17 @@ fn shared_table_options_and_invalid_state_boundaries() {
         r("alter range global primary_region='us'"),
         "ALTER RANGE `global` PRIMARY_REGION = 'us'"
     );
-    // Go admits bare ALTER RANGE into an AST that panics during restore.
-    // Rust rejects that impossible state at its typed parser boundary.
-    assert!(parse("alter range global").is_err());
+    assert_eq!(
+        r("alter range @r placement policy @p"),
+        "ALTER RANGE `r` PLACEMENT POLICY = `p`"
+    );
+    let Stmt::Ddl(ddl) = parse("alter range global").expect("Go accepts bare ALTER RANGE") else {
+        panic!("expected DDL statement")
+    };
+    let tidb_ast::DdlStmt::AlterRange(range) = ddl.as_ref() else {
+        panic!("expected ALTER RANGE")
+    };
+    assert!(range.placement.is_none());
     assert!(parse("alter instance reload").is_err());
     assert!(parse("alter instance reload tls no rollback").is_err());
 }
@@ -434,6 +446,10 @@ fn alter_instance_accepts_go_keyword_literals_across_token_kinds() {
     );
     assert_eq!(
         r("alter instance 'reload' tls"),
+        "ALTER INSTANCE RELOAD TLS"
+    );
+    assert_eq!(
+        r("alter instance @reload @tls"),
         "ALTER INSTANCE RELOAD TLS"
     );
     assert!(parse("alter instance 'WRONG' 'TLS'").is_err());

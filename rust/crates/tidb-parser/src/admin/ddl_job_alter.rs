@@ -21,31 +21,23 @@ use crate::{prec, PResult, Parser};
 
 /// Parses the source-owned `ADMIN ALTER DDL JOBS` branch.
 pub(super) fn parse(parser: &mut Parser) -> PResult<Option<AdminAlterDdlJobsStmt>> {
-    if !parser.is_kw_at(1, "ALTER") || !parser.is_kw_at(2, "DDL") || !parser.is_kw_at(3, "JOBS") {
+    if !parser.is_kw_at(1, "ALTER") || !parser.is_kw_at(2, "DDL") {
         return Ok(None);
     }
 
     parser.expect_kw("ADMIN")?;
     parser.expect_kw("ALTER")?;
     parser.expect_kw("DDL")?;
-    parser.expect_kw("JOBS")?;
-
-    let job_token = parser.peek().clone();
-    if job_token.kind != TokenKind::IntLit {
-        return Err(parser.err_here("expected an ADMIN ALTER DDL JOBS integer ID"));
-    }
+    // Go consumes the noun token without checking it and restores JOBS.
     parser.bump();
-    let job_number = job_token
-        .text
-        .parse()
-        .map_err(|_| parser.err_here("ADMIN ALTER DDL JOBS ID is out of signed 64-bit range"))?;
+
+    // The source likewise parses the following token with strconv and
+    // discards the error, leaving zero for EOF or non-numeric tokens.
+    let job_number = parser.bump().text.parse().unwrap_or_default();
 
     let mut options = Vec::new();
     while parser.peek().kind != TokenKind::Eof && !parser.is_op(";") {
         let option_token = parser.peek().clone();
-        if !matches!(option_token.kind, TokenKind::Ident | TokenKind::Keyword) {
-            return Err(parser.err_here("expected an ADMIN ALTER DDL JOBS option name"));
-        }
         parser.bump();
         if parser.is_op("=") || parser.is_op(":=") {
             parser.bump();
@@ -54,7 +46,7 @@ pub(super) fn parse(parser: &mut Parser) -> PResult<Option<AdminAlterDdlJobsStmt
         }
         let value = parse_signed_literal(parser)?;
         options.push(AdminAlterDdlJobOption {
-            name: option_token.text.to_lowercase(),
+            name: crate::table_name_token_text(option_token).to_lowercase(),
             value,
         });
         if parser.is_op(",") {

@@ -37,7 +37,7 @@ impl Parser {
                 let kind = IndexConstraintKind::Index;
                 self.bump();
                 let if_not_exists = self.parse_if_not_exists()?;
-                let name = self.try_parse_name()?;
+                let name = self.parse_optional_index_name()?;
                 let is_empty_index = name.as_deref() == Some("");
                 table_constraints.push(TableConstraint::Index(self.parse_index_constraint(
                     kind,
@@ -50,7 +50,7 @@ impl Parser {
                 self.bump();
                 self.expect_kw("INDEX")?;
                 let if_not_exists = self.parse_if_not_exists()?;
-                let name = self.try_parse_name()?;
+                let name = self.parse_optional_index_name()?;
                 let is_empty_index = name.as_deref() == Some("");
                 table_constraints.push(TableConstraint::Index(self.parse_index_constraint(
                     IndexConstraintKind::Vector,
@@ -64,7 +64,7 @@ impl Parser {
                 if self.is_kw("KEY") || self.is_kw("INDEX") {
                     self.bump();
                 }
-                let name = self.try_parse_name()?;
+                let name = self.parse_optional_index_name()?;
                 table_constraints.push(TableConstraint::Index(self.parse_index_constraint(
                     IndexConstraintKind::Fulltext,
                     false,
@@ -76,7 +76,7 @@ impl Parser {
                 self.bump();
                 self.expect_kw("INDEX")?;
                 let if_not_exists = self.parse_if_not_exists()?;
-                let name = self.try_parse_name()?;
+                let name = self.parse_optional_index_name()?;
                 let is_empty_index = name.as_deref() == Some("");
                 table_constraints.push(TableConstraint::Index(self.parse_index_constraint(
                     IndexConstraintKind::Columnar,
@@ -122,14 +122,18 @@ impl Parser {
     pub(crate) fn parse_table_constraint(&mut self) -> PResult<TableConstraint> {
         let constraint_name = if self.is_kw("CONSTRAINT") {
             self.bump();
-            self.try_parse_name()?
+            if self.is_ident_like_name() {
+                Some(self.parse_ident_like_name()?)
+            } else {
+                None
+            }
         } else {
             None
         };
         if self.is_kw("PRIMARY") {
             self.bump();
             self.expect_kw("KEY")?;
-            let inline_name = self.try_parse_name()?;
+            let inline_name = self.parse_optional_index_name()?;
             let name = constraint_name.or(inline_name);
             let is_empty_index = name.as_deref() == Some("");
             Ok(TableConstraint::Index(self.parse_index_constraint(
@@ -144,7 +148,7 @@ impl Parser {
             if self.is_kw("KEY") || self.is_kw("INDEX") {
                 self.bump();
             }
-            let inline_name = self.try_parse_name()?;
+            let inline_name = self.parse_optional_index_name()?;
             let name = constraint_name.or(inline_name);
             let is_empty_index = name.as_deref() == Some("");
             Ok(TableConstraint::Index(self.parse_index_constraint(
@@ -157,7 +161,7 @@ impl Parser {
         } else if self.is_kw("KEY") || self.is_kw("INDEX") {
             self.bump();
             let if_not_exists = self.parse_if_not_exists()?;
-            let inline_name = self.try_parse_name()?;
+            let inline_name = self.parse_optional_index_name()?;
             let name = constraint_name.or(inline_name);
             let is_empty_index = name.as_deref() == Some("");
             Ok(TableConstraint::Index(self.parse_index_constraint(
@@ -172,7 +176,7 @@ impl Parser {
             if self.is_kw("KEY") || self.is_kw("INDEX") {
                 self.bump();
             }
-            let inline_name = self.try_parse_name()?;
+            let inline_name = self.parse_optional_index_name()?;
             Ok(TableConstraint::Index(self.parse_index_constraint(
                 IndexConstraintKind::Fulltext,
                 false,
@@ -184,7 +188,7 @@ impl Parser {
             self.bump();
             self.expect_kw("INDEX")?;
             let if_not_exists = self.parse_if_not_exists()?;
-            let inline_name = self.try_parse_name()?;
+            let inline_name = self.parse_optional_index_name()?;
             let name = constraint_name.or(inline_name);
             let is_empty_index = name.as_deref() == Some("");
             Ok(TableConstraint::Index(self.parse_index_constraint(
@@ -198,7 +202,7 @@ impl Parser {
             self.bump();
             self.expect_kw("INDEX")?;
             let if_not_exists = self.parse_if_not_exists()?;
-            let inline_name = self.try_parse_name()?;
+            let inline_name = self.parse_optional_index_name()?;
             let name = constraint_name.or(inline_name);
             let is_empty_index = name.as_deref() == Some("");
             Ok(TableConstraint::Index(self.parse_index_constraint(
@@ -217,7 +221,11 @@ impl Parser {
             self.bump();
             self.expect_kw("KEY")?;
             let if_not_exists = self.parse_if_not_exists()?;
-            let inline_name = self.try_parse_name()?;
+            let inline_name = if self.is_ident_like_name() {
+                Some(self.parse_ident_like_name()?)
+            } else {
+                None
+            };
             Ok(TableConstraint::ForeignKey(
                 self.parse_foreign_key_constraint(constraint_name.or(inline_name), if_not_exists)?,
             ))

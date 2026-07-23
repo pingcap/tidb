@@ -36,7 +36,7 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     if parser.is_kw("COLUMN") {
         parser.bump();
     }
-    let name = parser.parse_name_or_keyword()?;
+    let name = parser.parse_column_name_path()?;
     let default_value = if parser.is_kw("SET") {
         parser.bump();
         parser.expect_kw("DEFAULT")?;

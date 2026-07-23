@@ -15,103 +15,70 @@
 //! Typed `ANALYZE INCREMENTAL TABLE` payloads from
 //! `pkg/parser/ddl_drop_parser.go`.
 
-use crate::util::{back_quote, push_name_path};
+use super::restore_analyze_body;
+use crate::{AnalyzeOption, AnalyzeTarget};
 
-/// `ANALYZE INCREMENTAL TABLE` preserves whether analysis is directed at all
-/// table statistics or an explicit partition set.
-#[derive(Debug, Clone, PartialEq)]
-pub enum AnalyzeIncrementalTarget {
-    /// `TABLE table [, table ...]` without a partition restriction.
-    Tables(Vec<Vec<String>>),
-    /// `TABLE table [, table ...] PARTITION partition [, partition ...]`.
-    Partitions {
-        /// Table-name paths in source order.
-        tables: Vec<Vec<String>>,
-        /// Simple partition names in source order.
-        partitions: Vec<String>,
-    },
-}
-
-/// The source-backed incremental-analysis subset.
-///
-/// `indexes` is `None` when no `INDEX` clause was written, and `Some(vec![])`
-/// for the valid, explicitly written empty `INDEX` selector.
+/// The source-backed incremental-analysis form. It deliberately shares the
+/// complete post-`TABLE` payload with ordinary [`crate::AnalyzeTableStmt`]
+/// because Go parses both through the same production after setting one flag.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyzeIncrementalStmt {
-    /// The table or partition statistics target.
-    pub target: AnalyzeIncrementalTarget,
-    /// Optional `INDEX [name [, name ...]]` selector.
-    pub indexes: Option<Vec<String>>,
+    /// Whether `NO_WRITE_TO_BINLOG` or `LOCAL` preceded `INCREMENTAL`.
+    pub no_write_to_binlog: bool,
+    /// One or more source table names.
+    pub tables: Vec<Vec<String>>,
+    /// Optional partition-name restriction.
+    pub partitions: Vec<String>,
+    /// The complete selector shared with ordinary ANALYZE TABLE.
+    pub target: AnalyzeTarget,
+    /// Ordered `WITH` options shared with ordinary ANALYZE TABLE.
+    pub options: Vec<AnalyzeOption>,
 }
 
 impl AnalyzeIncrementalStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("ANALYZE INCREMENTAL TABLE ");
-        let tables = match &self.target {
-            AnalyzeIncrementalTarget::Tables(tables) => tables,
-            AnalyzeIncrementalTarget::Partitions { tables, .. } => tables,
-        };
-        for (i, table) in tables.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            push_name_path(out, table);
+        out.push_str("ANALYZE ");
+        if self.no_write_to_binlog {
+            out.push_str("NO_WRITE_TO_BINLOG ");
         }
-        if let AnalyzeIncrementalTarget::Partitions { partitions, .. } = &self.target {
-            out.push_str(" PARTITION ");
-            for (i, partition) in partitions.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push_str(&back_quote(partition));
-            }
-        }
-        if let Some(indexes) = &self.indexes {
-            out.push_str(" INDEX");
-            if !indexes.is_empty() {
-                out.push(' ');
-                for (i, index) in indexes.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    out.push_str(&back_quote(index));
-                }
-            }
-        }
+        out.push_str("INCREMENTAL TABLE ");
+        restore_analyze_body(
+            out,
+            &self.tables,
+            &self.partitions,
+            &self.target,
+            &self.options,
+        );
     }
 }
 
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
-
-impl crate::Visitable for AnalyzeIncrementalTarget {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        match self {
-            Self::Tables(field_0) => {
-                let _ = field_0;
-            }
-            Self::Partitions { tables, partitions } => {
-                let _ = tables;
-                let _ = partitions;
-            }
-        }
-        visitor.leave(self)
-    }
-}
 
 impl crate::Visitable for AnalyzeIncrementalStmt {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        let Self { target, indexes } = self;
+        let Self {
+            no_write_to_binlog,
+            tables,
+            partitions,
+            target,
+            options,
+        } = self;
+        let _ = no_write_to_binlog;
+        let _ = tables;
+        let _ = partitions;
         if !crate::Visitable::accept(target, visitor) {
             return false;
         }
         let _ = target;
-        let _ = indexes;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = options;
         visitor.leave(self)
     }
 }

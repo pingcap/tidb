@@ -40,7 +40,8 @@ fn dml_publishes_row_count(dml: &DmlStmt) -> bool {
         | DmlStmt::Batch(_)
         | DmlStmt::DistributeTable(_)
         | DmlStmt::ImportInto(_)
-        | DmlStmt::LoadData(_) => false,
+        | DmlStmt::LoadData(_)
+        | DmlStmt::Call(_) => false,
     }
 }
 
@@ -281,6 +282,9 @@ impl Database {
         if matches!(dml, DmlStmt::DistributeTable(_)) {
             return Err(ExecError::Unsupported("DISTRIBUTE TABLE"));
         }
+        if matches!(dml, DmlStmt::Call(_)) {
+            return Err(ExecError::Unsupported("CALL"));
+        }
         if matches!(dml, DmlStmt::Insert(insert) if !insert.returning.is_empty())
             || matches!(dml, DmlStmt::Update(update) if !update.returning.is_empty())
             || matches!(dml, DmlStmt::Delete(delete) if !delete.returning.is_empty())
@@ -323,6 +327,7 @@ impl Database {
             DmlStmt::DistributeTable(_) => {
                 unreachable!("DISTRIBUTE TABLE rejected before transaction mutation")
             }
+            DmlStmt::Call(_) => unreachable!("CALL rejected before transaction mutation"),
         };
         if result.is_err() {
             self.tables = statement_tables;

@@ -16,8 +16,8 @@
 use crate::select::restore_partition_clause;
 use crate::util::{back_quote, escape_string_literal, push_name_path, redact_url};
 use crate::{
-    ColumnOrUserVar, Expr, Hint, Join, Limit, LoadDataOption, OrderItem, QueryStmt, SelectField,
-    TableRef,
+    ColumnOrUserVar, Expr, Hint, Join, Limit, LoadDataOption, OrderItem, QueryStmt, RestoreContext,
+    SelectField, TableRef,
 };
 
 /// MySQL statement priority shared by SELECT, INSERT/REPLACE, UPDATE, and
@@ -158,6 +158,10 @@ pub struct InsertStmt {
 
 impl InsertStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_with_context(out, &RestoreContext::default());
+    }
+
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         if self.replace {
             out.push_str("REPLACE ");
         } else {
@@ -205,7 +209,7 @@ impl InsertStmt {
             if self.source_parenthesized {
                 out.push('(');
             }
-            source.restore_into(out);
+            source.restore_into_with_context(out, context);
             if self.source_parenthesized {
                 out.push(')');
             }
@@ -413,6 +417,10 @@ pub enum UpdateKind {
 
 impl UpdateStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_with_context(out, &RestoreContext::default());
+    }
+
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         out.push_str("UPDATE ");
         restore_dml_hints(out, &self.hints);
         self.priority.restore_into(out);
@@ -420,8 +428,8 @@ impl UpdateStmt {
             out.push_str("IGNORE ");
         }
         match &self.kind {
-            UpdateKind::Single(table) => table.restore_into(out),
-            UpdateKind::Multi { from, .. } => from.restore_into(out),
+            UpdateKind::Single(table) => table.restore_into_with_context(out, context),
+            UpdateKind::Multi { from, .. } => from.restore_into_with_context(out, context),
         }
         out.push_str(" SET ");
         for (i, a) in self.assignments.iter().enumerate() {
@@ -432,7 +440,7 @@ impl UpdateStmt {
         }
         if let Some(w) = &self.where_clause {
             out.push_str(" WHERE ");
-            w.restore_into(out);
+            w.restore_into_with_context(out, context);
         }
         restore_dml_order_limit(out, &self.order_by, &self.limit);
         restore_returning(out, &self.returning);
@@ -492,6 +500,10 @@ pub enum DeleteKind {
 
 impl DeleteStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_with_context(out, &RestoreContext::default());
+    }
+
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         out.push_str("DELETE ");
         restore_dml_hints(out, &self.hints);
         self.priority.restore_into(out);
@@ -504,7 +516,7 @@ impl DeleteStmt {
         match &self.kind {
             DeleteKind::Single(table) => {
                 out.push_str("FROM ");
-                table.restore_into(out);
+                table.restore_into_with_context(out, context);
             }
             DeleteKind::Multi {
                 targets,
@@ -513,18 +525,18 @@ impl DeleteStmt {
             } => {
                 if *using {
                     out.push_str("FROM ");
-                    restore_target_list(out, targets);
+                    restore_target_list(out, targets, context);
                     out.push_str(" USING ");
                 } else {
-                    restore_target_list(out, targets);
+                    restore_target_list(out, targets, context);
                     out.push_str(" FROM ");
                 }
-                from.restore_into(out);
+                from.restore_into_with_context(out, context);
             }
         }
         if let Some(w) = &self.where_clause {
             out.push_str(" WHERE ");
-            w.restore_into(out);
+            w.restore_into_with_context(out, context);
         }
         restore_dml_order_limit(out, &self.order_by, &self.limit);
         restore_returning(out, &self.returning);
@@ -573,10 +585,16 @@ fn restore_dml_order_limit(out: &mut String, order_by: &[OrderItem], limit: &Opt
 
 /// Restores a multi-table `DELETE` target list: comma-joined (no space),
 /// each a back-quoted name path — `` `t1`,`t2` ``.
-fn restore_target_list(out: &mut String, targets: &[Vec<String>]) {
+fn restore_target_list(out: &mut String, targets: &[Vec<String>], context: &RestoreContext) {
     for (i, t) in targets.iter().enumerate() {
         if i > 0 {
             out.push(',');
+        }
+        if t.len() == 1 {
+            if let Some(database) = context.default_db_for_table(&t[0], false) {
+                out.push_str(&back_quote(database));
+                out.push('.');
+            }
         }
         push_name_path(out, t);
     }

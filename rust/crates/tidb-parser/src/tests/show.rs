@@ -99,17 +99,12 @@ fn show_variables() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowVariables {
-        global,
-        like,
-        where_clause,
-    } = admin.as_ref()
-    else {
+    let tidb_ast::AdminStmt::ShowVariables(show) = admin.as_ref() else {
         panic!("expected ShowVariables");
     };
-    assert!(*global);
-    assert!(like.is_none());
-    assert!(where_clause.is_some());
+    assert!(show.global);
+    assert!(show.like.is_none());
+    assert!(show.where_clause.is_some());
 
     for sql in [
         "show variables where",
@@ -347,8 +342,8 @@ fn show_table_status_preserves_its_distinct_go_payload() {
         Some(tidb_ast::ShowTableStatusFilter::Like(_))
     ));
 
+    assert_eq!(r("show table status from"), "SHOW TABLE STATUS");
     for sql in [
-        "show table status from",
         "show table status like",
         "show table status from test like",
         "show table status where",
@@ -709,10 +704,10 @@ fn show_tables_rejects_incomplete_filters() {
         "show full",
         "show full tables like",
         "show full tables where",
-        "show tables from",
     ] {
         assert!(parse(sql).is_err(), "Go rejects: {sql}");
     }
+    assert_eq!(r("show tables from"), "SHOW TABLES");
 }
 
 /// Exact `TestDBAStmt` rows at `pkg/parser/parser_test.go:1314-1315`.
@@ -910,6 +905,87 @@ fn show_stats_locked_preserves_shared_show_filters() {
         "show stats_locked like",
         "show stats_locked where",
         "show stats_locked like 't%' where table_name = 't'",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+#[test]
+fn show_ident_based_dispatch_uses_go_decoded_literals() {
+    for (sql, expected) in [
+        ("show 'databases'", "SHOW DATABASES"),
+        ("show @engines", "SHOW ENGINES"),
+        ("show 'grants'", "SHOW GRANTS"),
+        ("show 'bindings'", "SHOW SESSION BINDINGS"),
+        ("show 'placement' 'labels'", "SHOW PLACEMENT LABELS"),
+        ("show 'profile' cpu", "SHOW PROFILE CPU"),
+        ("show 'open' tables", "SHOW OPEN TABLES"),
+        ("show 'table' status", "SHOW TABLE STATUS"),
+        (
+            "show 'extended' columns from t",
+            "SHOW EXTENDED COLUMNS IN `t`",
+        ),
+        ("show 'slave' status", "SHOW REPLICA STATUS"),
+        ("show 'backup' logs status", "SHOW BACKUP LOGS STATUS"),
+        ("show 'br' job 1", "SHOW BR JOB 1"),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+    assert!(parse("show profile cpu,").is_err());
+    assert!(parse("show 'placement' for table t").is_err());
+}
+
+#[test]
+fn show_create_uses_source_owned_name_boundaries() {
+    for (sql, expected) in [
+        ("show create table 't'", "SHOW CREATE TABLE `t`"),
+        ("show create database 123", "SHOW CREATE DATABASE `123`"),
+        ("show create database", "SHOW CREATE DATABASE ``"),
+        (
+            "show create 'placement' 'policy' @p",
+            "SHOW CREATE PLACEMENT POLICY `p`",
+        ),
+        (
+            "show create 'resource' 'group' 123",
+            "SHOW CREATE RESOURCE GROUP `123`",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+    assert!(parse("show create table a.b.c").is_err());
+}
+
+#[test]
+fn show_parser_preserves_shared_go_semantics() {
+    for (sql, expected) in [
+        ("show variables like 1", "SHOW SESSION VARIABLES LIKE 1"),
+        ("show variables like @x", "SHOW SESSION VARIABLES LIKE @`x`"),
+        ("show distribution job 1", "SHOW DISTRIBUTION JOB 1"),
+        ("show distribution job -1", "SHOW DISTRIBUTION JOBS"),
+        ("show distribution job 1+2", "SHOW DISTRIBUTION JOBS"),
+        ("show tables from 123", "SHOW TABLES IN `123`"),
+        (
+            "show columns from t from 123",
+            "SHOW COLUMNS IN `t` IN `123`",
+        ),
+        ("show index from t from 123", "SHOW INDEX IN `123`.`t`"),
+        (
+            "show table t index i distributions",
+            "SHOW TABLE `t` DISTRIBUTIONS",
+        ),
+        ("show binary 'log' status", "SHOW BINARY LOG STATUS"),
+        ("show count(*) 'errors'", "SHOW ERRORS"),
+        ("show global 'bindings'", "SHOW GLOBAL BINDINGS"),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+
+    for sql in [
+        "show table a.b.c regions",
+        "show table t partition ('p') regions",
+        "show binary 'log' 'status'",
+        "show 'extended' 'columns' from t",
+        "show table t regions like 'x'",
     ] {
         assert!(parse(sql).is_err(), "Go rejects: {sql}");
     }

@@ -153,6 +153,12 @@ impl SessionState {
     /// simply never consulted for it, matching real TiDB's own
     /// `@@global.tx_isolation_one_shot` genuine `ERR`.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
+        if scope == Some(tidb_ast::SysVarScope::Instance) {
+            // This in-memory executor has no process-wide instance variable
+            // store. Do not silently read the session value for an explicit
+            // INSTANCE scope.
+            return None;
+        }
         let global = scope == Some(tidb_ast::SysVarScope::Global);
         match name.to_ascii_lowercase().as_str() {
             "autocommit" => Some(Datum::Int(i64::from(if global {

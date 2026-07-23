@@ -110,11 +110,43 @@ fn binding_command_restore_and_scope() {
                     if matches!(query.as_ref(), tidb_ast::QueryStmt::Select(_)))
     ));
 
-    // Do not turn unsupported nested SQL or SET's deliberately string-only
-    // digest target into raw text accepted by the outer binding grammar.
-    assert!(parse("create binding for grant select on t to u using select * from t").is_err());
+    // Binding parsing uses the ordinary statement parser. Semantic binding
+    // eligibility is checked later by preprocessing, exactly as in Go.
+    assert_eq!(
+        r("drop binding for grant select on t to u"),
+        "DROP SESSION BINDING FOR GRANT SELECT ON `t` TO `u`@`%`"
+    );
+    assert_eq!(
+        r("set binding enabled for grant select on t to u"),
+        "SET BINDING ENABLED FOR GRANT SELECT ON `t` TO `u`@`%`"
+    );
     assert!(parse("set binding enabled for sql digest @digest").is_err());
     assert!(parse("drop binding for sql digest 1").is_err());
+}
+
+#[test]
+fn binding_zero_value_and_list_boundaries_match_go_source() {
+    assert_eq!(
+        r("create binding"),
+        "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST "
+    );
+    assert_eq!(
+        r("create binding from history using"),
+        "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST "
+    );
+    assert_eq!(
+        r("create binding from history using plan digest 'x',"),
+        "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST 'x'"
+    );
+    assert_eq!(r("drop binding"), "DROP SESSION BINDING FOR SQL DIGEST ");
+    assert_eq!(
+        r("drop binding for sql ignored"),
+        "DROP SESSION BINDING FOR SQL DIGEST "
+    );
+    assert_eq!(
+        r("drop binding for sql digest 'x',"),
+        "DROP SESSION BINDING FOR SQL DIGEST 'x'"
+    );
 }
 
 /// `pkg/parser/join_parser.go:798-806` gives a table source one deliberately

@@ -12,6 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! All parser differential and selector tests in one process.
+//! Parser and lexer differential tests in one process.
 
 include!(concat!(env!("OUT_DIR"), "/all_tests.rs"));

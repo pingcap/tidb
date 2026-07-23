@@ -38,11 +38,7 @@ pub fn difftest_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Checked static Go parser oracle shared by source-owned selector shards.
-///
-/// Every selector imports this module through the library. The module keeps
-/// the decoded oracle in one process-wide immutable allocation, so all
-/// selectors in a family shard reuse the same 51k source records.
+/// Checked static Go parser oracle shared by the differential replay.
 #[path = "bin/integration_parser_golden.rs"]
 #[allow(dead_code, missing_docs)]
 pub mod parser_oracle;

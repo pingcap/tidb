@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 impl Parser {
     /// Parses `CREATE SEQUENCE [IF NOT EXISTS] name [options...]`.
@@ -28,7 +28,7 @@ impl Parser {
         self.expect_kw("CREATE")?;
         self.expect_kw("SEQUENCE")?;
         let if_not_exists = self.parse_if_not_exists()?;
-        let name = self.parse_name_path()?;
+        let name = self.parse_table_name()?;
         let mut options = Vec::new();
         let mut table_options = Vec::new();
         loop {
@@ -53,7 +53,7 @@ impl Parser {
         self.expect_kw("ALTER")?;
         self.expect_kw("SEQUENCE")?;
         let if_exists = self.parse_if_exists()?;
-        let name = self.parse_name_path()?;
+        let name = self.parse_table_name()?;
         let mut options = Vec::new();
         while let Some(option) = self.parse_alter_sequence_option()? {
             options.push(option);
@@ -75,7 +75,7 @@ impl Parser {
         let if_exists = self.parse_if_exists()?;
         let mut names = Vec::new();
         loop {
-            names.push(self.parse_name_path()?);
+            names.push(self.parse_table_name()?);
             if !self.is_op(",") {
                 break;
             }
@@ -90,8 +90,8 @@ impl Parser {
     pub(crate) fn parse_alter_instance(&mut self) -> PResult<AlterInstanceStmt> {
         self.expect_kw("ALTER")?;
         self.expect_kw("INSTANCE")?;
-        self.expect_keyword_literal("RELOAD")?;
-        self.expect_keyword_literal("TLS")?;
+        self.expect_token_literal("RELOAD")?;
+        self.expect_token_literal("TLS")?;
         let no_rollback_on_error = if self.is_kw("NO") {
             self.bump();
             self.expect_kw("ROLLBACK")?;
@@ -110,11 +110,7 @@ impl Parser {
     pub(crate) fn parse_alter_range(&mut self) -> PResult<AlterRangeStmt> {
         self.expect_kw("ALTER")?;
         self.expect_kw("RANGE")?;
-        let range_token = self.peek().clone();
-        if !matches!(range_token.kind, TokenKind::Ident | TokenKind::Keyword) {
-            return Err(self.err_here("expected range name"));
-        }
-        self.bump();
+        let range_name = self.parse_non_string_ident_like_name()?;
 
         let placement = if self.is_kw("PLACEMENT") {
             self.bump();
@@ -122,19 +118,19 @@ impl Parser {
             if self.is_op("=") {
                 self.bump();
             }
-            let policy = self.peek().clone();
-            if !matches!(policy.kind, TokenKind::Ident | TokenKind::Keyword) {
-                return Err(self.err_here("expected placement policy name"));
-            }
-            self.bump();
-            PlacementOption::Policy(policy.text)
+            let policy = if self.is_kw("DEFAULT") {
+                self.bump();
+                "default".to_owned()
+            } else {
+                self.parse_non_string_ident_like_name()?
+            };
+            Some(PlacementOption::Policy(policy))
         } else {
             self.parse_placement_option()?
-                .ok_or_else(|| self.err_here("ALTER RANGE requires one placement option"))?
         };
 
         Ok(AlterRangeStmt {
-            range_name: range_token.text,
+            range_name,
             placement,
         })
     }
@@ -261,19 +257,5 @@ impl Parser {
         } else {
             Ok(value as i64)
         }
-    }
-
-    /// Go accepts RELOAD/TLS as either their keyword token or a token whose
-    /// literal spells that keyword. Preserve that boundary behavior.
-    fn expect_keyword_literal(&mut self, keyword: &str) -> PResult<()> {
-        let token = self.peek().clone();
-        let matches = token.text.eq_ignore_ascii_case(keyword)
-            || (token.kind == TokenKind::Str
-                && decode_string(&token.text).eq_ignore_ascii_case(keyword));
-        if !matches {
-            return Err(self.err_here("expected keyword literal"));
-        }
-        self.bump();
-        Ok(())
     }
 }

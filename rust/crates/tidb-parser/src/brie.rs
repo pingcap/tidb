@@ -135,7 +135,7 @@ impl Parser {
 
     pub(crate) fn parse_show_brie(&mut self) -> PResult<BrieStmt> {
         self.expect_kw("SHOW")?;
-        if self.is_kw("BR") {
+        if self.token_literal_is_at(0, "BR") {
             self.bump();
             self.expect_kw("JOB")?;
             let kind = if self.is_kw("QUERY") {
@@ -153,7 +153,7 @@ impl Parser {
                 options: Vec::new(),
             });
         }
-        self.expect_kw("BACKUP")?;
+        self.expect_token_literal("BACKUP")?;
         let kind = if self.is_kw("LOGS") {
             self.bump();
             if self.is_kw("STATUS") {

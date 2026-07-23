@@ -15,7 +15,9 @@
 //! `WITH`/window/lock clauses) and their restore.
 
 use crate::util::{back_quote, escape_string_literal};
-use crate::{Expr, LoadDataFields, LoadDataLines, NodeText, QueryStmt, StatementPriority};
+use crate::{
+    Expr, LoadDataFields, LoadDataLines, NodeText, QueryStmt, RestoreContext, StatementPriority,
+};
 
 /// A set-operation statement: a chain of `SELECT` terms joined by set operators,
 /// with optional statement-level `ORDER BY` / `LIMIT`.
@@ -42,14 +44,24 @@ pub struct SetOprStmt {
     /// doc for why this is a SEPARATE field from any individual term's
     /// own `lock` rather than always attaching to the last term.
     pub lock: Option<SelectLock>,
+    /// An `ORDER BY` written outside this statement's own parentheses.
+    pub outer_order_by: Vec<OrderItem>,
+    /// A `LIMIT` written outside this statement's own parentheses.
+    pub outer_limit: Option<Limit>,
+    /// A locking clause written outside this statement's own parentheses.
+    pub outer_lock: Option<SelectLock>,
 }
 
 impl SetOprStmt {
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        if let Some(with) = &self.with {
-            with.restore_into(out);
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
+        let scoped_context = self
+            .with
+            .as_ref()
+            .map(|with| with.restore_into_with_context(out, context));
+        if self.with.is_some() {
             out.push(' ');
         }
+        let context = scoped_context.as_ref().unwrap_or(context);
         if self.is_in_braces {
             out.push('(');
         }
@@ -61,10 +73,10 @@ impl SetOprStmt {
             }
             if term.in_braces {
                 out.push('(');
-                term.body.restore_into(out);
+                term.body.restore_into_with_context(out, context);
                 out.push(')');
             } else {
-                term.body.restore_into(out);
+                term.body.restore_into_with_context(out, context);
             }
         }
         // A statement-level lock (see `SelectStmt::lock`'s own doc for why
@@ -77,8 +89,23 @@ impl SetOprStmt {
         restore_lock(out, &self.lock);
         restore_order_by(out, &self.order_by);
         restore_limit(out, &self.limit);
+        let has_inner_tail =
+            self.lock.is_some() || !self.order_by.is_empty() || self.limit.is_some();
+        // With no inner tail, TiDB folds an outer tail into the preserved
+        // parentheses. When both tails exist, the closing parenthesis remains
+        // their ownership boundary and the outer tail stays outside.
+        if !has_inner_tail {
+            restore_lock(out, &self.outer_lock);
+            restore_order_by(out, &self.outer_order_by);
+            restore_limit(out, &self.outer_limit);
+        }
         if self.is_in_braces {
             out.push(')');
+        }
+        if has_inner_tail {
+            restore_lock(out, &self.outer_lock);
+            restore_order_by(out, &self.outer_order_by);
+            restore_limit(out, &self.outer_limit);
         }
     }
 
@@ -133,10 +160,10 @@ pub enum SetOprTermBody {
 }
 
 impl SetOprTermBody {
-    fn restore_into(&self, out: &mut String) {
+    fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
-            SetOprTermBody::Select(sel) => sel.restore_into(out),
-            SetOprTermBody::Nested(so) => so.restore_into(out),
+            SetOprTermBody::Select(sel) => sel.restore_into_with_context(out, context),
+            SetOprTermBody::Nested(so) => so.restore_into_with_context(out, context),
         }
     }
 
@@ -350,27 +377,18 @@ impl SelectStmt {
         out
     }
 
-    pub(crate) fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         if self.kind == SelectStatementKind::Table {
             // Go's `parseTableStmt` constructs the same select-shaped AST
             // (wildcard field plus one table source), but its Kind restores
             // `TABLE` rather than an equivalent `SELECT * FROM` spelling.
             if let Some(with) = &self.with {
-                with.restore_into(out);
+                let scoped = with.restore_into_with_context(out, context);
                 out.push(' ');
+                self.restore_table_body(out, &scoped);
+                return;
             }
-            out.push_str("TABLE ");
-            self.from
-                .as_ref()
-                .expect("TABLE statements always own one table source")
-                .restore_into(out);
-            restore_order_by(out, &self.order_by);
-            restore_limit(out, &self.limit);
-            restore_lock(out, &self.lock);
-            if let Some(into) = &self.into_outfile {
-                out.push(' ');
-                into.restore_into(out);
-            }
+            self.restore_table_body(out, context);
             return;
         }
         if self.kind == SelectStatementKind::Values {
@@ -387,7 +405,7 @@ impl SelectStmt {
                     if value_index > 0 {
                         out.push(',');
                     }
-                    value.restore_into(out);
+                    value.restore_into_with_context(out, context);
                 }
                 out.push(')');
             }
@@ -403,10 +421,14 @@ impl SelectStmt {
             }
             return;
         }
-        if let Some(with) = &self.with {
-            with.restore_into(out);
+        let scoped_context = self
+            .with
+            .as_ref()
+            .map(|with| with.restore_into_with_context(out, context));
+        if self.with.is_some() {
             out.push(' ');
         }
+        let context = scoped_context.as_ref().unwrap_or(context);
         if self.is_in_braces {
             out.push('(');
         }
@@ -449,11 +471,11 @@ impl SelectStmt {
             if i > 0 {
                 out.push(',');
             }
-            f.restore_into(out);
+            f.restore_into_with_context(out, context);
         }
         if let Some(from) = &self.from {
             out.push_str(" FROM ");
-            from.restore_into(out);
+            from.restore_into_with_context(out, context);
         } else if self.where_clause.is_some() {
             // `WHERE` requires a table, so a table-less query with a predicate
             // restores the placeholder `FROM DUAL` (SelectStmt.Restore in
@@ -462,7 +484,7 @@ impl SelectStmt {
         }
         if let Some(w) = &self.where_clause {
             out.push_str(" WHERE ");
-            w.restore_into(out);
+            w.restore_into_with_context(out, context);
         }
         if !self.group_by.is_empty() {
             out.push_str(" GROUP BY ");
@@ -470,7 +492,7 @@ impl SelectStmt {
                 if i > 0 {
                     out.push(',');
                 }
-                restore_by_item_expr(&item.expr, out);
+                restore_by_item_expr_with_context(&item.expr, out, context);
                 // An explicit `ASC` restores identically to no direction
                 // at all (confirmed via `godump restore`) — only `DESC`
                 // ever shows up in the output, even though `tidb_exec`
@@ -486,7 +508,7 @@ impl SelectStmt {
         }
         if let Some(h) = &self.having {
             out.push_str(" HAVING ");
-            h.restore_into(out);
+            h.restore_into_with_context(out, context);
         }
         if !self.windows.is_empty() {
             out.push_str(" WINDOW ");
@@ -505,6 +527,27 @@ impl SelectStmt {
         // A plain `SELECT`'s own lock prints AFTER `ORDER BY`/`LIMIT`
         // (real SQL clause order — see `SelectStmt::lock`'s own doc for
         // the opposite `SetOprStmt`-level order).
+        restore_lock(out, &self.lock);
+        if let Some(into) = &self.into_outfile {
+            out.push(' ');
+            into.restore_into(out);
+        }
+        if self.is_in_braces {
+            out.push(')');
+        }
+    }
+
+    fn restore_table_body(&self, out: &mut String, context: &RestoreContext) {
+        if self.is_in_braces {
+            out.push('(');
+        }
+        out.push_str("TABLE ");
+        self.from
+            .as_ref()
+            .expect("TABLE statements always own one table source")
+            .restore_into_with_context(out, context);
+        restore_order_by(out, &self.order_by);
+        restore_limit(out, &self.limit);
         restore_lock(out, &self.lock);
         if let Some(into) = &self.into_outfile {
             out.push(' ');
@@ -556,6 +599,8 @@ pub enum LockWait {
     NoWait,
     /// `SKIP LOCKED`.
     SkipLocked,
+    /// `WAIT N`, accepted only by `FOR UPDATE`.
+    Wait(u64),
 }
 
 /// Restores a locking clause (nothing if absent) — shared by
@@ -589,6 +634,10 @@ fn restore_lock(out: &mut String, lock: &Option<SelectLock>) {
         LockWait::Default => {}
         LockWait::NoWait => out.push_str(" NOWAIT"),
         LockWait::SkipLocked => out.push_str(" SKIP LOCKED"),
+        LockWait::Wait(seconds) => {
+            out.push_str(" WAIT ");
+            out.push_str(&seconds.to_string());
+        }
     }
 }
 
@@ -615,11 +664,16 @@ impl WithClause {
     /// Restores the CTE prefix itself, without the separating space before
     /// the query it prefixes. Shared by plain `SELECT` and `SetOprStmt` so
     /// their syntax cannot drift.
-    pub(crate) fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into_with_context(
+        &self,
+        out: &mut String,
+        context: &RestoreContext,
+    ) -> RestoreContext {
         out.push_str("WITH ");
         if self.recursive {
             out.push_str("RECURSIVE ");
         }
+        let mut scoped = context.clone();
         for (i, cte) in self.ctes.iter().enumerate() {
             if i > 0 {
                 out.push_str(", ");
@@ -636,9 +690,11 @@ impl WithClause {
                 out.push(')');
             }
             out.push_str(" AS (");
-            cte.query.restore_into(out);
+            scoped = scoped.with_cte(&cte.name);
+            cte.query.restore_into_with_context(out, &scoped);
             out.push(')');
         }
+        scoped
     }
 }
 
@@ -691,9 +747,13 @@ impl OrderItem {
 /// `tidb_exec::order::positional`). Every other expression restores
 /// normally.
 fn restore_by_item_expr(expr: &Expr, out: &mut String) {
+    restore_by_item_expr_with_context(expr, out, &RestoreContext::default());
+}
+
+fn restore_by_item_expr_with_context(expr: &Expr, out: &mut String, context: &RestoreContext) {
     match expr {
         Expr::Bool(b) => out.push_str(if *b { "1" } else { "0" }),
-        _ => expr.restore_into(out),
+        _ => expr.restore_into_with_context(out, context),
     }
 }
 
@@ -1080,6 +1140,10 @@ impl PartialEq for SelectFieldList {
 
 impl SelectField {
     pub(crate) fn restore_into(&self, out: &mut String) {
+        self.restore_into_with_context(out, &RestoreContext::default());
+    }
+
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             SelectField::Wildcard(path) => {
                 for q in path {
@@ -1089,7 +1153,7 @@ impl SelectField {
                 out.push('*');
             }
             SelectField::Expr { expr, alias } => {
-                expr.restore_into(out);
+                expr.restore_into_with_context(out, context);
                 // An alias whose text is the empty string (`` `` ``)
                 // restores identically to no alias at all — confirmed via
                 // `godump restore` and matching `SelectField.Restore` in
@@ -1195,7 +1259,13 @@ pub struct TableRef {
 }
 
 impl TableRef {
-    pub(crate) fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
+        if self.name.len() == 1 {
+            if let Some(database) = context.default_db_for_table(&self.name[0], false) {
+                out.push_str(&back_quote(database));
+                out.push('.');
+            }
+        }
         for (i, part) in self.name.iter().enumerate() {
             if i > 0 {
                 out.push('.');
@@ -1894,6 +1964,10 @@ pub struct Join {
     /// though a bare `NATURAL JOIN` (no `INNER` prefix) uses the SAME
     /// [`JoinType::Cross`] a plain `INNER`/`CROSS`/bare `JOIN` does.
     pub natural: bool,
+    /// Whether this join subtree was explicitly parenthesized in the source.
+    /// Go uses this bit to prevent cross-join rotation across a name-scope
+    /// boundary; restoration derives the visible parentheses from the tree.
+    pub explicit_parens: bool,
 }
 
 impl Join {
@@ -1912,7 +1986,7 @@ impl Join {
     /// immediately preceding term (the accumulated join's own left operand)
     /// is a `SELECT`-in-parens derived table, not a plain table reference.
     /// The right operand is parenthesized whenever it is a join, regardless.
-    pub(crate) fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         let left_is_join = self.left.is_join();
         let use_comma_join = matches!(
             &self.left,
@@ -1922,7 +1996,7 @@ impl Join {
         if left_is_join && !use_comma_join {
             out.push('(');
         }
-        self.left.restore_into(out);
+        self.left.restore_into_with_context(out, context);
         if left_is_join && !use_comma_join {
             out.push(')');
         }
@@ -1948,13 +2022,13 @@ impl Join {
         if right_is_join {
             out.push('(');
         }
-        right.restore_into(out);
+        right.restore_into_with_context(out, context);
         if right_is_join {
             out.push(')');
         }
         if let Some(on) = &self.on {
             out.push_str(" ON ");
-            on.restore_into(out);
+            on.restore_into_with_context(out, context);
         }
         if !self.using.is_empty() {
             out.push_str(" USING (");
@@ -2015,9 +2089,9 @@ pub enum JoinNode {
 }
 
 impl JoinNode {
-    pub(crate) fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
-            JoinNode::Table(t) => t.restore_into(out),
+            JoinNode::Table(t) => t.restore_into_with_context(out, context),
             JoinNode::Derived {
                 subquery,
                 alias,
@@ -2028,7 +2102,7 @@ impl JoinNode {
                     out.push_str("LATERAL ");
                 }
                 out.push('(');
-                subquery.restore_into(out);
+                subquery.restore_into_with_context(out, context);
                 out.push(')');
                 // No alias at all (`None`) omits the clause entirely, the
                 // SAME restore as an explicit-but-empty alias TEXT (``
@@ -2052,7 +2126,7 @@ impl JoinNode {
                     }
                 }
             }
-            JoinNode::Join(j) => j.restore_into(out),
+            JoinNode::Join(j) => j.restore_into_with_context(out, context),
         }
     }
 
@@ -2086,6 +2160,9 @@ impl crate::Visitable for SetOprStmt {
             order_by,
             limit,
             lock,
+            outer_order_by,
+            outer_limit,
+            outer_lock,
         } = self;
         if let Some(value) = with.as_mut() {
             if !crate::Visitable::accept(value, visitor) {
@@ -2112,12 +2189,30 @@ impl crate::Visitable for SetOprStmt {
                 return false;
             }
         }
+        for value in outer_order_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = outer_limit.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = outer_lock.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
         let _ = with;
         let _ = is_in_braces;
         let _ = terms;
         let _ = order_by;
         let _ = limit;
         let _ = lock;
+        let _ = outer_order_by;
+        let _ = outer_limit;
+        let _ = outer_lock;
         visitor.leave(self)
     }
 }
@@ -2402,6 +2497,7 @@ impl crate::Visitable for LockWait {
             Self::Default => {}
             Self::NoWait => {}
             Self::SkipLocked => {}
+            Self::Wait(_) => {}
         }
         visitor.leave(self)
     }
@@ -2963,6 +3059,7 @@ impl crate::Visitable for Join {
             on,
             using,
             natural,
+            explicit_parens,
         } = self;
         if !crate::Visitable::accept(left, visitor) {
             return false;
@@ -2987,6 +3084,7 @@ impl crate::Visitable for Join {
         let _ = on;
         let _ = using;
         let _ = natural;
+        let _ = explicit_parens;
         visitor.leave(self)
     }
 }

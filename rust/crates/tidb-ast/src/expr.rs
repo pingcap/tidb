@@ -42,13 +42,61 @@ pub const FLAG_PRE_EVALUATED: u64 = 1 << 8;
 /// Contains a window function.
 pub const FLAG_HAS_WINDOW_FUNC: u64 = 1 << 9;
 
-/// The scope of a system variable (`@@GLOBAL.x` / `@@SESSION.x`).
+/// A decoded string value together with the connection character metadata
+/// attached by Go's parser driver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedString {
+    /// Decoded string contents.
+    pub value: String,
+    /// Connection character set attached to the value.
+    pub charset: String,
+    /// Connection collation attached to the value.
+    pub collation: String,
+}
+
+impl TypedString {
+    /// Creates a typed string from its decoded value and connection metadata.
+    pub fn new(
+        value: impl Into<String>,
+        charset: impl Into<String>,
+        collation: impl Into<String>,
+    ) -> Self {
+        Self {
+            value: value.into(),
+            charset: charset.into(),
+            collation: collation.into(),
+        }
+    }
+}
+
+impl From<String> for TypedString {
+    fn from(value: String) -> Self {
+        Self::new(
+            value,
+            tidb_mysql::DefaultCharset,
+            tidb_mysql::DefaultCollationName,
+        )
+    }
+}
+
+impl std::ops::Deref for TypedString {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+/// The scope of a system variable (`@@GLOBAL.x`, `@@SESSION.x`, or
+/// `@@INSTANCE.x`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SysVarScope {
     /// `@@GLOBAL.`.
     Global,
     /// `@@SESSION.` (also `@@LOCAL.`).
     Session,
+    /// `@@INSTANCE.`.
+    Instance,
 }
 
 /// A scalar expression.
@@ -122,6 +170,13 @@ pub enum Expr {
         charset: String,
         /// The string literal's decoded value.
         value: String,
+    },
+    /// A charset introducer applied to a hexadecimal or bit literal.
+    CharsetBinary {
+        /// Canonical uppercase charset name.
+        charset: String,
+        /// The introduced [`Expr::Hex`] or [`Expr::Bit`] literal.
+        value: Box<Expr>,
     },
     /// The `NULL` literal.
     Null,
@@ -268,7 +323,7 @@ pub enum Expr {
         order_by: Vec<OrderItem>,
         /// The separator between rows; `,` if not written (always restored
         /// explicitly, matching the Go AST's normalization).
-        separator: String,
+        separator: TypedString,
     },
     /// A window function call: `NAME(args...) OVER (window_spec)`. Five
     /// shapes share this one node, distinguished by `name` and `args.len()`:
@@ -519,6 +574,8 @@ pub enum Expr {
         pattern: Box<Expr>,
         /// Whether negated (`NOT LIKE`).
         not: bool,
+        /// Whether the source operator was `ILIKE` rather than `LIKE`.
+        ilike: bool,
         /// The explicit escape byte, if written and worth restoring —
         /// see this variant's own doc for the exact `None`/`Some(0)`/
         /// `Some(byte)` distinction.
@@ -844,6 +901,9 @@ impl Expr {
             Self::String(value) | Self::RawString(value) | Self::CharsetString { value, .. } => {
                 format_double_quoted_string(value, out);
             }
+            Self::CharsetBinary { .. } => {
+                panic!("Format is not implemented for charset binary literals")
+            }
             Self::Null => out.push_str("NULL"),
             Self::Bool(true) => out.push_str("TRUE"),
             Self::Bool(false) => out.push_str("FALSE"),
@@ -955,10 +1015,16 @@ impl Expr {
                 expr,
                 pattern,
                 not,
+                ilike,
                 escape,
             } => {
                 expr.format_into(out);
-                out.push_str(if *not { " NOT LIKE " } else { " LIKE " });
+                out.push_str(match (*not, *ilike) {
+                    (true, true) => " NOT ILIKE ",
+                    (true, false) => " NOT LIKE ",
+                    (false, true) => " ILIKE ",
+                    (false, false) => " LIKE ",
+                });
                 pattern.format_into(out);
                 if let Some(escape) = escape {
                     out.push_str(" ESCAPE '");
@@ -1053,7 +1119,7 @@ impl Expr {
     /// Restores this expression with Go-compatible formatting flags.
     pub fn restore_with_flags(&self, flags: RestoreFlags) -> String {
         let mut out = String::new();
-        self.restore_into_with_context(&mut out, RestoreContext::new(flags));
+        self.restore_into_with_context(&mut out, &RestoreContext::new(flags));
         out
     }
 
@@ -1151,6 +1217,7 @@ impl Expr {
             | Self::String(_)
             | Self::RawString(_)
             | Self::CharsetString { .. }
+            | Self::CharsetBinary { .. }
             | Self::Null
             | Self::Bool(_) => FLAG_CONSTANT,
         }
@@ -1167,14 +1234,14 @@ impl Expr {
     }
 
     pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_into_with_context(out, RestoreContext::default());
+        self.restore_into_with_context(out, &RestoreContext::default());
     }
 
     /// Restores an expression under the statement's source formatting
     /// context. DDL owns the caller today, but the context lives here because
     /// Go's column-name qualifier flags apply recursively inside expressions,
     /// not only to a statement's outer identifier slots.
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             Expr::Column(path) => restore_path_with_context(path, out, context),
             Expr::ParamMarker { .. } => out.push('?'),
@@ -1193,18 +1260,44 @@ impl Expr {
                 out.push_str(b);
                 out.push('\'');
             }
-            Expr::String(v) => out.push_str(&restore_string_literal(v)),
+            Expr::String(v) => {
+                if context.flags().has_string_without_charset()
+                    || context.flags().has_string_without_default_charset()
+                {
+                    out.push('\'');
+                    out.push_str(&escape_string_literal(v));
+                    out.push('\'');
+                } else {
+                    out.push_str(&restore_string_literal(v));
+                }
+            }
             Expr::RawString(v) => {
                 out.push('\'');
                 out.push_str(&escape_string_literal(v));
                 out.push('\'');
             }
             Expr::CharsetString { charset, value } => {
-                out.push('_');
-                out.push_str(charset);
+                let omit_charset = context.flags().has_string_without_charset()
+                    || (context.flags().has_string_without_default_charset()
+                        && charset.eq_ignore_ascii_case("utf8mb4"));
+                if !omit_charset {
+                    out.push('_');
+                    restore_charset_name(out, charset, context);
+                }
                 out.push('\'');
                 out.push_str(&escape_string_literal(value));
                 out.push('\'');
+            }
+            Expr::CharsetBinary { charset, value } => {
+                let omit_charset = context.flags().has_string_without_charset()
+                    || (context.flags().has_string_without_default_charset()
+                        && charset.eq_ignore_ascii_case("utf8mb4"));
+                if !omit_charset {
+                    out.push('_');
+                    restore_charset_name(out, charset, context);
+                    out.push(' ');
+                }
+                value.restore_into_with_context(out, context);
             }
             Expr::Null => out.push_str("NULL"),
             Expr::Bool(true) => out.push_str("TRUE"),
@@ -1226,6 +1319,7 @@ impl Expr {
                 match scope {
                     Some(SysVarScope::Global) => out.push_str("GLOBAL."),
                     Some(SysVarScope::Session) => out.push_str("SESSION."),
+                    Some(SysVarScope::Instance) => out.push_str("INSTANCE."),
                     None => {}
                 }
                 out.push_str(&back_quote(name));
@@ -1245,7 +1339,7 @@ impl Expr {
                 if bracket {
                     out.push('(');
                 }
-                l.restore_into_with_context(out, context);
+                restore_binary_operand(out, l, context, bracket);
                 if context.flags().has_spaces_around_binary_operation() {
                     out.push(' ');
                     out.push_str(op.restore().trim());
@@ -1253,7 +1347,7 @@ impl Expr {
                 } else {
                     out.push_str(op.restore());
                 }
-                r.restore_into_with_context(out, context);
+                restore_binary_operand(out, r, context, bracket);
                 if bracket {
                     out.push(')');
                 }
@@ -1281,7 +1375,13 @@ impl Expr {
                     out.push(')');
                     return;
                 }
-                out.push_str(&name.to_ascii_uppercase());
+                if context.flags().has_keyword_lowercase()
+                    || !context.flags().has_keyword_uppercase()
+                {
+                    out.push_str(&name.to_ascii_lowercase());
+                } else {
+                    out.push_str(&name.to_ascii_uppercase());
+                }
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
@@ -1514,10 +1614,16 @@ impl Expr {
                 expr,
                 pattern,
                 not,
+                ilike,
                 escape,
             } => {
                 expr.restore_into_with_context(out, context);
-                out.push_str(if *not { " NOT LIKE " } else { " LIKE " });
+                out.push_str(match (*not, *ilike) {
+                    (true, true) => " NOT ILIKE ",
+                    (true, false) => " NOT LIKE ",
+                    (false, true) => " ILIKE ",
+                    (false, false) => " LIKE ",
+                });
                 pattern.restore_into_with_context(out, context);
                 // `None` also covers an explicit `ESCAPE '\'` matching
                 // the default — see this variant's own doc.
@@ -1549,7 +1655,7 @@ impl Expr {
             }
             Expr::Subquery(s) => {
                 out.push('(');
-                s.restore_into(out);
+                s.restore_into_with_context(out, context);
                 out.push(')');
             }
             Expr::Exists { subquery, not } => {
@@ -1557,7 +1663,7 @@ impl Expr {
                     out.push_str("NOT ");
                 }
                 out.push_str("EXISTS (");
-                subquery.restore_into(out);
+                subquery.restore_into_with_context(out, context);
                 out.push(')');
             }
             Expr::InSubquery {
@@ -1567,7 +1673,7 @@ impl Expr {
             } => {
                 expr.restore_into_with_context(out, context);
                 out.push_str(if *not { " NOT IN (" } else { " IN (" });
-                subquery.restore_into(out);
+                subquery.restore_into_with_context(out, context);
                 out.push(')');
             }
             Expr::CompareSubquery {
@@ -1576,10 +1682,10 @@ impl Expr {
                 all,
                 subquery,
             } => {
-                left.restore_into(out);
+                left.restore_into_with_context(out, context);
                 out.push_str(op.restore());
                 out.push_str(if *all { "ALL (" } else { "ANY (" });
-                subquery.restore_into(out);
+                subquery.restore_into_with_context(out, context);
                 out.push(')');
             }
             Expr::Case {
@@ -1677,6 +1783,32 @@ impl Expr {
     }
 }
 
+fn restore_charset_name(out: &mut String, charset: &str, context: &RestoreContext) {
+    if context.flags().has_keyword_uppercase() {
+        out.push_str(&charset.to_ascii_uppercase());
+    } else if context.flags().has_keyword_lowercase() {
+        out.push_str(&charset.to_ascii_lowercase());
+    } else {
+        out.push_str(charset);
+    }
+}
+
+fn restore_binary_operand(
+    out: &mut String,
+    expr: &Expr,
+    context: &RestoreContext,
+    bracket_binary: bool,
+) {
+    let bracket = bracket_binary && matches!(expr, Expr::Between { .. });
+    if bracket {
+        out.push('(');
+    }
+    expr.restore_into_with_context(out, context);
+    if bracket {
+        out.push(')');
+    }
+}
+
 fn format_expr_list(exprs: &[Expr], out: &mut String, separator: &str) {
     for (index, expr) in exprs.iter().enumerate() {
         if index > 0 {
@@ -1755,7 +1887,7 @@ fn restore_path(path: &[String], out: &mut String) {
 /// (`table.col`), or three (`schema.table.col`) components; preserving that
 /// distinction avoids incorrectly treating a two-part path as if it had a
 /// schema component.
-fn restore_path_with_context(path: &[String], out: &mut String, context: RestoreContext) {
+fn restore_path_with_context(path: &[String], out: &mut String, context: &RestoreContext) {
     let flags = context.flags();
     if !flags.contains(RestoreFlags::WITHOUT_SCHEMA_NAME)
         && !flags.contains(RestoreFlags::WITHOUT_TABLE_NAME)
@@ -1816,10 +1948,9 @@ pub enum CastStyle {
     /// `FuncCallExpr` shape real TiDB's own `ast.DateLiteral` function
     /// name produces (`pkg/parser/expr_prefix_parser.go`'s
     /// `parsePrefixTimeLiteral`) — reused here as [`Expr::Cast`] with
-    /// `cast_type` always [`CastType::Date`], `expr` always an
-    /// [`Expr::String`] (never any other expression shape — real TiDB's
-    /// own grammar only accepts a raw string-literal token here, not an
-    /// arbitrary expression). Restores as `DATE 'literal'`, the literal's
+    /// `cast_type` always [`CastType::Date`]. Bare `DATE 'literal'` supplies
+    /// an [`Expr::String`]; ODBC `{d expression}` may supply any expression.
+    /// Restores as `DATE 'literal'`, the literal's
     /// quotes escaped but with NO `_UTF8MB4` charset-introducer prefix
     /// (confirmed via `godump restore` — a genuinely different restore
     /// rule from an ordinary standalone [`Expr::String`]). Only
@@ -2034,22 +2165,20 @@ pub enum CastType {
     Json,
 }
 
-/// Restores an ODBC-style typed literal (`DATE`/`TIME`/`TIMESTAMP
-/// 'literal'`, see [`CastStyle::DateLiteral`]'s own doc): `keyword`, a
-/// space, then the literal's escaped body between quotes — deliberately
-/// NOT [`Expr::String`]'s own `restore_into` (which would add an
-/// `_UTF8MB4` charset-introducer prefix real TiDB does not print here,
-/// confirmed via `godump restore`). `expr` is always `Expr::String` by
-/// construction (`tidb_parser`'s own grammar only ever builds one of
-/// these three `CastStyle`s from a raw string-literal token).
+/// Restores a typed date/time/timestamp expression. Bare SQL typed literals
+/// contain a string and omit its ordinary `_UTF8MB4` introducer; ODBC
+/// `{d|t|ts expression}` escapes may contain any expression and restore it
+/// normally after the type keyword.
 fn restore_typed_literal(keyword: &str, expr: &Expr, out: &mut String) {
-    let Expr::String(text) = expr else {
-        unreachable!("typed date/time/timestamp literal always wraps a string literal")
-    };
     out.push_str(keyword);
-    out.push_str(" '");
-    out.push_str(&escape_string_literal(text));
-    out.push('\'');
+    out.push(' ');
+    if let Expr::String(text) = expr {
+        out.push('\'');
+        out.push_str(&escape_string_literal(text));
+        out.push('\'');
+    } else {
+        expr.restore_into(out);
+    }
 }
 
 /// Restores a [`CastType`] plus its own optional `ARRAY` suffix (see
@@ -2304,6 +2433,7 @@ impl crate::Visitable for SysVarScope {
         match self {
             Self::Global => {}
             Self::Session => {}
+            Self::Instance => {}
         }
         visitor.leave(self)
     }
@@ -2350,6 +2480,12 @@ impl crate::Visitable for Expr {
             Self::CharsetString { charset, value } => {
                 let _ = charset;
                 let _ = value;
+            }
+            Self::CharsetBinary { charset, value } => {
+                let _ = charset;
+                if !value.accept(visitor) {
+                    return false;
+                }
             }
             Self::Null => {}
             Self::Bool(field_0) => {
@@ -2625,6 +2761,7 @@ impl crate::Visitable for Expr {
                 expr,
                 pattern,
                 not,
+                ilike,
                 escape,
             } => {
                 if !crate::Visitable::accept(expr.as_mut(), visitor) {
@@ -2636,6 +2773,7 @@ impl crate::Visitable for Expr {
                 let _ = expr;
                 let _ = pattern;
                 let _ = not;
+                let _ = ilike;
                 let _ = escape;
             }
             Self::Regexp { expr, pattern, not } => {

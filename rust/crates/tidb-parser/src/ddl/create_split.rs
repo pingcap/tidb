@@ -37,7 +37,7 @@ impl Parser {
                 CreateTableSplitTarget::PrimaryKey
             } else if self.is_kw("INDEX") {
                 self.bump();
-                CreateTableSplitTarget::Index(self.parse_name_or_keyword()?)
+                CreateTableSplitTarget::Index(self.parse_non_string_ident_like_name()?)
             } else if self.is_kw("TABLE") {
                 self.bump();
                 CreateTableSplitTarget::Table
@@ -50,7 +50,7 @@ impl Parser {
             };
             splits.push(CreateTableSplit {
                 target,
-                option: self.parse_split_option()?,
+                option: self.parse_create_table_split_option()?,
             });
         }
         Ok(splits)

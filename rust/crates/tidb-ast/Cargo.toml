@@ -6,6 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TiDB SQL abstract syntax tree (Rust)."
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
 
 [lints]
 workspace = true

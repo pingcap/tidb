@@ -18,48 +18,29 @@ use tidb_ast::{AlterTableAction, TableOption};
 
 use crate::{PResult, Parser};
 
-/// Parses one of the auto-ID table options owned by Go's alter-table option
-/// handler. The FORCE modifier is valid for AUTO_INCREMENT and
-/// AUTO_RANDOM_BASE; preserving it in distinct typed payloads avoids accepting
-/// `FORCE AUTO_ID_CACHE` or dropping the modifier during restore.
+/// Parses only Go's FORCE modifier for AUTO_INCREMENT/AUTO_RANDOM_BASE.
+/// Ordinary auto-ID options flow through the shared table-option loop so they
+/// compose with every adjacent option in one Go `AlterTableOption` spec.
 pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
-    let force = if parser.is_kw("FORCE") {
-        if !parser.is_kw_at(1, "AUTO_INCREMENT") && !parser.is_kw_at(1, "AUTO_RANDOM_BASE") {
-            return Ok(None);
-        }
-        parser.bump();
-        true
-    } else {
-        false
-    };
+    if !parser.is_kw("FORCE")
+        || (!parser.is_kw_at(1, "AUTO_INCREMENT") && !parser.is_kw_at(1, "AUTO_RANDOM_BASE"))
+    {
+        return Ok(None);
+    }
+    parser.bump();
 
     let option = if parser.is_kw("AUTO_INCREMENT") {
         parser.bump();
         parser.accept_optional_equals();
         let value = parser.parse_table_option_integer("AUTO_INCREMENT")?;
-        if force {
-            TableOption::ForceAutoIncrement(value)
-        } else {
-            TableOption::AutoIncrement(value)
-        }
-    } else if parser.is_kw("AUTO_ID_CACHE") {
-        if force {
-            return Err(parser.err_here("FORCE applies only to AUTO_RANDOM_BASE"));
-        }
-        parser.bump();
-        parser.accept_optional_equals();
-        TableOption::AutoIdCache(parser.parse_table_option_integer("AUTO_ID_CACHE")?)
+        TableOption::ForceAutoIncrement(value)
     } else if parser.is_kw("AUTO_RANDOM_BASE") {
         parser.bump();
         parser.accept_optional_equals();
         let value = parser.parse_table_option_integer("AUTO_RANDOM_BASE")?;
-        if force {
-            TableOption::ForceAutoRandomBase(value)
-        } else {
-            TableOption::AutoRandomBase(value)
-        }
+        TableOption::ForceAutoRandomBase(value)
     } else {
-        return Ok(None);
+        unreachable!("FORCE selector checked the auto-ID option")
     };
 
     Ok(Some(AlterTableAction::SetTableOptions {

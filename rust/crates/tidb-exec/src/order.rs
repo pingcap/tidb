@@ -254,11 +254,13 @@ pub(crate) fn resolve_having_aliases(expr: &Expr, fields: &[SelectField]) -> Exp
             expr,
             pattern,
             not,
+            ilike,
             escape,
         } => Expr::Like {
             expr: Box::new(resolve_having_aliases(expr, fields)),
             pattern: Box::new(resolve_having_aliases(pattern, fields)),
             not: *not,
+            ilike: *ilike,
             escape: *escape,
         },
         Expr::Regexp { expr, pattern, not } => Expr::Regexp {

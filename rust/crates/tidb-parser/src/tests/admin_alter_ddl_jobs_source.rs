@@ -36,6 +36,19 @@ fn admin_alter_ddl_jobs_restores_go_option_rows() {
             "admin alter ddl jobs 1 max_write_speed = _UTF8MB4'4MiB'",
             "ADMIN ALTER DDL JOBS 1 max_write_speed = _UTF8MB4'4MiB'",
         ),
+        ("admin alter ddl", "ADMIN ALTER DDL JOBS 0"),
+        ("admin alter ddl foo", "ADMIN ALTER DDL JOBS 0"),
+        ("admin alter ddl foo 1", "ADMIN ALTER DDL JOBS 1"),
+        ("admin alter ddl jobs x", "ADMIN ALTER DDL JOBS 0"),
+        (
+            "admin alter ddl jobs 1 'Foo'=2",
+            "ADMIN ALTER DDL JOBS 1 foo = 2",
+        ),
+        (
+            "admin alter ddl jobs 1 @foo=2",
+            "ADMIN ALTER DDL JOBS 1 foo = 2",
+        ),
+        ("admin alter ddl jobs 1 3=2", "ADMIN ALTER DDL JOBS 1 3 = 2"),
     ] {
         assert_eq!(r(sql), restored, "{sql}");
     }

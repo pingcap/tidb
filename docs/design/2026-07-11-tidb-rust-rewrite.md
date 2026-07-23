@@ -62,36 +62,29 @@ material, never evidence of package completion.
 
 ## Development loop
 
-Work on exactly one dependency-ready Go package. Transcreate its production
-owners in source order, then transcreate the complete original test/support
-owners. Run a focused test only when it gives immediate feedback for the code
-being changed. Fix shared-API consumers in place; do not add compatibility
-layers.
+Pick one dependency-ready Go package and transcreate the whole package as one
+compiler-driven batch: production code first, then every original test and
+support artifact. Do not close files or features individually, and do not stop
+for per-file audits. Preserve Go control flow until the package compiles; let
+Rust modules follow stable ownership boundaries rather than historical Go file
+boundaries.
 
-At package close, compare the live Go directory with its Rust owners, then run
-only the Go package tests, owning Rust crate tests, package differential or
-generator checks, and formatting. If a public Rust API changed, compile its
-direct reverse dependencies. Commit immediately and take the next package.
+The inner loop is only `edit -> compile the owning crates`. Once production
+code compiles, run the complete transcreated test suite and differential suite,
+fix failures in batches, then run the complete Go package and direct Rust
+reverse dependencies. Format and commit once when the package closes. Lint and
+live-cluster checks belong to integration or deployable milestones unless the
+package itself owns that external contract.
 
-Workspace-wide tests, Clippy, repository lint, and live-cluster checks run at
-dependency-layer integration points and deployable milestones, not after every
-leaf package. A package that directly owns a wire, storage, concurrency, or
-external-service contract still runs its relevant live check before close.
-Until the package checks succeed it is simply open; files, commits, crates, and
-test subsets are not completion units.
+The Go package tree is the input, compiler errors are the work list, tests are
+the progress report, and Git is recovery. There are no campaigns, queues,
+gates, claims, receipts, ledgers, freezes, handoffs, per-file status checks, or
+manual parity inventories. Differential tests carry bulk table-driven behavior;
+direct Rust tests exist only for state or diagnostics the differential cannot
+observe.
 
-No campaigns, queues, claims, receipts, ledgers, freezes, handoff/status files,
-integration branches, or manually maintained per-file status exist. Go is the
-specification, ordinary tests are the feedback loop, and Git is recovery.
-
-Do not create coverage evidence files, translation manifests, selector receipts,
-or test-to-test mapping tables. Keep executable differential inputs and goldens;
-delete the bookkeeping around them. To find a gap, run the complete Go package
-tests and its Rust/differential tests, fix the first real mismatch, and rerun.
-
-Organize Rust by stable cohesive responsibility. One Go package may map to
-multiple Rust modules or crates, but never create a module merely to isolate a
-partial port or a single test case.
+One Go package may map to several Rust modules or crates when that is a stable
+Rust boundary. It may not be split into partial completion units.
 
 ## Target architecture
 

@@ -306,6 +306,9 @@ impl Database {
                 position,
                 ..
             } => {
+                let old_name = old_name
+                    .last()
+                    .expect("CHANGE COLUMN source name is never empty");
                 let from = table
                     .cols
                     .iter()

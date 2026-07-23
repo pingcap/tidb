@@ -228,6 +228,9 @@ impl Parser {
                 } else {
                     self.parse_table_option_integer("STATS_AUTO_RECALC")?
                 };
+                if !matches!(value.as_str(), "DEFAULT" | "0" | "1") {
+                    return Err(self.err_here("STATS_AUTO_RECALC accepts only DEFAULT, 0, or 1"));
+                }
                 Some(TableOption::StatsAutoRecalc(value))
             }
             "STATS_SAMPLE_PAGES" => {

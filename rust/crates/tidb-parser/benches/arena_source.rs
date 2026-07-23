@@ -24,7 +24,7 @@ struct Node {
 }
 
 #[test]
-fn benchmark_arena_alloc_workload() {
+fn benchmark_arena_alloc() {
     let mut arena = Arena::new();
     for index in 0..10_000 {
         if index % 1_000 == 0 {
@@ -37,14 +37,14 @@ fn benchmark_arena_alloc_workload() {
 }
 
 #[test]
-fn benchmark_heap_alloc_workload() {
+fn benchmark_heap_alloc() {
     for index in 0..10_000 {
         black_box(Box::new(Node { value: index }));
     }
 }
 
 #[test]
-fn benchmark_typed_slab_workload() {
+fn benchmark_slab_alloc() {
     let mut slab = Slab::<Node>::default();
     for index in 0..10_000 {
         if index % 1_000 == 0 {

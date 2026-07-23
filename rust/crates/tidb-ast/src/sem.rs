@@ -55,6 +55,7 @@ impl DmlStmt {
             Self::LoadData(_) => "LOAD DATA",
             Self::Batch(_) => "BATCH",
             Self::DistributeTable(_) => "DISTRIBUTE TABLE",
+            Self::Call(_) => "CALL",
         }
     }
 }
@@ -107,7 +108,9 @@ impl SessionStmt {
     fn sem_command(&self) -> &'static str {
         match self {
             Self::Use(_) => "USE",
-            Self::Set(_) | Self::SetUserVar(_) | Self::SetCharset { .. } => "SET",
+            Self::Set(_) | Self::SetUserVar(_) | Self::SetCharset { .. } | Self::SetMixed(_) => {
+                "SET"
+            }
             Self::SetPassword(_) => "SET PASSWORD",
             Self::SetRole(_) => "SET ROLE",
             Self::SetDefaultRole(_) => "SET DEFAULT ROLE",
@@ -193,7 +196,7 @@ impl AdminStmt {
                 ShowCreateKind::ResourceGroup => "SHOW CREATE RESOURCE GROUP",
             },
             Self::ShowCreateUser(_) => "SHOW CREATE USER",
-            Self::ShowVariables { .. } => "SHOW VARIABLES",
+            Self::ShowVariables(_) => "SHOW VARIABLES",
             Self::ShowStatus(_) => "SHOW STATUS",
             Self::ShowWarnings(_) => "SHOW WARNINGS",
             Self::ShowErrors(_) => "SHOW ERRORS",

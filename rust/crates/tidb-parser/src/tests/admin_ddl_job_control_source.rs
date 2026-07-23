@@ -22,6 +22,7 @@ fn admin_ddl_job_controls_restore_original_go_rows() {
     for (sql, restored) in [
         ("admin cancel ddl jobs 1", "ADMIN CANCEL DDL JOBS 1"),
         ("admin cancel ddl jobs 1, 2", "ADMIN CANCEL DDL JOBS 1, 2"),
+        ("admin cancel ddl jobs 1,", "ADMIN CANCEL DDL JOBS 1"),
         ("admin pause ddl jobs 1, 3", "ADMIN PAUSE DDL JOBS 1, 3"),
         ("admin pause ddl jobs 5", "ADMIN PAUSE DDL JOBS 5"),
         ("admin resume ddl jobs 1, 2", "ADMIN RESUME DDL JOBS 1, 2"),

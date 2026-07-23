@@ -49,7 +49,11 @@ pub(super) fn parse(parser: &mut Parser) -> PResult<Option<AdminDdlJobControlStm
     let mut job_ids = vec![parse_job_id(parser)?];
     while parser.is_op(",") {
         parser.bump();
-        job_ids.push(parse_job_id(parser)?);
+        if parser.peek().kind == TokenKind::IntLit {
+            job_ids.push(parse_job_id(parser)?);
+        } else {
+            break;
+        }
     }
     Ok(Some(AdminDdlJobControlStmt { kind, job_ids }))
 }

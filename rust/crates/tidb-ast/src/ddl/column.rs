@@ -41,10 +41,10 @@ impl ColumnDef {
     /// single leading space, in the order they were parsed (matching the Go
     /// AST, which has no canonical option order of its own).
     fn restore_into(&self, out: &mut String) {
-        self.restore_into_with_name_path(out, &self.qualifier, RestoreContext::default());
+        self.restore_into_with_name_path(out, &self.qualifier, &RestoreContext::default());
     }
 
-    pub(super) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(super) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         if context.flags() == RestoreFlags::DEFAULT {
             self.restore_into(out);
             return;
@@ -58,7 +58,7 @@ impl ColumnDef {
         &self,
         out: &mut String,
         qualifier: &[String],
-        context: RestoreContext,
+        context: &RestoreContext,
     ) {
         for (index, part) in qualifier
             .iter()
@@ -81,7 +81,7 @@ impl ColumnDef {
     /// Restores this column into a byte-preserving sink. The normal option
     /// payloads are UTF-8 strings today; the declared type owns the only
     /// parser path that can contain arbitrary member bytes.
-    pub(crate) fn restore_into_bytes(&self, out: &mut Vec<u8>, context: RestoreContext) {
+    pub(crate) fn restore_into_bytes(&self, out: &mut Vec<u8>, context: &RestoreContext) {
         for (index, part) in self
             .qualifier
             .iter()
@@ -306,7 +306,7 @@ impl InlineKeyOption {
         }
     }
 
-    fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self.kind {
             InlineKeyKind::Primary {
                 storage: Some(storage),
@@ -392,7 +392,7 @@ impl ColumnOption {
         }
     }
 
-    fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             ColumnOption::InlineKey(key) => key.restore_into_with_context(out, context),
             ColumnOption::Generated {

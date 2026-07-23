@@ -177,14 +177,8 @@
 //! own nesting. `+` is commutative here (`INTERVAL ... + date_expr` also
 //! desugars, with the non-`Interval` operand always becoming `DATE_ADD`'s
 //! FIRST argument regardless of which side it was written on), but `-`
-//! is not (`INTERVAL ... - date_expr`, and `INTERVAL ... + INTERVAL
-//! ...`, are both genuine `ParseError`s here too). A PARENTHESIZED
-//! `INTERVAL` operand (`(INTERVAL x) + y`) is a KNOWN, narrower
-//! divergence — real TiDB rejects it outright, but this parser accepts
-//! it as a plain (never-evaluable) binary expression instead, since
-//! `Expr::Interval` parses as an ordinary primary expression reachable
-//! from inside `(...)` too; accepted as out of scope since it never
-//! appeared in the real-TiDB corpus that surfaced this feature. `EXTRACT(unit FROM
+//! is not (`INTERVAL ... - date_expr`, `INTERVAL ... + INTERVAL ...`,
+//! and a parenthesized standalone `INTERVAL` are parse errors). `EXTRACT(unit FROM
 //! expr)` ([`tidb_ast::Expr::Extract`] — its OWN grammar and AST shape,
 //! `unit FROM value`, the opposite argument order from `INTERVAL`'s own
 //! `value unit`; same broad-parse/narrower-eval split, any unit keyword
@@ -287,6 +281,7 @@ mod binding;
 mod brie;
 mod cast;
 mod ddl;
+mod digest;
 mod dml;
 mod expr;
 mod flush;
@@ -311,7 +306,26 @@ use tidb_ast::{
     AdminStmt, DdlStmt, DescribeTableStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
     PlanReplayerStmt, PlanReplayerTarget, StatsLockStmt, StatsLockTable, Stmt,
 };
-use tidb_lexer::{is_reserved, unescape_char, Lexer, Token, TokenKind};
+
+#[allow(deprecated)]
+pub use digest::{
+    digest_hash, digest_normalized, normalize, normalize_digest, normalize_digest_for_binding,
+    normalize_for_binding, normalize_keep_hint, Digest, RedactMode,
+};
+pub use select::{parse_hint, HintDiagnostic, HintParseResult};
+
+/// One parsed statement plus recoverable diagnostics emitted while parsing it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseOutput {
+    /// Parsed AST node.
+    pub statement: Stmt,
+    /// Recoverable parser diagnostics, in source order.
+    pub warnings: Vec<HintDiagnostic>,
+}
+pub use tidb_lexer::SqlMode;
+use tidb_lexer::{
+    is_builtin_function_keyword, is_reserved, unescape_char, Lexer, Token, TokenKind,
+};
 
 /// A parse failure with a human-readable reason and the byte offset at which it
 /// occurred.
@@ -319,8 +333,50 @@ use tidb_lexer::{is_reserved, unescape_char, Lexer, Token, TokenKind};
 pub struct ParseError {
     /// A description of what went wrong.
     pub message: String,
-    /// The byte offset in the source where the error was detected.
+    /// The byte offset immediately after the unexpected token, matching the
+    /// Go parser's yacc-compatible column boundary.
     pub offset: usize,
+    /// Byte offset where Go's `near` excerpt begins.
+    pub near_offset: usize,
+}
+
+impl ParseError {
+    /// Renders the parser diagnostic using Go TiDB's observable error format.
+    /// Semantic errors already carry their `[class:code]` prefix; ordinary
+    /// grammar failures use the source location and remaining SQL excerpt.
+    pub fn compatibility_message(&self, sql: &str) -> String {
+        if self.message.starts_with('[') {
+            return self.message.clone();
+        }
+        let near_offset = self.near_offset.min(sql.len());
+        let offset = self.offset.min(sql.len());
+        let line_start = sql.as_bytes()[..offset]
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |position| position + 1);
+        let line = sql.as_bytes()[..offset]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1;
+        if sql[near_offset..].starts_with("/*") {
+            let comment_line = sql.as_bytes()[..near_offset]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count()
+                + 1;
+            return format!("near '{}' at line {comment_line}", &sql[near_offset..]);
+        }
+        let column = offset.saturating_sub(line_start);
+        let mut near_end = (near_offset + 80).min(sql.len());
+        while !sql.is_char_boundary(near_end) {
+            near_end -= 1;
+        }
+        format!(
+            "line {line} column {column} near \"{}\" ",
+            &sql[near_offset..near_end]
+        )
+    }
 }
 
 type PResult<T> = Result<T, ParseError>;
@@ -330,11 +386,71 @@ pub fn parse(sql: &str) -> PResult<Stmt> {
     parse_with_mariadb(sql, false)
 }
 
+/// Parses one statement without discarding recoverable parser warnings.
+pub fn parse_with_warnings(sql: &str) -> PResult<ParseOutput> {
+    let mut parser = Parser::new_with_configuration(sql, false, SqlMode::default());
+    let statement = parse_one_with_parser(sql, &mut parser)?;
+    Ok(ParseOutput {
+        statement,
+        warnings: parser.warnings,
+    })
+}
+
 /// Parses one statement with the same MariaDB compatibility switch as Go's
 /// parser configuration. The default [`parse`] API remains MySQL/TiDB-strict;
 /// callers must opt in before `AS ROW START|END` becomes grammar.
 pub fn parse_with_mariadb(sql: &str, enable_mariadb: bool) -> PResult<Stmt> {
-    let mut p = Parser::new_with_mariadb(sql, enable_mariadb);
+    parse_with_configuration(sql, enable_mariadb, SqlMode::default())
+}
+
+/// Parses one statement under the scanner SQL-mode flags owned by the Rust
+/// lexer. This is the direct counterpart of Go `Parser.SetSQLMode` for the
+/// currently transcreated mode surface.
+pub fn parse_with_sql_mode(sql: &str, sql_mode: SqlMode) -> PResult<Stmt> {
+    parse_with_configuration(sql, false, sql_mode)
+}
+
+/// Parses one statement with Go's connection charset/collation metadata.
+pub fn parse_with_connection(sql: &str, charset: &str, collation: &str) -> PResult<Stmt> {
+    parse_with_full_configuration(sql, false, SqlMode::default(), charset, collation)
+}
+
+/// Parses one statement with Go's `Parser.EnableWindowFunc` scanner switch.
+pub fn parse_with_window_functions(sql: &str, enabled: bool) -> PResult<Stmt> {
+    let mut parser = Parser::new_with_all_configuration(
+        sql,
+        false,
+        SqlMode::default(),
+        tidb_mysql::DefaultCharset,
+        tidb_mysql::DefaultCollationName,
+        enabled,
+    );
+    parse_one_with_parser(sql, &mut parser)
+}
+
+fn parse_with_configuration(sql: &str, enable_mariadb: bool, sql_mode: SqlMode) -> PResult<Stmt> {
+    parse_with_full_configuration(
+        sql,
+        enable_mariadb,
+        sql_mode,
+        tidb_mysql::DefaultCharset,
+        tidb_mysql::DefaultCollationName,
+    )
+}
+
+fn parse_with_full_configuration(
+    sql: &str,
+    enable_mariadb: bool,
+    sql_mode: SqlMode,
+    charset: &str,
+    collation: &str,
+) -> PResult<Stmt> {
+    let mut p =
+        Parser::new_with_full_configuration(sql, enable_mariadb, sql_mode, charset, collation);
+    parse_one_with_parser(sql, &mut p)
+}
+
+fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
     let start = p.peek().offset;
     let mut stmt = p.parse_statement()?;
     let end = if p.is_op(";") {
@@ -369,25 +485,130 @@ pub fn parse_multi(sql: &str) -> PResult<Vec<Stmt>> {
 /// Multi-statement parser with the same MariaDB compatibility switch as
 /// [`parse_with_mariadb`].
 pub fn parse_multi_with_mariadb(sql: &str, enable_mariadb: bool) -> PResult<Vec<Stmt>> {
-    let mut p = Parser::new_with_mariadb(sql, enable_mariadb);
+    parse_multi_with_configuration(sql, enable_mariadb, SqlMode::default())
+}
+
+/// Parses multiple statements under the scanner SQL-mode flags owned by the
+/// Rust lexer.
+pub fn parse_multi_with_sql_mode(sql: &str, sql_mode: SqlMode) -> PResult<Vec<Stmt>> {
+    parse_multi_with_configuration(sql, false, sql_mode)
+}
+
+/// Parses SQL bytes using TiDB's `CharsetClient` decoding boundary.
+///
+/// This covers every client encoding with a dedicated Go parser
+/// implementation: UTF-8/UTF8MB4, ASCII, Latin-1, binary, GBK, and GB18030.
+pub fn parse_multi_bytes(sql: &[u8], client_charset: &str) -> PResult<Vec<Stmt>> {
+    let decoded = decode_client_sql(sql, client_charset)?;
+    parse_multi(&decoded)
+}
+
+/// Single-statement counterpart of [`parse_multi_bytes`].
+pub fn parse_bytes(sql: &[u8], client_charset: &str) -> PResult<Stmt> {
+    let decoded = decode_client_sql(sql, client_charset)?;
+    parse(&decoded)
+}
+
+fn decode_client_sql<'a>(
+    sql: &'a [u8],
+    client_charset: &str,
+) -> PResult<std::borrow::Cow<'a, str>> {
+    match client_charset {
+        "" | "binary" => Ok(String::from_utf8_lossy(sql)),
+        "utf8" | "utf8mb3" | "utf8mb4" => std::str::from_utf8(sql)
+            .map(std::borrow::Cow::Borrowed)
+            .map_err(|_| ParseError {
+                message: "invalid UTF-8 in client SQL".to_owned(),
+                offset: 0,
+                near_offset: 0,
+            }),
+        "ascii" if sql.is_ascii() => Ok(std::borrow::Cow::Borrowed(
+            std::str::from_utf8(sql).expect("ASCII is UTF-8"),
+        )),
+        "ascii" => Err(ParseError {
+            message: "invalid ASCII in client SQL".to_owned(),
+            offset: 0,
+            near_offset: 0,
+        }),
+        "latin1" => Ok(std::borrow::Cow::Owned(
+            sql.iter().map(|byte| char::from(*byte)).collect(),
+        )),
+        "gbk" | "gb18030" => {
+            let encoding = if client_charset == "gbk" {
+                encoding_rs::GBK
+            } else {
+                encoding_rs::GB18030
+            };
+            // Go's scanner uses the client encoding to find character
+            // boundaries, but it does not reject every malformed byte inside
+            // a quoted token. Replacement decoding preserves that permissive
+            // lexical contract while still preventing a GBK/GB18030 trail
+            // byte `0x5c` from becoming a SQL backslash escape.
+            Ok(encoding.decode_without_bom_handling(sql).0)
+        }
+        // `charset.FindEncoding` deliberately falls back to the binary
+        // implementation for an unknown or differently-cased name.
+        _ => Ok(String::from_utf8_lossy(sql)),
+    }
+}
+
+fn parse_multi_with_configuration(
+    sql: &str,
+    enable_mariadb: bool,
+    sql_mode: SqlMode,
+) -> PResult<Vec<Stmt>> {
+    let mut p = Parser::new_with_configuration(sql, enable_mariadb, sql_mode);
     let mut statements = Vec::new();
-    p.skip_semicolons();
+    let mut source_start = statement_source_start(sql, 0);
+    while p.is_op(";") {
+        source_start = p.bump().end_offset;
+    }
+    if !p.at_eof() {
+        source_start = statement_source_start(sql, source_start);
+    }
     while !p.at_eof() {
         p.reset_param_marker_positions();
-        let start = p.peek().offset;
         let mut statement = p.parse_statement()?;
-        let end = if p.is_op(";") {
+        let had_delimiter = p.is_op(";");
+        let end = if had_delimiter {
             p.bump().end_offset
         } else {
             p.peek().offset
         };
-        if end > start {
-            statement.set_text(None, sql.as_bytes()[start..end].to_vec());
+        if end > source_start {
+            statement.set_text(None, sql.as_bytes()[source_start..end].to_vec());
         }
         statements.push(statement);
-        p.skip_semicolons();
+        if !had_delimiter && !p.at_eof() {
+            return Err(p.err_here("expected ';' between statements"));
+        }
+        source_start = end;
+        while p.is_op(";") {
+            source_start = p.bump().end_offset;
+        }
+        if !p.at_eof() {
+            source_start = statement_source_start(sql, source_start);
+        }
     }
     Ok(statements)
+}
+
+fn statement_source_start(sql: &str, base: usize) -> usize {
+    let prefix = &sql.as_bytes()[..base];
+    let last_open = prefix.windows(3).rposition(|window| window == b"/*!");
+    let last_close = prefix.windows(2).rposition(|window| window == b"*/");
+    if last_open.is_some_and(|open| last_close.is_none_or(|close| open > close)) {
+        return base;
+    }
+    let mut start = base;
+    while sql
+        .as_bytes()
+        .get(start)
+        .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
+        start += 1;
+    }
+    start
 }
 
 struct Parser {
@@ -396,26 +617,77 @@ struct Parser {
     pos: usize,
     enable_mariadb: bool,
     param_marker_position: usize,
+    connection_charset: String,
+    connection_collation: String,
+    real_as_float: bool,
+    high_not_precedence: bool,
+    ignore_space: bool,
+    warnings: Vec<HintDiagnostic>,
 }
 
 impl Parser {
     #[cfg(test)]
     fn new(sql: &str) -> Self {
-        Self::new_with_mariadb(sql, false)
+        Self::new_with_configuration(sql, false, SqlMode::default())
     }
 
-    fn new_with_mariadb(sql: &str, enable_mariadb: bool) -> Self {
+    fn new_with_configuration(sql: &str, enable_mariadb: bool, sql_mode: SqlMode) -> Self {
+        Self::new_with_full_configuration(
+            sql,
+            enable_mariadb,
+            sql_mode,
+            tidb_mysql::DefaultCharset,
+            tidb_mysql::DefaultCollationName,
+        )
+    }
+
+    fn new_with_full_configuration(
+        sql: &str,
+        enable_mariadb: bool,
+        sql_mode: SqlMode,
+        charset: &str,
+        collation: &str,
+    ) -> Self {
+        Self::new_with_all_configuration(sql, enable_mariadb, sql_mode, charset, collation, true)
+    }
+
+    fn new_with_all_configuration(
+        sql: &str,
+        enable_mariadb: bool,
+        sql_mode: SqlMode,
+        charset: &str,
+        collation: &str,
+        support_window_functions: bool,
+    ) -> Self {
+        let mut lexer = Lexer::new(sql).with_sql_mode(sql_mode);
+        lexer.set_support_window_func(support_window_functions);
+        let (toks, lexer_warnings) = lexer.tokenize_with_warnings();
         Parser {
             source: sql.to_owned(),
-            toks: Lexer::new(sql).tokenize(),
+            toks,
             pos: 0,
             enable_mariadb,
             param_marker_position: 0,
+            connection_charset: charset.to_owned(),
+            connection_collation: collation.to_owned(),
+            real_as_float: sql_mode.real_as_float,
+            high_not_precedence: sql_mode.high_not_precedence,
+            ignore_space: sql_mode.ignore_space,
+            warnings: lexer_warnings
+                .into_iter()
+                .map(|message| HintDiagnostic { message })
+                .collect(),
         }
     }
 
     fn reset_param_marker_positions(&mut self) {
         self.param_marker_position = 0;
+    }
+
+    fn warn(&mut self, message: &'static str) {
+        self.warnings.push(HintDiagnostic {
+            message: message.to_owned(),
+        });
     }
 
     fn next_param_marker_position(&mut self) -> usize {
@@ -430,14 +702,34 @@ impl Parser {
     /// Constructs the nested parser for an optimizer-hint comment. Real
     /// TiDB uses a dedicated hint lexer, including a narrower query-block
     /// token boundary around dots.
-    fn new_hint(sql: &str) -> Self {
+    fn new_hint_with_ansi_quotes(sql: &str, ansi_quotes: bool) -> Self {
         Parser {
             source: sql.to_owned(),
-            toks: Lexer::new(sql).with_hint_mode().tokenize(),
+            toks: Lexer::new(sql)
+                .with_sql_mode(SqlMode {
+                    ansi_quotes,
+                    ..SqlMode::default()
+                })
+                .with_hint_mode()
+                .tokenize(),
             pos: 0,
             enable_mariadb: false,
             param_marker_position: 0,
+            connection_charset: tidb_mysql::DefaultCharset.to_owned(),
+            connection_collation: tidb_mysql::DefaultCollationName.to_owned(),
+            real_as_float: false,
+            high_not_precedence: false,
+            ignore_space: false,
+            warnings: Vec::new(),
         }
+    }
+
+    fn source_line(&self, offset: usize) -> usize {
+        self.source.as_bytes()[..offset.min(self.source.len())]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1
     }
 
     // ---- token cursor ----
@@ -466,7 +758,8 @@ impl Parser {
     fn err_here(&self, msg: &str) -> ParseError {
         ParseError {
             message: msg.to_string(),
-            offset: self.peek().offset,
+            offset: self.peek().end_offset,
+            near_offset: self.peek().offset,
         }
     }
 
@@ -555,7 +848,12 @@ impl Parser {
             self.bump();
             Ok(())
         } else {
-            Err(self.err_here(&format!("expected '{op}'")))
+            let unexpected = self.bump();
+            Err(ParseError {
+                message: format!("expected '{op}'"),
+                offset: unexpected.end_offset,
+                near_offset: unexpected.offset,
+            })
         }
     }
 
@@ -564,7 +862,12 @@ impl Parser {
             self.bump();
             Ok(())
         } else {
-            Err(self.err_here(&format!("expected keyword {kw}")))
+            let unexpected = self.bump();
+            Err(ParseError {
+                message: format!("expected keyword {kw}"),
+                offset: unexpected.end_offset,
+                near_offset: unexpected.offset,
+            })
         }
     }
 
@@ -576,13 +879,13 @@ impl Parser {
         self.expect_kw(if locked { "LOCK" } else { "UNLOCK" })?;
         self.expect_kw("STATS")?;
         let mut tables = vec![StatsLockTable {
-            name: self.parse_name_path()?,
+            name: self.parse_table_name()?,
             partitions: Vec::new(),
         }];
         while self.is_op(",") {
             self.bump();
             tables.push(StatsLockTable {
-                name: self.parse_name_path()?,
+                name: self.parse_table_name()?,
                 partitions: Vec::new(),
             });
         }
@@ -597,10 +900,10 @@ impl Parser {
             let target = tables
                 .last_mut()
                 .expect("LOCK STATS requires its first table before partitions");
-            target.partitions.push(self.parse_name()?);
+            target.partitions.push(table_name_token_text(self.bump()));
             while self.is_op(",") {
                 self.bump();
-                target.partitions.push(self.parse_name()?);
+                target.partitions.push(table_name_token_text(self.bump()));
             }
             if parenthesized {
                 self.expect_op(")")?;
@@ -835,32 +1138,7 @@ impl Parser {
             self.expect_op(")")?;
             PlanReplayerTarget::Statements(statements)
         } else if self.is_kw("SLOW") {
-            self.bump();
-            self.expect_kw("QUERY")?;
-            let where_clause = if self.is_kw("WHERE") {
-                self.bump();
-                Some(Box::new(self.parse_expr(prec::NONE)?))
-            } else {
-                None
-            };
-            let order_by = if self.is_kw("ORDER") {
-                self.bump();
-                self.expect_kw("BY")?;
-                self.parse_order_list()?
-            } else {
-                Vec::new()
-            };
-            let limit = if self.is_kw("LIMIT") {
-                self.bump();
-                Some(Box::new(self.parse_limit()?))
-            } else {
-                None
-            };
-            PlanReplayerTarget::SlowQuery {
-                where_clause,
-                order_by,
-                limit,
-            }
+            self.parse_slow_query_target()?
         } else if self.is_kw("WITH") {
             let start = self.peek().offset;
             let mut statement = Stmt::Query(tidb_ast::NodeBox::new(self.parse_with_select()?));
@@ -893,6 +1171,50 @@ impl Parser {
                 target: Box::new(target),
             })),
         )))
+    }
+
+    /// Direct translation of `admin_query_parser.go::parseSlowQueryStmt`.
+    /// The same target is accepted both after PLAN REPLAYER DUMP EXPLAIN and
+    /// as a top-level SLOW QUERY statement, whose Go AST is the zero-value
+    /// PlanReplayer container and therefore restores with the full prefix.
+    pub(crate) fn parse_slow_query_statement(&mut self) -> PResult<Stmt> {
+        let target = self.parse_slow_query_target()?;
+        Ok(Stmt::Admin(tidb_ast::NodeBox::new(
+            AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Dump {
+                historical_stats: None,
+                analyze: false,
+                target: Box::new(target),
+            })),
+        )))
+    }
+
+    fn parse_slow_query_target(&mut self) -> PResult<PlanReplayerTarget> {
+        self.expect_kw("SLOW")?;
+        self.expect_kw("QUERY")?;
+        let where_clause = if self.is_kw("WHERE") {
+            self.bump();
+            Some(Box::new(self.parse_expr(prec::NONE)?))
+        } else {
+            None
+        };
+        let order_by = if self.is_kw("ORDER") {
+            self.bump();
+            self.expect_kw("BY")?;
+            self.parse_order_list()?
+        } else {
+            Vec::new()
+        };
+        let limit = if self.is_kw("LIMIT") {
+            self.bump();
+            Some(Box::new(self.parse_limit()?))
+        } else {
+            None
+        };
+        Ok(PlanReplayerTarget::SlowQuery {
+            where_clause,
+            order_by,
+            limit,
+        })
     }
 
     /// Parses the common `DESC`/`DESCRIBE` and `EXPLAIN <table>` fallback
@@ -928,9 +1250,80 @@ impl Parser {
 
     fn parse_ident_like_name(&mut self) -> PResult<String> {
         if is_ident_like_name(self.peek()) {
-            Ok(self.bump().text)
+            Ok(table_name_token_text(self.bump()))
         } else {
             Err(self.err_here("expected an identifier-like name"))
+        }
+    }
+
+    fn is_ident_like_name(&self) -> bool {
+        is_ident_like_name(self.peek())
+    }
+
+    /// Consumes the next token's Go `yySymType.ident` payload without an
+    /// identifier-class check. A few legacy rename tails deliberately accept
+    /// literals and even EOF, whose empty payload means no restored rename.
+    fn parse_any_token_name(&mut self) -> String {
+        table_name_token_text(self.bump())
+    }
+
+    /// Go's `Token.IsKeyword` compares the decoded token literal regardless
+    /// of lexical token kind. Legacy grammar slots therefore accept quoted
+    /// strings, back-quoted identifiers, and single-@ names when their payload
+    /// spells the requested word.
+    fn token_literal_is_at(&self, offset: usize, expected: &str) -> bool {
+        token_literal_text(self.peek_n(offset)).eq_ignore_ascii_case(expected)
+    }
+
+    fn expect_token_literal(&mut self, expected: &str) -> PResult<()> {
+        if !self.token_literal_is_at(0, expected) {
+            return Err(self.err_here(&format!("expected {expected}")));
+        }
+        self.bump();
+        Ok(())
+    }
+
+    /// Go `peekKeyword` accepts the dedicated keyword token or an ordinary
+    /// identifier with the same decoded literal, but not strings/user vars.
+    fn keyword_or_ident_is_at(&self, offset: usize, expected: &str) -> bool {
+        let token = self.peek_n(offset);
+        matches!(token.kind, TokenKind::Keyword | TokenKind::Ident)
+            && token_literal_text(token).eq_ignore_ascii_case(expected)
+    }
+
+    fn expect_keyword_or_ident(&mut self, expected: &str) -> PResult<()> {
+        if !self.keyword_or_ident_is_at(0, expected) {
+            return Err(self.err_here(&format!("expected {expected}")));
+        }
+        self.bump();
+        Ok(())
+    }
+
+    /// The default identifier-driven grammar arms first require Go's
+    /// `isIdentLike`, then dispatch on the decoded literal.
+    fn ident_like_literal_is_at(&self, offset: usize, expected: &str) -> bool {
+        let token = self.peek_n(offset);
+        is_ident_like_name(token) && token_literal_text(token).eq_ignore_ascii_case(expected)
+    }
+
+    fn parse_ident_like_name_list(&mut self) -> PResult<Vec<String>> {
+        let mut names = vec![self.parse_ident_like_name()?];
+        while self.is_op(",") {
+            self.bump();
+            names.push(self.parse_ident_like_name()?);
+        }
+        Ok(names)
+    }
+
+    /// Go `isIdentLike` slot with the explicit `stringLit` exclusion used by
+    /// partition-definition and DROP STATS partition names. User variables
+    /// keep their decoded identifier payload; ordinary/non-reserved keyword
+    /// names reuse the scanner-context-aware name parser.
+    fn parse_non_string_ident_like_name(&mut self) -> PResult<String> {
+        if self.peek().kind == TokenKind::UserVar {
+            self.parse_ident_like_name()
+        } else {
+            self.parse_name_or_keyword()
         }
     }
 
@@ -939,7 +1332,7 @@ impl Parser {
     /// Parses a single identifier name (its decoded text).
     fn parse_name(&mut self) -> PResult<String> {
         if self.peek().kind == TokenKind::Ident {
-            Ok(self.bump().text)
+            Ok(normalize_identifier(self.bump().text))
         } else {
             Err(self.err_here("expected identifier"))
         }
@@ -960,7 +1353,7 @@ impl Parser {
     fn parse_name_or_keyword(&mut self) -> PResult<String> {
         let t = self.peek();
         if t.kind == TokenKind::Ident || (t.kind == TokenKind::Keyword && !is_reserved(&t.text)) {
-            Ok(self.bump().text)
+            Ok(normalize_identifier(self.bump().text))
         } else {
             Err(self.err_here("expected identifier"))
         }
@@ -1056,6 +1449,69 @@ impl Parser {
         }
         Ok(path)
     }
+
+    /// Direct translation of `join_parser.go::parseTableName`, the shared
+    /// `[schema.]table` production used by statement-level table lists. It is
+    /// intentionally different from a generic column-name path: it has at
+    /// most two components, accepts quoted/user-variable/charset tokens in
+    /// the first slot, and uses the Go parser's broader second-slot boundary.
+    pub(crate) fn parse_table_name(&mut self) -> PResult<Vec<String>> {
+        if self.is_op("*") && self.is_op_at(1, ".") {
+            self.bump();
+            self.bump();
+            let token = self.bump();
+            return Ok(vec!["*".to_owned(), table_name_token_text(token)]);
+        }
+
+        let token = self.bump();
+        if !is_table_name_first_token(&token) {
+            return Err(self.err_here("expected table name"));
+        }
+        let first = table_name_token_text(token);
+        if self.is_op(".") && !self.is_op_at(1, "*") {
+            self.bump();
+            let second = self.bump();
+            if matches!(
+                second.kind,
+                TokenKind::Eof | TokenKind::Invalid | TokenKind::Op | TokenKind::HintComment
+            ) {
+                return Err(self.err_here("expected table name after schema"));
+            }
+            if first.trim().is_empty() {
+                return Err(self.err_here("incorrect database name"));
+            }
+            Ok(vec![first, table_name_token_text(second)])
+        } else {
+            Ok(vec![first])
+        }
+    }
+
+    /// Direct translation of `parser_helpers.go::parseColumnName` for AST
+    /// slots that require a column name rather than a generic dotted path.
+    pub(crate) fn parse_column_name_path(&mut self) -> PResult<Vec<String>> {
+        let first = self.bump();
+        if first.kind == TokenKind::Str || !is_ident_like_name(&first) {
+            return Err(self.err_here("expected column name"));
+        }
+        let mut path = vec![table_name_token_text(first)];
+        while self.is_op(".") {
+            if path.len() == 3 {
+                return Err(self.err_here("column name has too many components"));
+            }
+            self.bump();
+            if self.is_op("*") {
+                self.bump();
+                path.push("*".to_owned());
+                return Ok(path);
+            }
+            let component = self.bump();
+            if !is_ident_like_name(&component) {
+                return Err(self.err_here("expected column name component"));
+            }
+            path.push(table_name_token_text(component));
+        }
+        Ok(path)
+    }
 }
 
 /// Whether `t` is acceptable to [`Parser::parse_name_or_keyword`]: a plain
@@ -1064,9 +1520,45 @@ fn is_name_or_keyword(t: &Token) -> bool {
     t.kind == TokenKind::Ident || (t.kind == TokenKind::Keyword && !is_reserved(&t.text))
 }
 
+fn normalize_identifier(name: String) -> String {
+    name.replace('\u{fffd}', "?")
+}
+
+fn table_name_token_text(token: Token) -> String {
+    match token.kind {
+        TokenKind::Str => decode_string(&token.text),
+        TokenKind::UserVar if token.text.starts_with("@@") => token.text,
+        TokenKind::UserVar => decode_at_name(&token.text),
+        _ => normalize_identifier(token.text),
+    }
+}
+
+fn token_literal_text(token: &Token) -> String {
+    match token.kind {
+        TokenKind::Str => decode_string(&token.text),
+        TokenKind::UserVar if token.text.starts_with("@@") => token.text.clone(),
+        TokenKind::UserVar => decode_at_name(&token.text),
+        _ => normalize_identifier(token.text.clone()),
+    }
+}
+
+fn is_table_name_first_token(token: &Token) -> bool {
+    match token.kind {
+        TokenKind::Ident | TokenKind::Str | TokenKind::UserVar | TokenKind::CharsetIntroducer => {
+            true
+        }
+        TokenKind::Keyword => !is_reserved(&token.text),
+        _ => false,
+    }
+}
+
 /// A Go `isIdentLike` slot accepts both identifier and keyword tokens.
 fn is_ident_like_name(t: &Token) -> bool {
-    matches!(t.kind, TokenKind::Ident | TokenKind::Keyword)
+    match t.kind {
+        TokenKind::Ident | TokenKind::Str | TokenKind::UserVar => true,
+        TokenKind::Keyword => !is_reserved(&t.text) && !is_builtin_function_keyword(&t.text),
+        _ => false,
+    }
 }
 
 /// Decodes the payload of a raw `UserVar` token (the lexer scans `@name`,

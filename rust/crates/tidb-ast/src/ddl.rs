@@ -195,7 +195,7 @@ impl DropIndexStmt {
         }
     }
 
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         out.push_str("DROP INDEX ");
         if self.if_exists {
             context.write_with_tidb_special_comment(out, "", |out| {
@@ -396,7 +396,7 @@ impl CreateIndexStmt {
         }
     }
 
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         out.push_str("CREATE ");
         out.push_str(self.kind.sql());
         out.push(' ');
@@ -498,7 +498,8 @@ impl SplitOption {
 /// The object whose keyspace an `ALTER TABLE ... SPLIT` operation addresses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SplitTarget {
-    /// The altered table's record keyspace (`SPLIT TABLE`).
+    /// The altered table's record keyspace. Go accepts both `SPLIT TABLE`
+    /// and bare `SPLIT`, but its ALTER restore omits `TABLE`.
     Table,
     /// The altered table's primary-index keyspace (`SPLIT PRIMARY KEY`).
     PrimaryKey,
@@ -509,7 +510,7 @@ pub enum SplitTarget {
 impl SplitTarget {
     fn restore_into(&self, out: &mut String) {
         match self {
-            Self::Table => out.push_str("TABLE "),
+            Self::Table => {}
             Self::PrimaryKey => out.push_str("PRIMARY KEY "),
             Self::Index(name) => {
                 out.push_str("INDEX ");
@@ -600,13 +601,14 @@ impl AlterTableStmt {
         }
     }
 
-    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         if context.flags().has_skip_placement_rule_for_restore()
             && !self.actions.is_empty()
             && self.actions.iter().all(|action| {
                 matches!(
                     action,
-                    AlterTableAction::Partition(AlterPartitionAction::SetPlacementPolicy { .. })
+                    AlterTableAction::Partition(AlterPartitionAction::SetOptions { options, .. })
+                        if options.iter().all(|option| matches!(option, TableOption::PlacementPolicy(_)))
                 )
             })
         {
@@ -700,7 +702,7 @@ impl StatsOptionsSpec {
 }
 
 impl AlterTableAction {
-    fn is_suppressed(&self, context: RestoreContext) -> bool {
+    fn is_suppressed(&self, context: &RestoreContext) -> bool {
         (context.flags().has_with_ttl_enable_off()
             && matches!(
                 self,
@@ -716,7 +718,8 @@ impl AlterTableAction {
             || (context.flags().has_skip_placement_rule_for_restore()
                 && matches!(
                     self,
-                    Self::Partition(AlterPartitionAction::SetPlacementPolicy { .. })
+                    Self::Partition(AlterPartitionAction::SetOptions { options, .. })
+                        if options.iter().all(|option| matches!(option, TableOption::PlacementPolicy(_)))
                 ))
     }
 
@@ -741,11 +744,11 @@ impl AlterTableAction {
                 out.push_str("ADD ");
                 constraint.restore_into(out);
             }
-            _ => self.restore_into_with_context(out, RestoreContext::default()),
+            _ => self.restore_into_with_context(out, &RestoreContext::default()),
         }
     }
 
-    fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
+    fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             AlterTableAction::Partition(action) => {
                 partition::restore_alter_action(out, action, context)
@@ -863,7 +866,7 @@ impl AlterTableAction {
             }
             AlterTableAction::AlterColumnDefault(action) => {
                 out.push_str("ALTER COLUMN ");
-                out.push_str(&back_quote(&action.name));
+                push_name_path(out, &action.name);
                 match &action.default_value {
                     Some(default_value) => {
                         out.push_str(" SET DEFAULT ");
@@ -910,7 +913,7 @@ impl AlterTableAction {
                         out.push_str("IF EXISTS ");
                     });
                 }
-                out.push_str(&back_quote(old_name));
+                push_name_path(out, old_name);
                 out.push(' ');
                 column.restore_into_with_context(out, context);
                 push_column_position(out, position);
@@ -981,13 +984,6 @@ impl AlterTableAction {
                     out.push_str(" COLLATE ");
                     out.push_str(collation);
                 }
-            }
-            AlterTableAction::SetAffinity { level } => {
-                context.write_with_tidb_special_comment(out, "affinity", |out| {
-                    out.push_str("AFFINITY = '");
-                    out.push_str(&escape_string_literal(level));
-                    out.push('\'');
-                });
             }
             AlterTableAction::Cache(mode) => out.push_str(mode.sql()),
             AlterTableAction::RemoveTtl(_) => {
@@ -1149,17 +1145,6 @@ pub enum AlterTableAction {
         /// Optional target collation.
         collation: Option<String>,
     },
-    /// `AFFINITY [=] 'level'`. Go represents this as a distinct
-    /// `TableOptionAffinity` inside an `AlterTableOption` spec. Keeping a
-    /// dedicated action here preserves the string-literal-only grammar and
-    /// prevents AFFINITY from widening the currently ported generic ALTER
-    /// option surface. The value is deliberately not normalized: Go parser
-    /// restore retains the source spelling, while DDL validation decides
-    /// whether it is `none`, `table`, or `partition`.
-    SetAffinity {
-        /// The decoded affinity-level literal, restored with SQL escaping.
-        level: String,
-    },
     /// `ATTRIBUTES [=] {DEFAULT | 'attributes'}`. This is a distinct Go
     /// `AlterTableAttributes` specification, rather than a generic table
     /// option; `None` retains Go's `DEFAULT` payload exactly.
@@ -1304,7 +1289,7 @@ pub enum AlterTableAction {
         /// Whether a missing source column is ignored.
         if_exists: bool,
         /// The column's current name.
-        old_name: String,
+        old_name: Vec<String>,
         /// The new name (in `column.name`) and new type/options.
         column: ColumnDef,
         /// Where to move it; `Default` leaves it at its current position.
@@ -1789,9 +1774,6 @@ impl crate::Visitable for AlterTableAction {
             Self::ConvertCharacterSet { charset, collation } => {
                 let _ = charset;
                 let _ = collation;
-            }
-            Self::SetAffinity { level } => {
-                let _ = level;
             }
             Self::SetAttributes(field_0) => {
                 if !crate::Visitable::accept(field_0, visitor) {

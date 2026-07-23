@@ -164,8 +164,7 @@ fn field_type_compatibility_aliases_restore_like_go() {
     // BOOL/BOOLEAN are their own Go parser branch: they materialize
     // TINYINT(1), but never accept an ordinary integer display width.
     assert!(parse("create table t (a bool(1))").is_err());
-    // REAL's default (without the unmodelled REAL_AS_FLOAT session mode) is
-    // a distinct branch and therefore does not consume DOUBLE's PRECISION.
+    // REAL's default branch does not consume DOUBLE's PRECISION.
     assert!(parse("create table t (a real precision)").is_err());
 }
 
@@ -371,6 +370,51 @@ fn field_type_numeric_modifier_state_machine_matches_go() {
     );
 }
 
+/// `pkg/parser/ddl_fieldtype_parser.go` does not have a generic comma-list
+/// production for field-type arguments. Integer/string/time/vector families
+/// accept at most one length, while FLOAT/DOUBLE/DECIMAL accept at most
+/// precision and scale. Keep those grammar boundaries explicit.
+#[test]
+fn field_type_argument_arity_matches_go() {
+    for sql in [
+        "create table t(a date(1))",
+        "create table t(a int(1,2))",
+        "create table t(a char(1,2))",
+        "create table t(a decimal(1,2,3))",
+        "create table t(a vector(1,2))",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects invalid type arity: {sql}");
+    }
+}
+
+/// Exact `parseFieldType` SQL-mode branch: REAL is DOUBLE by default and
+/// FLOAT only under REAL_AS_FLOAT. CREATE and ALTER share this field-type leaf.
+#[test]
+fn real_as_float_sql_mode_matches_go() {
+    let mode = SqlMode {
+        real_as_float: true,
+        ..SqlMode::default()
+    };
+    assert_eq!(
+        parse_with_sql_mode("create table t(a real)", mode)
+            .expect("REAL_AS_FLOAT CREATE source row")
+            .restore(),
+        "CREATE TABLE `t` (`a` FLOAT)"
+    );
+    assert_eq!(
+        parse_with_sql_mode("alter table t add column a real(8,2)", mode)
+            .expect("REAL_AS_FLOAT ALTER source row")
+            .restore(),
+        "ALTER TABLE `t` ADD COLUMN `a` FLOAT(8,2)"
+    );
+    assert_eq!(
+        parse_with_sql_mode("select cast(1 as real)", mode)
+            .expect("original REAL_AS_FLOAT CAST source row")
+            .restore(),
+        "SELECT CAST(1 AS FLOAT)"
+    );
+}
+
 /// Direct source rows from `pkg/parser/ddl_fieldtype_parser.go`'s
 /// `parseStringOptions`: modifier order is semantic, and the binary charset
 /// is a storage-type normalization rather than merely another restore token.
@@ -393,6 +437,15 @@ fn field_type_binary_string_options_match_go_normal_form() {
     // and rejected rather than silently folded into the same type.
     assert!(parse("create table t (a text byte binary)").is_err());
     assert!(parse("create table t (a text ascii binary)").is_err());
+    assert!(parse("create table t (a text charset some_invalid_charset)").is_err());
+    assert_eq!(
+        r("create table t (a text charset utf8mb3)"),
+        "CREATE TABLE `t` (`a` TEXT CHARACTER SET UTF8)"
+    );
+    assert_eq!(
+        r("create table t (a text character set 'utf8mb4')"),
+        "CREATE TABLE `t` (`a` TEXT CHARACTER SET UTF8MB4)"
+    );
 }
 
 /// `pkg/parser/ddl_fieldtype_parser.go:parseEnumSetOptions` accepts hex and
@@ -402,6 +455,14 @@ fn field_type_binary_string_options_match_go_normal_form() {
 /// because the member was written as a binary literal.
 #[test]
 fn field_type_enum_set_binary_members_match_go() {
+    assert_eq!(
+        r("create table t(a enum(), b set())"),
+        "CREATE TABLE `t` (`a` ENUM(),`b` SET())"
+    );
+    assert_eq!(
+        r("create table t(a enum(x''), b set(b''))"),
+        "CREATE TABLE `t` (`a` ENUM(''),`b` SET(''))"
+    );
     assert_eq!(
         r("alter table t modify column a enum(0x61, b'01100010')"),
         "ALTER TABLE `t` MODIFY COLUMN `a` ENUM('a','b')"

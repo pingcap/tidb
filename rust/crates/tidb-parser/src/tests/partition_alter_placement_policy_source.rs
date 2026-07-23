@@ -56,10 +56,34 @@ fn partition_alter_placement_policy_retains_the_partition_target() {
     assert_eq!(
         alter.actions,
         vec![tidb_ast::AlterTableAction::Partition(
-            tidb_ast::AlterPartitionAction::SetPlacementPolicy {
+            tidb_ast::AlterPartitionAction::SetOptions {
                 partition: "p1".to_owned(),
-                policy: "DEFAULT".to_owned(),
+                options: vec![tidb_ast::TableOption::PlacementPolicy("DEFAULT".to_owned())],
             }
         )]
     );
+}
+
+#[test]
+fn partition_alter_options_share_the_complete_go_table_option_parser() {
+    for (sql, expected) in [
+        (
+            "alter table t partition 'p' comment='x'",
+            "ALTER TABLE `t` PARTITION `p` COMMENT = 'x'",
+        ),
+        (
+            "alter table t partition @p engine=innodb",
+            "ALTER TABLE `t` PARTITION `p` ENGINE = innodb",
+        ),
+        (
+            "alter table t partition p placement policy='x' comment='y'",
+            "ALTER TABLE `t` PARTITION `p` PLACEMENT POLICY = `x` COMMENT = 'y'",
+        ),
+        (
+            "alter table t partition p affinity='table'",
+            "ALTER TABLE `t` PARTITION `p` AFFINITY = 'table'",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
 }

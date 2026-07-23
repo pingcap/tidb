@@ -51,6 +51,7 @@ impl Parser {
             if self.is_kw("NOT")
                 && (self.is_kw_at(1, "IN")
                     || self.is_kw_at(1, "LIKE")
+                    || self.is_kw_at(1, "ILIKE")
                     || self.is_kw_at(1, "BETWEEN")
                     || self.is_kw_at(1, "REGEXP")
                     || self.is_kw_at(1, "RLIKE"))
@@ -62,8 +63,17 @@ impl Parser {
                 left = self.parse_predicate(left, true)?;
                 continue;
             }
+            if self.is_kw("NOT") && min_prec <= prec::PREDICATE {
+                // Go shifts NOT before discovering that the following token
+                // cannot complete a NOT IN/LIKE/BETWEEN/REGEXP predicate.
+                // Consume it so the reported yacc boundary belongs to the
+                // actual unexpected token, not to NOT itself.
+                self.bump();
+                return Err(self.err_here("expected a predicate after NOT"));
+            }
             if self.is_kw("IN")
                 || self.is_kw("LIKE")
+                || self.is_kw("ILIKE")
                 || self.is_kw("BETWEEN")
                 || self.is_kw("REGEXP")
                 || self.is_kw("RLIKE")
@@ -100,7 +110,7 @@ impl Parser {
                 self.bump(); // COLLATE
                 let raw = self.parse_using_charset_name()?;
                 let collation = canonical_collation(&raw)
-                    .ok_or_else(|| self.err_here("unknown collation"))?
+                    .ok_or_else(|| self.err_here(&format!("[ddl:1273]Unknown collation: '{raw}'")))?
                     .to_owned();
                 left = Expr::Collate {
                     expr: Box::new(left),
@@ -230,20 +240,9 @@ impl Parser {
     /// argument regardless of which side it was written on), but `-` is
     /// NOT (`INTERVAL ... - date_expr` is a genuine `ParseError`, and so
     /// is `INTERVAL ... + INTERVAL ...`) — both confirmed via `godump
-    /// restore`. Real TiDB ALSO rejects a PARENTHESIZED `INTERVAL`
-    /// operand outright (`(INTERVAL x) + y` is a genuine `ParseError`
-    /// there too, confirmed via `godump restore` — a bare `(INTERVAL
-    /// ...)` isn't a valid standalone expression in real TiDB's own
-    /// grammar at all) — a narrower, KNOWN divergence this project does
-    /// NOT replicate: `Expr::Interval` is parsed here as an ordinary
-    /// primary expression (reachable from `parse_prefix`, hence also
-    /// from inside a `(...)`), so `(INTERVAL x) + y` parses successfully
-    /// here as a plain `Expr::Binary` (this check deliberately does NOT
-    /// unwrap `Expr::Paren` before testing for `Expr::Interval`, so a
-    /// parenthesized one is intentionally left ALONE rather than
-    /// desugared) rather than replicating real TiDB's rejection —
-    /// accepted as out of scope since it never appeared in the
-    /// real-TiDB-test-suite corpus that surfaced this whole feature.
+    /// restore`. A bare parenthesized `INTERVAL` is rejected while parsing
+    /// the parentheses, matching Go's rule that `INTERVAL` is not a
+    /// standalone expression.
     /// Runs INSIDE the main precedence-climbing loop (not as a one-shot
     /// post-pass), so a chain like `a + INTERVAL 5 DAY + INTERVAL 3
     /// DAY` builds on the ALREADY-desugared result at each step
@@ -319,7 +318,7 @@ impl Parser {
         }
     }
 
-    fn parse_prefix(&mut self, min_prec: u8) -> PResult<Expr> {
+    pub(crate) fn parse_prefix(&mut self, min_prec: u8) -> PResult<Expr> {
         let t = self.peek().clone();
         match t.kind {
             TokenKind::Op if t.text == "?" => {
@@ -416,6 +415,14 @@ impl Parser {
                 // names are lexer tokens but unsupported introducers.
                 let charset = canonical_legacy_charset(&t.text)
                     .ok_or_else(|| self.err_here("unsupported character introducer"))?;
+                // Go preserves the canonical lowercase name for an explicit
+                // `_charset` introducer, while national strings (`N'...'`)
+                // restore with their fixed `UTF8` spelling.
+                let restored_charset = if t.text.eq_ignore_ascii_case("N") {
+                    "UTF8".to_owned()
+                } else {
+                    charset.to_owned()
+                };
                 match self.peek().kind {
                     // Go's UNDERSCORE_CHARSET production accepts a string,
                     // hex, or bit literal after the introducer.  Hex/bit
@@ -429,18 +436,34 @@ impl Parser {
                             Ok(Expr::String(value))
                         } else {
                             Ok(Expr::CharsetString {
-                                charset: charset.to_ascii_uppercase(),
+                                charset: restored_charset,
                                 value,
                             })
                         }
                     }
                     TokenKind::HexLit => {
                         let token = self.bump();
-                        Ok(Expr::Hex(normalize_hex(&token.text)))
+                        let value = Expr::Hex(normalize_hex(&token.text));
+                        if matches!(charset, "binary" | "utf8mb4") {
+                            Ok(value)
+                        } else {
+                            Ok(Expr::CharsetBinary {
+                                charset: restored_charset,
+                                value: Box::new(value),
+                            })
+                        }
                     }
                     TokenKind::BitLit => {
                         let token = self.bump();
-                        Ok(Expr::Bit(normalize_bit(&token.text)))
+                        let value = Expr::Bit(normalize_bit(&token.text));
+                        if matches!(charset, "binary" | "utf8mb4") {
+                            Ok(value)
+                        } else {
+                            Ok(Expr::CharsetBinary {
+                                charset: restored_charset,
+                                value: Box::new(value),
+                            })
+                        }
                     }
                     _ => Err(self.err_here("expected a string, hex, or bit literal")),
                 }
@@ -545,18 +568,30 @@ impl Parser {
                     })
                 }
                 "NOT" => {
-                    if min_prec > prec::NOT {
+                    let precedence = if self.high_not_precedence {
+                        prec::UNARY
+                    } else {
+                        prec::NOT
+                    };
+                    if min_prec > precedence {
                         return Err(self.err_here("NOT not allowed at this precedence"));
                     }
                     self.bump();
-                    let e = self.parse_expr(prec::NOT)?;
+                    let e = self.parse_expr(precedence)?;
                     if let Expr::Exists { subquery, not } = e {
                         Ok(Expr::Exists {
                             subquery,
                             not: !not,
                         })
                     } else {
-                        Ok(Expr::Unary(UnaryOp::NotKeyword, Box::new(e)))
+                        Ok(Expr::Unary(
+                            if self.high_not_precedence {
+                                UnaryOp::Not
+                            } else {
+                                UnaryOp::NotKeyword
+                            },
+                            Box::new(e),
+                        ))
                     }
                 }
                 // `[NOT] EXISTS (subquery)`; `NOT` is handled by the unary path,
@@ -900,7 +935,7 @@ impl Parser {
                     // confirmed via a direct probe before this was added:
                     // `SELECT (WITH q AS (...) SELECT ...)` and `... IN
                     // (WITH ... SELECT ...)` were genuine `ParseError`s.
-                    if self.is_kw_at(1, "SELECT") || self.is_kw_at(1, "WITH") {
+                    if self.is_query_start_at(1) {
                         // Scalar subqueries use the complete query envelope,
                         // just like `IN`/`EXISTS`: a top-level UNION body is
                         // valid here in TiDB's source grammar and must not be
@@ -910,11 +945,20 @@ impl Parser {
                     } else {
                         self.bump();
                         let e = self.parse_expr(prec::NONE)?;
+                        if matches!(e, Expr::Interval { .. }) {
+                            return Err(self.err_here("INTERVAL is not a standalone expression"));
+                        }
                         if self.is_op(",") {
                             let mut values = vec![e];
                             while self.is_op(",") {
                                 self.bump();
-                                values.push(self.parse_expr(prec::NONE)?);
+                                let value = self.parse_expr(prec::NONE)?;
+                                if matches!(value, Expr::Interval { .. }) {
+                                    return Err(
+                                        self.err_here("INTERVAL is not a standalone expression")
+                                    );
+                                }
+                                values.push(value);
                             }
                             self.expect_op(")")?;
                             Ok(Expr::Row(values))
@@ -980,6 +1024,7 @@ impl Parser {
             return Err(self.err_here("expected an INTERVAL unit"));
         }
         let unit = self.bump().text.to_ascii_uppercase();
+        let unit = unit.strip_prefix("SQL_TSI_").unwrap_or(&unit).to_string();
         Ok(Expr::Interval {
             value: Box::new(value),
             unit,
@@ -1005,14 +1050,30 @@ impl Parser {
         })
     }
 
-    /// Reads a bare unit keyword token (same simple "any keyword, just
-    /// capture and uppercase the text" convention `INTERVAL`/`EXTRACT`
-    /// already use — see their own docs).
-    fn parse_bare_time_unit(&mut self) -> PResult<String> {
-        if self.peek().kind != TokenKind::Keyword {
+    /// Parses Go's closed `TimeUnit` production.
+    pub(crate) fn parse_bare_time_unit(&mut self) -> PResult<String> {
+        if !matches!(self.peek().kind, TokenKind::Ident | TokenKind::Keyword) {
             return Err(self.err_here("expected a time unit"));
         }
-        Ok(self.bump().text.to_ascii_uppercase())
+        let written = self.peek().text.to_ascii_uppercase();
+        let unit = match written.as_str() {
+            "SQL_TSI_SECOND" => "SECOND",
+            "SQL_TSI_MINUTE" => "MINUTE",
+            "SQL_TSI_HOUR" => "HOUR",
+            "SQL_TSI_DAY" => "DAY",
+            "SQL_TSI_WEEK" => "WEEK",
+            "SQL_TSI_MONTH" => "MONTH",
+            "SQL_TSI_QUARTER" => "QUARTER",
+            "SQL_TSI_YEAR" => "YEAR",
+            "MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" | "MONTH" | "QUARTER"
+            | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND" | "MINUTE_SECOND"
+            | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE" | "DAY_MICROSECOND"
+            | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH" => written.as_str(),
+            _ => return Err(self.err_here("expected a time unit")),
+        }
+        .to_owned();
+        self.bump();
+        Ok(unit)
     }
 
     /// `TIMESTAMPADD(unit, interval, datetime_expr)` — see
@@ -1040,6 +1101,20 @@ impl Parser {
         self.bump(); // TIMESTAMPDIFF
         self.expect_op("(")?;
         let unit = self.parse_bare_time_unit()?;
+        if !matches!(
+            unit.as_str(),
+            "MICROSECOND"
+                | "SECOND"
+                | "MINUTE"
+                | "HOUR"
+                | "DAY"
+                | "WEEK"
+                | "MONTH"
+                | "QUARTER"
+                | "YEAR"
+        ) {
+            return Err(self.err_here("TIMESTAMPDIFF requires a single time unit"));
+        }
         self.expect_op(",")?;
         let expr1 = self.parse_expr(prec::NONE)?;
         self.expect_op(",")?;
@@ -1450,14 +1525,8 @@ impl Parser {
     /// `tidb_ast::CastStyle::DateLiteral`/`TimeLiteral`/`TimestampLiteral`
     /// shape `DATE`/`TIME`/`TIMESTAMP 'literal'` already builds
     /// (confirmed via `godump restore`: both forms restore
-    /// byte-identically). Real TiDB's own grammar parses a full
-    /// expression here (`p.parseExpression(precNone)`), but only clears
-    /// the literal's charset — the thing that makes the restore match
-    /// `DATE 'literal'` exactly — when that expression is itself a bare
-    /// `ValueExpr`; every real-corpus statement is a plain string
-    /// literal, so (mirroring `parse_typed_literal`'s own established,
-    /// narrower scope) this requires one directly rather than modelling
-    /// the fully general expression case. Any OTHER type identifier
+    /// byte-identically). The inner value is the full expression owned by
+    /// Go's `Expression` production, not only a string literal. Any OTHER type identifier
     /// (`fn`, `date`, `time`, `timestamp`, ...) is a pass-through: the
     /// braces are discarded and the inner expression alone survives —
     /// real TiDB's own `default:` arm.
@@ -1477,13 +1546,10 @@ impl Parser {
             _ => None,
         };
         if let Some((style, cast_type)) = typed {
-            if self.peek().kind != TokenKind::Str {
-                return Err(self.err_here("expected a string literal"));
-            }
-            let lit = self.bump();
+            let value = self.parse_expr(prec::NONE)?;
             self.expect_op("}")?;
             return Ok(Expr::Cast(CastExpr {
-                expr: Box::new(Expr::String(decode_string(&lit.text))),
+                expr: Box::new(value),
                 cast_type,
                 style,
                 array: false,
@@ -1610,15 +1676,38 @@ impl Parser {
         let origin_position = self.peek().offset;
         let name = self.bump().text;
         self.expect_op("(")?;
+        let json_aggregate = matches!(
+            name.to_ascii_uppercase().as_str(),
+            "JSON_ARRAYAGG" | "JSON_OBJECTAGG"
+        );
+        if json_aggregate && self.is_kw("ALL") {
+            self.bump();
+        }
         let mut args = Vec::new();
         if !self.is_op(")") {
             args.push(self.parse_expr(prec::NONE)?);
             while self.is_op(",") {
                 self.bump();
+                if json_aggregate && self.is_kw("ALL") {
+                    self.bump();
+                }
                 args.push(self.parse_expr(prec::NONE)?);
             }
         }
         self.expect_op(")")?;
+        let arity = match name.to_ascii_uppercase().as_str() {
+            "JSON_ARRAYAGG" => Some(1),
+            "JSON_OBJECTAGG" => Some(2),
+            _ => None,
+        };
+        if arity.is_some_and(|expected| args.len() != expected) {
+            return Err(self.err_here("invalid JSON aggregate arity"));
+        }
+        if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
+            && (args.len() != 2 || !matches!(args[1], Expr::Interval { .. }))
+        {
+            return Err(self.err_here("DATE_ADD/DATE_SUB requires an INTERVAL argument"));
+        }
         Ok(Expr::Func {
             name,
             args,
@@ -1697,7 +1786,13 @@ impl Parser {
             false
         };
         if distinct && self.is_kw("ALL") {
+            if name == "COUNT" {
+                return Err(self.err_here("COUNT does not accept DISTINCT ALL"));
+            }
             self.bump();
+        }
+        if distinct && matches!(name.as_str(), "BIT_AND" | "BIT_OR" | "BIT_XOR") {
+            return Err(self.err_here("bit aggregates do not accept DISTINCT"));
         }
         let mut args = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
@@ -1943,7 +2038,7 @@ impl Parser {
     fn parse_group_concat(&mut self) -> PResult<Expr> {
         self.bump(); // GROUP_CONCAT
         self.expect_op("(")?;
-        let distinct = if self.is_kw("DISTINCT") {
+        let distinct = if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
             self.bump();
             true
         } else {
@@ -1982,7 +2077,11 @@ impl Parser {
             distinct,
             args,
             order_by,
-            separator,
+            separator: tidb_ast::TypedString::new(
+                separator,
+                self.connection_charset.clone(),
+                self.connection_collation.clone(),
+            ),
         })
     }
 
@@ -2001,7 +2100,7 @@ impl Parser {
             // UNION SELECT ...)` is real, additive grammar. `EXISTS` has
             // its own `parse_query_subquery` path for the same set-operation
             // shape; scalar and `ANY`/`ALL` remain `SelectStmt`-only here.
-            if self.is_op("(") && (self.is_kw_at(1, "SELECT") || self.is_kw_at(1, "WITH")) {
+            if self.is_op("(") && self.is_query_start_at(1) {
                 self.bump(); // (
                 let start = self.peek().offset;
                 let subquery = if self.is_kw("WITH") {
@@ -2033,7 +2132,8 @@ impl Parser {
                 list,
                 not,
             })
-        } else if self.is_kw("LIKE") {
+        } else if self.is_kw("LIKE") || self.is_kw("ILIKE") {
+            let ilike = self.is_kw("ILIKE");
             self.bump();
             // The pattern is a bit_expr (tighter than predicates).
             let pattern = self.parse_expr(prec::BIT_OR)?;
@@ -2042,6 +2142,7 @@ impl Parser {
                 expr: Box::new(left),
                 pattern: Box::new(pattern),
                 not,
+                ilike,
                 escape,
             })
         } else if self.is_kw("REGEXP") || self.is_kw("RLIKE") {
@@ -2092,7 +2193,7 @@ impl Parser {
             [] => Ok(Some(0)),
             [b'\\'] => Ok(None),
             [b] => Ok(Some(*b)),
-            _ => Err(self.err_here("ESCAPE must be a single character")),
+            _ => Err(self.err_here("[parser:1210]Incorrect arguments to ESCAPE")),
         }
     }
 
@@ -2363,6 +2464,7 @@ fn parse_variable(text: &str) -> Option<Expr> {
             let scope = match prefix.to_ascii_uppercase().as_str() {
                 "GLOBAL" => Some(SysVarScope::Global),
                 "SESSION" | "LOCAL" => Some(SysVarScope::Session),
+                "INSTANCE" => Some(SysVarScope::Instance),
                 _ => None,
             };
             if scope.is_some() {

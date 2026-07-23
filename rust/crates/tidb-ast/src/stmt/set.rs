@@ -53,7 +53,7 @@ pub struct SystemVariableAssignment {
 }
 
 impl SystemVariableAssignment {
-    fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("@@");
         out.push_str(match self.scope {
             SystemVariableScope::Session => "SESSION",
@@ -105,6 +105,35 @@ pub enum CharsetSetKind {
     Charset,
 }
 
+/// One comma-separated item in a heterogeneous `SET` statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SetItem {
+    /// An ordinary system-variable assignment.
+    System(SystemVariableAssignment),
+    /// `NAMES` or `CHARSET` connection configuration.
+    Charset {
+        /// Charset command family.
+        kind: CharsetSetKind,
+        /// Canonical charset name, or `None` for `DEFAULT`.
+        charset: Option<String>,
+        /// Optional `NAMES ... COLLATE ...` value.
+        collation: Option<String>,
+    },
+}
+
+impl SetItem {
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        match self {
+            Self::System(assignment) => assignment.restore_into(out),
+            Self::Charset {
+                kind,
+                charset,
+                collation,
+            } => restore_set_charset_item(out, *kind, charset, collation),
+        }
+    }
+}
+
 pub(crate) fn restore_set_charset(
     out: &mut String,
     kind: CharsetSetKind,
@@ -112,6 +141,15 @@ pub(crate) fn restore_set_charset(
     collation: &Option<String>,
 ) {
     out.push_str("SET ");
+    restore_set_charset_item(out, kind, charset, collation);
+}
+
+pub(crate) fn restore_set_charset_item(
+    out: &mut String,
+    kind: CharsetSetKind,
+    charset: &Option<String>,
+    collation: &Option<String>,
+) {
     out.push_str(match kind {
         CharsetSetKind::Names => "NAMES ",
         CharsetSetKind::Charset => "CHARSET ",
@@ -174,6 +212,27 @@ impl crate::Visitable for SetStmt {
             }
         }
         let _ = assignments;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetItem {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::System(assignment) => {
+                if !assignment.accept(visitor) {
+                    return false;
+                }
+            }
+            Self::Charset { kind, .. } => {
+                if !kind.accept(visitor) {
+                    return false;
+                }
+            }
+        }
         visitor.leave(self)
     }
 }

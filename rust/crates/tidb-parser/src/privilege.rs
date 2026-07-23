@@ -58,7 +58,7 @@ impl Parser {
     /// account owns an optional `USING` role list.
     pub(crate) fn parse_show_grants(&mut self) -> PResult<ShowGrantsStmt> {
         self.expect_kw("SHOW")?;
-        self.expect_kw("GRANTS")?;
+        self.expect_token_literal("GRANTS")?;
         let user = if self.is_kw("FOR") {
             self.bump();
             Some(self.parse_user_spec()?)
@@ -208,10 +208,10 @@ impl Parser {
                 return Err(self.err_here("expected ON in REVOKE privilege statement"));
             }
             self.bump();
-            let mut users = vec![self.parse_user_spec()?];
+            let mut users = vec![self.parse_create_user_spec()?];
             while self.is_op(",") {
                 self.bump();
-                users.push(self.parse_user_spec()?);
+                users.push(self.parse_create_user_spec()?);
             }
             return Ok(RevokeStmt {
                 privileges,
@@ -224,10 +224,10 @@ impl Parser {
         let object_type = self.parse_grant_object_type();
         let level = self.parse_grant_level()?;
         self.expect_kw("FROM")?;
-        let mut users = vec![self.parse_user_spec()?];
+        let mut users = vec![self.parse_create_user_spec()?];
         while self.is_op(",") {
             self.bump();
-            users.push(self.parse_user_spec()?);
+            users.push(self.parse_create_user_spec()?);
         }
         Ok(RevokeStmt {
             privileges,
@@ -301,7 +301,19 @@ impl Parser {
     }
 
     fn parse_privilege(&mut self, allow_extended: bool) -> PResult<GrantPrivilege> {
-        let (name, dynamic) = if self.is_kw("ALL") {
+        let known_multiword_dynamic = allow_extended
+            && ((self.is_kw("LOAD") && self.is_kw_at(1, "FROM"))
+                || (self.is_kw("SELECT") && self.is_kw_at(1, "INTO"))
+                || self.is_kw("INVOKE"));
+        let (name, dynamic) = if known_multiword_dynamic {
+            let mut words = Vec::new();
+            while matches!(self.peek().kind, TokenKind::Ident | TokenKind::Keyword)
+                && !self.is_kw("ON")
+            {
+                words.push(self.bump().text.to_ascii_uppercase());
+            }
+            (words.join(" "), true)
+        } else if self.is_kw("ALL") {
             self.bump();
             if self.is_kw("PRIVILEGES") {
                 self.bump();
@@ -386,6 +398,18 @@ impl Parser {
             } else {
                 return Err(self.err_here("expected CLIENT or SLAVE after REPLICATION"));
             }
+        } else if self.is_kw("BINLOG") {
+            // MariaDB aliases BINLOG MONITOR to MySQL's REPLICATION CLIENT.
+            // Go recognizes this through the standard-privilege branch only
+            // when MariaDB compatibility is enabled; BINLOG is a keyword, so
+            // it must not fall through to the identifier-only dynamic-
+            // privilege grammar in strict MySQL mode.
+            if !self.enable_mariadb || !self.is_kw_at(1, "MONITOR") {
+                return Err(self.err_here("BINLOG MONITOR requires MariaDB compatibility mode"));
+            }
+            self.bump();
+            self.bump();
+            ("REPLICATION CLIENT".to_string(), false)
         } else if self.is_kw("CREATE") {
             self.bump();
             if self.is_kw("VIEW") {

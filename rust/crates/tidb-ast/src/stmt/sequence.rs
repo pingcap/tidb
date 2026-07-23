@@ -183,24 +183,23 @@ impl AlterInstanceStmt {
 
 /// `ALTER RANGE name placement_option`.
 ///
-/// The placement option is required structurally. Go currently admits a bare
-/// `ALTER RANGE name` and then dereferences a nil option during restore; Rust
-/// rejects that impossible-to-restore state at the parser boundary.
+/// Go admits a bare `ALTER RANGE name`, leaving the placement option nil.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterRangeStmt {
     /// The range name.
     pub range_name: String,
-    /// The one required placement option.
-    pub placement: PlacementOption,
+    /// The optional placement payload.
+    pub placement: Option<PlacementOption>,
 }
 
 impl AlterRangeStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("ALTER RANGE ");
         out.push_str(&back_quote(&self.range_name));
-        out.push(' ');
-        self.placement
-            .restore_into(out, PlacementRestoreMode::Default);
+        if let Some(placement) = &self.placement {
+            out.push(' ');
+            placement.restore_into(out, PlacementRestoreMode::Default);
+        }
     }
 }
 
@@ -326,8 +325,10 @@ impl crate::Visitable for AlterRangeStmt {
             range_name,
             placement,
         } = self;
-        if !crate::Visitable::accept(placement, visitor) {
-            return false;
+        if let Some(value) = placement.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
         }
         let _ = range_name;
         let _ = placement;

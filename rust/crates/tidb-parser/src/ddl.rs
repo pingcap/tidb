@@ -17,11 +17,12 @@
 use tidb_ast::{
     AdminStmt, AlterOrderItem, AlterPartitionAction, AlterTableAction, AlterTableAlgorithm,
     AlterTableStmt, AnalyzeTableStmt, ColumnOption, ColumnPosition, CompactReplicaKind,
-    CreateTableTemporary, CreateViewStmt, DatabaseOption, DropIndexAlgorithm, DropIndexLock,
-    DropIndexStmt, DropTableStmt, DropTemporary, FlashbackDatabaseStmt, IndexConstraintKind,
-    OptimizeTableStmt, QueryStmt, RenameTableStmt, RepairTableStmt, SetOprTermBody, SplitOption,
-    SplitRegionStmt, SplitTarget, Stmt, TableLock, TableLockType, TableOption, UserSpec,
-    ViewAlgorithm, ViewCheckOption, ViewSecurity,
+    CreateTableTemporary, CreateViewStmt, DatabaseOption, DdlStmt, DropIndexAlgorithm,
+    DropIndexLock, DropIndexStmt, DropTableStmt, DropTemporary, Expr, FlashbackDatabaseStmt,
+    FlashbackTableStmt, FlashbackToTimestampStmt, IndexConstraintKind, OptimizeTableStmt,
+    QueryStmt, RecoverTableStmt, RenameTableStmt, RepairTableStmt, SetOprTermBody, SplitOption,
+    SplitRegionStmt, SplitTarget, Stmt, TableLock, TableLockType, UserSpec, ViewAlgorithm,
+    ViewCheckOption, ViewSecurity,
 };
 use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
 
@@ -55,21 +56,140 @@ mod partition;
 mod table_option;
 
 impl Parser {
-    pub(crate) fn parse_flashback_database(&mut self) -> PResult<FlashbackDatabaseStmt> {
+    pub(crate) fn parse_recover_table(&mut self) -> PResult<RecoverTableStmt> {
+        self.expect_kw("RECOVER")?;
+        self.expect_kw("TABLE")?;
+        if self.is_kw("BY") {
+            self.bump();
+            self.expect_kw("JOB")?;
+            let token = self.peek().clone();
+            if token.kind != TokenKind::IntLit {
+                return Err(self.err_here("expected RECOVER TABLE job ID"));
+            }
+            self.bump();
+            let job_id = token
+                .text
+                .parse::<i64>()
+                .map_err(|_| self.err_here("RECOVER TABLE job ID out of range"))?;
+            return Ok(RecoverTableStmt {
+                job_id,
+                table: None,
+                job_num: 0,
+            });
+        }
+        let table = self.parse_table_name()?;
+        let job_num = if self.peek().kind == TokenKind::IntLit {
+            self.bump()
+                .text
+                .parse::<i64>()
+                .map_err(|_| self.err_here("RECOVER TABLE job count out of range"))?
+        } else {
+            0
+        };
+        Ok(RecoverTableStmt {
+            job_id: 0,
+            table: Some(table),
+            job_num,
+        })
+    }
+
+    pub(crate) fn parse_flashback_statement(&mut self) -> PResult<DdlStmt> {
         self.expect_kw("FLASHBACK")?;
+        if self.is_kw("CLUSTER") {
+            self.bump();
+            return Ok(DdlStmt::FlashbackToTimestamp(Box::new(
+                self.parse_flashback_timestamp_tail(Vec::new(), String::new())?,
+            )));
+        }
+        if self.is_kw("TABLE") {
+            self.bump();
+            let mut tables = vec![self.parse_table_name()?];
+            while self.is_op(",") {
+                self.bump();
+                tables.push(self.parse_table_name()?);
+            }
+            if self.is_flashback_timestamp_tail() {
+                return Ok(DdlStmt::FlashbackToTimestamp(Box::new(
+                    self.parse_flashback_timestamp_tail(tables, String::new())?,
+                )));
+            }
+            let new_name = if self.is_kw("TO") {
+                self.bump();
+                self.parse_any_token_name()
+            } else {
+                String::new()
+            };
+            return Ok(DdlStmt::FlashbackTable(Box::new(FlashbackTableStmt {
+                table: tables.into_iter().next(),
+                new_name,
+            })));
+        }
         if self.is_kw("DATABASE") || self.is_kw("SCHEMA") {
             self.bump();
-        } else {
-            return Err(self.err_here("expected DATABASE or SCHEMA"));
+            let database_name = self.parse_ident_like_name()?;
+            if self.is_flashback_timestamp_tail() {
+                return Ok(DdlStmt::FlashbackToTimestamp(Box::new(
+                    self.parse_flashback_timestamp_tail(Vec::new(), database_name)?,
+                )));
+            }
+            let new_name = if self.is_kw("TO") {
+                self.bump();
+                Some(self.parse_any_token_name())
+            } else {
+                None
+            };
+            return Ok(DdlStmt::FlashbackDatabase(Box::new(
+                FlashbackDatabaseStmt {
+                    name: database_name,
+                    new_name,
+                },
+            )));
         }
-        let name = self.parse_name_or_keyword()?;
-        let new_name = if self.is_kw("TO") {
+        Err(self.err_here("expected CLUSTER, TABLE, DATABASE, or SCHEMA"))
+    }
+
+    fn is_flashback_timestamp_tail(&self) -> bool {
+        (self.is_kw("TO") && self.is_kw_at(1, "TIMESTAMP") && self.peek_n(2).kind == TokenKind::Str)
+            || (self.is_kw("TO") && self.is_kw_at(1, "TSO"))
+    }
+
+    fn parse_flashback_timestamp_tail(
+        &mut self,
+        tables: Vec<Vec<String>>,
+        database_name: String,
+    ) -> PResult<FlashbackToTimestampStmt> {
+        self.expect_kw("TO")?;
+        if self.is_kw("TIMESTAMP") {
             self.bump();
-            Some(self.parse_name_or_keyword()?)
-        } else {
-            None
-        };
-        Ok(FlashbackDatabaseStmt { name, new_name })
+            if self.peek().kind != TokenKind::Str {
+                return Err(self.err_here("FLASHBACK TIMESTAMP requires a string literal"));
+            }
+            let timestamp = crate::decode_string(&self.bump().text);
+            return Ok(FlashbackToTimestampStmt {
+                flashback_ts: Some(Expr::RawString(timestamp)),
+                flashback_tso: 0,
+                tables,
+                database_name,
+            });
+        }
+        self.expect_kw("TSO")?;
+        if self.peek().kind != TokenKind::IntLit {
+            return Err(self.err_here("FLASHBACK TSO requires a positive integer"));
+        }
+        let flashback_tso = self
+            .bump()
+            .text
+            .parse::<u64>()
+            .map_err(|_| self.err_here("FLASHBACK TSO out of range"))?;
+        if flashback_tso == 0 {
+            return Err(self.err_here("FLASHBACK TSO must be positive"));
+        }
+        Ok(FlashbackToTimestampStmt {
+            flashback_ts: None,
+            flashback_tso,
+            tables,
+            database_name,
+        })
     }
 
     pub(crate) fn parse_optimize_table(&mut self) -> PResult<OptimizeTableStmt> {
@@ -85,10 +205,10 @@ impl Parser {
         } else {
             return Err(self.err_here("expected TABLE"));
         }
-        let mut tables = vec![self.parse_name_path()?];
+        let mut tables = vec![self.parse_table_name()?];
         while self.is_op(",") {
             self.bump();
-            tables.push(self.parse_name_path()?);
+            tables.push(self.parse_table_name()?);
         }
         Ok(OptimizeTableStmt {
             no_write_to_binlog,
@@ -100,7 +220,7 @@ impl Parser {
         self.expect_kw("ADMIN")?;
         self.expect_kw("REPAIR")?;
         self.expect_kw("TABLE")?;
-        let table = self.parse_name_path()?;
+        let table = self.parse_table_name()?;
         let create = self.parse_create_table()?;
         Ok(RepairTableStmt { table, create })
     }
@@ -117,7 +237,7 @@ impl Parser {
             return Err(self.err_here("expected DATABASE or SCHEMA"));
         }
         let if_not_exists = self.parse_if_not_exists()?;
-        let name = self.parse_name_or_keyword()?;
+        let name = self.parse_ident_like_name()?;
         let options = self.parse_database_options()?;
         Ok((if_not_exists, name, options))
     }
@@ -138,7 +258,7 @@ impl Parser {
         let name = if self.starts_alter_database_option() {
             None
         } else {
-            Some(self.parse_name_or_keyword()?)
+            Some(self.parse_ident_like_name()?)
         };
         let options = self.parse_database_options()?;
         if options.is_empty() {
@@ -157,11 +277,9 @@ impl Parser {
             || self.is_kw("SET")
     }
 
-    /// Direct structural port of Go's `parseDatabaseOptions`. The generated
-    /// lexer charset table is itself sourced from TiDB's `charset.go`, so
-    /// invalid names fail at the same parser boundary instead of becoming a
-    /// Rust-only accepted statement. Collation lookup has a wider catalog
-    /// than the seed value domain; we still preserve its canonical AST form.
+    /// Direct structural port of Go's `parseDatabaseOptions`. The shared DDL
+    /// charset validator keeps this on TiDB's supported seven-name subset;
+    /// recognized-but-unsupported MySQL names fail at the same parser boundary.
     fn parse_database_options(&mut self) -> PResult<Vec<DatabaseOption>> {
         let mut options = Vec::new();
         loop {
@@ -174,13 +292,17 @@ impl Parser {
 
             let option = if self.is_kw("CHARACTER") || self.is_kw("CHAR") {
                 self.bump();
-                self.expect_kw("SET")?;
+                if self.is_kw("SET") {
+                    self.bump();
+                }
                 if self.is_op("=") {
                     self.bump();
                 }
                 let raw = self.parse_table_option_word()?;
-                let name = canonical_charset(&raw)
-                    .ok_or_else(|| self.err_here("unknown character set"))?
+                let name = field_type::canonical_field_charset(&raw)
+                    .ok_or_else(|| {
+                        self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+                    })?
                     .to_owned();
                 DatabaseOption::CharacterSet(name)
             } else if self.is_kw("CHARSET") {
@@ -189,8 +311,10 @@ impl Parser {
                     self.bump();
                 }
                 let raw = self.parse_table_option_word()?;
-                let name = canonical_charset(&raw)
-                    .ok_or_else(|| self.err_here("unknown character set"))?
+                let name = field_type::canonical_field_charset(&raw)
+                    .ok_or_else(|| {
+                        self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+                    })?
                     .to_owned();
                 DatabaseOption::CharacterSet(name)
             } else if self.is_kw("COLLATE") {
@@ -199,8 +323,9 @@ impl Parser {
                     self.bump();
                 }
                 let raw = self.parse_table_option_word()?;
-                let collation =
-                    canonical_collation(&raw).ok_or_else(|| self.err_here("unknown collation"))?;
+                let collation = canonical_collation(&raw).ok_or_else(|| {
+                    self.err_here(&format!("[ddl:1273]Unknown collation: '{raw}'"))
+                })?;
                 DatabaseOption::Collate(collation.to_owned())
             } else if self.is_kw("ENCRYPTION") {
                 self.bump();
@@ -214,12 +339,16 @@ impl Parser {
                 self.bump();
                 let value = decode_string(&token.text);
                 if !matches!(value.as_str(), "Y" | "y" | "N" | "n") {
-                    return Err(self.err_here("ENCRYPTION value must be Y or N"));
+                    return Err(self.err_here(&format!(
+                        "[parser:1525]Incorrect argument (should be Y or N) value: '{value}'"
+                    )));
                 }
                 DatabaseOption::Encryption(value)
             } else if self.is_kw("PLACEMENT") {
                 self.bump();
-                self.expect_kw("POLICY")?;
+                if self.is_kw("POLICY") {
+                    self.bump();
+                }
                 let name = if self.is_kw("SET") && self.is_kw_at(1, "DEFAULT") {
                     self.bump();
                     self.bump();
@@ -232,7 +361,7 @@ impl Parser {
                         self.bump();
                         "DEFAULT".to_owned()
                     } else {
-                        self.parse_placement_policy_name()?
+                        self.parse_any_token_name()
                     }
                 };
                 DatabaseOption::PlacementPolicy(name)
@@ -380,9 +509,9 @@ impl Parser {
         };
         self.expect_kw("INDEX")?;
         let if_exists = self.parse_if_exists()?;
-        let name = self.parse_name_or_keyword()?;
+        let name = crate::table_name_token_text(self.bump());
         self.expect_kw("ON")?;
-        let table = self.parse_name_path()?;
+        let table = self.parse_table_name()?;
         let (algorithm, lock) = self.parse_drop_index_lock_and_algorithm()?;
         Ok(DropIndexStmt {
             is_hypo,
@@ -513,42 +642,92 @@ impl Parser {
     /// tuple into `Expr::Row`: the AST's own restore has a distinct ordinary
     /// parenthesized tuple representation.
     fn parse_split_option(&mut self) -> PResult<SplitOption> {
+        self.parse_split_option_shape(true, false)
+    }
+
+    fn parse_create_table_split_option(&mut self) -> PResult<SplitOption> {
+        self.parse_split_option_shape(false, true)
+    }
+
+    fn parse_split_option_shape(
+        &mut self,
+        allow_empty_bounds: bool,
+        require_parenthesized: bool,
+    ) -> PResult<SplitOption> {
         if self.is_kw("BY") {
             self.bump();
-            let mut points = vec![self.parse_split_tuple(false)?];
+            let mut points = vec![self.parse_split_tuple(false, require_parenthesized)?];
             while self.is_op(",") {
                 self.bump();
-                points.push(self.parse_split_tuple(false)?);
+                points.push(self.parse_split_tuple(false, require_parenthesized)?);
             }
             Ok(SplitOption::By(points))
         } else if self.is_kw("BETWEEN") {
             self.bump();
-            let lower = self.parse_split_tuple(true)?;
+            let lower = self.parse_split_tuple(allow_empty_bounds, require_parenthesized)?;
             self.expect_kw("AND")?;
-            let upper = self.parse_split_tuple(true)?;
+            let upper = self.parse_split_tuple(allow_empty_bounds, require_parenthesized)?;
             self.expect_kw("REGIONS")?;
-            let token = self.peek().clone();
-            if token.kind != TokenKind::IntLit {
-                return Err(self.err_here("expected split region count"));
-            }
-            self.bump();
-            let regions = token
-                .text
-                .parse::<i64>()
-                .map_err(|_| self.err_here("split region count out of range"))?;
+            let regions = self.parse_split_region_count()?;
             Ok(SplitOption::Between {
                 lower,
                 upper,
                 regions,
             })
         } else {
-            Err(self.err_here("expected BY or BETWEEN in SPLIT statement"))
+            Ok(SplitOption::Between {
+                lower: Vec::new(),
+                upper: Vec::new(),
+                regions: 0,
+            })
+        }
+    }
+
+    fn parse_split_region_count(&mut self) -> PResult<i64> {
+        let negative = if self.is_op("-") {
+            self.bump();
+            true
+        } else {
+            if self.is_op("+") {
+                self.bump();
+            }
+            false
+        };
+        let token = self.peek().clone();
+        if token.kind != TokenKind::IntLit {
+            return Err(self.err_here("expected split region count"));
+        }
+        self.bump();
+        let magnitude = token
+            .text
+            .parse::<u64>()
+            .map_err(|_| self.err_here("split region count out of range"))?;
+        if negative {
+            if magnitude == (i64::MAX as u64) + 1 {
+                Ok(i64::MIN)
+            } else {
+                i64::try_from(magnitude)
+                    .map(|value| -value)
+                    .map_err(|_| self.err_here("split region count out of range"))
+            }
+        } else {
+            i64::try_from(magnitude).map_err(|_| self.err_here("split region count out of range"))
         }
     }
 
     /// Parses one split-key tuple.  Empty tuples are valid only in `BETWEEN`
     /// bounds; `BY ()` is a genuine parser error in Go.
-    fn parse_split_tuple(&mut self, allow_empty: bool) -> PResult<Vec<tidb_ast::Expr>> {
+    fn parse_split_tuple(
+        &mut self,
+        allow_empty: bool,
+        require_parenthesized: bool,
+    ) -> PResult<Vec<tidb_ast::Expr>> {
+        if !self.is_op("(") {
+            if require_parenthesized {
+                return Err(self.err_here("expected parenthesized split key values"));
+            }
+            return Ok(vec![self.parse_expr(prec::NONE)?]);
+        }
         self.expect_op("(")?;
         if self.is_op(")") {
             if !allow_empty {
@@ -767,8 +946,11 @@ impl Parser {
     /// `ParseError`.
     pub(crate) fn parse_alter_table_statement(&mut self) -> PResult<Stmt> {
         self.expect_kw("ALTER")?;
+        if self.is_kw("IGNORE") {
+            self.bump();
+        }
         self.expect_kw("TABLE")?;
-        let name = self.parse_name_path()?;
+        let name = self.parse_table_name()?;
         if self.is_kw("ANALYZE") {
             return self.parse_alter_analyze_partition(name);
         }
@@ -780,18 +962,21 @@ impl Parser {
     fn parse_alter_analyze_partition(&mut self, table: Vec<String>) -> PResult<Stmt> {
         self.expect_kw("ANALYZE")?;
         self.expect_kw("PARTITION")?;
-        let mut partitions = vec![self.parse_name()?];
-        while self.is_op(",") {
+        let partitions = self.parse_ident_like_name_list()?;
+        let target = if self.is_kw("INDEX") {
             self.bump();
-            partitions.push(self.parse_name()?);
-        }
+            tidb_ast::AnalyzeTarget::Index(self.parse_ident_like_name_list()?)
+        } else {
+            tidb_ast::AnalyzeTarget::Default
+        };
+        let options = self.parse_analyze_options()?;
         Ok(Stmt::Admin(tidb_ast::NodeBox::new(
             AdminStmt::AnalyzeTable(Box::new(AnalyzeTableStmt {
                 tables: vec![table],
                 partitions,
                 no_write_to_binlog: false,
-                target: tidb_ast::AnalyzeTarget::Default,
-                options: Vec::new(),
+                target,
+                options,
             })),
         )))
     }
@@ -905,8 +1090,6 @@ impl Parser {
             action
         } else if let Some(action) = alter::ttl::parse(self)? {
             action
-        } else if let Some(action) = alter::auto_increment::parse(self)? {
-            action
         } else if let Some(action) = alter::auto_id_options::parse(self)? {
             action
         } else if self.is_kw("FORCE") {
@@ -941,33 +1124,26 @@ impl Parser {
         } else if self.is_kw("SECONDARY_LOAD") || self.is_kw("SECONDARY_UNLOAD") {
             let load = self.is_kw("SECONDARY_LOAD");
             self.bump();
+            self.warn(if load {
+                "The SECONDARY_LOAD clause is parsed but not implement yet."
+            } else {
+                "The SECONDARY_UNLOAD VALIDATION clause is parsed but not implement yet."
+            });
             AlterTableAction::SecondaryLoad(load)
         } else if self.is_kw("IMPORT") || self.is_kw("DISCARD") {
             let import = self.is_kw("IMPORT");
             self.bump();
             self.expect_kw("TABLESPACE")?;
+            self.warn(if import {
+                "The IMPORT TABLESPACE clause is parsed but ignored by all storage engines."
+            } else {
+                "The DISCARD TABLESPACE clause is parsed but ignored by all storage engines."
+            });
             AlterTableAction::TablespaceImport(import)
         } else if self.is_kw("CONVERT") {
             AlterTableAction::ConvertCharacterSet {
                 charset: self.parse_alter_convert_character_set()?,
                 collation: self.parse_optional_alter_collation()?,
-            }
-        } else if self.is_kw("AFFINITY") {
-            // Direct Go `parseTableOption` transition: AFFINITY takes an
-            // optional equals sign followed by a string literal only. It is
-            // not a generic identifier-valued ALTER option; preserving that
-            // boundary prevents accepting Go-rejected numeric/bare forms.
-            self.bump();
-            if self.is_op("=") {
-                self.bump();
-            }
-            let token = self.peek().clone();
-            if token.kind != TokenKind::Str {
-                return Err(self.err_here("expected AFFINITY string literal"));
-            }
-            self.bump();
-            AlterTableAction::SetAffinity {
-                level: decode_string(&token.text),
             }
         } else if self.is_kw("ATTRIBUTES") {
             // Direct Go `parseAlterTableOptions` transition. ATTRIBUTES is
@@ -1010,47 +1186,20 @@ impl Parser {
                 Some(decode_string(&token.text))
             };
             AlterTableAction::SetStatsOptions(tidb_ast::StatsOptionsSpec { options })
-        } else if let Some(action) = alter::shard_row_id_bits::parse(self)? {
-            action
-        } else if self.starts_alter_table_charset_or_collation_option() {
-            AlterTableAction::SetTableOptions {
-                options: self.parse_alter_table_charset_collation_options()?,
-            }
-        } else if self.is_kw("ENGINE_ATTRIBUTE") {
-            // Go's `parseAlterTableOptions` delegates ENGINE_ATTRIBUTE to the
-            // shared `parseTableOption` production. Keep adjacent copies in
-            // one source-shaped option list (the comma-separated case is
-            // owned by the outer ALTER TABLE spec loop).
-            let mut options = Vec::new();
-            loop {
-                let Some(option) = self.parse_table_option()? else {
-                    unreachable!("ENGINE_ATTRIBUTE starts a table option");
-                };
-                options.push(option);
-                if !self.is_kw("ENGINE_ATTRIBUTE") {
-                    break;
-                }
-            }
-            AlterTableAction::SetTableOptions { options }
-        } else if self.starts_alter_table_generic_option() {
-            // Go's `parseAlterTableOptions` delegates these physical/MERGE
-            // options to the shared `parseTableOption` production. Keep the
-            // selector deliberately narrow: this ring owns only the exact
-            // standalone INSERT_METHOD, PRE_SPLIT_REGIONS, and UNION forms
-            // still present in the static Go-accepted queue.
-            let mut options = Vec::new();
+        } else if let Some(first_option) = self.parse_table_option()? {
+            // Go delegates every remaining option to the shared
+            // `parseTableOption` loop. One parser owns CREATE and ALTER table
+            // option boundaries; no second selector list can drift.
+            let mut options = vec![first_option];
             while let Some(option) = self.parse_table_option()? {
                 options.push(option);
-                if !self.starts_alter_table_generic_option() {
-                    break;
-                }
             }
             AlterTableAction::SetTableOptions { options }
         } else if self.is_kw("ADD") && self.is_kw_at(1, "STATS_EXTENDED") {
             self.bump();
             self.bump();
             let if_not_exists = self.parse_if_not_exists()?;
-            let name = self.parse_name()?;
+            let name = self.parse_ident_like_name()?;
             let stats_type = if self.is_kw("CARDINALITY") {
                 self.bump();
                 tidb_ast::ExtendedStatsType::Cardinality
@@ -1066,10 +1215,10 @@ impl Parser {
                 ));
             };
             self.expect_op("(")?;
-            let mut columns = vec![self.parse_name()?];
+            let mut columns = vec![self.parse_ident_like_name()?];
             while self.is_op(",") {
                 self.bump();
-                columns.push(self.parse_name()?);
+                columns.push(self.parse_ident_like_name()?);
             }
             self.expect_op(")")?;
             AlterTableAction::AddStatistics {
@@ -1083,7 +1232,7 @@ impl Parser {
             self.bump();
             AlterTableAction::DropStatistics {
                 if_exists: self.parse_if_exists()?,
-                name: self.parse_name()?,
+                name: self.parse_ident_like_name()?,
             }
         } else if self.is_kw("ADD") {
             self.bump();
@@ -1264,14 +1413,14 @@ impl Parser {
                 };
                 AlterTableAction::DropIndex {
                     if_exists,
-                    name: self.parse_name()?,
+                    name: self.parse_ident_like_name()?,
                 }
             } else {
                 if self.is_kw("COLUMN") {
                     self.bump();
                 }
                 let if_exists = self.parse_if_exists()?;
-                let name = self.parse_name()?;
+                let name = self.parse_ident_like_name()?;
                 // MySQL's optional RESTRICT/CASCADE suffix is accepted by
                 // Go and intentionally omitted by AlterTableSpec.Restore.
                 if self.is_kw("RESTRICT") || self.is_kw("CASCADE") {
@@ -1304,7 +1453,7 @@ impl Parser {
                 self.bump();
             }
             let if_exists = self.parse_if_exists()?;
-            let old_name = self.parse_name()?;
+            let old_name = self.parse_column_name_path()?;
             let column = self.parse_column_def()?;
             let position = self.parse_column_position()?;
             AlterTableAction::ChangeColumn {
@@ -1319,18 +1468,18 @@ impl Parser {
             action
         } else if self.is_kw("RENAME") {
             self.bump();
-            if self.is_kw("TO") || self.is_kw("AS") {
+            if self.is_kw("TO") || self.is_kw("AS") || self.is_op("=") {
                 self.bump();
             }
             AlterTableAction::RenameTable {
-                new_name: self.parse_name_path()?,
+                new_name: self.parse_table_name()?,
             }
         } else if self.is_kw("ORDER") {
             self.bump();
             self.expect_kw("BY")?;
             let mut items = Vec::new();
             loop {
-                let column = self.parse_name_path()?;
+                let column = self.parse_column_name_path()?;
                 let desc = if self.is_kw("DESC") {
                     self.bump();
                     true
@@ -1381,7 +1530,7 @@ impl Parser {
                         return Err(self.err_here("expected TiFlash location label"));
                     }
                     labels.push(crate::decode_string(&self.bump().text));
-                    if self.is_op(",") && self.peek_n(1).kind == TokenKind::Str {
+                    if self.is_op(",") {
                         self.bump();
                     } else {
                         break;
@@ -1401,10 +1550,10 @@ impl Parser {
             let mut partitions = Vec::new();
             if self.is_kw("PARTITION") {
                 self.bump();
-                partitions.push(self.parse_name()?);
+                partitions.push(self.parse_ident_like_name()?);
                 while self.is_op(",") {
                     self.bump();
-                    partitions.push(self.parse_name()?);
+                    partitions.push(self.parse_ident_like_name()?);
                 }
             }
             let replica_kind = if self.is_kw("TIFLASH") {
@@ -1446,16 +1595,17 @@ impl Parser {
                 SplitTarget::PrimaryKey
             } else if self.is_kw("INDEX") {
                 self.bump();
-                SplitTarget::Index(self.parse_name_or_keyword()?)
+                if self.peek().kind == TokenKind::Str || !crate::is_ident_like_name(self.peek()) {
+                    return Err(self.err_here("expected split index name"));
+                }
+                SplitTarget::Index(self.parse_ident_like_name()?)
             } else if self.is_kw("REGION") {
                 // Go accepts `SPLIT REGION BETWEEN ...` as the implicit
                 // table-level spelling.
                 self.bump();
                 SplitTarget::Table
-            } else if self.is_kw("BY") || self.is_kw("BETWEEN") {
-                SplitTarget::Table
             } else {
-                return Err(self.err_here("expected SPLIT TABLE, PRIMARY KEY, or INDEX"));
+                SplitTarget::Table
             };
             AlterTableAction::SplitRegion {
                 target,
@@ -1465,115 +1615,6 @@ impl Parser {
             return Ok(None);
         };
         Ok(Some(action))
-    }
-
-    /// Mirrors Go's `parseAlterTableOptions` narrow `TableOptionCharset` /
-    /// `TableOptionCollate` path. A single ALTER spec may contain multiple
-    /// adjacent options without commas (for example, `COLLATE x CHARSET y`),
-    /// and Go restores that source order as space-separated table options.
-    /// Keep this deliberately separate from CREATE TABLE's broad option loop:
-    /// this statement family has different `CONVERT TO` handling and no
-    /// implicit comma acceptance in this seed's one-action AST.
-    fn parse_alter_table_charset_collation_options(&mut self) -> PResult<Vec<TableOption>> {
-        let mut options = Vec::new();
-        while self.starts_alter_table_charset_or_collation_option() {
-            if self.is_kw("DEFAULT") {
-                self.bump();
-            }
-            if self.is_kw("CHARACTER") || self.is_kw("CHAR") {
-                self.bump();
-                self.expect_kw("SET")?;
-                if self.is_op("=") {
-                    self.bump();
-                }
-                options.push(TableOption::CharacterSet(self.parse_alter_charset_name()?));
-            } else if self.is_kw("CHARSET") {
-                self.bump();
-                if self.is_op("=") {
-                    self.bump();
-                }
-                options.push(TableOption::CharacterSet(self.parse_alter_charset_name()?));
-            } else {
-                self.expect_kw("COLLATE")?;
-                if self.is_op("=") {
-                    self.bump();
-                }
-                let raw = self.parse_table_option_word()?;
-                let collation =
-                    canonical_collation(&raw).ok_or_else(|| self.err_here("unknown collation"))?;
-                options.push(TableOption::Collate(collation.to_ascii_uppercase()));
-            }
-        }
-        Ok(options)
-    }
-
-    /// Whether the next Go `parseTableOption` production belongs to this
-    /// typed ALTER TABLE option slice. `DEFAULT` is only a prefix here when
-    /// it actually introduces a charset or collation option; treating a bare
-    /// DEFAULT as an option would accept a statement Go rejects.
-    fn starts_alter_table_charset_or_collation_option(&self) -> bool {
-        let mut offset = 0;
-        if self.is_kw("DEFAULT") {
-            offset = 1;
-        }
-        self.is_kw_at(offset, "CHARACTER")
-            || self.is_kw_at(offset, "CHAR")
-            || self.is_kw_at(offset, "CHARSET")
-            || self.is_kw_at(offset, "COLLATE")
-    }
-
-    fn starts_alter_table_generic_option(&self) -> bool {
-        let keyword = self.peek().text.to_ascii_uppercase();
-        matches!(
-            keyword.as_str(),
-            "ENGINE"
-                | "COMMENT"
-                | "ROW_FORMAT"
-                | "KEY_BLOCK_SIZE"
-                | "COMPRESSION"
-                | "STORAGE"
-                | "TABLESPACE"
-                | "SHARD_ROW_ID_BITS"
-                | "PRE_SPLIT_REGIONS"
-                | "AUTO_ID_CACHE"
-                | "MAX_ROWS"
-                | "MIN_ROWS"
-                | "AVG_ROW_LENGTH"
-                | "CHECKSUM"
-                | "DELAY_KEY_WRITE"
-                | "STATS_PERSISTENT"
-                | "PACK_KEYS"
-                | "AUTO_RANDOM_BASE"
-                | "NODEGROUP"
-                | "AUTOEXTEND_SIZE"
-                | "PAGE_CHECKSUM"
-                | "PAGE_COMPRESSED"
-                | "PAGE_COMPRESSION_LEVEL"
-                | "TRANSACTIONAL"
-                | "IETF_QUOTES"
-                | "SEQUENCE"
-                | "UNION"
-                | "CONNECTION"
-                | "PASSWORD"
-                | "STATS_AUTO_RECALC"
-                | "STATS_SAMPLE_PAGES"
-                | "INSERT_METHOD"
-                | "SECONDARY_ENGINE"
-                | "SECONDARY_ENGINE_ATTRIBUTE"
-                | "ENGINE_ATTRIBUTE"
-                | "TABLE_CHECKSUM"
-                | "STATS_BUCKETS"
-                | "STATS_TOPN"
-                | "STATS_SAMPLE_RATE"
-                | "STATS_COL_CHOICE"
-                | "STATS_COL_LIST"
-                | "TTL"
-                | "TTL_ENABLE"
-                | "TTL_JOB_INTERVAL"
-                | "AFFINITY"
-                | "PLACEMENT"
-                | "ENCRYPTION"
-        ) || matches!(keyword.as_str(), "DATA" | "INDEX") && self.is_kw_at(1, "DIRECTORY")
     }
 
     /// Parses Go's `CONVERT TO { CHARACTER SET | CHARSET | CHAR SET }
@@ -1627,9 +1668,9 @@ impl Parser {
         self.expect_kw("TABLE")?;
         let mut pairs = Vec::new();
         loop {
-            let old = self.parse_name_path()?;
+            let old = self.parse_table_name()?;
             self.expect_kw("TO")?;
-            let new = self.parse_name_path()?;
+            let new = self.parse_table_name()?;
             pairs.push((old, new));
             if self.is_op(",") {
                 self.bump();
@@ -1671,7 +1712,7 @@ impl Parser {
         };
         let mut names = Vec::new();
         loop {
-            names.push(self.parse_name_path()?);
+            names.push(self.parse_table_name()?);
             if self.is_op(",") {
                 self.bump();
                 continue;
@@ -1696,7 +1737,7 @@ impl Parser {
             Ok(ColumnPosition::First)
         } else if self.is_kw("AFTER") {
             self.bump();
-            Ok(ColumnPosition::After(self.parse_name()?))
+            Ok(ColumnPosition::After(self.parse_ident_like_name()?))
         } else {
             Ok(ColumnPosition::Default)
         }

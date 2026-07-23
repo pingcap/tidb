@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{prec, PResult, Parser};
+use crate::{decode_at_name, decode_string, prec, PResult, Parser};
 
 impl Parser {
     pub(crate) fn parse_query_watch(&mut self) -> PResult<tidb_ast::AdminStmt> {
@@ -38,8 +38,8 @@ impl Parser {
             Ok(tidb_ast::AdminStmt::AddQueryWatch(Box::new(
                 AddQueryWatchStmt { options },
             )))
-        } else {
-            self.expect_kw("REMOVE")?;
+        } else if self.is_kw("REMOVE") {
+            self.bump();
             let target = if self.peek().kind == TokenKind::IntLit {
                 let token = self.bump();
                 QueryWatchRemoveTarget::Id(
@@ -54,12 +54,31 @@ impl Parser {
                 if self.peek().kind == TokenKind::UserVar {
                     QueryWatchRemoveTarget::ResourceGroupExpr(self.parse_expr(prec::NONE)?)
                 } else {
-                    QueryWatchRemoveTarget::ResourceGroup(self.parse_name_or_keyword()?)
+                    QueryWatchRemoveTarget::ResourceGroup(self.parse_query_watch_name(false)?)
                 }
             };
             Ok(tidb_ast::AdminStmt::DropQueryWatch(Box::new(
                 DropQueryWatchStmt { target },
             )))
+        } else if self.is_kw("DROP") {
+            // Go keeps this compatibility fallback separate from REMOVE:
+            // it consumes only an optional integer and otherwise leaves the
+            // zero-valued ID in the AST.  In particular, bare
+            // `QUERY WATCH DROP` restores as `QUERY WATCH REMOVE 0`, while
+            // RESOURCE GROUP belongs exclusively to the REMOVE production.
+            self.bump();
+            let id = if self.peek().kind == TokenKind::IntLit {
+                self.bump().text.parse::<i64>().unwrap_or_default()
+            } else {
+                0
+            };
+            Ok(tidb_ast::AdminStmt::DropQueryWatch(Box::new(
+                DropQueryWatchStmt {
+                    target: QueryWatchRemoveTarget::Id(id),
+                },
+            )))
+        } else {
+            Err(self.err_here("expected ADD, REMOVE, or DROP after QUERY WATCH"))
         }
     }
 
@@ -73,7 +92,7 @@ impl Parser {
                 )))
             } else {
                 Ok(Some(QueryWatchOption::ResourceGroup(
-                    self.parse_name_or_keyword()?,
+                    self.parse_query_watch_name(false)?,
                 )))
             };
         }
@@ -94,11 +113,15 @@ impl Parser {
             } else if self.is_kw("SWITCH_GROUP") {
                 self.bump();
                 self.expect_op("(")?;
-                let name = self.parse_name_or_keyword()?;
+                let name = self.parse_query_watch_name(true)?;
                 self.expect_op(")")?;
                 ResourceGroupRunawayAction::SwitchGroup(name)
             } else {
-                return Err(self.err_here("expected QUERY WATCH action"));
+                // Go leaves the zero-valued action in the AST when no
+                // action token follows. Its zero value is DRYRUN. An
+                // unrecognized trailing token is still rejected later by
+                // the statement-completion check because it is not consumed.
+                ResourceGroupRunawayAction::DryRun
             };
             return Ok(Some(QueryWatchOption::Action(action)));
         }
@@ -110,7 +133,7 @@ impl Parser {
                 (RunawayWatchType::Similar, false)
             } else {
                 self.expect_kw("TEXT")?;
-                let watch_type = self.parse_query_watch_type()?;
+                let watch_type = self.parse_query_watch_type();
                 self.expect_kw("TO")?;
                 (watch_type, true)
             }
@@ -128,7 +151,7 @@ impl Parser {
         })))
     }
 
-    fn parse_query_watch_type(&mut self) -> PResult<RunawayWatchType> {
+    fn parse_query_watch_type(&mut self) -> RunawayWatchType {
         for (keyword, value) in [
             ("EXACT", RunawayWatchType::Exact),
             ("SIMILAR", RunawayWatchType::Similar),
@@ -136,10 +159,28 @@ impl Parser {
         ] {
             if self.is_kw(keyword) {
                 self.bump();
-                return Ok(value);
+                return value;
             }
         }
-        Err(self.err_here("expected EXACT, SIMILAR, or PLAN"))
+        RunawayWatchType::None
+    }
+
+    /// Go's QUERY WATCH name slots use `expectIdentLike`, which includes a
+    /// quoted string. SWITCH_GROUP additionally consumes a user-variable
+    /// token as a name; RESOURCE GROUP keeps that token as an expression.
+    fn parse_query_watch_name(&mut self, user_var_as_name: bool) -> PResult<String> {
+        match self.peek().kind {
+            TokenKind::Str => Ok(decode_string(&self.bump().text)),
+            TokenKind::UserVar if user_var_as_name => {
+                let raw = self.bump().text;
+                if raw.starts_with("@@") {
+                    Ok(raw)
+                } else {
+                    Ok(decode_at_name(&raw))
+                }
+            }
+            _ => self.parse_name_or_keyword(),
+        }
     }
 }
 
