@@ -164,8 +164,8 @@ type Storage interface {
 	URI() string
 
 	// Create opens a file writer by path. path is relative path to storage base
-	// path. The old file under same path will be overwritten. Currently only s3
-	// implemented WriterOption.
+	// path. The old file under same path will be overwritten. Not all backends
+	// honor WriterOption; see each backend's Create implementation.
 	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error

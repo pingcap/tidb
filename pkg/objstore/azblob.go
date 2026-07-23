@@ -733,10 +733,10 @@ func (s *AzureBlobStorage) Create(ctx context.Context, name string, wo *storeapi
 	}
 
 	chunkSize := azblobChunkSize
+	if wo != nil && wo.PartSize > 0 {
+		chunkSize = int(wo.PartSize)
+	}
 	if wo != nil && wo.Concurrency > 1 {
-		if wo.PartSize > 0 {
-			chunkSize = int(wo.PartSize)
-		}
 		eg, egCtx := errgroup.WithContext(ctx)
 		eg.SetLimit(wo.Concurrency)
 		uploader.eg = eg
