@@ -467,22 +467,28 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	// for hash inner join, both side is ok, by default, we use the probe side
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
-	outerTaskIndex := 1 - p.InnerChildIdx
-	if p.JoinType != base.InnerJoin {
-		if p.JoinType == base.RightOuterJoin {
-			outerTaskIndex = 1
-		} else {
-			outerTaskIndex = 0
+	partTp := property.AnyType
+	var hashCols []*property.MPPPartitionColumn
+	if p.JoinType != base.FullOuterJoin {
+		outerTaskIndex := 1 - p.InnerChildIdx
+		if p.JoinType != base.InnerJoin {
+			if p.JoinType == base.RightOuterJoin {
+				outerTaskIndex = 1
+			} else {
+				outerTaskIndex = 0
+			}
 		}
-	}
-	// can not use the task from tasks because it maybe updated.
-	outerTask := lTask
-	if outerTaskIndex == 1 {
-		outerTask = rTask
+		// can not use the task from tasks because it maybe updated.
+		outerTask := lTask
+		if outerTaskIndex == 1 {
+			outerTask = rTask
+		}
+		partTp = outerTask.GetPartitionType()
+		hashCols = outerTask.GetHashCols()
 	}
 	task := physicalop.NewMppTask(p,
-		outerTask.GetPartitionType(),
-		outerTask.GetHashCols(),
+		partTp,
+		hashCols,
 		nil, rTask.GetWarnings(), lTask.GetWarnings())
 	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
 	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
