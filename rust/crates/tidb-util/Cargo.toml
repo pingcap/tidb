@@ -9,3 +9,7 @@ description = "Complete TiDB utility package transcreations shared by the Rust S
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "zeropool"
+harness = false
