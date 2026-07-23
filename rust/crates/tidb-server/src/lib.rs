@@ -108,8 +108,8 @@ pub use mysql_connection::{
     MysqlConnectionError,
 };
 pub use native_password::{
-    generate_handshake_salt, verify_candidate, HandshakeSaltError, NativePasswordHash,
-    NativePasswordHashError, HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
+    generate_handshake_salt, verify_candidate, NativePasswordHash, NativePasswordHashError,
+    HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
 };
 pub use node_config::{
     ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig,

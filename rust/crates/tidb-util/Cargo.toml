@@ -26,8 +26,15 @@ regex.workspace = true
 serde_json.workspace = true
 tidb-hack = { path = "../tidb-hack" }
 
+[dev-dependencies]
+standard-fastrand = { package = "fastrand", version = "2" }
+
 [[bench]]
 name = "encrypt"
+harness = false
+
+[[bench]]
+name = "fastrand"
 harness = false
 
 [[bench]]

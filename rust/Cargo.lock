@@ -1381,7 +1381,6 @@ name = "tidb-server"
 version = "0.0.0"
 dependencies = [
  "ctrlc",
- "getrandom",
  "prost",
  "rustix",
  "sha1",
@@ -1392,6 +1391,7 @@ dependencies = [
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
+ "tidb-util",
 ]
 
 [[package]]
@@ -1440,6 +1440,7 @@ dependencies = [
  "aes",
  "chrono",
  "crc32fast",
+ "fastrand",
  "getrandom",
  "num-traits",
  "regex",

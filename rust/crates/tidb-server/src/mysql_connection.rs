@@ -305,8 +305,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     } = identity;
     stream.set_nodelay(true).map_err(MysqlConnectionError::Io)?;
     let mut output = stream.try_clone().map_err(MysqlConnectionError::Io)?;
-    let salt = generate_handshake_salt()
-        .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
+    let salt = generate_handshake_salt();
     let handshake = InitialHandshake {
         connection_id: u32::try_from(connection_id).unwrap_or(u32::MAX),
         salt: salt.to_vec(),

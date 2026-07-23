@@ -13,7 +13,6 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
-getrandom.workspace = true
 ctrlc.workspace = true
 rustix.workspace = true
 sha1.workspace = true
@@ -23,6 +22,7 @@ tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-protocol = { path = "../tidb-protocol" }
+tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
 prost.workspace = true

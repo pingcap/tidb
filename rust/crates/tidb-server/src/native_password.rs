@@ -126,32 +126,12 @@ impl std::fmt::Display for NativePasswordHashError {
 
 impl std::error::Error for NativePasswordHashError {}
 
-/// Failure to obtain handshake entropy from the operating system.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HandshakeSaltError;
-
-impl std::fmt::Display for HandshakeSaltError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("operating system handshake entropy is unavailable")
-    }
-}
-
-impl std::error::Error for HandshakeSaltError {}
-
-/// Generates a 20-byte, NUL-free salt from the operating system CSPRNG.
-///
-/// MySQL handshake payloads terminate the second salt part with NUL. Sampling
-/// zero bytes again avoids shortening the challenge in clients that treat the
-/// challenge as a C string, without biasing nonzero byte values.
-pub fn generate_handshake_salt() -> Result<[u8; HANDSHAKE_SALT_LEN], HandshakeSaltError> {
-    let mut salt = [0; HANDSHAKE_SALT_LEN];
-    getrandom::fill(&mut salt).map_err(|_| HandshakeSaltError)?;
-    for byte in &mut salt {
-        while *byte == 0 {
-            getrandom::fill(std::slice::from_mut(byte)).map_err(|_| HandshakeSaltError)?;
-        }
-    }
-    Ok(salt)
+/// Generates the source server's 20-byte, NUL- and `$`-free handshake salt.
+#[must_use]
+pub fn generate_handshake_salt() -> [u8; HANDSHAKE_SALT_LEN] {
+    tidb_util::fastrand::buf(HANDSHAKE_SALT_LEN as isize)
+        .try_into()
+        .expect("fastrand returned the requested handshake salt width")
 }
 
 /// Verifies a candidate account without revealing whether it existed.

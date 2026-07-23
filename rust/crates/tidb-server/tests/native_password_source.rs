@@ -121,11 +121,12 @@ fn challenge_verifier_matches_independent_client_scramble() {
 }
 
 #[test]
-fn operating_system_salt_has_protocol_width_and_no_nul_bytes() {
+fn source_fastrand_salt_has_protocol_width_and_excludes_separators() {
     for _ in 0..32 {
-        let salt = generate_handshake_salt().expect("OS entropy");
+        let salt = generate_handshake_salt();
         assert_eq!(salt.len(), HANDSHAKE_SALT_LEN);
         assert!(salt.iter().all(|byte| *byte != 0));
+        assert!(salt.iter().all(|byte| *byte != b'$'));
     }
 }
 
