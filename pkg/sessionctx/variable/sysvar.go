@@ -2894,6 +2894,10 @@ var defaultSysVars = []*SysVar{
 		s.DisableHashJoin = !TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableFullOuterJoin, Value: BoolToOnOff(vardef.DefTiDBEnableFullOuterJoin), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFullOuterJoin = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableIndexMergeJoin, Value: BoolToOnOff(vardef.DefTiDBEnableIndexMergeJoin), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 		return nil

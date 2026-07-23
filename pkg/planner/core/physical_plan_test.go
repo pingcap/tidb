@@ -94,6 +94,22 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 	}
 }
 
+func TestFullOuterJoinSyntaxUnsupported(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+
+	sql := "select * from t1 full outer join t2 on t1.a = t2.a"
+	expectedErr := plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+	for _, enableFullOuterJoin := range []string{"off", "on"} {
+		tk.MustExec("set @@tidb_enable_full_outer_join=" + enableFullOuterJoin)
+		err := tk.ExecToErr(sql)
+		require.Truef(t, terror.ErrorEqual(expectedErr, err), "err: %v", err)
+	}
+}
+
 func TestAnalyzeSetRate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
