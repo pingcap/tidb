@@ -212,8 +212,6 @@ func (w *GCSWriter) Close() (err error) {
 	return w.finalizeXMLMPU()
 }
 
-// abort cancels the multipart upload and returns cause, folding in any
-// cancellation failure.
 func (w *GCSWriter) abort(cause error) error {
 	if errC := w.cancel(); errC != nil {
 		return fmt.Errorf("%s; failed to cancel multipart upload: %s", cause, errC)
