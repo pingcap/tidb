@@ -84,7 +84,8 @@ func TestAnalyzeBatchScanBudget(t *testing.T) {
 	}{
 		{"batching disabled", 15, 0, 15, 0},
 		{"negative batch treated as disabled", 15, -1, 15, 0},
-		{"default envelope 15/4 fills budget exactly", 15, 4, 3, 4},
+		{"large-cluster adaptive 15/4 fills budget exactly", 15, 4, 3, 4},
+		{"analyze defaults 4/4 shrink group to budget", 4, 4, 1, 3},
 		{"tiny concurrency shrinks group width", 2, 4, 1, 1},
 		{"single scan degenerates to unbatched", 1, 4, 1, 0},
 		{"slack rounds down, never exceeds", 7, 4, 1, 4},
