@@ -1003,6 +1003,8 @@ func TestPresplitIndexSpecialComments(t *testing.T) {
 	}{
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = AUTO */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = AUTO */"},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] CLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] NONCLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4) */"},
