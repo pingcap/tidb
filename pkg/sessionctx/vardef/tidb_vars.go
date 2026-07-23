@@ -1455,7 +1455,7 @@ const (
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000
 	DefDistSQLScanConcurrency           = 15
-	DefTiDBQueryCopStoreLimit           = 0
+	DefTiDBQueryCopStoreLimit           = 15
 	DefAnalyzeDistSQLScanConcurrency    = 4
 	DefBuildStatsConcurrency            = 2
 	DefBuildSamplingStatsConcurrency    = 2
