@@ -55,7 +55,7 @@ var defaultPDClientFactory PDClientFactory = func(
 
 // NewEtcdMetaServiceClient creates a ServiceClient backed by etcd and PD clients.
 // When etcdCli is nil but pdCli is not, it returns a PD-only client that still
-// implements GetPDAddrs and GetPDHttpAddrs.
+// implements GetPDAddrs and GetPDServiceURLs.
 func NewEtcdMetaServiceClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
 	return newClient(etcdCli, pdCli)
 }
@@ -233,10 +233,10 @@ func (n *client) GetPDAddrs(ctx context.Context) ([]string, error) {
 }
 
 // GetPDAddrs returns dialable PD endpoints from PD members.
-// For http/https members, it returns host:port unless withSchema is true.
+// For http/https members, it returns host:port unless withScheme is true.
 // For unix members, it keeps the unix:// scheme because embedded etcd tests
 // publish unix:// endpoints and stripping the scheme would make them undialable.
-func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]string, error) {
+func GetPDAddrs(ctx context.Context, pdClient pd.Client, withScheme bool) ([]string, error) {
 	if pdClient == nil {
 		return nil, errors.New("PD client not found")
 	}
@@ -258,7 +258,7 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 				if err != nil {
 					continue
 				}
-				pdAddrs = append(pdAddrs, endpoint.Endpoint(withSchema))
+				pdAddrs = append(pdAddrs, endpoint.Endpoint(withScheme))
 			}
 		}
 		if len(pdAddrs) == 0 {
@@ -269,7 +269,7 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 }
 
 // ParseURL parses the given URL to get a dialable endpoint.
-func ParseURL(rawURL string) (prefix string, hostPort string, err error) {
+func ParseURL(rawURL string) (prefix string, address string, err error) {
 	endpoint, err := util.ParseServiceURL(rawURL)
 	if err != nil {
 		return "", "", err
@@ -277,8 +277,8 @@ func ParseURL(rawURL string) (prefix string, hostPort string, err error) {
 	return endpoint.SchemePrefix(), endpoint.Address(), nil
 }
 
-// GetPDHttpAddrs is used to get PD http addrs.
-func (n *client) GetPDHttpAddrs(ctx context.Context) ([]string, error) {
+// GetPDServiceURLs returns PD member client URLs with the scheme included.
+func (n *client) GetPDServiceURLs(ctx context.Context) ([]string, error) {
 	addrs, err := GetPDAddrs(ctx, n.pdCli, true)
 	if err != nil {
 		return nil, err

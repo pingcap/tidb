@@ -75,9 +75,9 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectAddrs, addrs)
 
-	httpAddrs, err := serviceClient.GetPDHttpAddrs(context.Background())
+	serviceURLs, err := serviceClient.GetPDServiceURLs(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, []string{"http://127.0.0.1:1111"}, httpAddrs)
+	require.Equal(t, []string{"http://127.0.0.1:1111"}, serviceURLs)
 
 	unixPdCli := &mockPDClient{
 		members: []*pdpb.Member{{
@@ -90,9 +90,9 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"unix://localhost:m0"}, unixAddrs)
 
-	unixHTTPAddrs, err := unixServiceClient.GetPDHttpAddrs(context.Background())
+	unixServiceURLs, err := unixServiceClient.GetPDServiceURLs(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, []string{"unix://localhost:m0"}, unixHTTPAddrs)
+	require.Equal(t, []string{"unix://localhost:m0"}, unixServiceURLs)
 
 	t.Run("dedicated meta service group ignores pd member urls", func(t *testing.T) {
 		pdCli := &mockPDClient{
@@ -289,10 +289,10 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 // TestParseURL tests the ParseURL function with various inputs.
 func TestParseURL(t *testing.T) {
 	tests := []struct {
-		rawURL   string
-		prefix   string
-		hostPort string
-		err      bool
+		rawURL  string
+		prefix  string
+		address string
+		err     bool
 	}{
 		// Successful test cases
 		{"http://example.com:8080", "http://", "example.com:8080", false},
@@ -316,17 +316,17 @@ func TestParseURL(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		prefix, hostPort, err := ParseURL(test.rawURL)
+		prefix, address, err := ParseURL(test.rawURL)
 
 		// Check if the error status matches the expectation
 		if test.err {
 			require.Error(t, err, "Expected an error for input: "+test.rawURL)
 			require.Empty(t, prefix, "Expected an error for input: "+test.rawURL)
-			require.Empty(t, hostPort, "hostPort should be empty for input: "+test.rawURL)
+			require.Empty(t, address, "address should be empty for input: "+test.rawURL)
 		} else {
 			require.NoError(t, err, "Did not expect an error for input: "+test.rawURL)
 			require.Equal(t, test.prefix, prefix, "prefix mismatch for input: "+test.rawURL)
-			require.Equal(t, test.hostPort, hostPort, "hostPort mismatch for input: "+test.rawURL)
+			require.Equal(t, test.address, address, "address mismatch for input: "+test.rawURL)
 		}
 	}
 }
