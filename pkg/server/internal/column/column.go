@@ -60,7 +60,7 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 	if d == nil {
 		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}
-	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
+	nameDump, orgnameDump := column.Name, column.OrgName
 	if len(nameDump) > maxColumnNameSize {
 		nameDump = nameDump[0:maxColumnNameSize]
 	}
@@ -68,11 +68,19 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
 	buffer = dump.LengthEncodedString(buffer, []byte("def"))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(nameDump))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
+	if d.encoding.Tp() == charset.EncodingTpBin {
+		buffer = appendLengthEncodedString(buffer, column.Schema)
+		buffer = appendLengthEncodedString(buffer, column.Table)
+		buffer = appendLengthEncodedString(buffer, column.OrgTable)
+		buffer = appendLengthEncodedString(buffer, nameDump)
+		buffer = appendLengthEncodedString(buffer, orgnameDump)
+	} else {
+		buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
+		buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
+		buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+		buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(nameDump)))
+		buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(orgnameDump)))
+	}
 
 	buffer = append(buffer, 0x0c)
 	buffer = dump.Uint16(buffer, d.ColumnTypeInfoCharsetID(column))
@@ -93,6 +101,11 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 	}
 
 	return buffer
+}
+
+func appendLengthEncodedString(buffer []byte, value string) []byte {
+	buffer = dump.LengthEncodedInt(buffer, uint64(len(value)))
+	return append(buffer, value...)
 }
 
 func (column *Info) dumpCharset() uint16 {
