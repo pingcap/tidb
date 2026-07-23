@@ -26,6 +26,7 @@ pub mod israce;
 pub mod layered_io;
 pub mod mathutil;
 pub mod naming;
+pub mod nocopy;
 pub mod size;
 pub mod sqlescape;
 pub mod zeropool;
