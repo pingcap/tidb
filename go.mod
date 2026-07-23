@@ -350,7 +350,7 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260718060327-de4fc502a526
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260723034533-4958a55f45c8
 
 replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260605103052-ef767379573f
 

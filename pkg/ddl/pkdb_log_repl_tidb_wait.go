@@ -209,6 +209,7 @@ func (s saveRaftIndex) checkAndWait(
 	if version <= lastFinishedVersion {
 		return version, nil
 	}
+	raftProgressID := curr.GetRaftProgressId()
 
 	storeWithPD, ok := store.(kv.StorageWithPD)
 	if !ok {
@@ -227,17 +228,19 @@ func (s saveRaftIndex) checkAndWait(
 
 	logutil.BgLogger().Info("start saveRaftIndex",
 		zap.Uint64("version", version),
+		zap.String("raftProgressID", raftProgressID),
 		zap.Uint64("maxTS", maxTS),
 		zap.Int("storeConcurrency", pkdbDefaultReadStoreConcurrency),
 	)
 
-	savedStates, err := saveStoreRegionProgresses(ctx, pdCli, maxTS)
+	savedStates, err := saveStoreRegionProgresses(ctx, pdCli, raftProgressID, maxTS)
 	if err != nil {
 		return 0, err
 	}
 
 	logutil.BgLogger().Info("finish saveRaftIndex",
 		zap.Uint64("version", version),
+		zap.String("raftProgressID", raftProgressID),
 		zap.Uint64("savedStates", savedStates),
 		zap.Uint64("maxTS", maxTS),
 	)
@@ -272,6 +275,7 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 	if version <= lastFinishedVersion {
 		return version, nil
 	}
+	raftProgressID := curr.GetRaftProgressId()
 
 	pdAddrs := curr.GetNewPrimaryPdAddrs()
 	if len(pdAddrs) == 0 {
@@ -297,10 +301,11 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 
 	logutil.BgLogger().Info("start loadRaftIndex",
 		zap.Uint64("version", version),
+		zap.String("raftProgressID", raftProgressID),
 		zap.Strings("newPrimaryPdAddrs", pdAddrs),
 	)
 
-	states, err := loadStoreRegionProgresses(ctx, primaryPDCli)
+	states, err := loadStoreRegionProgresses(ctx, primaryPDCli, raftProgressID)
 	if err != nil {
 		return 0, err
 	}
@@ -327,12 +332,13 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 
 	logutil.BgLogger().Info("finish loadRaftIndex",
 		zap.Uint64("version", version),
+		zap.String("raftProgressID", raftProgressID),
 		zap.Int("loadedStates", len(states)),
 	)
 	return version, nil
 }
 
-func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, maxTS uint64) (uint64, error) {
+func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgressID string, maxTS uint64) (uint64, error) {
 	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return 0, err
@@ -361,8 +367,9 @@ func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, maxTS uint6
 
 			client := logreplicationpb.NewLogReplicationClient(conn)
 			resp, err := client.SaveStoreRegionProgresses(gCtx, &logreplicationpb.SaveStoreRegionProgressesRequest{
-				Header: &logreplicationpb.Header{ClusterId: clusterID},
-				MaxTs:  maxTS,
+				Header:         &logreplicationpb.Header{ClusterId: clusterID},
+				MaxTs:          maxTS,
+				RaftProgressId: raftProgressID,
 			})
 			if err != nil {
 				return errors.Annotatef(err, "save store region progresses on store %d(%s)", storeID, addr)
@@ -377,7 +384,7 @@ func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, maxTS uint6
 	return savedStates.Load(), nil
 }
 
-func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client) ([]*logreplicationpb.LogReplicationState, error) {
+func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgressID string) ([]*logreplicationpb.LogReplicationState, error) {
 	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
@@ -407,7 +414,8 @@ func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client) ([]*logrepl
 
 			client := logreplicationpb.NewLogReplicationClient(conn)
 			resp, err := client.LoadStoreRegionProgresses(gCtx, &logreplicationpb.LoadStoreRegionProgressesRequest{
-				Header: &logreplicationpb.Header{ClusterId: clusterID},
+				Header:         &logreplicationpb.Header{ClusterId: clusterID},
+				RaftProgressId: raftProgressID,
 			})
 			if err != nil {
 				return errors.Annotatef(err, "load store region progresses from store %d(%s)", storeID, addr)
