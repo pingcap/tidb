@@ -81,6 +81,14 @@ func TestAlternativeEngineRestrictedRounds(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
 	enginesBefore := tk.MustQuery("select @@tidb_isolation_read_engines").Rows()
 
+	// Each case below disables the failpoint itself so the next case can arm it
+	// with a different value. This cleanup only matters when a require assertion
+	// aborts the test while the failpoint is still armed; the error is ignored
+	// because the failpoint is already disabled on the normal path.
+	t.Cleanup(func() {
+		_ = failpoint.Disable(engineRoundFailpoint)
+	})
+
 	mixedSQL := "select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv" +
 		" on alt_engine_flash.a = alt_engine_kv.a group by alt_engine_flash.c"
 	// Rows joining a=1..5, 100 rows per key: sum(b) = 247500 + 100*a per group.

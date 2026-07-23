@@ -653,30 +653,16 @@ func shouldTryTiFlashOnlyRound(sessVars *variable.SessionVars) bool {
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
-// setup/cleanup optionally modify session state before/after plan building.
+// setup optionally modifies session state before plan building and returns a
+// cleanup that restores exactly what it changed. The saved values live in the
+// returned closure, never in package state: optimize can run concurrently in
+// different sessions, so each invocation must own its own saved state.
 type alternativeRound struct {
 	name       string
 	adjustFlag func(uint64) uint64
 	enabled    func(*variable.SessionVars) bool
-	setup      func(*variable.SessionVars)
-	cleanup    func(*variable.SessionVars)
+	setup      func(*variable.SessionVars) (cleanup func())
 }
-
-// savedEnableCorrelateSubquery holds the pre-round value of
-// EnableCorrelateSubquery so setup/cleanup can share it without a closure
-// wrapper. Safe because optimize is single-threaded per session.
-var savedEnableCorrelateSubquery bool
-
-// savedFTSLikeFallback holds the pre-round value of
-// AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
-// setup/cleanup can restore it after running with the flag forced on. Safe
-// because optimize is single-threaded per session.
-var savedFTSLikeFallback bool
-
-// savedIsolationReadEngines holds the pre-round isolation read engines so the
-// engine-restricted rounds (tikv-only / tiflash-only) can restore them. Safe
-// because optimize is single-threaded per session.
-var savedIsolationReadEngines map[kv.StoreType]struct{}
 
 var alternativeRounds = [...]alternativeRound{
 	{
@@ -693,23 +679,19 @@ var alternativeRounds = [...]alternativeRound{
 		name:       "correlate",
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
 		enabled:    shouldTryCorrelateRound,
-		setup: func(sv *variable.SessionVars) {
-			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.EnableCorrelateSubquery
 			sv.EnableCorrelateSubquery = true
-		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+			return func() { sv.EnableCorrelateSubquery = saved }
 		},
 	},
 	{
 		name:    "semi-join-rewrite",
 		enabled: shouldTrySemiJoinRewriteRound,
-		setup: func(sv *variable.SessionVars) {
+		setup: func(sv *variable.SessionVars) func() {
 			sv.EnableSemiJoinRewrite = true
-		},
-		cleanup: func(sv *variable.SessionVars) {
 			// This round is enabled only when the original value is false.
-			sv.EnableSemiJoinRewrite = false
+			return func() { sv.EnableSemiJoinRewrite = false }
 		},
 	},
 	{
@@ -732,12 +714,10 @@ var alternativeRounds = [...]alternativeRound{
 			return sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback ||
 				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
 		},
-		setup: func(sv *variable.SessionVars) {
-			savedFTSLikeFallback = sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
 			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
-		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
+			return func() { sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = saved }
 		},
 	},
 	{
@@ -750,12 +730,10 @@ var alternativeRounds = [...]alternativeRound{
 		// alternative and lets the strict-`<` cost comparison decide.
 		name:    "tikv-only",
 		enabled: shouldTryTiKVOnlyRound,
-		setup: func(sv *variable.SessionVars) {
-			savedIsolationReadEngines = sv.IsolationReadEngines
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.IsolationReadEngines
 			sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiDB: {}}
-		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.IsolationReadEngines = savedIsolationReadEngines
+			return func() { sv.IsolationReadEngines = saved }
 		},
 	},
 	{
@@ -764,12 +742,10 @@ var alternativeRounds = [...]alternativeRound{
 		// produce a complete plan) or when MPP execution is not allowed.
 		name:    "tiflash-only",
 		enabled: shouldTryTiFlashOnlyRound,
-		setup: func(sv *variable.SessionVars) {
-			savedIsolationReadEngines = sv.IsolationReadEngines
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.IsolationReadEngines
 			sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiFlash: {}, kv.TiDB: {}}
-		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.IsolationReadEngines = savedIsolationReadEngines
+			return func() { sv.IsolationReadEngines = saved }
 		},
 	},
 }
@@ -892,8 +868,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		// EnableCorrelateSubquery) is restored even if the round panics.
 		func() {
 			if round.setup != nil {
-				round.setup(sessVars)
-				defer round.cleanup(sessVars)
+				cleanup := round.setup(sessVars)
+				defer cleanup()
 			}
 			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
 				ctx,
