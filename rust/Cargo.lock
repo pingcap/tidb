@@ -1442,6 +1442,7 @@ dependencies = [
  "crc32fast",
  "getrandom",
  "num-traits",
+ "regex",
  "tidb-hack",
 ]
 

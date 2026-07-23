@@ -21,6 +21,7 @@ chrono.workspace = true
 crc32fast.workspace = true
 getrandom.workspace = true
 num-traits.workspace = true
+regex.workspace = true
 tidb-hack = { path = "../tidb-hack" }
 
 [[bench]]
