@@ -1438,8 +1438,10 @@ name = "tidb-util"
 version = "0.0.0"
 dependencies = [
  "aes",
+ "chrono",
  "crc32fast",
  "getrandom",
+ "tidb-hack",
 ]
 
 [[package]]

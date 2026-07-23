@@ -17,11 +17,17 @@ intest = []
 
 [dependencies]
 aes.workspace = true
+chrono.workspace = true
 crc32fast.workspace = true
 getrandom.workspace = true
+tidb-hack = { path = "../tidb-hack" }
 
 [[bench]]
 name = "encrypt"
+harness = false
+
+[[bench]]
+name = "sqlescape"
 harness = false
 
 [[bench]]
