@@ -985,6 +985,22 @@ func (s *session) setLastTxnInfoBeforeTxnEnd() {
 		return
 	}
 
+	if txnCtx.TxnScope == kv.GlobalTxnScope {
+		const (
+			prefix = `{"txn_scope":"global","start_ts":`
+			suffix = `,"commit_ts":0,"txn_commit_mode":"","async_commit_fallback":false,"one_pc_fallback":false,"pipelined":false,"flush_wait_ms":0}`
+		)
+		var startTSBuffer [20]byte
+		startTS := strconv.AppendUint(startTSBuffer[:0], txnCtx.StartTS, 10)
+		var builder strings.Builder
+		builder.Grow(len(prefix) + len(startTS) + len(suffix))
+		builder.WriteString(prefix)
+		_, _ = builder.Write(startTS)
+		builder.WriteString(suffix)
+		s.GetSessionVars().LastTxnInfo = builder.String()
+		return
+	}
+
 	lastTxnInfo, err := json.Marshal(transaction.TxnInfo{
 		TxnScope: txnCtx.TxnScope,
 		StartTS:  txnCtx.StartTS,
