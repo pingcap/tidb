@@ -1443,6 +1443,7 @@ dependencies = [
  "getrandom",
  "num-traits",
  "regex",
+ "serde_json",
  "tidb-hack",
 ]
 
