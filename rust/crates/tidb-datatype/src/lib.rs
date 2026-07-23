@@ -80,7 +80,7 @@ pub use charset::{
     get_supported_collations, remove_charset, valid_charset_and_collation, Charset, CharsetError,
     CharsetInfo, Collation, CollationInfo, PAD_NONE, PAD_SPACE,
 };
-pub use config_duration::{parse_config_duration, ConfigDurationError};
+pub use config_duration::{parse_config_duration, ConfigDurationError, ParseFloatErrorKind};
 pub use conversion_context::{
     ConversionContext, ConversionFlags, ConversionLocation, ConversionWarningAppender,
     IgnoreConversionWarnings, DEFAULT_STATEMENT_FLAGS, IGNORE_CONVERSION_WARNINGS, STRICT_FLAGS,

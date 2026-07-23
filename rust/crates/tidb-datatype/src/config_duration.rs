@@ -110,17 +110,39 @@ fn is_go_unicode_digit(character: char) -> bool {
 pub enum ConfigDurationError {
     /// The next component does not start with a decimal number.
     MissingNumber,
-    /// `f64` rejected the source numeric spelling.
-    InvalidNumber(String),
+    /// Go `strconv.ParseFloat` rejected the numeric spelling.
+    ParseFloat {
+        /// The exact scanned numeric substring.
+        number: String,
+        /// The source error classification.
+        kind: ParseFloatErrorKind,
+    },
     /// A number is followed by an unsupported unit.
     UnknownUnit(char),
+}
+
+/// Error classes exposed by Go `strconv.ParseFloat` for this package's
+/// digits-and-dot-only scanner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseFloatErrorKind {
+    /// The scanned substring is not a valid decimal float.
+    InvalidSyntax,
+    /// The decimal magnitude cannot be represented by `float64`.
+    OutOfRange,
 }
 
 impl fmt::Display for ConfigDurationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingNumber => formatter.write_str("fail to read an integer"),
-            Self::InvalidNumber(number) => write!(formatter, "invalid duration number {number:?}"),
+            Self::ParseFloat { number, kind } => write!(
+                formatter,
+                "strconv.ParseFloat: parsing {number:?}: {}",
+                match kind {
+                    ParseFloatErrorKind::InvalidSyntax => "invalid syntax",
+                    ParseFloatErrorKind::OutOfRange => "value out of range",
+                }
+            ),
             Self::UnknownUnit(unit) => write!(formatter, "unknown unit {unit}"),
         }
     }
@@ -147,9 +169,7 @@ pub fn parse_config_duration(mut source: &str) -> Result<i64, ConfigDurationErro
             return Err(ConfigDurationError::MissingNumber);
         }
         let number = &source[..split];
-        let value = number
-            .parse::<f64>()
-            .map_err(|_| ConfigDurationError::InvalidNumber(number.to_owned()))?;
+        let value = parse_go_float(number)?;
         let unit = source[split..]
             .chars()
             .next()
@@ -164,6 +184,43 @@ pub fn parse_config_duration(mut source: &str) -> Result<i64, ConfigDurationErro
         source = &source[split + unit.len_utf8()..];
     }
     Ok(duration)
+}
+
+fn parse_go_float(number: &str) -> Result<f64, ConfigDurationError> {
+    let mut digits = 0;
+    let mut dots = 0;
+    for byte in number.bytes() {
+        match byte {
+            b'0'..=b'9' => digits += 1,
+            b'.' => dots += 1,
+            _ => {
+                return Err(parse_float_error(
+                    number,
+                    ParseFloatErrorKind::InvalidSyntax,
+                ))
+            }
+        }
+    }
+    if digits == 0 || dots > 1 {
+        return Err(parse_float_error(
+            number,
+            ParseFloatErrorKind::InvalidSyntax,
+        ));
+    }
+    let value = number
+        .parse::<f64>()
+        .map_err(|_| parse_float_error(number, ParseFloatErrorKind::OutOfRange))?;
+    if !value.is_finite() {
+        return Err(parse_float_error(number, ParseFloatErrorKind::OutOfRange));
+    }
+    Ok(value)
+}
+
+fn parse_float_error(number: &str, kind: ParseFloatErrorKind) -> ConfigDurationError {
+    ConfigDurationError::ParseFloat {
+        number: number.to_owned(),
+        kind,
+    }
 }
 
 #[cfg(test)]
@@ -199,15 +256,33 @@ mod tests {
         );
         assert_eq!(
             parse_config_duration("1..2h").unwrap_err(),
-            ConfigDurationError::InvalidNumber("1..2".to_owned())
+            ConfigDurationError::ParseFloat {
+                number: "1..2".to_owned(),
+                kind: ParseFloatErrorKind::InvalidSyntax,
+            }
         );
         assert_eq!(
             parse_config_duration("٢h").unwrap_err(),
-            ConfigDurationError::InvalidNumber("٢".to_owned())
+            ConfigDurationError::ParseFloat {
+                number: "٢".to_owned(),
+                kind: ParseFloatErrorKind::InvalidSyntax,
+            }
         );
         assert_eq!(
             parse_config_duration("²h").unwrap_err(),
             ConfigDurationError::MissingNumber
+        );
+        assert_eq!(
+            parse_config_duration(".h").unwrap_err().to_string(),
+            "strconv.ParseFloat: parsing \".\": invalid syntax"
+        );
+        let huge = format!("{}h", "9".repeat(400));
+        assert_eq!(
+            parse_config_duration(&huge).unwrap_err().to_string(),
+            format!(
+                "strconv.ParseFloat: parsing {:?}: value out of range",
+                "9".repeat(400)
+            )
         );
     }
 }
