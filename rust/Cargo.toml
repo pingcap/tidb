@@ -102,6 +102,7 @@ chrono-tz = "0.10"
 flate2 = "1"
 zstd = "0.13"
 crc32fast = "1"
+num-traits = "0.2"
 # `pkg/util/hack` reaches into Go's private Swiss-map ABI to account for the
 # allocation behind a map. Rust's standard HashMap deliberately hides that
 # layout. Pin hashbrown, the table implementation, so the Rust transcreation

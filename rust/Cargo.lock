@@ -1441,6 +1441,7 @@ dependencies = [
  "chrono",
  "crc32fast",
  "getrandom",
+ "num-traits",
  "tidb-hack",
 ]
 
