@@ -25,7 +25,8 @@ use std::time::Duration;
 
 use crate::{
     AssertionOp, BatchGetOptions, BatchGetter, CacheDb, EventCallback, FlagsOp, GetOptions, Getter,
-    Key, KeyFlags, KvIterator, MppClient, OptionKey, Request, StagingHandle, ValueEntry, Version,
+    Key, KeyFlags, KvIterator, MppClient, OptionKey, Request, StagingHandle, TiFlashReplicaRead,
+    ValueEntry, Version,
 };
 
 /// Returns only the bytes from one point read.
@@ -134,16 +135,6 @@ impl Retriever for EmptyRetriever {
     ) -> Result<Self::Iterator, <Self as Getter>::Error> {
         Ok(EmptyIterator::default())
     }
-}
-
-/// TiFlash replica-read policy carried by a client send.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum TiFlashReplicaRead {
-    /// Read from any eligible replica.
-    #[default]
-    AllReplicas,
-    /// Prefer the nearest replica.
-    ClosestAdaptive,
 }
 
 /// Per-send client controls.

@@ -54,6 +54,7 @@ pub mod region;
 mod resource_group;
 mod retry;
 pub mod rpc;
+mod tiflash;
 pub mod transaction;
 mod trxevents;
 mod txn_scope;
@@ -118,7 +119,7 @@ pub use kv_api::{
     batch_get_value, get_value, Client, ClientSendOption, Driver, EmptyIterator, EmptyRetriever,
     EmptyRetrieverError, EtcdBackend, FairLockingController, MemBuffer, Mutator, Response,
     ResultSubset, Retriever, RetrieverMutator, Snapshot, SnapshotInterceptor, SplittableStore,
-    Storage, StorageWithPd, TiFlashReplicaRead, Transaction,
+    Storage, StorageWithPd, Transaction,
 };
 pub use kv_contract::{
     find_keys_in_stage, set_txn_entry_size_limit, set_txn_total_size_limit, txn_entry_size_limit,
@@ -170,6 +171,11 @@ pub use rpc::{
     },
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
+};
+pub use tiflash::{
+    get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead, TiFlashReplicaRead,
+    ALL_REPLICAS, CLOSEST_ADAPTIVE, CLOSEST_REPLICAS,
+    MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
 };
 pub use trxevents::{
     wrap_cop_meet_lock, CopMeetLock, EventCallback, EventType, TransactionEvent,

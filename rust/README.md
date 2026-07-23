@@ -33,7 +33,7 @@ but does not replace reading or translating the source.
 | `crates/tidb-util` | complete dependency-leaf utility packages | `pkg/util/{disjointset,zeropool,encrypt,checksum,intest,sqlescape,mathutil,naming,size,israce,nocopy,tikvutil}`, followed by whole utility packages only |
 | `crates/tidb-datatype` | SQL scalar representation, charset, and collation | `pkg/parser/charset`, `pkg/util/collate`, `pkg/types/**`, later extracted TiKV query datatypes |
 | `crates/tidb-codec` | byte-compatible comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
-| `crates/tidb-txnkv` | complete KV contracts plus real PD/TiKV transaction runtime | `pkg/kv/**`, `pkg/util/trxevents`, and the required client-go transaction protocols |
+| `crates/tidb-txnkv` | complete KV contracts plus real PD/TiKV transaction runtime | `pkg/kv/**`, `pkg/util/{tiflash,trxevents}`, and the required client-go transaction protocols |
 | `crates/tidb-tablecodec` | table row/index formats above codecs and canonical KV handles | `pkg/tablecodec` |
 | `crates/tidb-expr` | expression construction/evaluation | `pkg/expression/**` |
 | `crates/tidb-exec` | seed session/catalog executor | `pkg/session/**`, `pkg/executor/**` |

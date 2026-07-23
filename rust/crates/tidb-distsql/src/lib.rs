@@ -46,7 +46,6 @@ mod select_iter;
 mod signed_handle_range;
 mod stream_decode;
 mod table_handle_ranges;
-mod tiflash_replica_read;
 mod transport;
 mod warning;
 
@@ -126,11 +125,8 @@ pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSo
 pub use tidb_txnkv::region;
 pub use tidb_txnkv::{
     IsolationLevel, Priority as KvPriority, ReplicaReadType, RequestSource, RequestType,
-    StoreLabel, StoreType, UnaryCallContext,
-};
-pub use tiflash_replica_read::{
-    TiFlashReplicaRead, ALL_REPLICAS, CLOSEST_ADAPTIVE, CLOSEST_REPLICAS,
-    MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
+    StoreLabel, StoreType, TiFlashReplicaRead, UnaryCallContext, ALL_REPLICAS, CLOSEST_ADAPTIVE,
+    CLOSEST_REPLICAS, MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
 };
 pub use transport::{
     TransportBinding, TransportRequest, TransportRequestError, TransportRequestState,
