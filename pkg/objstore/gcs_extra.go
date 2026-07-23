@@ -195,8 +195,8 @@ func (w *GCSWriter) Close() (err error) {
 	close(w.chunkCh)
 	w.wg.Wait()
 
-	// A failed part upload, a cancelled context, or a failed finalize leaves the
-	// initiated upload and its staged parts behind; abort it so they don't linger.
+	// GCS keeps billing staged parts until the upload is aborted, so abort on every error.
+	// https://cloud.google.com/storage/docs/multipart-uploads
 	defer func() {
 		if err != nil {
 			err = w.abort(err)
@@ -325,6 +325,9 @@ func (w *GCSWriter) appendMPUPart(part *xmlMPUPart) {
 	w.xmlMPUParts = append(w.xmlMPUParts, part)
 }
 
+// cancel aborts the multipart upload with an XML API DELETE ?uploadId= request,
+// which stops the parts from being billed and deletes them.
+// https://cloud.google.com/storage/docs/xml-api/delete-multipart
 func (w *GCSWriter) cancel() error {
 	opts := &storage.SignedURLOptions{
 		Scheme:          storage.SigningSchemeV4,
