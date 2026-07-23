@@ -1782,7 +1782,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		// The analyze result handling accepts responses whose batched
 		// tasks' results are merged into the main response, see
 		// handleBatchCopResponse.
-		AllowBatchTaskDataMerge: worker.req.Tp == kv.ReqTypeAnalyze,
+		AllowAnalyzeBatchTaskDataMerge: worker.req.Tp == kv.ReqTypeAnalyze,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
