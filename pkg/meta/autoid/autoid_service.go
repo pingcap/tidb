@@ -130,7 +130,7 @@ func (e *notLeaderFastFailError) Unwrap() error {
 func (*notLeaderFastFailError) AutoIDNotLeaderFastFail() {}
 
 // IsNotLeaderFastFailError reports whether err is a terminal error caused by
-// repeated not-leader responses from an unchanged AutoID leader.
+// repeated not-leader responses reaching the fast-fail threshold.
 func IsNotLeaderFastFailError(err error) bool {
 	var marker notLeaderFastFailMarker
 	return goerrors.As(err, &marker)
@@ -277,8 +277,18 @@ func (sp *singlePointAlloc) repeatedNotLeaderError(
 	operation string,
 	state notLeaderRetryState,
 	now time.Time,
+	revalidationErr error,
 ) error {
 	elapsed := now.Sub(state.firstSeen)
+	action := autoIDNotLeaderAction
+	if revalidationErr != nil {
+		action = fmt.Sprintf(
+			"fast-fail threshold reached, but the current AutoID leader could not be revalidated: %v; "+
+				"check etcd connectivity or AutoID leader election, then %s",
+			revalidationErr,
+			autoIDNotLeaderAction,
+		)
+	}
 	// TODO: Consider enriching terminal errors with the remote TiDB identity from /info.
 	message := fmt.Sprintf(
 		"autoid %s failed after %d consecutive %q responses from leader endpoint %s over %s; keyspace_id=%d, db_id=%d, table_id=%d; %s",
@@ -290,7 +300,7 @@ func (sp *singlePointAlloc) repeatedNotLeaderError(
 		sp.keyspaceID,
 		sp.dbID,
 		sp.tblID,
-		autoIDNotLeaderAction,
+		action,
 	)
 	return errors.AddStack(&notLeaderFastFailError{cause: ErrAutoincReadFailed.FastGen(message)})
 }
@@ -322,7 +332,12 @@ func (sp *singlePointAlloc) handleNotLeaderError(
 
 	_, _, currentLeader, err := sp.getClientWithLeader(ctx, sp.keyspaceID)
 	if err != nil {
-		return true, false, errors.Trace(err)
+		if ctx.Err() != nil {
+			return true, false, errors.Trace(ctx.Err())
+		}
+		terminalErr = sp.repeatedNotLeaderError(operation, *state, now, err)
+		requestLog.fastFail(*state, now.Sub(state.firstSeen), terminalErr)
+		return true, false, terminalErr
 	}
 	requestLog.setLeader(currentLeader)
 	if !state.leader.equal(currentLeader) {
@@ -332,7 +347,7 @@ func (sp *singlePointAlloc) handleNotLeaderError(
 	if ctx.Err() != nil {
 		return true, false, errors.Trace(ctx.Err())
 	}
-	terminalErr = sp.repeatedNotLeaderError(operation, *state, now)
+	terminalErr = sp.repeatedNotLeaderError(operation, *state, now, nil)
 	requestLog.fastFail(*state, now.Sub(state.firstSeen), terminalErr)
 	return true, false, terminalErr
 }

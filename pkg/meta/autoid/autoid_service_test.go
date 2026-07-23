@@ -293,13 +293,58 @@ func TestBackoffCtxAware(t *testing.T) {
 	_ = err
 }
 
-// TestAutoIDNotLeaderHelpers covers the narrow error classifier and the
-// request-local count-and-duration policy without using real retry delays.
+// TestAutoIDNotLeaderHelpers covers the narrow error classifier, request-local
+// count-and-duration policy, and terminal decision without real retry delays.
 func TestAutoIDNotLeaderHelpers(t *testing.T) {
 	t.Run("production default", func(t *testing.T) {
 		policy := (&singlePointAlloc{}).effectiveNotLeaderPolicy()
 		require.Equal(t, 10, policy.minConsecutive)
 		require.Equal(t, 15*time.Second, policy.minDuration)
+	})
+
+	t.Run("handler converts revalidation failure", func(t *testing.T) {
+		logs := observeAutoIDLogs(t)
+		etcdCli, err := clientv3.New(clientv3.Config{
+			Endpoints:          []string{"127.0.0.1:1"},
+			MaxUnaryRetries:    1,
+			BackoffWaitBetween: time.Millisecond,
+			Logger:             zap.NewNop(),
+		})
+		require.NoError(t, err)
+		require.NoError(t, etcdCli.Close())
+
+		allocator := newNotLeaderTestAllocator(t, etcdCli)
+		allocator.notLeaderPolicy.minConsecutive = 1
+		leader := autoIDLeaderSnapshot{
+			address:        "127.0.0.1:10080",
+			electionKey:    "leader/1",
+			createRevision: 10,
+		}
+		var state notLeaderRetryState
+		requestLog := newAutoIDRequestLogState("alloc", allocator.keyspaceID, allocator.dbID, allocator.tblID, time.Now())
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		handled, retryImmediately, terminalErr := allocator.handleNotLeaderError(
+			ctx, "alloc", 0, leader, status.Error(codes.Unknown, "not leader"), &state, &requestLog,
+		)
+		require.NoError(t, ctx.Err())
+		require.True(t, handled)
+		require.False(t, retryImmediately)
+		require.True(t, ErrAutoincReadFailed.Equal(terminalErr))
+		require.True(t, IsNotLeaderFastFailError(terminalErr))
+		require.Regexp(t, `could not be revalidated: .+; check etcd connectivity`, terminalErr.Error())
+		require.Contains(t, terminalErr.Error(), autoIDNotLeaderAction)
+		requestLog.complete(terminalErr)
+
+		starts := logs.FilterMessage("autoid request entered not-leader retry").All()
+		terminals := logs.FilterMessage("autoid request stopped after repeated not leader responses").All()
+		require.Len(t, starts, 1)
+		require.Len(t, terminals, 1)
+		require.Equal(t, starts[0].ContextMap()["autoid-request-id"], terminals[0].ContextMap()["autoid-request-id"])
+		require.Equal(t, "fast-failed", terminals[0].ContextMap()["outcome"])
+		require.Contains(t, terminals[0].ContextMap()["error"], "could not be revalidated")
+		require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
 	})
 
 	tests := []struct {
