@@ -255,7 +255,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	}
 
 	var wo *storeapi.WriterOption
-	if format == FileFormatCSV {
+	if format == FileFormatCSV || format == FileFormatSQLText {
 		wo = &storeapi.WriterOption{Concurrency: csvUploadConcurrency, PartSize: csvUploadPartSize}
 	}
 
