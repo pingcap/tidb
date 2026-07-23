@@ -908,14 +908,6 @@ type azblobUploader struct {
 	egCtx context.Context
 }
 
-func newBlockID() (string, error) {
-	generatedUUID, err := uuid.NewUUID()
-	if err != nil {
-		return "", errors.Annotate(err, "Fail to generate uuid")
-	}
-	return base64.StdEncoding.EncodeToString([]byte(generatedUUID.String())), nil
-}
-
 func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []byte) error {
 	_, err := u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), &blockblob.StageBlockOptions{
 		CPKScopeInfo: u.cpkScope,
@@ -928,10 +920,11 @@ func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
-	blockID, err := newBlockID()
+	generatedUUID, err := uuid.NewUUID()
 	if err != nil {
-		return 0, err
+		return 0, errors.Annotate(err, "Fail to generate uuid")
 	}
+	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
 
 	if u.eg == nil {
 		if err := u.stageBlock(ctx, blockID, data); err != nil {
