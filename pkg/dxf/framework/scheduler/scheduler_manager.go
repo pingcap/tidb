@@ -423,6 +423,9 @@ func (sm *Manager) cleanupTaskLoop() {
 
 // drainCleanupTaskBatches processes bounded batches until one transfers no task to history.
 func (sm *Manager) drainCleanupTaskBatches() {
+	// keep cleaning as long as we made any progress in each cycle. and since
+	// we do clean using single routine, it's fine to keep running without a
+	// overall bound.
 	for sm.processCleanupTaskBatch() > 0 {
 	}
 }
@@ -446,7 +449,7 @@ func (sm *Manager) processCleanupTaskBatch() int {
 	transferredTaskCount, err := sm.cleanupFinishedTasks(tasks)
 	if err != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
-		return transferredTaskCount
+		return 0
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
 	sm.logger.Info("cleanup routine success")
