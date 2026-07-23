@@ -1095,6 +1095,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	idxColLens := path.IdxColLens
 	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
 		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
+		len(ds.CommonHandleLens) == len(ds.CommonHandleCols) &&
 		len(path.Index.Columns) == len(path.IdxCols) &&
 		!ds.HasV0NewCollationStringHandle() {
 		extended := false

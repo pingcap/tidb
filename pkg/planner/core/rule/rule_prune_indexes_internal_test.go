@@ -60,3 +60,21 @@ func TestEffectiveIndexColumnIDsWithUnresolvedColumn(t *testing.T) {
 	require.Nil(t, appendLens)
 	require.Equal(t, []int64{1, -1}, effectiveIndexColumnIDs(ds, unresolvedPath))
 }
+
+// TestScoreIndexPathPartialIndexBadOffset covers a partial index whose constraint column
+// offset does not resolve within the table columns passed to scoreIndexPath. The pre-check
+// must treat the column as not found (zero score) instead of indexing out of bounds.
+func TestScoreIndexPathPartialIndexBadOffset(t *testing.T) {
+	ds := &logicalop.DataSource{TableInfo: &model.TableInfo{}}
+	req := columnRequirements{interestingColIDs: map[int64]struct{}{1: {}}}
+	tableColumns := []*model.ColumnInfo{{ID: 1}}
+	path := &util.AccessPath{
+		Index: &model.IndexInfo{
+			ConditionExprString: "a > 0",
+			AffectColumn:        []*model.IndexColumn{{Offset: len(tableColumns)}},
+		},
+		FullIdxCols: []*expression.Column{{ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}},
+	}
+	score := scoreIndexPath(ds, path, req, tableColumns)
+	require.Zero(t, score.interestingCount)
+}

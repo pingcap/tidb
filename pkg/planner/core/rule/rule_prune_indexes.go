@@ -469,7 +469,12 @@ func scoreIndexPath(
 			// Some columns from the constraint is not found. Then the path can not be selected.
 			// We mixed the WHERE clause and other clauses like JOIN/ORDER BY to prune the indexes.
 			// So this check is not the strictest one.
-			if _, found := req.interestingColIDs[ds.TableInfo.Columns[col.Offset].ID]; !found {
+			// An unresolvable constraint column counts as not found: returning a zero score
+			// only prunes the index, which is always safe (the table path is kept).
+			if col.Offset < 0 || col.Offset >= len(tableColumns) || tableColumns[col.Offset] == nil {
+				return score
+			}
+			if _, found := req.interestingColIDs[tableColumns[col.Offset].ID]; !found {
 				return score
 			}
 		}
