@@ -387,6 +387,7 @@ func (w *HashAggPartialWorker) processError(err error) {
 	w.spillHelper.setError()
 }
 
+// CheckChunkSpill checks if this spill chunk need to be spilled
 func CheckChunkSpill(chk *chunk.Chunk) bool {
 	return chk.NumRows() > 0 && (chk.UsedMemoryUsage() >= SpillChunkSizeThreshold || chk.IsFull())
 }
