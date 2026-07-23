@@ -736,8 +736,8 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             .to_string());
         }
         let selection_seed = self.replica_read_seed.next();
-        let timeout = if metadata.session.tikv_client_read_timeout_ms > 0 {
-            Duration::from_millis(metadata.session.tikv_client_read_timeout_ms)
+        let timeout = if metadata.tikv_client_read_timeout_ms > 0 {
+            Duration::from_millis(metadata.tikv_client_read_timeout_ms)
         } else {
             self.config.default_timeout
         };
@@ -777,7 +777,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
 fn read_policy_from_metadata(
     metadata: &crate::KvRequestMetadata,
 ) -> Result<ReadPolicy, DirectUnaryTransportError> {
-    let mode = match metadata.session.replica_read {
+    let mode = match metadata.replica_read {
         ReplicaReadType::Leader => ReplicaReadMode::Leader,
         ReplicaReadType::Follower => ReplicaReadMode::Follower,
         ReplicaReadType::Mixed => ReplicaReadMode::Mixed,
@@ -787,6 +787,7 @@ fn read_policy_from_metadata(
         // plus labels/load inputs. Those inputs are rejected above until the
         // corresponding store metadata exists; the bare mode is exact Mixed.
         ReplicaReadType::Closest | ReplicaReadType::ClosestAdaptive => ReplicaReadMode::Mixed,
+        _ => ReplicaReadMode::Leader,
     };
     Ok(ReadPolicy {
         // EnableStaleWithMixedReplicaRead overrides the session mode.
@@ -810,13 +811,13 @@ fn metadata_region_ranges(
         .key_ranges
         .as_ref()
         .ok_or_else(|| DirectUnaryTransportError::Coordinator("missing_ranges".to_owned()))?;
-    if !ranges.is_non_partitioned() || ranges.partitions.len() != 1 {
+    if !ranges.is_non_partitioned() || ranges.partitions().len() != 1 {
         return Err(DirectUnaryTransportError::Coordinator(
             "partitioned_ranges".to_owned(),
         ));
     }
     let ranges = ranges
-        .partitions
+        .partitions()
         .first()
         .ok_or_else(|| DirectUnaryTransportError::Coordinator("missing_ranges".to_owned()))?;
     if ranges.is_empty() {
@@ -1038,8 +1039,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     })
                     .collect(),
                 stores: Vec::new(),
-                busy_threshold: Duration::from_millis(
-                    self.metadata.session.store_busy_threshold_ms,
+                busy_threshold: Duration::from_nanos(
+                    u64::try_from(self.metadata.store_busy_threshold_ns).unwrap_or(0),
                 ),
             });
             self.request_selectors.insert(logical_task_id, selector);

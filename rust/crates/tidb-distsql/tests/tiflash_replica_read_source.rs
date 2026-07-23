@@ -71,9 +71,7 @@ fn existing_request_projection_consumes_the_canonical_policy() {
         TiFlashReplicaRead::ClosestReplicas
     );
     assert_eq!(
-        KvRequestMetadata::from_context(&context)
-            .session
-            .tiflash_replica_read,
+        KvRequestMetadata::from_context(&context).tiflash_replica_read,
         TiFlashReplicaRead::ClosestReplicas
     );
 }

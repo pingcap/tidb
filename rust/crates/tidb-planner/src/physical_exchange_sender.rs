@@ -70,6 +70,8 @@ impl CompressionMode {
     pub const HIGH_COMPRESSION: Self = Self(2);
     /// `ExchangeCompressionModeUnspecified`.
     pub const UNSPECIFIED: Self = Self(3);
+    /// Source-recommended mode.
+    pub const RECOMMENDED: Self = Self::FAST;
 
     /// Creates a compression mode from its source raw value.
     #[must_use]
@@ -83,7 +85,9 @@ impl CompressionMode {
         self.0
     }
 
-    fn name(self) -> &'static str {
+    /// Returns the source variable name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
         match self.raw() {
             0 => "NONE",
             1 => "FAST",
@@ -91,6 +95,33 @@ impl CompressionMode {
             3 => "UNSPECIFIED",
             // Go's ToTipbCompressionMode falls back to NONE for unknown values.
             _ => "NONE",
+        }
+    }
+
+    /// Parses the case-insensitive source variable domain.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        if name.eq_ignore_ascii_case("UNSPECIFIED") {
+            return Some(Self::UNSPECIFIED);
+        }
+        if name.eq_ignore_ascii_case("NONE") {
+            return Some(Self::NONE);
+        }
+        if name.eq_ignore_ascii_case("FAST") {
+            return Some(Self::FAST);
+        }
+        if name.eq_ignore_ascii_case("HIGH_COMPRESSION") {
+            return Some(Self::HIGH_COMPRESSION);
+        }
+        None
+    }
+
+    /// Returns the raw generated TIPB compression-mode value.
+    #[must_use]
+    pub const fn to_tipb_raw(self) -> i32 {
+        match self.raw() {
+            0..=2 => self.raw(),
+            _ => 0,
         }
     }
 }
@@ -254,5 +285,27 @@ mod tests {
             0,
         );
         assert_eq!(unknown.explain_info(), "ExchangeType: , Compression: NONE");
+    }
+
+    /// Source: `pkg/kv/version_test.go::TestExchangeCompressionMode`.
+    #[test]
+    #[allow(non_snake_case)]
+    fn TestExchangeCompressionMode() {
+        for (name, mode) in [
+            ("UNSPECIFIED", CompressionMode::UNSPECIFIED),
+            ("NONE", CompressionMode::NONE),
+            ("FAST", CompressionMode::FAST),
+            ("HIGH_COMPRESSION", CompressionMode::HIGH_COMPRESSION),
+        ] {
+            assert_eq!(mode.name(), name);
+            assert_eq!(CompressionMode::parse(name), Some(mode));
+            assert_eq!(
+                CompressionMode::parse(&name.to_ascii_lowercase()),
+                Some(mode)
+            );
+        }
+        assert_eq!(CompressionMode::RECOMMENDED, CompressionMode::FAST);
+        assert_eq!(CompressionMode::RECOMMENDED.to_tipb_raw(), 1);
+        assert_eq!(CompressionMode::UNSPECIFIED.to_tipb_raw(), 0);
     }
 }

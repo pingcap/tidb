@@ -24,7 +24,7 @@ use tidb_txnkv::driver::read::{
 };
 use tidb_txnkv::{
     del_key_with_prefix, row_key_prefix_filter, scan_meta_with_prefix, BatchBufferGetter,
-    BatchGetError, BatchGetOptions, BatchGetter, Getter, Key, KvIterator, ValueEntry,
+    BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key, KvIterator, ValueEntry,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,7 +99,7 @@ impl MockBuffer {
 impl Getter for MockBuffer {
     type Error = TestError;
 
-    fn get(&mut self, key: &Key, _options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.values
             .get(key)
             .cloned()
@@ -182,7 +182,7 @@ impl MockSnapshot {
 impl Getter for MockSnapshot {
     type Error = TestError;
 
-    fn get(&mut self, key: &Key, _options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.values
             .get(key)
             .cloned()
@@ -202,7 +202,7 @@ impl BatchGetter for MockSnapshot {
         Ok(keys
             .iter()
             .filter_map(|key| {
-                self.get(key, options)
+                self.get(key, options.into())
                     .ok()
                     .map(|value| (key.clone(), value))
             })
@@ -300,16 +300,16 @@ fn prefix_scan_and_delete_match_test_prefix() {
 
     del_key_with_prefix(&mut transaction, &key(b"key".to_vec())).unwrap();
     assert_eq!(
-        transaction.get(&exact_key, BatchGetOptions::default()),
+        transaction.get(&exact_key, GetOptions::default()),
         Err(TestError::NotFound)
     );
     assert_eq!(
-        transaction.get(&key(b"key-old".to_vec()), BatchGetOptions::default()),
+        transaction.get(&key(b"key-old".to_vec()), GetOptions::default()),
         Err(TestError::NotFound)
     );
     assert_eq!(
         transaction
-            .get(&key(b"other".to_vec()), BatchGetOptions::default())
+            .get(&key(b"other".to_vec()), GetOptions::default())
             .unwrap()
             .value,
         b"keep"
@@ -374,14 +374,14 @@ fn delete_next_error_closes_without_applying_collected_deletes() {
     );
     assert_eq!(
         transaction
-            .get(&dirty_key, BatchGetOptions::default())
+            .get(&dirty_key, GetOptions::default())
             .unwrap()
             .value,
         b"dirty-value"
     );
     assert_eq!(
         transaction
-            .get(&snapshot_key, BatchGetOptions::default())
+            .get(&snapshot_key, GetOptions::default())
             .unwrap()
             .value,
         b"snapshot-value"

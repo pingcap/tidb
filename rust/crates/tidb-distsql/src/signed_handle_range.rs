@@ -127,7 +127,7 @@ pub(crate) fn encode_signed_handle_range(
     }
 
     RequestKeyRange {
-        start_key: encode_row_key(table_id, &low_encoded),
-        end_key: encode_row_key(table_id, &high_encoded),
+        start_key: encode_row_key(table_id, &low_encoded).into(),
+        end_key: encode_row_key(table_id, &high_encoded).into(),
     }
 }

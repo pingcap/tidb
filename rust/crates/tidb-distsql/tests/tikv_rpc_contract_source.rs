@@ -33,39 +33,38 @@ use tidb_txnkv::{ClientReplicaReadType, EndpointType, TraceInfo};
 
 fn range(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {
-        start_key: start.as_bytes().to_vec(),
-        end_key: end.as_bytes().to_vec(),
+        start_key: start.as_bytes().to_vec().into(),
+        end_key: end.as_bytes().to_vec().into(),
     }
 }
 
 fn metadata() -> KvRequestMetadata {
-    let mut metadata = KvRequestMetadata {
-        request_type: RequestType::Dag,
-        data: Some(b"dag".to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")])),
-        keep_order: true,
-        cacheable: true,
-        store_type: StoreType::TiKv,
-        start_ts: 100,
-        schema_version: 7,
-        connection_id: 9,
-        connection_alias: "session".to_owned(),
-        read_replica_scope: "global".to_owned(),
-        txn_scope: "global".to_owned(),
-        is_staleness: true,
-        ..KvRequestMetadata::default()
-    };
-    metadata.session.paging.enabled = true;
-    metadata.session.paging.min_size = 2;
-    metadata.session.paging.max_size = 8;
-    metadata.session.replica_read = ReplicaReadType::Follower;
-    metadata.session.priority = KvPriority::High;
-    metadata.session.not_fill_cache = true;
-    metadata.session.task_id = 42;
-    metadata.session.resource_group_name = "rg1".to_owned();
-    metadata.session.store_busy_threshold_ms = u64::from(u32::MAX) + 2;
-    metadata.session.tikv_client_read_timeout_ms = 777;
-    metadata.session.request_source = RequestSource {
+    let mut metadata = KvRequestMetadata::default();
+    metadata.request_type = RequestType::Dag;
+    metadata.data = Some(b"dag".to_vec());
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")]));
+    metadata.keep_order = true;
+    metadata.cacheable = true;
+    metadata.store_type = StoreType::TiKv;
+    metadata.start_ts = 100;
+    metadata.schema_version = 7;
+    metadata.connection_id = 9;
+    metadata.connection_alias = "session".to_owned();
+    metadata.read_replica_scope = "global".to_owned();
+    metadata.txn_scope = "global".to_owned();
+    metadata.is_staleness = true;
+    metadata.paging.enabled = true;
+    metadata.paging.min_size = 2;
+    metadata.paging.max_size = 8;
+    metadata.replica_read = ReplicaReadType::Follower;
+    metadata.priority = KvPriority::High;
+    metadata.not_fill_cache = true;
+    metadata.task_id = 42;
+    metadata.resource_group_name = "rg1".to_owned();
+    metadata.store_busy_threshold_ns =
+        (i64::from(u32::MAX) + 2).saturating_mul(1_000_000);
+    metadata.tikv_client_read_timeout_ms = 777;
+    metadata.request_source = RequestSource {
         internal: true,
         source_type: "stats".to_owned(),
         explicit_source_type: "analyze".to_owned(),
@@ -131,7 +130,7 @@ fn checked_task_becomes_wire_ready_request_with_exact_context_and_wrapper_metada
     assert_eq!(request.timeout_override_ms, Some(777));
 
     let wire = CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
-    assert_eq!(wire.tp, RequestType::Dag as i64);
+    assert_eq!(wire.tp, RequestType::Dag.raw());
     assert_eq!(wire.data, b"dag");
     assert_eq!(wire.start_ts, 100);
     assert_eq!(wire.schema_ver, 7);
@@ -145,7 +144,10 @@ fn checked_task_becomes_wire_ready_request_with_exact_context_and_wrapper_metada
     assert_eq!(context.region_id, 8);
     assert_eq!(context.region_epoch.unwrap().version, 3);
     assert_eq!(context.peer.unwrap().store_id, 12);
-    assert_eq!(context.priority, KvPriority::High as i32);
+    assert_eq!(
+        context.priority,
+        i32::try_from(KvPriority::High.raw()).unwrap()
+    );
     assert!(context.not_fill_cache);
     assert!(context.record_time_stat);
     assert!(context.record_scan_stat);

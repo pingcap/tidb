@@ -131,7 +131,7 @@ impl TransportRequest {
             .metadata
             .key_ranges
             .as_ref()
-            .and_then(|ranges| ranges.partitions.first())
+            .and_then(|ranges| ranges.partitions().first())
             .and_then(|ranges| ranges.first())
             .map_or(&[][..], |range| range.start_key.as_slice());
         Some(tagger.encode_tag_with_key(first_key))
@@ -204,7 +204,7 @@ impl TransportRequest {
             return Ok(Vec::new());
         }
         let mut metadata = self.metadata.clone();
-        metadata.session.store_batch_size = 0;
+        metadata.store_batch_size = 0;
         let mut tasks = build_region_tasks(&metadata, topology)
             .ok_or(TransportRequestError::InvalidRegionTopology)?;
         if limit > 0 {
@@ -264,7 +264,7 @@ impl TransportRequest {
             return Err(TransportRequestError::AlreadyBound);
         }
         let mut metadata = self.metadata.clone();
-        metadata.session.request_source = request_source;
+        metadata.request_source = request_source;
         Ok(Self {
             metadata,
             execution_cancellation: Arc::clone(&self.execution_cancellation),

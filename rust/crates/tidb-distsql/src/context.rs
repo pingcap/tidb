@@ -16,44 +16,10 @@
 
 use crate::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 use crate::{ExecutionState, TiFlashReplicaRead, Warning, WarningCollector};
+use tidb_txnkv::ReplicaReadType;
 
 /// TiDB's default `tidb_distsql_scan_concurrency` used by the Go test helper.
 pub const DEFAULT_DIST_SQL_CONCURRENCY: u64 = 15;
-/// Replica selection values copied from `pkg/kv.ReplicaReadType`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
-pub enum ReplicaReadType {
-    /// Read from the leader only.
-    #[default]
-    Leader = 0,
-    /// Read from followers.
-    Follower = 1,
-    /// Read from leaders and followers.
-    Mixed = 2,
-    /// Read from the closest leader/follower zone.
-    Closest = 3,
-    /// Prefer a same-zone follower after the response-size threshold.
-    ClosestAdaptive = 4,
-    /// Read from learners.
-    Learner = 5,
-    /// Prefer the leader and fall back to followers.
-    PreferLeader = 6,
-}
-
-impl ReplicaReadType {
-    /// Returns whether follower-capable routing is enabled.
-    #[must_use]
-    pub const fn is_follower_read(self) -> bool {
-        !matches!(self, Self::Leader)
-    }
-
-    /// Returns whether the exact closest-read mode is selected.
-    #[must_use]
-    pub const fn is_closest_read(self) -> bool {
-        matches!(self, Self::Closest)
-    }
-}
-
 /// Statement priority values copied from `pkg/parser/mysql.PriorityEnum`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]

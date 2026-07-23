@@ -14,6 +14,7 @@
 //! Direct translations of the representable key/version tests in `pkg/kv`.
 
 use std::cmp::Ordering;
+use std::time::SystemTime;
 
 use tidb_txnkv::{
     gen_key_exists_err, get_cdc_write_source, get_lossy_ddl_reorg_source,
@@ -328,7 +329,12 @@ fn test_inner_txn_start_ts_box() {
         timestamps.store_inner_txn_ts(start_ts);
     }
     assert_eq!(
-        get_min_inner_txn_start_ts(&timestamps, lower_limit, current_min),
+        get_min_inner_txn_start_ts(
+            &timestamps,
+            SystemTime::UNIX_EPOCH,
+            lower_limit,
+            current_min
+        ),
         200
     );
 
@@ -337,11 +343,21 @@ fn test_inner_txn_start_ts_box() {
     timestamps.delete_inner_txn_ts(300);
     timestamps.delete_inner_txn_ts(400);
     assert_eq!(
-        get_min_inner_txn_start_ts(&timestamps, lower_limit, current_min),
+        get_min_inner_txn_start_ts(
+            &timestamps,
+            SystemTime::UNIX_EPOCH,
+            lower_limit,
+            current_min
+        ),
         current_min
     );
     assert_eq!(
-        get_min_inner_txn_start_ts(&timestamps, current_min, lower_limit),
+        get_min_inner_txn_start_ts(
+            &timestamps,
+            SystemTime::UNIX_EPOCH,
+            current_min,
+            lower_limit
+        ),
         lower_limit
     );
 }

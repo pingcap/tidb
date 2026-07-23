@@ -41,8 +41,8 @@ pub fn table_handles_to_kv_ranges(
             let start_key = encode_row_key(table_id, common.encoded());
             let end_handle = Key::from_bytes(common.encoded()).next();
             ranges.push(RequestKeyRange {
-                start_key,
-                end_key: encode_row_key(table_id, end_handle.as_bytes()),
+                start_key: start_key.into(),
+                end_key: encode_row_key(table_id, end_handle.as_bytes()).into(),
             });
             hints.push(1);
             index += 1;
@@ -81,8 +81,8 @@ pub fn table_handles_to_kv_ranges(
         encode_int(&mut high_encoded, high);
         let high_exclusive = Key::from_bytes(high_encoded).prefix_next();
         ranges.push(RequestKeyRange {
-            start_key: encode_row_key(table_id, &low_encoded),
-            end_key: encode_row_key(table_id, high_exclusive.as_bytes()),
+            start_key: encode_row_key(table_id, &low_encoded).into(),
+            end_key: encode_row_key(table_id, high_exclusive.as_bytes()).into(),
         });
         hints.push(end - index);
         index = end;

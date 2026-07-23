@@ -254,7 +254,7 @@ impl RequestBuilder {
                 .map_or(0, RequestKeyRanges::partition_count);
         }
         if let Some(concurrency) = dag.small_limit_concurrency() {
-            self.request.session.concurrency = concurrency;
+            self.request.concurrency = concurrency as isize;
         }
         self.request.request_type = RequestType::Dag;
         self.request.cacheable = true;
@@ -284,9 +284,9 @@ impl RequestBuilder {
         }
         self.request.request_type = RequestType::Analyze;
         self.request.data = Some(data.into());
-        self.request.session.not_fill_cache = true;
-        self.request.session.isolation_level = isolation_level;
-        self.request.session.priority = KvPriority::Low;
+        self.request.not_fill_cache = true;
+        self.request.isolation_level = isolation_level;
+        self.request.priority = KvPriority::Low;
         self
     }
 
@@ -297,23 +297,24 @@ impl RequestBuilder {
         }
         self.request.request_type = RequestType::Checksum;
         self.request.data = Some(data.into());
-        self.request.session.not_fill_cache = true;
+        self.request.not_fill_cache = true;
         self
     }
 
     /// Projects source session settings, preserving an already selected DAG
     /// concurrency long enough for the source upper-bound clamp.
     pub fn set_from_context(&mut self, context: &DistSqlContext) -> &mut Self {
-        let current_concurrency = self.request.session.concurrency;
-        self.request.session = ReadRequestBuilder::new()
-            .set_concurrency(current_concurrency)
+        let current_concurrency = self.request.concurrency;
+        let session = ReadRequestBuilder::new()
+            .set_concurrency(u64::try_from(current_concurrency).unwrap_or(0))
             .from_context(context)
             .build();
+        self.request.apply_session_metadata(session);
         if !context.request.weak_consistency
             && !context.request.rc_check_ts
             && self.request.request_type == RequestType::Analyze
         {
-            self.request.session.isolation_level = IsolationLevel::ReadCommitted;
+            self.request.isolation_level = IsolationLevel::ReadCommitted;
         }
         self.request.connection_id = context.request.session.connection_id;
         self.request.connection_alias = context.request.session.alias.clone();
@@ -337,19 +338,19 @@ impl RequestBuilder {
 
     /// Sets request concurrency directly.
     pub fn set_concurrency(&mut self, concurrency: u64) -> &mut Self {
-        self.request.session.concurrency = concurrency;
+        self.request.concurrency = concurrency as isize;
         self
     }
 
     /// Sets replica-read mode.
     pub fn set_replica_read(&mut self, replica_read: ReplicaReadType) -> &mut Self {
-        self.request.session.replica_read = replica_read;
+        self.request.replica_read = replica_read;
         self
     }
 
     /// Sets only paging admission, preserving all configured paging sizes.
     pub fn set_paging(&mut self, enabled: bool) -> &mut Self {
-        self.request.session.paging.enabled = enabled;
+        self.request.paging.enabled = enabled;
         self
     }
 
@@ -405,13 +406,13 @@ impl RequestBuilder {
 
     /// Sets the resource group name independently of session projection.
     pub fn set_resource_group_name(&mut self, name: impl Into<String>) -> &mut Self {
-        self.request.session.resource_group_name = name.into();
+        self.request.resource_group_name = name.into();
         self
     }
 
     /// Replaces all request-source metadata.
     pub fn set_request_source(&mut self, source: RequestSource) -> &mut Self {
-        self.request.session.request_source = source;
+        self.request.request_source = source;
         self
     }
 
@@ -420,7 +421,7 @@ impl RequestBuilder {
         &mut self,
         source_type: impl Into<String>,
     ) -> &mut Self {
-        self.request.session.request_source.explicit_source_type = source_type.into();
+        self.request.request_source.explicit_source_type = source_type.into();
         self
     }
 
@@ -450,7 +451,7 @@ impl RequestBuilder {
         if request.read_replica_scope.is_empty() {
             request.read_replica_scope = GLOBAL_REPLICA_SCOPE.to_owned();
         }
-        if request.session.replica_read.is_closest_read()
+        if request.replica_read.is_closest_read()
             && request.read_replica_scope != GLOBAL_REPLICA_SCOPE
         {
             request.match_store_labels = vec![StoreLabel {
@@ -465,8 +466,10 @@ impl RequestBuilder {
         if let Some(dag) = &self.dag {
             let mut shape = dag.clone();
             shape.keep_order = request.keep_order;
-            request.session.concurrency =
-                shape.build_concurrency(request.session.concurrency, DEFAULT_DIST_SQL_CONCURRENCY);
+            request.concurrency = shape.build_concurrency(
+                u64::try_from(request.concurrency).unwrap_or(0),
+                DEFAULT_DIST_SQL_CONCURRENCY,
+            ) as isize;
         }
 
         Ok(request)
@@ -546,8 +549,8 @@ pub fn index_ranges_to_kv_ranges(
             encoded
                 .iter()
                 .map(|(low, high)| RequestKeyRange {
-                    start_key: encode_index_seek_key(*table_id, index_id, low),
-                    end_key: encode_index_seek_key(*table_id, index_id, high),
+                    start_key: encode_index_seek_key(*table_id, index_id, low).into(),
+                    end_key: encode_index_seek_key(*table_id, index_id, high).into(),
                 })
                 .collect()
         })
@@ -602,8 +605,8 @@ pub fn build_table_ranges(
                 low = Key::from_bytes(low).prefix_next().into_bytes();
             }
             output.push(RequestKeyRange {
-                start_key: encode_row_key(table_id, &low),
-                end_key: encode_row_key(table_id, &high),
+                start_key: encode_row_key(table_id, &low).into(),
+                end_key: encode_row_key(table_id, &high).into(),
             });
         } else {
             output.extend(table_ranges_to_kv_ranges(

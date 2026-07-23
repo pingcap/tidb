@@ -23,6 +23,7 @@ mod store_state;
 mod topology;
 
 pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind};
+pub use crate::StoreLabel;
 pub use background::{
     BackgroundMaintenanceRound, BackgroundRegionCache, BackgroundRegionCacheError,
     BackgroundRegionCacheOwner, StoreLivenessProbe,
@@ -40,7 +41,7 @@ pub use cache::{
 };
 pub use cache_entry::{CacheEntryState, CacheReloadState};
 pub use error::{RegionLoadError, RegionRouteError};
-pub use health_policy::{ReplicaHealthFacts, ReplicaHealthPolicy, StoreLabel, StoreSelectionScore};
+pub use health_policy::{ReplicaHealthFacts, ReplicaHealthPolicy, StoreSelectionScore};
 pub use id::{RegionEpoch, RegionVerId};
 pub use location::{
     KeyRange, Peer, PeerRole, RegionLocation, RegionMetadata, RegionMetadataPeer, Store,
@@ -55,6 +56,7 @@ pub use request_selector::{
     MAX_REPLICA_ATTEMPTS, MAX_REPLICA_ATTEMPT_TIME,
 };
 pub use route::{RouteFeedback, RouteOutcome};
+pub use slow_score::SlowScoreStat;
 pub use store_health::{
     HealthInstant, StoreHealth, StoreHealthDetail, StoreLoad, StoreRoutingHealth,
 };

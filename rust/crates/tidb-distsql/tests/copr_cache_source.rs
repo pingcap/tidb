@@ -77,12 +77,12 @@ fn test_build_cache_key() {
         data: vec![0x18, 0, 0x20, 0, 0x40, 0, 0x5a, 0],
         ranges: vec![
             RequestKeyRange {
-                start_key: vec![0x01],
-                end_key: vec![0x01, 0x02],
+                start_key: vec![0x01].into(),
+                end_key: vec![0x01, 0x02].into(),
             },
             RequestKeyRange {
-                start_key: vec![0x01, 0x01, 0x02],
-                end_key: vec![0x01, 0x01, 0x03],
+                start_key: vec![0x01, 0x01, 0x02].into(),
+                end_key: vec![0x01, 0x01, 0x03].into(),
             },
         ],
         ..CoprocessorRequestEnvelope::default()
@@ -293,8 +293,8 @@ fn test_get_set_and_live_request_response_lifecycle() {
         tp: 0xab,
         data: b"dag".to_vec(),
         ranges: vec![RequestKeyRange {
-            start_key: b"a".to_vec(),
-            end_key: b"z".to_vec(),
+            start_key: b"a".to_vec().into(),
+            end_key: b"z".to_vec().into(),
         }],
         paging_size_bytes: 1024,
         ..CoprocessorRequestEnvelope::default()
@@ -450,8 +450,8 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
         tp: 1,
         data: b"range-presence".to_vec(),
         ranges: vec![RequestKeyRange {
-            start_key: b"a".to_vec(),
-            end_key: b"z".to_vec(),
+            start_key: b"a".to_vec().into(),
+            end_key: b"z".to_vec().into(),
         }],
         paging_size_bytes: 1,
         ..CoprocessorRequestEnvelope::default()

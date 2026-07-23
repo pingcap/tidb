@@ -20,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use tidb_txnkv::driver::read::{TransactionReadDriver, TransactionReadError, TransactionSnapshot};
 use tidb_txnkv::{
     del_key_with_prefix, AssertionOp, BatchGetError, BatchGetOptions, BatchGetter, FlagsOp, Getter,
-    Key, KeyFlags, KvIterator, MemBufferBackend, MemBufferDriver, StagingHandle, ValueEntry,
+    GetOptions, Key, KeyFlags, KvIterator, MemBufferBackend, MemBufferDriver, StagingHandle,
+    ValueEntry,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,7 +89,7 @@ struct OwnedGetter {
 impl Getter for OwnedGetter {
     type Error = TestError;
 
-    fn get(&mut self, key: &Key, _options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.values
             .get(key)
             .cloned()
@@ -170,7 +171,7 @@ impl MemBufferBackend for FakeBackend {
             .sum()
     }
 
-    fn get(&mut self, key: &Key, _options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.values
             .get(key)
             .cloned()
@@ -345,7 +346,7 @@ impl Snapshot {
 impl Getter for Snapshot {
     type Error = TestError;
 
-    fn get(&mut self, key: &Key, _options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.values
             .get(key)
             .cloned()
@@ -365,7 +366,7 @@ impl BatchGetter for Snapshot {
         Ok(keys
             .iter()
             .filter_map(|key| {
-                self.get(key, options)
+                self.get(key, options.into())
                     .ok()
                     .map(|value| (key.clone(), value))
             })
@@ -429,13 +430,13 @@ fn mem_buffer_driver_is_the_transaction_read_and_mutation_buffer() {
 
     assert_eq!(
         transaction
-            .get(&k("a"), BatchGetOptions::default())
+            .get(&k("a"), GetOptions::default())
             .unwrap()
             .value,
         b"dirty-a"
     );
     assert_eq!(
-        transaction.get(&k("b"), BatchGetOptions::default()),
+        transaction.get(&k("b"), GetOptions::default()),
         Err(TestError::NotFound)
     );
     let batch = transaction
@@ -529,7 +530,7 @@ fn buffer_snapshot_views_are_stable_and_pipelined_views_are_empty() {
         .unwrap();
     assert_eq!(
         getter
-            .get(&k("a"), BatchGetOptions::default())
+            .get(&k("a"), GetOptions::default())
             .unwrap()
             .value,
         b"one"
@@ -542,7 +543,7 @@ fn buffer_snapshot_views_are_stable_and_pipelined_views_are_empty() {
         .unwrap();
     assert_eq!(
         pipelined
-            .get(&k("a"), BatchGetOptions::default())
+            .get(&k("a"), GetOptions::default())
             .unwrap()
             .value,
         b"live"
@@ -550,7 +551,7 @@ fn buffer_snapshot_views_are_stable_and_pipelined_views_are_empty() {
     assert_eq!(
         pipelined
             .snapshot_getter()
-            .get(&k("a"), BatchGetOptions::default()),
+            .get(&k("a"), GetOptions::default()),
         Err(TestError::NotFound)
     );
     assert!(!pipelined.snapshot_iter(&k("a"), None).valid());
@@ -567,13 +568,13 @@ fn prefix_delete_consumes_the_same_mutable_driver_and_clones_before_mutation() {
     del_key_with_prefix(&mut transaction, &k("meta/")).unwrap();
     for key in [k("meta/a"), k("meta/b"), k("meta/c")] {
         assert_eq!(
-            transaction.get(&key, BatchGetOptions::default()),
+            transaction.get(&key, GetOptions::default()),
             Err(TestError::NotFound)
         );
     }
     assert_eq!(
         transaction
-            .get(&k("other"), BatchGetOptions::default())
+            .get(&k("other"), GetOptions::default())
             .unwrap()
             .value,
         b"keep"

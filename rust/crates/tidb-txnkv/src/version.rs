@@ -25,6 +25,15 @@ pub const MIN_VERSION: Version = Version::new(0);
 /// real transaction.
 pub const MAX_VERSION: Version = Version::new(u64::MAX);
 
+/// Provider of monotonically increasing KV versions.
+pub trait VersionProvider {
+    /// Provider-specific error.
+    type Error;
+
+    /// Returns the current version.
+    fn current_version(&self) -> Result<Version, Self::Error>;
+}
+
 impl Version {
     /// Creates a version from its unsigned integer value.
     pub const fn new(value: u64) -> Self {

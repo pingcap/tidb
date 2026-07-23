@@ -110,7 +110,7 @@ impl QueryTransport for ScriptedTransport {
             .as_ref()
             .expect("read request carries table ranges");
         assert!(ranges.is_non_partitioned());
-        let [ranges] = ranges.partitions.as_slice() else {
+        let [ranges] = ranges.partitions() else {
             panic!("one non-partitioned range group");
         };
 
@@ -194,11 +194,13 @@ fn full_table_range() -> RequestKeyRange {
     RequestKeyRange {
         start_key: vec![
             b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0, 0, 0, 0, 0, 0, 0, 0,
-        ],
+        ]
+        .into(),
         end_key: vec![
             b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
             0xff, 0,
-        ],
+        ]
+        .into(),
     }
 }
 

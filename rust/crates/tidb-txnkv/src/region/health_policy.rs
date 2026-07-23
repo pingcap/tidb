@@ -15,6 +15,7 @@
 use std::time::Duration;
 
 use super::store_health::{HealthInstant, StoreHealthDetail, StoreLoad};
+use crate::StoreLabel;
 
 /// Exact five-bit store-selection score from pinned client-go.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -41,15 +42,6 @@ impl StoreSelectionScore {
     fn insert(&mut self, flag: Self) {
         self.0 |= flag.0;
     }
-}
-
-/// One immutable label predicate.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoreLabel {
-    /// Label key.
-    pub key: String,
-    /// Required value.
-    pub value: String,
 }
 
 /// Pure policy applied to immutable replica facts.

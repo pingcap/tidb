@@ -40,9 +40,82 @@ impl ValueEntry {
             commit_ts,
         }
     }
+
+    /// Returns whether the stored value is empty.
+    #[must_use]
+    pub fn is_value_empty(&self) -> bool {
+        self.value.is_empty()
+    }
+
+    /// Returns the Go source memory accounting for this entry.
+    #[must_use]
+    pub fn size(&self) -> usize {
+        // A Go `ValueEntry` is one 24-byte slice header plus one `uint64`.
+        32_usize.saturating_add(self.value.len())
+    }
 }
 
-/// The only get option observed by `batch_getter.go` and its source test.
+/// One option accepted by both point and batch reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GetOrBatchGetOption {
+    /// Return the commit timestamp with the value.
+    ReturnCommitTs,
+}
+
+/// Option accepted by a point read.
+pub type GetOption = GetOrBatchGetOption;
+
+/// Option accepted by a batch read.
+pub type BatchGetOption = GetOrBatchGetOption;
+
+/// Returns the source option that requests commit timestamps.
+#[must_use]
+pub const fn with_return_commit_ts() -> GetOrBatchGetOption {
+    GetOrBatchGetOption::ReturnCommitTs
+}
+
+/// Converts batch-read options that are also valid for point reads.
+///
+/// The current client-go source has one shared option. Keeping this explicit
+/// conversion preserves the package boundary when either option domain grows.
+#[must_use]
+pub fn batch_get_to_get_options(options: &[BatchGetOption]) -> Vec<GetOption> {
+    options.to_vec()
+}
+
+/// Applied options for one point read.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GetOptions {
+    /// Requests the commit timestamp from the input layer.
+    pub return_commit_ts: bool,
+}
+
+impl GetOptions {
+    /// Applies point-read options in source order.
+    pub fn apply(&mut self, options: &[GetOption]) {
+        self.return_commit_ts |= options
+            .iter()
+            .any(|option| matches!(option, GetOrBatchGetOption::ReturnCommitTs));
+    }
+
+    /// Constructs the commonly used commit-timestamp option set.
+    #[must_use]
+    pub fn with_return_commit_ts() -> Self {
+        let mut options = Self::default();
+        options.apply(&[with_return_commit_ts()]);
+        options
+    }
+}
+
+impl From<BatchGetOptions> for GetOptions {
+    fn from(options: BatchGetOptions) -> Self {
+        Self {
+            return_commit_ts: options.return_commit_ts,
+        }
+    }
+}
+
+/// Applied options for one batch read.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatchGetOptions {
     /// Requests commit timestamps from every input layer.
@@ -50,11 +123,19 @@ pub struct BatchGetOptions {
 }
 
 impl BatchGetOptions {
-    /// Equivalent to Go `kv.WithReturnCommitTS()` for this bounded consumer.
-    pub const fn with_return_commit_ts() -> Self {
-        Self {
-            return_commit_ts: true,
-        }
+    /// Applies batch-read options in source order.
+    pub fn apply(&mut self, options: &[BatchGetOption]) {
+        self.return_commit_ts |= options
+            .iter()
+            .any(|option| matches!(option, GetOrBatchGetOption::ReturnCommitTs));
+    }
+
+    /// Constructs the commonly used commit-timestamp option set.
+    #[must_use]
+    pub fn with_return_commit_ts() -> Self {
+        let mut options = Self::default();
+        options.apply(&[with_return_commit_ts()]);
+        options
     }
 }
 
@@ -76,7 +157,7 @@ pub trait Getter {
     type Error: BatchGetError;
 
     /// Gets one key with the source option set.
-    fn get(&mut self, key: &Key, options: BatchGetOptions) -> Result<ValueEntry, Self::Error>;
+    fn get(&mut self, key: &Key, options: GetOptions) -> Result<ValueEntry, Self::Error>;
 }
 
 /// Batch read surface used by the snapshot.
@@ -189,7 +270,7 @@ where
             if buffer_values.contains_key(key) {
                 continue;
             }
-            match middle_cache.get(key, options) {
+            match middle_cache.get(key, options.into()) {
                 Ok(value) => {
                     buffer_values.insert(key.clone(), value);
                 }

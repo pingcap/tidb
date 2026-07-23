@@ -38,14 +38,14 @@ fn store_batch_task_preserves_region_epoch_peer_ranges_and_bucket_version() {
             is_witness: true,
         }),
         ranges: vec![RequestKeyRange {
-            start_key: b"a".to_vec(),
-            end_key: b"b".to_vec(),
+            start_key: b"a".to_vec().into(),
+            end_key: b"b".to_vec().into(),
         }],
         task_id: 42,
         versioned_ranges: vec![VersionedRegionKeyRange {
             range: RequestKeyRange {
-                start_key: b"p".to_vec(),
-                end_key: b"p".to_vec(),
+                start_key: b"p".to_vec().into(),
+                end_key: b"p".to_vec().into(),
             },
             read_ts: 99,
         }],
@@ -98,12 +98,12 @@ fn absent_region_metadata_stays_absent_and_ranges_keep_order() {
         region_id: 17,
         ranges: vec![
             RequestKeyRange {
-                start_key: vec![2],
-                end_key: vec![3],
+                start_key: vec![2].into(),
+                end_key: vec![3].into(),
             },
             RequestKeyRange {
-                start_key: vec![0],
-                end_key: vec![1],
+                start_key: vec![0].into(),
+                end_key: vec![1].into(),
             },
         ],
         ..Default::default()

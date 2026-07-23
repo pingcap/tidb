@@ -81,10 +81,10 @@ fn test_table_handles_to_kv_ranges() {
     let mut builder = KvRequestBuilder::new();
     builder.set_table_handles(1, &handles);
     let request = builder.build().expect("table-handle request build");
-    let attached = request.key_ranges.expect("ranges attached");
+    let attached = request.key_ranges.as_ref().expect("ranges attached");
     assert!(attached.is_non_partitioned());
-    assert_eq!(attached.partitions, vec![ranges]);
-    assert_eq!(attached.row_count_hints, vec![hints]);
+    assert_eq!(attached.partitions(), vec![ranges]);
+    assert_eq!(attached.row_count_hints(), vec![hints]);
 }
 
 /// Source: `request_builder_test.go::TestTablePartitionHandlesToKVRanges`.
@@ -157,10 +157,16 @@ fn empty_handles_preserve_non_partitioned_builder_shape() {
     let mut builder = KvRequestBuilder::new();
     builder.set_table_handles(1, &[]);
     let request = builder.build().expect("empty table-handle request build");
-    let attached = request.key_ranges.expect("empty ranges attached");
+    let attached = request
+        .key_ranges
+        .as_ref()
+        .expect("empty ranges attached");
     assert!(attached.is_non_partitioned());
-    assert_eq!(attached.partitions, vec![vec![]]);
-    assert_eq!(attached.row_count_hints, vec![Vec::<usize>::new()]);
+    assert_eq!(attached.partitions(), vec![vec![]]);
+    assert_eq!(
+        attached.row_count_hints(),
+        vec![Vec::<usize>::new()]
+    );
 }
 
 #[test]

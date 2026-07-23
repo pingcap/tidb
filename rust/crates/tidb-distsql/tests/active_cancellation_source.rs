@@ -242,23 +242,22 @@ impl DirectUnaryClient for CancellationThenTransportErrorClient {
 
 fn range(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {
-        start_key: start.as_bytes().to_vec(),
-        end_key: end.as_bytes().to_vec(),
+        start_key: start.as_bytes().to_vec().into(),
+        end_key: end.as_bytes().to_vec().into(),
     }
 }
 
 fn metadata() -> KvRequestMetadata {
-    KvRequestMetadata {
-        request_type: RequestType::Dag,
-        data: Some(b"cancelled-dag".to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")])),
-        keep_order: true,
-        store_type: StoreType::TiKv,
-        start_ts: 42,
-        read_replica_scope: "global".to_owned(),
-        txn_scope: "global".to_owned(),
-        ..KvRequestMetadata::default()
-    }
+    let mut metadata = KvRequestMetadata::default();
+    metadata.request_type = RequestType::Dag;
+    metadata.data = Some(b"cancelled-dag".to_vec());
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")]));
+    metadata.keep_order = true;
+    metadata.store_type = StoreType::TiKv;
+    metadata.start_ts = 42;
+    metadata.read_replica_scope = "global".to_owned();
+    metadata.txn_scope = "global".to_owned();
+    metadata
 }
 
 fn location(region_id: u64, start: &str, end: &str) -> RegionLocation {

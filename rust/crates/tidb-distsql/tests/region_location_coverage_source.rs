@@ -19,8 +19,8 @@ use tidb_distsql::{RegionTaskEnvelope, RegionTaskLocation, RequestKeyRange};
 
 fn kr(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {
-        start_key: start.as_bytes().to_vec(),
-        end_key: end.as_bytes().to_vec(),
+        start_key: start.as_bytes().to_vec().into(),
+        end_key: end.as_bytes().to_vec().into(),
     }
 }
 

@@ -151,12 +151,12 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
     let task = RegionTaskEnvelope {
         ranges: vec![
             RequestKeyRange {
-                start_key: b"a".to_vec(),
-                end_key: b"c".to_vec(),
+                start_key: b"a".to_vec().into(),
+                end_key: b"c".to_vec().into(),
             },
             RequestKeyRange {
-                start_key: b"e".to_vec(),
-                end_key: b"g".to_vec(),
+                start_key: b"e".to_vec().into(),
+                end_key: b"g".to_vec().into(),
             },
         ],
         paging: true,
@@ -197,8 +197,8 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
 fn terminal_nil_range_cannot_resurrect_completed_paging_state() {
     let task = RegionTaskEnvelope {
         ranges: vec![RequestKeyRange {
-            start_key: b"a".to_vec(),
-            end_key: b"z".to_vec(),
+            start_key: b"a".to_vec().into(),
+            end_key: b"z".to_vec().into(),
         }],
         paging: true,
         paging_size: 128,
@@ -242,8 +242,8 @@ fn terminal_nil_range_cannot_resurrect_completed_paging_state() {
 fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
     let task = RegionTaskEnvelope {
         ranges: vec![RequestKeyRange {
-            start_key: b"a".to_vec(),
-            end_key: b"z".to_vec(),
+            start_key: b"a".to_vec().into(),
+            end_key: b"z".to_vec().into(),
         }],
         paging: true,
         paging_size: 128,
@@ -288,8 +288,8 @@ fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
 fn bounded_channel_applies_backpressure_before_continuation_mutation() {
     let task = RegionTaskEnvelope {
         ranges: vec![RequestKeyRange {
-            start_key: b"a".to_vec(),
-            end_key: b"z".to_vec(),
+            start_key: b"a".to_vec().into(),
+            end_key: b"z".to_vec().into(),
         }],
         paging: true,
         paging_size: 128,

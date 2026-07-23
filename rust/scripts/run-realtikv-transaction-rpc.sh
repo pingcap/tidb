@@ -40,7 +40,7 @@ validate_owned_tag_dir() {
   fi
   local tiup_data="${TIUP_HOME:-${HOME}/.tiup}/data"
   [[ "${TAG_DIR}" == "${tiup_data}/${TAG}" ]] \
-    && [[ "${TAG}" == campaign28-transaction-rpc-* ]]
+    && [[ "${TAG}" == realtikv-transaction-rpc-* ]]
 }
 
 cleanup_resources() {
@@ -124,8 +124,8 @@ cleanup() {
 
 self_test_cleanup() {
   local unrelated_pid=
-  SELF_TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/c28-stage-a-self-test.XXXXXX")
-  TAG="campaign28-transaction-rpc-self-test-${$}"
+  SELF_TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/transaction-rpc-self-test.XXXXXX")
+  TAG="realtikv-transaction-rpc-self-test-${$}"
   TAG_DIR="${SELF_TEST_ROOT}/${TAG}"
   mkdir -p "${TAG_DIR}"
   TIUP_CLEAN_REQUIRED=false
@@ -221,17 +221,17 @@ fi
 cd "${RUST_ROOT}"
 TXN_RPC_PD_ADDR="${PD_ADDR}" CARGO_BUILD_JOBS=12 \
   cargo test --offline --locked -j12 -p tidb-txnkv \
-    --test tikv_transaction_rpc_realtikv_source \
-    typed_transaction_commands_reach_real_tikv_and_leave_no_lock \
+    --test all \
+    tikv_transaction_rpc_realtikv_source::typed_transaction_commands_reach_real_tikv_and_leave_no_lock \
     -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
       echo "transaction-RPC real transaction RPC proof failed" >&2
       tail -180 "${RUST_LOG}" >&2
       exit 1
     }
 
-RECEIPTS=$(grep '^campaign28_transaction_rpc command=' "${RUST_LOG}" || true)
-MARKER=$(grep '^campaign28_transaction_rpc status=passed ' "${RUST_LOG}" | tail -1 || true)
-if [[ $(printf '%s\n' "${RECEIPTS}" | grep -c '^campaign28_transaction_rpc command=') -ne 6 ]] \
+RECEIPTS=$(grep '^realtikv_transaction_rpc command=' "${RUST_LOG}" || true)
+MARKER=$(grep '^realtikv_transaction_rpc status=passed ' "${RUST_LOG}" | tail -1 || true)
+if [[ $(printf '%s\n' "${RECEIPTS}" | grep -c '^realtikv_transaction_rpc command=') -ne 6 ]] \
   || [[ "${RECEIPTS}" != *"command=Prewrite tag=3"* ]] \
   || [[ "${RECEIPTS}" != *"command=Commit tag=4"* ]] \
   || [[ "${RECEIPTS}" != *"command=Get tag=1"* ]] \

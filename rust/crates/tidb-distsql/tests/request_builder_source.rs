@@ -106,8 +106,8 @@ fn canonical_builder_covers_all_source_range_entry_points() {
     // converge on this one builder and one request envelope.
     let handles = [0, 2, 3, 4, 5, 10, 11, 100].map(|value| Handle::Int(IntHandle::new(value)));
     let raw = vec![RequestKeyRange {
-        start_key: vec![1],
-        end_key: vec![2],
+        start_key: vec![1].into(),
+        end_key: vec![2].into(),
     }];
     let mut builders = [
         {
@@ -141,7 +141,10 @@ fn canonical_builder_covers_all_source_range_entry_points() {
         assert_eq!(request.request_type, RequestType::Dag);
         assert_eq!(request.data.as_deref(), Some(DAG_BYTES));
         assert!(request.cacheable);
-        assert_eq!(request.session.concurrency, DEFAULT_DIST_SQL_CONCURRENCY);
+        assert_eq!(
+            request.concurrency,
+            isize::try_from(DEFAULT_DIST_SQL_CONCURRENCY).unwrap()
+        );
         assert_eq!(request.read_replica_scope, GLOBAL_REPLICA_SCOPE);
         assert!(request.key_ranges.is_some());
     }
@@ -158,11 +161,11 @@ fn analyze_checksum_replica_and_default_state_match_source() {
     let analyze = analyze.build().expect("analyze");
     assert_eq!(analyze.request_type, RequestType::Analyze);
     assert_eq!(
-        analyze.session.isolation_level,
+        analyze.isolation_level,
         IsolationLevel::ReadCommitted
     );
-    assert_eq!(analyze.session.priority, KvPriority::Low);
-    assert!(analyze.session.not_fill_cache);
+    assert_eq!(analyze.priority, KvPriority::Low);
+    assert!(analyze.not_fill_cache);
     assert!(analyze.keep_order);
 
     let mut checksum = RequestBuilder::new();
@@ -171,8 +174,8 @@ fn analyze_checksum_replica_and_default_state_match_source() {
         .set_concurrency(10);
     let checksum = checksum.build().expect("checksum");
     assert_eq!(checksum.request_type, RequestType::Checksum);
-    assert!(checksum.session.not_fill_cache);
-    assert_eq!(checksum.session.concurrency, 10);
+    assert!(checksum.not_fill_cache);
+    assert_eq!(checksum.concurrency, 10);
 
     for replica in [
         ReplicaReadType::Leader,
@@ -184,10 +187,14 @@ fn analyze_checksum_replica_and_default_state_match_source() {
         let mut builder = RequestBuilder::from_context(&context);
         builder.set_concurrency(10);
         let request = builder.build().expect("replica request");
-        assert_eq!(request.session.replica_read, replica);
-        assert_eq!(request.session.concurrency, 10);
+        assert_eq!(request.replica_read, replica);
+        assert_eq!(request.concurrency, 10);
         assert_eq!(
-            request.key_ranges.expect("default ranges").partitions,
+            request
+                .key_ranges
+                .as_ref()
+                .expect("default ranges")
+                .partitions(),
             vec![vec![]]
         );
     }
@@ -196,8 +203,11 @@ fn analyze_checksum_replica_and_default_state_match_source() {
     context.request.resource_group_name = "test".to_owned();
     let mut builder = RequestBuilder::from_context(&context);
     let request = builder.build().expect("default request");
-    assert_eq!(request.session.resource_group_name, "test");
-    assert_eq!(request.session.concurrency, DEFAULT_DIST_SQL_CONCURRENCY);
+    assert_eq!(request.resource_group_name, "test");
+    assert_eq!(
+        request.concurrency,
+        isize::try_from(DEFAULT_DIST_SQL_CONCURRENCY).unwrap()
+    );
 }
 
 #[test]
@@ -212,10 +222,10 @@ fn paging_timeout_and_execution_time_survive_projection() {
     context.request.max_execution_time_ms = 101;
     let mut builder = RequestBuilder::from_context(&context);
     let request = builder.build().expect("session projection");
-    assert!(!request.session.paging.enabled);
-    assert_eq!(request.session.paging.size_bytes, 4 * 1024 * 1024);
-    assert_eq!(request.session.tikv_client_read_timeout_ms, 100);
-    assert_eq!(request.session.max_execution_time_ms, 101);
+    assert!(!request.paging.enabled);
+    assert_eq!(request.paging.size_bytes, 4 * 1024 * 1024);
+    assert_eq!(request.tikv_client_read_timeout_ms, 100);
+    assert_eq!(request.max_execution_time_ms, 101);
 }
 
 #[test]
@@ -235,7 +245,7 @@ fn scan_limit_and_index_lookup_concurrency_match_source_tables() {
             .set_dag_request(dag, DAG_BYTES)
             .set_from_context(&DistSqlContext::new());
         let request = builder.build().expect("scan limit");
-        assert_eq!(request.session.concurrency, expected);
+        assert_eq!(request.concurrency, expected);
         assert_eq!(request.limit_size, limit);
     }
 
@@ -251,7 +261,7 @@ fn scan_limit_and_index_lookup_concurrency_match_source_tables() {
             .set_dag_request(dag, DAG_BYTES)
             .set_from_context(&DistSqlContext::new());
         assert_eq!(
-            builder.build().expect("lookup").session.concurrency,
+            builder.build().expect("lookup").concurrency,
             expected
         );
     }
@@ -275,7 +285,7 @@ fn dag_concurrency_preserves_builder_call_order() {
         .set_dag_request(small_limit(), DAG_BYTES)
         .set_from_context(&context);
     assert_eq!(
-        dag_then_context.build().unwrap().session.concurrency,
+        dag_then_context.build().unwrap().concurrency,
         4,
         "a later session projection caps SetDAGRequest's partition count"
     );
@@ -286,13 +296,13 @@ fn dag_concurrency_preserves_builder_call_order() {
         .set_partition_key_ranges(ranges)
         .set_dag_request(small_limit(), DAG_BYTES);
     assert_eq!(
-        context_then_dag.build().unwrap().session.concurrency,
+        context_then_dag.build().unwrap().concurrency,
         6,
         "a later SetDAGRequest owns the small-limit concurrency mutation"
     );
 
     let mut zero = RequestBuilder::new();
-    assert_eq!(zero.build().unwrap().session.concurrency, 0);
+    assert_eq!(zero.build().unwrap().concurrency, 0);
 
     let ordered_scan = || {
         let mut dag = RequestEnvelope::new(vec![ExecutorShape::new(ExecutorKind::TableScan)]);
@@ -304,7 +314,7 @@ fn dag_concurrency_preserves_builder_call_order() {
         .set_keep_order(true)
         .set_dag_request(ordered_scan(), DAG_BYTES)
         .set_from_context(&DistSqlContext::new());
-    assert_eq!(default_scan.build().unwrap().session.concurrency, 2);
+    assert_eq!(default_scan.build().unwrap().concurrency, 2);
 
     let mut explicit_context = DistSqlContext::new();
     explicit_context.request.dist_sql_concurrency = 4;
@@ -313,7 +323,7 @@ fn dag_concurrency_preserves_builder_call_order() {
         .set_keep_order(true)
         .set_dag_request(ordered_scan(), DAG_BYTES)
         .set_from_context(&explicit_context);
-    assert_eq!(explicit_scan.build().unwrap().session.concurrency, 4);
+    assert_eq!(explicit_scan.build().unwrap().concurrency, 4);
 }
 
 #[test]
@@ -364,17 +374,17 @@ fn complete_metadata_setters_and_read_consistency_reach_transport_snapshot() {
         (request.connection_id, request.connection_alias.as_str()),
         (11, "client")
     );
-    assert_eq!(request.session.resource_group_name, "rg");
-    assert!(request.session.request_source.internal);
-    assert_eq!(request.session.request_source.source_type, "internal");
+    assert_eq!(request.resource_group_name, "rg");
+    assert!(request.request_source.internal);
+    assert_eq!(request.request_source.source_type, "internal");
     assert_eq!(
-        request.session.request_source.explicit_source_type,
+        request.request_source.explicit_source_type,
         "explicit"
     );
-    assert!(!request.session.paging.enabled);
-    assert_eq!(request.session.paging.size_bytes, 4096);
+    assert!(!request.paging.enabled);
+    assert_eq!(request.paging.size_bytes, 4096);
     assert_eq!(
-        request.session.isolation_level,
+        request.isolation_level,
         IsolationLevel::ReadCommitted
     );
     assert_eq!(
@@ -389,15 +399,15 @@ fn complete_metadata_setters_and_read_consistency_reach_transport_snapshot() {
     rc_check.request.rc_check_ts = true;
     rc_check.request.replica_read = ReplicaReadType::Follower;
     let request = RequestBuilder::from_context(&rc_check).build().unwrap();
-    assert_eq!(request.session.isolation_level, IsolationLevel::RcCheckTs);
-    assert_eq!(request.session.replica_read, ReplicaReadType::Leader);
+    assert_eq!(request.isolation_level, IsolationLevel::RcCheckTs);
+    assert_eq!(request.replica_read, ReplicaReadType::Leader);
 
     let mut analyze = RequestBuilder::new();
     analyze
         .set_analyze_request([], IsolationLevel::ReadCommitted)
         .set_from_context(&DistSqlContext::new());
     assert_eq!(
-        analyze.build().unwrap().session.isolation_level,
+        analyze.build().unwrap().isolation_level,
         IsolationLevel::ReadCommitted
     );
 }

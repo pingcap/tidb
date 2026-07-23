@@ -38,8 +38,8 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
     let envelope = CoprocessorRequestEnvelope::from_metadata(
         &metadata,
         vec![RequestKeyRange {
-            start_key: vec![1],
-            end_key: vec![2, 3],
+            start_key: vec![1].into(),
+            end_key: vec![2, 3].into(),
         }],
     )
     .with_context(KvrpcContext {
@@ -66,7 +66,7 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
 
     let decoded = CoprocessorRequest::decode(encoded.as_slice()).expect("coprocessor wire");
     assert_eq!(decoded.context.unwrap().region_id, 9);
-    assert_eq!(decoded.tp, RequestType::Dag as i64);
+    assert_eq!(decoded.tp, RequestType::Dag.raw());
     assert_eq!(decoded.data, payload);
     assert_eq!(decoded.ranges[0].start, vec![1]);
     assert_eq!(decoded.ranges[0].end, vec![2, 3]);
@@ -88,8 +88,8 @@ fn transport_request_rejects_unbound_serialization_and_allows_bound_snapshot() {
         std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
     );
     let ranges = vec![RequestKeyRange {
-        start_key: vec![4],
-        end_key: vec![5],
+        start_key: vec![4].into(),
+        end_key: vec![5].into(),
     }];
 
     assert!(matches!(
@@ -107,7 +107,7 @@ fn transport_request_rejects_unbound_serialization_and_allows_bound_snapshot() {
             .as_slice(),
     )
     .expect("decode bound wire");
-    assert_eq!(decoded.tp, RequestType::Checksum as i64);
+    assert_eq!(decoded.tp, RequestType::Checksum.raw());
     assert_eq!(decoded.data, vec![0xaa, 0xbb]);
     assert_eq!(decoded.ranges.len(), 1);
 }

@@ -290,8 +290,8 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
 fn select_input_from_request(request: &TransportRequest, mut input: SelectInput) -> SelectInput {
     let metadata = request.metadata();
     input.store_type = metadata.store_type;
-    input.paging_enabled = metadata.session.paging.enabled;
-    input.paging_size_bytes = metadata.session.paging.size_bytes;
-    input.dist_sql_concurrency = metadata.session.concurrency;
+    input.paging_enabled = metadata.paging.enabled;
+    input.paging_size_bytes = metadata.paging.size_bytes;
+    input.dist_sql_concurrency = u64::try_from(metadata.concurrency).unwrap_or(0);
     input
 }

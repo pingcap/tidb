@@ -163,25 +163,21 @@ impl tidb_distsql::LockRecoveryClient for ReaderUnaryClient {
 }
 
 fn request(cancel: std::sync::Arc<tidb_distsql::CancelHandle>) -> TransportRequest {
-    TransportRequest::new(
-        KvRequestMetadata {
-            request_type: RequestType::Dag,
-            data: Some(b"table-scan-dag".to_vec()),
-            key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-                RequestKeyRange {
-                    start_key: b"a".to_vec(),
-                    end_key: b"z".to_vec(),
-                },
-            ])),
-            keep_order: true,
-            store_type: StoreType::TiKv,
-            start_ts: 42,
-            read_replica_scope: "global".to_owned(),
-            txn_scope: "global".to_owned(),
-            ..KvRequestMetadata::default()
+    let mut metadata = KvRequestMetadata::default();
+    metadata.request_type = RequestType::Dag;
+    metadata.data = Some(b"table-scan-dag".to_vec());
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![
+        RequestKeyRange {
+            start_key: b"a".to_vec().into(),
+            end_key: b"z".to_vec().into(),
         },
-        cancel,
-    )
+    ]));
+    metadata.keep_order = true;
+    metadata.store_type = StoreType::TiKv;
+    metadata.start_ts = 42;
+    metadata.read_replica_scope = "global".to_owned();
+    metadata.txn_scope = "global".to_owned();
+    TransportRequest::new(metadata, cancel)
 }
 
 fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryClient, ReaderLoader> {

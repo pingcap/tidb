@@ -20,207 +20,128 @@
 //! metadata. It deliberately does not marshal protobuf data, route regions,
 //! acquire a TiKV client, or issue RPCs.
 
-use crate::{DistSqlContext, ReadRequestMetadata};
+use std::ops::{Deref, DerefMut};
+
+use crate::{DistSqlContext, ReadRequestMetadata, TiFlashReplicaRead};
+pub use tidb_txnkv::{
+    KeyRange as RequestKeyRange, PartitionIdAndRanges, PartitionedKeyRanges as RequestKeyRanges,
+};
 
 /// Go's `kv.GlobalReplicaScope` / client-go `oracle.GlobalTxnScope` value.
 pub const GLOBAL_REPLICA_SCOPE: &str = "global";
 /// Go placement's data-center label key used for closest reads.
 pub const DC_LABEL_KEY: &str = "zone";
 
-/// A raw key range carried by the request envelope.
+/// DistSQL-only metadata attached to the canonical `pkg/kv.Request`.
 ///
-/// The bytes are kept as owned metadata and are converted to the canonical
-/// `tidb-txnkv::KeyRanges` container by the region task constructor.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RequestKeyRange {
-    /// Inclusive start boundary.
-    pub start_key: Vec<u8>,
-    /// Exclusive end boundary.
-    pub end_key: Vec<u8>,
-}
-
-/// Partition-aware key ranges corresponding to Go's `kv.KeyRanges`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RequestKeyRanges {
-    /// Ranges grouped by physical partition.
-    pub partitions: Vec<Vec<RequestKeyRange>>,
-    /// Estimated source row counts aligned with each partition's ranges.
-    pub row_count_hints: Vec<Vec<usize>>,
-    /// Whether the outer grouping represents a partitioned table.
-    pub partitioned: bool,
-}
-
-/// Partition-scoped ranges used by TiFlash partition-table scans.
-///
-/// This mirrors `kv.PartitionIDAndRanges` (`pkg/kv/kv.go:579-581,678-682`)
-/// without interpreting key bytes or selecting a storage client.  The
-/// request owner keeps the partition identifier beside the exact ordered
-/// ranges so a later TiFlash/RPC adapter cannot accidentally flatten them
-/// into the ordinary `KeyRanges` envelope.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PartitionIdAndRanges {
-    /// Physical partition/table identifier.
-    pub id: i64,
-    /// Ordered ranges belonging to this partition.
-    pub key_ranges: Vec<RequestKeyRange>,
-}
-
-impl RequestKeyRanges {
-    /// Creates the Go `NewNonPartitionedKeyRanges` shape.
-    #[must_use]
-    pub fn new_non_partitioned(ranges: Vec<RequestKeyRange>) -> Self {
-        Self {
-            partitions: vec![ranges],
-            row_count_hints: Vec::new(),
-            partitioned: false,
-        }
-    }
-
-    /// Creates Go `NewNonParitionedKeyRangesWithHint`'s exact shape.
-    #[must_use]
-    pub fn new_non_partitioned_with_hints(ranges: Vec<RequestKeyRange>, hints: Vec<usize>) -> Self {
-        Self {
-            partitions: vec![ranges],
-            row_count_hints: vec![hints],
-            partitioned: false,
-        }
-    }
-
-    /// Creates partitioned ranges without interpreting key bytes.
-    #[must_use]
-    pub fn new_partitioned(partitions: Vec<Vec<RequestKeyRange>>) -> Self {
-        Self {
-            partitions,
-            row_count_hints: Vec::new(),
-            partitioned: true,
-        }
-    }
-
-    /// Returns the source partition count.
-    #[must_use]
-    pub fn partition_count(&self) -> usize {
-        self.partitions.len()
-    }
-
-    /// Returns whether this envelope is non-partitioned.
-    #[must_use]
-    pub const fn is_non_partitioned(&self) -> bool {
-        !self.partitioned
-    }
-}
-
-/// Store label metadata produced for a closest-read request.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct StoreLabel {
-    /// Label key.
-    pub key: String,
-    /// Label value.
-    pub value: String,
-}
-
-/// Request type values used by the source `kv.Request.Tp` field.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(i64)]
-pub enum RequestType {
-    /// No request type selected.
-    #[default]
-    Unknown = 0,
-    /// DAG coprocessor request (`kv.ReqTypeDAG`).
-    Dag = 103,
-    /// Analyze request (`kv.ReqTypeAnalyze`).
-    Analyze = 104,
-    /// Checksum request (`kv.ReqTypeChecksum`).
-    Checksum = 105,
-}
-
-/// Store engine values copied from Go's `kv.StoreType`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
-pub enum StoreType {
-    /// TiKV storage.
-    #[default]
-    TiKv = 0,
-    /// TiFlash storage.
-    TiFlash = 1,
-    /// TiDB memory-backed storage.
-    TiDb = 2,
-    /// An unspecified store engine.
-    Unspecified = 255,
-}
-
-/// Explicit marker for fields that require a future transport owner.
-///
-/// This marker is preferable to fake region handles or RPC clients. Even when
-/// the caller supplies opaque `Data`, protobuf serialization ownership,
-/// coprocessor rate limiters, resource group taggers, runaway checkers, and
-/// request adjusters remain unbound.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum RequestTransportState {
-    /// No protobuf or storage transport is attached.
-    #[default]
-    Unbound,
-}
-
-/// The dependency-closed request metadata produced by [`KvRequestBuilder`].
-#[derive(Clone, Debug, Default)]
+/// All KV request fields live in [`tidb_txnkv::Request`]. This wrapper carries
+/// only TiFlash's client-send selection policy, which is not a field of Go
+/// `kv.Request`.
+#[derive(Clone)]
 pub struct KvRequestMetadata {
-    /// Source request type (`Tp`).
-    pub request_type: RequestType,
-    /// Source transaction start timestamp (`StartTs`).
-    pub start_ts: u64,
-    /// Optional already-serialized DAG/analyze/checksum payload. The bytes are
-    /// absent by default and are never encoded or interpreted by this crate.
-    pub data: Option<Vec<u8>>,
-    /// Initialized key-range envelope.
-    pub key_ranges: Option<RequestKeyRanges>,
-    /// TiFlash partition-scoped ranges, kept separate from `key_ranges`.
-    pub partition_id_and_ranges: Vec<PartitionIdAndRanges>,
-    /// Session-projected fields from `SetFromSessionVars`.
-    pub session: ReadRequestMetadata,
-    /// Whether response order must be preserved.
-    pub keep_order: bool,
-    /// Whether ranges are scanned in descending order.
-    pub desc: bool,
-    /// Whether this request may be cached.
-    pub cacheable: bool,
-    /// Schema version for schema-aware storage.
-    pub schema_version: i64,
-    /// Whether batch coprocessor is requested.
-    pub batch_cop: bool,
-    /// TiDB server identity; zero means all instances.
-    pub tidb_server_id: u64,
-    /// Transaction scope.
-    pub txn_scope: String,
-    /// Replica scope, normalized to [`GLOBAL_REPLICA_SCOPE`] by `build`.
-    pub read_replica_scope: String,
-    /// Whether this is a staleness read.
-    pub is_staleness: bool,
-    /// Closest-read store labels selected during `build`.
-    pub match_store_labels: Vec<StoreLabel>,
-    /// Store engine.
-    pub store_type: StoreType,
-    /// Session connection identifier copied into a coprocessor request.
-    pub connection_id: u64,
-    /// Session connection alias copied into a coprocessor request.
-    pub connection_alias: String,
-    /// Terminal scan limit projected from a DAG envelope.
-    pub limit_size: u64,
-    /// Optional source-compatible resource-group tag builder consumed at the
-    /// pre-transport boundary using the first request key.
-    pub resource_group_tagger: Option<tidb_txnkv::ResourceGroupTagBuilder>,
-    /// Explicit transport boundary marker.
-    pub transport: RequestTransportState,
+    request: tidb_txnkv::Request,
+    /// TiFlash node-selection policy projected into client-send metadata.
+    pub tiflash_replica_read: TiFlashReplicaRead,
+}
+
+impl Default for KvRequestMetadata {
+    fn default() -> Self {
+        let mut request = tidb_txnkv::Request::default();
+        let paging = crate::PagingConfig::source_defaults();
+        request.paging = tidb_txnkv::Paging {
+            enabled: paging.enabled,
+            min_size: paging.min_size,
+            max_size: paging.max_size,
+            size_bytes: paging.size_bytes,
+        };
+        Self {
+            request,
+            tiflash_replica_read: TiFlashReplicaRead::default(),
+        }
+    }
 }
 
 impl KvRequestMetadata {
+    /// Wraps one canonical KV request with default DistSQL-only metadata.
+    #[must_use]
+    pub fn from_request(request: tidb_txnkv::Request) -> Self {
+        Self {
+            request,
+            tiflash_replica_read: TiFlashReplicaRead::default(),
+        }
+    }
+
+    /// Consumes the wrapper and returns the canonical KV request.
+    #[must_use]
+    pub fn into_request(self) -> tidb_txnkv::Request {
+        self.request
+    }
+
     /// Projects the source context fields into a new request metadata value.
     #[must_use]
     pub fn from_context(context: &DistSqlContext) -> Self {
-        Self {
-            session: ReadRequestMetadata::from_context(context),
-            connection_id: context.request.session.connection_id,
-            connection_alias: context.request.session.alias.clone(),
-            ..Self::default()
-        }
+        let mut request = Self::default();
+        request.apply_session_metadata(ReadRequestMetadata::from_context(context));
+        request.connection_id = context.request.session.connection_id;
+        request.connection_alias = context.request.session.alias.clone();
+        request
+    }
+
+    pub(crate) fn apply_session_metadata(&mut self, session: ReadRequestMetadata) {
+        self.concurrency = session.concurrency as isize;
+        self.isolation_level = session.isolation_level;
+        self.priority = session.priority;
+        self.not_fill_cache = session.not_fill_cache;
+        self.task_id = session.task_id;
+        self.replica_read = session.replica_read;
+        self.tiflash_replica_read = session.tiflash_replica_read;
+        self.paging = tidb_txnkv::Paging {
+            enabled: session.paging.enabled,
+            min_size: session.paging.min_size,
+            max_size: session.paging.max_size,
+            size_bytes: session.paging.size_bytes,
+        };
+        self.request_source = session.request_source;
+        self.store_batch_size = session.store_batch_size as isize;
+        self.resource_group_name = session.resource_group_name;
+        self.store_busy_threshold_ns =
+            (session.store_busy_threshold_ms as i64).wrapping_mul(1_000_000);
+        self.tikv_client_read_timeout_ms = session.tikv_client_read_timeout_ms;
+        self.max_execution_time_ms = session.max_execution_time_ms;
+        self.max_keys_read = session.max_keys_read;
+        self.max_keys_read_counter = session.max_keys_read_counter;
+    }
+}
+
+impl Deref for KvRequestMetadata {
+    type Target = tidb_txnkv::Request;
+
+    fn deref(&self) -> &Self::Target {
+        &self.request
+    }
+}
+
+impl DerefMut for KvRequestMetadata {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.request
+    }
+}
+
+impl std::fmt::Debug for KvRequestMetadata {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("KvRequestMetadata")
+            .field("request_type", &self.request_type)
+            .field("start_ts", &self.start_ts)
+            .field(
+                "range_count",
+                &self
+                    .key_ranges
+                    .as_ref()
+                    .map(RequestKeyRanges::total_range_count),
+            )
+            .field("store_type", &self.store_type)
+            .field("connection_id", &self.connection_id)
+            .finish_non_exhaustive()
     }
 }

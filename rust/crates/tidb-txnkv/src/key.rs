@@ -15,6 +15,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::ops::Deref;
 
 /// An owned TiDB KV key ordered lexicographically by unsigned bytes.
 ///
@@ -33,6 +34,19 @@ impl Key {
     /// Returns the raw key bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Returns the raw key bytes using the standard slice accessor name.
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Returns the owned allocation capacity.
+    ///
+    /// Go's package contract exposes capacity indirectly through
+    /// `KeyRangeSliceMemUsage`, so the Rust owner must retain it too.
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
     }
 
     /// Consumes the key and returns its owned bytes.
@@ -87,15 +101,53 @@ impl AsRef<[u8]> for Key {
     }
 }
 
+impl Deref for Key {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_bytes()
+    }
+}
+
 impl From<Vec<u8>> for Key {
     fn from(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
 }
 
+impl From<Key> for Vec<u8> {
+    fn from(key: Key) -> Self {
+        key.into_bytes()
+    }
+}
+
 impl From<&[u8]> for Key {
     fn from(bytes: &[u8]) -> Self {
         Self(bytes.to_vec())
+    }
+}
+
+impl PartialEq<Vec<u8>> for Key {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        self.as_bytes() == other.as_slice()
+    }
+}
+
+impl PartialEq<&[u8]> for Key {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.as_bytes() == *other
+    }
+}
+
+impl<const N: usize> PartialEq<[u8; N]> for Key {
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.as_bytes() == other
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for Key {
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.as_bytes() == other.as_slice()
     }
 }
 
@@ -150,6 +202,44 @@ impl KeyRange {
 
         false
     }
+}
+
+/// One key/value entry.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Entry {
+    /// Entry key.
+    pub key: Key,
+    /// Entry value.
+    pub value: Vec<u8>,
+}
+
+impl Entry {
+    /// Creates one owned key/value entry.
+    #[must_use]
+    pub fn new(key: Key, value: impl Into<Vec<u8>>) -> Self {
+        Self {
+            key,
+            value: value.into(),
+        }
+    }
+}
+
+/// Returns the source-shaped memory usage of a key-range slice.
+///
+/// On the supported 64-bit TiDB targets a Go `KeyRange` is two slice headers,
+/// or 48 bytes. Rust's `Vec<KeyRange>` owns the same number of initialized
+/// elements but does not expose spare elements, so callers pass the slice
+/// capacity explicitly when it differs from its length.
+#[must_use]
+pub fn key_range_slice_mem_usage(ranges: &[KeyRange], capacity: usize) -> i64 {
+    const GO_KEY_RANGE_SIZE: usize = 48;
+    let allocation = GO_KEY_RANGE_SIZE.saturating_mul(capacity);
+    let key_bytes = ranges.iter().fold(0_usize, |total, range| {
+        total
+            .saturating_add(range.start_key.capacity())
+            .saturating_add(range.end_key.capacity())
+    });
+    i64::try_from(allocation.saturating_add(key_bytes)).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]

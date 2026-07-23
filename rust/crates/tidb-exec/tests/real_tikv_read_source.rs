@@ -119,7 +119,7 @@ impl QueryTransport for ScriptedTransport {
             .as_ref()
             .expect("read request carries table ranges");
         assert!(ranges.is_non_partitioned());
-        let [ranges] = ranges.partitions.as_slice() else {
+        let [ranges] = ranges.partitions() else {
             panic!("one non-partitioned range group");
         };
 
@@ -340,11 +340,15 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     assert_eq!(
         request.ranges,
         [RequestKeyRange {
-            start_key: vec![b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0, 0, 0, 0, 0, 0, 0, 0,],
+            start_key: vec![
+                b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0, 0, 0, 0, 0, 0, 0, 0,
+            ]
+            .into(),
             end_key: vec![
                 b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 0xff, 0xff, 0,
-            ],
+            ]
+            .into(),
         }]
     );
     let dag = DagRequest::decode(request.data.as_slice()).expect("request data is a TiDB DAG");

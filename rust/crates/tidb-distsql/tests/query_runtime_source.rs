@@ -65,7 +65,7 @@ impl QueryTransport for ScriptedTransport {
         self.dispatches.push(dispatch.clone());
         self.request_was_bound = request.is_bound();
         self.request_sources
-            .push(request.metadata().session.request_source.clone());
+            .push(request.metadata().request_source.clone());
         self.responses
             .pop_front()
             .expect("one scripted result per send")

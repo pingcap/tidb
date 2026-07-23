@@ -57,7 +57,7 @@ pub use chunk_decode::{
     RawChunkRow, RawColumnarChunk, TypedColumnarChunk,
 };
 pub use context::{
-    DistSqlContext, PagingConfig, Priority, ReplicaReadType, RequestContext, SessionContext,
+    DistSqlContext, PagingConfig, Priority, RequestContext, SessionContext,
     DEFAULT_DIST_SQL_CONCURRENCY,
 };
 pub use cop_paging::{
@@ -87,8 +87,8 @@ pub use distsql_runtime::{
 pub use envelope::{ExecutorKind, ExecutorShape, RequestEnvelope, ESTIMATED_REGION_ROW_COUNT};
 pub use execution::{CancelHandle, CpuUsage, ExecutionState, KillHandle, KvVariables};
 pub use kv_request::{
-    KvRequestMetadata, PartitionIdAndRanges, RequestKeyRange, RequestKeyRanges,
-    RequestTransportState, RequestType, StoreLabel, StoreType, DC_LABEL_KEY, GLOBAL_REPLICA_SCOPE,
+    KvRequestMetadata, PartitionIdAndRanges, RequestKeyRange, RequestKeyRanges, DC_LABEL_KEY,
+    GLOBAL_REPLICA_SCOPE,
 };
 pub use paging::{
     calculate_seek_count, grow_paging_size, MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE,
@@ -104,9 +104,7 @@ pub use region_task::{
     RegionTaskEnvelope, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     VersionedRegionKeyRange,
 };
-pub use request::{
-    IsolationLevel, KvPriority, ReadRequestBuilder, ReadRequestMetadata, RequestSource,
-};
+pub use request::{ReadRequestBuilder, ReadRequestMetadata};
 pub use request_builder::{
     build_table_ranges, index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange,
     KvRequestBuildError, KvRequestBuilder, RequestBuilder, TableIndexRangeSpec, TableRangeSpec,
@@ -126,7 +124,10 @@ pub use stream_decode::{decode_stream_response, RawStreamResponse};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
 pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSource};
 pub use tidb_txnkv::region;
-pub use tidb_txnkv::UnaryCallContext;
+pub use tidb_txnkv::{
+    IsolationLevel, Priority as KvPriority, ReplicaReadType, RequestSource, RequestType,
+    StoreLabel, StoreType, UnaryCallContext,
+};
 pub use tiflash_replica_read::{
     TiFlashReplicaRead, ALL_REPLICAS, CLOSEST_ADAPTIVE, CLOSEST_REPLICAS,
     MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,

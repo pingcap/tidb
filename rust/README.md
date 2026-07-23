@@ -31,7 +31,7 @@ but does not replace reading or translating the source.
 | `crates/tidb-parser` | recursive-descent grammar | `pkg/parser/**_parser.go` |
 | `crates/tidb-datatype` | SQL scalar representation, charset, and collation | `pkg/parser/charset`, `pkg/util/collate`, `pkg/types/**`, later extracted TiKV query datatypes |
 | `crates/tidb-codec` | byte-compatible comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
-| `crates/tidb-txnkv` | source-backed KV key/range/version foundation; future TiKV transaction client | `pkg/kv/**`, then client-go transaction protocols |
+| `crates/tidb-txnkv` | complete KV contracts plus real PD/TiKV transaction runtime | `pkg/kv/**` and the required client-go transaction protocols |
 | `crates/tidb-tablecodec` | table row/index formats above codecs and canonical KV handles | `pkg/tablecodec` |
 | `crates/tidb-expr` | expression construction/evaluation | `pkg/expression/**` |
 | `crates/tidb-exec` | seed session/catalog executor | `pkg/session/**`, `pkg/executor/**` |
@@ -39,16 +39,16 @@ but does not replace reading or translating the source.
 | `difftests/parser-tests` | parser differential tests | lexer/parser/static Go oracle only |
 | `difftests/planner-tests` | plan-ring source translations | source-backed planner primitive tests |
 | `difftests/result-tests` | result-ring tests | expression, query, and table result parity |
-| `difftests/transaction-tests` | transaction-ring source translations | `pkg/kv/**`, later real-TiKV/failure-injection evidence |
+| `difftests/transaction-tests` | transaction differential and live-cluster proofs | `pkg/kv/**`, RealTiKV, retry, lock, and fault-injection behavior |
 
 The seed executor and evaluator are migration scaffolding, not a parity claim.
-`tidb-txnkv` currently delivers key/range/version plus source-backed
-`Int`/`Common`/`Partition` handles and a portable handle map. `tidb-codec`
-provides their real comparable key encoding dependency. `tidb-tablecodec`
-then combines those foundations without redefining handle ownership. The
-dependency-leaf table-key framing remains in `tidb-codec` because transaction
-diagnostics also decode those keys. Neither foundation crate yet contains RPC,
-MVCC, locks, retries, or commit protocols.
+`tidb-txnkv` owns the Rust `pkg/kv` contracts and the existing PD/TiKV region,
+RPC, MVCC, lock, retry, and optimistic-commit runtime. `tidb-codec` provides
+comparable key encoding, and `tidb-tablecodec` combines those foundations
+without redefining handle ownership. The dependency-leaf table-key framing
+remains in `tidb-codec` because transaction diagnostics also decode those keys.
+The package is accepted only after its complete source, tests, benchmarks,
+support files, direct consumers, and live TiKV checks pass together.
 Unsupported behavior must fail before mutation. It must not be approximated
 with a locally convenient rule just to make a golden pass.
 

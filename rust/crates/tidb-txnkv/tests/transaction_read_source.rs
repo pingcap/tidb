@@ -24,8 +24,8 @@ use tidb_txnkv::driver::read::{
     TransactionSnapshot,
 };
 use tidb_txnkv::{
-    BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, Getter, Key, KvIterator,
-    ValueEntry,
+    BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key,
+    KvIterator, ValueEntry,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -115,7 +115,7 @@ impl Default for MockBuffer {
 impl Getter for MockBuffer {
     type Error = ReadError;
 
-    fn get(&mut self, key: &Key, _options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.values
             .get(key)
             .cloned()
@@ -203,7 +203,7 @@ impl MockSnapshot {
 impl Getter for MockSnapshot {
     type Error = ReadError;
 
-    fn get(&mut self, key: &Key, options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.values
             .get(key)
             .cloned()
@@ -232,7 +232,7 @@ impl BatchGetter for MockSnapshot {
         Ok(keys
             .iter()
             .filter_map(|key| {
-                self.get(key, options)
+                self.get(key, options.into())
                     .ok()
                     .map(|value| (key.clone(), value))
             })
@@ -275,7 +275,7 @@ impl SnapshotInterceptor<MockSnapshot> for MockInterceptor {
         &mut self,
         snapshot: &mut MockSnapshot,
         key: &Key,
-        options: BatchGetOptions,
+        options: GetOptions,
     ) -> Result<ValueEntry, ReadError> {
         if self.fail {
             Err(ReadError::Intercepted)
@@ -394,56 +394,56 @@ fn test_txn_get() {
     let mut txn = transaction(&[("k1", "v1")]);
 
     assert_eq!(
-        txn.get(&k("k1"), BatchGetOptions::default()),
+        txn.get(&k("k1"), GetOptions::default()),
         Ok(ValueEntry::new(b"v1".as_slice(), 0))
     );
     let entry = txn
-        .get(&k("k1"), BatchGetOptions::with_return_commit_ts())
+        .get(&k("k1"), GetOptions::with_return_commit_ts())
         .unwrap();
     assert_eq!(entry.value, b"v1");
     assert_valid_commit_ts(entry.commit_ts);
 
     txn.set(k("k1"), b"v1+".to_vec()).unwrap();
     assert_eq!(
-        txn.get(&k("k1"), BatchGetOptions::default()),
+        txn.get(&k("k1"), GetOptions::default()),
         Ok(ValueEntry::new(b"v1+".as_slice(), 0))
     );
     assert_eq!(
-        txn.get(&k("k1"), BatchGetOptions::with_return_commit_ts()),
+        txn.get(&k("k1"), GetOptions::with_return_commit_ts()),
         Ok(ValueEntry::new(b"v1+".as_slice(), 0))
     );
 
     txn.set(k("k2"), b"v2+".to_vec()).unwrap();
     assert_eq!(
-        txn.get(&k("k2"), BatchGetOptions::default()),
+        txn.get(&k("k2"), GetOptions::default()),
         Ok(ValueEntry::new(b"v2+".as_slice(), 0))
     );
 
     txn.delete(k("k1")).unwrap();
     assert_eq!(
-        txn.get(&k("k1"), BatchGetOptions::default()),
+        txn.get(&k("k1"), GetOptions::default()),
         Err(ReadError::NotFound)
     );
     assert_eq!(
-        txn.get(&k("kn"), BatchGetOptions::default()),
+        txn.get(&k("kn"), GetOptions::default()),
         Err(ReadError::NotFound)
     );
     assert_eq!(
-        txn.get(&k("k1"), BatchGetOptions::with_return_commit_ts()),
+        txn.get(&k("k1"), GetOptions::with_return_commit_ts()),
         Err(ReadError::NotFound)
     );
 
     let mut txn = txn.with_snapshot_interceptor(MockInterceptor { fail: true });
     assert_eq!(
-        txn.get(&k("k1"), BatchGetOptions::default()),
+        txn.get(&k("k1"), GetOptions::default()),
         Err(ReadError::NotFound)
     );
     assert_eq!(
-        txn.get(&k("k2"), BatchGetOptions::default()),
+        txn.get(&k("k2"), GetOptions::default()),
         Ok(ValueEntry::new(b"v2+".as_slice(), 0))
     );
     assert_eq!(
-        txn.get(&k("kn"), BatchGetOptions::default()),
+        txn.get(&k("kn"), GetOptions::default()),
         Err(ReadError::Intercepted)
     );
 }
@@ -452,7 +452,7 @@ fn test_txn_get() {
 fn test_txn_batch_get() {
     let mut txn = transaction(&[("k1", "v1"), ("k2", "v2"), ("k3", "v3"), ("k4", "v4")]);
     let commit_ts = txn
-        .get(&k("k1"), BatchGetOptions::with_return_commit_ts())
+        .get(&k("k1"), GetOptions::with_return_commit_ts())
         .unwrap()
         .commit_ts;
     assert_valid_commit_ts(commit_ts);
@@ -593,11 +593,11 @@ fn snapshot_interceptor_installs_late_and_replaces_in_place() {
 
     let mut txn = txn.with_snapshot_interceptor(MockInterceptor { fail: true });
     assert_eq!(
-        txn.get(&k("snapshot"), BatchGetOptions::default()),
+        txn.get(&k("snapshot"), GetOptions::default()),
         Err(ReadError::Intercepted)
     );
     assert_eq!(
-        txn.get(&k("dirty"), BatchGetOptions::default()),
+        txn.get(&k("dirty"), GetOptions::default()),
         Ok(ValueEntry::new(b"uncommitted".as_slice(), 0))
     );
 
@@ -606,7 +606,7 @@ fn snapshot_interceptor_installs_late_and_replaces_in_place() {
         .expect("the late interceptor must be replaced");
     assert!(previous.fail);
     assert_eq!(
-        txn.get(&k("snapshot"), BatchGetOptions::default()),
+        txn.get(&k("snapshot"), GetOptions::default()),
         Ok(ValueEntry::new(b"value".as_slice(), 0))
     );
 
@@ -615,7 +615,7 @@ fn snapshot_interceptor_installs_late_and_replaces_in_place() {
         .expect("the replacement interceptor must be cleared");
     assert!(!previous.fail);
     assert_eq!(
-        txn.get(&k("snapshot"), BatchGetOptions::default()),
+        txn.get(&k("snapshot"), GetOptions::default()),
         Ok(ValueEntry::new(b"value".as_slice(), 0))
     );
 }

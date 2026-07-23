@@ -197,8 +197,8 @@ impl RegionTaskEnvelope {
                 .ranges
                 .iter()
                 .map(|range| CoprocessorKeyRange {
-                    start: range.start_key.clone(),
-                    end: range.end_key.clone(),
+                    start: range.start_key.to_vec(),
+                    end: range.end_key.to_vec(),
                 })
                 .collect(),
             task_id: self.task_id,
@@ -207,8 +207,8 @@ impl RegionTaskEnvelope {
                 .iter()
                 .map(|range| CoprocessorVersionedKeyRange {
                     range: Some(CoprocessorKeyRange {
-                        start: range.range.start_key.clone(),
-                        end: range.range.end_key.clone(),
+                        start: range.range.start_key.to_vec(),
+                        end: range.range.end_key.to_vec(),
                     }),
                     read_ts: range.read_ts,
                 })
@@ -275,17 +275,17 @@ pub(crate) fn build_region_tasks(
     let key_ranges = metadata.key_ranges.as_ref()?;
     let mut original_ranges = Vec::new();
     let mut original_hints = Vec::new();
-    let hints_shape_valid = key_ranges.row_count_hints.len() == key_ranges.partitions.len()
+    let hints_shape_valid = key_ranges.row_count_hints().len() == key_ranges.partitions().len()
         && key_ranges
-            .partitions
+            .partitions()
             .iter()
-            .zip(&key_ranges.row_count_hints)
+            .zip(key_ranges.row_count_hints())
             .all(|(ranges, hints)| ranges.len() == hints.len());
-    for (partition_index, partition) in key_ranges.partitions.iter().enumerate() {
+    for (partition_index, partition) in key_ranges.partitions().iter().enumerate() {
         for (range_index, range) in partition.iter().enumerate() {
             original_ranges.push(to_txn_range(range));
             if hints_shape_valid {
-                original_hints.push(key_ranges.row_count_hints[partition_index][range_index]);
+                original_hints.push(key_ranges.row_count_hints()[partition_index][range_index]);
             }
         }
     }
@@ -314,18 +314,14 @@ pub(crate) fn build_region_tasks(
                 continue;
             }
             let request_ranges: Vec<_> = fragments.iter().map(to_request_range).collect();
-            let mut paging = metadata.session.paging.enabled;
-            let mut paging_size = if paging {
-                metadata.session.paging.min_size
-            } else {
-                0
-            };
+            let mut paging = metadata.paging.enabled;
+            let mut paging_size = if paging { metadata.paging.min_size } else { 0 };
             if paging && metadata.limit_size != 0 && metadata.limit_size < paging_size {
                 paging = false;
                 paging_size = 0;
             }
             let response_channel_capacity = if metadata.keep_order {
-                if metadata.session.paging.enabled || metadata.session.paging.size_bytes > 0 {
+                if metadata.paging.enabled || metadata.paging.size_bytes > 0 {
                     18
                 } else {
                     2
@@ -347,8 +343,10 @@ pub(crate) fn build_region_tasks(
                     row_count_hint(&fragments, &original_ranges, hints)
                 }),
                 response_channel_capacity,
-                store_busy_threshold_ms: metadata.session.store_busy_threshold_ms,
-                tikv_client_read_timeout_ms: metadata.session.tikv_client_read_timeout_ms,
+                store_busy_threshold_ms: u64::try_from(metadata.store_busy_threshold_ns)
+                    .unwrap_or(0)
+                    / 1_000_000,
+                tikv_client_read_timeout_ms: metadata.tikv_client_read_timeout_ms,
                 batch_task_list: Vec::new(),
                 store_batch_eligible: region.store_batch_eligible,
             });
@@ -358,8 +356,11 @@ pub(crate) fn build_region_tasks(
     if !all_ranges_covered(&sorted_ranges, &tasks) {
         return None;
     }
-    if metadata.session.store_batch_size > 0 && hints.is_some() {
-        tasks = batch_tasks(tasks, metadata.session.store_batch_size);
+    if metadata.store_batch_size > 0 && hints.is_some() {
+        tasks = batch_tasks(
+            tasks,
+            u64::try_from(metadata.store_batch_size).unwrap_or(u64::MAX),
+        );
     }
     // Go batches while visiting regions in ascending key order, then reverses
     // only the resulting parent task list for descending scans. Children stay
@@ -437,25 +438,19 @@ fn normalized_bucket_ranges(region: &RegionTaskTopology) -> Option<Vec<RequestKe
     Some(
         keys.windows(2)
             .map(|pair| RequestKeyRange {
-                start_key: pair[0].clone(),
-                end_key: pair[1].clone(),
+                start_key: pair[0].clone().into(),
+                end_key: pair[1].clone().into(),
             })
             .collect(),
     )
 }
 
 fn to_txn_range(range: &RequestKeyRange) -> KeyRange {
-    KeyRange::new(
-        Key::from_bytes(range.start_key.clone()),
-        Key::from_bytes(range.end_key.clone()),
-    )
+    range.clone()
 }
 
 fn to_request_range(range: &KeyRange) -> RequestKeyRange {
-    RequestKeyRange {
-        start_key: range.start_key.as_bytes().to_vec(),
-        end_key: range.end_key.as_bytes().to_vec(),
-    }
+    range.clone()
 }
 
 fn intersect_range(range: &KeyRange, bucket: &RequestKeyRange) -> Option<KeyRange> {
@@ -511,20 +506,20 @@ fn row_count_hint(fragments: &[KeyRange], originals: &[KeyRange], hints: &[usize
 fn all_ranges_covered(ranges: &[KeyRange], tasks: &[RegionTaskEnvelope]) -> bool {
     ranges.iter().all(|range| {
         if range.start_key == range.end_key {
-            return tasks.iter().flat_map(|task| &task.ranges).any(|part| {
-                part.start_key == range.start_key.as_bytes()
-                    && part.end_key == range.end_key.as_bytes()
-            });
+            return tasks
+                .iter()
+                .flat_map(|task| &task.ranges)
+                .any(|part| part.start_key == range.start_key && part.end_key == range.end_key);
         }
         let mut cursor = range.start_key.as_bytes().to_vec();
         for part in tasks.iter().flat_map(|task| &task.ranges) {
             if part.end_key.as_slice() <= cursor.as_slice() && !part.end_key.is_empty() {
                 continue;
             }
-            if part.start_key != cursor {
+            if part.start_key.as_slice() != cursor {
                 continue;
             }
-            cursor.clone_from(&part.end_key);
+            cursor.clone_from(&part.end_key.to_vec());
             if cursor == range.end_key.as_bytes() {
                 return true;
             }

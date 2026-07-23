@@ -169,13 +169,13 @@ fn execute_live_empty_query(
     runtime: &mut InjectedQueryRuntime<DirectUnaryQueryTransport<RecordingClient, PdRegionLoader>>,
     source: &str,
 ) {
-    let mut metadata = KvRequestMetadata {
+    let mut metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(TABLE_SCAN_DAG.to_vec()),
         key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
             RequestKeyRange {
-                start_key: TABLE_START.to_vec(),
-                end_key: TABLE_END.to_vec(),
+                start_key: TABLE_START.to_vec().into(),
+                end_key: TABLE_END.to_vec().into(),
             },
         ])),
         keep_order: true,
@@ -183,10 +183,10 @@ fn execute_live_empty_query(
         start_ts: 1,
         read_replica_scope: "global".to_owned(),
         txn_scope: "global".to_owned(),
-        ..KvRequestMetadata::default()
-    };
-    metadata.session.replica_read = ReplicaReadType::Leader;
-    metadata.session.request_source.explicit_source_type = source.to_owned();
+        ..tidb_txnkv::Request::default()
+    });
+    metadata.replica_read = ReplicaReadType::Leader;
+    metadata.request_source.explicit_source_type = source.to_owned();
     let request = TransportRequest::new(
         metadata,
         std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
@@ -271,13 +271,13 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     )
     .expect("construct production direct unary transport");
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let mut metadata = KvRequestMetadata {
+    let mut metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(TABLE_SCAN_DAG.to_vec()),
         key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
             RequestKeyRange {
-                start_key: TABLE_START.to_vec(),
-                end_key: TABLE_END.to_vec(),
+                start_key: TABLE_START.to_vec().into(),
+                end_key: TABLE_END.to_vec().into(),
             },
         ])),
         keep_order: true,
@@ -285,10 +285,10 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
         start_ts: 1,
         read_replica_scope: "global".to_owned(),
         txn_scope: "global".to_owned(),
-        ..KvRequestMetadata::default()
-    };
-    metadata.session.replica_read = ReplicaReadType::Follower;
-    metadata.session.request_source.explicit_source_type = "campaign13".to_owned();
+        ..tidb_txnkv::Request::default()
+    });
+    metadata.replica_read = ReplicaReadType::Follower;
+    metadata.request_source.explicit_source_type = "realtikv_replica_read".to_owned();
     let request = TransportRequest::new(
         metadata,
         std::sync::Arc::new(tidb_distsql::CancelHandle::default()),

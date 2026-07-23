@@ -325,8 +325,8 @@ impl CopPagingState {
                 .to_ranges()
                 .into_iter()
                 .map(|range| crate::RequestKeyRange {
-                    start_key: range.start_key.as_bytes().to_vec(),
-                    end_key: range.end_key.as_bytes().to_vec(),
+                    start_key: range.start_key,
+                    end_key: range.end_key,
                 })
                 .collect(),
             next_paging_size: self.paging_size,
@@ -347,8 +347,8 @@ impl CopPagingState {
                 .to_ranges()
                 .into_iter()
                 .map(|range| crate::RequestKeyRange {
-                    start_key: range.start_key.as_bytes().to_vec(),
-                    end_key: range.end_key.as_bytes().to_vec(),
+                    start_key: range.start_key,
+                    end_key: range.end_key,
                 })
                 .collect(),
             next_paging_size: self.paging_size,

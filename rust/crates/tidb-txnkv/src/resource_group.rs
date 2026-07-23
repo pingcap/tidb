@@ -14,22 +14,39 @@
 
 //! Resource-group request-tag encoding from `pkg/kv/kv.go`.
 //!
-//! The builder owns only the dependency-closed protobuf/tag boundary. Request
-//! extraction (the `tikvrpc.Request` sum type) belongs to the future protocol
-//! client, and table-ID decoding is deliberately explicit: the current codec
-//! can classify row/index prefixes but does not yet expose the Go
-//! `decodeTableID` hook.
+//! Request extraction is expressed through a small request trait and table-ID
+//! decoding retains Go's replaceable hook, avoiding a `tablecodec -> kv`
+//! dependency cycle.
 
 use prost::Message;
+use std::sync::{Arc, LazyLock, RwLock};
 use tidb_codec::{decode_table_id, get_key_kind, KeyKind};
 use tidb_proto::{ResourceGroupTag, ResourceGroupTagLabel};
+
+type DecodeTableId = dyn Fn(&[u8]) -> i64 + Send + Sync;
+
+static DECODE_TABLE_ID: LazyLock<RwLock<Arc<DecodeTableId>>> =
+    LazyLock::new(|| RwLock::new(Arc::new(decode_table_id)));
+
+/// Replaces the process-wide table-ID decoder used to avoid an import cycle.
+pub fn set_decode_table_id(decoder: impl Fn(&[u8]) -> i64 + Send + Sync + 'static) {
+    *DECODE_TABLE_ID
+        .write()
+        .expect("table-id decoder lock poisoned") = Arc::new(decoder);
+}
+
+/// Request operations consumed by the resource-group tagger.
+pub trait ResourceGroupTaggedRequest {
+    /// Returns the first request key, if the request carries one.
+    fn first_key(&self) -> Option<&[u8]>;
+    /// Replaces the encoded resource-group tag.
+    fn set_resource_group_tag(&mut self, tag: Vec<u8>);
+}
 
 /// Builds the wire-compatible `tipb.ResourceGroupTag` carried by a KV request.
 ///
 /// `table_id` is always present on the wire, including the default zero, which
-/// matches the Go protobuf's non-nullable field. Legacy table keys infer their
-/// ID through `tidb_codec::decode_table_id`; API-V2 keyspace-prefix decoding is
-/// an explicit future codec boundary and therefore falls back to zero.
+/// matches the Go protobuf's non-nullable field.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResourceGroupTagBuilder {
     sql_digest: Option<Vec<u8>>,
@@ -83,7 +100,9 @@ impl ResourceGroupTagBuilder {
         let table_id = if key.is_empty() {
             self.table_id
         } else {
-            decode_table_id(key)
+            DECODE_TABLE_ID
+                .read()
+                .expect("table-id decoder lock poisoned")(key)
         };
         ResourceGroupTag {
             sql_digest: self.sql_digest.clone(),
@@ -93,6 +112,18 @@ impl ResourceGroupTagBuilder {
             keyspace_name: self.keyspace_name.clone(),
         }
         .encode_to_vec()
+    }
+
+    /// Builds and attaches a tag to a request.
+    pub fn build<R: ResourceGroupTaggedRequest + ?Sized>(&self, request: Option<&mut R>) {
+        let Some(request) = request else {
+            return;
+        };
+        let key = request.first_key().unwrap_or_default();
+        let encoded = self.encode_tag_with_key(key);
+        if !encoded.is_empty() {
+            request.set_resource_group_tag(encoded);
+        }
     }
 }
 

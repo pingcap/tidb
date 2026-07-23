@@ -378,30 +378,26 @@ impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
 
 fn range(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {
-        start_key: start.as_bytes().to_vec(),
-        end_key: end.as_bytes().to_vec(),
+        start_key: start.as_bytes().to_vec().into(),
+        end_key: end.as_bytes().to_vec().into(),
     }
 }
 
 fn metadata(start: &str, end: &str) -> KvRequestMetadata {
-    let mut metadata = KvRequestMetadata {
-        request_type: RequestType::Dag,
-        data: Some(b"dag-read".to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![range(
-            start, end,
-        )])),
-        keep_order: true,
-        store_type: StoreType::TiKv,
-        start_ts: 42,
-        read_replica_scope: "global".to_owned(),
-        txn_scope: "global".to_owned(),
-        ..KvRequestMetadata::default()
-    };
-    metadata.session.tikv_client_read_timeout_ms = 777;
-    metadata.session.task_id = 29;
-    metadata.session.request_source.internal = true;
-    metadata.session.request_source.source_type = "ddl".to_owned();
-    metadata.session.not_fill_cache = true;
+    let mut metadata = KvRequestMetadata::default();
+    metadata.request_type = RequestType::Dag;
+    metadata.data = Some(b"dag-read".to_vec());
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range(start, end)]));
+    metadata.keep_order = true;
+    metadata.store_type = StoreType::TiKv;
+    metadata.start_ts = 42;
+    metadata.read_replica_scope = "global".to_owned();
+    metadata.txn_scope = "global".to_owned();
+    metadata.tikv_client_read_timeout_ms = 777;
+    metadata.task_id = 29;
+    metadata.request_source.internal = true;
+    metadata.request_source.source_type = "ddl".to_owned();
+    metadata.not_fill_cache = true;
     metadata
 }
 
@@ -915,7 +911,7 @@ fn production_metadata_drives_supported_replica_policies_and_exact_request_flags
     ] {
         let calls = Rc::new(RefCell::new(Vec::new()));
         let mut metadata = metadata("a", "z");
-        metadata.session.replica_read = case.source;
+        metadata.replica_read = case.source;
         let mut runtime = InjectedQueryRuntime::new(transport(
             Rc::clone(&calls),
             [Ok(response(b"ok"))],
@@ -948,12 +944,12 @@ fn labels_and_load_inputs_are_consumed_by_the_live_selector() {
             });
         },
         |metadata: &mut KvRequestMetadata| {
-            metadata.session.store_busy_threshold_ms = 1;
+            metadata.store_busy_threshold_ns = 1_000_000;
         },
     ];
     for configure in configurations {
         let mut metadata = metadata("a", "z");
-        metadata.session.replica_read = ReplicaReadType::Mixed;
+        metadata.replica_read = ReplicaReadType::Mixed;
         configure(&mut metadata);
         let calls = Rc::new(RefCell::new(Vec::new()));
         let mut runtime = InjectedQueryRuntime::new(transport(
@@ -980,7 +976,7 @@ fn labels_and_load_inputs_are_consumed_by_the_live_selector() {
 fn fresh_queries_advance_the_transport_seed_once_each() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
-    request_metadata.session.replica_read = ReplicaReadType::Mixed;
+    request_metadata.replica_read = ReplicaReadType::Mixed;
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
         [
@@ -1019,7 +1015,7 @@ fn fresh_queries_advance_the_transport_seed_once_each() {
 fn logical_tasks_in_one_query_share_the_bound_seed() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
-    request_metadata.session.replica_read = ReplicaReadType::Mixed;
+    request_metadata.replica_read = ReplicaReadType::Mixed;
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
         [Ok(response(b"left")), Ok(response(b"right"))],
@@ -1049,7 +1045,7 @@ fn logical_tasks_in_one_query_share_the_bound_seed() {
 fn region_reload_reuses_the_bound_query_seed() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
-    request_metadata.session.replica_read = ReplicaReadType::Mixed;
+    request_metadata.replica_read = ReplicaReadType::Mixed;
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
         [Ok(region_not_found(1)), Ok(response(b"fresh"))],
@@ -1096,7 +1092,7 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
         },
     );
     let mut request_metadata = metadata("a", "z");
-    request_metadata.session.replica_read = ReplicaReadType::Leader;
+    request_metadata.replica_read = ReplicaReadType::Leader;
     request_metadata.is_staleness = true;
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
@@ -1128,7 +1124,7 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
 fn stale_data_not_ready_then_known_leader_retries_one_selector_and_publishes_once() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
-    request_metadata.session.replica_read = ReplicaReadType::Leader;
+    request_metadata.replica_read = ReplicaReadType::Leader;
     request_metadata.is_staleness = true;
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
@@ -1458,7 +1454,7 @@ fn retry_wait_never_crosses_the_bind_anchored_deadline() {
         },
     );
     let mut request_metadata = metadata("a", "z");
-    request_metadata.session.tikv_client_read_timeout_ms = 50;
+    request_metadata.tikv_client_read_timeout_ms = 50;
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
@@ -1484,7 +1480,7 @@ fn elapsed_deadline_blocks_zero_wait_dispatch_and_cancellation_wins() {
         let retry_control = Rc::new(RecordingRetryControl::default());
         let execution = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
         let mut request_metadata = metadata("a", "z");
-        request_metadata.session.tikv_client_read_timeout_ms = 1;
+        request_metadata.tikv_client_read_timeout_ms = 1;
         let request = TransportRequest::new(request_metadata, std::sync::Arc::clone(&execution));
         let transport = transport_with_loader_calls_and_config(
             Rc::clone(&calls),
@@ -1681,9 +1677,9 @@ fn only_successful_paging_creates_a_continuation_attempt() {
     }
     .encode_to_vec();
     let mut metadata = metadata("a", "z");
-    metadata.session.paging.enabled = true;
-    metadata.session.paging.min_size = 2;
-    metadata.session.paging.max_size = 8;
+    metadata.paging.enabled = true;
+    metadata.paging.min_size = 2;
+    metadata.paging.max_size = 8;
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
         [Ok(first), Ok(response(b"page-two"))],
@@ -1719,9 +1715,9 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
     }
     .encode_to_vec();
     let mut metadata = metadata("a", "z");
-    metadata.session.paging.enabled = true;
-    metadata.session.paging.min_size = 2;
-    metadata.session.paging.max_size = 8;
+    metadata.paging.enabled = true;
+    metadata.paging.min_size = 2;
+    metadata.paging.max_size = 8;
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
         [Ok(first), Ok(response(b"page-two"))],
@@ -2625,7 +2621,7 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
         },
     ));
     let mut request_metadata = metadata("a", "z");
-    request_metadata.session.tikv_client_read_timeout_ms = 60_000;
+    request_metadata.tikv_client_read_timeout_ms = 60_000;
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
     assert_eq!(
@@ -2933,7 +2929,7 @@ fn closest_replica_policy_with_labels_reaches_the_live_selector() {
         Rc::clone(&loader_calls),
     ));
     let mut closest_with_labels = metadata("a", "z");
-    closest_with_labels.session.replica_read = tidb_distsql::ReplicaReadType::Closest;
+    closest_with_labels.replica_read = tidb_distsql::ReplicaReadType::Closest;
     closest_with_labels
         .match_store_labels
         .push(tidb_distsql::StoreLabel {

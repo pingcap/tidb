@@ -417,7 +417,7 @@ impl CopReadTaskRuntime {
                     paging: CopPagingState::new_with_shared_ema(
                         task,
                         metadata.desc,
-                        metadata.session.paging.max_size,
+                        metadata.paging.max_size,
                         generation,
                         ema.clone(),
                     ),
@@ -548,8 +548,7 @@ impl CopReadTaskRuntime {
                     region_id: prepared.task.region_id,
                     process_time_nanos,
                     paging_task_index: prepared.page_index,
-                    paging_enabled: prepared.task.paging
-                        || self.metadata.session.paging.size_bytes > 0,
+                    paging_enabled: prepared.task.paging || self.metadata.paging.size_bytes > 0,
                 },
             )?)
         } else if response.is_cache_hit {
@@ -738,7 +737,7 @@ impl CopReadTaskRuntime {
             let paging = CopPagingState::new_with_shared_ema(
                 &task,
                 self.metadata.desc,
-                self.metadata.session.paging.max_size,
+                self.metadata.paging.max_size,
                 self.tasks[failed.logical_task_index].paging.generation(),
                 self.ema.clone(),
             );
@@ -833,7 +832,7 @@ impl CopReadTaskRuntime {
         task.paging_size = paging_size;
         let page_index = allocate_paging_task_index(
             &mut self.next_paging_task_index,
-            task.paging || self.metadata.session.paging.size_bytes > 0,
+            task.paging || self.metadata.paging.size_bytes > 0,
         );
         let mut request = CoprocessorRequestEnvelope::from_metadata(&self.metadata, ranges)
             .with_paging_size(paging_size);
@@ -904,7 +903,7 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if metadata.batch_cop {
         return Err(CopReadTaskError::BatchCoprocessor);
     }
-    if metadata.session.store_batch_size > 0 {
+    if metadata.store_batch_size > 0 {
         return Err(CopReadTaskError::StoreBatching);
     }
     if !metadata.keep_order {
@@ -913,18 +912,18 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if !metadata.partition_id_and_ranges.is_empty() {
         return Err(CopReadTaskError::PartitionedRanges);
     }
-    if metadata.session.max_keys_read > 0 || metadata.session.max_keys_read_counter.is_some() {
+    if metadata.max_keys_read > 0 || metadata.max_keys_read_counter.is_some() {
         return Err(CopReadTaskError::MaxKeysRead);
     }
     let ranges = metadata
         .key_ranges
         .as_ref()
         .ok_or(CopReadTaskError::MissingRanges)?;
-    if ranges.partitioned || ranges.partitions.len() != 1 {
+    if ranges.is_partitioned() || ranges.partitions().len() != 1 {
         return Err(CopReadTaskError::PartitionedRanges);
     }
     let ranges = ranges
-        .partitions
+        .partitions()
         .first()
         .ok_or(CopReadTaskError::MissingRanges)?;
     if ranges.is_empty() {

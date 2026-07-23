@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use crate::batch_getter::{
-    batch_get_from_layers, BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, Getter,
-    ValueEntry,
+    batch_get_from_layers, BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter,
+    GetOptions, Getter, ValueEntry,
 };
 use crate::error::{KvError, ERR_NOT_EXIST};
 use crate::iteration::KvIterator;
@@ -107,7 +107,7 @@ where
         &mut self,
         snapshot: &mut S,
         key: &Key,
-        options: BatchGetOptions,
+        options: GetOptions,
     ) -> Result<ValueEntry, <S as Getter>::Error>;
 
     /// Replaces snapshot `BatchGet`.
@@ -149,7 +149,7 @@ where
         &mut self,
         snapshot: &mut S,
         key: &Key,
-        options: BatchGetOptions,
+        options: GetOptions,
     ) -> Result<ValueEntry, <S as Getter>::Error> {
         snapshot.get(key, options)
     }
@@ -333,7 +333,7 @@ where
     pub fn get(
         &mut self,
         key: &Key,
-        options: BatchGetOptions,
+        options: GetOptions,
     ) -> Result<ValueEntry, <B as Getter>::Error> {
         let value = match self.buffer.get(key, options) {
             Ok(value) => value,
@@ -412,7 +412,7 @@ where
     fn snapshot_get(
         &mut self,
         key: &Key,
-        options: BatchGetOptions,
+        options: GetOptions,
     ) -> Result<ValueEntry, <B as Getter>::Error> {
         match self.interceptor.as_mut() {
             Some(interceptor) => interceptor.on_get(&mut self.snapshot, key, options),
@@ -501,7 +501,7 @@ where
 {
     type Error = E;
 
-    fn get(&mut self, _key: &Key, _options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, _key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
         unreachable!("the transaction driver has no middle-cache layer")
     }
 }

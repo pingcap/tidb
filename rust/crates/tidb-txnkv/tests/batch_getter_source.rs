@@ -17,8 +17,8 @@
 use std::collections::HashMap;
 
 use tidb_txnkv::{
-    BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, BufferBatchGetter, Getter, Key,
-    ValueEntry,
+    BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, BufferBatchGetter, GetOptions,
+    Getter, Key, ValueEntry,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,7 +59,7 @@ impl MockStore {
 impl Getter for MockStore {
     type Error = TestError;
 
-    fn get(&mut self, key: &Key, options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, options: GetOptions) -> Result<ValueEntry, Self::Error> {
         let value = self.values.get(key).ok_or(TestError::NotFound)?;
         let commit_ts = if options.return_commit_ts {
             self.commit_ts_base + u64::from(key.as_bytes()[0])
@@ -80,7 +80,7 @@ impl BatchGetter for MockStore {
     ) -> Result<HashMap<Key, ValueEntry>, Self::Error> {
         let mut values = HashMap::new();
         for key in keys {
-            match Getter::get(self, key, options) {
+            match Getter::get(self, key, options.into()) {
                 Ok(value) => {
                     values.insert(key.clone(), value);
                 }

@@ -68,7 +68,7 @@ fn route_from_location(location: RegionLocation, cluster_id: u64) -> RealRoute {
                 role: leader.role.as_i32(),
                 is_witness: leader.is_witness,
             }),
-            request_source: "campaign28_transaction_rpc".to_owned(),
+            request_source: "realtikv_transaction_rpc".to_owned(),
             request_origin: KvrpcRequestOrigin::TiDb as i32,
             cluster_id,
             ..KvrpcContext::default()
@@ -89,7 +89,7 @@ fn assert_publication(
     assert_ne!(publication.batch_stream_generation(), 0);
     assert_eq!(publication.forwarded_host(), None);
     println!(
-        "campaign28_transaction_rpc command={command} tag={} request_id={} physical_address={} channel_version={} stream_generation={} region_id={} peer_id={} start_ts={} commit_ts={}",
+        "realtikv_transaction_rpc command={command} tag={} request_id={} physical_address={} channel_version={} stream_generation={} region_id={} peer_id={} start_ts={} commit_ts={}",
         publication.tag().field_number(),
         publication.request_id(),
         publication.physical_address(),
@@ -116,7 +116,7 @@ fn typed_transaction_commands_reach_real_tikv_and_leave_no_lock() {
         TonicCoprocessorClient::new().expect("construct sole process-owned TiKV transport");
 
     let start_ts = pd.get_timestamp().expect("allocate real prewrite TSO");
-    let committed_key = format!("c28-stage-a-committed-{start_ts}").into_bytes();
+    let committed_key = format!("transaction-rpc-committed-{start_ts}").into_bytes();
     let committed_value = b"real-batchcommands-value".to_vec();
     let committed_route = route_for_key(&mut loader, &committed_key, cluster_id);
     let prewrite = KvrpcPrewriteRequest {
@@ -229,7 +229,7 @@ fn typed_transaction_commands_reach_real_tikv_and_leave_no_lock() {
     assert_publication("Get", &publication, &committed_route, read_ts, commit_ts);
 
     let rollback_start_ts = pd.get_timestamp().expect("allocate rollback prewrite TSO");
-    let rolled_back_key = format!("c28-stage-a-rolled-back-{rollback_start_ts}").into_bytes();
+    let rolled_back_key = format!("transaction-rpc-rolled-back-{rollback_start_ts}").into_bytes();
     let rollback_route = route_for_key(&mut loader, &rolled_back_key, cluster_id);
     let prewrite = KvrpcPrewriteRequest {
         mutations: vec![KvrpcMutation {
@@ -346,6 +346,6 @@ fn typed_transaction_commands_reach_real_tikv_and_leave_no_lock() {
     drop(loader);
     pd.shutdown().expect("close sole PD worker owner");
     println!(
-        "campaign28_transaction_rpc status=passed cluster_id={cluster_id} start_ts={start_ts} commit_ts={commit_ts} rollback_start_ts={rollback_start_ts}"
+        "realtikv_transaction_rpc status=passed cluster_id={cluster_id} start_ts={start_ts} commit_ts={commit_ts} rollback_start_ts={rollback_start_ts}"
     );
 }

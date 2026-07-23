@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use prost::Message;
 use tidb_distsql::{
-    KvRequestBuilder, KvRequestMetadata, PagingConfig, ReadBytesEma, RegionTaskEnvelope,
+    KvRequestBuilder, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope,
     RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, StoreType,
     TransportBinding, TransportRequest,
 };
@@ -42,8 +42,8 @@ type RegionPagingCase<'a> = (&'a [&'a str], isize, &'a [KeyPair<'a>]);
 
 fn kr(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {
-        start_key: start.as_bytes().to_vec(),
-        end_key: end.as_bytes().to_vec(),
+        start_key: start.as_bytes().to_vec().into(),
+        end_key: end.as_bytes().to_vec().into(),
     }
 }
 
@@ -123,8 +123,8 @@ fn task_ranges(task: &RegionTaskEnvelope) -> Vec<(String, String)> {
         .iter()
         .map(|range| {
             (
-                String::from_utf8(range.start_key.clone()).unwrap(),
-                String::from_utf8(range.end_key.clone()).unwrap(),
+                String::from_utf8(range.start_key.to_vec()).unwrap(),
+                String::from_utf8(range.end_key.to_vec()).unwrap(),
             )
         })
         .collect()
@@ -455,10 +455,7 @@ fn rebuild_consumes_refreshed_topology_and_reverses_descending_tasks() {
 #[test]
 fn build_paging_tasks_preserves_minimum_page_size() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
-    metadata.session.paging = PagingConfig {
-        enabled: true,
-        ..PagingConfig::default()
-    };
+    metadata.paging.enabled = true;
     let tasks = transport_request(metadata)
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
@@ -470,20 +467,20 @@ fn build_paging_tasks_preserves_minimum_page_size() {
 #[test]
 fn task_build_does_not_mutate_or_cancel_request_state() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
-    metadata.session.paging.enabled = true;
-    metadata.session.max_execution_time_ms = 10_000;
+    metadata.paging.enabled = true;
+    metadata.max_execution_time_ms = 10_000;
     let request = transport_request(metadata.clone());
     let _ = request
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
-    assert_eq!(request.metadata().session.max_execution_time_ms, 10_000);
-    assert_eq!(request.metadata().session.paging, metadata.session.paging);
+    assert_eq!(request.metadata().max_execution_time_ms, 10_000);
+    assert_eq!(request.metadata().paging, metadata.paging);
 }
 
 #[test]
 fn small_limit_disables_row_paging_without_byte_prediction() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
-    metadata.session.paging.enabled = true;
+    metadata.paging.enabled = true;
     metadata.limit_size = 1;
     let tasks = transport_request(metadata)
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
@@ -499,7 +496,7 @@ fn small_limit_disables_row_paging_without_byte_prediction() {
 fn byte_paging_budget_enlarges_channel_and_survives_row_paging_downgrade() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
     metadata.keep_order = true;
-    metadata.session.paging.size_bytes = 4 * 1024 * 1024;
+    metadata.paging.size_bytes = 4 * 1024 * 1024;
     let tasks = transport_request(metadata.clone())
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
@@ -508,11 +505,11 @@ fn byte_paging_budget_enlarges_channel_and_survives_row_paging_downgrade() {
     assert_eq!(tasks[0].response_channel_capacity, 18);
     let ema = ReadBytesEma::new(4 * 1024 * 1024);
     assert_eq!(
-        tasks[0].predicted_read_bytes(metadata.session.paging.size_bytes, &ema),
+        tasks[0].predicted_read_bytes(metadata.paging.size_bytes, &ema),
         4 * 1024 * 1024
     );
 
-    metadata.session.paging.enabled = true;
+    metadata.paging.enabled = true;
     metadata.limit_size = 1;
     let request = transport_request(metadata);
     let tasks = request
@@ -521,11 +518,11 @@ fn byte_paging_budget_enlarges_channel_and_survives_row_paging_downgrade() {
     assert!(!tasks[0].paging);
     assert_eq!(tasks[0].response_channel_capacity, 18);
     assert_eq!(
-        request.metadata().session.paging.size_bytes,
+        request.metadata().paging.size_bytes,
         4 * 1024 * 1024
     );
     assert_eq!(
-        tasks[0].predicted_read_bytes(request.metadata().session.paging.size_bytes, &ema),
+        tasks[0].predicted_read_bytes(request.metadata().paging.size_bytes, &ema),
         4 * 1024 * 1024
     );
 }
@@ -638,8 +635,8 @@ fn store_batching_requires_a_leader_selected_peer() {
     )
     .metadata()
     .clone();
-    metadata.session.store_batch_size = 3;
-    metadata.session.store_busy_threshold_ms = 1_000;
+    metadata.store_batch_size = 3;
+    metadata.store_busy_threshold_ns = 1_000_000_000;
 
     let batched = transport_request(metadata.clone())
         .build_region_tasks(&topo)
@@ -675,7 +672,7 @@ fn store_batch_children_preserve_each_region_bucket_version_on_wire() {
     let mut metadata = request(&["a", "b", "o", "p", "y", "z"], Some(vec![1, 1, 1]))
         .metadata()
         .clone();
-    metadata.session.store_batch_size = 3;
+    metadata.store_batch_size = 3;
     let tasks = transport_request(metadata)
         .build_region_tasks(&topo)
         .unwrap();
@@ -697,7 +694,7 @@ fn store_batch_children_preserve_each_region_bucket_version_on_wire() {
     let mut metadata = request(&["a", "b", "o", "p", "y", "z"], Some(vec![1, 40, 1]))
         .metadata()
         .clone();
-    metadata.session.store_batch_size = 3;
+    metadata.store_batch_size = 3;
     metadata.desc = true;
     let tasks = transport_request(metadata)
         .build_region_tasks(&sparse_stores)

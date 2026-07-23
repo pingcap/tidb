@@ -16,7 +16,7 @@
 
 use crate::Key;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use tidb_codec::{cut_one, decode_one, encode_int, CodecError};
 use tidb_datatype::Datum;
@@ -40,7 +40,7 @@ pub struct IntHandle(i64);
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CommonHandle {
     encoded: Key,
-    column_ends: Vec<usize>,
+    column_ends: Vec<u16>,
 }
 
 /// A physical partition id paired with an underlying Handle.
@@ -147,15 +147,13 @@ impl CommonHandle {
         let original = encoded.into();
         let mut remain = original.as_slice();
         let mut column_ends = Vec::new();
-        let mut end = 0_usize;
+        let mut end = 0_u16;
         while !remain.is_empty() {
             if remain[0] == 0 {
                 break;
             }
             let (column, next) = cut_one(remain)?;
-            end = end
-                .checked_add(column.len())
-                .ok_or(CodecError::InvalidEncoding("common handle length overflow"))?;
+            end = end.wrapping_add(column.len() as u16);
             column_ends.push(end);
             remain = next;
         }
@@ -199,10 +197,10 @@ impl CommonHandle {
 
     /// Returns one exact encoded column, or `None` for an invalid index.
     pub fn encoded_column(&self, index: usize) -> Option<&[u8]> {
-        let end = *self.column_ends.get(index)?;
+        let end = usize::from(*self.column_ends.get(index)?);
         let start = index
             .checked_sub(1)
-            .map_or(0, |previous| self.column_ends[previous]);
+            .map_or(0, |previous| usize::from(self.column_ends[previous]));
         self.encoded.as_bytes().get(start..end)
     }
 
@@ -250,6 +248,22 @@ impl CommonHandle {
         } else {
             Ok(self.encoded().cmp(other.encoded().as_slice()))
         }
+    }
+
+    /// Returns Go's source-shaped total memory usage.
+    #[must_use]
+    pub fn mem_usage(&self) -> u64 {
+        48_u64.saturating_add(self.extra_mem_size())
+    }
+
+    /// Returns allocation bytes behind the two source slices.
+    #[must_use]
+    pub fn extra_mem_size(&self) -> u64 {
+        let encoded = u64::try_from(self.encoded.capacity()).unwrap_or(u64::MAX);
+        let offsets = u64::try_from(self.column_ends.capacity())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(2);
+        encoded.saturating_add(offsets)
     }
 }
 
@@ -354,6 +368,18 @@ impl PartitionHandle {
             }
             handle => self.handle.equal(handle),
         }
+    }
+
+    /// Returns Go's source-shaped total memory usage.
+    #[must_use]
+    pub fn mem_usage(&self) -> u64 {
+        self.handle.mem_usage().saturating_add(24)
+    }
+
+    /// Returns allocation bytes owned by the underlying handle.
+    #[must_use]
+    pub fn extra_mem_size(&self) -> u64 {
+        self.handle.extra_mem_size()
     }
 }
 
@@ -476,6 +502,26 @@ impl Handle {
             Self::Partition(partition) => partition.handle.encoded_column(index),
         }
     }
+
+    /// Returns Go's source-shaped total memory usage.
+    #[must_use]
+    pub fn mem_usage(&self) -> u64 {
+        match self {
+            Self::Int(_) => 8,
+            Self::Common(handle) => handle.mem_usage(),
+            Self::Partition(handle) => handle.mem_usage(),
+        }
+    }
+
+    /// Returns source allocation bytes outside the handle value itself.
+    #[must_use]
+    pub fn extra_mem_size(&self) -> u64 {
+        match self {
+            Self::Int(_) => 0,
+            Self::Common(handle) => handle.extra_mem_size(),
+            Self::Partition(handle) => handle.extra_mem_size(),
+        }
+    }
 }
 
 impl fmt::Display for Handle {
@@ -595,6 +641,105 @@ impl<V> HandleMap<V> {
                 return;
             }
         }
+    }
+
+    /// Returns the source Go map's shallow memory-accounting value.
+    #[must_use]
+    pub fn mem_usage(&self) -> i64 {
+        const SIZEOF_HANDLE_MAP: usize = 32;
+        const SIZEOF_INT64: usize = 8;
+        const SIZEOF_INTERFACE: usize = 16;
+        const SIZEOF_STRING: usize = 16;
+        const SIZEOF_STR_HANDLE_VALUE: usize = 32;
+        const SIZEOF_MAP: usize = 8;
+
+        let mut bytes = SIZEOF_HANDLE_MAP;
+        let mut partition_ints = HashSet::new();
+        let mut partition_strings = HashSet::new();
+        for key in self.entries.keys() {
+            match key {
+                MapKey::Int(_) => {
+                    bytes = bytes.saturating_add(SIZEOF_INT64 + SIZEOF_INTERFACE);
+                }
+                MapKey::Common(encoded) => {
+                    bytes = bytes
+                        .saturating_add(SIZEOF_STRING)
+                        .saturating_add(encoded.len())
+                        .saturating_add(SIZEOF_STR_HANDLE_VALUE);
+                }
+                MapKey::PartitionInt(partition_id, _) => {
+                    partition_ints.insert(*partition_id);
+                    bytes = bytes.saturating_add(SIZEOF_INT64 + SIZEOF_INTERFACE);
+                }
+                MapKey::PartitionCommon(partition_id, encoded) => {
+                    partition_strings.insert(*partition_id);
+                    bytes = bytes
+                        .saturating_add(SIZEOF_STRING)
+                        .saturating_add(encoded.len())
+                        .saturating_add(SIZEOF_STR_HANDLE_VALUE);
+                }
+            }
+        }
+        bytes = bytes
+            .saturating_add(
+                partition_ints
+                    .len()
+                    .saturating_mul(SIZEOF_INT64 + SIZEOF_MAP),
+            )
+            .saturating_add(
+                partition_strings
+                    .len()
+                    .saturating_mul(SIZEOF_INT64 + SIZEOF_MAP),
+            );
+        i64::try_from(bytes).unwrap_or(i64::MAX)
+    }
+}
+
+/// Handle map with insertion-time shallow memory deltas.
+///
+/// Like Go's `MemAwareHandleMap`, values and heap objects reachable through
+/// values are deliberately excluded from accounting.
+#[derive(Debug, Clone, Default)]
+pub struct MemAwareHandleMap<V> {
+    entries: HandleMap<V>,
+    accounted_bytes: i64,
+}
+
+impl<V> MemAwareHandleMap<V> {
+    /// Creates an empty map.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entries: HandleMap::new(),
+            accounted_bytes: 0,
+        }
+    }
+
+    /// Returns a value by source handle identity.
+    #[must_use]
+    pub fn get(&self, handle: &Handle) -> Option<&V> {
+        self.entries.get(handle)
+    }
+
+    /// Inserts or overwrites a value and returns the shallow accounting delta.
+    pub fn set(&mut self, handle: impl Into<Handle>, value: V) -> i64 {
+        let before = self.entries.mem_usage();
+        self.entries.set(handle, value);
+        let after = self.entries.mem_usage();
+        let delta = after.saturating_sub(before);
+        self.accounted_bytes = self.accounted_bytes.saturating_add(delta);
+        delta
+    }
+
+    /// Iterates entries until `visit` returns false.
+    pub fn range(&self, visit: impl FnMut(&Handle, &V) -> bool) {
+        self.entries.range(visit);
+    }
+
+    /// Returns the sum of insertion deltas.
+    #[must_use]
+    pub const fn accounted_bytes(&self) -> i64 {
+        self.accounted_bytes
     }
 }
 

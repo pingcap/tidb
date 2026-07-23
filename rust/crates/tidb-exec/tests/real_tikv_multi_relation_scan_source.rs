@@ -116,8 +116,7 @@ impl QueryTransport for CapturingTransport {
             .key_ranges
             .as_ref()
             .expect("table read carries ranges")
-            .partitions
-            .as_slice()
+            .partitions()
         else {
             panic!("one nonpartitioned range group")
         };
@@ -125,7 +124,8 @@ impl QueryTransport for CapturingTransport {
             .first()
             .expect("noncontradictory scan has a range")
             .start_key
-            .clone();
+            .clone()
+            .into();
         let mut state = self.state.lock().unwrap();
         state.requests.push(RequestObservation {
             transport_id: self.transport_id,

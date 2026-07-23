@@ -28,25 +28,23 @@ use tidb_proto::{
 
 fn range(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {
-        start_key: start.as_bytes().to_vec(),
-        end_key: end.as_bytes().to_vec(),
+        start_key: start.as_bytes().to_vec().into(),
+        end_key: end.as_bytes().to_vec().into(),
     }
 }
 
 fn metadata(ranges: Vec<RequestKeyRange>) -> KvRequestMetadata {
-    let mut metadata = KvRequestMetadata {
-        request_type: RequestType::Dag,
-        data: Some(b"dag".to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(ranges)),
-        keep_order: true,
-        cacheable: true,
-        store_type: StoreType::TiKv,
-        start_ts: 100,
-        ..KvRequestMetadata::default()
-    };
-    metadata.session.paging.enabled = true;
-    metadata.session.paging.min_size = 2;
-    metadata.session.paging.max_size = 8;
+    let mut metadata = KvRequestMetadata::default();
+    metadata.request_type = RequestType::Dag;
+    metadata.data = Some(b"dag".to_vec());
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(ranges));
+    metadata.keep_order = true;
+    metadata.cacheable = true;
+    metadata.store_type = StoreType::TiKv;
+    metadata.start_ts = 100;
+    metadata.paging.enabled = true;
+    metadata.paging.min_size = 2;
+    metadata.paging.max_size = 8;
     metadata
 }
 
@@ -247,7 +245,7 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
     cases.push((request, "batch_coprocessor"));
 
     let mut request = metadata(vec![range("a", "z")]);
-    request.session.store_batch_size = 2;
+    request.store_batch_size = 2;
     cases.push((request, "store_batching"));
 
     let mut request = metadata(vec![range("a", "z")]);
@@ -261,7 +259,7 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
     cases.push((request, "partitioned_ranges"));
 
     let mut request = metadata(vec![range("a", "z")]);
-    request.session.max_keys_read = 10;
+    request.max_keys_read = 10;
     cases.push((request, "max_keys_read"));
 
     for (request, expected) in cases {

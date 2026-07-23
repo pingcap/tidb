@@ -224,13 +224,13 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
     )
     .expect("construct response over the pre-existing primed cache");
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let metadata = KvRequestMetadata {
+    let metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(Vec::new()),
         key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
             RequestKeyRange {
-                start_key: Vec::new(),
-                end_key: Vec::new(),
+                start_key: Vec::new().into(),
+                end_key: Vec::new().into(),
             },
         ])),
         keep_order: true,
@@ -238,8 +238,8 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
         start_ts: 1,
         read_replica_scope: "global".to_owned(),
         txn_scope: "global".to_owned(),
-        ..KvRequestMetadata::default()
-    };
+        ..tidb_txnkv::Request::default()
+    });
     let mut result = runtime
         .select_with_runtime_stats(
             &TransportRequest::new(

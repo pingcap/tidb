@@ -15,17 +15,11 @@
 #![allow(dead_code, missing_docs)]
 
 use std::time::Duration;
-
-#[path = "../src/region/health_policy.rs"]
-mod health_policy;
-#[path = "../src/region/slow_score.rs"]
-mod slow_score;
-#[path = "../src/region/store_health.rs"]
-mod store_health;
-
-use health_policy::{ReplicaHealthFacts, ReplicaHealthPolicy, StoreLabel, StoreSelectionScore};
-use slow_score::SlowScoreStat;
-use store_health::{StoreHealth, StoreHealthDetail, StoreLoad, StoreRoutingHealth};
+use tidb_txnkv::region::{
+    ReplicaHealthFacts, ReplicaHealthPolicy, SlowScoreStat, StoreHealth, StoreHealthDetail,
+    StoreLoad, StoreRoutingHealth, StoreSelectionScore,
+};
+use tidb_txnkv::StoreLabel;
 
 fn label(key: &str, value: &str) -> StoreLabel {
     StoreLabel {

@@ -72,15 +72,15 @@ impl CoprocessorRequestEnvelope {
     #[must_use]
     pub fn from_metadata(metadata: &KvRequestMetadata, ranges: Vec<RequestKeyRange>) -> Self {
         Self {
-            tp: metadata.request_type as i64,
+            tp: metadata.request_type.raw(),
             data: metadata.data.clone().unwrap_or_default(),
             ranges,
             start_ts: metadata.start_ts,
             schema_ver: metadata.schema_version,
             connection_id: metadata.connection_id,
             connection_alias: metadata.connection_alias.clone(),
-            max_keys_read: metadata.session.max_keys_read,
-            paging_size_bytes: metadata.session.paging.size_bytes,
+            max_keys_read: metadata.max_keys_read,
+            paging_size_bytes: metadata.paging.size_bytes,
             ..Self::default()
         }
     }
@@ -125,8 +125,8 @@ impl CoprocessorRequestEnvelope {
                 .ranges
                 .iter()
                 .map(|range| CoprocessorKeyRange {
-                    start: range.start_key.clone(),
-                    end: range.end_key.clone(),
+                    start: range.start_key.to_vec(),
+                    end: range.end_key.to_vec(),
                 })
                 .collect(),
             is_cache_enabled: self.is_cache_enabled,

@@ -44,15 +44,15 @@ fn go_partition_table_scan_keeps_partition_ids_next_to_ranges() {
         PartitionIdAndRanges {
             id: 41,
             key_ranges: vec![RequestKeyRange {
-                start_key: vec![1, 2],
-                end_key: vec![3],
+                start_key: vec![1, 2].into(),
+                end_key: vec![3].into(),
             }],
         },
         PartitionIdAndRanges {
             id: 42,
             key_ranges: vec![RequestKeyRange {
-                start_key: vec![4],
-                end_key: vec![5, 6],
+                start_key: vec![4].into(),
+                end_key: vec![5, 6].into(),
             }],
         },
     ]);

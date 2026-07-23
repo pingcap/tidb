@@ -99,7 +99,7 @@ impl QueryTransport for CapturingTransport {
             .as_ref()
             .expect("clustered table request carries key ranges");
         assert!(ranges.is_non_partitioned());
-        let [ranges] = ranges.partitions.as_slice() else {
+        let [ranges] = ranges.partitions() else {
             panic!("one non-partitioned range group")
         };
         self.state.sends.set(self.state.sends.get() + 1);

@@ -24,6 +24,7 @@
 
 mod assertion;
 mod batch_getter;
+mod cache_db;
 mod checker;
 mod client;
 mod counter;
@@ -39,8 +40,13 @@ mod key;
 mod key_flags;
 mod key_ranges;
 mod keyspace;
+mod kv_api;
+mod kv_contract;
 pub mod lock;
+mod mpp;
 mod mvcc_metadata;
+mod new_txn;
+mod option;
 mod pd_loader;
 mod prefix_ops;
 mod read_runtime;
@@ -52,13 +58,17 @@ pub mod transaction;
 mod txn_scope;
 mod txn_source;
 mod union_iter;
+mod unistore;
+mod variables;
 mod version;
 
 pub use assertion::AssertionOp;
 pub use batch_getter::{
-    BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, BufferBatchGetter, Getter,
-    ValueEntry,
+    batch_get_to_get_options, with_return_commit_ts, BatchBufferGetter, BatchGetError,
+    BatchGetOption, BatchGetOptions, BatchGetter, BufferBatchGetter, GetOption, GetOptions,
+    GetOrBatchGetOption, Getter, ValueEntry,
 };
+pub use cache_db::{new_cache_db, CacheDb, CacheDbError, MemManager, TABLE_CACHE_CAPACITY_BYTES};
 pub use checker::{
     RequestTypeSupportedChecker, REQ_SUB_TYPE_ANALYZE_COL, REQ_SUB_TYPE_ANALYZE_IDX,
     REQ_SUB_TYPE_BASIC, REQ_SUB_TYPE_DESC, REQ_SUB_TYPE_GROUP_BY, REQ_SUB_TYPE_SIGNATURE,
@@ -73,8 +83,8 @@ pub use client::{
 };
 pub use counter::{get_int64, inc_int64, CounterError, CounterStorage};
 pub use driver::mem_buffer::{
-    EmptyIterator, MemBufferBackend, MemBufferDriver, MemBufferSnapshotGetter,
-    MemBufferSnapshotIterator, StagingHandle,
+    EmptyIterator as DriverEmptyIterator, MemBufferBackend, MemBufferDriver,
+    MemBufferSnapshotGetter, MemBufferSnapshotIterator, StagingHandle,
 };
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use error::{
@@ -86,26 +96,67 @@ pub use error::{
     ERR_WRITE_CONFLICT_IN_TIDB, TXN_RETRYABLE_MARK,
 };
 pub use fault_injection::{
-    new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction, InjectionConfig,
-    KvSnapshot, KvStorage, KvTransaction,
+    new_injected_storage, new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction,
+    InjectionConfig, KvSnapshot, KvStorage, KvTransaction,
 };
-pub use handle::{CommonHandle, Handle, HandleCompareError, HandleMap, IntHandle, PartitionHandle};
-pub use inner_txn::{get_min_inner_txn_start_ts, InnerTxnStartTsBox};
+pub use handle::{
+    CommonHandle, Handle, HandleCompareError, HandleMap, IntHandle, MemAwareHandleMap,
+    PartitionHandle,
+};
+pub use inner_txn::{
+    get_min_inner_txn_start_ts, long_running_inner_txn, long_running_inner_txns,
+    print_long_time_internal_txn, InnerTxnStartTsBox, LongRunningInnerTxn,
+    GLOBAL_INNER_TXN_START_TS, TIME_TO_PRINT_LONG_INTERNAL_TXN,
+};
 pub use iteration::{next_until, row_key_prefix_filter, walk_mem_buffer, KvIterator, KvRetriever};
-pub use key::{Key, KeyRange};
+pub use key::{key_range_slice_mem_usage, Entry, Key, KeyRange};
 pub use key_flags::{AssertionState, FlagsOp, KeyFlags};
 pub use key_ranges::KeyRanges;
 pub use keyspace::{is_system_keyspace, is_user_keyspace, KernelType, SYSTEM_KEYSPACE};
+pub use kv_api::{
+    batch_get_value, get_value, Client, ClientSendOption, Driver, EmptyIterator, EmptyRetriever,
+    EmptyRetrieverError, EtcdBackend, FairLockingController, MemBuffer, Mutator, Response,
+    ResultSubset, Retriever, RetrieverMutator, Snapshot, SnapshotInterceptor, SplittableStore,
+    Storage, StorageWithPd, TiFlashReplicaRead, Transaction,
+};
+pub use kv_contract::{
+    find_keys_in_stage, set_txn_entry_size_limit, set_txn_total_size_limit, txn_entry_size_limit,
+    txn_total_size_limit, CoprocessorRequestAdjuster, IsolationLevel, Paging, PartitionIdAndRanges,
+    PartitionedKeyRanges, Priority, Request, RequestType, RunawayAction, RunawayChecker,
+    StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT, DEFAULT_TXN_TOTAL_SIZE_LIMIT,
+    GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
+};
+pub use mpp::{
+    CancelMppTasksParam, DispatchMppTaskParam, EstablishMppConnsParam, MppBuildTasksRequest,
+    MppClient, MppCoordinator, MppDispatchRequest, MppQueryId, MppTask, MppTaskLocation,
+    MppTaskMeta, MppTaskState, MppVersion,
+};
 pub use mvcc_metadata::{
     decode_extra_txn_status_key, decode_key_ts, encode_extra_txn_status_key, encode_write_cf_value,
     parse_write_cf_value, DbUserMeta, LockType, MvccLockMetadata, MvccMetadataError, WriteCfValue,
     WriteType, FOR_UPDATE_PREFIX, LOCK_USER_META_DELETE, LOCK_USER_META_NONE, MIN_COMMIT_TS_PREFIX,
     SHORT_VALUE_MAX_LEN, SHORT_VALUE_PREFIX,
 };
+pub use new_txn::{
+    retry_backoff_delay, run_in_new_txn, run_in_new_txn_with, set_txn_resource_group, NewTxnError,
+    NewTxnStorage, NewTxnTransaction, RunInNewTxnContext, TxnOptionValue, MAX_RETRY_COUNT,
+};
+pub use option::{
+    get_internal_source_type, OptionKey, ReplicaReadType, RequestSource, TxnSizeLimits,
+    INTERNAL_DDL_NOTIFIER, INTERNAL_DIST_TASK, INTERNAL_IMPORT_INTO, INTERNAL_LOAD_DATA,
+    INTERNAL_TIMER, INTERNAL_TXN_ADMIN, INTERNAL_TXN_BACKFILL_DDL_PREFIX, INTERNAL_TXN_BIND_INFO,
+    INTERNAL_TXN_BOOTSTRAP, INTERNAL_TXN_BR, INTERNAL_TXN_CACHE_TABLE, INTERNAL_TXN_DDL,
+    INTERNAL_TXN_GC, INTERNAL_TXN_LIGHTNING, INTERNAL_TXN_META, INTERNAL_TXN_OTHERS,
+    INTERNAL_TXN_PRIVILEGE, INTERNAL_TXN_STATS, INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
+    INTERNAL_TXN_SYS_VAR, INTERNAL_TXN_TELEMETRY, INTERNAL_TXN_TOOLS, INTERNAL_TXN_TRACE,
+    INTERNAL_TXN_TTL, INTERNAL_TXN_WORKLOAD_LEARNING,
+};
 pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
 pub use read_runtime::{SharedReadAuthority, SharedReadOpener, SharedReadRuntime};
-pub use resource_group::ResourceGroupTagBuilder;
+pub use resource_group::{
+    set_decode_table_id, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
+};
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,
     RETRY_BACKOFF_CAP_MS,
@@ -126,4 +177,6 @@ pub use txn_source::{
     TxnSourceError, LIGHTNING_PHYSICAL_IMPORT_TXN_SOURCE, LOSSY_DDL_COLUMN_REORG_SOURCE,
 };
 pub use union_iter::{UnionIter, UnionIterInitError};
-pub use version::{Version, MAX_VERSION, MIN_VERSION};
+pub use unistore::{set_standalone_tidb, standalone_tidb, STANDALONE_TIDB};
+pub use variables::{KvVariables, DEFAULT_BACKOFF_LOCK_FAST, DEFAULT_BACKOFF_WEIGHT};
+pub use version::{Version, VersionProvider, MAX_VERSION, MIN_VERSION};

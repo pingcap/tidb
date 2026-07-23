@@ -23,43 +23,7 @@ use std::sync::{atomic::AtomicU64, Arc};
 use crate::{
     DistSqlContext, PagingConfig, Priority, ReplicaReadType, RequestContext, TiFlashReplicaRead,
 };
-
-/// Transaction isolation values copied from `pkg/kv.IsoLevel`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
-pub enum IsolationLevel {
-    /// Snapshot isolation (`kv.SI`).
-    #[default]
-    Snapshot = 0,
-    /// Read committed (`kv.RC`).
-    ReadCommitted = 1,
-    /// Read committed with timestamp checking (`kv.RCCheckTS`).
-    RcCheckTs = 2,
-}
-
-/// KV priority values copied from `pkg/kv`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
-pub enum KvPriority {
-    /// Normal priority (`mysql.NoPriority` and `mysql.DelayedPriority`).
-    #[default]
-    Normal = 0,
-    /// Low priority (`mysql.LowPriority`).
-    Low = 1,
-    /// High priority (`mysql.HighPriority`).
-    High = 2,
-}
-
-/// Request-source metadata copied from `kv.RequestSource`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RequestSource {
-    /// Whether the source is an internal/restricted SQL request.
-    pub internal: bool,
-    /// Internal request source type.
-    pub source_type: String,
-    /// Explicit client-supplied request source type.
-    pub explicit_source_type: String,
-}
+use tidb_txnkv::{IsolationLevel, Priority as KvPriority, RequestSource};
 
 /// The immutable, dependency-closed request metadata produced by the builder.
 #[derive(Clone, Debug, Default)]

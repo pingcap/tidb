@@ -1,0 +1,47 @@
+syntax = "proto3";
+package mpp;
+
+import "metapb.proto";
+
+// Wire-compatible dependency-closed projection of kvproto mpp.proto.
+message TaskMeta {
+  uint64 start_ts = 1;
+  int64 task_id = 2;
+  int64 partition_id = 3;
+  string address = 4;
+  uint64 gather_id = 5;
+  uint64 query_ts = 6;
+  uint64 local_query_id = 7;
+  uint64 server_id = 8;
+  int64 mpp_version = 9;
+  uint32 keyspace_id = 10;
+  string coordinator_address = 11;
+  bool report_execution_summary = 12;
+  int32 api_version = 16;
+  string resource_group_name = 17;
+  uint64 connection_id = 18;
+  string connection_alias = 19;
+  string sql_digest = 20;
+  string plan_digest = 21;
+}
+
+message Error {
+  int32 code = 1;
+  string msg = 2;
+  int64 mpp_version = 3;
+}
+
+message DispatchTaskResponse {
+  Error error = 1;
+  repeated metapb.Region retry_regions = 2;
+}
+
+message ReportTaskStatusRequest {
+  TaskMeta meta = 1;
+  bytes data = 2;
+  Error error = 3;
+}
+
+message ReportTaskStatusResponse {
+  Error error = 1;
+}

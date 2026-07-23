@@ -325,13 +325,13 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
     .expect("construct direct unary transport");
     let mut runtime = InjectedQueryRuntime::new(transport);
     let request = TransportRequest::new(
-        KvRequestMetadata {
+        KvRequestMetadata::from_request(tidb_txnkv::Request {
             request_type: RequestType::Dag,
             data: Some(TABLE_SCAN_DAG.to_vec()),
             key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
                 RequestKeyRange {
-                    start_key: TABLE_START.to_vec(),
-                    end_key: TABLE_END.to_vec(),
+                    start_key: TABLE_START.to_vec().into(),
+                    end_key: TABLE_END.to_vec().into(),
                 },
             ])),
             keep_order: true,
@@ -339,8 +339,8 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
             start_ts: 1,
             read_replica_scope: "global".to_owned(),
             txn_scope: "global".to_owned(),
-            ..KvRequestMetadata::default()
-        },
+            ..tidb_txnkv::Request::default()
+        }),
         std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
     );
     let mut result = runtime

@@ -45,6 +45,11 @@ pub mod pdpb {
     include!(concat!(env!("OUT_DIR"), "/pdpb.rs"));
 }
 
+/// The generated dependency-closed TiFlash MPP package.
+pub mod mpp {
+    include!(concat!(env!("OUT_DIR"), "/mpp.rs"));
+}
+
 pub use coprocessor::{
     ExecDetailsV2 as CoprocessorExecDetailsV2, KeyRange as CoprocessorKeyRange,
     Peer as CoprocessorPeer, RegionEpoch as CoprocessorRegionEpoch, Request as CoprocessorRequest,
@@ -53,6 +58,12 @@ pub use coprocessor::{
 };
 
 pub use errorpb::Error as RegionError;
+
+pub use mpp::{
+    DispatchTaskResponse as MppDispatchTaskResponse, Error as MppError,
+    ReportTaskStatusRequest as MppReportTaskStatusRequest,
+    ReportTaskStatusResponse as MppReportTaskStatusResponse, TaskMeta as MppTaskMeta,
+};
 
 pub use kvrpcpb::{
     Action as KvrpcTxnAction, AlreadyExist as KvrpcAlreadyExist, Assertion as KvrpcAssertion,

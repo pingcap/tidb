@@ -24,25 +24,36 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-use crate::batch_getter::{BatchBufferGetter, BatchGetOptions, Getter, ValueEntry};
+use crate::batch_getter::{BatchBufferGetter, BatchGetOptions, GetOptions, Getter, ValueEntry};
 use crate::driver::read::{TransactionBuffer, TransactionReadError};
 use crate::iteration::KvIterator;
 use crate::{AssertionOp, FlagsOp, Key, KeyFlags};
 
 /// Opaque handle returned by one backend staging scope.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct StagingHandle(usize);
+pub struct StagingHandle(isize);
 
 impl StagingHandle {
+    /// Invalid staging handle, matching the Go zero value.
+    pub const INVALID: Self = Self(0);
+    /// Sentinel that always names the last active stage.
+    pub const LAST_ACTIVE: Self = Self(-1);
+
     /// Wraps one backend-native staging index.
     #[must_use]
     pub const fn new(index: usize) -> Self {
-        Self(index)
+        Self(index as isize)
     }
 
-    /// Returns the backend-native staging index.
+    /// Returns a positive backend-native staging index.
     #[must_use]
-    pub const fn index(self) -> usize {
+    pub fn index(self) -> Option<usize> {
+        (self.0 > 0).then(|| self.0 as usize)
+    }
+
+    /// Returns the source signed representation.
+    #[must_use]
+    pub const fn raw(self) -> isize {
         self.0
     }
 }
@@ -69,7 +80,7 @@ pub trait MemBufferBackend {
     /// Approximate memory occupied by the buffer.
     fn size(&self) -> usize;
     /// Reads one live buffered value, including an empty deletion tombstone.
-    fn get(&mut self, key: &Key, options: BatchGetOptions) -> Result<ValueEntry, Self::Error>;
+    fn get(&mut self, key: &Key, options: GetOptions) -> Result<ValueEntry, Self::Error>;
     /// Reads live buffered values for the requested keys.
     fn batch_get(
         &mut self,
@@ -293,7 +304,7 @@ impl<B: MemBufferBackend> MemBufferDriver<B> {
 impl<B: MemBufferBackend> Getter for MemBufferDriver<B> {
     type Error = B::Error;
 
-    fn get(&mut self, key: &Key, options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, options: GetOptions) -> Result<ValueEntry, Self::Error> {
         self.backend.get(key, options)
     }
 }
@@ -354,7 +365,7 @@ where
 {
     type Error = E;
 
-    fn get(&mut self, key: &Key, options: BatchGetOptions) -> Result<ValueEntry, Self::Error> {
+    fn get(&mut self, key: &Key, options: GetOptions) -> Result<ValueEntry, Self::Error> {
         match self {
             Self::Backend(getter) => getter.get(key, options),
             Self::Empty(_) => Err(empty_not_found()),

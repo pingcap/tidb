@@ -188,13 +188,13 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
     )
     .expect("install lock recovery over sole runtime");
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let metadata = KvRequestMetadata {
+    let metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(dag.encode_to_vec()),
         key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
             RequestKeyRange {
-                start_key: secondary_key,
-                end_key,
+                start_key: secondary_key.into(),
+                end_key: end_key.into(),
             },
         ])),
         keep_order: true,
@@ -202,8 +202,8 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
         start_ts: current_ts,
         read_replica_scope: "global".to_owned(),
         txn_scope: "global".to_owned(),
-        ..KvRequestMetadata::default()
-    };
+        ..tidb_txnkv::Request::default()
+    });
     let mut result = runtime
         .select_with_runtime_stats(
             &TransportRequest::new(

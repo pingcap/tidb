@@ -109,7 +109,7 @@ fn test_context_detach_preserves_source_routing_values() {
     assert!(ReplicaReadType::PreferLeader.is_follower_read());
     assert!(ReplicaReadType::Closest.is_closest_read());
     assert!(!ReplicaReadType::ClosestAdaptive.is_closest_read());
-    assert_eq!(ReplicaReadType::Learner as u8, 5);
+    assert_eq!(ReplicaReadType::Learner.raw(), 5);
     assert_eq!(Priority::NoPriority as u8, 0);
     assert_eq!(Priority::Low as u8, 1);
     assert_eq!(Priority::High as u8, 2);
@@ -309,7 +309,7 @@ fn test_kv_request_build_initializes_defaults_and_is_one_use() {
     assert_eq!(request.read_replica_scope, GLOBAL_REPLICA_SCOPE);
     // Go RequestBuilder.Build leaves concurrency unset. Session projection or
     // DAG policy owns any non-zero value; Build must not invent a default.
-    assert_eq!(request.session.concurrency, 0);
+    assert_eq!(request.concurrency, 0);
     assert_eq!(
         request
             .key_ranges
@@ -322,7 +322,6 @@ fn test_kv_request_build_initializes_defaults_and_is_one_use() {
         .as_ref()
         .is_some_and(RequestKeyRanges::is_non_partitioned));
     assert_eq!(request.match_store_labels, Vec::new());
-    assert_eq!(request.transport, RequestTransportState::Unbound);
     assert!(matches!(
         builder.build(),
         Err(KvRequestBuildError::AlreadyBuilt)
@@ -333,7 +332,7 @@ fn test_kv_request_build_initializes_defaults_and_is_one_use() {
     let request = KvRequestBuilder::from_context(&context)
         .build()
         .expect("context build");
-    assert_eq!(request.session.resource_group_name, "test");
+    assert_eq!(request.resource_group_name, "test");
 }
 
 #[test]
@@ -344,8 +343,8 @@ fn test_kv_request_build_closest_scope_and_range_metadata() {
         .set_read_replica_scope("az-a")
         .set_key_ranges(RequestKeyRanges::new_partitioned(vec![vec![
             RequestKeyRange {
-                start_key: vec![1],
-                end_key: vec![2],
+                start_key: vec![1].into(),
+                end_key: vec![2].into(),
             },
         ]]));
 
@@ -376,5 +375,5 @@ fn test_kv_request_build_projects_dag_limit_and_partition_concurrency() {
     assert_eq!(request.request_type, RequestType::Dag);
     assert!(request.cacheable);
     assert_eq!(request.limit_size, 1);
-    assert_eq!(request.session.concurrency, 3);
+    assert_eq!(request.concurrency, 3);
 }
