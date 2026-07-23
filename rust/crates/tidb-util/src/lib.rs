@@ -22,6 +22,7 @@ pub mod checksum;
 pub mod disjointset;
 pub mod encrypt;
 pub mod intest;
+pub mod israce;
 pub mod layered_io;
 pub mod mathutil;
 pub mod naming;
