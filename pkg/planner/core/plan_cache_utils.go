@@ -306,7 +306,31 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the user might switch the prune mode dynamically
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
-	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
+	_, readFromTiDB := vars.IsolationReadEngines[kv.TiDB]
+	_, readFromTiKV := vars.IsolationReadEngines[kv.TiKV]
+	_, readFromTiFlash := vars.IsolationReadEngines[kv.TiFlash]
+	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
+
+	const encodedIntSize = 8
+	hashCapacity := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText) + len(pruneMode) +
+		len(binding) + len(connCharset) + len(connCollation)
+	hashCapacity += encodedIntSize * (6 + len(stmt.RelateVersion)*2 + len(dirtyTables))
+	hashCapacity += len(strconv.FormatBool(false)) * 3
+	hashCapacity += 2 + 6 // subquery and foreign-key flags, then transaction status
+	if readFromTiDB {
+		hashCapacity += len(kv.TiDB.Name())
+	}
+	if readFromTiKV {
+		hashCapacity += len(kv.TiKV.Name())
+	}
+	if readFromTiFlash {
+		hashCapacity += len(kv.TiFlash.Name())
+	}
+	if vars.PlanCacheInvalidationOnFreshStats {
+		hashCapacity += encodedIntSize
+	}
+
+	hash := make([]byte, 0, hashCapacity)
 	hash = append(hash, hack.Slice(userName)...)
 	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
@@ -321,13 +345,13 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
-	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
+	if readFromTiDB {
 		hash = append(hash, kv.TiDB.Name()...)
 	}
-	if _, ok := vars.IsolationReadEngines[kv.TiKV]; ok {
+	if readFromTiKV {
 		hash = append(hash, kv.TiKV.Name()...)
 	}
-	if _, ok := vars.IsolationReadEngines[kv.TiFlash]; ok {
+	if readFromTiFlash {
 		hash = append(hash, kv.TiFlash.Name()...)
 	}
 	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
@@ -389,7 +413,6 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// handle dirty tables
-	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
 		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
 		for t, dirty := range dirtyTables {
