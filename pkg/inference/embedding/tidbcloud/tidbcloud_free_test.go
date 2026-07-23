@@ -20,19 +20,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
 
 type contextBlockingReader struct {
 	ctx         context.Context
@@ -45,33 +39,11 @@ func (r *contextBlockingReader) Read([]byte) (int, error) {
 	return 0, r.ctx.Err()
 }
 
-func TestCreateEmbeddings_EmptyTexts(t *testing.T) {
-	cfg := EmbedderConfig{}
-	embedder := NewTiDBCloudFreeEmbedder(cfg)
-
-	ctx := context.Background()
-	embeddings, err := embedder.CreateEmbeddings(ctx, "test-model", []string{}, nil)
-
-	require.NoError(t, err)
-	assert.Empty(t, embeddings)
-}
-
-func TestCreateEmbeddings_EmptyModel(t *testing.T) {
-	cfg := EmbedderConfig{}
-	embedder := NewTiDBCloudFreeEmbedder(cfg)
-
-	ctx := context.Background()
-	_, err := embedder.CreateEmbeddings(ctx, "", []string{"test"}, nil)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "model name is required")
-}
-
 func TestTiDBCloudFreeEmbedder_Success(t *testing.T) {
 	mockResponse := `{
 		"embeddings": [
-			"39MmPZun+j7S4Gw+ZEDbvkeeKj5cVwa/96yDPjPxED6S+VW+3JGYPg==",
-			"bTC0vQlWEz+9nwo+JkCYvp5FSj7cU9q+l3O6PgBCTD7oCUe+LLyzPg=="
+			"` + testutil.EncodeFloat32Base64(1, 2) + `",
+			"` + testutil.EncodeFloat32Base64(3, 4) + `"
 		]
 	}`
 
@@ -105,13 +77,7 @@ func TestTiDBCloudFreeEmbedder_Success(t *testing.T) {
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "amazon/titan-embed-text-v2", texts, nil)
 
 	require.NoError(t, err)
-	require.Len(t, embeddings, 2)
-	require.Equal(t, embeddings[0], []float32{
-		0.0407294, 0.48955998, 0.23132637, -0.42822564, 0.1666194, -0.5247705, 0.257179, 0.1415451, -0.20895985, 0.29798782,
-	})
-	require.Equal(t, embeddings[1], []float32{
-		-0.08798299, 0.57553154, 0.13537498, -0.2973644, 0.1975312, -0.42642105, 0.36416313, 0.19947052, -0.19437373, 0.351045,
-	})
+	require.Equal(t, [][]float32{{1, 2}, {3, 4}}, embeddings)
 }
 
 func TestTiDBCloudFreeEmbedder_WithOptions(t *testing.T) {
@@ -150,73 +116,48 @@ func TestTiDBCloudFreeEmbedder_WithOptions(t *testing.T) {
 	require.NotEmpty(t, embeddings[0])
 }
 
-func TestTiDBCloudFreeEmbedder_UnknownModel(t *testing.T) {
-	// Mock error response for unknown model
-	mockResponse := `{"error":"Unknown model 'abc'"}`
+func TestTiDBCloudFreeEmbedderErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		response    string
+		model       string
+		errContains string
+	}{
+		{
+			name:        "unknown model",
+			statusCode:  http.StatusBadRequest,
+			response:    `{"error":"Unknown model 'abc'"}`,
+			model:       "abc",
+			errContains: "Unknown model 'abc'",
+		},
+		{
+			name:        "malformed request",
+			statusCode:  http.StatusBadRequest,
+			response:    `{"error":"Malformed input request: #: required key [input_type] not found#: required key [images] not found#/texts: false schema always fails, please reformat your input and try again."}`,
+			model:       "cohere/embed-english-v3",
+			errContains: "required key [input_type] not found",
+		},
+		{
+			name:        "quota exceeded",
+			statusCode:  http.StatusForbidden,
+			response:    `{"error":"Exceeded quota limit. Current usage: $0.0000, Limit: $0.0000"}`,
+			model:       "amazon/titan-embed-text-v2",
+			errContains: "Exceeded quota limit",
+		},
+	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
-
-	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-		GetBaseURL: func() string { return server.URL },
-	})
-
-	texts := []string{"abc", "def"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "abc", texts, nil)
-
-	require.Nil(t, embeddings)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "Unknown model 'abc'")
-}
-
-func TestTiDBCloudFreeEmbedder_MalformedRequest(t *testing.T) {
-	// Mock error response for malformed request (missing required parameters)
-	mockResponse := `{"error":"Malformed input request: #: required key [input_type] not found#: required key [images] not found#/texts: false schema always fails, please reformat your input and try again."}`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
-
-	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-		GetBaseURL: func() string { return server.URL },
-	})
-
-	texts := []string{"abc", "def"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "cohere/embed-english-v3", texts, nil)
-
-	require.Nil(t, embeddings)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "required key [input_type] not found")
-}
-
-func TestTiDBCloudFreeEmbedder_QuotaExceeded(t *testing.T) {
-	// Mock error response for quota exceeded
-	mockResponse := `{"error":"Exceeded quota limit. Current usage: $0.0000, Limit: $0.0000"}`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
-
-	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-		GetBaseURL: func() string { return server.URL },
-	})
-
-	texts := []string{"abc", "def"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "amazon/titan-embed-text-v2", texts, nil)
-
-	require.Nil(t, embeddings)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "Exceeded quota limit")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serverURL := testutil.NewJSONServer(t, tt.statusCode, tt.response)
+			embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
+				GetBaseURL: func() string { return serverURL },
+			})
+			embeddings, err := embedder.CreateEmbeddings(context.Background(), tt.model, []string{"abc", "def"}, nil)
+			require.Nil(t, embeddings)
+			require.ErrorContains(t, err, tt.errContains)
+		})
+	}
 }
 
 func TestTiDBCloudFreeEmbedderEndpoint(t *testing.T) {
@@ -236,39 +177,7 @@ func TestTiDBCloudFreeEmbedderEndpoint(t *testing.T) {
 	}
 }
 
-func TestTiDBCloudFreeEmbedderResponseBodyLimit(t *testing.T) {
-	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(strings.Repeat("x", 65)))
-			}))
-			defer server.Close()
-
-			embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-				GetAPIKey:            func() string { return "test-api-key" },
-				GetBaseURL:           func() string { return server.URL },
-				MaxResponseBodyBytes: 64,
-			})
-			_, err := embedder.CreateEmbeddings(context.Background(), "test-model", []string{"test"}, nil)
-			require.EqualError(t, err, "failed to read from TiDB Cloud Inference Service")
-		})
-	}
-}
-
 func TestTiDBCloudFreeEmbedderPreservesContextCause(t *testing.T) {
-	t.Run("request", func(t *testing.T) {
-		cause := errors.New("request canceled by caller")
-		ctx, cancel := context.WithCancelCause(context.Background())
-		cancel(cause)
-
-		embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-			GetBaseURL: func() string { return "http://127.0.0.1" },
-		})
-		_, err := embedder.CreateEmbeddings(ctx, "test-model", []string{"test"}, nil)
-		require.ErrorIs(t, err, cause)
-	})
-
 	t.Run("deadline", func(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()
@@ -288,7 +197,7 @@ func TestTiDBCloudFreeEmbedderPreservesContextCause(t *testing.T) {
 		embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
 			GetBaseURL: func() string { return "http://127.0.0.1" },
 		})
-		embedder.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		embedder.client.Transport = testutil.RoundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				Status:     "200 OK",
 				StatusCode: http.StatusOK,
@@ -322,21 +231,24 @@ func TestTiDBCloudFreeEmbedderPreservesContextCause(t *testing.T) {
 	})
 }
 
-func TestTiDBCloudFreeEmbedderErrorRedaction(t *testing.T) {
-	const apiKey = "provider-secret"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"invalid api key: provider-secret"}`))
-	}))
-	defer server.Close()
-
-	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return apiKey },
-		GetBaseURL: func() string { return server.URL },
+func TestTiDBCloudFreeEmbedderContract(t *testing.T) {
+	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
+		Model: "test-model",
+		New: func(cfg testutil.EmbedderConfig) *Embedder {
+			embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
+				GetAPIKey:            func() string { return cfg.APIKey },
+				GetBaseURL:           func() string { return cfg.BaseURL },
+				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,
+			})
+			embedder.client.Transport = cfg.Transport
+			return embedder
+		},
+		RequestError:              "failed to request TiDB Cloud Inference Service",
+		ResponseBodyLimitError:    "failed to read from TiDB Cloud Inference Service",
+		TransportCauseIsPreserved: false,
+		RedactionResponse:         `{"error":"invalid api key: provider-secret"}`,
+		RedactionError:            "TiDB Cloud Inference: status code 400, message: invalid api key: [REDACTED]",
 	})
-	_, err := embedder.CreateEmbeddings(context.Background(), "test-model", []string{"test"}, nil)
-	require.EqualError(t, err, "TiDB Cloud Inference: invalid api key: [REDACTED]")
-	require.NotContains(t, err.Error(), apiKey)
 }
 
 func TestTiDBCloudFreeEmbedderResponseValidation(t *testing.T) {
@@ -362,13 +274,10 @@ func TestTiDBCloudFreeEmbedderResponseValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(tt.response))
-			}))
-			defer server.Close()
+			serverURL := testutil.NewJSONServer(t, http.StatusOK, tt.response)
 
 			embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-				GetBaseURL: func() string { return server.URL },
+				GetBaseURL: func() string { return serverURL },
 			})
 			embeddings, err := embedder.CreateEmbeddings(context.Background(), "test-model", tt.texts, nil)
 			require.Nil(t, embeddings)

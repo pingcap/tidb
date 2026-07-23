@@ -15,12 +15,10 @@
 package openai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
@@ -28,12 +26,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DefaultAPIBaseURL is the default base URL (without the /embeddings suffix) for OpenAI embeddings API.
-	DefaultAPIBaseURL = "https://api.openai.com/v1"
-	// DefaultMaxResponseBodyBytes bounds memory used to read an OpenAI-compatible response.
-	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
-)
+// DefaultAPIBaseURL is the default base URL (without the /embeddings suffix) for OpenAI embeddings API.
+const DefaultAPIBaseURL = "https://api.openai.com/v1"
 
 // Embedder is for OpenAI embeddings.
 type Embedder struct {
@@ -56,14 +50,14 @@ type EmbedderConfig struct {
 	// callers can include deployment-specific configuration guidance.
 	ErrUnauthorized error
 	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use DefaultMaxResponseBodyBytes.
+	// Non-positive values use base.DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
 // NewOpenAIEmbedder creates a new OpenAIEmbedder instance with the provided configuration.
 func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
 	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
@@ -76,24 +70,18 @@ func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
 // https://platform.openai.com/docs/api-reference/embeddings/create
 // For compatibility with existing callers, baseURL may already end in /embeddings.
 func embeddingsEndpoint(baseURL string) (string, error) {
-	u, err := url.Parse(baseURL)
+	u, err := base.ParseHTTPURL(baseURL, "OpenAI API base URL")
 	if err != nil {
-		return "", base.NewRedactedError("invalid OpenAI API base URL", err)
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("invalid OpenAI API base URL: absolute URL is required")
+		return "", err
 	}
 
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/")
 	if !strings.HasSuffix(escapedPath, "/embeddings") {
 		escapedPath += "/embeddings"
 	}
-	path, err := url.PathUnescape(escapedPath)
-	if err != nil {
-		return "", base.NewRedactedError("invalid OpenAI API base URL path", err)
+	if err := base.SetEscapedURLPath(u, escapedPath, "OpenAI API base URL path"); err != nil {
+		return "", err
 	}
-	u.Path = path
-	u.RawPath = escapedPath
 	return u.String(), nil
 }
 
@@ -136,26 +124,19 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if err != nil {
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "OpenAI", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := e.client.Do(httpReq)
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "OpenAI", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := base.ReadResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
+	httpReq, err := base.NewJSONRequest(ctx, "OpenAI", endpoint, jsonData)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	statusCode, body, err := base.DoRequest(ctx, &e.client, "OpenAI", httpReq, e.cfg.MaxResponseBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode != http.StatusOK {
 		var errResp ErrorResponse
 		message := ""
 		var parseErr error
@@ -165,7 +146,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			message = base.SanitizeErrorText(errResp.Error.Message, apiKey)
 		}
 
-		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
+		logFields := []zap.Field{zap.Int("status", statusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
 		}
@@ -175,16 +156,13 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		logutil.BgLogger().Error("OpenAI API request failed",
 			logFields...,
 		)
-		if resp.StatusCode == http.StatusUnauthorized {
+		if statusCode == http.StatusUnauthorized {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
 			return nil, fmt.Errorf("OpenAI returns status unauthorized, check API key")
 		}
-		if message == "" {
-			message = http.StatusText(resp.StatusCode)
-		}
-		return nil, fmt.Errorf("OpenAI: status code %d, message: %s", resp.StatusCode, message)
+		return nil, base.NewProviderResponseError("OpenAI", statusCode, message)
 	}
 
 	var respObj Response

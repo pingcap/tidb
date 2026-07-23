@@ -21,8 +21,9 @@ go_test(
     srcs = ["openai_test.go"],
     embed = [":openai"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 8,
     deps = [
+        "//pkg/inference/embedding/internal/testutil",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",

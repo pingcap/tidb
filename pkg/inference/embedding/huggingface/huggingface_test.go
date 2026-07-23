@@ -23,15 +23,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
 
 func TestHuggingFaceEmbedder_Success(t *testing.T) {
 	// Mock successful response from real HuggingFace API
@@ -83,23 +78,13 @@ func TestHuggingFaceEmbedder_Success(t *testing.T) {
 }
 
 func TestHuggingFaceEmbedder_UnauthorizedAPIKey(t *testing.T) {
-	// Mock unauthorized response from real HuggingFace API
-	mockResponse := `{"error":"Invalid credentials in Authorization header"}`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusUnauthorized, `{"error":"Invalid credentials in Authorization header"}`)
 
 	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		GetBaseURL: func() string { return serverURL },
 	})
-
-	texts := []string{"hello world"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "intfloat/multilingual-e5-large", texts, nil)
+	embeddings, err := embedder.CreateEmbeddings(context.Background(), "intfloat/multilingual-e5-large", []string{"hello world"}, nil)
 
 	require.Nil(t, embeddings)
 	require.Error(t, err)
@@ -107,20 +92,13 @@ func TestHuggingFaceEmbedder_UnauthorizedAPIKey(t *testing.T) {
 }
 
 func TestHuggingFaceEmbedder_InvalidModel(t *testing.T) {
-	// Mock model not found response from real HuggingFace API (404 with no body)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		// No body for 404 responses from HuggingFace
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusNotFound, "")
 
 	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		GetBaseURL: func() string { return serverURL },
 	})
-
-	texts := []string{"hello world"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "abc/def", texts, nil)
+	embeddings, err := embedder.CreateEmbeddings(context.Background(), "abc/def", []string{"hello world"}, nil)
 
 	require.Nil(t, embeddings)
 	require.Error(t, err)
@@ -128,50 +106,17 @@ func TestHuggingFaceEmbedder_InvalidModel(t *testing.T) {
 }
 
 func TestHuggingFaceEmbedder_ErrorWithMessage(t *testing.T) {
-	// Mock error response with message
-	mockResponse := `{"error":"Model is currently loading"}`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusServiceUnavailable, `{"error":"Model is currently loading"}`)
 
 	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		GetBaseURL: func() string { return serverURL },
 	})
-
-	texts := []string{"hello world"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "some/model", texts, nil)
+	embeddings, err := embedder.CreateEmbeddings(context.Background(), "some/model", []string{"hello world"}, nil)
 
 	require.Nil(t, embeddings)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "HuggingFace: Model is currently loading")
-}
-
-func TestHuggingFaceEmbedder_EmptyTexts(t *testing.T) {
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "http://mock-url" },
-	})
-
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "intfloat/multilingual-e5-large", []string{}, nil)
-	require.NoError(t, err)
-	require.Len(t, embeddings, 0)
-}
-
-func TestHuggingFaceEmbedder_NoModel(t *testing.T) {
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "http://mock-url" },
-	})
-
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "", []string{"test"}, nil)
-	require.Nil(t, embeddings)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "model name is required")
+	require.EqualError(t, err, "HuggingFace: status code 503, message: Model is currently loading")
 }
 
 func TestHuggingFaceEmbedder_NoAPIKey(t *testing.T) {
@@ -199,14 +144,11 @@ func TestHuggingFaceEmbedder_CustomErrorHandling(t *testing.T) {
 
 func TestHuggingFaceEmbedder_CustomUnauthorizedError(t *testing.T) {
 	customErr := fmt.Errorf("custom unauthorized error")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusUnauthorized, "")
 
 	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
 		GetAPIKey:       func() string { return "invalid-key" },
-		GetBaseURL:      func() string { return server.URL },
+		GetBaseURL:      func() string { return serverURL },
 		ErrUnauthorized: customErr,
 	})
 
@@ -216,21 +158,14 @@ func TestHuggingFaceEmbedder_CustomUnauthorizedError(t *testing.T) {
 }
 
 func TestHuggingFaceEmbedder_MismatchedResponseLength(t *testing.T) {
-	// Mock response with different length than input
 	mockResponse := `[
 		[0.1, 0.2, 0.3]
 	]`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusOK, mockResponse)
 
 	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		GetBaseURL: func() string { return serverURL },
 	})
 
 	texts := []string{"hello", "world"} // 2 texts but response has only 1 embedding
@@ -281,55 +216,22 @@ func TestHuggingFaceEmbedderEndpoint(t *testing.T) {
 	}
 }
 
-func TestHuggingFaceEmbedderResponseBodyLimit(t *testing.T) {
-	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(strings.Repeat("x", 65)))
-			}))
-			defer server.Close()
-
+func TestHuggingFaceEmbedderContract(t *testing.T) {
+	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
+		Model: "org/model",
+		New: func(cfg testutil.EmbedderConfig) *Embedder {
 			embedder := NewHuggingFaceEmbedder(EmbedderConfig{
-				GetAPIKey:            func() string { return "test-api-key" },
-				GetBaseURL:           func() string { return server.URL },
-				MaxResponseBodyBytes: 64,
+				GetAPIKey:            func() string { return cfg.APIKey },
+				GetBaseURL:           func() string { return cfg.BaseURL },
+				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,
 			})
-			_, err := embedder.CreateEmbeddings(context.Background(), "org/model", []string{"test"}, nil)
-			require.ErrorContains(t, err, "response body exceeds maximum size of 64 bytes")
-		})
-	}
-}
-
-func TestHuggingFaceEmbedderErrorRedaction(t *testing.T) {
-	const apiKey = "provider-secret"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"invalid api key: provider-secret"}`))
-	}))
-	defer server.Close()
-
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return apiKey },
-		GetBaseURL: func() string { return server.URL },
+			embedder.client.Transport = cfg.Transport
+			return embedder
+		},
+		RequestError:              "HuggingFace request failed",
+		ResponseBodyLimitError:    "response body exceeds maximum size of 64 bytes",
+		TransportCauseIsPreserved: true,
+		RedactionResponse:         `{"error":"invalid api key: provider-secret"}`,
+		RedactionError:            "HuggingFace: status code 400, message: invalid api key: [REDACTED]",
 	})
-	_, err := embedder.CreateEmbeddings(context.Background(), "org/model", []string{"test"}, nil)
-	require.EqualError(t, err, "HuggingFace: invalid api key: [REDACTED]")
-	require.NotContains(t, err.Error(), apiKey)
-}
-
-func TestHuggingFaceEmbedderTransportErrorRedaction(t *testing.T) {
-	const secret = "super-secret"
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "https://internal.example/inference?token=" + secret },
-	})
-	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return nil, assert.AnError
-	})
-
-	_, err := embedder.CreateEmbeddings(context.Background(), "org/model", []string{"test"}, nil)
-	require.EqualError(t, err, "HuggingFace request failed")
-	require.NotContains(t, err.Error(), secret)
-	require.ErrorIs(t, err, assert.AnError)
 }

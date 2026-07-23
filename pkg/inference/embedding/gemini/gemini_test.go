@@ -20,18 +20,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
 
 func TestGeminiEmbedder_Success(t *testing.T) {
 	// Mock successful response from Gemini API
@@ -236,20 +230,13 @@ func TestGeminiEmbedder_InvalidAPIKey(t *testing.T) {
 		}
 	}`
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusBadRequest, mockResponse)
 
 	embedder := NewGeminiEmbedder(EmbedderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		GetBaseURL: func() string { return serverURL },
 	})
-
-	texts := []string{"hello world"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", texts, nil)
+	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"hello world"}, nil)
 
 	require.Nil(t, embeddings)
 	require.Error(t, err)
@@ -265,46 +252,17 @@ func TestGeminiEmbedder_InvalidModel(t *testing.T) {
 		}
 	}`
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusNotFound, mockResponse)
 
 	embedder := NewGeminiEmbedder(EmbedderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		GetBaseURL: func() string { return serverURL },
 	})
-
-	texts := []string{"hello world"}
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "gemini-embedding-exp-03-09", texts, nil)
+	embeddings, err := embedder.CreateEmbeddings(context.Background(), "gemini-embedding-exp-03-09", []string{"hello world"}, nil)
 
 	require.Nil(t, embeddings)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "not found for API version v1beta")
-}
-
-func TestGeminiEmbedder_EmptyTexts(t *testing.T) {
-	embedder := NewGeminiEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "http://mock-url" },
-	})
-
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{}, nil)
-	require.NoError(t, err)
-	require.Len(t, embeddings, 0)
-}
-
-func TestGeminiEmbedder_NoModel(t *testing.T) {
-	embedder := NewGeminiEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "http://mock-url" },
-	})
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "", []string{"test"}, nil)
-	require.Nil(t, embeddings)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "model name is required")
 }
 
 func TestGeminiEmbedder_MissingAPIKey(t *testing.T) {
@@ -333,70 +291,34 @@ func TestGeminiEmbedderEndpoint(t *testing.T) {
 	}
 }
 
-func TestGeminiEmbedderResponseBodyLimit(t *testing.T) {
-	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(strings.Repeat("x", 65)))
-			}))
-			defer server.Close()
-
-			embedder := NewGeminiEmbedder(EmbedderConfig{
-				GetAPIKey:            func() string { return "test-api-key" },
-				GetBaseURL:           func() string { return server.URL },
-				MaxResponseBodyBytes: 64,
-			})
-			_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"test"}, nil)
-			require.ErrorContains(t, err, "response body exceeds maximum size of 64 bytes")
-		})
-	}
-}
-
-func TestGeminiEmbedderErrorRedaction(t *testing.T) {
-	const apiKey = "provider-secret"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key: provider-secret"}}`))
-	}))
-	defer server.Close()
-
-	embedder := NewGeminiEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return apiKey },
-		GetBaseURL: func() string { return server.URL },
-	})
-	_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"test"}, nil)
-	require.EqualError(t, err, "Gemini: invalid api key: [REDACTED]")
-	require.NotContains(t, err.Error(), apiKey)
-}
-
 func TestGeminiEmbedderMismatchedResponseLength(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"embeddings":[{"values":[1.0]}]}`))
-	}))
-	defer server.Close()
+	serverURL := testutil.NewJSONServer(t, http.StatusOK, `{"embeddings":[{"values":[1.0]}]}`)
 
 	embedder := NewGeminiEmbedder(EmbedderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		GetBaseURL: func() string { return serverURL },
 	})
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"a", "b"}, nil)
 	require.Nil(t, embeddings)
 	require.ErrorContains(t, err, "response embeddings length 1 does not match input texts length 2")
 }
 
-func TestGeminiEmbedderTransportErrorRedaction(t *testing.T) {
-	const secret = "super-secret"
-	embedder := NewGeminiEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "https://internal.example/v1beta/models?token=" + secret },
+func TestGeminiEmbedderContract(t *testing.T) {
+	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
+		Model: "text-embedding-004",
+		New: func(cfg testutil.EmbedderConfig) *Embedder {
+			embedder := NewGeminiEmbedder(EmbedderConfig{
+				GetAPIKey:            func() string { return cfg.APIKey },
+				GetBaseURL:           func() string { return cfg.BaseURL },
+				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,
+			})
+			embedder.client.Transport = cfg.Transport
+			return embedder
+		},
+		RequestError:              "Gemini request failed",
+		ResponseBodyLimitError:    "response body exceeds maximum size of 64 bytes",
+		TransportCauseIsPreserved: true,
+		RedactionResponse:         `{"error":{"message":"invalid api key: provider-secret"}}`,
+		RedactionError:            "Gemini: status code 400, message: invalid api key: [REDACTED]",
 	})
-	embedder.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return nil, assert.AnError
-	})
-
-	_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"test"}, nil)
-	require.EqualError(t, err, "Gemini request failed")
-	require.NotContains(t, err.Error(), secret)
-	require.ErrorIs(t, err, assert.AnError)
 }

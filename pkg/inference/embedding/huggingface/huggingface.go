@@ -15,7 +15,6 @@
 package huggingface
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,12 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DefaultAPIBaseURL is the default base URL for HuggingFace inference API.
-	DefaultAPIBaseURL = "https://router.huggingface.co/hf-inference"
-	// DefaultMaxResponseBodyBytes bounds memory used to read a HuggingFace response.
-	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
-)
+// DefaultAPIBaseURL is the default base URL for HuggingFace inference API.
+const DefaultAPIBaseURL = "https://router.huggingface.co/hf-inference"
 
 // Embedder is for HuggingFace embeddings.
 type Embedder struct {
@@ -53,14 +48,14 @@ type EmbedderConfig struct {
 	ErrMissingAPIKey error // The error to return when API key is missing
 	ErrUnauthorized  error // The error to return when API key is invalid
 	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use DefaultMaxResponseBodyBytes.
+	// Non-positive values use base.DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
 // NewHuggingFaceEmbedder creates a new HuggingFaceEmbedder instance with the provided configuration.
 func NewHuggingFaceEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
 	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
@@ -73,29 +68,26 @@ func featureExtractionEndpoint(configured, model string) (string, error) {
 	if baseURL == "" {
 		baseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(baseURL)
+	u, err := base.ParseHTTPURL(baseURL, "HuggingFace API base URL")
 	if err != nil {
-		return "", base.NewRedactedError("invalid HuggingFace API base URL", err)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("invalid HuggingFace API base URL: absolute HTTP(S) URL is required")
+		return "", err
 	}
 	modelParts := strings.Split(model, "/")
 	for i := range modelParts {
 		modelParts[i] = escapePathSegment(modelParts[i])
 	}
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/models/" + strings.Join(modelParts, "/") + "/pipeline/feature-extraction"
-	path, err := url.PathUnescape(escapedPath)
-	if err != nil {
-		return "", base.NewRedactedError("invalid HuggingFace API base URL path", err)
+	if err := base.SetEscapedURLPath(u, escapedPath, "HuggingFace API base URL path"); err != nil {
+		return "", err
 	}
-	u.Path = path
-	u.RawPath = escapedPath
 	return u.String(), nil
 }
 
 func escapePathSegment(segment string) string {
 	escaped := url.PathEscape(segment)
+	// url.PathEscape intentionally leaves the complete dot segments "." and
+	// ".." unchanged. Escape them explicitly so intermediaries cannot remove
+	// or normalize model path segments according to RFC 3986 section 5.2.4.
 	if escaped == "." {
 		return "%2E"
 	}
@@ -143,26 +135,19 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "HuggingFace", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := e.client.Do(httpReq)
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "HuggingFace", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := base.ReadResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
+	httpReq, err := base.NewJSONRequest(ctx, "HuggingFace", endpoint, jsonData)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	statusCode, body, err := base.DoRequest(ctx, &e.client, "HuggingFace", httpReq, e.cfg.MaxResponseBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode != http.StatusOK {
 		var errResp ErrorResponse
 		message := ""
 		var parseErr error
@@ -171,7 +156,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		} else if errResp.Error != "" {
 			message = base.SanitizeErrorText(errResp.Error, apiKey)
 		}
-		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
+		logFields := []zap.Field{zap.Int("status", statusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
 		}
@@ -180,22 +165,18 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		}
 		logutil.BgLogger().Error("HuggingFace API request failed", logFields...)
 
-		if resp.StatusCode == http.StatusUnauthorized {
+		if statusCode == http.StatusUnauthorized {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
 			return nil, fmt.Errorf("HuggingFace returns status unauthorized, check API key")
 		}
 
-		if resp.StatusCode == http.StatusNotFound {
+		if statusCode == http.StatusNotFound {
 			return nil, fmt.Errorf("HuggingFace model '%s' does not exist or is not available", model)
 		}
 
-		if message != "" {
-			return nil, fmt.Errorf("HuggingFace: %s", message)
-		}
-
-		return nil, fmt.Errorf("HuggingFace: status code %d", resp.StatusCode)
+		return nil, base.NewProviderResponseError("HuggingFace", statusCode, message)
 	}
 
 	var embeddings Response

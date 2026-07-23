@@ -22,6 +22,7 @@ type Request struct {
 }
 
 // Response is the model for JinaAI embeddings API response.
+// See https://jina.ai/embeddings/.
 type Response struct {
 	Model string `json:"model"`
 	Data  []struct {

@@ -15,6 +15,7 @@
 package gemini
 
 // BatchResponse is the model for Gemini batch embeddings API response.
+// See https://ai.google.dev/api/rest/v1beta/models/batchEmbedContents.
 type BatchResponse struct {
 	Embeddings []struct {
 		Values []float32 `json:"values"`

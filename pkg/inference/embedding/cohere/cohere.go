@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
@@ -28,12 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DefaultAPIBaseURL is the default endpoint URL for the Cohere embeddings API.
-	DefaultAPIBaseURL = "https://api.cohere.com/v1/embed"
-	// DefaultMaxResponseBodyBytes bounds memory used to read a Cohere response.
-	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
-)
+// DefaultAPIBaseURL is the default endpoint URL for the Cohere embeddings API.
+const DefaultAPIBaseURL = "https://api.cohere.com/v1/embed"
 
 // Embedder is for Cohere embeddings.
 type Embedder struct {
@@ -52,14 +47,14 @@ type EmbedderConfig struct {
 	ErrMissingAPIKey error // The error to return when API key is missing
 	ErrUnauthorized  error // The error to return when API key is invalid
 	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use DefaultMaxResponseBodyBytes.
+	// Non-positive values use base.DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
 // NewCohereEmbedder creates a new CohereEmbedder instance with the provided configuration.
 func NewCohereEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
 	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
@@ -72,12 +67,9 @@ func embeddingsEndpoint(configured string) (string, error) {
 	if endpoint == "" {
 		endpoint = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(endpoint)
+	u, err := base.ParseHTTPURL(endpoint, "Cohere API base URL")
 	if err != nil {
-		return "", base.NewRedactedError("invalid Cohere API base URL", err)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("invalid Cohere API base URL: absolute HTTP(S) URL is required")
+		return "", err
 	}
 	return u.String(), nil
 }
@@ -112,6 +104,9 @@ func validateEmbeddingTypes(opts map[string]any) error {
 }
 
 func decodeEmbeddings(raw json.RawMessage) ([][]float32, error) {
+	// When embedding_types is omitted, Cohere returns embeddings as an array.
+	// When it is set, Cohere returns an object keyed by embedding type.
+	// See https://docs.cohere.com/v1/reference/embed.
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("Cohere response does not contain embeddings")
@@ -183,26 +178,19 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "Cohere", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := e.client.Do(httpReq)
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "Cohere", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := base.ReadResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
+	httpReq, err := base.NewJSONRequest(ctx, "Cohere", endpoint, jsonData)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	statusCode, body, err := base.DoRequest(ctx, &e.client, "Cohere", httpReq, e.cfg.MaxResponseBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode != http.StatusOK {
 		var errResp ErrorResponse
 		message := ""
 		var parseErr error
@@ -211,7 +199,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		} else if errResp.Message != "" {
 			message = base.SanitizeErrorText(errResp.Message, apiKey)
 		}
-		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
+		logFields := []zap.Field{zap.Int("status", statusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
 		}
@@ -219,16 +207,13 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
 		logutil.BgLogger().Error("Cohere API request failed", logFields...)
-		if resp.StatusCode == http.StatusUnauthorized {
+		if statusCode == http.StatusUnauthorized {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
 			return nil, fmt.Errorf("cohere returns status unauthorized, check API key")
 		}
-		if message != "" {
-			return nil, fmt.Errorf("cohere: %s", message)
-		}
-		return nil, fmt.Errorf("cohere: status code %d", resp.StatusCode)
+		return nil, base.NewProviderResponseError("Cohere", statusCode, message)
 	}
 
 	var respObj Response

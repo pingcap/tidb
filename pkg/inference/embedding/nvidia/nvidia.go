@@ -15,12 +15,10 @@
 package nvidia
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
@@ -28,12 +26,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DefaultAPIBaseURL is the default endpoint URL for the NVIDIA NIM embeddings API.
-	DefaultAPIBaseURL = "https://integrate.api.nvidia.com/v1/embeddings"
-	// DefaultMaxResponseBodyBytes bounds memory used to read an NVIDIA NIM response.
-	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
-)
+// DefaultAPIBaseURL is the default endpoint URL for the NVIDIA NIM embeddings API.
+const DefaultAPIBaseURL = "https://integrate.api.nvidia.com/v1/embeddings"
 
 // Embedder is for NVIDIA NIM embeddings.
 type Embedder struct {
@@ -52,14 +46,14 @@ type EmbedderConfig struct {
 	ErrMissingAPIKey error // The error to return when API key is missing
 	ErrUnauthorized  error // The error to return when API key is invalid
 	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use DefaultMaxResponseBodyBytes.
+	// Non-positive values use base.DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
 // NewNvidiaEmbedder creates a new NvidiaEmbedder instance with the provided configuration.
 func NewNvidiaEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
 	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
@@ -72,12 +66,9 @@ func embeddingsEndpoint(configured string) (string, error) {
 	if endpoint == "" {
 		endpoint = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(endpoint)
+	u, err := base.ParseHTTPURL(endpoint, "NVIDIA NIM API base URL")
 	if err != nil {
-		return "", base.NewRedactedError("invalid NVIDIA NIM API base URL", err)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("invalid NVIDIA NIM API base URL: absolute HTTP(S) URL is required")
+		return "", err
 	}
 	return u.String(), nil
 }
@@ -134,26 +125,19 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if err != nil {
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "NVIDIA NIM", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := e.client.Do(httpReq)
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "NVIDIA NIM", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := base.ReadResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
+	httpReq, err := base.NewJSONRequest(ctx, "NVIDIA NIM", endpoint, jsonData)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	statusCode, body, err := base.DoRequest(ctx, &e.client, "NVIDIA NIM", httpReq, e.cfg.MaxResponseBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode != http.StatusOK {
 		// NVIDIA endpoints use different error schemas across hosted and
 		// self-hosted versions, so accept all known message fields.
 		var errResp ErrorResponse
@@ -168,7 +152,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		} else if errResp.Error != "" {
 			message = base.SanitizeErrorText(errResp.Error, apiKey)
 		}
-		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
+		logFields := []zap.Field{zap.Int("status", statusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
 		}
@@ -176,19 +160,16 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
 		logutil.BgLogger().Error("NVIDIA NIM API request failed", logFields...)
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
-			return nil, fmt.Errorf("NVIDIA NIM returns status %s, check API key", strings.ToLower(http.StatusText(resp.StatusCode)))
+			return nil, fmt.Errorf("NVIDIA NIM returns status %s, check API key", strings.ToLower(http.StatusText(statusCode)))
 		}
-		if resp.StatusCode == http.StatusNotFound {
+		if statusCode == http.StatusNotFound {
 			return nil, fmt.Errorf("NVIDIA NIM model '%s' does not exist or is not available", model)
 		}
-		if message != "" {
-			return nil, fmt.Errorf("NVIDIA NIM: %s", message)
-		}
-		return nil, fmt.Errorf("NVIDIA NIM: status code %d", resp.StatusCode)
+		return nil, base.NewProviderResponseError("NVIDIA NIM", statusCode, message)
 	}
 
 	var respObj Response

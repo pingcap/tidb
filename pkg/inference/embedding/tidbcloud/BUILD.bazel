@@ -21,8 +21,9 @@ go_test(
     srcs = ["tidbcloud_free_test.go"],
     embed = [":tidbcloud"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 8,
     deps = [
+        "//pkg/inference/embedding/internal/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],

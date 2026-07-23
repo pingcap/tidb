@@ -15,7 +15,6 @@
 package gemini
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,12 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DefaultAPIBaseURL is the default base URL for the Gemini embeddings API.
-	DefaultAPIBaseURL = "https://generativelanguage.googleapis.com/v1beta/models"
-	// DefaultMaxResponseBodyBytes bounds memory used to read a Gemini response.
-	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
-)
+// DefaultAPIBaseURL is the default base URL for the Gemini embeddings API.
+const DefaultAPIBaseURL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 // Embedder is for Gemini embeddings.
 type Embedder struct {
@@ -52,14 +47,14 @@ type EmbedderConfig struct {
 	GetBaseURL       func() string
 	ErrMissingAPIKey error // The error to return when API key is missing
 	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use DefaultMaxResponseBodyBytes.
+	// Non-positive values use base.DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
 // NewGeminiEmbedder creates a new GeminiEmbedder instance with the provided configuration.
 func NewGeminiEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
 	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
@@ -72,20 +67,16 @@ func batchEmbeddingsEndpoint(configured, model string) (string, error) {
 	if baseURL == "" {
 		baseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(baseURL)
+	u, err := base.ParseHTTPURL(baseURL, "Gemini API base URL")
 	if err != nil {
-		return "", base.NewRedactedError("invalid Gemini API base URL", err)
+		return "", err
 	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("invalid Gemini API base URL: absolute HTTP(S) URL is required")
-	}
+	// Gemini batch embeddings append /<model>:batchEmbedContents to the models
+	// base. See https://ai.google.dev/api/rest/v1beta/models/batchEmbedContents.
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/" + url.PathEscape(model) + ":batchEmbedContents"
-	path, err := url.PathUnescape(escapedPath)
-	if err != nil {
-		return "", base.NewRedactedError("invalid Gemini API base URL path", err)
+	if err := base.SetEscapedURLPath(u, escapedPath, "Gemini API base URL path"); err != nil {
+		return "", err
 	}
-	u.Path = path
-	u.RawPath = escapedPath
 	return u.String(), nil
 }
 
@@ -135,26 +126,19 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "Gemini", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-goog-api-key", apiKey)
-
-	resp, err := e.client.Do(httpReq)
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "Gemini", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := base.ReadResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
+	httpReq, err := base.NewJSONRequest(ctx, "Gemini", fullURL, jsonData)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	httpReq.Header.Set("x-goog-api-key", apiKey)
+
+	statusCode, body, err := base.DoRequest(ctx, &e.client, "Gemini", httpReq, e.cfg.MaxResponseBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode != http.StatusOK {
 		var errResp ErrorResponse
 		message := ""
 		var parseErr error
@@ -163,7 +147,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		} else if errResp.Error.Message != "" {
 			message = base.SanitizeErrorText(errResp.Error.Message, apiKey)
 		}
-		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
+		logFields := []zap.Field{zap.Int("status", statusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
 		}
@@ -171,10 +155,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
 		logutil.BgLogger().Error("Gemini API request failed", logFields...)
-		if message != "" {
-			return nil, fmt.Errorf("Gemini: %s", message)
-		}
-		return nil, fmt.Errorf("Gemini: status code %d", resp.StatusCode)
+		return nil, base.NewProviderResponseError("Gemini", statusCode, message)
 	}
 
 	var respObj BatchResponse

@@ -18,7 +18,10 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -153,4 +156,67 @@ func TestRedactedErrors(t *testing.T) {
 	err = NewProviderRequestError(ctx, "test provider", cause)
 	require.ErrorIs(t, err, customCause)
 	require.Equal(t, customCause, err)
+}
+
+func TestHTTPHelpers(t *testing.T) {
+	t.Run("parse HTTP URL", func(t *testing.T) {
+		u, err := ParseHTTPURL("  https://example.com/root?tenant=x  ", "test provider URL")
+		require.NoError(t, err)
+		require.Equal(t, "https://example.com/root?tenant=x", u.String())
+
+		const secret = "super-secret"
+		_, err = ParseHTTPURL("https://example.com/%zz?token="+secret, "test provider URL")
+		require.EqualError(t, err, "invalid test provider URL")
+		require.NotContains(t, err.Error(), secret)
+
+		for _, rawURL := range []string{"/relative", "ftp://example.com/path"} {
+			_, err = ParseHTTPURL(rawURL, "test provider URL")
+			require.EqualError(t, err, "invalid test provider URL: absolute HTTP(S) URL is required")
+		}
+	})
+
+	t.Run("escaped path", func(t *testing.T) {
+		u, err := ParseHTTPURL("https://example.com?tenant=x", "test provider URL")
+		require.NoError(t, err)
+		require.NoError(t, SetEscapedURLPath(u, "/models/org%2Fmodel", "test provider URL path"))
+		require.Equal(t, "https://example.com/models/org%2Fmodel?tenant=x", u.String())
+
+		const secret = "super-secret"
+		err = SetEscapedURLPath(u, "/%zz/"+secret, "test provider URL path")
+		require.EqualError(t, err, "invalid test provider URL path")
+		require.NotContains(t, err.Error(), secret)
+	})
+
+	t.Run("JSON request", func(t *testing.T) {
+		req, err := NewJSONRequest(context.Background(), "test provider", "https://example.com/embed", []byte(`{"input":"test"}`))
+		require.NoError(t, err)
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "application/json", req.Header.Get("Content-Type"))
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"input":"test"}`, string(body))
+	})
+
+	t.Run("execute request", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, http.MethodPost, r.Method)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+		defer server.Close()
+
+		req, err := NewJSONRequest(context.Background(), "test provider", server.URL, nil)
+		require.NoError(t, err)
+		statusCode, body, err := DoRequest(context.Background(), &http.Client{}, "test provider", req, 64)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusAccepted, statusCode)
+		require.JSONEq(t, `{"ok":true}`, string(body))
+	})
+
+	t.Run("response error", func(t *testing.T) {
+		err := NewProviderResponseError("test provider", http.StatusBadRequest, "invalid input")
+		require.EqualError(t, err, "test provider: status code 400, message: invalid input")
+		err = NewProviderResponseError("test provider", http.StatusServiceUnavailable, "")
+		require.EqualError(t, err, "test provider: status code 503, message: Service Unavailable")
+	})
 }

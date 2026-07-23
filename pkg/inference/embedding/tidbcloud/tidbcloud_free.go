@@ -15,7 +15,6 @@
 package tidbcloud
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,11 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-)
-
-const (
-	// DefaultMaxResponseBodyBytes bounds memory used to read a TiDB Cloud Inference response.
-	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
 )
 
 // Embedder is for TiDB Cloud Free embeddings.
@@ -51,14 +45,14 @@ type EmbedderConfig struct {
 	// appends /api/v1/inference/embeddings/<billing-id>.
 	GetBaseURL func() string
 	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use DefaultMaxResponseBodyBytes.
+	// Non-positive values use base.DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
 // NewTiDBCloudFreeEmbedder creates a new TiDBCloudFreeEmbedder instance with the provided configuration.
 func NewTiDBCloudFreeEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
 	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
@@ -67,20 +61,14 @@ func NewTiDBCloudFreeEmbedder(cfg EmbedderConfig) *Embedder {
 }
 
 func embeddingsEndpoint(configured, billingID string) (string, error) {
-	u, err := url.Parse(strings.TrimSpace(configured))
+	u, err := base.ParseHTTPURL(configured, "TiDB Cloud Inference base URL")
 	if err != nil {
-		return "", base.NewRedactedError("invalid TiDB Cloud Inference base URL", err)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("invalid TiDB Cloud Inference base URL: absolute HTTP(S) URL is required")
+		return "", err
 	}
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/api/v1/inference/embeddings/" + escapePathSegment(billingID)
-	path, err := url.PathUnescape(escapedPath)
-	if err != nil {
-		return "", base.NewRedactedError("invalid TiDB Cloud Inference base URL path", err)
+	if err := base.SetEscapedURLPath(u, escapedPath, "TiDB Cloud Inference base URL path"); err != nil {
+		return "", err
 	}
-	u.Path = path
-	u.RawPath = escapedPath
 	return u.String(), nil
 }
 
@@ -146,14 +134,13 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, fmt.Errorf("unexpected marshal request error")
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(jsonData))
+	httpReq, err := base.NewJSONRequest(ctx, "TiDB Cloud Inference", fullURL, jsonData)
 	if err != nil {
-		logRequestError(apiKey, base.NewProviderRequestError(ctx, "TiDB Cloud Inference", err))
+		logRequestError(apiKey, err)
 		// Do not return error directly to users to avoid exposing URLs
 		return nil, fmt.Errorf("failed to request TiDB Cloud Inference Service")
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := e.client.Do(httpReq)
@@ -195,10 +182,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
 		logutil.BgLogger().Error("TiDB Cloud Inference API request failed", logFields...)
-		if message != "" {
-			return nil, fmt.Errorf("TiDB Cloud Inference: %s", message)
-		}
-		return nil, fmt.Errorf("TiDB Cloud Inference: status code %d", resp.StatusCode)
+		return nil, base.NewProviderResponseError("TiDB Cloud Inference", resp.StatusCode, message)
 	}
 
 	var respObj Response

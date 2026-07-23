@@ -15,24 +15,29 @@
 package base
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"maps"
 	"math"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/docker/go-units"
 )
 
 const (
 	// DefaultHTTPClientTimeout bounds embedding provider requests when the caller context is not cancelled.
 	DefaultHTTPClientTimeout = 30 * time.Second
 	// DefaultMaxResponseBodyBytes bounds memory used to read an embedding provider response.
-	DefaultMaxResponseBodyBytes int64 = 32 << 20
+	DefaultMaxResponseBodyBytes int64 = 32 * units.MiB
 
-	maxSanitizedErrorTextBytes = 4096
+	maxSanitizedErrorTextBytes = 4 * units.KiB
 )
 
 // ReadResponseBody reads an embedding provider response up to maxBytes and
@@ -99,6 +104,76 @@ func NewProviderRequestError(ctx context.Context, provider string, cause error) 
 		return contextCause
 	}
 	return NewRedactedError(provider+" request failed", cause)
+}
+
+// ParseHTTPURL parses and validates an absolute HTTP(S) URL. description must
+// be a fixed, non-sensitive name used to construct a safe error message.
+func ParseHTTPURL(rawURL, description string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return nil, NewRedactedError("invalid "+description, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("invalid %s: absolute HTTP(S) URL is required", description)
+	}
+	return u, nil
+}
+
+// SetEscapedURLPath assigns an escaped URL path without exposing the original
+// path in an error. description must be a fixed, non-sensitive name.
+func SetEscapedURLPath(u *url.URL, escapedPath, description string) error {
+	path, err := url.PathUnescape(escapedPath)
+	if err != nil {
+		return NewRedactedError("invalid "+description, err)
+	}
+	u.Path = path
+	u.RawPath = escapedPath
+	return nil
+}
+
+// NewJSONRequest creates an HTTP POST request with a JSON content type while
+// keeping endpoint details out of request-construction errors.
+func NewJSONRequest(ctx context.Context, provider, endpoint string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, NewProviderRequestError(ctx, provider, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
+// DoRequest executes an embedding provider request, closes the response body,
+// and reads at most maxResponseBodyBytes bytes.
+func DoRequest(
+	ctx context.Context,
+	client *http.Client,
+	provider string,
+	req *http.Request,
+	maxResponseBodyBytes int64,
+) (int, []byte, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, NewProviderRequestError(ctx, provider, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ReadResponseBody(resp.Body, maxResponseBodyBytes)
+	if err != nil {
+		if contextCause := context.Cause(ctx); contextCause != nil {
+			return 0, nil, contextCause
+		}
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
+}
+
+// NewProviderResponseError returns a consistent generic provider error. The
+// message must already be sanitized when it originated from a remote service.
+func NewProviderResponseError(provider string, statusCode int, message string) error {
+	if message == "" {
+		message = http.StatusText(statusCode)
+	}
+	return fmt.Errorf("%s: status code %d, message: %s", provider, statusCode, message)
 }
 
 // DecodeFloat32ArrayBytes decodes bytes of an float32 array in little endian into a float32 slice.

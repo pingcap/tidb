@@ -15,12 +15,10 @@
 package jina
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
@@ -28,12 +26,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DefaultAPIBaseURL is the default endpoint URL for the Jina AI embeddings API.
-	DefaultAPIBaseURL = "https://api.jina.ai/v1/embeddings"
-	// DefaultMaxResponseBodyBytes bounds memory used to read a Jina AI response.
-	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
-)
+// DefaultAPIBaseURL is the default endpoint URL for the Jina AI embeddings API.
+const DefaultAPIBaseURL = "https://api.jina.ai/v1/embeddings"
 
 // Embedder is for JinaAI embeddings.
 type Embedder struct {
@@ -52,14 +46,14 @@ type EmbedderConfig struct {
 	ErrMissingAPIKey error // The error to return when API key is missing
 	ErrUnauthorized  error // The error to return when API key is invalid
 	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use DefaultMaxResponseBodyBytes.
+	// Non-positive values use base.DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
 // NewJinaEmbedder creates a new JinaEmbedder instance with the provided configuration.
 func NewJinaEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
 	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
@@ -72,12 +66,9 @@ func embeddingsEndpoint(configured string) (string, error) {
 	if endpoint == "" {
 		endpoint = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(endpoint)
+	u, err := base.ParseHTTPURL(endpoint, "Jina AI API base URL")
 	if err != nil {
-		return "", base.NewRedactedError("invalid Jina AI API base URL", err)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("invalid Jina AI API base URL: absolute HTTP(S) URL is required")
+		return "", err
 	}
 	return u.String(), nil
 }
@@ -119,26 +110,19 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if err != nil {
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "JinaAI", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := e.client.Do(httpReq)
-	if err != nil {
-		return nil, base.NewProviderRequestError(ctx, "JinaAI", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := base.ReadResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
+	httpReq, err := base.NewJSONRequest(ctx, "JinaAI", endpoint, jsonData)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	statusCode, body, err := base.DoRequest(ctx, &e.client, "JinaAI", httpReq, e.cfg.MaxResponseBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode != http.StatusOK {
 		var errResp ErrorResponse
 		message := ""
 		var parseErr error
@@ -147,7 +131,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		} else if errResp.Detail != "" {
 			message = base.SanitizeErrorText(errResp.Detail, apiKey)
 		}
-		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
+		logFields := []zap.Field{zap.Int("status", statusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
 		}
@@ -155,16 +139,13 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
 		logutil.BgLogger().Error("JinaAI API request failed", logFields...)
-		if resp.StatusCode == http.StatusUnauthorized {
+		if statusCode == http.StatusUnauthorized {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
 			return nil, fmt.Errorf("JinaAI returns status unauthorized, check API key")
 		}
-		if message != "" {
-			return nil, fmt.Errorf("JinaAI: %s", message)
-		}
-		return nil, fmt.Errorf("JinaAI: status code %d", resp.StatusCode)
+		return nil, base.NewProviderResponseError("JinaAI", statusCode, message)
 	}
 
 	var respObj Response

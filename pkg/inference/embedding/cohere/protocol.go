@@ -17,6 +17,7 @@ package cohere
 import "encoding/json"
 
 // Response is the model for Cohere embeddings API response.
+// See https://docs.cohere.com/v1/reference/embed.
 type Response struct {
 	Embeddings json.RawMessage `json:"embeddings"`
 }
