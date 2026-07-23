@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"path"
 	"sync"
 	"sync/atomic"
@@ -34,9 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -63,7 +67,7 @@ type collectConflictsStepExecutor struct {
 	// if we have 2 rows (1, 3, 4), (2, 3, 4), one pair of conflicted UK KV will
 	// be generated for kv group u1 and u2 respectively.
 	// this also means we need to process conflicted UK KV group one by one.
-	sharedHandleSet *conflictedkv.BoundedHandleSet
+	sharedHandleSet *conflictedkv.BoundedKeySet
 	summary         execute.SubtaskSummary
 }
 
@@ -174,11 +178,20 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
-
+	targetIdx, err := e.getKVGroupIndexInfo(kvGroup)
+	if err != nil {
+		return err
+	}
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
 		return err
+	}
+
+	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	needDispatch := concurrency > 1 && targetIdx != nil && targetIdx.MVIndex
+	var collectorChs []chan *simplesst.KVPair
+	if needDispatch {
+		collectorChs = make([]chan *simplesst.KVPair, concurrency)
 	}
 
 	var (
@@ -186,6 +199,11 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		mergedLocalSet = conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
 	)
 	for i := range concurrency {
+		collectorCh := pairCh
+		if needDispatch {
+			collectorCh = make(chan *simplesst.KVPair, conflictedkv.BufferedHandleLimit)
+			collectorChs[i] = collectorCh
+		}
 		encoder := encoders[i]
 		uid := uuid.New().String()
 		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
@@ -215,7 +233,12 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 				e.result.Merge(collector.GetCollectResult())
 				mu.Unlock()
 			}()
-			return collector.Run(egCtx, pairCh)
+			return collector.Run(egCtx, collectorCh)
+		})
+	}
+	if needDispatch {
+		eg.Go(func() error {
+			return e.dispatchMVIndexKVPairs(egCtx, pairCh, collectorChs, targetIdx)
 		})
 	}
 
@@ -225,6 +248,68 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	e.sharedHandleSet.Merge(mergedLocalSet)
 	return nil
+}
+
+func (e *collectConflictsStepExecutor) getKVGroupIndexInfo(kvGroup string) (*model.IndexInfo, error) {
+	if kvGroup == globalsort.DataKVGroup {
+		return nil, nil
+	}
+
+	indexID, err := globalsort.KVGroup2IndexID(kvGroup)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tblMeta := e.tableImporter.Table.Meta()
+	targetIdx := model.FindIndexInfoByID(tblMeta.Indices, indexID)
+	if targetIdx == nil {
+		// should not happen
+		return nil, errors.Errorf("index %d in table %s", indexID, tblMeta.Name)
+	}
+	return targetIdx, nil
+}
+
+func (e *collectConflictsStepExecutor) dispatchMVIndexKVPairs(
+	ctx context.Context,
+	pairCh <-chan *simplesst.KVPair,
+	collectorChs []chan *simplesst.KVPair,
+	targetIdx *model.IndexInfo,
+) error {
+	defer func() {
+		for _, collectorCh := range collectorChs {
+			close(collectorCh)
+		}
+	}()
+
+	for {
+		var pair *simplesst.KVPair
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case p, ok := <-pairCh:
+			if !ok {
+				return nil
+			}
+			pair = p
+		}
+
+		key, err := e.store.GetCodec().DecodeKey(pair.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		handle, err := tablecodec.DecodeIndexHandle(key, pair.Value, len(targetIdx.Columns))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// Keep all index KVs for one row in the same collector so its local
+		// handled-row set can deduplicate them.
+		collectorIdx := int(crc32.ChecksumIEEE(handle.Encoded()) % uint32(len(collectorChs)))
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case collectorChs[collectorIdx] <- pair:
+		}
+	}
 }
 
 // right now we only have 1 subtask, but later we might have multiple subtasks

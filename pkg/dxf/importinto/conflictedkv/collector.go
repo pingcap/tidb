@@ -92,7 +92,6 @@ type Collector struct {
 	kvGroup        string
 	handler        Handler
 	result         *CollectResult
-	hdlSet         *BoundedHandleSet
 	// total recorded file size is shared across collectors in one collect-conflicts
 	// subtask, to enforce one global hard limit.
 	sharedTotalFileSize *atomic.Int64
@@ -113,7 +112,7 @@ func NewCollector(
 	filenamePrefix string,
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
-	globalSet, localSet *BoundedHandleSet,
+	globalSet, localSet *BoundedKeySet,
 	sharedTotalFileSize *atomic.Int64,
 	progressCollector execute.Collector,
 	trafficRec TrafficRecorder,
@@ -129,7 +128,6 @@ func NewCollector(
 		filenamePrefix:      filenamePrefix,
 		kvGroup:             kvGroup,
 		result:              NewCollectResult(store.GetCodec().GetKeyspace()),
-		hdlSet:              localSet,
 		sharedTotalFileSize: sharedTotalFileSize,
 	}
 	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, progressCollector, logger)
@@ -137,7 +135,7 @@ func NewCollector(
 	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
-		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), NewHandleFilter(globalSet))
+		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), NewKeyFilter(globalSet, localSet))
 	}
 	collector.handler = h
 	return collector
@@ -154,18 +152,6 @@ func (c *Collector) Run(ctx context.Context, ch chan *simplesst.KVPair) (err err
 // HandleEncodedRow handles the re-encoded row from conflict KV.
 func (c *Collector) HandleEncodedRow(ctx context.Context, rowKey tidbkv.Key,
 	row []types.Datum, kvPairs *kv.Pairs) error {
-	// every conflicted row from data KV group must be recorded, but for index KV
-	// group, they might come from the same row, so we only need to record it on
-	// the first time we meet it.
-	// currently, we use memory to do this check, if it's too large, we just skip
-	// the checking and skip later checksum.
-	//
-	// an alternative solution is to upload those row keys to sort storage and
-	// check them in another pass later.
-	if c.kvGroup != globalsort.DataKVGroup {
-		c.hdlSet.Add(rowKey)
-	}
-
 	if err := c.recordRowToFile(ctx, row); err != nil {
 		return err
 	}

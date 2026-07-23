@@ -193,7 +193,7 @@ func TestHandler(t *testing.T) {
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
 				conflictedkv.NewLazyRefreshedSnapshot(store, trafficRec),
-				conflictedkv.NewHandleFilter(alreadyProcessedRowKeys),
+				conflictedkv.NewKeyFilter(alreadyProcessedRowKeys),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
 			var ch = make(chan *simplesst.KVPair, 10)

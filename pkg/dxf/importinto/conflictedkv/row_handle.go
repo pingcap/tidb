@@ -35,27 +35,44 @@ const (
 	rowKeyMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
 )
 
-// HandleFilter is used to filter row handles.
-type HandleFilter struct {
-	set *BoundedHandleSet
+// KeyFilter is used to filter row handles.
+type KeyFilter struct {
+	globalSet *BoundedKeySet
+	localSet  *BoundedKeySet
 }
 
-// NewHandleFilter creates a new HandleFilter.
+// NewKeyFilter creates a new KeyFilter.
 // exported for test.
-func NewHandleFilter(set *BoundedHandleSet) *HandleFilter {
-	return &HandleFilter{set: set}
+func NewKeyFilter(globalSet, localSet *BoundedKeySet) *KeyFilter {
+	return &KeyFilter{globalSet: globalSet, localSet: localSet}
 }
 
-func (f *HandleFilter) needSkip(rowKey tidbkv.Key) bool {
+// it's used to check whether the row key is already handled when processing
+// another index kv group.
+func (f *KeyFilter) isHandledGlobally(rowKey tidbkv.Key) bool {
 	if f == nil {
 		return false
 	}
-	return f.set.Contains(rowKey)
+	return f.globalSet.Contains(rowKey)
 }
 
-// BoundedHandleSet is a set of data row keys with a size limit.
+func (f *KeyFilter) isHandledLocally(keyStr string) bool {
+	if f == nil {
+		return false
+	}
+	return f.localSet.containsStrKey(keyStr)
+}
+
+func (f *KeyFilter) addLocal(keyStr string) {
+	if f == nil {
+		return
+	}
+	f.localSet.addStr(keyStr)
+}
+
+// BoundedKeySet is a set of data row keys with a size limit.
 // this set is not goroutine safe.
-type BoundedHandleSet struct {
+type BoundedKeySet struct {
 	logger *zap.Logger
 	// we use a shared size, as we collect conflicted rows concurrently
 	sharedSize *atomic.Int64
@@ -63,13 +80,13 @@ type BoundedHandleSet struct {
 	rowKeys    map[string]bool
 }
 
-// NewBoundedHandleSet creates a new BoundedHandleSet.
-func NewBoundedHandleSet(logger *zap.Logger, sharedSize *atomic.Int64, limit int64) *BoundedHandleSet {
+// NewBoundedHandleSet creates a new BoundedKeySet.
+func NewBoundedHandleSet(logger *zap.Logger, sharedSize *atomic.Int64, limit int64) *BoundedKeySet {
 	size := initMapSizeForConflictedRows
 	if sharedSize.Load() >= limit {
 		size = 0
 	}
-	return &BoundedHandleSet{
+	return &BoundedKeySet{
 		logger:     logger,
 		sharedSize: sharedSize,
 		sizeLimit:  limit,
@@ -78,12 +95,20 @@ func NewBoundedHandleSet(logger *zap.Logger, sharedSize *atomic.Int64, limit int
 }
 
 // Add adds a data row key to the set.
-func (s *BoundedHandleSet) Add(rowKey tidbkv.Key) {
+// for partitioned table, row handle itself is not enough to make sure uniqueness,
+// need to used together with the physical table ID, so we use row key directly.
+func (s *BoundedKeySet) Add(rowKey tidbkv.Key) {
+	if s.BoundExceeded() {
+		return
+	}
+	s.addStr(string(rowKey))
+}
+
+func (s *BoundedKeySet) addStr(keyStr string) {
 	if s.BoundExceeded() {
 		return
 	}
 
-	keyStr := string(rowKey)
 	delta := int64(len(keyStr)) + rowKeyMapEntryShallowSize
 	newSize := s.sharedSize.Add(delta)
 	s.rowKeys[keyStr] = true
@@ -102,7 +127,7 @@ func (s *BoundedHandleSet) Add(rowKey tidbkv.Key) {
 }
 
 // Contains checks whether the data row key is in the set.
-func (s *BoundedHandleSet) Contains(rowKey tidbkv.Key) bool {
+func (s *BoundedKeySet) Contains(rowKey tidbkv.Key) bool {
 	// during handling the first kv group, this map is empty, we can avoid calling
 	// string(rowKey)
 	if len(s.rowKeys) == 0 {
@@ -111,8 +136,16 @@ func (s *BoundedHandleSet) Contains(rowKey tidbkv.Key) bool {
 	return s.rowKeys[string(rowKey)]
 }
 
-// Merge merges another BoundedHandleSet into this one.
-func (s *BoundedHandleSet) Merge(other *BoundedHandleSet) {
+// Contains checks whether the data row key is in the set.
+func (s *BoundedKeySet) containsStrKey(keyStr string) bool {
+	if len(s.rowKeys) == 0 {
+		return false
+	}
+	return s.rowKeys[keyStr]
+}
+
+// Merge merges another BoundedKeySet into this one.
+func (s *BoundedKeySet) Merge(other *BoundedKeySet) {
 	if other == nil {
 		return
 	}
@@ -120,8 +153,8 @@ func (s *BoundedHandleSet) Merge(other *BoundedHandleSet) {
 }
 
 // BoundExceeded checks whether the size limit is exceeded.
-func (s *BoundedHandleSet) BoundExceeded() bool {
+func (s *BoundedKeySet) BoundExceeded() bool {
 	limit := s.sizeLimit
-	failpoint.InjectCall("mockHandleSetSizeLimit", &limit)
+	failpoint.InjectCall("mockKeySetSizeLimit", &limit)
 	return s.sharedSize.Load() >= limit
 }

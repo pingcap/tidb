@@ -213,7 +213,7 @@ func encodeDataRowKey(tableID int64, handle tidbkv.Handle) tidbkv.Key {
 type IndexKVHandler struct {
 	*BaseHandler
 	snapshot  *LazyRefreshedSnapshot
-	hdlFilter *HandleFilter
+	hdlFilter *KeyFilter
 
 	targetIdx    *model.IndexInfo
 	bufferedRows []rowKeyWithHandle
@@ -226,7 +226,7 @@ var (
 
 // NewIndexKVHandler creates a new IndexKVHandler.
 // exported for test.
-func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filter *HandleFilter) *IndexKVHandler {
+func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filter *KeyFilter) *IndexKVHandler {
 	h := &IndexKVHandler{
 		BaseHandler: base,
 		snapshot:    snapshot,
@@ -275,7 +275,7 @@ func (h *IndexKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error
 	}
 	// The filter and snapshot lookup need the data row key, not this index key.
 	rowKey := encodeDataRowKey(tableID, handle)
-	if h.hdlFilter.needSkip(rowKey) {
+	if h.hdlFilter.isHandledGlobally(rowKey) {
 		return nil
 	}
 
@@ -303,10 +303,24 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	for rowKey, val := range res {
+		// when it's MV index, 2 index keys might point to the same row key.
+		if h.hdlFilter.isHandledLocally(rowKey) {
+			continue
+		}
 		handle := rowKeys2Handle[rowKey]
 		if err := h.encodeAndHandleRow(ctx, tidbkv.Key(rowKey), handle, val.Value); err != nil {
 			return errors.Trace(err)
 		}
+
+		// every conflicted row from data KV group must be recorded, but for index KV
+		// group, they might come from the same row, so we only need to record it on
+		// the first time we meet it.
+		// currently, we use memory to do this check, if it's too large, we just skip
+		// the checking and skip later checksum.
+		//
+		// an alternative solution is to upload those row keys to sort storage and
+		// check them in another pass later.
+		h.hdlFilter.addLocal(rowKey)
 	}
 	h.bufferedRows = h.bufferedRows[:0]
 	return nil

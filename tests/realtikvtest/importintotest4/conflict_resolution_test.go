@@ -725,7 +725,7 @@ func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	var fpEntered atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockHandleSetSizeLimit", func(limitP *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockKeySetSizeLimit", func(limitP *int64) {
 		*limitP = 0
 		fpEntered.CompareAndSwap(0, 1)
 	})

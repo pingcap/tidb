@@ -25,16 +25,16 @@ import (
 )
 
 func TestHandleFilter(t *testing.T) {
-	var hf *HandleFilter
-	// we allow nil HandleFilter
-	require.False(t, hf.needSkip(tidbkv.Key("row-key-1")))
+	var hf *KeyFilter
+	// we allow nil KeyFilter
+	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-1")))
 
 	sharedSize := atomic.Int64{}
 	set := NewBoundedHandleSet(nil, &sharedSize, 1024)
 	set.Add(tidbkv.Key("row-key-1"))
-	hf = NewHandleFilter(set)
-	require.True(t, hf.needSkip(tidbkv.Key("row-key-1")))
-	require.False(t, hf.needSkip(tidbkv.Key("row-key-2")))
+	hf = NewKeyFilter(set)
+	require.True(t, hf.isHandledGlobally(tidbkv.Key("row-key-1")))
+	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-2")))
 }
 
 func TestBoundedHandleSet(t *testing.T) {
