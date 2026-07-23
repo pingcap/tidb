@@ -41,9 +41,26 @@ type ServiceURL struct {
 
 // ParseServiceURL parses a supported service URL.
 func ParseServiceURL(raw string) (ServiceURL, error) {
+	return parseServiceURL(raw, "")
+}
+
+func parseServiceURL(raw string, defaultScheme string) (ServiceURL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ServiceURL{}, errors.New("URL must not be empty")
+	}
+
+	if !strings.Contains(raw, "://") {
+		if !isSupportedServiceURLScheme(defaultScheme) {
+			if defaultScheme == "" {
+				return ServiceURL{}, errors.Errorf("URL scheme must be http, https, unix, or unixs: %s", raw)
+			}
+			return ServiceURL{}, errors.Errorf("URL scheme must be http, https, unix, or unixs: %s", defaultScheme)
+		}
+		if _, _, err := net.SplitHostPort(raw); err != nil {
+			return ServiceURL{}, errors.Errorf(`URL address does not have the form "host:port": %s`, raw)
+		}
+		return ServiceURL{scheme: defaultScheme, address: raw}, nil
 	}
 
 	for _, scheme := range []string{URLSchemeUnix, URLSchemeUnixs} {
@@ -79,24 +96,11 @@ func ParseServiceURL(raw string) (ServiceURL, error) {
 
 // NormalizeServiceURL normalizes host:port or supported URL input to scheme://address.
 func NormalizeServiceURL(raw string, defaultScheme string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", errors.New("URL must not be empty")
+	parsed, err := parseServiceURL(raw, defaultScheme)
+	if err != nil {
+		return "", err
 	}
-	if strings.Contains(raw, "://") {
-		parsed, err := ParseServiceURL(raw)
-		if err != nil {
-			return "", err
-		}
-		return parsed.String(), nil
-	}
-	if !isSupportedServiceURLScheme(defaultScheme) {
-		return "", errors.Errorf("URL scheme must be http, https, unix, or unixs: %s", defaultScheme)
-	}
-	if _, _, err := net.SplitHostPort(raw); err != nil {
-		return "", errors.Errorf(`URL address does not have the form "host:port": %s`, raw)
-	}
-	return defaultScheme + "://" + raw, nil
+	return parsed.String(), nil
 }
 
 // SchemePrefix returns the normalized scheme prefix.

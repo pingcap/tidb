@@ -98,6 +98,7 @@ func TestNormalizeServiceURL(t *testing.T) {
 		{raw: "http://127.0.0.1:2379", defaultScheme: URLSchemeHTTP, expected: "http://127.0.0.1:2379"},
 		{raw: "https://127.0.0.1:2379", defaultScheme: URLSchemeHTTP, expected: "https://127.0.0.1:2379"},
 		{raw: "unix://localhost:m0", defaultScheme: URLSchemeHTTP, expected: "unix://localhost:m0"},
+		{raw: "unix:///tmp/etcd.sock", defaultScheme: URLSchemeHTTP, expected: "unix:///tmp/etcd.sock"},
 	}
 
 	for _, test := range tests {

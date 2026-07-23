@@ -234,8 +234,9 @@ func (n *client) GetPDAddrs(ctx context.Context) ([]string, error) {
 
 // GetPDAddrs returns dialable PD endpoints from PD members.
 // For http/https members, it returns host:port unless withScheme is true.
-// For unix members, it keeps the unix:// scheme because embedded etcd tests
-// publish unix:// endpoints and stripping the scheme would make them undialable.
+// For unix-family members, it keeps the scheme because the scheme is required
+// for dialing. Malformed member URLs are skipped, and an error is returned only
+// when no usable PD client URL remains.
 func GetPDAddrs(ctx context.Context, pdClient pd.Client, withScheme bool) ([]string, error) {
 	if pdClient == nil {
 		return nil, errors.New("PD client not found")
