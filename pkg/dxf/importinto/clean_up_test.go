@@ -21,14 +21,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
@@ -106,4 +110,111 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 		require.NotContains(t, string(task.Meta), accessKey)
 		require.Contains(t, string(task.Meta), "access-key=xxxxxx")
 	}
+}
+
+func TestSendMeterOnCleanUpInParallelSuccess(t *testing.T) {
+	tasks := make([]*proto.Task, cleanUpMeteringConcurrency*2)
+	for i := range tasks {
+		tasks[i] = &proto.Task{
+			TaskBase: proto.TaskBase{
+				ID:    int64(i + 1),
+				State: proto.TaskStateSucceed,
+			},
+		}
+	}
+
+	var processedTaskCount atomic.Int32
+	sendFn := func(context.Context, *proto.Task, *zap.Logger) error {
+		processedTaskCount.Add(1)
+		return nil
+	}
+
+	err := sendMeterOnCleanUpInParallel(context.Background(), tasks, sendFn)
+	require.NoError(t, err)
+	require.Equal(t, int32(len(tasks)), processedTaskCount.Load())
+}
+
+func TestSendMeterOnCleanUpInParallelCancellation(t *testing.T) {
+	t.Run("send error stops starting pending tasks", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		tasks := make([]*proto.Task, cleanUpMeteringConcurrency*2)
+		releases := make([]chan error, len(tasks))
+		for i := range tasks {
+			tasks[i] = &proto.Task{
+				TaskBase: proto.TaskBase{
+					ID:    int64(i + 1),
+					State: proto.TaskStateSucceed,
+				},
+			}
+			releases[i] = make(chan error, 1)
+		}
+
+		startedTasks := make(chan int64, len(tasks))
+		done := make(chan error, 1)
+		sendFn := func(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
+			startedTasks <- task.ID
+			select {
+			case err := <-releases[task.ID-1]:
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		go func() {
+			done <- sendMeterOnCleanUpInParallel(ctx, tasks, sendFn)
+		}()
+
+		startedTaskIDs := make([]int64, 0, cleanUpMeteringConcurrency)
+		for range cleanUpMeteringConcurrency {
+			select {
+			case taskID := <-startedTasks:
+				startedTaskIDs = append(startedTaskIDs, taskID)
+			case <-ctx.Done():
+				require.NoError(t, ctx.Err())
+			}
+		}
+
+		sendErr := fmt.Errorf("metering failed")
+		releases[startedTaskIDs[0]-1] <- sendErr
+		var err error
+		select {
+		case err = <-done:
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err())
+		}
+		require.ErrorIs(t, err, sendErr)
+		require.Empty(t, startedTasks)
+	})
+
+	t.Run("parent cancellation is propagated", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, State: proto.TaskStateSucceed}}}
+
+		err := sendMeterOnCleanUpInParallel(ctx, tasks, func(ctx context.Context, _ *proto.Task, _ *zap.Logger) error {
+			return ctx.Err()
+		})
+		require.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+func TestSendMeterOnCleanUpInParallelRecoversPanic(t *testing.T) {
+	restoreLog := log.ReplaceGlobals(zap.NewNop(), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.FatalLevel)})
+	defer restoreLog()
+
+	tasks := []*proto.Task{{
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStateSucceed,
+		},
+	}}
+	sendFn := func(context.Context, *proto.Task, *zap.Logger) error {
+		panic("metering panic")
+	}
+
+	err := sendMeterOnCleanUpInParallel(context.Background(), tasks, sendFn)
+	require.ErrorContains(t, err, "metering panic")
 }

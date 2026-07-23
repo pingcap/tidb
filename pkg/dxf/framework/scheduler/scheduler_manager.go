@@ -408,6 +408,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 
 func (sm *Manager) cleanupTaskLoop() {
 	sm.logger.Info("cleanup loop start")
+	sm.drainCleanupTaskBatches()
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -416,38 +417,58 @@ func (sm *Manager) cleanupTaskLoop() {
 			sm.logger.Info("cleanup loop exits")
 			return
 		case <-sm.finishCh:
-			sm.doCleanupTask()
+			sm.drainCleanupTaskBatches()
 		case <-ticker.C:
-			sm.doCleanupTask()
+			sm.drainCleanupTaskBatches()
 		}
 	}
 }
 
-// doCleanupTask processes clean up routine defined by each type of tasks and cleanupMeta.
+// drainCleanupTaskBatches processes bounded batches until one is not fully handled.
+func (sm *Manager) drainCleanupTaskBatches() {
+	// Since cleanup runs in a single routine, it is safe to keep draining
+	// without an overall bound while every batch is fully handled.
+	for {
+		batchFullyHandled := sm.processCleanupTaskBatch()
+		if !batchFullyHandled {
+			break
+		}
+	}
+}
+
+// processCleanupTaskBatch processes one bounded batch of cleanup tasks.
+// It returns whether every task in the batch was transferred to history.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) doCleanupTask() {
-	failpoint.InjectCall("doCleanupTask")
+func (sm *Manager) processCleanupTaskBatch() bool {
 	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
 		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
-		return
+		return false
 	}
 	if len(tasks) == 0 {
-		return
+		return false
 	}
+	failpoint.InjectCall("processCleanupTaskBatch")
 	sm.logger.Info("cleanup routine start")
-	err = sm.cleanupFinishedTasks(tasks)
+	transferredTaskCount, err := sm.cleanupFinishedTasks(tasks)
 	if err != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
-		return
+		return false
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
-	sm.logger.Info("cleanup routine success")
+	batchFullyHandled := transferredTaskCount == len(tasks)
+	sm.logger.Info("cleanup routine finished",
+		zap.Int("transferred-task-count", transferredTaskCount),
+		zap.Int("total-task-count", len(tasks)),
+		zap.Bool("batch-fully-handled", batchFullyHandled))
+	return batchFullyHandled
 }
 
-func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
+// cleanupFinishedTasks runs cleanup and transfers the successfully cleaned tasks to history.
+// The returned count reports history-transfer progress and is zero if that transfer fails.
+func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) (int, error) {
 	type singleCleanUpTask struct {
 		task    *proto.Task
 		cleanUp CleanUpRoutine
@@ -513,10 +534,13 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	}
 
 	failpoint.Inject("mockTransferErr", func() {
-		failpoint.Return(errors.New("transfer err"))
+		failpoint.Return(0, errors.New("transfer err"))
 	})
 
-	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
+	if err := sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks); err != nil {
+		return 0, err
+	}
+	return len(cleanedTasks), nil
 }
 
 func (sm *Manager) collectLoop() {
