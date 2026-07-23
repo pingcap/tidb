@@ -20,7 +20,6 @@ http_archive(
     urls = [
         "http://bazel-cache.pingcap.net:8080/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
         "http://ats.apps.svc/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
-        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
         "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
         "https://github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
     ],
