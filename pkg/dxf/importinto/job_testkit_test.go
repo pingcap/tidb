@@ -274,7 +274,6 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		sysKSTK.MustQuery("select state from mysql.tidb_global_task where task_key = ?", importinto.TaskKey(jobID)).
 			Check(testkit.Rows(string(proto.TaskStatePending)))
 	})
-
 }
 
 func TestGetTaskImportedRows(t *testing.T) {
