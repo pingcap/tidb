@@ -287,7 +287,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	execStmt := &ast.ExecuteStmt{
-		BinaryArgs: args,
+		BinaryArgs: binaryArgsForPreparedExecution(args),
 		PrepStmt:   prepStmt,
 	}
 
@@ -361,6 +361,13 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	return false, nil
+}
+
+func binaryArgsForPreparedExecution(args []param.BinaryParam) any {
+	if len(args) == 1 {
+		return (*[1]param.BinaryParam)(args)
+	}
+	return args
 }
 
 func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.ResultSet) (lazy bool, err error) {

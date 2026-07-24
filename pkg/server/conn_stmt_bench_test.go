@@ -15,15 +15,20 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/param"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+var executeStmtSink *ast.ExecuteStmt
 
 type livenessTestConn struct {
 	alive atomic.Bool
@@ -121,4 +126,33 @@ func BenchmarkSetConnectionAliveCheckerParallel(b *testing.B) {
 			killer.IsConnectionAlive.Store(nil)
 		}
 	})
+}
+
+func TestBinaryArgsForPreparedExecution(t *testing.T) {
+	one := make([]param.BinaryParam, 1)
+	oneArgs, ok := binaryArgsForPreparedExecution(one).(*[1]param.BinaryParam)
+	require.True(t, ok)
+	require.Equal(t, &one[0], &oneArgs[0])
+
+	multiple := make([]param.BinaryParam, 8)
+	multipleArgs, ok := binaryArgsForPreparedExecution(multiple).([]param.BinaryParam)
+	require.True(t, ok)
+	require.Equal(t, &multiple[0], &multipleArgs[0])
+}
+
+func BenchmarkBuildExecuteStmtForPreparedExecution(b *testing.B) {
+	prepStmt := new(int)
+	for _, size := range []int{1, 8} {
+		b.Run(fmt.Sprintf("params=%d", size), func(b *testing.B) {
+			args := make([]param.BinaryParam, size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				executeStmtSink = &ast.ExecuteStmt{
+					BinaryArgs: binaryArgsForPreparedExecution(args),
+					PrepStmt:   prepStmt,
+				}
+			}
+		})
+	}
 }

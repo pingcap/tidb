@@ -2086,7 +2086,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
+		if binParam, ok := getBinaryExecuteParams(execStmt.BinaryArgs); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
 			if err != nil {
 				return nil, err
@@ -2543,6 +2543,17 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
+}
+
+func getBinaryExecuteParams(binaryArgs any) ([]param.BinaryParam, bool) {
+	switch args := binaryArgs.(type) {
+	case []param.BinaryParam:
+		return args, true
+	case *[1]param.BinaryParam:
+		return args[:], true
+	default:
+		return nil, false
+	}
 }
 
 // ExecutePreparedStmt executes a prepared statement.
