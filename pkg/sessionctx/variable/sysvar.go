@@ -3904,6 +3904,10 @@ var defaultSysVars = []*SysVar{
 		s.SharedLockPromotion = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableSharedLockUpgrade, Value: BoolToOnOff(vardef.DefTiDBEnableSharedLockUpgrade), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSharedLockUpgrade = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaxDistTaskNodes, Value: strconv.Itoa(vardef.DefTiDBMaxDistTaskNodes), Type: vardef.TypeInt, MinValue: -1, MaxValue: 128,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 			maxNodes := TidbOptInt(normalizedValue, vardef.DefTiDBMaxDistTaskNodes)

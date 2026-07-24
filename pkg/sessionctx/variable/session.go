@@ -1886,6 +1886,10 @@ type SessionVars struct {
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
 
+	// EnableSharedLockUpgrade indicates whether shared locks may be upgraded to exclusive locks during
+	// pessimistic locking.
+	EnableSharedLockUpgrade bool
+
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
 

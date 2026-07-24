@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 func TestLockNotFoundPrint(t *testing.T) {
@@ -28,6 +29,26 @@ func TestLockNotFoundPrint(t *testing.T) {
 	key := prettyLockNotFoundKey(msg)
 	expected := "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}"
 	require.Equal(t, expected, key)
+}
+
+func TestLockUpgradeConflictMapsToNonRetryableDeadlock(t *testing.T) {
+	err := extractKeyErr(errors.WithStack(&tikverr.ErrLockUpgradeConflict{
+		LockUpgradeConflict: &kvrpcpb.LockUpgradeConflict{
+			Key:          []byte("key"),
+			StartTs:      101,
+			OwnerStartTs: 202,
+			Reason:       kvrpcpb.LockUpgradeConflict_SecondUpgrader,
+		},
+	}))
+	require.Error(t, err)
+	require.False(t, kv.ErrWriteConflict.Equal(err))
+	require.False(t, kv.ErrTxnRetryable.Equal(err))
+
+	var deadlock *tikverr.ErrDeadlock
+	require.ErrorAs(t, err, &deadlock)
+	require.False(t, deadlock.IsRetryable)
+	require.Equal(t, uint64(202), deadlock.LockTs)
+	require.Equal(t, []byte("key"), deadlock.LockKey)
 }
 
 func TestWriteConflictPrettyFormat(t *testing.T) {
