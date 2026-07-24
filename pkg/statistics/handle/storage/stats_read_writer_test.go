@@ -75,13 +75,12 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	// Parse version from stats_meta.
 	version := rows[0][0].(string)
 
-	// Check stats_meta_history again. The version should be the same.
-	rows = testKit.MustQuery(
+	// Historical stats tables remain for compatibility, but stats updates should no longer append records.
+	testKit.MustQuery(
 		"select count(*) from mysql.stats_meta_history where table_id = ? and version = ?",
 		p0.ID,
 		version,
-	).Rows()
-	require.Equal(t, 1, len(rows))
+	).Check(testkit.Rows("0"))
 }
 
 func TestSlowStatsSaving(t *testing.T) {
@@ -222,5 +221,5 @@ func TestFailedToHandleSlowStatsSaving(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	testKit.MustGetErrMsg("analyze table t with 0 topn", "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later")
+	testKit.MustGetErrMsg("analyze table t with 0 topn", "failed to update stats meta version while saving statistics; the system may be too busy; please retry the operation later: mock update stats meta version failed")
 }

@@ -27,7 +27,6 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
@@ -50,7 +49,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+	cfg.Socket = newTestSocket(t)
 
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.
 	// Recreate it to avoid racing on subsequent server starts in the same test binary.
@@ -74,10 +73,6 @@ func TestDumpStatsAPI(t *testing.T) {
 	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("tidb"), ast.NewCIStr("test"))
-	require.NoError(t, err)
-	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
-	require.NoError(t, err)
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", statsHandler)
@@ -104,13 +99,9 @@ func TestDumpStatsAPI(t *testing.T) {
 	checkData(t, path, client)
 	checkCorrelation(t, client)
 
-	// sleep for 1 seconds to ensure the existence of tidb.test
-	time.Sleep(time.Second)
-	timeBeforeDropStats := time.Now()
-	snapshot := timeBeforeDropStats.Format("20060102150405")
-	prepare4DumpHistoryStats(t, client)
+	prepareTableWithoutStats(t, client)
 
-	// test dump history stats
+	// test dump stats for a table without stats
 	resp1, err := client.FetchStatus("/stats/dump/tidb/test")
 	require.NoError(t, err)
 	defer func() {
@@ -120,27 +111,15 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "null", string(js))
 
-	path1 := filepath.Join(tmp, "stats_history.json")
-	fp1, err := os.Create(path1)
-	require.NoError(t, err)
-	require.NotNil(t, fp1)
-	defer func() {
-		require.NoError(t, fp1.Close())
-		require.NoError(t, os.Remove(path1))
-	}()
-
-	resp2, err := client.FetchStatus("/stats/dump/tidb/test/" + snapshot)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, resp2.Body.Close())
-	}()
-	js, err = io.ReadAll(resp2.Body)
-	require.NoError(t, err)
-	_, err = fp1.Write(js)
-	require.NoError(t, err)
-	checkData(t, path1, client)
-
 	testDumpPartitionTableStats(t, client, statsHandler)
+}
+
+func newTestSocket(t *testing.T) string {
+	socket := filepath.Join(os.TempDir(), fmt.Sprintf("tidb-%d.sock", time.Now().UnixNano()))
+	t.Cleanup(func() {
+		_ = os.Remove(socket)
+	})
+	return socket
 }
 
 func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHandle *optimizor.StatsHandler) {
@@ -162,7 +141,6 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("insert test values (1, 's')")
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table test")
-	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
 	tk.MustExec("flush stats_delta *.*")
@@ -211,7 +189,7 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	require.NoError(t, h.Update(context.Background(), is))
 }
 
-func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerClient) {
+func prepareTableWithoutStats(t *testing.T, client *testserverclient.TestServerClient) {
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -220,15 +198,6 @@ func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerC
 	}()
 
 	tk := testkit.NewDBTestKit(t, db)
-
-	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20060102-15:04:05 -0700"
-	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-	ON DUPLICATE KEY
-	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-	tk.MustExec(updateSafePoint)
-
 	tk.MustExec("drop table tidb.test")
 	tk.MustExec("create table tidb.test (a int, b varchar(20))")
 }
@@ -297,7 +266,6 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 }
 
 func TestStatsPriorityQueueAPI(t *testing.T) {
-	tmp := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
@@ -305,7 +273,7 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+	cfg.Socket = newTestSocket(t)
 
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.
 	// Recreate it to avoid racing on subsequent server starts in the same test binary.
@@ -368,7 +336,7 @@ func TestLoadNullStatsFile(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+	cfg.Socket = newTestSocket(t)
 
 	// Creating and running the server
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.

@@ -47,7 +47,6 @@ func (oth OptimizeTraceHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 	name := params[handler.FileName]
 	handler := downloadFileHandler{
 		filePath:           filepath.Join(domain.GetOptimizerTraceDirName(), name),
-		fileName:           name,
 		infoGetter:         oth.infoGetter,
 		address:            oth.address,
 		statusPort:         oth.statusPort,

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -188,41 +187,63 @@ func forCount(total int64, batch int64) int64 {
 	return result
 }
 
-// ClearOutdatedHistoryStats clear outdated historical stats
+// ClearOutdatedHistoryStats clears outdated historical stats.
+// Nothing writes to mysql.stats_meta_history/mysql.stats_history anymore since
+// the historical stats feature was removed, but rows written before an upgrade
+// may remain, so we keep draining them once they fall out of the retention
+// window. The two tables are counted and deleted independently: their row
+// counts are unrelated, and either table may still hold rows after the other
+// has been fully drained.
 func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
-	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
+	metaCount, err := countOutdatedHistoryRows(sctx, "mysql.stats_meta_history")
 	if err != nil {
 		return err
 	}
-	if rs == nil {
+	historyCount, err := countOutdatedHistoryRows(sctx, "mysql.stats_history")
+	if err != nil {
+		return err
+	}
+	if metaCount == 0 && historyCount == 0 {
 		return nil
 	}
-	var rows []chunk.Row
-	defer terror.Call(rs.Close)
-	if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
-		return errors.Trace(err)
-	}
-	count := rows[0].GetInt64(0)
-	if count > 0 {
-		for range forCount(count, int64(1000)) {
-			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
-			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
-			if err != nil {
-				return err
-			}
-		}
-		for range forCount(count, int64(50)) {
-			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
-			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
+	for range forCount(metaCount, int64(1000)) {
+		sql := "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
+		if _, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds()); err != nil {
 			return err
 		}
-		logutil.BgLogger().Info("clear outdated historical stats")
 	}
+	for range forCount(historyCount, int64(50)) {
+		sql := "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
+		if _, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds()); err != nil {
+			return err
+		}
+	}
+	logutil.BgLogger().Info("clear outdated historical stats",
+		zap.Int64("stats-meta-history-rows", metaCount),
+		zap.Int64("stats-history-rows", historyCount))
 	return nil
 }
 
-// gcHistoryStatsFromKV delete history stats from kv.
+// countOutdatedHistoryRows counts the rows of the given historical stats table
+// that have fallen out of the retention window.
+func countOutdatedHistoryRows(sctx sessionctx.Context, table string) (int64, error) {
+	sql := "select count(*) from " + table + " use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
+	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
+	if err != nil {
+		return 0, err
+	}
+	if rs == nil {
+		return 0, nil
+	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(context.Background(), rs, 8)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return rows[0].GetInt64(0), nil
+}
+
+// gcHistoryStatsFromKV deletes historical stats from kv.
 func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
 	sql := "delete from mysql.stats_history where table_id = %?"
 	_, err = util.Exec(sctx, sql, physicalID)

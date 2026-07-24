@@ -15,24 +15,15 @@
 package storage
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
-
-	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/types"
-	compressutil "github.com/pingcap/tidb/pkg/util/compress"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
 
 func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *statsutil.JSONColumn {
@@ -224,118 +215,4 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 		}
 	}
 	return tbl, nil
-}
-
-// JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
-func JSONTableToBlocks(jsTable *statsutil.JSONTable, blockSize int) ([][]byte, error) {
-	data, err := json.Marshal(jsTable)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var gzippedData bytes.Buffer
-	gzipWriter := compressutil.GzipWriterPool.Get().(*gzip.Writer)
-	defer compressutil.GzipWriterPool.Put(gzipWriter)
-	gzipWriter.Reset(&gzippedData)
-	if _, err := gzipWriter.Write(data); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	blocksNum := gzippedData.Len() / blockSize
-	if gzippedData.Len()%blockSize != 0 {
-		blocksNum = blocksNum + 1
-	}
-	blocks := make([][]byte, blocksNum)
-	for i := range blocksNum - 1 {
-		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
-	}
-	blocks[blocksNum-1] = gzippedData.Bytes()[blockSize*(blocksNum-1):]
-	return blocks, nil
-}
-
-// BlocksToJSONTable convert gzip-compressed blocks to JSONTable
-func BlocksToJSONTable(blocks [][]byte) (*statsutil.JSONTable, error) {
-	if len(blocks) == 0 {
-		return nil, errors.New("Block empty error")
-	}
-	data := blocks[0]
-	for i := 1; i < len(blocks); i++ {
-		data = append(data, blocks[i]...)
-	}
-	gzippedData := bytes.NewReader(data)
-	gzipReader := compressutil.GzipReaderPool.Get().(*gzip.Reader)
-	if err := gzipReader.Reset(gzippedData); err != nil {
-		compressutil.GzipReaderPool.Put(gzipReader)
-		return nil, err
-	}
-	defer func() {
-		compressutil.GzipReaderPool.Put(gzipReader)
-	}()
-	if err := gzipReader.Close(); err != nil {
-		return nil, err
-	}
-	jsonStr, err := io.ReadAll(gzipReader)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jsonTbl := statsutil.JSONTable{}
-	err = json.Unmarshal(jsonStr, &jsonTbl)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &jsonTbl, nil
-}
-
-// TableHistoricalStatsToJSON converts the historical stats of a table to JSONTable.
-func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snapshot uint64) (jt *statsutil.JSONTable, exist bool, err error) {
-	// get meta version
-	rows, _, err := util.ExecRows(sctx, "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get records of stats_meta_history",
-			zap.Int64("table-id", physicalID),
-			zap.Uint64("snapshotTS", snapshot))
-		return nil, false, nil
-	}
-	statsMetaVersion := rows[0].GetInt64(0)
-	// get stats meta
-	rows, _, err = util.ExecRows(sctx, "select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?", physicalID, statsMetaVersion)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
-
-	// get stats version
-	rows, _, err = util.ExecRows(sctx, "select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get record of stats_history",
-			zap.Int64("table-id", physicalID),
-			zap.Uint64("snapshotTS", snapshot))
-		return nil, false, nil
-	}
-	statsVersion := rows[0].GetInt64(0)
-
-	// get stats
-	rows, _, err = util.ExecRows(sctx, "select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no", physicalID, statsVersion)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	blocks := make([][]byte, 0)
-	for _, row := range rows {
-		blocks = append(blocks, row.GetBytes(0))
-	}
-	jsonTbl, err := BlocksToJSONTable(blocks)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	jsonTbl.Count = count
-	jsonTbl.ModifyCount = modifyCount
-	jsonTbl.IsHistoricalStats = true
-	return jsonTbl, true, nil
 }

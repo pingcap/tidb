@@ -141,6 +141,11 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustQuery("plan replayer dump explain select * from v2")
 	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 
+	// Keep accepting the legacy syntax, but reject its execution because the
+	// historical stats feature has been removed.
+	tk.MustGetErrMsg("plan replayer dump with stats as of timestamp '2023-06-28 12:34:00' explain select * from t where a=10",
+		"WITH STATS AS OF TIMESTAMP is no longer supported because the historical stats feature has been removed")
+
 	// clear the status table and assert
 	tk.MustExec("delete from mysql.plan_replayer_status")
 	tk.MustQuery("plan replayer dump explain select * from v2")
@@ -239,12 +244,9 @@ func TestPlanReplayerCapture(t *testing.T) {
 	_, sqlDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
 	_, planDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
 	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
-	tk.MustExec("SET @@global.tidb_enable_historical_stats_for_capture='ON'")
 	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", sqlDigest.String(), planDigest.String()))
 	err := dom.GetPlanReplayerHandle().CollectPlanReplayerTask()
 	require.NoError(t, err)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/shouldDumpStats", "return(true)"))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/shouldDumpStats"))
 	tk.MustExec("execute stmt using @number,@number")
 	task := dom.GetPlanReplayerHandle().DrainTask()
 	require.NotNil(t, task)
@@ -290,12 +292,6 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set @@global.tidb_enable_historical_stats='OFF'")
-	_, err = tk.Exec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
-	require.Error(t, err)
-	require.Equal(t, err.Error(), "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture")
-
-	tk.MustExec("set @@global.tidb_enable_historical_stats='ON'")
 	tk.MustExec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
 
 	prHandle := dom.GetPlanReplayerHandle()

@@ -1197,10 +1197,9 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	e := &PlanReplayerExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
-			Analyze:           v.Analyze,
-			Path:              v.File,
-			ctx:               b.sctx,
-			HistoricalStatsTS: v.HistoricalStatsTS,
+			Analyze: v.Analyze,
+			Path:    v.File,
+			ctx:     b.sctx,
 		},
 	}
 	if len(v.StmtList) > 0 {

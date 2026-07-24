@@ -28,16 +28,17 @@ const (
 
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
-	Columns           map[string]*JSONColumn `json:"columns"`
-	Indices           map[string]*JSONColumn `json:"indices"`
-	Partitions        map[string]*JSONTable  `json:"partitions"`
-	DatabaseName      string                 `json:"database_name"`
-	TableName         string                 `json:"table_name"`
-	PredicateColumns  []*JSONPredicateColumn `json:"predicate_columns"`
-	Count             int64                  `json:"count"`
-	ModifyCount       int64                  `json:"modify_count"`
-	Version           uint64                 `json:"version"`
-	IsHistoricalStats bool                   `json:"is_historical_stats"`
+	Columns          map[string]*JSONColumn `json:"columns"`
+	Indices          map[string]*JSONColumn `json:"indices"`
+	Partitions       map[string]*JSONTable  `json:"partitions"`
+	DatabaseName     string                 `json:"database_name"`
+	TableName        string                 `json:"table_name"`
+	PredicateColumns []*JSONPredicateColumn `json:"predicate_columns"`
+	Count            int64                  `json:"count"`
+	ModifyCount      int64                  `json:"modify_count"`
+	Version          uint64                 `json:"version"`
+	// IsHistoricalStats is kept for stats JSON compatibility. Historical stats dumps have been removed.
+	IsHistoricalStats bool `json:"is_historical_stats"`
 }
 
 // Sort is used to sort the object in the JSONTable. it is used for testing to avoid flaky test.
