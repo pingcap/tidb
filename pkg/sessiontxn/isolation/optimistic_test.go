@@ -15,6 +15,7 @@
 package isolation_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,12 +24,14 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -37,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var benchmarkOptimisticTxnContextProvider *isolation.OptimisticTxnContextProvider
@@ -54,6 +59,57 @@ func BenchmarkOptimisticTxnContextProviderResetForNewTxn(b *testing.B) {
 		providers[i&1].ResetForNewTxn(sctx, i&2 != 0)
 	}
 	benchmarkOptimisticTxnContextProvider = &providers[b.N&1]
+}
+
+func BenchmarkOptimisticTxnContextProviderAdvisePreparedPointGet(b *testing.B) {
+	logLevel := log.GetLevel()
+	log.SetLevel(zap.InfoLevel)
+	b.Cleanup(func() {
+		log.SetLevel(logLevel)
+	})
+
+	sctx := mock.NewContext()
+	var providers [2]isolation.OptimisticTxnContextProvider
+	plan := &plannercore.Execute{Plan: &plannercore.PointGetPlan{}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		provider := &providers[i&1]
+		provider.ResetForNewTxn(sctx, false)
+		if err := provider.AdviseOptimizeWithPlan(plan); err != nil {
+			b.Fatal(err)
+		}
+	}
+	benchmarkOptimisticTxnContextProvider = &providers[b.N&1]
+}
+
+func TestOptimisticTxnContextProviderPointGetDebugLog(t *testing.T) {
+	var output bytes.Buffer
+	sink := zapcore.AddSync(&output)
+	logger, props, err := log.InitLoggerWithWriteSyncer(
+		&log.Config{Level: "debug"},
+		sink,
+		sink,
+	)
+	require.NoError(t, err)
+	restore := log.ReplaceGlobals(logger, props)
+	defer restore()
+
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().ConnectionID = 42
+	sctx.GetSessionVars().StmtCtx.OriginalSQL = "SELECT c FROM t WHERE id = ?"
+	var provider isolation.OptimisticTxnContextProvider
+	provider.ResetForNewTxn(sctx, false)
+
+	err = provider.AdviseOptimizeWithPlan(
+		&plannercore.Execute{Plan: &plannercore.PointGetPlan{}},
+	)
+	require.NoError(t, err)
+	require.NoError(t, logger.Sync())
+	require.Contains(t, output.String(), "init txnStartTS with MaxUint64")
+	require.Contains(t, output.String(), "conn=42")
+	require.Contains(t, output.String(), "text=\"SELECT c FROM t WHERE id = ?\"")
 }
 
 func TestOptimisticTxnContextProviderTS(t *testing.T) {
