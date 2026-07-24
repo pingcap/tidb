@@ -38,7 +38,6 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -87,9 +86,7 @@ func openParser(
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	openReader := mydump.NewReaderOpener(&chunk.FileMeta, store, compressedio.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
+	openReader := mydump.NewReaderOpener(&chunk.FileMeta, store)
 	var reader storeapi.ReadSeekCloser
 	var err error
 	if chunk.FileMeta.Type != mydump.SourceTypeParquet {
