@@ -18,10 +18,12 @@
 //! Deliberately not yet ported from `builtin_encryption.go` because their
 //! required session or binary-value contracts are not present:
 //! - `AES_ENCRYPT`/`AES_DECRYPT` (`builtinAesEncrypt*`/`builtinAesDecrypt*`):
-//!   behavior is chosen by the `block_encryption_mode` session variable
-//!   (key size / block mode / IV requirement via the `aesModes` table) and
-//!   ciphertext is arbitrary bytes. `Datum::Bytes` now represents the output,
-//!   but the required session mode/build context is still absent.
+//!   the default `block_encryption_mode` (`aes-128-ecb`, no IV) two-argument
+//!   form is ported below; it is session-independent. The other modes in the
+//!   `aesModes` table (192/256 key sizes and the CBC/OFB/CFB modes that need an
+//!   IV argument) are selected by the `block_encryption_mode` session variable
+//!   and remain a session boundary, as does the ignored-IV warning for a third
+//!   argument in a no-IV mode.
 //! - `COMPRESS`/`UNCOMPRESS`/`UNCOMPRESSED_LENGTH` (`builtinCompressSig`
 //!   etc.): zlib DEFLATE framing with a 4-byte little-endian length prefix;
 //!   the compressed payload now fits `Datum::Bytes`, but this bounded source
@@ -44,6 +46,8 @@
 //!   `pkg/parser/auth`; the complete expression package must route it through
 //!   the existing Rust parser-auth implementation.
 
+use aes::cipher::{Block, BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
+use aes::Aes128;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
@@ -61,7 +65,106 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("PASSWORD", 1) => Some(password_hash(&vals[0])),
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
         ("DECODE", 2) => Some(sql_decode(&vals[0], &vals[1])),
+        ("AES_ENCRYPT", 2) => Some(aes_encrypt(&vals[0], &vals[1])),
+        ("AES_DECRYPT", 2) => Some(aes_decrypt(&vals[0], &vals[1])),
         _ => None,
+    }
+}
+
+/// AES block size (bytes) and, for the default `aes-128-ecb`, the derived key
+/// length.
+const AES_BLOCK_SIZE: usize = 16;
+
+/// Derives the encryption key from a password using MySQL's algorithm: fold the
+/// key bytes into `AES_BLOCK_SIZE` bytes by XOR, wrapping. Port of
+/// `encrypt.DeriveKeyMySQL` with `blockSize == 16` (the default `aes-128-ecb`).
+fn derive_key_mysql(key: &[u8]) -> [u8; AES_BLOCK_SIZE] {
+    let mut rkey = [0u8; AES_BLOCK_SIZE];
+    for (i, &k) in key.iter().enumerate() {
+        rkey[i % AES_BLOCK_SIZE] ^= k;
+    }
+    rkey
+}
+
+/// PKCS7-pads `data` in place to a multiple of `AES_BLOCK_SIZE`. Port of
+/// `encrypt.PKCS7Pad`: a full-block input still gains a whole padding block.
+fn pkcs7_pad(data: &mut Vec<u8>) {
+    let pad_len = AES_BLOCK_SIZE - (data.len() % AES_BLOCK_SIZE);
+    data.extend(std::iter::repeat_n(pad_len as u8, pad_len));
+}
+
+/// PKCS7-unpads `data`, returning `None` on invalid padding. Port of
+/// `encrypt.PKCS7Unpad`.
+fn pkcs7_unpad(data: &[u8]) -> Option<&[u8]> {
+    let length = data.len();
+    if length == 0 || !length.is_multiple_of(AES_BLOCK_SIZE) {
+        return None;
+    }
+    let pad = data[length - 1];
+    let pad_len = pad as usize;
+    if pad_len > AES_BLOCK_SIZE || pad_len == 0 {
+        return None;
+    }
+    for &v in &data[length - pad_len..length - 1] {
+        if v != pad {
+            return None;
+        }
+    }
+    Some(&data[..length - pad_len])
+}
+
+/// `AES_ENCRYPT(str, key_str)` in the default `aes-128-ecb` mode. Port of
+/// `builtinAesEncryptSig.evalString` + `encrypt.AESEncryptWithECB`. Either
+/// argument being NULL yields NULL.
+fn aes_encrypt(str_arg: &Datum, key_arg: &Datum) -> Result<Datum, EvalError> {
+    let Some(plain) = sql_string_bytes(str_arg)? else {
+        return Ok(Datum::Null);
+    };
+    let Some(key) = sql_string_bytes(key_arg)? else {
+        return Ok(Datum::Null);
+    };
+    let cipher = Aes128::new_from_slice(&derive_key_mysql(&key))
+        .expect("derived AES-128 key is exactly 16 bytes");
+
+    let mut data = plain;
+    pkcs7_pad(&mut data);
+    for chunk in data.chunks_exact_mut(AES_BLOCK_SIZE) {
+        let mut block = Block::<Aes128>::default();
+        block.copy_from_slice(chunk);
+        cipher.encrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+    }
+    Ok(Datum::new_string(data))
+}
+
+/// `AES_DECRYPT(crypt_str, key_str)` in the default `aes-128-ecb` mode. Port of
+/// `builtinAesDecryptSig.evalString` + `encrypt.AESDecryptWithECB`. Either
+/// argument being NULL yields NULL, and any decryption error (a length that is
+/// not a whole number of blocks, or invalid PKCS7 padding) also yields NULL, as
+/// the Go evaluator maps such errors to NULL.
+fn aes_decrypt(crypt_arg: &Datum, key_arg: &Datum) -> Result<Datum, EvalError> {
+    let Some(crypt) = sql_string_bytes(crypt_arg)? else {
+        return Ok(Datum::Null);
+    };
+    let Some(key) = sql_string_bytes(key_arg)? else {
+        return Ok(Datum::Null);
+    };
+    if !crypt.len().is_multiple_of(AES_BLOCK_SIZE) {
+        return Ok(Datum::Null);
+    }
+    let cipher = Aes128::new_from_slice(&derive_key_mysql(&key))
+        .expect("derived AES-128 key is exactly 16 bytes");
+
+    let mut data = crypt;
+    for chunk in data.chunks_exact_mut(AES_BLOCK_SIZE) {
+        let mut block = Block::<Aes128>::default();
+        block.copy_from_slice(chunk);
+        cipher.decrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+    }
+    match pkcs7_unpad(&data) {
+        Some(plain) => Ok(Datum::new_string(plain.to_vec())),
+        None => Ok(Datum::Null),
     }
 }
 
@@ -429,6 +532,70 @@ mod tests {
         Datum::Decimal(Decimal::from_literal(text))
     }
 
+    fn bytes_of(d: &Datum) -> Vec<u8> {
+        match d {
+            Datum::String(value) => value.bytes().to_vec(),
+            Datum::Bytes(value) => value.clone(),
+            other => panic!("expected string/bytes datum, got {other:?}"),
+        }
+    }
+
+    /// Vectors from `TestAESEncrypt`/`TestAESDecrypt` (default `aes-128-ecb`;
+    /// the Go test's tuple is `{mode, str, key_args, expected_hex}`, so the
+    /// second field is the plaintext and the key is `args[0]`). GBK/other-mode
+    /// cases need session state and are out of this domain.
+    #[test]
+    fn aes_ecb_go_vectors() {
+        let cases: &[(Datum, Datum, &str)] = &[
+            (
+                s("pingcap"),
+                s("1234567890123456"),
+                "697BFE9B3F8C2F289DD82C88C7BC95C4",
+            ),
+            (s("pingcap"), s("123"), "996E0CA8688D7AD20819B90B273E01C6"),
+            (
+                s("pingcap"),
+                Datum::Int(123),
+                "996E0CA8688D7AD20819B90B273E01C6",
+            ),
+            (
+                s("pingcap"),
+                s("123456789012345678901234"),
+                "6F1589686860C8E8C7A40A78B25FF2C0",
+            ),
+        ];
+        for (str_arg, key_arg, want) in cases {
+            let crypt = call("AES_ENCRYPT", &[str_arg.clone(), key_arg.clone()]);
+            assert_eq!(
+                hex_upper(&bytes_of(&crypt)),
+                *want,
+                "AES_ENCRYPT({str_arg:?}, {key_arg:?})"
+            );
+            // Round-trip decrypt recovers the plaintext.
+            let plain = call("AES_DECRYPT", &[crypt.clone(), key_arg.clone()]);
+            assert_eq!(
+                bytes_of(&plain),
+                bytes_of(str_arg),
+                "AES_DECRYPT round-trip"
+            );
+        }
+
+        // NULL in either argument yields NULL.
+        assert_eq!(call("AES_ENCRYPT", &[Datum::Null, s("k")]), Datum::Null);
+        assert_eq!(call("AES_ENCRYPT", &[s("x"), Datum::Null]), Datum::Null);
+        assert_eq!(call("AES_DECRYPT", &[Datum::Null, s("k")]), Datum::Null);
+        // A ciphertext whose length is not a whole number of blocks -> NULL.
+        assert_eq!(
+            call("AES_DECRYPT", &[s("not-16-bytes"), s("key")]),
+            Datum::Null
+        );
+        // Valid-length but undecryptable-to-good-padding ciphertext -> NULL.
+        assert_eq!(
+            call("AES_DECRYPT", &[s("0123456789abcdef"), s("wrong-key")]),
+            Datum::Null
+        );
+    }
+
     /// Vectors from `TestMD5Hash` (default charset cases only — GBK cases
     /// need session charset conversion, out of this domain).
     #[test]
@@ -794,6 +961,10 @@ mod tests {
         assert!(dispatch("PASSWORD", &[s("a"), s("b")]).is_none());
         assert!(dispatch("ENCODE", &[s("a")]).is_none());
         assert!(dispatch("DECODE", &[s("a")]).is_none());
-        assert!(dispatch("AES_ENCRYPT", &[s("a"), s("k")]).is_none());
+        // The 2-arg default `aes-128-ecb` form is handled; the 3-arg IV form and
+        // other arities remain a session boundary and decline.
+        assert!(dispatch("AES_ENCRYPT", &[s("a")]).is_none());
+        assert!(dispatch("AES_ENCRYPT", &[s("a"), s("k"), s("iv")]).is_none());
+        assert!(dispatch("AES_DECRYPT", &[s("a"), s("k"), s("iv")]).is_none());
     }
 }

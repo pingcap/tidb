@@ -1283,6 +1283,7 @@ dependencies = [
 name = "tidb-expr"
 version = "0.0.0"
 dependencies = [
+ "aes",
  "des",
  "md-5",
  "regex",

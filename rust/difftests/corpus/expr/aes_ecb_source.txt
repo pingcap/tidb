@@ -1,0 +1,17 @@
+## Scalar source rows for AES_ENCRYPT/AES_DECRYPT in the default
+## block_encryption_mode = aes-128-ecb (session-independent), transcreated from
+## pkg/expression/builtin_encryption_test.go TestAESEncrypt/TestAESDecrypt.
+## GBK/other-charset and non-ECB modes need session state and are out of scope.
+aes_encrypt('pingcap', '1234567890123456')
+aes_encrypt('pingcap', '123')
+aes_encrypt('pingcap', 123)
+aes_encrypt('pingcap', '123456789012345678901234')
+aes_encrypt('', 'key')
+aes_encrypt('a longer plaintext that spans multiple blocks!!', 'secret')
+aes_encrypt(NULL, 'key')
+aes_encrypt('x', NULL)
+aes_decrypt(aes_encrypt('pingcap', '1234567890123456'), '1234567890123456')
+aes_decrypt(aes_encrypt('roundtrip value', 'k'), 'k')
+aes_decrypt('short', 'key')
+aes_decrypt(NULL, 'key')
+aes_decrypt('x', NULL)
