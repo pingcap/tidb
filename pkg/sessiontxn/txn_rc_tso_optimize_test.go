@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
@@ -786,6 +788,7 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 
 func TestRcWaitTSInSlowLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	setOracleFutureDelay(t, store, time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
@@ -802,13 +805,49 @@ func TestRcWaitTSInSlowLog(t *testing.T) {
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	tk.MustExec("begin pessimistic")
-	waitTs1 := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
-	waitTs2 := sctx.GetSessionVars().DurationWaitTS
+	pointUpdateWaitTS := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
-	waitTs3 := sctx.GetSessionVars().DurationWaitTS
+	rangeUpdateWaitTS := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("commit")
-	require.NotEqual(t, waitTs1, waitTs2)
-	require.NotEqual(t, waitTs1, waitTs2)
-	require.NotEqual(t, waitTs2, waitTs3)
+	require.Greater(t, pointUpdateWaitTS, time.Duration(0))
+	require.Greater(t, rangeUpdateWaitTS, time.Duration(0))
+}
+
+type oracleSetter interface {
+	GetOracle() oracle.Oracle
+	SetOracle(oracle.Oracle)
+}
+
+func setOracleFutureDelay(t *testing.T, store any, delay time.Duration) {
+	storage, ok := store.(oracleSetter)
+	require.True(t, ok)
+	originalOracle := storage.GetOracle()
+	storage.SetOracle(delayedOracle{Oracle: originalOracle, delay: delay})
+	t.Cleanup(func() {
+		storage.SetOracle(originalOracle)
+	})
+}
+
+type delayedOracle struct {
+	oracle.Oracle
+	delay time.Duration
+}
+
+func (o delayedOracle) GetTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
+	return delayedOracleFuture{Future: o.Oracle.GetTimestampAsync(ctx, opt), delay: o.delay}
+}
+
+func (o delayedOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
+	return delayedOracleFuture{Future: o.Oracle.GetLowResolutionTimestampAsync(ctx, opt), delay: o.delay}
+}
+
+type delayedOracleFuture struct {
+	oracle.Future
+	delay time.Duration
+}
+
+func (f delayedOracleFuture) Wait() (uint64, error) {
+	time.Sleep(f.delay)
+	return f.Future.Wait()
 }
