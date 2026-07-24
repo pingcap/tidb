@@ -106,6 +106,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
@@ -2664,7 +2665,34 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	}
 
 	var recordSet sqlexec.RecordSet
-	if stmt.PsStmt != nil { // point plan short path
+	// Point plan short path. The prepared case (stmt.PsStmt != nil) has used
+	// this path historically. The non-prepared extension applies when the
+	// statement's Plan is already a *PointGetPlan or *BatchPointGetPlan (set
+	// by TryFastPlan or the non-prepared plan cache) and the session opt-in
+	// is enabled. Both cases skip the runStmt envelope (rich trace events,
+	// flight recorder triggers, telemetry counters) in favour of the
+	// simplified flow below. ExecStmt.PointGet's executor build path is
+	// plan-type-agnostic; its cache only fires for *PointGetExecutor on
+	// prepared statements.
+	//
+	// The non-prepared case must mirror the safety conditions the prepared
+	// case gets from IsSafeToReusePointGetExecutor at compile time: the
+	// shortcut invalidates s.txn before the lazy recordSet is drained, so it
+	// is only sound for autocommit reads outside an explicit transaction
+	// (an in-txn point-get must read its own uncommitted writes, and a
+	// FOR UPDATE lock acquires through s.txn during Next) and never for
+	// stale reads. Autocommit also guarantees the plan carries no pessimistic
+	// lock, since getLockWaitTime only sets Lock when the session is
+	// lock-eligible (in a transaction or with autocommit disabled).
+	useShortcut := stmt.PsStmt != nil
+	if !useShortcut && s.sessionVars.EnablePointGetExecShortcut &&
+		plannercore.IsAutoCommitTxn(s.sessionVars) && !staleread.IsStmtStaleness(s) {
+		switch stmt.Plan.(type) {
+		case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+			useShortcut = true
+		}
+	}
+	if useShortcut {
 		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
 		// Emit stmt.start trace event (simplified for point-get fast path)

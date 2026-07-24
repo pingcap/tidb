@@ -1445,6 +1445,11 @@ type SessionVars struct {
 	// PrevFoundInBinding indicates whether the last execution plan is matched with the hints in the binding.
 	PrevFoundInBinding bool
 
+	// EnablePointGetExecShortcut enables routing non-prepared point-get
+	// statements through the simplified execution path used by prepared
+	// point-gets. Disabled by default while the behavior soaks.
+	EnablePointGetExecShortcut bool
+
 	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
 	OptimizerUseInvisibleIndexes bool
 
