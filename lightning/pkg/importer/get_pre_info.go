@@ -499,13 +499,9 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		fileSize := dataFileMeta.FileSize
-		if dataFileMeta.Compression != mydump.CompressionNone {
-			fileSize = 0
-		}
 		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, openReader,
-			dataFileMeta.Path, fileSize, parquetfile.FileMeta{},
+			dataFileMeta.Path, dataFileMeta.FileSize, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -686,13 +682,9 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		fileSize := sampleFile.FileSize
-		if sampleFile.Compression != mydump.CompressionNone {
-			fileSize = 0
-		}
 		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, openReader,
-			sampleFile.Path, fileSize, parquetfile.FileMeta{},
+			sampleFile.Path, sampleFile.FileSize, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)

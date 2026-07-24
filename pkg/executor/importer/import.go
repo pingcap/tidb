@@ -1801,10 +1801,6 @@ func newLoadDataParser(
 			nil,
 		)
 	case DataFormatParquet:
-		fileSize := dataFileInfo.Remote.FileSize
-		if dataFileInfo.Remote.Compression != mydump.CompressionNone {
-			fileSize = 0
-		}
 		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
@@ -1812,7 +1808,7 @@ func newLoadDataParser(
 				return dataFileInfo.Opener(ctx)
 			},
 			dataFileInfo.Remote.Path,
-			fileSize,
+			dataFileInfo.Remote.FileSize,
 			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:

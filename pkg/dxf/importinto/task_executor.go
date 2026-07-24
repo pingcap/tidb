@@ -202,11 +202,7 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, chun
 		}
 	}
 
-	fileSize := targetChunk.FileSize
-	if targetChunk.Compression != mydump.CompressionNone {
-		fileSize = 0
-	}
-	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path, fileSize)
+	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path, targetChunk.FileSize)
 	if err != nil {
 		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
 			zap.Error(err))

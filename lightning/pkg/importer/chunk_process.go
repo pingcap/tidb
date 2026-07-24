@@ -117,12 +117,8 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		fileSize := chunk.FileMeta.FileSize
-		if chunk.FileMeta.Compression != mydump.CompressionNone {
-			fileSize = 0
-		}
 		parser, err = parquetfile.NewParser(
-			ctx, store, openReader, chunk.FileMeta.Path, fileSize, chunk.FileMeta.ParquetMeta,
+			ctx, store, openReader, chunk.FileMeta.Path, chunk.FileMeta.FileSize, chunk.FileMeta.ParquetMeta,
 		)
 		if err != nil {
 			return nil, err
