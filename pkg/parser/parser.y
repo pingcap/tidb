@@ -7198,6 +7198,18 @@ IndexOption:
 			},
 		}
 	}
+|	"PRE_SPLIT_REGIONS" EqOpt Identifier
+	{
+		if !strings.EqualFold($3, "AUTO") {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.IndexOption{
+			SplitOpt: &ast.SplitOption{
+				Auto: true,
+			},
+		}
+	}
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
 	{
 		$$ = &ast.IndexOption{SecondaryEngineAttr: $3}

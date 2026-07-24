@@ -126,6 +126,46 @@ func TestIndexChange(t *testing.T) {
 	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, noneTable.Meta())
 }
 
+func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("create table t_auto_presplit(a int primary key, b int)")
+	tk.MustExec("insert into t_auto_presplit values " +
+		"(1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1)," +
+		"(11,2),(12,2),(13,2),(14,2),(15,2),(16,3),(17,4),(18,5),(19,6),(20,7)")
+
+	h := dom.StatsHandle()
+	originLease := h.Lease()
+	h.SetLease(time.Millisecond)
+	defer h.SetLease(originLease)
+
+	tk.MustExec("analyze table t_auto_presplit all columns with 2 topn, 2 buckets")
+
+	type topNFromStorageArgs struct {
+		isIndex  int
+		histID   int64
+		priority int
+	}
+	var loadedTopNFromStorage atomic.Pointer[topNFromStorageArgs]
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(5)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority",
+		func(_ int64, isIndex int, histID int64, priority int) {
+			loadedTopNFromStorage.Store(&topNFromStorageArgs{
+				isIndex:  isIndex,
+				histID:   histID,
+				priority: priority,
+			})
+		})
+	tk.MustExec("alter table t_auto_presplit add index idx_b(b) pre_split_regions auto")
+	loadedArgs := loadedTopNFromStorage.Load()
+	require.NotNil(t, loadedArgs)
+	require.Equal(t, 0, loadedArgs.isIndex)
+	require.Equal(t, int64(2), loadedArgs.histID)
+	require.Equal(t, kv.PriorityNormal, loadedArgs.priority)
+}
+
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {
 	idx := tbl.Indices()[0]
 	txn, err := ctx.Txn(true)

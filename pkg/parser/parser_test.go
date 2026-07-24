@@ -3041,6 +3041,7 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true, "CREATE TABLE `t` (`c` TEXT) DEFAULT CHARACTER SET = UTF8 DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1, PRE_SPLIT_REGIONS = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1 PRE_SPLIT_REGIONS = 1"},
+		{"CREATE TABLE t (c TEXT) PRE_SPLIT_REGIONS AUTO;", false, ""},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true, "CREATE TABLE IF NOT EXISTS `general_log` (`event_time` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` MEDIUMTEXT NOT NULL,`thread_id` BIGINT(20) UNSIGNED NOT NULL,`server_id` INT(10) UNSIGNED NOT NULL,`command_type` VARCHAR(64) NOT NULL,`argument` MEDIUMBLOB NOT NULL) ENGINE = CSV DEFAULT CHARACTER SET = UTF8 COMMENT = 'General log'"}, // TODO: The number yacc in parentheses has not been implemented yet.
 		// For reference_definition in column_definition.
@@ -3278,13 +3279,17 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING RTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'a'", false, ""},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) CLUSTERED PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) NONCLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) PRE_SPLIT_REGIONS = AUTO"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (by (1, 'a'), (2, 'b'), (3, 'c'));", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BY (1,_UTF8MB4'a'),(2,_UTF8MB4'b'),(3,_UTF8MB4'c'))"},
 		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"CREATE INDEX idx ON t (a, b) pre_split_regions = 100", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = 100"},
+		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS AUTO", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = AUTO"},
 		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", true, "ALTER TABLE `t` ADD INDEX `idx`(`a`) PRE_SPLIT_REGIONS = 100, ADD INDEX `idx2`(`b`) PRE_SPLIT_REGIONS = (BY (1),(2),(3))"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},

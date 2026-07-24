@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -29,6 +30,28 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTopNFromStorageWithPriorityAndLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	const tableID int64 = 100
+	const histID int64 = 1
+	tk.MustExec(`insert into mysql.stats_top_n(table_id, is_index, hist_id, value, count) values
+		(100, 0, 1, 'a', 10), (100, 0, 1, 'b', 50), (100, 0, 1, 'c', 30), (100, 0, 1, 'd', 40)`)
+
+	topN, err := storage.TopNFromStorageWithPriorityAndLimit(
+		context.Background(), tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
+	require.NoError(t, err)
+	require.Len(t, topN.TopN, 2)
+	require.Equal(t, []uint64{50, 40}, []uint64{topN.TopN[0].Count, topN.TopN[1].Count})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = storage.TopNFromStorageWithPriorityAndLimit(
+		ctx, tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 func TestLoadStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)

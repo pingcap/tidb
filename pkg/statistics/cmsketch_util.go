@@ -72,3 +72,8 @@ func topNMetaToDatum(val TopNMeta,
 	}
 	return dat, err
 }
+
+// DecodeColumnTopNValue decodes an encoded column TopN value into a datum of the specified type.
+func DecodeColumnTopNValue(encoded []byte, tp byte, loc *time.Location) (types.Datum, error) {
+	return topNMetaToDatum(TopNMeta{Encoded: encoded}, tp, false, loc)
+}

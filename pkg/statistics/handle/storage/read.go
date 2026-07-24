@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -204,7 +205,34 @@ func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, hist
 
 // TopNFromStorage reads TopN from storage
 func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
-	rows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	return topNFromStorageWithPriorityAndLimit(util.StatsCtx, sctx, tblID, isIndex, histID, kv.PriorityHigh, 0)
+}
+
+// TopNFromStorageWithPriorityAndLimit reads at most limit TopN values with the highest counts from storage.
+func TopNFromStorageWithPriorityAndLimit(ctx context.Context, sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority, limit int) (_ *statistics.TopN, err error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
+	return topNFromStorageWithPriorityAndLimit(ctx, sctx, tblID, isIndex, histID, priority, limit)
+}
+
+func topNFromStorageWithPriorityAndLimit(ctx context.Context, sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority, limit int) (_ *statistics.TopN, err error) {
+	failpoint.InjectCall("beforeTopNFromStorageWithPriority", tblID, isIndex, histID, priority)
+	selectPrefix := "select "
+	switch priority {
+	case kv.PriorityHigh:
+		selectPrefix += "high_priority "
+	case kv.PriorityLow:
+		selectPrefix += "low_priority "
+	}
+	query := selectPrefix + "value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?"
+	args := []any{tblID, isIndex, histID}
+	if limit > 0 {
+		query += " order by count desc, value limit %?"
+		args = append(args, limit)
+	}
+	rows, _, err := util.ExecRowsWithCtx(ctx, sctx, query, args...)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
