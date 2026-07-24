@@ -87,6 +87,21 @@ func (s *tikvSnapshot) IterReverse(k kv.Key, lowerBound kv.Key) (kv.Iterator, er
 	return &tikvScanner{scanner.(*txnsnapshot.Scanner)}, err
 }
 
+// SetOptionsForSession sets the session options without boxing them through SetOption.
+func (s *tikvSnapshot) SetOptionsForSession(
+	readReplicaScope string,
+	taskID uint64,
+	tikvClientReadTimeout uint64,
+	resourceGroupName string,
+	explicitRequestSourceType string,
+) {
+	s.KVSnapshot.SetReadReplicaScope(readReplicaScope)
+	s.KVSnapshot.SetTaskID(taskID)
+	s.KVSnapshot.SetKVReadTimeout(time.Duration(tikvClientReadTimeout) * time.Millisecond)
+	s.KVSnapshot.SetResourceGroupName(resourceGroupName)
+	s.KVSnapshot.SetExplicitRequestSourceType(explicitRequestSourceType)
+}
+
 func (s *tikvSnapshot) SetOption(opt int, val any) {
 	switch opt {
 	case kv.IsolationLevel:

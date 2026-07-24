@@ -2171,6 +2171,16 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	return snapshot, nil
 }
 
+type sessionSnapshotOptionsSetter interface {
+	SetOptionsForSession(
+		readReplicaScope string,
+		taskID uint64,
+		tikvClientReadTimeout uint64,
+		resourceGroupName string,
+		explicitRequestSourceType string,
+	)
+}
+
 // InitSnapshotWithSessCtx initialize snapshot using session context
 func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnReplicaReadTypePtr *string) {
 	sessVars := ctx.GetSessionVars()
@@ -2182,11 +2192,21 @@ func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnRe
 	} else {
 		txnReplicaReadType = *txnReplicaReadTypePtr
 	}
-	snapshot.SetOption(kv.ReadReplicaScope, txnReplicaReadType)
-	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
-	snapshot.SetOption(kv.TiKVClientReadTimeout, sessVars.GetTiKVClientReadTimeout())
-	snapshot.SetOption(kv.ResourceGroupName, sessVars.StmtCtx.ResourceGroupName)
-	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
+	if setter, ok := snapshot.(sessionSnapshotOptionsSetter); ok {
+		setter.SetOptionsForSession(
+			txnReplicaReadType,
+			sessVars.StmtCtx.TaskID,
+			sessVars.GetTiKVClientReadTimeout(),
+			sessVars.StmtCtx.ResourceGroupName,
+			sessVars.ExplicitRequestSourceType,
+		)
+	} else {
+		snapshot.SetOption(kv.ReadReplicaScope, txnReplicaReadType)
+		snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+		snapshot.SetOption(kv.TiKVClientReadTimeout, sessVars.GetTiKVClientReadTimeout())
+		snapshot.SetOption(kv.ResourceGroupName, sessVars.StmtCtx.ResourceGroupName)
+		snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
+	}
 
 	if replicaReadType.IsClosestRead() && txnReplicaReadType != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
