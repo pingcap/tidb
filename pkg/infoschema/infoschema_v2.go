@@ -97,6 +97,120 @@ func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
 	}
 }
 
+// isPartitionOnlyAction returns true if the DDL only modifies partitions (not the table itself).
+// For these actions, unchanged partitions don't need new pid2tid entries.
+func isPartitionOnlyAction(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionAddTablePartition, model.ActionDropTablePartition,
+		model.ActionTruncateTablePartition, model.ActionReorganizePartition:
+		return true
+	}
+	return false
+}
+
+// diffChangedPartitionIDs returns the set of partition IDs that are NEW in the current table
+// compared to what was previously in pid2tid. For add partition, these are the newly added partitions.
+// For reorganize partition, these are the replacement partitions that were not in the old table.
+// For truncate partition, these are the new replacement partition IDs.
+// For drop partition, no new partitions are added, so an empty (non-nil) map is returned
+// so that callers skip re-inserting all remaining partitions into pid2tid.
+// Returns nil if all partitions should be inserted (non-partition DDL, unable to diff, or no diff found).
+// When nil is returned, callers fall back to inserting all partitions, which is correct but less efficient.
+func diffChangedPartitionIDs(oldTable table.Table, newTblInfo *model.TableInfo, tp model.ActionType) map[int64]struct{} {
+	if !isPartitionOnlyAction(tp) {
+		return nil
+	}
+	newPi := newTblInfo.GetPartitionInfo()
+	if newPi == nil {
+		return nil
+	}
+
+	// For drop partition: remaining partitions need new alive entries at the new version.
+	// Return all remaining partition IDs from the new table so they get alive entries.
+	// Dropped partitions are tomb-marked separately in addTableWithActionType by
+	// comparing old vs new partition IDs.
+	switch tp {
+	case model.ActionDropTablePartition:
+		changed := make(map[int64]struct{}, len(newPi.Definitions))
+		for _, def := range newPi.Definitions {
+			changed[def.ID] = struct{}{}
+		}
+		return changed
+	}
+
+	// For add/reorganize/truncate partition: find partition IDs in new table that were NOT in old table.
+	if oldTable != nil {
+		if oldPi := oldTable.Meta().GetPartitionInfo(); oldPi != nil {
+			oldIDs := make(map[int64]struct{}, len(oldPi.Definitions))
+			for _, def := range oldPi.Definitions {
+				oldIDs[def.ID] = struct{}{}
+			}
+			changed := make(map[int64]struct{})
+			for _, def := range newPi.Definitions {
+				if _, ok := oldIDs[def.ID]; !ok {
+					changed[def.ID] = struct{}{}
+				}
+			}
+			if len(changed) > 0 {
+				return changed
+			}
+			// If no difference found (e.g., same partitions re-ordered), fall through to insert all.
+			return nil
+		}
+	}
+
+	// Can't determine old partitions, insert all.
+	return nil
+}
+
+// diffDroppedPartitionIDs returns the set of partition IDs that should be tomb-marked.
+// For drop/truncate partition DDLs, only the dropped partitions need tomb entries.
+// Returns nil if all partitions should be tomb-marked (non-partition DDL).
+func diffDroppedPartitionIDs(diff *model.SchemaDiff, pi *model.PartitionInfo) map[int64]struct{} {
+	if !isPartitionOnlyAction(diff.Type) {
+		return nil
+	}
+
+	switch diff.Type {
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		// For drop/truncate partition in StatePublic (final state), AffectedOpts contains
+		// the affected partition IDs. For intermediate DDL states, AffectedOpts may be empty.
+		// In that case, return empty map (skip tomb marking) because the partitions are
+		// not actually dropped yet — they will be tomb-marked when the final state is applied.
+		//
+		// Note: For truncate partition, AffectedOpts[i].TableID is the NEW partition ID
+		// (replacement), while AffectedOpts[i].OldTableID is the OLD partition ID (truncated).
+		// We need to tomb the OLD partition ID, so we use OldTableID.
+		if len(diff.AffectedOpts) > 0 {
+			dropped := make(map[int64]struct{}, len(diff.AffectedOpts))
+			for _, opt := range diff.AffectedOpts {
+				dropped[opt.OldTableID] = struct{}{}
+			}
+			return dropped
+		}
+		// Intermediate DDL state: no partitions are actually dropped yet.
+		return make(map[int64]struct{})
+	case model.ActionReorganizePartition:
+		// Reorganize replaces some partitions with new ones.
+		// Old partitions should be tomb-marked.
+		// Use OldTableID for the same reason as truncate partition above.
+		if len(diff.AffectedOpts) > 0 {
+			dropped := make(map[int64]struct{}, len(diff.AffectedOpts))
+			for _, opt := range diff.AffectedOpts {
+				dropped[opt.OldTableID] = struct{}{}
+			}
+			return dropped
+		}
+	}
+
+	// For add partition: no partitions are dropped, return empty set to skip tomb marking.
+	if diff.Type == model.ActionAddTablePartition {
+		return make(map[int64]struct{})
+	}
+
+	return nil
+}
+
 // Data is the core data struct of infoschema V2.
 type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
@@ -144,6 +258,10 @@ type Data struct {
 
 	// the minimum ts of the recent used infoschema
 	recentMinTS atomic.Uint64
+
+	// lastGCPartitionCutVer records the cutVer of the last gcCollectPartitionItem call.
+	// If cutVer hasn't changed, the next GC would find nothing to delete and can be skipped.
+	lastGCPartitionCutVer atomic.Int64
 }
 
 type tableInfoItem struct {
@@ -195,13 +313,32 @@ func (isd *Data) SetCacheCapacity(capacity uint64) {
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
+	isd.addPartitions(item, tbl, nil)
+}
+
+// addPartitions inserts table entry and partition entries into btrees.
+// If changedPartitionIDs is non-nil, only those partition IDs are inserted into pid2tid.
+// If changedPartitionIDs is nil, all partitions are inserted (backward compatible).
+func (isd *Data) addPartitions(item tableItem, tbl table.Table, changedPartitionIDs map[int64]struct{}) {
 	btreeSet(&isd.byID, &item)
 	btreeSet(&isd.byName, &item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
 	ti := tbl.Meta()
 	if pi := ti.GetPartitionInfo(); pi != nil {
-		for _, def := range pi.Definitions {
-			btreeSet(&isd.pid2tid, partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+		if changedPartitionIDs != nil {
+			cnt := 0
+			for _, def := range pi.Definitions {
+				if _, ok := changedPartitionIDs[def.ID]; ok {
+					btreeSet(&isd.pid2tid, partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+					cnt++
+				}
+			}
+			logutil.BgLogger().Info("infoschema v2 addPartitions delta", zap.Int("total_partitions", len(pi.Definitions)), zap.Int("inserted", cnt))
+		} else {
+			logutil.BgLogger().Info("infoschema v2 addPartitions full", zap.Int("total_partitions", len(pi.Definitions)))
+			for _, def := range pi.Definitions {
+				btreeSet(&isd.pid2tid, partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+			}
 		}
 	}
 	if infoschemacontext.HasSpecialAttributes(ti) {
@@ -212,6 +349,50 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 			tableInfo:     ti,
 			tomb:          false})
 	}
+}
+
+// GetPartitionedTableIDs returns all partitioned table IDs for the given schema version.
+// This is used to replace ListTablesWithSpecialAttribute(PartitionAttribute) in V2,
+// allowing partition tables to be loaded on-demand from the Sieve cache.
+//
+// pid2tid is a delta/MVCC btree keyed by (partitionID, schemaVersion). A partition's
+// latest record may sit at an older schemaVersion when the current version advanced due
+// to an unrelated DDL, or after a partition-only delta that only re-inserted the changed
+// partitions. So we must use the "latest entry <= schemaVersion" semantics (same as
+// searchPartitionItemByPartitionID / listPartitionTablesWithFilter) instead of exact
+// version matching, otherwise unchanged partition tables get silently missed.
+func (isd *Data) GetPartitionedTableIDs(schemaVersion int64) []int64 {
+	var tidSet map[int64]bool
+	var lastPartitionID int64
+	// Descend iterates (partitionID, schemaVersion) in descending order. For each
+	// partitionID, the first entry with schemaVersion <= target is its latest valid record.
+	isd.pid2tid.Load().Descend(func(item partitionItem) bool {
+		if item.schemaVersion > schemaVersion {
+			return true
+		}
+		// Dedup: only the latest entry per partitionID matters.
+		if lastPartitionID != 0 && lastPartitionID == item.partitionID {
+			return true
+		}
+		lastPartitionID = item.partitionID
+		if !item.tomb {
+			if tidSet == nil {
+				tidSet = make(map[int64]bool)
+			}
+			tidSet[item.tableID] = true
+		}
+		return true
+	})
+
+	if tidSet == nil {
+		return nil
+	}
+
+	result := make([]int64, 0, len(tidSet))
+	for tid := range tidSet {
+		result = append(result, tid)
+	}
+	return result
 }
 
 func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
@@ -406,6 +587,53 @@ func gcCollectTableItem(bt *btree.BTreeG[*tableItem], cutVer int64, maxItems int
 	return dels
 }
 
+// gcCollectPartitionItem returns up to maxItems old partitionItem versions for GC.
+// The logic mirrors gcCollectTableItem: for each partitionID, keep the latest version
+// below cutVer (the pivot) and delete all older versions of the same partitionID.
+func gcCollectPartitionItem(bt *btree.BTreeG[partitionItem], cutVer int64, maxItems int) []partitionItem {
+	var dels []partitionItem
+	var prev partitionItem
+	var hasPrev bool
+	bt.Descend(func(item partitionItem) bool {
+		if item.schemaVersion < cutVer &&
+			hasPrev &&
+			prev.partitionID == item.partitionID &&
+			prev.schemaVersion < cutVer {
+			dels = append(dels, item)
+			if len(dels) >= maxItems {
+				return false
+			}
+		}
+		prev = item
+		hasPrev = true
+		return true
+	})
+	return dels
+}
+
+// gcOldPID2TIDVersion performs GC of old partitionItem entries up to maxItems.
+func (isd *Data) gcOldPID2TIDVersion(schemaVersion int64) int {
+	// Skip the expensive tree iteration if cutVer hasn't advanced since last GC.
+	// gcCollectPartitionItem can only delete entries with version < cutVer,
+	// so if cutVer is unchanged, the result would be identical to the last call.
+	if schemaVersion <= isd.lastGCPartitionCutVer.Load() {
+		logutil.BgLogger().Info("infoschema v2 pid2tid GC skipped (cutVer unchanged)", zap.Int64("schemaVersion", schemaVersion))
+		return 0
+	}
+	isd.lastGCPartitionCutVer.Store(schemaVersion)
+
+	old := isd.pid2tid.Load()
+	newTree := old.Clone()
+	dels := gcCollectPartitionItem(old, schemaVersion, 1024)
+	for _, item := range dels {
+		newTree.Delete(item)
+	}
+	if !isd.pid2tid.CompareAndSwap(old, newTree) {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() pid2tid gc conflict")
+	}
+	return len(dels)
+}
+
 // gcCollectReferredForeignKeyItem returns up to maxItems old referredForeignKeyItem versions for GC.
 func gcCollectReferredForeignKeyItem(bt *btree.BTreeG[*referredForeignKeyItem], cutVer int64, maxItems int) []*referredForeignKeyItem {
 	var dels []*referredForeignKeyItem
@@ -470,6 +698,9 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 
 	// collect and remove old referredForeignKeyItems
 	_ = isd.gcOldFKVersion(schemaVersion)
+
+	// collect and remove old partitionItems in pid2tid
+	_ = isd.gcOldPID2TIDVersion(schemaVersion)
 
 	return len(dels), int64(isd.byName.Load().Len())
 }
@@ -1314,7 +1545,10 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 		return nil, nil, nil
 	}
 
-	tbl, ok := is.TableByID(context.Background(), pi.tableID)
+	// Set refill option to true for partition table.
+	// Without refill, partition table with 1024 partitions will cache miss 1024 times!
+	ctx := WithRefillOption(context.Background(), true)
+	tbl, ok := is.TableByID(ctx, pi.tableID)
 	if !ok {
 		// something wrong?
 		return nil, nil, nil
@@ -1457,6 +1691,19 @@ func IsV2(is InfoSchema) (bool, *infoschemaV2) {
 	return ok, ret
 }
 
+// GetPartitionedTableIDsV2 returns all partitioned table IDs for the given schema version.
+// This is used to replace ListTablesWithSpecialAttribute(PartitionAttribute) in V2,
+// allowing partition tables to be loaded on-demand from the Sieve cache.
+// Returns nil if not V2 or no partitioned tables found.
+// See design doc: explorer/partition-table-optimization-design.md
+func GetPartitionedTableIDsV2(is InfoSchema, schemaVersion int64) []int64 {
+	_, isv2 := IsV2(is)
+	if isv2 == nil {
+		return nil
+	}
+	return isv2.Data.GetPartitionedTableIDs(schemaVersion)
+}
+
 func applyTableUpdate(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		return b.applyTableUpdateV2(m, diff)
@@ -1590,6 +1837,21 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 
+	// For partition-only DDLs, cache the old table before it's removed by dropTableForUpdate.
+	// This allows applyCreateTable to diff only the changed partitions instead of re-inserting all.
+	// Note: For add/drop partition, the table ID doesn't change (oldTableID=0, newTableID=tableID).
+	// For truncate/reorganize, oldTableID may differ. Use whichever is valid.
+	b.oldTableForPartitionDiff = nil
+	if isPartitionOnlyAction(diff.Type) {
+		lookupID := oldTableID
+		if !tableIDIsValid(lookupID) {
+			lookupID = newTableID // add partition: table ID doesn't change
+		}
+		if tableIDIsValid(lookupID) {
+			b.oldTableForPartitionDiff, _ = b.infoschemaV2.TableByID(context.Background(), lookupID)
+		}
+	}
+
 	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, oldDBInfo, diff)
 	if err != nil {
 		return nil, err
@@ -1644,8 +1906,20 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	b.infoschemaV2.Data.deleteReferredForeignKeys(dbInfo.Name, tblInfo, diff.Version)
 
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
-		for _, def := range pi.Definitions {
-			btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+		droppedPartitionIDs := diffDroppedPartitionIDs(diff, pi)
+		if droppedPartitionIDs == nil {
+			// Non-partition DDL (e.g. drop table): tomb all partitions from the old table.
+			for _, def := range pi.Definitions {
+				btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+			}
+		} else {
+			// Partition-only DDL: tomb only the specifically dropped partitions.
+			// Iterate droppedPartitionIDs directly, not pi.Definitions, because the dropped
+			// partitions may no longer be in the old table's partition definitions
+			// (DDL intermediate states may have already updated the table meta).
+			for partitionID := range droppedPartitionIDs {
+				btreeSet(&b.infoData.pid2tid, partitionItem{partitionID, diff.Version, table.Meta().ID, true})
+			}
 		}
 	}
 
@@ -1742,6 +2016,9 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 	var currDB string
 	var lastTableID int64
 	var res infoschemacontext.TableInfoResult
+	// Track table IDs already found in tableInfoResident to avoid duplicates
+	// when also checking pid2tid for partition tables.
+	existingTableIDs := make(map[int64]bool)
 	is.Data.tableInfoResident.Load().Descend(func(item tableInfoItem) bool {
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
 			// Skip the versions that we are not looking for.
@@ -1761,6 +2038,8 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 			return true
 		}
 
+		existingTableIDs[item.tableID] = true
+
 		if currDB == "" {
 			currDB = item.dbName.L
 			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
@@ -1777,7 +2056,77 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 	if len(res.TableInfos) > 0 {
 		ret = append(ret, res)
 	}
+
+	// Partition tables are not stored in tableInfoResident (to save memory).
+	// Check pid2tid for partition tables and look up their table info on demand.
+	is.listPartitionTablesWithFilter(filter, &ret, existingTableIDs)
+
 	return ret
+}
+
+// listPartitionTablesWithFilter looks up partition tables from pid2tid, loads their
+// table info, applies the filter, and appends matching results to ret.
+// Partition tables are excluded from tableInfoResident to save memory, so we need
+// this separate path to handle the PartitionAttribute filter.
+// existingTableIDs tracks tables already found via tableInfoResident to avoid duplicates.
+func (is *infoschemaV2) listPartitionTablesWithFilter(filter infoschemacontext.SpecialAttributeFilter, ret *[]infoschemacontext.TableInfoResult, existingTableIDs map[int64]bool) {
+	seen := make(map[int64]bool) // tableIDs we've already added
+	var lastPartitionID int64
+	// Descend iterates {partitionID, schemaVersion} in descending order.
+	// For each partitionID, the first entry with schemaVersion <= schemaMetaVersion
+	// is the latest valid record (same logic as searchPartitionItemByPartitionID).
+	is.Data.pid2tid.Load().Descend(func(item partitionItem) bool {
+		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+			return true
+		}
+		// Dedup: for each partitionID, we only care about the latest version <= target.
+		if lastPartitionID != 0 && lastPartitionID == item.partitionID {
+			return true
+		}
+		lastPartitionID = item.partitionID
+
+		if item.tomb {
+			return true
+		}
+
+		// Dedup table ID: multiple partitions can belong to the same table,
+		// or the table may already have been found in tableInfoResident.
+		if existingTableIDs[item.tableID] {
+			return true
+		}
+		if seen[item.tableID] {
+			return true
+		}
+		seen[item.tableID] = true
+
+		tbl, ok := is.TableInfoByID(item.tableID)
+		if !ok || !filter(tbl) {
+			return true
+		}
+
+		// Find the DB name for this table.
+		tblItem, ok := is.searchTableItemByID(item.tableID)
+		if !ok {
+			return true
+		}
+
+		// Find or create the result entry for this DB.
+		found := false
+		for i := range *ret {
+			if (*ret)[i].DBName.L == tblItem.dbName.L {
+				(*ret)[i].TableInfos = append((*ret)[i].TableInfos, tbl)
+				found = true
+				break
+			}
+		}
+		if !found {
+			*ret = append(*ret, infoschemacontext.TableInfoResult{
+				DBName:     tblItem.dbName,
+				TableInfos: []*model.TableInfo{tbl},
+			})
+		}
+		return true
+	})
 }
 
 type refillOption struct{}

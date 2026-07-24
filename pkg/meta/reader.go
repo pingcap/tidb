@@ -32,7 +32,7 @@ type Reader interface {
 	IterDatabases(func(info *model.DBInfo) error) error
 	IterTables(dbID int64, fn func(info *model.TableInfo) error) error
 	GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors
-	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error)
+	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, map[int64]int64, error)
 
 	GetMetadataLock() (enable bool, isNull bool, err error)
 	GetHistoryDDLJob(id int64) (*model.Job, error)
