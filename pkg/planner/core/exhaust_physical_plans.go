@@ -2196,6 +2196,11 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		joins = append(joins, mergeJoins...)
 
 		enableRatioPrune := len(hashJoins) > 0 && !hasForceIndexJoinFamilyHint(p)
+		failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
+			if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
+				enableRatioPrune = false
+			}
+		})
 		indexJoins := tryToEnumerateIndexJoin(super, prop, enableRatioPrune)
 		joins = append(joins, indexJoins...)
 
