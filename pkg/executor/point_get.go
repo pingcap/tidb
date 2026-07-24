@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -143,7 +145,42 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats                    *runtimeStatsWithSnapshot
+	resourceGroupTaggerCache resourceGroupTaggerCache
+}
+
+type resourceGroupTaggerCache struct {
+	initialized bool
+	sqlDigest   string
+	planDigest  string
+}
+
+func (c *resourceGroupTaggerCache) get(
+	sc *stmtctx.StatementContext,
+) (*kv.ResourceGroupTagBuilder, bool) {
+	normalizedSQL, sqlDigest := sc.SQLDigest()
+	_, planDigest := sc.GetPlanDigest()
+
+	sqlDigestKey := ""
+	if len(normalizedSQL) > 0 && sqlDigest != nil {
+		sqlDigestKey = sqlDigest.String()
+	}
+	planDigestKey := ""
+	if planDigest != nil {
+		planDigestKey = planDigest.String()
+	}
+	if c.initialized && c.sqlDigest == sqlDigestKey && c.planDigest == planDigestKey {
+		return nil, false
+	}
+
+	c.initialized = true
+	c.sqlDigest = sqlDigestKey
+	c.planDigest = planDigestKey
+	tagger := kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetPlanDigest(planDigest)
+	if len(normalizedSQL) > 0 {
+		tagger.SetSQLDigest(sqlDigest)
+	}
+	return tagger, true
 }
 
 // GetPhysID returns the physical id used, either the table's id or a partition's ID
@@ -258,8 +295,24 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
-	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
+	e.setOptionForTopSQL()
 	return nil
+}
+
+func (e *PointGetExecutor) setOptionForTopSQL() {
+	if e.snapshot == nil {
+		return
+	}
+	if txn, ok := e.snapshot.(kv.Transaction); ok && txn.IsPipelined() {
+		return
+	}
+	sc := e.Ctx().GetSessionVars().StmtCtx
+	if tagger, changed := e.resourceGroupTaggerCache.get(sc); changed {
+		e.snapshot.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+	if sc.KvExecCounter != nil {
+		e.snapshot.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
+	}
 }
 
 // Close implements the Executor interface.
