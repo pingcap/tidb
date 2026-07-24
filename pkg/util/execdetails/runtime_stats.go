@@ -616,20 +616,14 @@ func (e *RuntimeStatsColl) RecordCopStats(
 		if scan != nil {
 			copStats.scanDetail = *scan
 		}
-		copStats.readPoolTaskDetails = readPoolTaskDetails.Clone()
 		e.copStats[planID] = copStats
 	} else {
 		if scan != nil {
 			copStats.scanDetail.Merge(scan)
 		}
 		copStats.timeDetail.Merge(&time)
-		if !readPoolTaskDetails.Empty() {
-			if copStats.readPoolTaskDetails == nil {
-				copStats.readPoolTaskDetails = &util.PoolTaskDetails{}
-			}
-			copStats.readPoolTaskDetails.Merge(readPoolTaskDetails)
-		}
 	}
+	copStats.readPoolTaskDetails = mergeReadPoolTaskDetails(copStats.readPoolTaskDetails, readPoolTaskDetails)
 	if summary != nil {
 		// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 		// summary, use it overwrite the planID
