@@ -172,7 +172,9 @@ func runConflictedKVHandleStep(t *testing.T, subtask *proto.Subtask, stepExe exe
 	ctx := context.Background()
 	require.NoError(t, stepExe.Init(ctx))
 	t.Cleanup(func() {
-		require.NoError(t, stepExe.Cleanup(context.Background()))
+		if err := stepExe.Cleanup(context.Background()); err != nil {
+			t.Errorf("cleanup conflict resolution step executor: %v", err)
+		}
 	})
 	require.NoError(t, stepExe.RunSubtask(ctx, subtask))
 }
