@@ -733,14 +733,13 @@ func TestBuildTableSampleQueries(t *testing.T) {
 		for _, handleVal := range handleVals {
 			handleValString := make([]string, 0, len(handleVal))
 			for i, val := range handleVal {
-				rec := colTypeRowReceiverMap[strings.ToUpper(handleColTypes[i])]()
+				ct := strings.ToUpper(handleColTypes[i])
 				var valStr string
-				switch rec.(type) {
-				case *SQLTypeString:
+				if _, ok := dataTypeString[ct]; ok {
 					valStr = fmt.Sprintf("'%s'", val)
-				case *SQLTypeBytes:
+				} else if _, ok := dataTypeBin[ct]; ok {
 					valStr = fmt.Sprintf("x'%x'", val)
-				case *SQLTypeNumber:
+				} else {
 					valStr = fmt.Sprintf("%d", val)
 				}
 				handleValString = append(handleValString, valStr)

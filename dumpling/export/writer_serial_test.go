@@ -16,6 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type csvOption struct {
+	nullValue      string
+	separator      []byte
+	delimiter      []byte
+	lineTerminator []byte
+	binaryFormat   BinaryFormat
+}
+
 // BytesWriter is a Writer implementation on top of bytes.Buffer that is useful for testing.
 type BytesWriter struct {
 	buf *bytes.Buffer
@@ -212,7 +220,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 
 	// test delimiter
 	bf.Reset()
-	opt.delimiter = quotationMark
+	opt.delimiter = []byte{'\''}
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
 	m = newMetrics(conf.PromFactory, conf.Labels)
