@@ -291,7 +291,10 @@ func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]b
 		failpoint.Return([]byte(clientPlugin), nil)
 	})
 	enclen := 1 + len(clientPlugin) + 1 + len(cc.salt) + 1
-	data := cc.alloc.AllocWithLen(4, enclen)
+	data, err := cc.allocPacketBuffer(4, 4+enclen)
+	if err != nil {
+		return nil, err
+	}
 	data = append(data, mysql.AuthSwitchRequest) // switch request
 	data = append(data, []byte(clientPlugin)...)
 	data = append(data, byte(0x00)) // requires null
@@ -303,7 +306,7 @@ func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]b
 		data = append(data, cc.salt...)
 		data = append(data, 0)
 	}
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		logutil.Logger(ctx).Debug("write response to client failed", zap.Error(err))
 		return nil, err
@@ -358,7 +361,10 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		return initErr
 	}
 
-	data := cc.alloc.AllocWithLen(4, 32)
+	data, err := cc.allocPacketBuffer(4, 32)
+	if err != nil {
+		return err
+	}
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -366,7 +372,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		data = append(data, 0, 0)
 	}
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	cc.pkt.SetSequence(0)
 	if err != nil {
 		err = errors.SuspendStack(err)
@@ -1607,7 +1613,10 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 	}
 	msg := fmt.Appendf(nil, "Uptime: %d  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000",
 		uptime)
-	data := cc.alloc.AllocWithLen(4, len(msg))
+	data, err := cc.allocPacketBuffer(4, 4+len(msg))
+	if err != nil {
+		return err
+	}
 	data = append(data, msg...)
 
 	err = cc.writePacket(data)
@@ -1697,7 +1706,10 @@ func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, 
 		enclen = util2.LengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
-	data := cc.alloc.AllocWithLen(4, 32+enclen)
+	data, err := cc.allocPacketBuffer(4, 32+enclen)
+	if err != nil {
+		return err
+	}
 	data = append(data, header)
 	data = dump.LengthEncodedInt(data, affectedRows)
 	data = dump.LengthEncodedInt(data, lastInsertID)
@@ -1711,7 +1723,7 @@ func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, 
 		data = dump.LengthEncodedString(data, []byte(msg))
 	}
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		return err
 	}
@@ -1745,7 +1757,10 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 
 	cc.lastCode = m.Code
 	defer errno.IncrementError(m.Code, cc.user, cc.peerHost)
-	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
+	data, err := cc.allocPacketBuffer(4, 16+len(m.Message))
+	if err != nil {
+		return err
+	}
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -1755,7 +1770,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 
 	data = append(data, m.Message...)
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		return err
 	}
@@ -1773,7 +1788,10 @@ func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
 		return cc.writeOkWith(ctx, mysql.EOFHeader, false, serverStatus)
 	}
 
-	data := cc.alloc.AllocWithLen(4, 9)
+	data, err := cc.allocPacketBuffer(4, 9)
+	if err != nil {
+		return err
+	}
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -1781,21 +1799,40 @@ func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
 		data = dump.Uint16(data, serverStatus)
 	}
 
-	err := cc.writePacket(data)
-	return err
+	return cc.writePacket(data)
 }
 
 func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
-	data := cc.alloc.AllocWithLen(4, 5+len(filePath))
+	data, err := cc.allocPacketBuffer(4, 5+len(filePath))
+	if err != nil {
+		return err
+	}
 	data = append(data, mysql.LocalInFileHeader)
 	data = append(data, filePath...)
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		return err
 	}
 
 	return cc.flush(ctx)
+}
+
+func (cc *clientConn) allocPacketBuffer(length int, capacity int) ([]byte, error) {
+	if capacity < length {
+		capacity = length
+	}
+
+	if cc.pkt != nil {
+		buf, err := cc.pkt.AvailableWriteBuffer(capacity)
+		if err != nil {
+			return nil, err
+		}
+		if buf != nil {
+			return buf[:length], nil
+		}
+	}
+	return cc.alloc.AllocWithLen(length, capacity), nil
 }
 
 // getDataFromPath gets file contents from file path.
@@ -2447,11 +2484,13 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	if err != nil {
 		return err
 	}
-	data := cc.alloc.AllocWithLen(4, 1024)
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
 	for _, column := range columns {
-		data = data[0:4]
+		data, err := cc.allocPacketBuffer(4, 1024)
+		if err != nil {
+			return err
+		}
 		data = column.DumpWithDefault(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
@@ -2509,13 +2548,19 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
-	data := cc.alloc.AllocWithLen(4, 1024)
+	data, err := cc.allocPacketBuffer(4, 1024)
+	if err != nil {
+		return err
+	}
 	data = dump.LengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
 		return err
 	}
 	for _, v := range columns {
-		data = data[0:4]
+		data, err = cc.allocPacketBuffer(4, 1024)
+		if err != nil {
+			return err
+		}
 		data = v.Dump(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
@@ -2529,7 +2574,6 @@ func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
 // serverStatus, a flag bit represents server information
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
 func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16) (bool, error) {
-	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk(cc.ctx.GetSessionVars().GetChunkAllocator())
 	gotColumnInfo := false
 	var columns []*column.Info
@@ -2604,7 +2648,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		reg := trace.StartRegion(ctx, "WriteClientConn")
 		start = beginWriteSQLRespDuration(stmtDetail)
 		for i := range rowCount {
-			data = data[0:4]
+			data, err := cc.allocPacketBuffer(4, 1024)
+			if err != nil {
+				reg.End()
+				return false, err
+			}
 			if binary {
 				data, err = column.DumpBinaryRow(data, columns, req.GetRow(i), cc.rsEncoder)
 			} else {
@@ -2643,7 +2691,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		err        error
 		start      time.Time
 	)
-	data := cc.alloc.AllocWithLen(4, 1024)
 	writtenRows := 0
 	stmtDetail = stmtExecDetailsFromContext(ctx)
 	defer func() {
@@ -2660,7 +2707,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 	for i := 0; i < fetchSize && iter.Current(ctx) != iter.End(); i++ {
 		row := iter.Current(ctx)
 
-		data = data[0:4]
+		data, err := cc.allocPacketBuffer(4, 1024)
+		if err != nil {
+			return err
+		}
 		data, err = column.DumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
 			return err
