@@ -2035,7 +2035,7 @@ DirectResourceGroupRunawayOption:
 	}
 |	"WATCH" EqOpt ResourceGroupRunawayWatchOption WatchDurationOption
 	{
-		dur := strings.ToLower($4.(ast.ValueExpr).GetString())
+		dur := strings.ToLower($4.(string))
 		if dur == "unlimited" {
 			dur = ""
 		}
