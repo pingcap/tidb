@@ -304,6 +304,7 @@ go_test(
         "schema_test.go",
         "schema_version_test.go",
         "sequence_test.go",
+        "split_region_test.go",
         "stat_test.go",
         "storage_class_partition_test.go",
         "storage_class_test.go",
