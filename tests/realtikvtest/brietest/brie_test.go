@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -136,6 +137,80 @@ func TestCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		req.FailNow("the backup job doesn't be canceled")
 	}
+}
+
+func TestRestoreAbortReentrantBeforeTableModeReset(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	cleanupRestoreRegistry(kit.tk)
+	defer cleanupRestoreRegistry(kit.tk)
+	kit.tk.MustExec("CREATE DATABASE IF NOT EXISTS test")
+
+	tableName := fmt.Sprintf("restore_abort_reentrant_%d", time.Now().UnixNano())
+	filterStr := "test." + tableName
+	fullStorage := tableName + "_full"
+	prepareRestoreModeFullBackup(t, kit, tableName, fullStorage)
+
+	var restoreID uint64
+	kit.WithChecker(func(err error) {
+		require.ErrorContains(t, err, "fail after protected tables are created")
+	}, func() {
+		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, true,
+			fmt.Sprintf("INSERT INTO test.%s VALUES (9999, 'during')", tableName), nil, func() {
+				kit.RunFullRestore(func(rc *task.RestoreConfig) {
+					rc.Storage = kit.LocalURI(fullStorage)
+					rc.UseCheckpoint = true
+					kit.SetFilter(&rc.Config, filterStr)
+				})
+			})
+	})
+	require.Equal(t, restoreID, requireRestoreRegistryID(t, kit.tk, task.FullRestoreCmd, filterStr, "paused"))
+
+	abortFailpoint := "github.com/pingcap/tidb/br/pkg/task/run-restore-abort-before-reset-table-mode"
+	require.NoError(t, failpoint.Enable(abortFailpoint, "return"))
+	abortFailpointEnabled := true
+	defer func() {
+		if abortFailpointEnabled {
+			require.NoError(t, failpoint.Disable(abortFailpoint))
+		}
+	}()
+	kit.WithChecker(func(err error) {
+		require.ErrorContains(t, err, "fail before resetting table mode after abort")
+	}, func() {
+		kit.RunFullRestoreAbort(func(ac *task.RestoreConfig) {
+			ac.Storage = kit.LocalURI(fullStorage)
+			kit.SetFilter(&ac.Config, filterStr)
+		})
+	})
+	require.NoError(t, failpoint.Disable(abortFailpoint))
+	abortFailpointEnabled = false
+
+	require.Equal(t, restoreID, requireRestoreRegistryID(t, kit.tk, task.FullRestoreCmd, filterStr, "resetting"))
+	requireRestoreModeProtection(t, kit.tk, tableName,
+		fmt.Sprintf("INSERT INTO test.%s VALUES (9999, 'during')", tableName))
+
+	staleCheckFailpoint := "github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration"
+	require.NoError(t, failpoint.Enable(staleCheckFailpoint, "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(staleCheckFailpoint))
+	}()
+	kit.WithChecker(func(err error) {
+		require.ErrorContains(t, err, "already exists and is resetting")
+	}, func() {
+		kit.RunFullRestore(func(rc *task.RestoreConfig) {
+			rc.Storage = kit.LocalURI(fullStorage)
+			rc.UseCheckpoint = true
+			kit.SetFilter(&rc.Config, filterStr)
+		})
+	})
+	require.Equal(t, restoreID, requireRestoreRegistryID(t, kit.tk, task.FullRestoreCmd, filterStr, "resetting"))
+
+	kit.RunFullRestoreAbort(func(ac *task.RestoreConfig) {
+		ac.Storage = kit.LocalURI(fullStorage)
+		kit.SetFilter(&ac.Config, filterStr)
+	})
+	requireNoRestoreRegistryEntry(t, kit.tk, restoreID)
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES (2, 'after')", tableName))
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE test.%s", tableName))
 }
 
 func TestExistedTables(t *testing.T) {

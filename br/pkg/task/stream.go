@@ -1883,7 +1883,17 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	if cfg.ExplicitFilter {
+	if cfg.ProtectTables {
+		// RestoreKVFiles can advance schema metadata directly, bypassing the
+		// domain's normal schema load loop. Reload once before reading
+		// InfoSchema so SetTableModeToNormal can see the restored tables.
+		if err = client.GetDomain().Reload(); err != nil {
+			return errors.Annotate(err, "failed to reload schema info")
+		}
+		if err = waitUntilSchemaReload(ctx, client); err != nil {
+			return errors.Trace(err)
+		}
+
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
 		})
@@ -2389,7 +2399,7 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 
 func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
 	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tableMappingManager.IsFromPiTRIDMap(), cfg.tiflashRecorder,
-		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter)
+		client.CurrentTS(), client.RecordDeleteRange, cfg.ProtectTables)
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.

@@ -398,6 +398,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		SplitRegionIndexStep:     restoresplit.DefaultRegionIndexStep,
 		WithPlacementPolicy:      "STRICT",
 		UseCheckpoint:            true,
+		ProtectTables:            true,
 		AllowPITRFromIncremental: true,
 	}
 }
