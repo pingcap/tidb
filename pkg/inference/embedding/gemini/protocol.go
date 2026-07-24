@@ -12,29 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package gemini
 
-import "github.com/pingcap/tidb/pkg/inference/embedding/base"
-
-// OpenAI embeddings protocol reference:
-// https://platform.openai.com/docs/api-reference/embeddings/create
-
-// Request is the model for OpenAI embeddings API request.
-type Request struct {
-	Input          []string `json:"input"`
-	Model          string   `json:"model"`
-	EncodingFormat string   `json:"encoding_format"`
+// BatchResponse is the model for Gemini batch embeddings API response.
+// See https://ai.google.dev/api/rest/v1beta/models/batchEmbedContents.
+type BatchResponse struct {
+	Embeddings []struct {
+		Values []float32 `json:"values"`
+	} `json:"embeddings"`
 }
 
-// Response is the model for OpenAI embeddings API response.
-type Response struct {
-	Model string                        `json:"model"`
-	Data  []base.IndexedBase64Embedding `json:"data"`
-}
-
-// ErrorResponse is the model for OpenAI embeddings API response when an error occurs.
+// ErrorResponse is the model for Gemini embeddings API response when an error occurs.
 type ErrorResponse struct {
 	Error struct {
+		Code    int    `json:"code"`
 		Message string `json:"message"`
+		Status  string `json:"status"`
 	} `json:"error"`
 }

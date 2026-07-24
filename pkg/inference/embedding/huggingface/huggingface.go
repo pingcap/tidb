@@ -12,22 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package huggingface
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 )
 
-// DefaultAPIBaseURL is the default base URL (without the /embeddings suffix) for OpenAI embeddings API.
-const DefaultAPIBaseURL = "https://api.openai.com/v1"
+// DefaultAPIBaseURL is the default base URL for HuggingFace inference API.
+const DefaultAPIBaseURL = "https://router.huggingface.co/hf-inference"
 
-// Embedder is for OpenAI embeddings.
+// Embedder is for HuggingFace embeddings.
 type Embedder struct {
 	client http.Client
 	cfg    base.APIKeyProviderConfig
@@ -35,34 +36,49 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// NewOpenAIEmbedder creates a new OpenAIEmbedder instance with the provided configuration.
-// cfg.GetBaseURL may return an OpenAI-compatible API base URL with or without
-// the trailing /embeddings path.
-func NewOpenAIEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
+// NewHuggingFaceEmbedder creates a new HuggingFaceEmbedder instance with the provided configuration.
+// cfg.GetBaseURL returns the inference API base; the embedder appends
+// /models/<model>/pipeline/feature-extraction. An empty value uses
+// DefaultAPIBaseURL.
+func NewHuggingFaceEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
 		cfg:    cfg.WithDefaults(),
 	}
 }
 
-// embeddingsEndpoint resolves an OpenAI-compatible base URL to the embeddings endpoint.
-// The OpenAI API defines the endpoint as POST /v1/embeddings:
-// https://platform.openai.com/docs/api-reference/embeddings/create
-// For compatibility with existing callers, baseURL may already end in /embeddings.
-func embeddingsEndpoint(baseURL string) (string, error) {
-	u, err := base.ParseHTTPURL(baseURL, "OpenAI API base URL")
+func featureExtractionEndpoint(configured, model string) (string, error) {
+	baseURL := strings.TrimSpace(configured)
+	if baseURL == "" {
+		baseURL = DefaultAPIBaseURL
+	}
+	u, err := base.ParseHTTPURL(baseURL, "HuggingFace API base URL")
 	if err != nil {
 		return "", err
 	}
-
-	escapedPath := strings.TrimRight(u.EscapedPath(), "/")
-	if !strings.HasSuffix(escapedPath, "/embeddings") {
-		escapedPath += "/embeddings"
+	modelParts := strings.Split(model, "/")
+	for i := range modelParts {
+		modelParts[i] = escapePathSegment(modelParts[i])
 	}
-	if err := base.SetEscapedURLPath(u, escapedPath, "OpenAI API base URL path"); err != nil {
+	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/models/" + strings.Join(modelParts, "/") + "/pipeline/feature-extraction"
+	if err := base.SetEscapedURLPath(u, escapedPath, "HuggingFace API base URL path"); err != nil {
 		return "", err
 	}
 	return u.String(), nil
+}
+
+func escapePathSegment(segment string) string {
+	escaped := url.PathEscape(segment)
+	// url.PathEscape intentionally leaves the complete dot segments "." and
+	// ".." unchanged. Escape them explicitly so intermediaries cannot remove
+	// or normalize model path segments according to RFC 3986 section 5.2.4.
+	if escaped == "." {
+		return "%2E"
+	}
+	if escaped == ".." {
+		return "%2E%2E"
+	}
+	return escaped
 }
 
 func decodeErrorMessage(body []byte) (string, error) {
@@ -70,55 +86,54 @@ func decodeErrorMessage(body []byte) (string, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return "", err
 	}
-	return response.Error.Message, nil
+	return response.Error, nil
 }
 
 func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
-	var response Response
-	if err := json.Unmarshal(body, &response); err != nil {
+	var embeddings Response
+	if err := json.Unmarshal(body, &embeddings); err != nil {
 		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
 	}
-	return base.DecodeIndexedBase64Embeddings(response.Data, expectedCount)
+	if len(embeddings) != expectedCount {
+		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(embeddings), expectedCount)
+	}
+	return embeddings, nil
 }
 
 func (e *Embedder) unauthorizedError() error {
 	if e.cfg.ErrUnauthorized != nil {
 		return e.cfg.ErrUnauthorized
 	}
-	return fmt.Errorf("OpenAI returns status unauthorized, check API key")
+	return fmt.Errorf("HuggingFace returns status unauthorized, check API key")
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
-	// ref: https://platform.openai.com/docs/api-reference/embeddings/create
+	// ref: https://huggingface.co/docs/inference-providers/en/tasks/feature-extraction
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
 	if model == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
-	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for OpenAI"))
+
+	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for HuggingFace"))
 	if err != nil {
 		return nil, err
 	}
-	baseURL := DefaultAPIBaseURL
-	if configured := strings.TrimSpace(e.cfg.ConfiguredBaseURL()); configured != "" {
-		baseURL = configured
-	}
-	endpoint, err := embeddingsEndpoint(baseURL)
+
+	endpoint, err := featureExtractionEndpoint(e.cfg.ConfiguredBaseURL(), model)
 	if err != nil {
 		return nil, err
 	}
 
 	return base.ExecuteJSONEmbeddingCall(ctx, len(texts), base.JSONEmbeddingCall{
-		Provider: "OpenAI",
+		Provider: "HuggingFace",
 		Client:   &e.client,
 		Endpoint: endpoint,
 		Payload: base.JSONFieldsWithOptions(map[string]any{
-			"model":           model,
-			"input":           texts,
-			"encoding_format": "base64",
+			"inputs": texts,
 		}, opts),
 		Headers:              http.Header{"Authorization": {"Bearer " + apiKey}},
 		MaxResponseBodyBytes: e.cfg.MaxResponseBodyBytes,
@@ -126,6 +141,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		DecodeErrorMessage:   decodeErrorMessage,
 		StatusErrors: map[int]error{
 			http.StatusUnauthorized: e.unauthorizedError(),
+			http.StatusNotFound:     fmt.Errorf("HuggingFace model '%s' does not exist or is not available", model),
 		},
 		DecodeEmbeddings: decodeEmbeddings,
 	})

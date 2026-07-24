@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package nvidia
 
 import (
 	"context"
@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 )
 
-// DefaultAPIBaseURL is the default base URL (without the /embeddings suffix) for OpenAI embeddings API.
-const DefaultAPIBaseURL = "https://api.openai.com/v1"
+// DefaultAPIBaseURL is the default endpoint URL for the NVIDIA NIM embeddings API.
+const DefaultAPIBaseURL = "https://integrate.api.nvidia.com/v1/embeddings"
 
-// Embedder is for OpenAI embeddings.
+// Embedder is for NVIDIA NIM embeddings.
 type Embedder struct {
 	client http.Client
 	cfg    base.APIKeyProviderConfig
@@ -35,42 +35,54 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// NewOpenAIEmbedder creates a new OpenAIEmbedder instance with the provided configuration.
-// cfg.GetBaseURL may return an OpenAI-compatible API base URL with or without
-// the trailing /embeddings path.
-func NewOpenAIEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
+// NewNvidiaEmbedder creates a new NvidiaEmbedder instance with the provided configuration.
+// cfg.GetBaseURL returns the complete NVIDIA NIM embeddings endpoint; an empty
+// value uses DefaultAPIBaseURL.
+func NewNvidiaEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
 		cfg:    cfg.WithDefaults(),
 	}
 }
 
-// embeddingsEndpoint resolves an OpenAI-compatible base URL to the embeddings endpoint.
-// The OpenAI API defines the endpoint as POST /v1/embeddings:
-// https://platform.openai.com/docs/api-reference/embeddings/create
-// For compatibility with existing callers, baseURL may already end in /embeddings.
-func embeddingsEndpoint(baseURL string) (string, error) {
-	u, err := base.ParseHTTPURL(baseURL, "OpenAI API base URL")
+func embeddingsEndpoint(configured string) (string, error) {
+	endpoint := strings.TrimSpace(configured)
+	if endpoint == "" {
+		endpoint = DefaultAPIBaseURL
+	}
+	u, err := base.ParseHTTPURL(endpoint, "NVIDIA NIM API base URL")
 	if err != nil {
-		return "", err
-	}
-
-	escapedPath := strings.TrimRight(u.EscapedPath(), "/")
-	if !strings.HasSuffix(escapedPath, "/embeddings") {
-		escapedPath += "/embeddings"
-	}
-	if err := base.SetEscapedURLPath(u, escapedPath, "OpenAI API base URL path"); err != nil {
 		return "", err
 	}
 	return u.String(), nil
 }
 
+func validateEmbeddingType(opts map[string]any) error {
+	value, ok := opts["embedding_type"]
+	if !ok {
+		return nil
+	}
+	embeddingType, ok := value.(string)
+	if !ok || embeddingType != "float" {
+		return fmt.Errorf(`NVIDIA NIM embedding_type must be "float"`)
+	}
+	return nil
+}
+
 func decodeErrorMessage(body []byte) (string, error) {
+	// NVIDIA endpoints use different error schemas across hosted and
+	// self-hosted versions, so accept all known message fields.
 	var response ErrorResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return "", err
 	}
-	return response.Error.Message, nil
+	if response.Detail != "" {
+		return response.Detail, nil
+	}
+	if response.Message != "" {
+		return response.Message, nil
+	}
+	return response.Error, nil
 }
 
 func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
@@ -81,38 +93,37 @@ func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
 	return base.DecodeIndexedBase64Embeddings(response.Data, expectedCount)
 }
 
-func (e *Embedder) unauthorizedError() error {
+func (e *Embedder) unauthorizedError(statusCode int) error {
 	if e.cfg.ErrUnauthorized != nil {
 		return e.cfg.ErrUnauthorized
 	}
-	return fmt.Errorf("OpenAI returns status unauthorized, check API key")
+	return fmt.Errorf("NVIDIA NIM returns status %s, check API key", strings.ToLower(http.StatusText(statusCode)))
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
-	// ref: https://platform.openai.com/docs/api-reference/embeddings/create
+	// ref: https://docs.api.nvidia.com/nim/reference/baai-bge-m3-invoke
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
 	if model == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
-	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for OpenAI"))
+	if err := validateEmbeddingType(opts); err != nil {
+		return nil, err
+	}
+	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for NVIDIA NIM"))
 	if err != nil {
 		return nil, err
 	}
-	baseURL := DefaultAPIBaseURL
-	if configured := strings.TrimSpace(e.cfg.ConfiguredBaseURL()); configured != "" {
-		baseURL = configured
-	}
-	endpoint, err := embeddingsEndpoint(baseURL)
+	endpoint, err := embeddingsEndpoint(e.cfg.ConfiguredBaseURL())
 	if err != nil {
 		return nil, err
 	}
 
 	return base.ExecuteJSONEmbeddingCall(ctx, len(texts), base.JSONEmbeddingCall{
-		Provider: "OpenAI",
+		Provider: "NVIDIA NIM",
 		Client:   &e.client,
 		Endpoint: endpoint,
 		Payload: base.JSONFieldsWithOptions(map[string]any{
@@ -125,7 +136,9 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		Secrets:              []string{apiKey},
 		DecodeErrorMessage:   decodeErrorMessage,
 		StatusErrors: map[int]error{
-			http.StatusUnauthorized: e.unauthorizedError(),
+			http.StatusUnauthorized: e.unauthorizedError(http.StatusUnauthorized),
+			http.StatusForbidden:    e.unauthorizedError(http.StatusForbidden),
+			http.StatusNotFound:     fmt.Errorf("NVIDIA NIM model '%s' does not exist or is not available", model),
 		},
 		DecodeEmbeddings: decodeEmbeddings,
 	})
