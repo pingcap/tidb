@@ -126,10 +126,10 @@ func TestSlotManager(t *testing.T) {
 		require.True(t, sm.alloc(task1))
 		require.True(t, sm.alloc(task2))
 		require.True(t, sm.alloc(task3))
-		require.ElementsMatch(t, []TaskSlotSnapshot{
-			{ID: 1, RequiredSlots: 3},
-			{ID: 2, RequiredSlots: 5},
-			{ID: 3, RequiredSlots: 7},
+		require.Equal(t, map[int64]int{
+			1: 3,
+			2: 5,
+			3: 7,
 		}, sm.executorTaskSlotsSnapshot())
 	})
 }
