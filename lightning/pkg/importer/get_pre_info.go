@@ -468,11 +468,9 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	openReader := func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
-		return mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
-			ZStdDecodeConcurrency: 1,
-		})
-	}
+	openReader := mydump.NewReaderOpener(&dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	var reader storeapi.ReadSeekCloser
 	var err error
 	if dataFileMeta.Type != mydump.SourceTypeParquet {
@@ -632,11 +630,9 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	openReader := func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
-		return mydump.OpenReader(ctx, &sampleFile, p.srcStorage, compressedio.DecompressConfig{
-			ZStdDecodeConcurrency: 1,
-		})
-	}
+	openReader := mydump.NewReaderOpener(&sampleFile, p.srcStorage, compressedio.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	var reader storeapi.ReadSeekCloser
 	var err error
 	if sampleFile.Type != mydump.SourceTypeParquet {

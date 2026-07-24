@@ -681,3 +681,14 @@ func OpenReader(
 	}
 	return
 }
+
+// NewReaderOpener creates a function that opens a reader for fileMeta on demand.
+func NewReaderOpener(
+	fileMeta *SourceFileMeta,
+	store storeapi.Storage,
+	decompressCfg compressedio.DecompressConfig,
+) func(context.Context) (storeapi.ReadSeekCloser, error) {
+	return func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+		return OpenReader(ctx, fileMeta, store, decompressCfg)
+	}
+}

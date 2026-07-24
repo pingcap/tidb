@@ -273,7 +273,7 @@ func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path st
 func prepareReader(
 	ctx context.Context,
 	store storeapi.Storage,
-	openReader func(context.Context) (storeapi.ReadSeekCloser, error),
+	openReader ReaderOpener,
 	path string,
 	fileSize int64,
 ) (parquet.ReaderAtSeeker, *inMemoryReaderBase, storeapi.ReadSeekCloser, error) {

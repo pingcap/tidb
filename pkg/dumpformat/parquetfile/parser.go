@@ -73,6 +73,9 @@ type FileMeta struct {
 	Loc       *time.Location
 }
 
+// ReaderOpener lazily opens the reader used to parse parquet metadata.
+type ReaderOpener func(context.Context) (storeapi.ReadSeekCloser, error)
+
 func estimateRowSize(row []types.Datum) int {
 	length := 0
 	for _, v := range row {
@@ -618,7 +621,7 @@ func ReadRowCount(
 func NewParser(
 	ctx context.Context,
 	store storeapi.Storage,
-	openReader func(context.Context) (storeapi.ReadSeekCloser, error),
+	openReader ReaderOpener,
 	path string,
 	fileSize int64,
 	meta FileMeta,
