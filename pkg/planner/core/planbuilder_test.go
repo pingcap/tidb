@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -191,6 +192,118 @@ func TestRewriterPool(t *testing.T) {
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
+
+	t.Run("auxiliary fields preserve builder state", func(t *testing.T) {
+		testBuildSubqueryPlanForAuxiliaryFieldsPreservesBuilderState(t)
+	})
+	t.Run("expression rewriter subquery preserves builder state", func(t *testing.T) {
+		testExpressionRewriterBuildSubqueryPreservesBuilderState(t)
+	})
+}
+
+func testBuildSubqueryPlanForAuxiliaryFieldsPreservesBuilderState(t *testing.T) {
+	suite := coretestsdk.CreatePlannerSuiteElems()
+	defer suite.Close()
+
+	stmtNode, err := suite.GetParser().ParseOneStmt(
+		"select last_value(t.a) over (order by t.a) in (select sum(t.b) from t2 having count(*) > 0) from t",
+		"",
+		"",
+	)
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmtNode)
+	err = Preprocess(context.Background(), suite.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: suite.GetIS()}))
+	require.NoError(t, err)
+
+	stmt := stmtNode.(*ast.SelectStmt)
+	exprTextBefore := restoreNodeTextForTest(t, stmt.Fields.Fields[0].Expr)
+
+	outerStmtNode, err := suite.GetParser().ParseOneStmt("select * from t", "", "")
+	require.NoError(t, err)
+	outerNodeW := resolve.NewNodeW(outerStmtNode)
+	err = Preprocess(context.Background(), suite.GetSCtx(), outerNodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: suite.GetIS()}))
+	require.NoError(t, err)
+	outerBuilder, _ := NewPlanBuilder().Init(suite.GetCtx(), suite.GetIS(), hint.NewQBHintHandler(nil))
+	p, err := outerBuilder.Build(context.Background(), outerNodeW)
+	require.NoError(t, err)
+
+	builder, _ := NewPlanBuilder().Init(suite.GetCtx(), suite.GetIS(), hint.NewQBHintHandler(nil))
+	builder.resolveCtx = nodeW.GetResolveContext()
+	sentinelAgg := &ast.AggregateFuncExpr{F: ast.AggFuncSum}
+	sentinelCol := &expression.CorrelatedColumn{}
+	builder.correlatedAggMapper = map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn{sentinelAgg: sentinelCol}
+	builder.curClause = orderByClause
+
+	np, err := builder.buildSubqueryPlanForAuxiliaryFields(context.Background(), p.(base.LogicalPlan), stmt.Fields.Fields[0].Expr)
+	require.NoError(t, err)
+	require.NotNil(t, np)
+	require.Len(t, builder.correlatedAggMapper, 1)
+	require.Same(t, sentinelCol, builder.correlatedAggMapper[sentinelAgg])
+	require.Equal(t, orderByClause, builder.curClause)
+	require.Equal(t, exprTextBefore, restoreNodeTextForTest(t, stmt.Fields.Fields[0].Expr))
+}
+
+func testExpressionRewriterBuildSubqueryPreservesBuilderState(t *testing.T) {
+	suite := coretestsdk.CreatePlannerSuiteElems()
+	defer suite.Close()
+
+	stmtNode, err := suite.GetParser().ParseOneStmt(
+		"select * from t where exists (select 1 from t2 where t2.a = t.a)",
+		"",
+		"",
+	)
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmtNode)
+	err = Preprocess(context.Background(), suite.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: suite.GetIS()}))
+	require.NoError(t, err)
+
+	stmt := stmtNode.(*ast.SelectStmt)
+	existsExpr, ok := stmt.Where.(*ast.ExistsSubqueryExpr)
+	require.True(t, ok)
+	subq, ok := existsExpr.Sel.(*ast.SubqueryExpr)
+	require.True(t, ok)
+
+	outerStmtNode, err := suite.GetParser().ParseOneStmt("select * from t", "", "")
+	require.NoError(t, err)
+	outerNodeW := resolve.NewNodeW(outerStmtNode)
+	err = Preprocess(context.Background(), suite.GetSCtx(), outerNodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: suite.GetIS()}))
+	require.NoError(t, err)
+	outerBuilder, _ := NewPlanBuilder().Init(suite.GetCtx(), suite.GetIS(), hint.NewQBHintHandler(nil))
+	p, err := outerBuilder.Build(context.Background(), outerNodeW)
+	require.NoError(t, err)
+
+	builder, _ := NewPlanBuilder().Init(suite.GetCtx(), suite.GetIS(), hint.NewQBHintHandler(nil))
+	builder.resolveCtx = nodeW.GetResolveContext()
+	builder.curClause = whereClause
+	builder.subQueryHintFlags = hint.HintFlagSemiJoinRewrite
+	builder.windowSpecs = map[string]*ast.WindowSpec{
+		"outer": {Name: ast.NewCIStr("outer")},
+	}
+
+	rewriter := &expressionRewriter{
+		schema: p.Schema().Clone(),
+		names:  p.OutputNames(),
+	}
+	planCtx := &exprRewriterPlanCtx{builder: builder}
+
+	np, hintFlags, err := rewriter.buildSubquery(context.Background(), planCtx, subq, handlingExistsSubquery)
+	require.NoError(t, err)
+	require.NotNil(t, np)
+	require.Zero(t, hintFlags)
+	require.Equal(t, whereClause, builder.curClause)
+	require.Equal(t, hint.HintFlagSemiJoinRewrite, builder.subQueryHintFlags)
+	require.Contains(t, builder.windowSpecs, "outer")
+	require.Len(t, builder.outerSchemas, 0)
+	require.Len(t, builder.outerNames, 0)
+	require.Len(t, builder.outerBlockExpand, 0)
+}
+
+func restoreNodeTextForTest(t *testing.T, node ast.Node) string {
+	t.Helper()
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, node.Restore(restoreCtx))
+	return sb.String()
 }
 
 func TestGetInsertColExprDeepCopiesValueExprFieldType(t *testing.T) {
