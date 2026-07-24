@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/spf13/pflag"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -904,10 +903,11 @@ type azblobUploader struct {
 	cpkInfo  *blob.CPKInfo
 
 	// eg/egCtx drive concurrent upload; nil means Write stages blocks
-	// synchronously. err records the first stage failure on either path.
+	// synchronously. err holds the synchronous path's stage failure; the
+	// concurrent path's error comes from eg.Wait().
 	eg    *errgroup.Group
 	egCtx context.Context
-	err   atomic.Error
+	err   error
 }
 
 func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []byte) error {
@@ -916,16 +916,16 @@ func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []
 		CPKInfo:      u.cpkInfo,
 	})
 	if err != nil {
-		err = errors.Annotate(err, "Failed to upload block to azure blob")
-		u.err.CompareAndSwap(nil, err)
-		return err
+		return errors.Annotate(err, "Failed to upload block to azure blob")
 	}
 	return nil
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
-	if err := u.err.Load(); err != nil {
-		return 0, err
+	if u.eg != nil {
+		if err := u.egCtx.Err(); err != nil {
+			return 0, err
+		}
 	}
 	generatedUUID, err := uuid.NewUUID()
 	if err != nil {
@@ -944,16 +944,18 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 	}
 
 	if err := u.stageBlock(ctx, blockID, data); err != nil {
+		u.err = err
 		return 0, err
 	}
 	return len(data), nil
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
+	err := u.err
 	if u.eg != nil {
-		_ = u.eg.Wait()
+		err = u.eg.Wait()
 	}
-	if err := u.err.Load(); err != nil {
+	if err != nil {
 		// Uncommitted blocks are garbage-collected by Azure after a week, so
 		// skip CommitBlockList and surface the failure instead.
 		return err
@@ -968,6 +970,6 @@ func (u *azblobUploader) Close(ctx context.Context) error {
 	if len(u.accessTier) > 0 {
 		options.Tier = &u.accessTier
 	}
-	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
+	_, err = u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
 	return errors.Trace(err)
 }
