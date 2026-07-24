@@ -459,8 +459,18 @@ func (helper extractHelper) extractLikePattern(
 	case ast.EQ:
 		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 	case ast.Like, ast.Ilike:
+		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
+		// diverge from the original predicate (issue #69653). The escape has to
+		// be resolvable at plan time: for a constant escape (including the
+		// default '\' and the empty escape of NO_BACKSLASH_ESCAPES) we compile
+		// the regexp with it; a non-constant/deferred escape can't be resolved
+		// here, so we skip extraction and let the scalar predicate be rechecked.
+		escape, ok := likeEscapeConst(fn)
+		if !ok {
+			return false, ""
+		}
 		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			return true, stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
 		}
 		return true, datums[0].GetString()
 	case ast.Regexp, ast.RegexpLike:
@@ -468,6 +478,23 @@ func (helper extractHelper) extractLikePattern(
 	default:
 		return false, ""
 	}
+}
+
+// likeEscapeConst returns the ESCAPE byte of a LIKE/ILIKE ScalarFunction when
+// it is a plan-time constant (ok=true). The escape must be constant so the
+// pushed-down pattern can be compiled to match the predicate exactly (issue
+// #69653); a non-constant, deferred, or parameterized escape returns ok=false,
+// telling the caller to skip pushdown and keep a scalar recheck.
+func likeEscapeConst(fn *expression.ScalarFunction) (byte, bool) {
+	args := fn.GetArgs()
+	if len(args) < 3 {
+		return 0, false
+	}
+	escape, ok := args[2].(*expression.Constant)
+	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
+		return 0, false
+	}
+	return byte(escape.Value.GetInt64()), true
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
