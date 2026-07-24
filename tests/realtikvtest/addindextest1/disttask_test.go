@@ -593,7 +593,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
 		<-ch
 	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
