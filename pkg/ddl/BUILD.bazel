@@ -326,6 +326,7 @@ go_test(
         "//pkg/ddl/ingest",
         "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/jobsubmit",
+        "//pkg/ddl/label",
         "//pkg/ddl/logutil",
         "//pkg/ddl/mock",
         "//pkg/ddl/placement",
