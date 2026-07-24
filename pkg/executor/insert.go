@@ -53,6 +53,51 @@ type InsertExec struct {
 	row4Update     []types.Datum
 
 	Priority mysql.PriorityEnum
+
+	// For RETURNING clause support
+	returningExprs           []expression.Expression
+	returningSchema          *expression.Schema
+	returningNeedExtraHandle bool
+	returningRows            [][]types.Datum
+	returningDone            bool
+}
+
+func (e *InsertExec) appendReturningRow(row []types.Datum, handle kv.Handle) {
+	if len(e.returningExprs) == 0 {
+		return
+	}
+	rowLen := len(row)
+	if e.returningNeedExtraHandle && !e.hasExtraHandle {
+		rowLen++
+	}
+	rowCopy := make([]types.Datum, rowLen)
+	for i := range row {
+		row[i].Copy(&rowCopy[i])
+	}
+	if e.returningNeedExtraHandle && !e.hasExtraHandle && handle != nil && handle.IsInt() {
+		rowCopy[len(row)].SetInt64(handle.IntValue())
+	}
+	e.returningRows = append(e.returningRows, rowCopy)
+}
+
+func (e *InsertExec) addRecord(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
+	handle, err := e.InsertValues.addRecordWithAutoIDHintAndHandle(ctx, row, 0, dupKeyCheck)
+	if err != nil {
+		return err
+	}
+	e.appendReturningRow(row, handle)
+	return nil
+}
+
+func (e *InsertExec) addRecordWithAutoIDHint(
+	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
+) error {
+	handle, err := e.InsertValues.addRecordWithAutoIDHintAndHandle(ctx, row, reserveAutoIDCount, dupKeyCheck)
+	if err != nil {
+		return err
+	}
+	e.appendReturningRow(row, handle)
+	return nil
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -64,6 +109,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 		return tblName
 	}))
+
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.Ctx().GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -364,6 +410,11 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.recordRUV2RowsColMultiply = true
 
+	// Handle RETURNING clause
+	if len(e.returningExprs) > 0 {
+		return e.nextWithReturning(ctx, req)
+	}
+
 	if !e.EmptyChildren() && e.Children(0) != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
@@ -376,6 +427,52 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return err
 	}
+	return nil
+}
+
+// nextWithReturning handles the RETURNING clause for INSERT statements.
+func (e *InsertExec) nextWithReturning(ctx context.Context, req *chunk.Chunk) error {
+	// If we've already returned all rows, we're done
+	if e.returningDone {
+		return nil
+	}
+
+	e.returningRows = e.returningRows[:0]
+
+	// First, execute the insert operation
+	if !e.EmptyChildren() && e.Children(0) != nil {
+		err := insertRowsFromSelect(ctx, e)
+		if err != nil {
+			return err
+		}
+	} else {
+		err := insertRows(ctx, e)
+		if err != nil {
+			terr, ok := errors.Cause(err).(*terror.Error)
+			if ok && len(e.OnDuplicate) == 0 && terr.Code() == errno.ErrAutoincReadFailed {
+				ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+				return ec.HandleError(err)
+			}
+			return err
+		}
+	}
+
+	// Now evaluate RETURNING expressions for each inserted row
+	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+	for _, row := range e.returningRows {
+		// Create a chunk row from the inserted data for expression evaluation
+		chkRow := chunk.MutRowFromDatums(row).ToRow()
+
+		for i, expr := range e.returningExprs {
+			val, err := expr.Eval(evalCtx, chkRow)
+			if err != nil {
+				return err
+			}
+			req.AppendDatum(i, &val)
+		}
+	}
+
+	e.returningDone = true
 	return nil
 }
 
@@ -535,6 +632,8 @@ func (e *InsertExec) doDupRowUpdate(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	e.appendReturningRow(newData, handle)
 
 	if autoColIdx >= 0 {
 		if e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {
