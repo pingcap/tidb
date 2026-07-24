@@ -23,12 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	intest.InTest = true
+	intest.EnableAssert = true
 	tikv.EnableFailpoints()
 
 	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
