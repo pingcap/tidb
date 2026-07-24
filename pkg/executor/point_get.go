@@ -145,7 +145,8 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats     *runtimeStatsWithSnapshot
+	resultSet recordSet
 }
 
 // GetPhysID returns the physical id used, either the table's id or a partition's ID

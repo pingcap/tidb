@@ -491,6 +491,16 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	// Extract trace ID from context to store in recordSet for lazy execution
 	traceID := tikvtrace.TraceIDFromContext(ctx)
 
+	if pointGetExecutor, ok := executor.(*PointGetExecutor); ok {
+		pointGetExecutor.resultSet = recordSet{
+			executor:   executor,
+			schema:     executor.Schema(),
+			stmt:       a,
+			txnStartTS: startTs,
+			traceID:    traceID,
+		}
+		return &pointGetExecutor.resultSet, nil
+	}
 	return &recordSet{
 		executor:   executor,
 		schema:     executor.Schema(),
