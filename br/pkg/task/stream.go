@@ -1738,28 +1738,19 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	logFilesIter, err := client.LoadDMLFiles(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
-	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-
-	// Pre-split regions based on total data volume across ALL files.
-	// On success the pipeline-level per-batch split is skipped to avoid
-	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
-	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, splitSize, splitKeys)
-	if preSplitErr != nil {
-		log.Warn("pre-split regions failed, continuing with per-batch splitting",
-			zap.Error(preSplitErr))
-	}
-
-	logFilesIter, err := client.LoadDMLFiles(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
 	// TODO: need keep the order of ssts for compatible of rewrite rules
@@ -1850,20 +1841,9 @@ func restoreStream(
 		}
 
 		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
-		// Skip per-batch splitting when pre-split already covered all files;
-		// doing both passes would produce redundant split+scatter calls.
-		// Checkpoint filtering must still be applied on the pre-split path.
-		var logFilesIterWithSplit logclient.LogIter
-		if preSplitDone {
-			logFilesIterWithSplit, err = client.WrapLogFilesIterWithCheckpointFilter(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		logFilesIterWithSplit = iter.WithEmitSizeTrace(logFilesIterWithSplit, metrics.KVLogFileEmittedMemory.WithLabelValues("1-split"))
 
