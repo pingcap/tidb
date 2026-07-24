@@ -413,7 +413,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	// Print all fields even though the value of some fields is 0.
 	str := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
-	cop.readPoolTaskDetails = &util.PoolTaskDetails{
+	readPoolTaskDetails := &util.PoolTaskDetails{
 		TaskCount:        1,
 		PollCount:        1,
 		MaxPollCount:     1,
@@ -422,6 +422,8 @@ func TestCopRuntimeStats(t *testing.T) {
 		MaxDispatchCount: 1,
 		MinDispatchCount: 1,
 	}
+	stats.RecordCopStats(tableScanID, kv.TiKV, nil, util.TimeDetail{}, readPoolTaskDetails, nil)
+	cop = stats.GetCopStats(tableScanID)
 	require.Contains(t, cop.String(), "read_pool:{tasks:1,")
 	require.NotContains(t, cop.String(), "read_pool_task:")
 	zeroScanDetail := util.ScanDetail{}

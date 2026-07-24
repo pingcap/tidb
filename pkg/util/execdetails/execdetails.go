@@ -498,6 +498,9 @@ func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
 // MergeReadPoolTaskDetails merges an aggregate without changing cop-task counts or
 // other execution details.
 func (s *SyncExecDetails) MergeReadPoolTaskDetails(details *util.PoolTaskDetails) {
+	if details.Empty() {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.execDetails.ReadPoolTaskDetails = mergeReadPoolTaskDetails(s.execDetails.ReadPoolTaskDetails, details)
