@@ -32,19 +32,19 @@ import (
 )
 
 const (
-	advertisedStatusEndpointCheckTimeout      = 5 * time.Second
-	advertisedStatusEndpointResponseBodyLimit = 1 << 20
-	advertisedStatusEndpointWarningMessage    = "failed to verify advertised status endpoint identity"
+	endpointCheckTimeout      = 5 * time.Second
+	endpointResponseBodyLimit = 1 << 20
+	endpointWarningMessage    = "failed to verify advertised status endpoint identity"
 )
 
-type advertisedStatusEndpointCheckReason string
+type endpointCheckReason string
 
 const (
-	advertisedStatusEndpointRequestFailed    advertisedStatusEndpointCheckReason = "request-failed"
-	advertisedStatusEndpointUnexpectedStatus advertisedStatusEndpointCheckReason = "unexpected-status"
-	advertisedStatusEndpointInvalidResponse  advertisedStatusEndpointCheckReason = "invalid-response"
-	advertisedStatusEndpointMissingIdentity  advertisedStatusEndpointCheckReason = "missing-identity"
-	advertisedStatusEndpointIdentityMismatch advertisedStatusEndpointCheckReason = "identity-mismatch"
+	endpointRequestFailed    endpointCheckReason = "request-failed"
+	endpointUnexpectedStatus endpointCheckReason = "unexpected-status"
+	endpointInvalidResponse  endpointCheckReason = "invalid-response"
+	endpointMissingIdentity  endpointCheckReason = "missing-identity"
+	endpointIdentityMismatch endpointCheckReason = "identity-mismatch"
 )
 
 // Options contains the server-owned inputs needed for the advertised status endpoint check.
@@ -55,15 +55,15 @@ type Options struct {
 	ReportStatus     bool
 }
 
-type advertisedStatusEndpointCheckInput struct {
+type endpointCheckInput struct {
 	endpoint string
 	localID  string
 }
 
-type advertisedStatusEndpointCheckResult struct {
+type endpointCheckResult struct {
 	err      error
 	remoteID string
-	reason   advertisedStatusEndpointCheckReason
+	reason   endpointCheckReason
 	status   string
 }
 
@@ -81,23 +81,23 @@ func Start(ctx context.Context, options Options) {
 		Host:   net.JoinHostPort(options.AdvertiseAddress, strconv.Itoa(effectivePort)),
 		Path:   "/info",
 	}).String()
-	input := advertisedStatusEndpointCheckInput{
+	input := endpointCheckInput{
 		endpoint: endpoint,
 		localID:  options.LocalID,
 	}
 
-	reporter := logAdvertisedStatusEndpointCheckWarning
+	reporter := logEndpointCheckWarning
 	if testReporter, ok := ctx.Value(testReporterKey{}).(func(
-		advertisedStatusEndpointCheckInput,
-		advertisedStatusEndpointCheckResult,
+		endpointCheckInput,
+		endpointCheckResult,
 	)); ok {
 		reporter = testReporter
 	}
 
-	client := newAdvertisedStatusEndpointHTTPClient()
+	client := newEndpointHTTPClient()
 	go util.WithRecovery(func() {
 		defer client.CloseIdleConnections()
-		result := checkAdvertisedStatusEndpoint(ctx, client, input.endpoint, input.localID)
+		result := checkEndpoint(ctx, client, input.endpoint, input.localID)
 		// Cancellation means this Server.Run invocation is ending, not that the endpoint failed verification.
 		if ctx.Err() != nil || result.reason == "" {
 			return
@@ -106,7 +106,7 @@ func Start(ctx context.Context, options Options) {
 	}, nil)
 }
 
-func newAdvertisedStatusEndpointHTTPClient() *http.Client {
+func newEndpointHTTPClient() *http.Client {
 	var baseTransport *http.Transport
 	if internalTransport := util.InternalHTTPClient().Transport; internalTransport == nil {
 		baseTransport = http.DefaultTransport.(*http.Transport)
@@ -118,90 +118,90 @@ func newAdvertisedStatusEndpointHTTPClient() *http.Client {
 	directTransport.Proxy = nil
 	return &http.Client{
 		Transport: directTransport,
-		Timeout:   advertisedStatusEndpointCheckTimeout,
+		Timeout:   endpointCheckTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
 }
 
-func checkAdvertisedStatusEndpoint(
+func checkEndpoint(
 	ctx context.Context,
 	client *http.Client,
 	endpoint string,
 	expectedID string,
-) advertisedStatusEndpointCheckResult {
+) endpointCheckResult {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return advertisedStatusEndpointCheckResult{reason: advertisedStatusEndpointRequestFailed, err: err}
+		return endpointCheckResult{reason: endpointRequestFailed, err: err}
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return advertisedStatusEndpointCheckResult{reason: advertisedStatusEndpointRequestFailed, err: err}
+		return endpointCheckResult{reason: endpointRequestFailed, err: err}
 	}
 	defer response.Body.Close()
 
-	result := advertisedStatusEndpointCheckResult{status: response.Status}
+	result := endpointCheckResult{status: response.Status}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		result.reason = advertisedStatusEndpointUnexpectedStatus
+		result.reason = endpointUnexpectedStatus
 		return result
 	}
 
-	body, err := io.ReadAll(io.LimitReader(response.Body, advertisedStatusEndpointResponseBodyLimit+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, endpointResponseBodyLimit+1))
 	if err != nil {
-		result.reason = advertisedStatusEndpointRequestFailed
+		result.reason = endpointRequestFailed
 		result.err = err
 		return result
 	}
-	if len(body) > advertisedStatusEndpointResponseBodyLimit {
-		result.reason = advertisedStatusEndpointInvalidResponse
-		result.err = errors.Errorf("response body exceeds %d-byte limit", advertisedStatusEndpointResponseBodyLimit)
+	if len(body) > endpointResponseBodyLimit {
+		result.reason = endpointInvalidResponse
+		result.err = errors.Errorf("response body exceeds %d-byte limit", endpointResponseBodyLimit)
 		return result
 	}
 	// Reuse the type embedded in the /info response so the ddl_id field stays aligned with the handler.
 	var responseInfo serverinfo.StaticInfo
 	if err := json.Unmarshal(body, &responseInfo); err != nil {
-		result.reason = advertisedStatusEndpointInvalidResponse
+		result.reason = endpointInvalidResponse
 		result.err = err
 		return result
 	}
 	if responseInfo.ID == "" {
-		result.reason = advertisedStatusEndpointMissingIdentity
+		result.reason = endpointMissingIdentity
 		result.err = errors.New("response does not contain ddl_id")
 		return result
 	}
 	result.remoteID = responseInfo.ID
 	if responseInfo.ID != expectedID {
-		result.reason = advertisedStatusEndpointIdentityMismatch
+		result.reason = endpointIdentityMismatch
 	}
 	return result
 }
 
-func advertisedStatusEndpointWarningAction(reason advertisedStatusEndpointCheckReason) string {
+func endpointWarningAction(reason endpointCheckReason) string {
 	switch reason {
-	case advertisedStatusEndpointRequestFailed:
+	case endpointRequestFailed:
 		return "check DNS, network, TLS, and whether this TiDB instance can complete a request to the advertised status endpoint"
-	case advertisedStatusEndpointUnexpectedStatus,
-		advertisedStatusEndpointInvalidResponse,
-		advertisedStatusEndpointMissingIdentity:
+	case endpointUnexpectedStatus,
+		endpointInvalidResponse,
+		endpointMissingIdentity:
 		return "check that advertise-address and status-port serve a valid TiDB /info response"
-	case advertisedStatusEndpointIdentityMismatch:
+	case endpointIdentityMismatch:
 		return "check that advertise-address and status-port route directly to this TiDB instance and that no TiDB exists outside the intended topology"
 	default:
 		return "inspect the error and advertised status endpoint"
 	}
 }
 
-func logAdvertisedStatusEndpointCheckWarning(
-	input advertisedStatusEndpointCheckInput,
-	result advertisedStatusEndpointCheckResult,
+func logEndpointCheckWarning(
+	input endpointCheckInput,
+	result endpointCheckResult,
 ) {
 	fields := make([]zap.Field, 0, 8)
 	fields = append(fields, zap.String("advertised-status-endpoint", input.endpoint))
 	fields = append(fields,
 		zap.String("local-tidb-id", input.localID),
 		zap.String("reason", string(result.reason)),
-		zap.String("action", advertisedStatusEndpointWarningAction(result.reason)),
+		zap.String("action", endpointWarningAction(result.reason)),
 	)
 	if result.remoteID != "" {
 		fields = append(fields, zap.String("remote-tidb-id", result.remoteID))
@@ -212,5 +212,5 @@ func logAdvertisedStatusEndpointCheckWarning(
 	if result.err != nil {
 		fields = append(fields, zap.Error(result.err))
 	}
-	logutil.BgLogger().Warn(advertisedStatusEndpointWarningMessage, fields...)
+	logutil.BgLogger().Warn(endpointWarningMessage, fields...)
 }

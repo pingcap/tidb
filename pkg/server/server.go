@@ -527,9 +527,9 @@ func (s *Server) Run(dom *domain.Domain) error {
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
 	if s.cfg.Status.ReportStatus {
-		advertisedStatusEndpointCheckCtx, cancelAdvertisedStatusEndpointCheck := context.WithCancel(context.Background())
-		defer cancelAdvertisedStatusEndpointCheck()
-		advertisedstatus.Start(advertisedStatusEndpointCheckCtx, advertisedstatus.Options{
+		endpointCheckCtx, cancelEndpointCheck := context.WithCancel(context.Background())
+		defer cancelEndpointCheck()
+		advertisedstatus.Start(endpointCheckCtx, advertisedstatus.Options{
 			ReportStatus:     s.cfg.Status.ReportStatus,
 			StatusListener:   s.statusListener,
 			AdvertiseAddress: s.cfg.AdvertiseAddress,

@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAdvertisedStatusEndpointURL(t *testing.T) {
+func TestEndpointURL(t *testing.T) {
 	testCases := []struct {
 		name    string
 		network string
@@ -50,13 +50,13 @@ func TestAdvertisedStatusEndpointURL(t *testing.T) {
 			require.NoError(t, err)
 
 			requests := make(chan [2]string, 1)
-			server, connectionClosed := newAdvertisedStatusEndpointTestServer(t, listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server, connectionClosed := newEndpointTestServer(t, listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests <- [2]string{r.Host, r.URL.Path}
 				_, _ = io.WriteString(w, `{"ddl_id":"local-id"}`)
 			}))
-			reports := make(chan advertisedStatusEndpointTestReport, 1)
-			ctx := context.WithValue(t.Context(), testReporterKey{}, func(input advertisedStatusEndpointCheckInput, result advertisedStatusEndpointCheckResult) {
-				reports <- advertisedStatusEndpointTestReport{input: input, result: result}
+			reports := make(chan endpointTestReport, 1)
+			ctx := context.WithValue(t.Context(), testReporterKey{}, func(input endpointCheckInput, result endpointCheckResult) {
+				reports <- endpointTestReport{input: input, result: result}
 			})
 
 			Start(ctx, Options{
@@ -87,7 +87,7 @@ func TestAdvertisedStatusEndpointURL(t *testing.T) {
 	}
 }
 
-func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
+func TestStartPrerequisites(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -95,7 +95,7 @@ func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	baseOptions := advertisedStatusEndpointTestOptions(t, server.Listener, "local-id")
+	baseOptions := endpointTestOptions(t, server.Listener, "local-id")
 	testCases := []struct {
 		name   string
 		update func(*Options)
@@ -107,7 +107,7 @@ func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
 	}
 
 	var reports atomic.Int32
-	ctx := context.WithValue(t.Context(), testReporterKey{}, func(advertisedStatusEndpointCheckInput, advertisedStatusEndpointCheckResult) {
+	ctx := context.WithValue(t.Context(), testReporterKey{}, func(endpointCheckInput, endpointCheckResult) {
 		reports.Add(1)
 	})
 	for _, testCase := range testCases {
@@ -122,12 +122,12 @@ func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
 	}, 100*time.Millisecond, 10*time.Millisecond)
 }
 
-func TestAdvertisedStatusEndpointCheckResponses(t *testing.T) {
+func TestEndpointCheckResponses(t *testing.T) {
 	testCases := []struct {
 		name             string
 		statusCode       int
 		body             string
-		expectedReason   advertisedStatusEndpointCheckReason
+		expectedReason   endpointCheckReason
 		expectedRemoteID string
 	}{
 		{
@@ -140,32 +140,32 @@ func TestAdvertisedStatusEndpointCheckResponses(t *testing.T) {
 			name:             "identity mismatch",
 			statusCode:       http.StatusOK,
 			body:             `{"ddl_id":"remote-id"}`,
-			expectedReason:   advertisedStatusEndpointIdentityMismatch,
+			expectedReason:   endpointIdentityMismatch,
 			expectedRemoteID: "remote-id",
 		},
 		{
 			name:           "missing identity",
 			statusCode:     http.StatusOK,
 			body:           `{"is_owner":false}`,
-			expectedReason: advertisedStatusEndpointMissingIdentity,
+			expectedReason: endpointMissingIdentity,
 		},
 		{
 			name:           "malformed JSON",
 			statusCode:     http.StatusOK,
 			body:           `{"ddl_id":`,
-			expectedReason: advertisedStatusEndpointInvalidResponse,
+			expectedReason: endpointInvalidResponse,
 		},
 		{
 			name:           "oversized body",
 			statusCode:     http.StatusOK,
-			body:           `{"ddl_id":"` + strings.Repeat("x", advertisedStatusEndpointResponseBodyLimit) + `"}`,
-			expectedReason: advertisedStatusEndpointInvalidResponse,
+			body:           `{"ddl_id":"` + strings.Repeat("x", endpointResponseBodyLimit) + `"}`,
+			expectedReason: endpointInvalidResponse,
 		},
 		{
 			name:           "non-2xx status",
 			statusCode:     http.StatusInternalServerError,
 			body:           `{"ddl_id":"local-id"}`,
-			expectedReason: advertisedStatusEndpointUnexpectedStatus,
+			expectedReason: endpointUnexpectedStatus,
 		},
 	}
 
@@ -181,18 +181,18 @@ func TestAdvertisedStatusEndpointCheckResponses(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			client := newAdvertisedStatusEndpointTestClient(t)
-			result := checkAdvertisedStatusEndpoint(t.Context(), client, server.URL+"/info", "local-id")
+			client := newEndpointTestClient(t)
+			result := checkEndpoint(t.Context(), client, server.URL+"/info", "local-id")
 			require.Equal(t, testCase.expectedReason, result.reason)
 			require.Equal(t, testCase.expectedRemoteID, result.remoteID)
-			if testCase.expectedReason == advertisedStatusEndpointUnexpectedStatus {
+			if testCase.expectedReason == endpointUnexpectedStatus {
 				require.Equal(t, "500 Internal Server Error", result.status)
 			}
 		})
 	}
 }
 
-func TestAdvertisedStatusEndpointCheckRedirect(t *testing.T) {
+func TestEndpointCheckRedirect(t *testing.T) {
 	var targetRequests atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		targetRequests.Add(1)
@@ -205,22 +205,22 @@ func TestAdvertisedStatusEndpointCheckRedirect(t *testing.T) {
 	}))
 	t.Cleanup(redirect.Close)
 
-	client := newAdvertisedStatusEndpointTestClient(t)
-	result := checkAdvertisedStatusEndpoint(t.Context(), client, redirect.URL+"/info", "local-id")
-	require.Equal(t, advertisedStatusEndpointUnexpectedStatus, result.reason)
+	client := newEndpointTestClient(t)
+	result := checkEndpoint(t.Context(), client, redirect.URL+"/info", "local-id")
+	require.Equal(t, endpointUnexpectedStatus, result.reason)
 	require.Equal(t, "302 Found", result.status)
 	require.Zero(t, targetRequests.Load())
 }
 
-func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
+func TestEndpointCheckRequestFailures(t *testing.T) {
 	t.Run("connection failure", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		endpoint := server.URL + "/info"
 		server.Close()
 
-		client := newAdvertisedStatusEndpointTestClient(t)
-		result := checkAdvertisedStatusEndpoint(t.Context(), client, endpoint, "local-id")
-		require.Equal(t, advertisedStatusEndpointRequestFailed, result.reason)
+		client := newEndpointTestClient(t)
+		result := checkEndpoint(t.Context(), client, endpoint, "local-id")
+		require.Equal(t, endpointRequestFailed, result.reason)
 		require.Error(t, result.err)
 	})
 
@@ -232,11 +232,11 @@ func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 
-		client := newAdvertisedStatusEndpointTestClient(t)
+		client := newEndpointTestClient(t)
 		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 		defer cancel()
-		result := checkAdvertisedStatusEndpoint(ctx, client, server.URL+"/info", "local-id")
-		require.Equal(t, advertisedStatusEndpointRequestFailed, result.reason)
+		result := checkEndpoint(ctx, client, server.URL+"/info", "local-id")
+		require.Equal(t, endpointRequestFailed, result.reason)
 		require.ErrorIs(t, result.err, context.DeadlineExceeded)
 	})
 
@@ -247,9 +247,9 @@ func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 
-		client := newAdvertisedStatusEndpointTestClient(t)
-		result := checkAdvertisedStatusEndpoint(t.Context(), client, server.URL+"/info", "local-id")
-		require.Equal(t, advertisedStatusEndpointRequestFailed, result.reason)
+		client := newEndpointTestClient(t)
+		result := checkEndpoint(t.Context(), client, server.URL+"/info", "local-id")
+		require.Equal(t, endpointRequestFailed, result.reason)
 		require.ErrorIs(t, result.err, io.ErrUnexpectedEOF)
 	})
 
@@ -263,12 +263,12 @@ func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 
-		client := newAdvertisedStatusEndpointTestClient(t)
+		client := newEndpointTestClient(t)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		resultCh := make(chan advertisedStatusEndpointCheckResult, 1)
+		resultCh := make(chan endpointCheckResult, 1)
 		go func() {
-			resultCh <- checkAdvertisedStatusEndpoint(ctx, client, server.URL+"/info", "local-id")
+			resultCh <- checkEndpoint(ctx, client, server.URL+"/info", "local-id")
 		}()
 		select {
 		case <-requestStarted:
@@ -279,7 +279,7 @@ func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
 
 		select {
 		case result := <-resultCh:
-			require.Equal(t, advertisedStatusEndpointRequestFailed, result.reason)
+			require.Equal(t, endpointRequestFailed, result.reason)
 			require.ErrorIs(t, result.err, context.Canceled)
 		case <-time.After(time.Second):
 			require.FailNow(t, "request did not stop after lifecycle cancellation")
@@ -299,14 +299,14 @@ func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
 		server.StartTLS()
 		t.Cleanup(server.Close)
 
-		client := newAdvertisedStatusEndpointTestClient(t)
-		result := checkAdvertisedStatusEndpoint(t.Context(), client, server.URL+"/info", "local-id")
-		require.Equal(t, advertisedStatusEndpointRequestFailed, result.reason)
+		client := newEndpointTestClient(t)
+		result := checkEndpoint(t.Context(), client, server.URL+"/info", "local-id")
+		require.Equal(t, endpointRequestFailed, result.reason)
 		require.Error(t, result.err)
 	})
 }
 
-func TestAdvertisedStatusEndpointCheckPreservesTLS(t *testing.T) {
+func TestHTTPClientPreservesTLS(t *testing.T) {
 	var clientCertificateSeen atomic.Bool
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientCertificateSeen.Store(r.TLS != nil && len(r.TLS.PeerCertificates) == 1)
@@ -319,17 +319,17 @@ func TestAdvertisedStatusEndpointCheckPreservesTLS(t *testing.T) {
 	baseTransport := server.Client().Transport.(*http.Transport).Clone()
 	baseTLSConfig := baseTransport.TLSClientConfig
 	baseTLSConfig.Certificates = []tls.Certificate{server.TLS.Certificates[0]}
-	setAdvertisedStatusEndpointTestTransport(t, baseTransport)
-	client := newAdvertisedStatusEndpointTestClient(t)
+	setEndpointTestTransport(t, baseTransport)
+	client := newEndpointTestClient(t)
 	require.NotSame(t, baseTransport, client.Transport)
-	require.Equal(t, advertisedStatusEndpointCheckTimeout, client.Timeout)
-	result := checkAdvertisedStatusEndpoint(t.Context(), client, server.URL+"/info", "local-id")
+	require.Equal(t, endpointCheckTimeout, client.Timeout)
+	result := checkEndpoint(t.Context(), client, server.URL+"/info", "local-id")
 	require.Empty(t, result.reason)
 	require.NoError(t, result.err)
 	require.True(t, clientCertificateSeen.Load())
 }
 
-func TestAdvertisedStatusEndpointCheckBypassesProxy(t *testing.T) {
+func TestHTTPClientBypassesProxy(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://proxy.invalid")
 	t.Setenv("NO_PROXY", "")
 
@@ -351,18 +351,18 @@ func TestAdvertisedStatusEndpointCheckBypassesProxy(t *testing.T) {
 
 	baseTransport := http.DefaultTransport.(*http.Transport).Clone()
 	baseTransport.Proxy = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
-	setAdvertisedStatusEndpointTestTransport(t, baseTransport)
-	client := newAdvertisedStatusEndpointTestClient(t)
+	setEndpointTestTransport(t, baseTransport)
+	client := newEndpointTestClient(t)
 	require.NotNil(t, baseTransport.Proxy)
 	require.Nil(t, client.Transport.(*http.Transport).Proxy)
 
-	result := checkAdvertisedStatusEndpoint(t.Context(), client, endpoint.URL+"/info", "local-id")
+	result := checkEndpoint(t.Context(), client, endpoint.URL+"/info", "local-id")
 	require.Empty(t, result.reason)
 	require.Equal(t, int32(1), endpointRequests.Load())
 	require.Zero(t, proxyRequests.Load())
 }
 
-func TestAdvertisedStatusEndpointCheckLifecycle(t *testing.T) {
+func TestStartLifecycle(t *testing.T) {
 	t.Run("cancellation stops without reporting", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -371,16 +371,16 @@ func TestAdvertisedStatusEndpointCheckLifecycle(t *testing.T) {
 		var requests atomic.Int32
 		requestStarted := make(chan struct{})
 		handlerExited := make(chan struct{})
-		server, connectionClosed := newAdvertisedStatusEndpointTestServer(t, nil, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		server, connectionClosed := newEndpointTestServer(t, nil, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			requests.Add(1)
 			close(requestStarted)
 			<-r.Context().Done()
 			close(handlerExited)
 		}))
-		ctx = context.WithValue(ctx, testReporterKey{}, func(advertisedStatusEndpointCheckInput, advertisedStatusEndpointCheckResult) {
+		ctx = context.WithValue(ctx, testReporterKey{}, func(endpointCheckInput, endpointCheckResult) {
 			reports.Add(1)
 		})
-		options := advertisedStatusEndpointTestOptions(t, server.Listener, "local-id")
+		options := endpointTestOptions(t, server.Listener, "local-id")
 
 		returned := make(chan struct{})
 		go func() {
@@ -417,22 +417,22 @@ func TestAdvertisedStatusEndpointCheckLifecycle(t *testing.T) {
 	t.Run("completed failure reports once", func(t *testing.T) {
 		var requests atomic.Int32
 		var reports atomic.Int32
-		server, connectionClosed := newAdvertisedStatusEndpointTestServer(t, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		server, connectionClosed := newEndpointTestServer(t, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			requests.Add(1)
 			_, _ = io.WriteString(w, `{"ddl_id":"remote-id"}`)
 		}))
-		reported := make(chan advertisedStatusEndpointTestReport, 2)
-		ctx := context.WithValue(t.Context(), testReporterKey{}, func(input advertisedStatusEndpointCheckInput, result advertisedStatusEndpointCheckResult) {
+		reported := make(chan endpointTestReport, 2)
+		ctx := context.WithValue(t.Context(), testReporterKey{}, func(input endpointCheckInput, result endpointCheckResult) {
 			reports.Add(1)
-			reported <- advertisedStatusEndpointTestReport{input: input, result: result}
+			reported <- endpointTestReport{input: input, result: result}
 		})
-		Start(ctx, advertisedStatusEndpointTestOptions(t, server.Listener, "local-id"))
+		Start(ctx, endpointTestOptions(t, server.Listener, "local-id"))
 
 		select {
 		case report := <-reported:
 			require.Equal(t, server.URL+"/info", report.input.endpoint)
 			require.Equal(t, "local-id", report.input.localID)
-			require.Equal(t, advertisedStatusEndpointIdentityMismatch, report.result.reason)
+			require.Equal(t, endpointIdentityMismatch, report.result.reason)
 			require.Equal(t, "remote-id", report.result.remoteID)
 		case <-time.After(time.Second):
 			require.FailNow(t, "completed failure was not reported")
@@ -450,20 +450,20 @@ func TestAdvertisedStatusEndpointCheckLifecycle(t *testing.T) {
 	})
 }
 
-type advertisedStatusEndpointTestReport struct {
-	input  advertisedStatusEndpointCheckInput
-	result advertisedStatusEndpointCheckResult
+type endpointTestReport struct {
+	input  endpointCheckInput
+	result endpointCheckResult
 }
 
-func newAdvertisedStatusEndpointTestClient(t *testing.T) *http.Client {
+func newEndpointTestClient(t *testing.T) *http.Client {
 	t.Helper()
-	client := newAdvertisedStatusEndpointHTTPClient()
+	client := newEndpointHTTPClient()
 	t.Cleanup(client.CloseIdleConnections)
 	return client
 }
 
 // Tests using this helper must not run in parallel because InternalHTTPClient is process-global.
-func setAdvertisedStatusEndpointTestTransport(t *testing.T, transport *http.Transport) {
+func setEndpointTestTransport(t *testing.T, transport *http.Transport) {
 	t.Helper()
 	internalClient := util.InternalHTTPClient()
 	originalTransport := internalClient.Transport
@@ -473,7 +473,7 @@ func setAdvertisedStatusEndpointTestTransport(t *testing.T, transport *http.Tran
 	})
 }
 
-func advertisedStatusEndpointTestOptions(t *testing.T, listener net.Listener, localID string) Options {
+func endpointTestOptions(t *testing.T, listener net.Listener, localID string) Options {
 	t.Helper()
 	advertiseAddress, _, err := net.SplitHostPort(listener.Addr().String())
 	require.NoError(t, err)
@@ -485,7 +485,7 @@ func advertisedStatusEndpointTestOptions(t *testing.T, listener net.Listener, lo
 	}
 }
 
-func newAdvertisedStatusEndpointTestServer(
+func newEndpointTestServer(
 	t *testing.T,
 	listener net.Listener,
 	handler http.Handler,
