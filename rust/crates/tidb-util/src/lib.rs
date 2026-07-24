@@ -36,5 +36,6 @@ pub mod nocopy;
 pub mod size;
 pub mod slice;
 pub mod sqlescape;
+pub mod texttree;
 pub mod tikvutil;
 pub mod zeropool;
