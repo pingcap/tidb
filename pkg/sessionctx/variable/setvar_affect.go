@@ -144,6 +144,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
 	"max_execution_time":      {},
+	"tidb_max_keys_read":      {},
 }
 
 func setHintUpdatable(vars []*SysVar) {

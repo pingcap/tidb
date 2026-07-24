@@ -15,17 +15,26 @@
 package metrics
 
 import (
+	"context"
+	"net"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	tikvcollectors "github.com/tikv/client-go/v2/util/collectors"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/channelz/grpc_channelz_v1"
+	"google.golang.org/grpc/channelz/service"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 var (
@@ -98,6 +107,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	InitExternalWorkloadMetrics()
 	InitStmtSummaryMetrics()
 	dxfmetric.InitDistTaskMetrics()
 	ingestmetric.InitIngestMetrics()
@@ -187,6 +197,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryRPCHistogram)
 	prometheus.MustRegister(QueryProcessedKeyHistogram)
+	prometheus.MustRegister(IARemoteReadSegmentCount)
+	prometheus.MustRegister(IARemoteReadSegmentSize)
+	prometheus.MustRegister(IARemoteReadSegmentWaitDuration)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -259,6 +272,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
 	prometheus.MustRegister(LastCheckpoint)
+	prometheus.MustRegister(ExternalStorageCheckpoint)
 	prometheus.MustRegister(AdvancerOwner)
 	prometheus.MustRegister(AdvancerTickDuration)
 	prometheus.MustRegister(GetCheckpointBatchSize)
@@ -281,6 +295,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLInsertRowsCount)
 	prometheus.MustRegister(TTLWatermarkDelay)
 	prometheus.MustRegister(TTLEventCounter)
+
+	prometheus.MustRegister(ExternalWorkloadTaskCounter)
 
 	prometheus.MustRegister(timermetrics.TimerEventCounter)
 
@@ -337,6 +353,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RUV2PlanDeriveStatsPaths)
 	prometheus.MustRegister(RUV2ResourceManagerReadCnt)
 	prometheus.MustRegister(RUV2ResourceManagerWriteCnt)
+	prometheus.MustRegister(RUV2WriteKeys)
+	prometheus.MustRegister(RUV2WriteSize)
 	prometheus.MustRegister(RUV2SessionParserTotal)
 	prometheus.MustRegister(RUV2TxnCnt)
 	prometheus.MustRegister(RUV2TiKVKVEngineCacheMiss)
@@ -394,6 +412,10 @@ func RegisterMetrics() {
 	// StmtSummary
 	prometheus.MustRegister(StmtSummaryWindowRecordCount)
 	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
+
+	// Channelz
+	setupChannelzCollector()
 }
 
 // Register registers custom collectors.
@@ -457,4 +479,145 @@ func ToggleSimplifiedMode(simplified bool) {
 			}
 		}
 	}
+}
+
+var grpcChannelzCollector struct {
+	mu sync.Mutex
+
+	listener *bufconn.Listener
+	server   *grpc.Server
+	conn     *grpc.ClientConn
+
+	collector  prometheus.Collector
+	registered bool
+}
+
+func setupChannelzCollector() {
+	if intest.InTest {
+		return
+	}
+
+	grpcChannelzCollector.mu.Lock()
+	defer grpcChannelzCollector.mu.Unlock()
+
+	if err := initGrpcChannelzCollectorLocked(); err != nil {
+		logutil.BgLogger().Warn("setup internal channelz collector failed", zap.Error(err))
+		return
+	}
+	if grpcChannelzCollector.registered {
+		return
+	}
+	prometheus.MustRegister(grpcChannelzCollector.collector)
+	grpcChannelzCollector.registered = true
+}
+
+// initGrpcChannelzCollectorLocked initializes the singleton channelz collector.
+// It must be called with grpcChannelzCollector.mu held.
+func initGrpcChannelzCollectorLocked() error {
+	if grpcChannelzCollector.collector != nil {
+		return nil
+	}
+
+	grpcChannelzCollector.listener = bufconn.Listen(1 << 20)
+	grpcChannelzCollector.server = grpc.NewServer()
+	service.RegisterChannelzServiceToServer(grpcChannelzCollector.server)
+	go func(listener *bufconn.Listener, server *grpc.Server) {
+		if err := server.Serve(listener); err != nil {
+			logutil.BgLogger().Warn("internal channelz grpc server stopped", zap.Error(err))
+		}
+	}(grpcChannelzCollector.listener, grpcChannelzCollector.server)
+
+	listener := grpcChannelzCollector.listener
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		}),
+	)
+	if err != nil {
+		stopGrpcChannelzCollectorLocked()
+		return err
+	}
+
+	grpcChannelzCollector.conn = conn
+	grpcChannelzCollector.collector = tikvcollectors.NewChannelzCollector(conn, channelzCollectorOpts())
+	return nil
+}
+
+func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
+	return tikvcollectors.ChannelzCollectorOpts{
+		Namespace: namespace,
+		Filter: func(node any) (collect bool, walkChildren bool) {
+			// Only collect socket and leaf subchannel info, which are more useful for troubleshooting network issues.
+			switch n := node.(type) {
+			case *grpc_channelz_v1.Channel:
+				if isInternalChannelzTarget(n.GetData().GetTarget()) {
+					return false, false
+				}
+				return false, true
+
+			case *grpc_channelz_v1.Subchannel:
+				if isInternalChannelzTarget(n.GetData().GetTarget()) {
+					return false, false
+				}
+				isLeaf := len(n.GetSocketRef()) > 0 &&
+					len(n.GetChannelRef()) == 0 &&
+					len(n.GetSubchannelRef()) == 0
+
+				return isLeaf, true
+
+			case *grpc_channelz_v1.Socket:
+				if isInternalChannelzSocket(n) {
+					return false, false
+				}
+				return true, false
+
+			default:
+				return false, true
+			}
+		},
+	}
+}
+
+// isInternalChannelzTarget returns true if the target is used for internal channelz collector, which is identified by
+// the fact that its target is "bufnet" or "passthrough:///bufnet".
+func isInternalChannelzTarget(target string) bool {
+	return target == "bufnet" || target == "passthrough:///bufnet"
+}
+
+// isInternalChannelzSocket returns true if the socket is created by the internal channelz collector for scrapping
+// channelz metrics, which is identified by the fact that it has no remote endpoint.
+func isInternalChannelzSocket(socket *grpc_channelz_v1.Socket) bool {
+	return socket.GetRemote() == nil && socket.GetRemoteName() == ""
+}
+
+func cleanupGrpcChannelzCollectorForTest() {
+	grpcChannelzCollector.mu.Lock()
+	defer grpcChannelzCollector.mu.Unlock()
+
+	stopGrpcChannelzCollectorLocked()
+}
+
+// stopGrpcChannelzCollectorLocked stops and resets the singleton channelz collector.
+// It must be called with grpcChannelzCollector.mu held.
+func stopGrpcChannelzCollectorLocked() {
+	if grpcChannelzCollector.registered && grpcChannelzCollector.collector != nil {
+		prometheus.Unregister(grpcChannelzCollector.collector)
+	}
+	if grpcChannelzCollector.conn != nil {
+		_ = grpcChannelzCollector.conn.Close()
+	}
+	if grpcChannelzCollector.server != nil {
+		grpcChannelzCollector.server.Stop()
+	}
+	if grpcChannelzCollector.listener != nil {
+		_ = grpcChannelzCollector.listener.Close()
+	}
+
+	grpcChannelzCollector.server = nil
+	grpcChannelzCollector.listener = nil
+	grpcChannelzCollector.conn = nil
+	grpcChannelzCollector.collector = nil
+	grpcChannelzCollector.registered = false
 }

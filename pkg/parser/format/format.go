@@ -242,6 +242,11 @@ const (
 	RestoreForNonPrepPlanCache
 
 	RestoreBracketAroundBetweenExpr
+	// RestoreSkipRedundantParentheses lets expression Restore omit parentheses
+	// that do not affect SQL semantics under the current restore context. It is
+	// intended for canonicalization paths such as binding normalization; default
+	// SQL restore keeps user-written parentheses for stable round-tripping.
+	RestoreSkipRedundantParentheses
 )
 
 const (
@@ -332,6 +337,12 @@ func (rf RestoreFlags) HasRestoreBracketAroundBetweenExpr() bool {
 	return rf.has(RestoreBracketAroundBetweenExpr)
 }
 
+// HasRestoreSkipRedundantParentheses returns a boolean indicating whether
+// `rf` has `RestoreSkipRedundantParentheses` flag.
+func (rf RestoreFlags) HasRestoreSkipRedundantParentheses() bool {
+	return rf.has(RestoreSkipRedundantParentheses)
+}
+
 // HasStringWithoutCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutCharset` flag.
 func (rf RestoreFlags) HasStringWithoutCharset() bool {
 	return rf.has(RestoreStringWithoutCharset)
@@ -369,6 +380,29 @@ type RestoreCtx struct {
 	Flags     RestoreFlags
 	In        RestoreWriter
 	DefaultDB string
+	// ParentBinaryOp stores the parent opcode.Op as an int; 0 means no parent.
+	// Expression Restore callers set it while restoring a child so parentheses
+	// removal can compare the child expression's precedence with the surrounding
+	// operator. Callers must restore the previous value before returning.
+	ParentBinaryOp int
+	// ParentBinarySide records whether the current child is on the left or right
+	// side of ParentBinaryOp. It is interpreted by expression restore using the
+	// internal left/right constants in ast/expressions.go and is meaningful only
+	// together with ParentBinaryOp.
+	//
+	// Examples:
+	// - In `(a + b) * c`, the `(a + b)` child is the left side of `*`, so `+`
+	//   must keep its parentheses.
+	// - In `a + (b * c)`, the `(b * c)` child is the right side of `+`, so `*`
+	//   can drop its parentheses because it binds tighter.
+	// - In `a - (b - c)`, the right-side marker makes the same-precedence `-`
+	//   child keep parentheses because subtraction is not associative.
+	//
+	// Callers must restore the previous value before returning.
+	ParentBinarySide int
+	// InUnaryOperation marks that a child expression is being restored as a unary
+	// operand. Callers must restore the previous value before returning.
+	InUnaryOperation bool
 	CTERestorer
 }
 

@@ -907,7 +907,8 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	numRanges := getNumberOfRanges(probe)
 	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost,
+		costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
@@ -987,6 +988,11 @@ func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 		childCosts = append(childCosts, childCost)
 	}
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCosts...), concurrency)
+	if p.Mpp && p.SCtx().GetSessionVars().IsMPPEnforced() &&
+		!hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
+		// Keep enforced MPP UnionAll comparable through cost instead of bypassing the normal plan comparison path.
+		p.PlanCostVer2 = costusage.DivCostVer2(p.PlanCostVer2, 1000000000)
+	}
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
 }

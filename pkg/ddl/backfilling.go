@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -776,8 +776,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	}
 
 	var (
-		cfg *local.BackendConfig
-		bd  *local.Backend
+		cfg *ingestctrl.BackendConfig
+		bd  *ingestctrl.Backend
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {

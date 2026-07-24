@@ -21,7 +21,7 @@ jobs:
     name: Generate Bazel Files
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -42,7 +42,16 @@ jobs:
           sed -i '/ats.apps.svc/d' DEPS.bzl
           sed -i '/bazel-cache/d' WORKSPACE
           sed -i '/ats.apps.svc/d' WORKSPACE
-          make bazel_prepare
+          bazel run //:gazelle
+          bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps -build_file_proto_mode=disable -prune
+          bazel run \
+            --run_under="cd ${PWD} && " \
+            //tools/tazel:tazel
+
+          tmp_out="$(mktemp -d -t tidbbzl.XXXXXX)"
+          trap 'rm -rf "${tmp_out}"' EXIT
+          bazel run //cmd/mirror -- --mirror > "${tmp_out}/DEPS.bzl"
+          cp "${tmp_out}/DEPS.bzl" DEPS.bzl
       - name: Restore non-generated files
         shell: bash
         run: |
@@ -62,10 +71,16 @@ jobs:
             fi
 
             case "${path}" in
+              build/BUILD.bazel|build/*/BUILD.bazel)
+                ;;
+              WORKSPACE|WORKSPACE.bazel|build|build/*)
+                echo "Unsafe generated file path: ${path}" >&2
+                exit 1
+                ;;
               DEPS.bzl|*.bazel|*.bzl)
                 ;;
               *)
-                echo "Unexpected file changed by bazel_prepare: ${path}" >&2
+                echo "Unexpected generated file path: ${path}" >&2
                 exit 1
                 ;;
             esac
@@ -82,7 +97,7 @@ jobs:
             ':(glob)**/*.bzl' \
             > bazel-artifact/bazel.patch
       - name: Upload Bazel Files Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bazel-files
           path: bazel-artifact/bazel.patch

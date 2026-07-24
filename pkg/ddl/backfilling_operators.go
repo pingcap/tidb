@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -111,7 +111,7 @@ func NewAddIndexIngestPipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithCollate(tbl.UseNewCollate(), tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
-	onClose external.OnWriterCloseFunc,
+	onClose simplesst.OnWriterCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
@@ -169,7 +169,7 @@ func NewWriteIndexToExternalStoragePipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithCollate(tbl.UseNewCollate(), tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -533,9 +533,11 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
+
 	// Local ingest may trigger partial import/reset while the scan transaction is
 	// still open, so only the global-sort path can stream results immediately.
 	enableStreaming := w.reorgMeta.UseCloudStorage
+	failpoint.InjectCall("checkEnableStreaming", enableStreaming)
 	sendResult := func(idxResult IndexRecordChunk) {
 		sender(idxResult)
 		if w.cpOp != nil {
@@ -647,7 +649,7 @@ func NewWriteExternalStoreOperator(
 	store storeapi.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
-	onClose external.OnWriterCloseFunc,
+	onClose simplesst.OnWriterCloseFunc,
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
@@ -659,7 +661,7 @@ func NewWriteExternalStoreOperator(
 	})
 
 	totalCount := new(atomic.Int64)
-	blockSize := external.GetAdjustedBlockSize(memoryQuota, external.DefaultBlockSize)
+	blockSize := simplesst.GetAdjustedBlockSize(memoryQuota, simplesst.DefaultBlockSize)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -667,7 +669,7 @@ func NewWriteExternalStoreOperator(
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
-				builder := external.NewWriterBuilder().
+				builder := simplesst.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetMemorySizeLimit(memoryQuota).
 					SetTiKVCodec(tikvCodec).
@@ -879,7 +881,7 @@ func (w *indexIngestWorker) Close() error {
 	var gerr error
 
 	for i, writer := range w.writers {
-		ew, ok := writer.(*external.Writer)
+		ew, ok := writer.(*simplesst.Writer)
 		if !ok {
 			break
 		}
@@ -912,7 +914,8 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx,
+		sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta(), w.tbl.UseNewCollate())
 	if err != nil || cnt == 0 {
 		return 0, 0, err
 	}

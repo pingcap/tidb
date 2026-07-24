@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -486,6 +487,7 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
@@ -655,6 +657,7 @@ var partitionsCols = []columnInfo{
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -933,6 +936,9 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.RocksdbBlockCacheHitCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadByteStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentWaitTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogDBStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogIndexNamesStr, tp: mysql.TypeVarchar, size: 100},
 	{name: variable.SlowLogIsInternalStr, tp: mysql.TypeTiny, size: 1},
@@ -1365,6 +1371,12 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxRocksdbBlockReadCountStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read count"},
 	{name: stmtsummary.AvgRocksdbBlockReadByteStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block read byte"},
 	{name: stmtsummary.MaxRocksdbBlockReadByteStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read byte"},
+	{name: stmtsummary.AvgIARemoteReadSegmentCountStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of IA remote segments read"},
+	{name: stmtsummary.MaxIARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of IA remote segments read"},
+	{name: stmtsummary.AvgIARemoteReadSegmentSizeStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.AvgIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time spent waiting for IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time spent waiting for IA remote segment reads"},
 	{name: stmtsummary.AvgPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of prewrite phase"},
 	{name: stmtsummary.MaxPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of prewrite phase"},
 	{name: stmtsummary.AvgCommitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of commit phase"},
@@ -2239,7 +2251,7 @@ func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	members, err := etcd.EtcdAddrs()
+	members, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2647,6 +2659,12 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface. Info schema
+// tables are not persisted user tables, so they use the current process default.
+func (it *infoschemaTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
@@ -2745,6 +2763,12 @@ func (vt *VirtualTable) Meta() *model.TableInfo {
 	return nil
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface. Virtual tables
+// are not persisted user tables, so they use the current process default.
+func (vt *VirtualTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (vt *VirtualTable) GetPhysicalID() int64 {
 	return 0
@@ -2768,17 +2792,18 @@ func GetTiFlashServerInfo(store kv.Storage) ([]ServerInfo, error) {
 	return serversInfo, nil
 }
 
+// ServerInfoResult contains server info results
+type ServerInfoResult struct {
+	Idx  int
+	Rows [][]types.Datum
+	Err  error
+}
+
 // FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
-func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) []ServerInfoResult {
 	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
+	ch := make(chan ServerInfoResult, len(serversInfo))
 	infoTp := serverInfoType
-	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
 		address := srv.Address
 		remote := address
@@ -2791,34 +2816,31 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *vari
 				defer wg.Done()
 				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
 				if err != nil {
-					ch <- result{idx: index, err: err}
+					ch <- ServerInfoResult{Idx: index, Err: err}
 					return
 				}
 				partRows := serverInfoItemToRows(items, serverTP, address)
-				ch <- result{idx: index, rows: partRows}
+				ch <- ServerInfoResult{Idx: index, Rows: partRows}
 			}, nil)
 		}(i, remote, address, srv.ServerType)
 	}
 	wg.Wait()
 	close(ch)
 	// Keep the original order to make the result more stable
-	var results []result //nolint: prealloc
+	var results []ServerInfoResult //nolint: prealloc
 	for result := range ch {
-		if result.err != nil {
+		if result.Err != nil {
 			if recordWarningInStmtCtx {
-				vars.StmtCtx.AppendWarning(result.err)
+				vars.StmtCtx.AppendWarning(result.Err)
 			} else {
-				log.Warn(result.err.Error())
+				log.Warn(result.Err.Error())
 			}
 			continue
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
+	slices.SortFunc(results, func(i, j ServerInfoResult) int { return cmp.Compare(i.Idx, j.Idx) })
+	return results
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {

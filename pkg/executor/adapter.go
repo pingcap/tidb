@@ -187,8 +187,14 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	ctx = inheritStmtRUV2Context(ctx, a.stmt)
 
-	err = a.stmt.next(ctx, a.executor, req)
-	syncRUV2MetricsAfterExec(a.stmt)
+	e := a.executor
+	if e == nil {
+		err = exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+		a.lastErrs = append(a.lastErrs, err)
+		return err
+	}
+
+	err = a.stmt.next(ctx, e, req)
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
@@ -213,31 +219,48 @@ func inheritStmtRUV2Context(ctx context.Context, stmt *ExecStmt) context.Context
 	return execdetails.ContextWithInheritedRUV2Details(ctx, stmt.GoCtx)
 }
 
-func syncRUV2MetricsAfterExec(stmt *ExecStmt) {
-	if stmt == nil || stmt.GoCtx == nil {
-		return
+func (a *recordSet) chunkConfig() (fields []*types.FieldType, initCap int, maxChunkSize int) {
+	if a.executor != nil {
+		return a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize()
 	}
-	sessVars := stmt.Ctx.GetSessionVars()
-	if sessVars.RUV2Metrics == nil {
-		return
+	if a.schema != nil {
+		fields = make([]*types.FieldType, 0, a.schema.Len())
+		for _, col := range a.schema.Columns {
+			fields = append(fields, col.RetType)
+		}
 	}
-	ruDetail, _ := stmt.GoCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
-	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
+	if a.stmt == nil || a.stmt.Ctx == nil {
+		return fields, vardef.DefInitChunkSize, vardef.DefMaxChunkSize
+	}
+	sessVars := a.stmt.Ctx.GetSessionVars()
+	return fields, sessVars.InitChunkSize, sessVars.MaxChunkSize
 }
 
-// NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
+// NewChunk creates a chunk based on the top-level executor's result schema.
 func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
-	if alloc == nil {
-		return exec.NewFirstChunk(a.executor)
+	e := a.executor
+	if e == nil {
+		fields, initCap, maxChunkSize := a.chunkConfig()
+		if alloc == nil {
+			return chunk.New(fields, initCap, maxChunkSize)
+		}
+		return alloc.Alloc(fields, initCap, maxChunkSize)
 	}
 
-	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
+	if alloc == nil {
+		return exec.NewFirstChunk(e)
+	}
+
+	return alloc.Alloc(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
-		err = exec.Close(a.executor)
+		if a.executor != nil {
+			err = exec.Close(a.executor)
+			a.executor = nil
+		}
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -245,7 +268,6 @@ func (a *recordSet) Finish() error {
 		if err == nil {
 			err = cteErr
 		}
-		a.executor = nil
 		if a.stmt != nil {
 			status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
 			inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
@@ -1131,7 +1153,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	}
 
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
-	syncRUV2MetricsAfterExec(a)
 	if err != nil {
 		return nil, err
 	}
@@ -1399,6 +1420,14 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, lockErr
 	}
 
+	// LOAD DATA LOCAL INFILE reads a one-shot file stream from the client
+	// connection. Rebuilding and reopening its executor would send another
+	// LOCAL_INFILE_REQUEST in the same command and desynchronize the MySQL
+	// packet sequence. Server or remote files can be reopened and retried.
+	if loadData, ok := a.Plan.(*plannercore.LoadData); ok && loadData.FileLocRef == ast.FileLocClient {
+		return nil, lockErr
+	}
+
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
@@ -1650,11 +1679,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+	if execDetail.ScanDetail != nil {
 		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
 		if processedKeys > 0 {
-			// Only record the read keys in write statement which affect row more than 0.
-			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+			if sessVars.StmtCtx.AffectedRows() > 0 {
+				// Only record the read keys in write statement which affect row more than 0.
+				a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+			}
+			sessVars.KeysExamined += uint64(processedKeys)
 		}
 	}
 	succ := err == nil
@@ -1664,7 +1696,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
-	a.recordInsertRows2Metrics()
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
@@ -1752,37 +1783,35 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func (a *ExecStmt) recordInsertRows2Metrics() {
-	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
-}
-
-func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
-	stmtCtx := sessVars.StmtCtx
-	if stmtCtx.StmtType != "Insert" {
-		return
-	}
-	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
-	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
-	if stmtCtx.InsertRowsAsRUV2Recorded {
+func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
+	if rowCount <= 0 || columnCount <= 0 {
 		return
 	}
 
-	affectedRows := stmtCtx.AffectedRows()
-	if affectedRows <= 0 {
-		return
+	rowsColMultiply := rowCount * columnCount
+	if rowCount > math.MaxInt64/columnCount {
+		rowsColMultiply = math.MaxInt64
 	}
-
 	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
 	}
-	stmtCtx.InsertRowsAsRUV2Recorded = true
 }
 
+func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
+	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
+}
+
+// finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
+// TopRU samples see ResourceManager{Read,Write}Cnt as zero until this runs;
+// per-statement totals telescope correctly across the post-finalize sample.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
+
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
 
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
@@ -1850,7 +1879,10 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 }
 
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
-	if kv.GetInternalSourceType(a.GoCtx) == kv.InternalTxnStats {
+	source := kv.GetInternalSourceType(a.GoCtx)
+	// Analyze and foreground-priority statistics work use these request sources.
+	// Filter both so plan replayer capture skips all internal statistics work.
+	if source == kv.InternalTxnStats || source == kv.InternalTxnStatsForegroundPriority {
 		return
 	}
 	se := a.Ctx
@@ -2210,7 +2242,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	stmtDetail, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
+	writeSQLRespDuration, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -2254,7 +2286,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
 	stmtExecInfo.ExecRetryCount = a.retryCount
-	stmtExecInfo.StmtExecDetails = stmtDetail
+	stmtExecInfo.WriteSQLRespDuration = writeSQLRespDuration
 	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
 	stmtExecInfo.Prepared = a.isPreparedStmt

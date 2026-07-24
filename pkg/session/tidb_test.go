@@ -164,6 +164,38 @@ func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
 	require.True(t, dctx.RUConsumptionReporter == nil)
 }
 
+func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	oldRCEnabled := vardef.EnableResourceControl.Load()
+	vardef.EnableResourceControl.Store(true)
+	defer vardef.EnableResourceControl.Store(oldRCEnabled)
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	MustExec(t, se, "create resource group rg_paging_capped ru_per_sec=1000")
+	MustExec(t, se, "create resource group rg_paging_unlimited ru_per_sec=1000 burstable=unlimited")
+
+	const pagingSizeBytes = 4 * 1024 * 1024
+	se.sessionVars.PagingSizeBytes = pagingSizeBytes
+
+	check := func(resourceGroupName string, rcEnabled bool, expected int) {
+		vardef.EnableResourceControl.Store(rcEnabled)
+		se.sessionVars.StmtCtx.ResetForRetry()
+		se.sessionVars.StmtCtx.ResourceGroupName = resourceGroupName
+		require.Equal(t, expected, se.GetDistSQLCtx().PagingSizeBytes)
+	}
+
+	check("default", true, 0)
+	MustExec(t, se, "alter resource group `default` ru_per_sec=1000 burstable=off")
+	check("default", true, pagingSizeBytes)
+	check("rg_paging_capped", true, pagingSizeBytes)
+	check("rg_paging_unlimited", true, 0)
+	check("rg_paging_capped", false, 0)
+}
+
 func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

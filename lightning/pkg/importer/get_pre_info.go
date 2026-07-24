@@ -29,11 +29,12 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -145,7 +146,7 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
+		backendTargetInfoGetter = ingestctrl.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -299,7 +300,7 @@ func NewPreImportInfoGetter(
 		case config.BackendTiDB:
 			encBuilder = tidb.NewEncodingBuilder()
 		case config.BackendLocal:
-			encBuilder = local.NewEncodingBuilder(context.Background())
+			encBuilder = ingestctrl.NewEncodingBuilder(context.Background())
 		default:
 			return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 		}
@@ -467,11 +468,18 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
-	if err != nil {
-		return nil, nil, errors.Trace(err)
+	openReader := func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+		return mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
+			ZStdDecodeConcurrency: 1,
+		})
+	}
+	var reader storeapi.ReadSeekCloser
+	var err error
+	if dataFileMeta.Type != mydump.SourceTypeParquet {
+		reader, err = openReader(ctx)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 	}
 
 	var parser mydump.Parser
@@ -491,9 +499,13 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(
-			ctx, p.srcStorage, reader,
-			dataFileMeta.Path, dataFileMeta.FileSize, mydump.ParquetFileMeta{},
+		fileSize := dataFileMeta.FileSize
+		if dataFileMeta.Compression != mydump.CompressionNone {
+			fileSize = 0
+		}
+		parser, err = parquetfile.NewParser(
+			ctx, p.srcStorage, openReader,
+			dataFileMeta.Path, fileSize, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -624,11 +636,18 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, compressedio.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
-	if err != nil {
-		return 0.0, false, errors.Trace(err)
+	openReader := func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+		return mydump.OpenReader(ctx, &sampleFile, p.srcStorage, compressedio.DecompressConfig{
+			ZStdDecodeConcurrency: 1,
+		})
+	}
+	var reader storeapi.ReadSeekCloser
+	var err error
+	if sampleFile.Type != mydump.SourceTypeParquet {
+		reader, err = openReader(ctx)
+		if err != nil {
+			return 0.0, false, errors.Trace(err)
+		}
 	}
 	idAlloc := kv.NewPanickingAllocators(tableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
@@ -667,9 +686,13 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(
-			ctx, p.srcStorage, reader,
-			sampleFile.Path, sampleFile.FileSize, mydump.ParquetFileMeta{},
+		fileSize := sampleFile.FileSize
+		if sampleFile.Compression != mydump.CompressionNone {
+			fileSize = 0
+		}
+		parser, err = parquetfile.NewParser(
+			ctx, p.srcStorage, openReader,
+			sampleFile.Path, fileSize, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)

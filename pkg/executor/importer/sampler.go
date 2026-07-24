@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -208,7 +209,12 @@ func validateKVSizeSampleConfig(cfg *KVSizeSampleConfig) error {
 func (s *kvSizeSampler) CreateColAssignSimpleExprs(
 	ctx expression.BuildContext,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(s.cfg.ColumnAssignments, ctx, &s.colAssignMu)
+	return createColAssignSimpleExprs(
+		s.cfg.ColumnAssignments,
+		ctx,
+		&s.colAssignMu,
+		s.table.UseNewCollate(),
+	)
 }
 
 func (s *kvSizeSampler) generateCSVConfig() *config.CSVConfig {
@@ -330,7 +336,7 @@ func (s *kvSizeSampler) sampleOneFile(
 		ParquetMeta: file.ParquetMeta,
 	}
 	idAlloc := kv.NewPanickingAllocators(s.table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, s.table.Meta())
+	tbl, err := tables.TableFromMetaWithCollate(s.table.UseNewCollate(), idAlloc, s.table.Meta())
 	if err != nil {
 		return 0, 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", s.table.Meta().Name)
 	}
@@ -388,7 +394,7 @@ func (s *kvSizeSampler) sampleOneFile(
 	return sourceSize, dataKVSize, indexKVSize, nil
 }
 
-func (s *kvSizeSampler) sampledRowSourceSize(parser mydump.Parser, startPos int64, row mydump.Row) int64 {
+func (s *kvSizeSampler) sampledRowSourceSize(parser mydump.Parser, startPos int64, row parsedef.Row) int64 {
 	// Sampling needs per-row source bytes, not buffered reader progress.
 	// SQL/CSV parsers expose byte offsets through Pos(), including compressed
 	// input where Pos() tracks uncompressed bytes and stays aligned with the

@@ -135,6 +135,51 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestTiDBMaxKeysRead(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBMaxKeysRead)
+	require.NotNil(t, sv)
+	vars := NewSessionVars(nil)
+
+	// Negative values should be clipped to 0.
+	val, err := sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Zero is valid (unlimited).
+	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Positive values are accepted.
+	val, err = sv.Validate(vars, "1000", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "1000", val)
+
+	// SetSession sets MaxKeysRead.
+	require.Nil(t, sv.SetSessionFromHook(vars, "500"))
+	require.Equal(t, uint64(500), vars.MaxKeysRead)
+
+	// IsHintUpdatableVerified must be true.
+	require.True(t, sv.IsHintUpdatableVerified)
+}
+
+func TestGetMaxKeysRead(t *testing.T) {
+	vars := NewSessionVars(nil)
+	vars.MaxKeysRead = 100
+
+	// Outside SELECT statement: returns 0.
+	vars.StmtCtx.InSelectStmt = false
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+
+	// Inside SELECT statement: returns configured value.
+	vars.StmtCtx.InSelectStmt = true
+	require.Equal(t, uint64(100), vars.GetMaxKeysRead())
+
+	// Zero means unlimited regardless of context.
+	vars.MaxKeysRead = 0
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+}
+
 func TestTiFlashMaxBytes(t *testing.T) {
 	varNames := []string{vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy, vardef.TiDBMaxBytesBeforeTiFlashExternalSort}
 	for index, varName := range varNames {
@@ -535,8 +580,14 @@ func TestTiDBReplicaRead(t *testing.T) {
 	sv := GetSysVar(vardef.TiDBReplicaRead)
 	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "follower", vardef.ScopeGlobal)
-	require.Equal(t, val, "follower")
-	require.NoError(t, err)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+		require.Equal(t, "leader", val)
+	} else {
+		require.Equal(t, val, "follower")
+		require.NoError(t, err)
+	}
 }
 
 func TestSQLAutoIsNull(t *testing.T) {
@@ -1855,6 +1906,57 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTiDBAnalyzeDefaultBucketAndTopNOptions(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	defer func() {
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+	}()
+
+	bucketsVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumBuckets)
+	require.NotNil(t, bucketsVar)
+	require.NoError(t, bucketsVar.SetGlobalFromHook(ctx, vars, "100", false))
+	require.Equal(t, uint64(100), vardef.AnalyzeDefaultNumBuckets.Load())
+
+	val, err := bucketsVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+
+	// Unsigned sysvar validation normalizes out-of-range values to the configured
+	// boundary instead of returning an error.
+	val, err = bucketsVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(vardef.MinTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	val, err = bucketsVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(vardef.MaxTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	topNVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumTopN)
+	require.NotNil(t, topNVar)
+	require.NoError(t, topNVar.SetGlobalFromHook(ctx, vars, "50", false))
+	require.Equal(t, uint64(50), vardef.AnalyzeDefaultNumTopN.Load())
+
+	val, err = topNVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "50", val)
+
+	val, err = topNVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(vardef.MinTiDBAnalyzeDefaultNumTopN, 10), val)
+
+	val, err = topNVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(vardef.MaxTiDBAnalyzeDefaultNumTopN, 10), val)
 }
 
 func TestTiDBOptSelectivityFactor(t *testing.T) {

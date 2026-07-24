@@ -60,6 +60,12 @@ type signalsKey struct{}
 // ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
 var ParseSlowLogBatchSize = 64
 
+// slowLogTimeRangeInternalTolerance only widens internal file pruning and
+// reverse-scan stop checks. Rows are still filtered by the original time ranges
+// in slowLogChecker. In a real use cluster, the max time unorder drift is 50ms.
+// The 1s tolerance should be enough.
+const slowLogTimeRangeInternalTolerance = time.Second
+
 // slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
 	table                 *model.TableInfo
@@ -401,7 +407,7 @@ func newSlowLogReverseScanner(e *slowQueryRetriever, sctx sessionctx.Context) *s
 				minStart = tr.startTime
 			}
 		}
-		scanner.minStartTime = minStart
+		scanner.minStartTime = slowLogTimeWithTolerance(minStart, tz, -slowLogTimeRangeInternalTolerance)
 		scanner.hasMinStart = true
 	}
 	return scanner
@@ -1118,7 +1124,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		execdetails.RequestCountStr, execdetails.TotalKeysStr, execdetails.ProcessKeysStr,
 		execdetails.RocksdbDeleteSkippedCountStr, execdetails.RocksdbKeySkippedCountStr,
 		execdetails.RocksdbBlockCacheHitCountStr, execdetails.RocksdbBlockReadCountStr,
-		variable.SlowLogTxnStartTSStr, execdetails.RocksdbBlockReadByteStr:
+		variable.SlowLogTxnStartTSStr, execdetails.RocksdbBlockReadByteStr,
+		execdetails.IARemoteReadSegmentCountStr, execdetails.IARemoteReadSegmentSizeStr:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
@@ -1137,7 +1144,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		variable.SlowLogCopWaitAvg, variable.SlowLogCopWaitP90, variable.SlowLogCopWaitMax, variable.SlowLogKVTotal,
 		variable.SlowLogPDTotal, variable.SlowLogBackoffTotal, variable.SlowLogWriteSQLRespTotal, variable.SlowLogRRU,
 		variable.SlowLogWRU, variable.SlowLogWaitRUDuration, variable.SlowLogTidbCPUUsageDuration, variable.SlowLogTikvCPUUsageDuration,
-		variable.SlowLogMemArbitration, variable.SlowLogRequestUnitV2:
+		variable.SlowLogMemArbitration, execdetails.IARemoteReadSegmentWaitTimeStr, variable.SlowLogRequestUnitV2:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseFloat(value, 64)
 			if err != nil {
@@ -1261,6 +1268,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	if err != nil {
 		return nil, err
 	}
+	tz := sctx.GetSessionVars().Location()
 	walkFn := func(path string, info os.DirEntry) error {
 		if info.IsDir() {
 			return nil
@@ -1289,12 +1297,11 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if err != nil {
 			return handleErr(err)
 		}
-		tz := sctx.GetSessionVars().Location()
 		start := types.NewTime(types.FromGoTime(fileStartTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
 		if e.checker.enableTimeCheck {
 			notInAllTimeRanges := true
 			for _, tr := range e.checker.timeRanges {
-				if start.Compare(tr.endTime) <= 0 {
+				if start.Compare(slowLogTimeWithTolerance(tr.endTime, tz, slowLogTimeRangeInternalTolerance)) <= 0 {
 					notInAllTimeRanges = false
 					break
 				}
@@ -1316,7 +1323,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 				end := types.NewTime(types.FromGoTime(fileEndTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
 				inTimeRanges := false
 				for _, tr := range e.checker.timeRanges {
-					if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+					if slowLogMayOverlapTimeRangeWithTolerance(start, end, tr, tz) {
 						inTimeRanges = true
 						break
 					}
@@ -1360,7 +1367,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		end := logFiles[i+1].start
 		inTimeRanges := false
 		for _, tr := range e.checker.timeRanges {
-			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+			if slowLogMayOverlapTimeRangeWithTolerance(start, end, tr, tz) {
 				inTimeRanges = true
 				break
 			}
@@ -1370,6 +1377,20 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	return ret, err
+}
+
+func slowLogMayOverlapTimeRangeWithTolerance(start, end types.Time, tr *timeRange, tz *time.Location) bool {
+	rangeStart := slowLogTimeWithTolerance(tr.startTime, tz, -slowLogTimeRangeInternalTolerance)
+	rangeEnd := slowLogTimeWithTolerance(tr.endTime, tz, slowLogTimeRangeInternalTolerance)
+	return !(start.Compare(rangeEnd) > 0 || end.Compare(rangeStart) < 0)
+}
+
+func slowLogTimeWithTolerance(t types.Time, tz *time.Location, tolerance time.Duration) types.Time {
+	goTime, err := t.CoreTime().GoTime(tz)
+	if err != nil {
+		return t
+	}
+	return types.NewTime(types.FromGoTime(goTime.Add(tolerance)), t.Type(), t.Fsp())
 }
 
 func (*slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File, compressed bool) (time.Time, error) {
@@ -1540,7 +1561,16 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		}
 	}
 	finalStr := string(lines[firstNonNewlinePos:])
-	return strings.Split(strings.ReplaceAll(finalStr, "\r\n", "\n"), "\n"), len(finalStr), nil
+	return splitSlowLogLines(finalStr), len(finalStr), nil
+}
+
+func splitSlowLogLines(s string) []string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	// strip the last empty string if the ending is new line symbol.
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {

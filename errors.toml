@@ -638,7 +638,7 @@ found data conflict records in table %s, primary key is '%s', row data is '%s'
 
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
-found duplicate key '%s', value '%s'
+found duplicate key '%x', value '%x'
 '''
 
 ["Lightning:Restore:ErrFoundIndexConflictRecords"]
@@ -974,6 +974,11 @@ Key part '%-.192s' length cannot be 0
 ["ddl:1452"]
 error = '''
 Cannot add or update a child row: a foreign key constraint fails (%.192s)
+'''
+
+["ddl:1468"]
+error = '''
+User name must start with `%s.` (use `%s.%s` instead)
 '''
 
 ["ddl:1470"]
@@ -1656,6 +1661,11 @@ error = '''
 Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
 '''
 
+["ddl:8276"]
+error = '''
+Job [%v] has been paused by TiDB because a storage node does not have enough disk space: %s
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
@@ -1844,6 +1854,21 @@ Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_
 ["executor:3638"]
 error = '''
 Cannot use these credentials for '%s@%s' because they contradict the password history policy.
+'''
+
+["executor:3878"]
+error = '''
+Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.
+'''
+
+["executor:3894"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.
+'''
+
+["executor:3895"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.
 '''
 
 ["executor:3929"]
@@ -2074,6 +2099,11 @@ Quarantined and interrupted because of being in runaway watch list
 ["executor:8255"]
 error = '''
 Unknown background task name '%-.192s'
+'''
+
+["executor:8274"]
+error = '''
+tidb_max_keys_read limit exceeded
 '''
 
 ["expression:1139"]
@@ -2339,6 +2369,11 @@ masking policy already exists
 ["meta:8269"]
 error = '''
 masking policy doesn't exist
+'''
+
+["meta:8275"]
+error = '''
+masking policy expression can only reference the target column '%-.64s'
 '''
 
 ["planner:1044"]
@@ -3094,6 +3129,11 @@ Access denied for user '%-.48s'@'%-.255s'
 ["server:1820"]
 error = '''
 You must reset your password using ALTER USER statement before executing this statement
+'''
+
+["server:20003"]
+error = '''
+User name prefix does not match the assigned keyspace.
 '''
 
 ["server:3159"]

@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -717,7 +718,7 @@ func (s *AzureBlobStorage) URI() string {
 const azblobChunkSize = 64 * 1024 * 1024
 
 // Create implements the StorageWriter interface.
-func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
+func (s *AzureBlobStorage) Create(ctx context.Context, name string, wo *storeapi.WriterOption) (objectio.Writer, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	uploader := &azblobUploader{
 		blobClient: client,
@@ -730,7 +731,18 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *storeapi.Wr
 		cpkInfo:  s.cpkInfo,
 	}
 
-	uploaderWriter := objectio.NewBufferedWriter(uploader, azblobChunkSize, compressedio.NoCompression, nil)
+	chunkSize := azblobChunkSize
+	if wo != nil && wo.PartSize > 0 {
+		chunkSize = int(wo.PartSize)
+	}
+	if wo != nil && wo.Concurrency > 1 {
+		eg, egCtx := errgroup.WithContext(ctx)
+		eg.SetLimit(wo.Concurrency)
+		uploader.eg = eg
+		uploader.egCtx = egCtx
+	}
+
+	uploaderWriter := objectio.NewBufferedWriter(uploader, chunkSize, compressedio.NoCompression, nil)
 	return uploaderWriter, nil
 }
 
@@ -889,28 +901,66 @@ type azblobUploader struct {
 
 	cpkScope *blob.CPKScopeInfo
 	cpkInfo  *blob.CPKInfo
+
+	// eg/egCtx drive concurrent upload; nil means Write stages blocks
+	// synchronously. err holds the synchronous path's stage failure; the
+	// concurrent path's error comes from eg.Wait().
+	eg    *errgroup.Group
+	egCtx context.Context
+	err   error
+}
+
+func (u *azblobUploader) stageBlock(ctx context.Context, blockID string, data []byte) error {
+	_, err := u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), &blockblob.StageBlockOptions{
+		CPKScopeInfo: u.cpkScope,
+		CPKInfo:      u.cpkInfo,
+	})
+	if err != nil {
+		return errors.Annotate(err, "Failed to upload block to azure blob")
+	}
+	return nil
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
+	if u.eg != nil {
+		if err := u.egCtx.Err(); err != nil {
+			return 0, err
+		}
+	}
 	generatedUUID, err := uuid.NewUUID()
 	if err != nil {
 		return 0, errors.Annotate(err, "Fail to generate uuid")
 	}
 	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
-
-	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), &blockblob.StageBlockOptions{
-		CPKScopeInfo: u.cpkScope,
-		CPKInfo:      u.cpkInfo,
-	})
-	if err != nil {
-		return 0, errors.Annotate(err, "Failed to upload block to azure blob")
-	}
 	u.blockIDList = append(u.blockIDList, blockID)
 
+	if u.eg != nil {
+		buf := make([]byte, len(data))
+		copy(buf, data)
+		u.eg.Go(func() error {
+			return u.stageBlock(u.egCtx, blockID, buf)
+		})
+		return len(data), nil
+	}
+
+	if err := u.stageBlock(ctx, blockID, data); err != nil {
+		u.err = err
+		return 0, err
+	}
 	return len(data), nil
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
+	err := u.err
+	if u.eg != nil {
+		err = u.eg.Wait()
+	}
+	if err != nil {
+		// Uncommitted blocks are garbage-collected by Azure after a week, so
+		// skip CommitBlockList and surface the failure instead.
+		return err
+	}
+
 	// the encryption scope and the access tier can not be both in the HTTP headers
 	options := &blockblob.CommitBlockListOptions{
 		CPKScopeInfo: u.cpkScope,
@@ -920,6 +970,6 @@ func (u *azblobUploader) Close(ctx context.Context) error {
 	if len(u.accessTier) > 0 {
 		options.Tier = &u.accessTier
 	}
-	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
+	_, err = u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
 	return errors.Trace(err)
 }

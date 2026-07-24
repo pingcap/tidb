@@ -25,13 +25,15 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 )
 
-// defaultCompressionType is the default Parquet compression codec.
-var defaultCompressionType = compress.Codecs.Zstd
-
 const (
-	defaultRowGroupMemoryLimitBytes = 120 * units.MiB
+	// DefaultCompressionType is the default parquet compression type.
+	DefaultCompressionType = compressedio.Snappy
+	// DefaultRowGroupMemoryLimitBytes is the default row-group flush threshold
+	// by accounted in-memory bytes.
+	DefaultRowGroupMemoryLimitBytes = 120 * units.MiB
 	definitionLevelMemoryBytes      = int64(2)
 )
 
@@ -100,8 +102,8 @@ func (cw *countingWriter) Close() error {
 	return nil
 }
 
-// ParquetWriter writes SQL rows into a Parquet file using parquet/file.Writer.
-type ParquetWriter struct {
+// Writer writes SQL rows into a Parquet file using parquet/file.Writer.
+type Writer struct {
 	writer                   *file.Writer
 	output                   *countingWriter
 	columns                  []column
@@ -123,9 +125,25 @@ type WriterOption func(writerOptions) writerOptions
 func defaultWriterOptions() writerOptions {
 	return writerOptions{
 		writerProperties: []parquet.WriterProperty{
-			parquet.WithCompression(defaultCompressionType),
+			parquet.WithCompression(CompressionCodec(DefaultCompressionType)),
 		},
-		rowGroupMemoryLimitBytes: defaultRowGroupMemoryLimitBytes,
+		rowGroupMemoryLimitBytes: DefaultRowGroupMemoryLimitBytes,
+	}
+}
+
+// CompressionCodec converts dumpling compression type to parquet codec.
+func CompressionCodec(compressType compressedio.CompressType) compress.Compression {
+	switch compressType {
+	case compressedio.NoCompression:
+		return compress.Codecs.Uncompressed
+	case compressedio.Gzip:
+		return compress.Codecs.Gzip
+	case compressedio.Snappy:
+		return compress.Codecs.Snappy
+	case compressedio.Zstd:
+		return compress.Codecs.Zstd
+	default:
+		return CompressionCodec(DefaultCompressionType)
 	}
 }
 
@@ -156,8 +174,8 @@ func WithRowGroupMemoryLimit(limitBytes int64) WriterOption {
 	}
 }
 
-// NewParquetWriter creates a Parquet writer for SQL result rows.
-func NewParquetWriter(w io.Writer, columns []*ColumnInfo, options ...WriterOption) (*ParquetWriter, error) {
+// NewWriter creates a Parquet writer for SQL result rows.
+func NewWriter(w io.Writer, columns []*ColumnInfo, options ...WriterOption) (*Writer, error) {
 	if w == nil {
 		return nil, fmt.Errorf("parquet output buffer is nil")
 	}
@@ -176,7 +194,7 @@ func NewParquetWriter(w io.Writer, columns []*ColumnInfo, options ...WriterOptio
 		return nil, err
 	}
 
-	return &ParquetWriter{
+	return &Writer{
 		writer:                   file.NewParquetWriter(output, parquetSchema, file.WithWriterProps(props)),
 		output:                   output,
 		columns:                  parsedColumns,
@@ -198,7 +216,7 @@ func newWriterOptions(options []WriterOption) writerOptions {
 // Write appends one row from SQL raw column bytes.
 // Any write failure makes this writer unusable; callers should stop writing
 // and close it.
-func (pw *ParquetWriter) Write(src []sql.RawBytes) error {
+func (pw *Writer) Write(src []sql.RawBytes) error {
 	if pw.closed {
 		return fmt.Errorf("parquet writer is closed")
 	}
@@ -212,7 +230,7 @@ func (pw *ParquetWriter) Write(src []sql.RawBytes) error {
 }
 
 // Close flushes buffered rows and closes the Parquet writer.
-func (pw *ParquetWriter) Close() error {
+func (pw *Writer) Close() error {
 	if pw.closed {
 		return nil
 	}
@@ -224,7 +242,7 @@ func (pw *ParquetWriter) Close() error {
 
 // EstimateFileSize returns an estimated final file size by summing bytes
 // already flushed to the sink and bytes still buffered in memory.
-func (pw *ParquetWriter) EstimateFileSize() uint64 {
+func (pw *Writer) EstimateFileSize() uint64 {
 	estimatedBytes := pw.totalWrittenBytes() + pw.bufferedMemoryBytes
 	if estimatedBytes <= 0 {
 		return 0
@@ -232,14 +250,14 @@ func (pw *ParquetWriter) EstimateFileSize() uint64 {
 	return uint64(estimatedBytes)
 }
 
-func (pw *ParquetWriter) totalWrittenBytes() int64 {
+func (pw *Writer) totalWrittenBytes() int64 {
 	if pw.output == nil {
 		return 0
 	}
 	return pw.output.writtenBytes
 }
 
-func (pw *ParquetWriter) parseAndAppendRow(rawRow []sql.RawBytes) error {
+func (pw *Writer) parseAndAppendRow(rawRow []sql.RawBytes) error {
 	if len(rawRow) != len(pw.columns) {
 		return fmt.Errorf("parquet row has %d values, expected %d", len(rawRow), len(pw.columns))
 	}
@@ -258,7 +276,7 @@ func (pw *ParquetWriter) parseAndAppendRow(rawRow []sql.RawBytes) error {
 	return nil
 }
 
-func (pw *ParquetWriter) flushRows() error {
+func (pw *Writer) flushRows() error {
 	if pw.bufferedRows == 0 {
 		return nil
 	}
@@ -288,7 +306,7 @@ func (pw *ParquetWriter) flushRows() error {
 	return nil
 }
 
-func (pw *ParquetWriter) parseColumnValue(colIdx int, rawValue sql.RawBytes) (parsedColumnValue, error) {
+func (pw *Writer) parseColumnValue(colIdx int, rawValue sql.RawBytes) (parsedColumnValue, error) {
 	column := pw.columns[colIdx]
 	if rawValue == nil {
 		if !column.allowsNullEncoding {
@@ -304,7 +322,7 @@ func (pw *ParquetWriter) parseColumnValue(colIdx int, rawValue sql.RawBytes) (pa
 	return parsedColumnValue{value: parsedValue, isNull: isNull}, nil
 }
 
-func (pw *ParquetWriter) appendParsedColumnValue(colIdx int, parsedValue parsedColumnValue) error {
+func (pw *Writer) appendParsedColumnValue(colIdx int, parsedValue parsedColumnValue) error {
 	column := pw.columns[colIdx]
 	buffer := &pw.buffers[colIdx]
 

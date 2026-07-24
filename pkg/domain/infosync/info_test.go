@@ -17,10 +17,16 @@ package infosync
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	keyspacepb "github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -28,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/goleak"
 )
 
@@ -131,6 +138,42 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
 
+	t.Run("circuitBreakerCancelsProgressCollection", func(t *testing.T) {
+		restore := config.RestoreFunc()
+		defer restore()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.CSE.ColumnarCollectTimeout = 50 * time.Millisecond
+		})
+
+		requestCanceled := make(chan struct{}, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+			requestCanceled <- struct{}{}
+		}))
+		defer server.Close()
+
+		tikvStores := map[int64]pdhttp.StoreInfo{
+			1: {
+				Store: pdhttp.MetaStore{
+					ID:            1,
+					StatusAddress: strings.TrimPrefix(server.URL, "http://"),
+					StateName:     "Up",
+				},
+			},
+		}
+
+		progress, circuitBreakerTriggered, err := MustGetTiFlashProgressWithCircuitBreaker(context.Background(), 1024, 1, nil, tikvStores)
+		require.NoError(t, err)
+		require.True(t, circuitBreakerTriggered)
+		require.Equal(t, 1.0, progress)
+
+		select {
+		case <-requestCanceled:
+		case <-time.After(time.Second):
+			t.Fatal("expected progress collection request to be canceled")
+		}
+	})
+
 	// DeleteTiFlashPlacementRules
 	require.NoError(t, DeleteTiFlashPlacementRules(ctx, []int64{1}))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
@@ -209,4 +252,89 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
+}
+
+type mockKeyspaceConfigPDHTTPClient struct {
+	pdhttp.Client
+	t              *testing.T
+	expectedName   string
+	expectedParams *pdhttp.UpdateKeyspaceConfigParams
+	retErr         error
+}
+
+func (m *mockKeyspaceConfigPDHTTPClient) UpdateKeyspaceConfig(
+	ctx context.Context,
+	keyspaceName string,
+	params *pdhttp.UpdateKeyspaceConfigParams,
+) (*keyspacepb.KeyspaceMeta, error) {
+	require.NotNil(m.t, ctx)
+	require.Equal(m.t, m.expectedName, keyspaceName)
+	require.Equal(m.t, m.expectedParams, params)
+	if m.retErr != nil {
+		return nil, m.retErr
+	}
+	return &keyspacepb.KeyspaceMeta{}, nil
+}
+
+func TestSetKeyspaceConfig(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+
+	value := "True"
+	precondition := "False"
+	expected := &pdhttp.UpdateKeyspaceConfigParams{
+		Config: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &value,
+		},
+		Preconditions: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &precondition,
+		},
+	}
+	restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
+		t:              t,
+		expectedName:   "test-keyspace",
+		expectedParams: expected,
+	})
+	defer restore()
+
+	input := pdhttp.UpdateKeyspaceConfigParams{
+		Config: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &value,
+		},
+		Preconditions: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &precondition,
+		},
+	}
+
+	require.NoError(t, SetKeyspaceConfig(context.Background(), "test-keyspace", input))
+}
+
+func TestSetKeyspaceConfigWithoutPDHTTPClient(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+
+	err = SetKeyspaceConfig(context.Background(), "test-keyspace", pdhttp.UpdateKeyspaceConfigParams{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "pd http cli is nil")
+}
+
+func TestSetKeyspaceConfigPropagatesPDHTTPError(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+
+	expectedErr := errors.New("update keyspace config failed")
+	restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
+		t:            t,
+		expectedName: "test-keyspace",
+		expectedParams: &pdhttp.UpdateKeyspaceConfigParams{
+			Config: map[string]*string{"k": nil},
+		},
+		retErr: expectedErr,
+	})
+	defer restore()
+
+	err = SetKeyspaceConfig(context.Background(), "test-keyspace", pdhttp.UpdateKeyspaceConfigParams{
+		Config: map[string]*string{"k": nil},
+	})
+	require.ErrorIs(t, err, expectedErr)
 }

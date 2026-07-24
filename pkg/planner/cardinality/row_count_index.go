@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"bytes"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -37,12 +38,23 @@ import (
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-// idxCols used when index statistics are invalid, because coll may not have index info, can be nil whenever index statistics are valid.
+// idxCols is used when index statistics are invalid (coll may not have index info), and to recognize
+// virtual columns inside expBackoffEstimation. It can be nil, in which case both usages are skipped.
+// When exp-backoff cannot estimate a virtual column, prefer the composite-index estimate as a fallback.
+// This may improve estimation but remains subject to encoded index histogram interpolation accuracy.
 func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxCols []*expression.Column) (result statistics.RowEstimate, err error) {
 	var count, maxCount float64
 	sc := sctx.GetSessionVars().StmtCtx
 	idx := coll.GetIdx(idxID)
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
+	// Fast-path: a full-range scan over a non-MV, non-partial index returns exactly
+	// RealtimeCount regardless of histogram availability, so we can short-circuit
+	// before IndexStatsIsInvalid — which would otherwise queue an unnecessary async
+	// histogram load whenever the index stats are not fully loaded.
+	if idx != nil && canSkipIndexEstimation(idx, indexRanges) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
+		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
+	}
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
 		if hasColumnStats(sctx, coll, idxCols) && !ranger.HasFullRange(indexRanges, false) {
 			count, maxCount, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
@@ -58,14 +70,11 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		return result, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-	if canSkipIndexEstimation(idx, indexRanges) {
-		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
-	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		count, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 		result = statistics.DefaultRowEst(count)
 	} else {
-		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
+		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, idxCols, realtimeCnt, modifyCount)
 	}
 	return result, errors.Trace(err)
 }
@@ -89,7 +98,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-			rowEstimate, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
+			rowEstimate, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, nil, realtimeCnt, modifyCount)
 			count := rowEstimate.Est
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -186,7 +195,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
-func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (totalCount statistics.RowEstimate, err error) {
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, idxCols []*expression.Column, realtimeRowCount, modifyCount int64) (totalCount statistics.RowEstimate, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	isSingleColIdx := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
@@ -245,7 +254,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		// If the first column's range is point.
 		if rangePosition := getOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= statistics.Version2 && coll != nil {
 			var expBackoffSel, minSel, maxSel float64
-			expBackoffSel, minSel, maxSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
+			expBackoffSel, minSel, maxSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange, idxCols)
 			if err != nil {
 				return statistics.DefaultRowEst(0), err
 			}
@@ -294,8 +303,12 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
 				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
-				// Retrieve column statistics for the 1st index column
-				c := coll.GetCol(colIDs[0])
+				// Retrieve column statistics for the 1st index column.
+				// colIDs may be empty if the index-to-column mapping is not populated, so guard the access.
+				var c *statistics.Column
+				if len(colIDs) > 0 {
+					c = coll.GetCol(colIDs[0])
+				}
 				// If this is single column predicate - use the column's information rather than index.
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
@@ -434,7 +447,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, minSel float64, maxSel float64, success bool, err error) {
+func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, minSel float64, maxSel float64, success bool, err error) {
 	tmpRan := []*ranger.Range{
 		{
 			LowVal:    make([]types.Datum, 1),
@@ -499,6 +512,16 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			}
 		}
 		if !foundStats {
+			// A virtual column never has column statistics, so skipping it would
+			// drop what may be the most selective column of the index. Fall back
+			// to the index-stats-based estimation instead, provided the index has
+			// statistics. See https://github.com/pingcap/tidb/issues/69134.
+			// Any other column lacking statistics keeps the existing behavior:
+			// skip it and estimate from the remaining columns.
+			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil &&
+				(idx.Histogram.Len() > 0 || idx.TopN.Num() > 0) {
+				return 0, 0, 0, false, nil
+			}
 			continue
 		}
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
@@ -544,6 +567,119 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	multResult := ApplyExponentialBackoff(singleColumnEstResults, minBound, 1.0)
 
 	return multResult, minSel, maxSel, true, nil
+}
+
+// AdjustRowCountForAppendedHandleColumns damps a row count estimated from the declared
+// index columns with the selectivity of the handle columns that fillIndexPath appended
+// to the range columns of a non-unique index path. Index statistics only cover the
+// declared columns, so prefixCount was computed from ranges pruned back to
+// declaredColCnt dimensions and gives the appended handle predicates no credit; without
+// an adjustment, a path whose benefit is the handle seek looks as expensive as one
+// without it. Following expBackoffEstimation, the prefix estimate keeps the full-weight
+// slot and each handle column contributes sel^(1/2), sel^(1/4), ... starting from the
+// most selective one, which credits the handle predicates without assuming full
+// independence between the index columns and the primary key. The full ranges must not
+// reach the index statistics directly: bounds encoded from the appended dimensions sort
+// past the truncated statistics keys and would collapse the estimate.
+//
+// idxColsWithHandle must be the declared index columns followed by the complete handle:
+// fillIndexPath only appends the handle when the table's primary key is the single
+// integer handle column, so the dimensions past declaredColCnt always identify a row
+// exactly. A partial handle suffix would break the full-point cap below.
+func AdjustRowCountForAppendedHandleColumns(
+	sctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	ranges []*ranger.Range,
+	idxColsWithHandle []*expression.Column,
+	declaredColCnt int,
+	prefixCount statistics.RowEstimate,
+) statistics.RowEstimate {
+	realtimeCount := float64(coll.RealtimeCount)
+	if realtimeCount <= 0 || len(ranges) == 0 || len(idxColsWithHandle) <= declaredColCnt {
+		return prefixCount
+	}
+	sels := make([]float64, 0, len(idxColsWithHandle)-declaredColCnt)
+	for dim := declaredColCnt; dim < len(idxColsWithHandle); dim++ {
+		col := idxColsWithHandle[dim]
+		if col == nil || statistics.ColumnStatsIsInvalid(coll.GetCol(col.UniqueID), sctx, coll, col.UniqueID) {
+			continue
+		}
+		colRanges := make(ranger.Ranges, 0, len(ranges))
+		allBound := true
+		for _, ran := range ranges {
+			if len(ran.LowVal) <= dim || len(ran.HighVal) <= dim {
+				// Some range does not constrain this dimension, so the column is not
+				// bound across the whole path and must not contribute selectivity.
+				allBound = false
+				break
+			}
+			colRanges = append(colRanges, &ranger.Range{
+				LowVal:    []types.Datum{ran.LowVal[dim]},
+				HighVal:   []types.Datum{ran.HighVal[dim]},
+				Collators: []collate.Collator{ran.Collators[dim]},
+				// The exclusion flags of a multi-column range apply to its last dimension.
+				LowExclude:  ran.LowExclude && dim == len(ran.LowVal)-1,
+				HighExclude: ran.HighExclude && dim == len(ran.HighVal)-1,
+			})
+		}
+		if !allBound {
+			continue
+		}
+		// Ranges that differ only in earlier dimensions repeat the same handle bound;
+		// merge them so the column row count is not summed once per range.
+		merged, err := ranger.UnionRanges(sctx.GetRangerCtx(), colRanges, false)
+		if err != nil {
+			continue
+		}
+		countEst, err := GetRowCountByColumnRanges(sctx, coll, col.UniqueID, merged, false)
+		if err != nil {
+			continue
+		}
+		if sel := countEst.Est / realtimeCount; sel > 0 && sel < 1 {
+			sels = append(sels, sel)
+		}
+	}
+	adjusted := prefixCount
+	if len(sels) > 0 {
+		slices.Sort(sels)
+		factor, indepFactor := 1.0, 1.0
+		for i, sel := range sels {
+			indepFactor *= sel
+			// The prefix estimate occupies the full-weight slot, so the i-th handle
+			// selectivity gets weight 1/2^(i+1).
+			if i+1 < MaxExponentialBackoffCols {
+				for range i + 1 {
+					sel = math.Sqrt(sel)
+				}
+				factor *= sel
+			}
+		}
+		adjusted.Est *= factor
+		// Damping should not push the estimate below 1 row unless the prefix estimate is already < 1.
+		adjusted.Est = max(adjusted.Est, min(prefixCount.Est, 1))
+		// Full independence gives the most optimistic count; the unadjusted prefix
+		// estimate remains the upper bound in MaxEst.
+		adjusted.MinEst = min(adjusted.MinEst*indepFactor, adjusted.Est)
+	}
+	// A point range over the declared columns plus the full handle identifies at most
+	// one row, because the physical key of a non-unique index ends with the complete
+	// handle and is therefore unique. This relies on the contract above: the appended
+	// dimensions cover the complete handle, not a prefix of a multi-column primary key.
+	fullPoints := true
+	for _, ran := range ranges {
+		if len(ran.LowVal) != len(idxColsWithHandle) || len(ran.HighVal) != len(idxColsWithHandle) ||
+			!ran.IsPoint(sctx.GetRangerCtx()) {
+			fullPoints = false
+			break
+		}
+	}
+	if fullPoints {
+		pointCap := float64(len(ranges))
+		adjusted.Est = min(adjusted.Est, pointCap)
+		adjusted.MinEst = min(adjusted.MinEst, adjusted.Est)
+		adjusted.MaxEst = min(adjusted.MaxEst, pointCap)
+	}
+	return adjusted
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.
@@ -608,10 +744,16 @@ func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) 
 }
 
 // isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
-// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull),
-// not KindMinNotNull, ensuring NULL rows are included in the count.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull) inclusive,
+// not KindMinNotNull and not an exclusive lower bound, so NULL rows are guaranteed to be
+// included in the count.
 func isFullRangeIncludingNulls(ran *ranger.Range) bool {
 	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	// An exclusive bound on NULL (low) or +inf (high) would drop those endpoints
+	// and shrink the range, so the fast path must not apply.
+	if ran.LowExclude || ran.HighExclude {
 		return false
 	}
 	for i := range ran.LowVal {

@@ -553,6 +553,27 @@ func TestOptimizerCostFactors(t *testing.T) {
 		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=1")
 		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=1")
 		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0")
+
+		// Test IndexJoin scan ratio threshold
+		tk.MustExec("drop table if exists t_outer, t_inner")
+		tk.MustExec("create table t_outer(a int primary key, b int, key(b))")
+		tk.MustExec("create table t_inner(a int primary key, b int, key(b))")
+		tk.MustExec("insert into t_outer values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("insert into t_inner values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("analyze table t_outer, t_inner")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=100")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0")
+		rs = tk.MustQuery("explain format=verbose select /*+ INL_JOIN(i) */ * from t_outer o straight_join t_inner i on o.b = i.b").Rows()
+		require.Contains(t, rs[0][0].(string), "IndexJoin")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0.8")
+		rs = tk.MustQuery("explain format=verbose select /*+ INL_JOIN(i) */ * from t_outer o straight_join t_inner i on o.b = i.b").Rows()
+		require.Contains(t, rs[0][0].(string), "IndexJoin")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=1")
 
 		// Test MergeJoin cost factor increase
 		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=1")

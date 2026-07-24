@@ -64,6 +64,17 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
+// ShouldUseAsyncPrepare returns whether IMPORT INTO should use
+// DXF prepare-mode asynchronous prepare.
+// Nextgen only supports global sort for IMPORT INTO in production, but local
+// sort can still be exercised in tests, so keep the IsGlobalSort check.
+func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
+	failpoint.Inject("mockDisableAsyncPrepare", func() {
+		failpoint.Return(false)
+	})
+	return plan != nil && kerneltype.IsNextGen() && plan.IsGlobalSort()
+}
+
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	var instances []*serverinfo.ServerInfo
 	if instance != nil {
@@ -81,6 +92,13 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		Stmt:              stmt,
 		EligibleInstances: instances,
 		ChunkMap:          chunkMap,
+	}
+	asyncPrepare := ShouldUseAsyncPrepare(plan)
+	if asyncPrepare {
+		logicalPlan.PrepareMode = proto.PrepareModeRequired
+		// below params will be filled later in async prepare, init to 1 temporarily.
+		plan.ThreadCnt = 1
+		plan.MaxNodeCnt = 1
 	}
 	planCtx := planner.PlanCtx{
 		Ctx:        ctx,
@@ -127,6 +145,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
 	dxfTaskMgr := taskManager
 	if runningOnUserKS {
+		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
 		var err2 error
 		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
 		if err2 != nil {
@@ -151,14 +170,21 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	if err != nil {
 		return 0, nil, err
 	}
-
-	logutil.BgLogger().Info("job submitted to task queue",
+	logFields := []zap.Field{
 		zap.Int64("job-id", jobID),
 		zap.String("task-key", task.Key),
 		zap.Int64("task-id", task.ID),
-		zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
-		zap.Int("thread-cnt", plan.ThreadCnt),
-		zap.Bool("global-sort", plan.IsGlobalSort()))
+		zap.Bool("global-sort", plan.IsGlobalSort()),
+		zap.Bool("async-prepare", asyncPrepare),
+	}
+	if !asyncPrepare {
+		logFields = append(logFields,
+			zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
+			zap.Int("thread-cnt", plan.ThreadCnt),
+			zap.Int("max-node-cnt", plan.MaxNodeCnt),
+		)
+	}
+	logutil.BgLogger().Info("job submitted to task queue", logFields...)
 
 	return jobID, task, nil
 }
@@ -378,7 +404,7 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 					union
 				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?
 			) t`,
-			task.ID, task.ID,
+			storage.TaskIDToKey(task.ID), storage.TaskIDToKey(task.ID),
 		)
 		return err
 	})

@@ -28,22 +28,50 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
+type importTestSessionPool struct {
+	*pools.ResourcePool
+}
+
+func (p importTestSessionPool) Destroy(resource pools.Resource) {
+	resource.Close()
+}
+
+func newImportTestRuntime(ctrl *gomock.Controller, store kv.Storage, sessPool *pools.ResourcePool) *sqlsvrapimock.MockRuntime {
+	var destroyableSessPool tidbutil.DestroyableSessionPool
+	if sessPool != nil {
+		destroyableSessPool = importTestSessionPool{ResourcePool: sessPool}
+	}
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	runtime.EXPECT().SysSessionPool().Return(destroyableSessPool).AnyTimes()
+	return runtime
+}
+
 func TestSchedulerExtLocalSort(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -97,7 +125,8 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(manager, store))
+	var taskMgr scheduler.TaskManager = manager
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -193,9 +222,243 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", gotJobInfo.Status)
+
+	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+	logicalPlan.JobID = jobID
+	bs, err = logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task.Meta = bs
+	task.Step = proto.StepInit
+	task.State = proto.TaskStatePending
+	if kerneltype.IsNextGen() {
+		// If a nextgen dangling import job was already cancelled before scheduler
+		// admission, the scheduler should enter the existing cancel/revert path
+		// without planning work or generating subtasks.
+		err = ext.OnPrepare(ctx, d, task)
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "cancelled", gotJobInfo.Status)
+		require.Equal(t, "", gotJobInfo.Step)
+
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		require.Nil(t, subtaskMetas)
+	} else {
+		// Classic has no dangling import job window: CANCEL IMPORT JOB changes the
+		// DXF task to cancelling, so this import-job status check must not reject
+		// scheduler planning if a test calls the hook directly.
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.NoError(t, err)
+		require.NotNil(t, subtaskMetas)
+	}
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", gotJobInfo.Status)
+	require.Equal(t, "", gotJobInfo.Step)
+}
+
+func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	if !kerneltype.IsNextGen() {
+		t.Skip("prepare mode only applies in nextgen kernel")
+	}
+
+	host := "127.0.0.1"
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       host,
+		Port:       0,
+		PublicHost: host,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	defer server.Stop()
+	gcsEndpoint := fmt.Sprintf("%s/storage/v1/", server.URL())
+	sortStorageURI := fmt.Sprintf("gs://sort-bucket/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sort-bucket"})
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "test-load"})
+	server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load",
+			Name:       "1.csv",
+		},
+		Content: []byte("1\n"),
+	})
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+		context.Background(),
+		ast.NewCIStr("test"),
+		ast.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta().Clone()
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	mgr := storage.NewTaskManager(pool)
+	storage.SetTaskManager(mgr)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
+	keyspace := store.GetKeyspace()
+	scope := handle.GetTargetScope()
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", scope))
+
+	conn := tk.Session().GetSQLExecutor()
+	var taskMgr scheduler.TaskManager = mgr
+	createPrepareTask := func(t *testing.T) (int64, *proto.Task) {
+		t.Helper()
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", tblInfo.ID,
+			"root", "", &importer.ImportParameters{}, 0)
+		require.NoError(t, err)
+		defaultCharset := "utf8mb4"
+		logicalPlan := &importinto.LogicalPlan{
+			JobID: jobID,
+			Plan: importer.Plan{
+				Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+				Format: importer.DataFormatAuto,
+				DBName: "test",
+				TableInfo: func() *model.TableInfo {
+					c := tblInfo.Clone()
+					c.Name = ast.NewCIStr("t")
+					c.State = model.StatePublic
+					return c
+				}(),
+				DisableTiKVImportMode: true,
+				CloudStorageURI:       sortStorageURI,
+				InImportInto:          true,
+				Charset:               &defaultCharset,
+				FieldNullDef:          []string{`\N`},
+				LineFieldsInfo: plannercore.LineFieldsInfo{
+					FieldsTerminatedBy: ",",
+					FieldsEnclosedBy:   `"`,
+					FieldsEscapedBy:    `\`,
+					LinesStartingBy:    ``,
+					LinesTerminatedBy:  ``,
+				},
+			},
+			Stmt: `IMPORT INTO test.t FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+		}
+		require.True(t, importinto.ShouldUseAsyncPrepare(&logicalPlan.Plan))
+		bs, err := logicalPlan.ToTaskMeta()
+		require.NoError(t, err)
+		task := &proto.Task{
+			TaskBase: proto.TaskBase{
+				Type:        proto.ImportInto,
+				Step:        proto.StepInit,
+				State:       proto.TaskStatePending,
+				ExtraParams: proto.ExtraParams{PrepareMode: proto.PrepareModeRequired},
+			},
+			Meta:            bs,
+			StateUpdateTime: time.Now(),
+		}
+		task.ID, err = mgr.CreateTask(
+			ctx,
+			importinto.TaskKey(jobID),
+			proto.ImportInto,
+			keyspace,
+			1,
+			scope,
+			1,
+			proto.ExtraParams{PrepareMode: proto.PrepareModeRequired},
+			bs,
+		)
+		require.NoError(t, err)
+		return jobID, task
+	}
+
+	t.Run("transitions_to_encode_and_sort", func(t *testing.T) {
+		jobID, task := createPrepareTask(t)
+		d := sch.MockScheduler(task)
+		ext := importinto.NewImportSchedulerForTest(true, task,
+			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+
+		require.NoError(t, ext.OnPrepare(ctx, d, task))
+		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+		require.Equal(t, importer.DataFormatCSV, info.Parameters.Format)
+		require.EqualValues(t, 2, info.SourceFileSize)
+		require.False(t, info.StartTime.IsZero())
+		startTime := info.StartTime
+
+		task.Step = proto.StepPrepared
+		nextStep := ext.GetNextStep(&task.TaskBase)
+		require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
+		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
+		require.NoError(t, err)
+		require.NotEmpty(t, metas)
+		info, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepGlobalSorting, info.Step)
+		require.Equal(t, startTime, info.StartTime)
+	})
+
+	t.Run("cancelled_before_prepare", func(t *testing.T) {
+		jobID, task := createPrepareTask(t)
+		require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+		d := sch.MockScheduler(task)
+		ext := importinto.NewImportSchedulerForTest(true, task,
+			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+
+		err := ext.OnPrepare(ctx, d, task)
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "cancelled", info.Status)
+		require.Equal(t, "", info.Step)
+		require.Equal(t, 0, task.RequiredSlots)
+		require.Equal(t, 0, task.MaxNodeCount)
+	})
+
+	t.Run("cancelled_after_prepare", func(t *testing.T) {
+		jobID, task := createPrepareTask(t)
+		d := sch.MockScheduler(task)
+		ext := importinto.NewImportSchedulerForTest(true, task,
+			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+		require.NoError(t, ext.OnPrepare(ctx, d, task))
+		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+		require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+
+		task.Step = proto.StepPrepared
+		nextStep := ext.GetNextStep(&task.TaskBase)
+		require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
+		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		require.Nil(t, metas)
+		info, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "cancelled", info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+	})
 }
 
 func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	if !kerneltype.IsClassic() {
 		t.Skip("table mode is only set in classic kernel")
 	}
@@ -263,7 +526,8 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 		Error: errors.New("cancelled by user"),
 	}
 
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(mgr, store))
+	var taskMgr scheduler.TaskManager = mgr
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	require.NoError(t, ext.OnDone(ctx, nil, task))
 
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -272,6 +536,9 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 }
 
 func TestSchedulerExtGlobalSort(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	host := "127.0.0.1"
 	port := uint16(4448)
 	opt := fakestorage.Options{
@@ -357,7 +624,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(manager, store))
+	var taskMgr scheduler.TaskManager = manager
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
@@ -378,11 +646,11 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
-		SortedDataMeta: &external.SortedKVMeta{
+		SortedDataMeta: &globalsort.SortedKVMeta{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			MultipleFilesStats: []external.MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
@@ -390,12 +658,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 				},
 			},
 		},
-		SortedIndexMetas: map[int64]*external.SortedKVMeta{
+		SortedIndexMetas: map[int64]*globalsort.SortedKVMeta{
 			1: {
 				StartKey:    []byte("ia"),
 				EndKey:      []byte("ic"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []external.MultipleFilesStat{
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{"gs://sort-bucket/index/1", "gs://sort-bucket/index/1.stat"},
@@ -434,7 +702,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{
 		KVGroup: "data",
-		SortedKVMeta: external.SortedKVMeta{
+		SortedKVMeta: globalsort.SortedKVMeta{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,

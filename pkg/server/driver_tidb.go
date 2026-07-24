@@ -18,9 +18,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -65,8 +69,10 @@ type TiDBStatement struct {
 	id          uint32
 	numParams   int
 	boundParams [][]byte
-	paramsType  []byte
-	ctx         *TiDBContext
+	// boundParamsTooLarge tracks whether a single COM_STMT_SEND_LONG_DATA parameter has exceeded max_allowed_packet.
+	boundParamsTooLarge bool
+	paramsType          []byte
+	ctx                 *TiDBContext
 	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
 	// not moved out to reuse the logic inside functions `writeResultSet...`
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
@@ -106,7 +112,27 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if len(data) == 0 {
 		ts.boundParams[paramID] = []byte{}
 	} else {
+		if uint64(len(ts.boundParams[paramID]))+uint64(len(data)) > ts.ctx.GetSessionVars().MaxAllowedPacket {
+			// MySQL reports the packet-too-large error on the following EXECUTE, not on SEND_LONG_DATA.
+			// Stop appending more bytes once the limit is exceeded so the statement cannot grow unboundedly.
+			ts.boundParamsTooLarge = true
+			return nil
+		}
 		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	}
+	return nil
+}
+
+// CheckLongDataSize implements PreparedStatement CheckLongDataSize method.
+func (ts *TiDBStatement) CheckLongDataSize() error {
+	if ts.boundParamsTooLarge {
+		return servererr.ErrNetPacketTooLarge
+	}
+	maxAllowedPacket := ts.ctx.GetSessionVars().MaxAllowedPacket
+	for _, boundParam := range ts.boundParams {
+		if uint64(len(boundParam)) > maxAllowedPacket {
+			return servererr.ErrNetPacketTooLarge
+		}
 	}
 	return nil
 }
@@ -148,6 +174,7 @@ func (ts *TiDBStatement) Reset() error {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
+	ts.boundParamsTooLarge = false
 	ts.hasActiveCursor = false
 
 	resultset.ReportCursorRUV2Delta(ts.rs, 0)
@@ -250,6 +277,12 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	}
 	se.SetClientCapability(capability)
 	se.SetConnectionID(connID)
+	if deploymode.IsStarter() {
+		err = se.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
+		if err != nil {
+			return nil, err
+		}
+	}
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),

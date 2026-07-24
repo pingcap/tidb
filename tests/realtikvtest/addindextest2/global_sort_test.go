@@ -39,8 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/session"
@@ -50,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -99,7 +102,7 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
-		files, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		files, err := simplesst.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
 		require.Greater(t, jobID, int64(0))
 		require.Equal(t, 0, len(files))
@@ -112,7 +115,7 @@ func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
 	require.NoError(t, err)
 	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, dir)
+	dataFiles, err := simplesst.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
 	filteredFiles := make([]string, 0)
 	for _, f := range dataFiles {
@@ -163,7 +166,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
 		ch <- struct{}{}
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
@@ -198,6 +201,12 @@ func TestGlobalSortBasic(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkEnableStreaming",
+		func(enabled bool) {
+			require.True(t, enabled, "streaming should be enabled with global sort")
+		},
+	)
 
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
@@ -281,6 +290,14 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 					t.Skip("DXF is always enabled on nextgen")
 				}
 			}
+
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkEnableStreaming",
+				func(enabled bool) {
+					expected := tc.cloudStorageURI != ""
+					require.Equal(t, expected, enabled)
+				},
+			)
+
 			if kerneltype.IsClassic() {
 				tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 				tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
@@ -572,7 +589,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 
 	dts := []types.Datum{types.NewIntDatum(1)}
 	sctx := tk.Session().GetSessionVars().StmtCtx
-	idxKey, _, err := tablecodec.GenIndexKey(sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
+	idxKey, _, err := tablecodec.GenIndexKey(codec.NewEncoder(collate.NewCollationEnabled()), sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
@@ -664,7 +681,7 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 
 	// Change the concurrency during merge sort and check the modified parameters.
 	var onceMerge sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mergeOverlappingFiles", func(op *external.MergeOperator) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mergeOverlappingFiles", func(op *globalsort.MergeOperator) {
 		onceMerge.Do(func() {
 			tk1 := testkit.NewTestKit(t, store)
 			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
@@ -810,10 +827,10 @@ func TestSplitRangeForTable(t *testing.T) {
 	})
 
 	var addCnt, removeCnt atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/AddPartitionRangeForTable", func() {
 		addCnt.Add(1)
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/RemovePartitionRangeRequest", func() {
 		removeCnt.Add(1)
 	})
 
@@ -837,7 +854,7 @@ func TestSplitRangeForTable(t *testing.T) {
 			// 2. Verify large table case (mocked by lowering threshold)
 			// We only need to verify the logic once for the local backend logic.
 			if tc.caseName == "local ingest" {
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ForcePartitionRegionThreshold", func(threshold *int) {
 					*threshold = 0
 				})
 				addCnt.Store(0)
@@ -886,10 +903,10 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 	for i, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
 			var addCnt, removeCnt atomic.Int32
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/AddPartitionRangeForTable", func() {
 				addCnt.Add(1)
 			})
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/RemovePartitionRangeRequest", func() {
 				removeCnt.Add(1)
 			})
 
@@ -910,7 +927,7 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 
 			// 2. Verify large table case (mocked by lowering threshold)
 			if tc.caseName == "local ingest" {
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ForcePartitionRegionThreshold", func(threshold *int) {
 					*threshold = 0
 				})
 				addCnt.Store(0)
@@ -1028,7 +1045,9 @@ func TestNextGenMetering(t *testing.T) {
 			items["index_kv_bytes"].(int64) == 153 &&
 			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
-			items[metering.DurationSecondsField].(int64) > 0
+			// duration_seconds uses integer seconds; tasks finishing in <1s
+			// are truncated to 0.
+			items[metering.DurationSecondsField].(int64) >= 0
 	}, 30*time.Second, 100*time.Millisecond)
 }
 

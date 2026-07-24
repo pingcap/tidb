@@ -65,6 +65,7 @@ go_library(
         "expression.go",
         "extension.go",
         "fts_helper.go",
+        "fts_to_like.go",
         "function_traits.go",
         "grouping_sets.go",
         "helper.go",
@@ -80,6 +81,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression/exprctx",
@@ -199,6 +201,7 @@ go_test(
         "evaluator_test.go",
         "expr_to_pb_test.go",
         "expression_test.go",
+        "fts_to_like_test.go",
         "function_traits_test.go",
         "grouping_sets_test.go",
         "helper_test.go",

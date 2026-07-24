@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -709,6 +711,41 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	defer func() {
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+	}()
+
+	vardef.AnalyzeDefaultNumBuckets.Store(512)
+	vardef.AnalyzeDefaultNumTopN.Store(150)
+
+	optMap, err := handleAnalyzeOptions(nil)
+	require.NoError(t, err)
+	require.Empty(t, optMap)
+
+	filledMap := fillAnalyzeOptions(optMap)
+	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
+
+	testDefaults := AnalyzeOptionDefault()
+	require.Equal(t, uint64(512), testDefaults[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), testDefaults[ast.AnalyzeOptNumTopN])
+
+	optMap, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{
+			Type:  ast.AnalyzeOptNumBuckets,
+			Value: ast.NewValueExpr(1024, "", ""),
+		},
+	})
+	require.NoError(t, err)
+	filledMap = fillAnalyzeOptions(optMap)
+	require.Equal(t, uint64(1024), filledMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
+}
+
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
@@ -1131,9 +1168,20 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
+	bak := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "aaa"
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = bak
+		})
+	})
+
 	for _, str := range []string{
 		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
 		"oss://bucket?External-id=abc&role-arn=arn",
 		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 	} {
@@ -1145,6 +1193,9 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	}
 
 	for _, str := range []string{
+		"s3://bucket?external-id=aaa&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external_id=aaa&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=aaa&external_id=aaa&access-key=ak&secret-access-key=sk",
 		"s3://bucket?access-key=ak&secret-access-key=sk",
 		"s3://bucket?access_key=ak&secret_access_key=sk",
 		"oss://bucket?role-arn=arn",
