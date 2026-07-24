@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -218,7 +219,61 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	}
 
 	s.taskMeta = bgm
+	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
+	if len(s.taskMeta.CloudStorageURI) == 0 && s.task.Step == proto.BackfillStepReadIndex {
+		runningJobCount, runningJobRuntimeSlots, runningJobUsedBytes, err :=
+			s.getRunningLocalSortJobDiskUsage(ctx)
+		if err != nil {
+			return err
+		}
+		if err := ingest.CheckLocalSortFreeDisk(
+			s.GetExecutorID(),
+			runningJobCount,
+			runningJobRuntimeSlots,
+			runningJobUsedBytes,
+			s.task.GetRuntimeSlots(),
+		); err != nil {
+			// Running add-index disk usage is subtracted from the remaining growth budget, so admission failures
+			// indicate persistent non-DDL disk pressure and must remain fatal; operators
+			// must remove logs or other files to resolve it.
+			return err
+		}
+	}
 	return nil
+}
+
+func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
+	ctx context.Context,
+) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
+	taskSlots := s.ExecutorTaskSlotsSnapshot()
+	for taskID, taskRuntimeSlots := range taskSlots {
+		if taskID == s.task.ID {
+			continue
+		}
+
+		task, err := s.GetTaskTable().GetTaskByID(ctx, taskID)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		if task.Type != proto.Backfill || task.Step != proto.BackfillStepReadIndex {
+			continue
+		}
+
+		taskMeta := &BackfillTaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+			return 0, 0, 0, errors.Trace(err)
+		}
+		if len(taskMeta.CloudStorageURI) > 0 {
+			continue
+		}
+
+		jobCount++
+		runtimeSlots += taskRuntimeSlots
+		if ingest.LitDiskRoot != nil {
+			usedBytes += ingest.LitDiskRoot.GetUsage(taskMeta.Job.ID)
+		}
+	}
+	return jobCount, runtimeSlots, usedBytes, nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {

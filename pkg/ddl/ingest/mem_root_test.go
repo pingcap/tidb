@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ingest_test
+package ingest
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMemoryRoot(t *testing.T) {
-	memRoot := ingest.MemRoot(ingest.NewMemRootImpl(1024))
+	memRoot := MemRoot(NewMemRootImpl(1024))
 	require.Equal(t, int64(1024), memRoot.MaxMemoryQuota())
 	require.Equal(t, int64(0), memRoot.CurrentUsage())
 
@@ -60,7 +60,40 @@ func TestMemoryRoot(t *testing.T) {
 }
 
 func TestRiskOfDiskFull(t *testing.T) {
-	require.False(t, ingest.RiskOfDiskFull(11, 100))
-	require.False(t, ingest.RiskOfDiskFull(10, 100))
-	require.True(t, ingest.RiskOfDiskFull(9, 100))
+	require.False(t, RiskOfDiskFull(11, 100))
+	require.False(t, RiskOfDiskFull(10, 100))
+	require.True(t, RiskOfDiskFull(9, 100))
+
+	t.Run("check local sort free disk", func(t *testing.T) {
+		const execID = "10.0.1.8:4000"
+		err := checkLocalSortFreeDisk(execID, "/tmp/local-sort", 20*size.GB, 20*size.GB, 1, 4, size.GB, 2)
+		require.NoError(t, err)
+
+		err = checkLocalSortFreeDisk(execID, "/tmp/local-sort", 12*size.GB, 20*size.GB, 1, 3, 0, 2)
+		require.Error(t, err)
+
+		err = checkLocalSortFreeDisk(execID, "/tmp/local-sort", 9*size.GB, 10*size.GB, 2, 4, 2*size.GB, 1)
+		require.Error(t, err)
+
+		// 60 slots reserve 120 GB, capped at the 100 GB quota. After subtracting
+		// 40 GB usage, the required space is 60 GB plus 20 GB capacity headroom.
+		err = checkLocalSortFreeDisk(execID, "/tmp/local-sort", 81*size.GB, 200*size.GB, 1, 40, 40*size.GB, 20)
+		require.NoError(t, err)
+
+		err = checkLocalSortFreeDisk(execID, "/tmp/local-sort", 80*size.GB, 200*size.GB, 1, 40, 40*size.GB, 20)
+		require.Error(t, err)
+
+		err = checkLocalSortFreeDisk(execID, "/tmp/local-sort", 21*size.GB, 200*size.GB, 1, 40, 101*size.GB, 20)
+		require.NoError(t, err)
+
+		err = checkLocalSortFreeDisk(execID, "/tmp/local-sort", size.GB, size.GB, 1, 1, 0, 1)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "insufficient free disk space on TiDB node 10.0.1.8:4000 at /tmp/local-sort: 1073741824 bytes available")
+		require.ErrorContains(t, err, "the add-index job cannot start because low disk space would degrade SST ingestion")
+		require.ErrorContains(t, err, "Free disk space on this TiDB node by removing unnecessary logs or files")
+		require.NotContains(t, err.Error(), "running local-sort job count")
+		require.NotContains(t, err.Error(), "runtime slots")
+		require.NotContains(t, err.Error(), "bytes per slot")
+		require.EqualValues(t, 2*size.GB, localSortBytesPerSlot)
+	})
 }

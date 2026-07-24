@@ -669,6 +669,17 @@ func (e *BaseTaskExecutor) GetTaskBase() *proto.TaskBase {
 	return &task.TaskBase
 }
 
+// GetExecutorID returns the executor ID, which identifies the TiDB node as IP:port.
+func (e *BaseTaskExecutor) GetExecutorID() string {
+	return e.execID
+}
+
+// ExecutorTaskSlotsSnapshot returns the current task/slot snapshot tracked by
+// the executor slot manager.
+func (e *BaseTaskExecutor) ExecutorTaskSlotsSnapshot() map[int64]int {
+	return e.slotMgr.executorTaskSlotsSnapshot()
+}
+
 // CancelRunningSubtask implements TaskExecutor.CancelRunningSubtask.
 func (e *BaseTaskExecutor) CancelRunningSubtask() {
 	e.cancelRunStepWith(ErrCancelSubtask)
