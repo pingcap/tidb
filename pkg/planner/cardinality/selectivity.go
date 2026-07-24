@@ -16,7 +16,6 @@ package cardinality
 
 import (
 	"cmp"
-	"maps"
 	"math"
 	"math/bits"
 	"slices"
@@ -42,6 +41,93 @@ import (
 var (
 	outOfRangeBetweenRate int64 = 100
 )
+
+type selectivityExprBuckets struct {
+	items []selectivityExprBucket
+
+	constantsCount      int
+	dnfCount            int
+	strMatchCount       int
+	negateStrMatchCount int
+	otherExprCount      int
+}
+
+type selectivityExprBucket struct {
+	constant       *expression.Constant
+	dnf            *expression.ScalarFunction
+	strMatch       *expression.ScalarFunction
+	negateStrMatch *expression.ScalarFunction
+	otherExpr      expression.Expression
+}
+
+func newSelectivityExprBuckets(size int) selectivityExprBuckets {
+	return selectivityExprBuckets{
+		items: make([]selectivityExprBucket, size),
+	}
+}
+
+func (b *selectivityExprBuckets) setConstant(i int, c *expression.Constant) {
+	if b.items[i].constant == nil {
+		b.constantsCount++
+	}
+	b.items[i].constant = c
+}
+
+func (b *selectivityExprBuckets) clearConstant(i int) {
+	if b.items[i].constant != nil {
+		b.items[i].constant = nil
+		b.constantsCount--
+	}
+}
+
+func (b *selectivityExprBuckets) setDNF(i int, sf *expression.ScalarFunction) {
+	if b.items[i].dnf == nil {
+		b.dnfCount++
+	}
+	b.items[i].dnf = sf
+}
+
+func (b *selectivityExprBuckets) clearDNF(i int) {
+	if b.items[i].dnf != nil {
+		b.items[i].dnf = nil
+		b.dnfCount--
+	}
+}
+
+func (b *selectivityExprBuckets) setStrMatch(i int, sf *expression.ScalarFunction) {
+	if b.items[i].strMatch == nil {
+		b.strMatchCount++
+	}
+	b.items[i].strMatch = sf
+}
+
+func (b *selectivityExprBuckets) clearStrMatch(i int) {
+	if b.items[i].strMatch != nil {
+		b.items[i].strMatch = nil
+		b.strMatchCount--
+	}
+}
+
+func (b *selectivityExprBuckets) setNegateStrMatch(i int, sf *expression.ScalarFunction) {
+	if b.items[i].negateStrMatch == nil {
+		b.negateStrMatchCount++
+	}
+	b.items[i].negateStrMatch = sf
+}
+
+func (b *selectivityExprBuckets) clearNegateStrMatch(i int) {
+	if b.items[i].negateStrMatch != nil {
+		b.items[i].negateStrMatch = nil
+		b.negateStrMatchCount--
+	}
+}
+
+func (b *selectivityExprBuckets) setOtherExpr(i int, expr expression.Expression) {
+	if b.items[i].otherExpr == nil {
+		b.otherExprCount++
+	}
+	b.items[i].otherExpr = expr
+}
 
 // Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
 // The definition of selectivity is (row count after filter / row count before filter).
@@ -95,7 +181,7 @@ func Selectivity(
 		ret *= sel
 	}
 
-	extractedCols := slices.Collect(maps.Values(expression.ExtractColumnsMapFromExpressions(nil, remainedExprs...)))
+	extractedCols := expression.ExtractAllColumnsFromExpressionsInUsedSlices(make([]*expression.Column, 0, len(remainedExprs)), nil, remainedExprs...)
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
@@ -225,27 +311,24 @@ func Selectivity(
 		}
 	}
 
-	notCoveredConstants := make(map[int]*expression.Constant)
-	notCoveredDNF := make(map[int]*expression.ScalarFunction)
-	notCoveredStrMatch := make(map[int]*expression.ScalarFunction)
-	notCoveredNegateStrMatch := make(map[int]*expression.ScalarFunction)
-	notCoveredOtherExpr := make(map[int]expression.Expression)
+	var notCovered selectivityExprBuckets
 	if mask > 0 {
+		notCovered = newSelectivityExprBuckets(len(remainedExprs))
 		for i, expr := range remainedExprs {
 			if mask&(1<<uint64(i)) == 0 {
 				continue
 			}
 			switch x := expr.(type) {
 			case *expression.Constant:
-				notCoveredConstants[i] = x
+				notCovered.setConstant(i, x)
 				continue
 			case *expression.ScalarFunction:
 				switch x.FuncName.L {
 				case ast.LogicOr:
-					notCoveredDNF[i] = x
+					notCovered.setDNF(i, x)
 					continue
 				case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
-					notCoveredStrMatch[i] = x
+					notCovered.setStrMatch(i, x)
 					continue
 				case ast.FTSMysqlMatchAgainst:
 					// FTSMysqlMatchAgainst is opaque to the stats engine — its
@@ -269,7 +352,7 @@ func Selectivity(
 					if substitute, err := expression.BuildFTSToILikeExpressionFromBuiltin(ctx.GetExprCtx(), x); err == nil {
 						switch sub := substitute.(type) {
 						case *expression.ScalarFunction:
-							notCoveredStrMatch[i] = sub
+							notCovered.setStrMatch(i, sub)
 							continue
 						case *expression.Constant:
 							// AGAINST(NULL) produces Constant(NULL) (preserves SQL
@@ -281,13 +364,13 @@ func Selectivity(
 							// pass at line ~309 zeroes selectivity for both
 							// shapes) instead of applying the str-match default
 							// (0.1).
-							notCoveredConstants[i] = sub
+							notCovered.setConstant(i, sub)
 							continue
 						}
 					}
 					// Fall through if substitution failed; the FTS expression will
 					// use the str-match default selectivity (0.1) instead of 0.8.
-					notCoveredStrMatch[i] = x
+					notCovered.setStrMatch(i, x)
 					continue
 				case ast.UnaryNot:
 					inner := expression.GetExprInsideIsTruth(x.GetArgs()[0])
@@ -295,18 +378,22 @@ func Selectivity(
 					if ok {
 						switch innerSF.FuncName.L {
 						case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
-							notCoveredNegateStrMatch[i] = x
+							notCovered.setNegateStrMatch(i, x)
 							continue
 						}
 					}
 				}
 			}
-			notCoveredOtherExpr[i] = expr
+			notCovered.setOtherExpr(i, expr)
 		}
 	}
 
 	// Try to cover remaining Constants
-	for i, c := range notCoveredConstants {
+	for i := range notCovered.items {
+		c := notCovered.items[i].constant
+		if c == nil {
+			continue
+		}
 		if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), c) {
 			continue
 		}
@@ -314,7 +401,7 @@ func Selectivity(
 			// c is null
 			ret *= 0
 			mask &^= 1 << uint64(i)
-			delete(notCoveredConstants, i)
+			notCovered.clearConstant(i)
 		} else if isTrue, err := c.Value.ToBool(sc.TypeCtx()); err == nil {
 			if isTrue == 0 {
 				// c is false
@@ -322,7 +409,7 @@ func Selectivity(
 			}
 			// c is true, no need to change ret
 			mask &^= 1 << uint64(i)
-			delete(notCoveredConstants, i)
+			notCovered.clearConstant(i)
 		}
 		// Not expected to come here:
 		// err != nil, no need to do anything.
@@ -331,7 +418,11 @@ func Selectivity(
 	// Try to cover remaining DNF conditions using independence assumption,
 	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
 OUTER:
-	for i, scalarCond := range notCoveredDNF {
+	for i := range notCovered.items {
+		scalarCond := notCovered.items[i].dnf
+		if scalarCond == nil {
+			continue
+		}
 		// If there are columns not in stats, we won't handle them. This case might happen after DDL operations.
 		cols := expression.ExtractColumns(scalarCond)
 		for i := range cols {
@@ -376,13 +467,17 @@ OUTER:
 		if selectivity != 0 {
 			ret *= selectivity
 			mask &^= 1 << uint64(i)
-			delete(notCoveredDNF, i)
+			notCovered.clearDNF(i)
 		}
 	}
 
 	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
-		for i, scalarCond := range notCoveredStrMatch {
+		for i := range notCovered.items {
+			scalarCond := notCovered.items[i].strMatch
+			if scalarCond == nil {
+				continue
+			}
 			ok, sel, err := GetSelectivityByFilter(ctx, coll, scalarCond)
 			if err != nil {
 				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
@@ -392,9 +487,13 @@ OUTER:
 			}
 			ret *= sel
 			mask &^= 1 << uint64(i)
-			delete(notCoveredStrMatch, i)
+			notCovered.clearStrMatch(i)
 		}
-		for i, scalarCond := range notCoveredNegateStrMatch {
+		for i := range notCovered.items {
+			scalarCond := notCovered.items[i].negateStrMatch
+			if scalarCond == nil {
+				continue
+			}
 			ok, sel, err := GetSelectivityByFilter(ctx, coll, scalarCond)
 			if err != nil {
 				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
@@ -404,7 +503,7 @@ OUTER:
 			}
 			ret *= sel
 			mask &^= 1 << uint64(i)
-			delete(notCoveredNegateStrMatch, i)
+			notCovered.clearNegateStrMatch(i)
 		}
 	}
 
@@ -414,13 +513,13 @@ OUTER:
 	// other expressions' default selectivity is selectionFactor.
 	if mask > 0 {
 		minSelectivity := 1.0
-		if len(notCoveredConstants) > 0 || len(notCoveredDNF) > 0 || len(notCoveredOtherExpr) > 0 {
+		if notCovered.constantsCount > 0 || notCovered.dnfCount > 0 || notCovered.otherExprCount > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().SelectivityFactor)
 		}
-		if len(notCoveredStrMatch) > 0 {
+		if notCovered.strMatchCount > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
 		}
-		if len(notCoveredNegateStrMatch) > 0 {
+		if notCovered.negateStrMatchCount > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity())
 		}
 		ret *= minSelectivity
@@ -487,7 +586,8 @@ func CalcTotalSelectivityForMVIdxPath(
 					break
 				}
 			}
-			cols := expression.ExtractColumnsMapFromExpressions(
+			cols := expression.ExtractAllColumnsFromExpressionsInUsedSlices(
+				nil,
 				func(column *expression.Column) bool {
 					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
 				},
@@ -903,15 +1003,11 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil
 	}
-	cols := expression.ExtractColumnsMapFromExpressions(nil, filters)
+	cols := expression.ExtractAllColumnsFromExpressionsInUsedSlices(nil, nil, filters)
 	if len(cols) != 1 {
 		return false, 0, nil
 	}
-	var col *expression.Column
-	for _, c := range cols {
-		col = c
-		break
-	}
+	col := cols[0]
 	tp := col.RetType
 	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
 		return false, 0, nil
