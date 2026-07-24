@@ -952,6 +952,26 @@ func TestParallelAlterIndex(t *testing.T) {
 		tk.MustExec("select * from t")
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
+
+	// Regression test for issue 70049. Ordinary indexes with an underscore-delimited
+	// suffix must not be mistaken for temporary indexes created by modify column.
+	query := `select key_name, is_visible from information_schema.tidb_indexes
+		where table_schema = 'test_db_state' and table_name = '%s' order by key_name`
+	tk.MustExec("create table t_invisible (k int, key idx_k(k), key idx_k_1(k), key idx_k_copy(k))")
+	tk.MustExec("alter table t_invisible alter index idx_k invisible")
+	tk.MustQuery(fmt.Sprintf(query, "t_invisible")).Check(testkit.Rows(
+		"idx_k NO",
+		"idx_k_1 YES",
+		"idx_k_copy YES",
+	))
+
+	tk.MustExec("create table t_visible (k int, key idx_k(k) invisible, key idx_k_1(k) invisible, key idx_k_copy(k) invisible)")
+	tk.MustExec("alter table t_visible alter index idx_k visible")
+	tk.MustQuery(fmt.Sprintf(query, "t_visible")).Check(testkit.Rows(
+		"idx_k YES",
+		"idx_k_1 NO",
+		"idx_k_copy NO",
+	))
 }
 
 func TestParallelAlterModifyColumn(t *testing.T) {
