@@ -377,6 +377,13 @@ type expressionRewriter struct {
 	disableFoldCounter int
 	tryFoldCounter     int
 
+	// consumedNotDepth counts pending ancestor NOT/NOT2 unary operators whose
+	// polarity has already been folded into an IN-subquery rewrite (see
+	// evenNotFilterDepth and handleInSubquery). Each Leave(*ast.UnaryOperationExpr)
+	// for Not/Not2 decrements it and, while positive, skips wrapping the (already
+	// consumed) result in another `not` function.
+	consumedNotDepth int
+
 	astNodeStack []ast.Node
 
 	planCtx       *exprRewriterPlanCtx
@@ -684,6 +691,45 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.asScalar = true
 	}
 	return inNode, false
+}
+
+// evenNotFilterDepth reports how many `NOT`/`NOT2` unary operators directly and
+// exclusively wrap the current node (skipping parentheses) between it and the
+// WHERE/HAVING root. It returns (0, false) unless every ancestor up to that root
+// is one of those NOTs or parentheses, and the NOT count is even (net non-negated),
+// so `WHERE NOT NOT ... IN (subq)` is recognized as equivalent in polarity to a bare
+// `WHERE ... IN (subq)`.
+//
+// The even-only restriction keeps this narrowly scoped to the double-negation case:
+// an odd count means the net predicate is genuinely negated, which callers should
+// keep handling through the normal asScalar=true / v.Not machinery rather than this
+// shortcut.
+func (er *expressionRewriter) evenNotFilterDepth(planCtx *exprRewriterPlanCtx) (notDepth int, ok bool) {
+	if planCtx == nil {
+		return 0, false
+	}
+	if planCtx.curClause != whereClause && planCtx.curClause != havingClause {
+		return 0, false
+	}
+	if len(er.astNodeStack) == 0 {
+		return 0, false
+	}
+	for i := len(er.astNodeStack) - 2; i >= 0; i-- {
+		switch n := er.astNodeStack[i].(type) {
+		case *ast.ParenthesesExpr:
+		case *ast.UnaryOperationExpr:
+			if n.Op != opcode.Not && n.Op != opcode.Not2 {
+				return 0, false
+			}
+			notDepth++
+		default:
+			return 0, false
+		}
+	}
+	if notDepth == 0 || notDepth%2 != 0 {
+		return 0, false
+	}
+	return notDepth, true
 }
 
 // canTreatInSubqueryAsExistsForFilter reports whether the IN subquery is in a WHERE/HAVING boolean chain
@@ -1286,6 +1332,25 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	asScalar := er.asScalar
+	// `WHERE NOT NOT x IN (subq)` (and any even-length NOT chain wrapping the IN,
+	// directly under WHERE/HAVING) is polarity-equivalent to a bare `WHERE x IN (subq)`.
+	// Without this, the generic AST-traversal default in Enter forces asScalar=true for
+	// any node under a NOT, which disqualifies the IN from the InnerJoin/SemiJoin filter
+	// rewrite below and forces the much slower LeftOuterSemiJoin-with-marker-column plan
+	// even though the NOTs cancel out. Detect that shape here and consume the wrapping
+	// NOTs so their Leave handlers don't try to re-negate a value that was never pushed.
+	//
+	// notDepthToConsume is kept local (not written to er.consumedNotDepth yet) because
+	// v.Expr.Accept(er) below walks the IN's left operand, which may itself contain NOT
+	// nodes (e.g. `NOT NOT (NOT a) IN (subq)`); arming the counter before that walk would
+	// let the operand's own NOT incorrectly consume one of the outer wrapper NOTs' slots.
+	notDepthToConsume := 0
+	if asScalar {
+		if notDepth, ok := er.evenNotFilterDepth(planCtx); ok {
+			asScalar = false
+			notDepthToConsume = notDepth
+		}
+	}
 	er.asScalar = true
 	v.Expr.Accept(er)
 	if er.err != nil {
@@ -1491,6 +1556,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		col := planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1]
 		er.ctxStackAppend(col, planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1])
 	}
+	// Arm the counter only now that the IN's left operand (and everything else that could
+	// still fail) has been fully rewritten, so it only ever governs the wrapper NOTs found
+	// by evenNotFilterDepth above, never any NOT nested inside v.Expr.
+	er.consumedNotDepth = notDepthToConsume
 	return v, true
 }
 
@@ -2060,6 +2129,13 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 }
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
+	if (v.Op == opcode.Not || v.Op == opcode.Not2) && er.consumedNotDepth > 0 {
+		// This NOT's polarity was already folded into an IN-subquery filter rewrite
+		// by handleInSubquery (see evenNotFilterDepth); no scalar was pushed for it
+		// to negate, so skip wrapping and just let the pass-through continue.
+		er.consumedNotDepth--
+		return
+	}
 	stkLen := len(er.ctxStack)
 	var op string
 	switch v.Op {
