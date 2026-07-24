@@ -18,6 +18,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -94,6 +95,20 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
 		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
 		return predicates, child, err
+	}
+	if agg, ok := p.Children()[0].(*LogicalAggregation); ok {
+		ordinaryPredicates, sensitivePredicates := splitTypeSensitiveProjectionPredicates(p, agg, predicates)
+		if len(sensitivePredicates) > 0 {
+			// Keep type-sensitive HAVING predicates above Projection -> Aggregation
+			// only when a single CNF item still depends on aggregate results after
+			// projection substitution. CNF items that use only grouping columns should
+			// continue through aggregation so they match direct HAVING pushdown.
+			// For example, keep `ifnull(sum(a), 0) > 0` here, but still push a
+			// separate grouping-key predicate like `b > 0`.
+			canBePushed, canNotBePushed := breakDownPredicates(p, ordinaryPredicates)
+			remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
+			return append(append(remained, canNotBePushed...), sensitivePredicates...), child, err
+		}
 	}
 	canBePushed, canNotBePushed := breakDownPredicates(p, predicates)
 	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
@@ -657,6 +672,72 @@ func breakDownPredicates(p *LogicalProjection, predicates []expression.Expressio
 		}
 	}
 	return canBePushed, canNotBePushed
+}
+
+func splitTypeSensitiveProjectionPredicates(p *LogicalProjection, agg *LogicalAggregation, predicates []expression.Expression) (ordinary, sensitive []expression.Expression) {
+	ordinary = make([]expression.Expression, 0, len(predicates))
+	sensitive = make([]expression.Expression, 0, len(predicates))
+	for _, predicate := range predicates {
+		if isTypeSensitiveProjectionPredicate(p, agg, predicate) {
+			sensitive = append(sensitive, predicate)
+			continue
+		}
+		ordinary = append(ordinary, predicate)
+	}
+	return ordinary, sensitive
+}
+
+func isTypeSensitiveProjectionPredicate(p *LogicalProjection, agg *LogicalAggregation, predicate expression.Expression) bool {
+	substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(p.SCtx().GetExprCtx(), predicate, p.Schema(), p.Exprs, true)
+	if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
+		return hasTypeSensitiveAggCNFItem(newFilter, agg)
+	}
+	if hasTypeSensitiveProjectionPredicateExpr(predicate) {
+		return true
+	}
+	for _, col := range expression.ExtractColumns(predicate) {
+		idx := p.Schema().ColumnIndex(col)
+		if idx >= 0 && hasTypeSensitiveProjectionPredicateExpr(p.Exprs[idx]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTypeSensitiveAggCNFItem(predicate expression.Expression, agg *LogicalAggregation) bool {
+	for _, cnfItem := range expression.SplitCNFItems(predicate) {
+		if hasTypeSensitiveProjectionPredicateExpr(cnfItem) && hasRealAggFuncColumn(cnfItem, agg) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRealAggFuncColumn(expr expression.Expression, agg *LogicalAggregation) bool {
+	for _, col := range expression.ExtractColumns(expr) {
+		idx := agg.Schema().ColumnIndex(col)
+		// Aggregation output columns stay aligned with AggFuncs; PruneColumns
+		// deletes schema columns and AggFuncs together to preserve this invariant.
+		// For example, `ifnull(sum(a), 0)` references a real aggregate column,
+		// while an internal `firstrow(b)` for a grouping key should still be
+		// treated as a grouping-column predicate.
+		if idx >= 0 && idx < len(agg.AggFuncs) && agg.AggFuncs[idx].Name != ast.AggFuncFirstRow {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTypeSensitiveProjectionPredicateExpr(expr expression.Expression) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch sf.FuncName.L {
+	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull:
+		return true
+	}
+	return slices.ContainsFunc(sf.GetArgs(), hasTypeSensitiveProjectionPredicateExpr)
 }
 
 // todo: merge with rule_eliminate_projection.go
