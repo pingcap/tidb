@@ -12,28 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreations of TiDB's dependency-leaf utility packages.
+//! Complete transcreation of Go `pkg/util/generic` (`sync_map.go`,
+//! `bounded_min_heap.go`).
 //!
-//! Each public module corresponds to one complete Go package. Modules are
-//! added only when that package's production files, tests, and support
-//! obligations move together.
+//! Go's type-parameterized helpers map directly onto Rust generics. The two
+//! production files become two modules re-exported here so the public surface
+//! (`SyncMap`, `BoundedMinHeap`) mirrors the Go package.
 
-pub mod arena;
-pub mod backoff;
-pub mod bitmap;
-pub mod checksum;
-pub mod disjointset;
-pub mod encrypt;
-pub mod fastrand;
-pub mod generic;
-pub mod intest;
-pub mod israce;
-pub mod layered_io;
-pub mod mathutil;
-pub mod naming;
-pub mod nocopy;
-pub mod size;
-pub mod slice;
-pub mod sqlescape;
-pub mod tikvutil;
-pub mod zeropool;
+mod bounded_min_heap;
+mod sync_map;
+
+pub use bounded_min_heap::BoundedMinHeap;
+pub use sync_map::SyncMap;
