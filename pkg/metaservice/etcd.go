@@ -18,21 +18,185 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const getAllMembersBackoffMs = 5000
 
+// PDClientFactory constructs a PD client for one keyspace-aware etcd dial attempt.
+type PDClientFactory func(
+	ctx context.Context,
+	apiCtx pd.APIContext,
+	callerComponent caller.Component,
+	svrAddrs []string,
+	security pd.SecurityOption,
+	opts ...opt.ClientOption,
+) (pd.Client, error)
+
+var defaultPDClientFactory PDClientFactory = func(
+	ctx context.Context,
+	_ pd.APIContext,
+	callerComponent caller.Component,
+	svrAddrs []string,
+	security pd.SecurityOption,
+	opts ...opt.ClientOption,
+) (pd.Client, error) {
+	return pd.NewClientWithContext(ctx, callerComponent, svrAddrs, security, opts...)
+}
+
 // NewEtcdMetaServiceClient creates a ServiceClient backed by etcd and PD clients.
 // When etcdCli is nil but pdCli is not, it returns a PD-only client that still
-// implements GetPDAddrs and GetPDHttpAddrs.
+// implements GetPDAddrs and GetPDServiceURLs.
 func NewEtcdMetaServiceClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
 	return newClient(etcdCli, pdCli)
+}
+
+type etcdDialInfo struct {
+	endpoints []string
+	namespace string
+}
+
+func resolveEtcdDialInfo(
+	ctx context.Context,
+	pdCli pd.Client,
+	keyspaceMeta *keyspacepb.KeyspaceMeta,
+	callerPDAddrs []string,
+) (etcdDialInfo, error) {
+	pdAddrs := filterEmptyAddrs(callerPDAddrs)
+	if len(pdAddrs) == 0 && usesGlobalMetaServiceGroup(keyspaceMeta) {
+		var err error
+		pdAddrs, err = GetPDAddrs(ctx, pdCli, false)
+		if err != nil {
+			return etcdDialInfo{}, err
+		}
+	}
+
+	info, err := GetInfo(keyspaceMeta, pdAddrs)
+	if err != nil {
+		return etcdDialInfo{}, err
+	}
+
+	dialInfo := etcdDialInfo{endpoints: info.GroupAddrs()}
+	if keyspaceMeta != nil {
+		codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+		if err != nil {
+			return etcdDialInfo{}, err
+		}
+		dialInfo.namespace = keyspace.MakeKeyspaceEtcdNamespace(codec)
+	}
+	return dialInfo, nil
+}
+
+func filterEmptyAddrs(addrs []string) []string {
+	if len(addrs) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr != "" {
+			filtered = append(filtered, addr)
+		}
+	}
+	return filtered
+}
+
+func usesGlobalMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	if keyspaceMeta == nil {
+		return true
+	}
+	_, ok := keyspaceMeta.Config[GroupIDKey]
+	return !ok
+}
+
+// NewEtcdClientFromPDClient resolves the meta service group from an existing PD
+// client and returns a namespaced etcd client. callerPDAddrs are used when the
+// keyspace does not have a dedicated meta service group.
+func NewEtcdClientFromPDClient(
+	ctx context.Context,
+	pdCli pd.Client,
+	keyspaceMeta *keyspacepb.KeyspaceMeta,
+	callerPDAddrs []string,
+	etcdCfg clientv3.Config,
+) (*clientv3.Client, error) {
+	return newEtcdClientFromPDClient(ctx, pdCli, keyspaceMeta, callerPDAddrs, etcdCfg)
+}
+
+// DialEtcdClient resolves the target meta service group and returns a namespaced etcd client.
+func DialEtcdClient(
+	ctx context.Context,
+	keyspaceName string,
+	pdAddrs []string,
+	security pd.SecurityOption,
+	pdClientFactory PDClientFactory,
+	callerComponent caller.Component,
+	pdClientOpts []opt.ClientOption,
+	etcdCfg clientv3.Config,
+) (*clientv3.Client, error) {
+	if pdClientFactory == nil {
+		pdClientFactory = defaultPDClientFactory
+	}
+
+	// DialEtcdClient only needs PD member discovery plus one explicit keyspace
+	// metadata lookup. Use a V1 discovery client here so the direct-etcd path
+	// performs exactly one LoadKeyspace RPC below instead of letting a V2 PD
+	// client load keyspace metadata during initialization and then loading it
+	// again here.
+	// TODO: switch back to reusing keyspace-scoped PD client initialization once
+	// pd.Client exposes the keyspace metadata it already resolved.
+	v1DiscoveryAPICtx := pd.NewAPIContextV1()
+	pdCli, err := pdClientFactory(
+		ctx, v1DiscoveryAPICtx, callerComponent, pdAddrs, security, pdClientOpts...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer pdCli.Close()
+
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	if keyspaceName != "" {
+		keyspaceMeta, err = pdCli.LoadKeyspace(ctx, keyspaceName)
+		if err != nil {
+			return nil, err
+		}
+		if keyspaceMeta == nil {
+			return nil, fmt.Errorf("keyspace meta not found for keyspace %q", keyspaceName)
+		}
+	}
+
+	return newEtcdClientFromPDClient(ctx, pdCli, keyspaceMeta, pdAddrs, etcdCfg)
+}
+
+func newEtcdClientFromPDClient(
+	ctx context.Context,
+	pdCli pd.Client,
+	keyspaceMeta *keyspacepb.KeyspaceMeta,
+	callerPDAddrs []string,
+	etcdCfg clientv3.Config,
+) (*clientv3.Client, error) {
+	dialInfo, err := resolveEtcdDialInfo(ctx, pdCli, keyspaceMeta, callerPDAddrs)
+	if err != nil {
+		return nil, err
+	}
+
+	etcdCfg.Context = ctx
+	etcdCfg.Endpoints = dialInfo.endpoints
+	etcdCli, err := clientv3.New(etcdCfg)
+	if err != nil {
+		return nil, err
+	}
+	if dialInfo.namespace != "" {
+		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.namespace)
+	}
+	return etcdCli, nil
 }
 
 // client is used to implement etcd meta service.
@@ -71,8 +235,12 @@ func (n *client) GetPDAddrs(ctx context.Context) ([]string, error) {
 	return addrs, err
 }
 
-// GetPDAddrs returns the PD addresses from PD client.
-func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]string, error) {
+// GetPDAddrs returns dialable PD endpoints from PD members.
+// For http/https members, it returns host:port unless withScheme is true.
+// For unix-family members, it keeps the scheme because the scheme is required
+// for dialing. Malformed member URLs are skipped, and an error is returned only
+// when no usable PD client URL remains.
+func GetPDAddrs(ctx context.Context, pdClient pd.Client, withScheme bool) ([]string, error) {
 	if pdClient == nil {
 		return nil, errors.New("PD client not found")
 	}
@@ -89,19 +257,12 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 			continue
 		}
 		for _, member := range members.GetMembers() {
-			if len(member.ClientUrls) > 0 {
-				prefix, hostPort, err := ParseURL(member.ClientUrls[0])
+			for _, clientURL := range member.ClientUrls {
+				endpoint, err := util.ParseServiceURL(clientURL)
 				if err != nil {
-					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
+					continue
 				}
-				var pdAddr string
-				if withSchema {
-					pdAddr = prefix + hostPort // http://ip:port
-				} else {
-					pdAddr = hostPort // ip:port
-				}
-
-				pdAddrs = append(pdAddrs, pdAddr)
+				pdAddrs = append(pdAddrs, endpoint.Endpoint(withScheme))
 			}
 		}
 		if len(pdAddrs) == 0 {
@@ -111,36 +272,17 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 	}
 }
 
-// ParseURL parses the given URL to get the host:port.
-func ParseURL(rawURL string) (prefix string, hostPort string, err error) {
-	u, parseErr := url.Parse(rawURL)
-	if parseErr != nil {
-		return "", "", invalidURLHostPortErr()
+// ParseURL parses the given URL to get a dialable endpoint.
+func ParseURL(rawURL string) (prefix string, address string, err error) {
+	endpoint, err := util.ParseServiceURL(rawURL)
+	if err != nil {
+		return "", "", err
 	}
-
-	switch u.Scheme {
-	case "http":
-		prefix = "http://"
-	case "https":
-		prefix = "https://"
-	default:
-		return "", "", fmt.Errorf("invalid URL prefix")
-	}
-
-	host, port, splitErr := net.SplitHostPort(u.Host)
-	if splitErr != nil || host == "" || port == "" {
-		return "", "", invalidURLHostPortErr()
-	}
-
-	return prefix, u.Host, nil
+	return endpoint.SchemePrefix(), endpoint.Address(), nil
 }
 
-func invalidURLHostPortErr() error {
-	return fmt.Errorf("invalid URL format, expect host:port")
-}
-
-// GetPDHttpAddrs is used to get PD http addrs.
-func (n *client) GetPDHttpAddrs(ctx context.Context) ([]string, error) {
+// GetPDServiceURLs returns PD member client URLs with the scheme included.
+func (n *client) GetPDServiceURLs(ctx context.Context) ([]string, error) {
 	addrs, err := GetPDAddrs(ctx, n.pdCli, true)
 	if err != nil {
 		return nil, err

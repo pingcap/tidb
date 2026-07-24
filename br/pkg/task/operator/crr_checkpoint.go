@@ -30,7 +30,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -41,6 +44,8 @@ import (
 type cleanupFunc func()
 
 const etcdGRPCBackOffMaxDelay = 3 * time.Second
+
+var newPDClientWithAPIContext = pd.NewClientWithAPIContext
 
 // NewCRRCheckpointService creates the CRR checkpoint service and its dependent clients.
 func NewCRRCheckpointService(
@@ -270,9 +275,8 @@ func dialEtcdWithCfg(ctx context.Context, cfg task.Config) (*clientv3.Client, er
 	if err != nil {
 		return nil, err
 	}
-	etcdCli, err := clientv3.New(etcdCfg)
-	if err != nil {
-		return nil, err
-	}
-	return etcdCli, nil
+	return metaservice.DialEtcdClient(
+		ctx, cfg.KeyspaceName, cfg.PD, cfg.TLS.ToPDSecurityOption(),
+		newPDClientWithAPIContext, caller.GetComponent(1), nil, etcdCfg,
+	)
 }

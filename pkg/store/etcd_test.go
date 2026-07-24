@@ -15,11 +15,19 @@
 package store
 
 import (
+	"context"
 	"crypto/tls"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type mockEtcdBackend struct {
@@ -27,6 +35,7 @@ type mockEtcdBackend struct {
 	kv.EtcdBackend
 	pdAddrs   []string
 	metaAddrs []string
+	codec     tikv.Codec
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
@@ -40,6 +49,8 @@ func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 func (*mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
 func (*mockEtcdBackend) StartGCWorker() error { return nil }
+
+func (mebd *mockEtcdBackend) GetCodec() tikv.Codec { return mebd.codec }
 
 func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 	etcdStore, addrs, err := GetEtcdAddrs(nil)
@@ -58,4 +69,43 @@ func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 	cli, err := NewEtcdCli(nil)
 	require.NoError(t, err)
 	require.Nil(t, cli)
+}
+
+func TestNewEtcdCliUsesMetaServiceGroupAndNamespace(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	// The store path already selects meta service group addrs; this regression
+	// test locks that behavior in and also checks keyspace namespacing.
+	metaCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer metaCluster.Terminate(t)
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:   42,
+		Name: "ks1",
+		Config: map[string]string{
+			"gc_management_type":      "keyspace_level",
+			metaservice.GroupIDKey:    "group1",
+			metaservice.GroupAddrsKey: strings.Join(metaCluster.Client(0).Endpoints(), ","),
+		},
+	}
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+
+	backend := &mockEtcdBackend{
+		pdAddrs:   []string{"localhost:2379"},
+		metaAddrs: metaCluster.Client(0).Endpoints(),
+		codec:     codec,
+	}
+	cli, err := NewEtcdCli(backend)
+	require.NoError(t, err)
+	defer cli.Close()
+
+	ctx := context.Background()
+	_, err = cli.Put(ctx, "direct-key", "meta-group")
+	require.NoError(t, err)
+
+	// A raw read from the embedded etcd cluster should observe the namespaced key.
+	namespacePrefix := keyspace.MakeKeyspaceEtcdNamespace(codec)
+	metaResp, err := metaCluster.Client(0).Get(ctx, namespacePrefix, clientv3.WithPrefix())
+	require.NoError(t, err)
+	require.Len(t, metaResp.Kvs, 1)
 }

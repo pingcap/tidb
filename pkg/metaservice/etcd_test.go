@@ -20,20 +20,33 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type mockPDClient struct {
 	pd.Client
-	members []*pdpb.Member
+	members             []*pdpb.Member
+	keyspaceMeta        *keyspacepb.KeyspaceMeta
+	loadedKeyspaceNames []string
 }
 
 func (c *mockPDClient) GetAllMembers(context.Context) (*pdpb.GetMembersResponse, error) {
 	return &pdpb.GetMembersResponse{Members: c.members}, nil
 }
+
+func (c *mockPDClient) LoadKeyspace(_ context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
+	c.loadedKeyspaceNames = append(c.loadedKeyspaceNames, name)
+	return c.keyspaceMeta, nil
+}
+
+func (*mockPDClient) Close() {}
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
 // We have to skip some of the test in such case.
@@ -62,13 +75,162 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectAddrs, addrs)
 
-	httpAddrs, err := serviceClient.GetPDHttpAddrs(context.Background())
+	serviceURLs, err := serviceClient.GetPDServiceURLs(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, []string{"http://127.0.0.1:1111"}, httpAddrs)
+	require.Equal(t, []string{"http://127.0.0.1:1111"}, serviceURLs)
+
+	unixPdCli := &mockPDClient{
+		members: []*pdpb.Member{{
+			ClientUrls: []string{"unix://localhost:m0"},
+		}},
+	}
+	unixServiceClient := newClient(nil, unixPdCli)
+
+	unixAddrs, err := unixServiceClient.GetPDAddrs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"unix://localhost:m0"}, unixAddrs)
+
+	unixServiceURLs, err := unixServiceClient.GetPDServiceURLs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"unix://localhost:m0"}, unixServiceURLs)
+
+	t.Run("dedicated meta service group ignores pd member urls", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://127.0.0.1"},
+			}},
+		}
+		keyspaceMeta := &keyspacepb.KeyspaceMeta{
+			Id:   42,
+			Name: "ks1",
+			Config: map[string]string{
+				"gc_management_type": "keyspace_level",
+				GroupIDKey:           "group1",
+				GroupAddrsKey:        "meta-service:2379",
+			},
+		}
+
+		dialInfo, err := resolveEtcdDialInfo(context.Background(), pdCli, keyspaceMeta, nil)
+		require.NoError(t, err)
+		require.Equal(t, []string{"meta-service:2379"}, dialInfo.endpoints)
+		require.NotEmpty(t, dialInfo.namespace)
+	})
+
+	t.Run("global meta service group uses caller provided endpoints", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://127.0.0.1"},
+			}},
+		}
+		keyspaceMeta := &keyspacepb.KeyspaceMeta{
+			Id:     43,
+			Name:   "ks2",
+			Config: map[string]string{"gc_management_type": "keyspace_level"},
+		}
+
+		dialInfo, err := resolveEtcdDialInfo(
+			context.Background(), pdCli, keyspaceMeta, []string{"pd-proxy:2379"},
+		)
+		require.NoError(t, err)
+		require.Equal(t, []string{"pd-proxy:2379"}, dialInfo.endpoints)
+		require.NotEmpty(t, dialInfo.namespace)
+	})
+
+	t.Run("NewEtcdClientFromPDClient keeps caller provided endpoints for global group", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://internal-pd:2379"},
+			}},
+		}
+		keyspaceMeta := &keyspacepb.KeyspaceMeta{
+			Id:     44,
+			Name:   "ks3",
+			Config: map[string]string{"gc_management_type": "keyspace_level"},
+		}
+
+		etcdCli, err := NewEtcdClientFromPDClient(
+			context.Background(), pdCli, keyspaceMeta, []string{"pd-proxy:2379"}, clientv3.Config{},
+		)
+		require.NoError(t, err)
+		defer etcdCli.Close()
+		require.Equal(t, []string{"pd-proxy:2379"}, etcdCli.Endpoints())
+	})
 }
 
 func TestNewClientReturnsNilWithoutClients(t *testing.T) {
 	require.Nil(t, newClient(nil, nil))
+}
+
+func TestDialEtcdClientMissingKeyspaceMetaIncludesKeyspaceName(t *testing.T) {
+	t.Run("custom factory keeps keyspace api context", func(t *testing.T) {
+		pdCli := &mockPDClient{}
+		_, err := DialEtcdClient(
+			context.Background(),
+			"missing-ks",
+			[]string{"127.0.0.1:2379"},
+			pd.SecurityOption{},
+			func(
+				_ context.Context,
+				apiCtx pd.APIContext,
+				_ caller.Component,
+				_ []string,
+				_ pd.SecurityOption,
+				_ ...opt.ClientOption,
+			) (pd.Client, error) {
+				require.Equal(t, pd.V1, apiCtx.GetAPIVersion())
+				require.Empty(t, apiCtx.GetKeyspaceName())
+				return pdCli, nil
+			},
+			caller.Component("test"),
+			nil,
+			clientv3.Config{},
+		)
+		require.Error(t, err)
+		require.EqualError(t, err, `keyspace meta not found for keyspace "missing-ks"`)
+		require.Equal(t, []string{"missing-ks"}, pdCli.loadedKeyspaceNames)
+	})
+
+	t.Run("default factory loads keyspace once with v1 pd client", func(t *testing.T) {
+		oldFactory := defaultPDClientFactory
+		t.Cleanup(func() {
+			defaultPDClientFactory = oldFactory
+		})
+
+		pdCli := &mockPDClient{
+			keyspaceMeta: &keyspacepb.KeyspaceMeta{
+				Id:     47,
+				Name:   "ks-default",
+				Config: map[string]string{"gc_management_type": "keyspace_level"},
+			},
+		}
+		defaultPDClientFactory = func(
+			_ context.Context,
+			apiCtx pd.APIContext,
+			_ caller.Component,
+			_ []string,
+			_ pd.SecurityOption,
+			_ ...opt.ClientOption,
+		) (pd.Client, error) {
+			require.Equal(t, pd.V1, apiCtx.GetAPIVersion())
+			require.Empty(t, apiCtx.GetKeyspaceName())
+			return pdCli, nil
+		}
+
+		etcdCli, err := DialEtcdClient(
+			context.Background(),
+			"ks-default",
+			[]string{"pd-proxy:2379"},
+			pd.SecurityOption{},
+			nil,
+			caller.Component("test"),
+			nil,
+			clientv3.Config{},
+		)
+		require.NoError(t, err)
+		defer etcdCli.Close()
+		require.Equal(t, []string{"ks-default"}, pdCli.loadedKeyspaceNames)
+		require.Equal(t, []string{"pd-proxy:2379"}, etcdCli.Endpoints())
+	})
 }
 
 // TestGetPDAddrsWithRealClient tests the GetPDAddrs method with a real etcd client
@@ -109,15 +271,28 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 		require.Nil(t, addrs)
 		require.EqualError(t, err, "no usable PD client URL found in PD members")
 	})
+
+	t.Run("malformed client urls are skipped when usable ones remain", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{
+				{ClientUrls: []string{"http://127.0.0.1", "http://127.0.0.1:1111"}},
+			},
+		}
+
+		serviceClient := newClient(etcdCli, pdCli)
+		addrs, err := serviceClient.GetPDAddrs(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []string{"127.0.0.1:1111"}, addrs)
+	})
 }
 
 // TestParseURL tests the ParseURL function with various inputs.
 func TestParseURL(t *testing.T) {
 	tests := []struct {
-		rawURL   string
-		prefix   string
-		hostPort string
-		err      bool
+		rawURL  string
+		prefix  string
+		address string
+		err     bool
 	}{
 		// Successful test cases
 		{"http://example.com:8080", "http://", "example.com:8080", false},
@@ -126,9 +301,10 @@ func TestParseURL(t *testing.T) {
 		{"https://[2001:db8::1]:443", "https://", "[2001:db8::1]:443", false},
 
 		// Unsuccessful test cases
-		{"ftp://example.com", "ftp://", "", true},              // Invalid prefix
-		{"unix://localhost:m0", "unix://", "", true},           // Unix schema is unsupported
-		{"unix://localhost", "unix://", "", true},              // Unix schema is unsupported
+		{"ftp://example.com", "ftp://", "", true}, // Invalid prefix
+		{"unix://localhost:m0", "unix://", "localhost:m0", false},
+		{"unix:///tmp/etcd.sock", "unix://", "/tmp/etcd.sock", false},
+		{"unix://", "unix://", "", true},
 		{"http://example.com:8080:extra", "http://", "", true}, // Extra part after port
 		{"https://:8080", "https://", "", true},                // Missing host
 		{"http://", "http://", "", true},                       // Incomplete URL
@@ -140,17 +316,17 @@ func TestParseURL(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		prefix, hostPort, err := ParseURL(test.rawURL)
+		prefix, address, err := ParseURL(test.rawURL)
 
 		// Check if the error status matches the expectation
 		if test.err {
 			require.Error(t, err, "Expected an error for input: "+test.rawURL)
 			require.Empty(t, prefix, "Expected an error for input: "+test.rawURL)
-			require.Empty(t, hostPort, "hostPort should be empty for input: "+test.rawURL)
+			require.Empty(t, address, "address should be empty for input: "+test.rawURL)
 		} else {
 			require.NoError(t, err, "Did not expect an error for input: "+test.rawURL)
 			require.Equal(t, test.prefix, prefix, "prefix mismatch for input: "+test.rawURL)
-			require.Equal(t, test.hostPort, hostPort, "hostPort mismatch for input: "+test.rawURL)
+			require.Equal(t, test.address, address, "address mismatch for input: "+test.rawURL)
 		}
 	}
 }

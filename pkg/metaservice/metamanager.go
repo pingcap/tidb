@@ -184,8 +184,8 @@ func GetInfoAndGroupAddrs(ctx context.Context, pdClient pd.Client, keyspaceMeta 
 
 // ServiceClient is used to request meta service.
 type ServiceClient interface {
-	// GetPDAddrs is used to get pd addrs(host:port).
+	// GetPDAddrs is used to get dialable PD endpoints.
 	GetPDAddrs(ctx context.Context) ([]string, error)
-	// GetPDHttpAddrs is used to get PD http addrs.
-	GetPDHttpAddrs(ctx context.Context) ([]string, error)
+	// GetPDServiceURLs is used to get PD service URLs.
+	GetPDServiceURLs(ctx context.Context) ([]string, error)
 }
