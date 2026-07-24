@@ -17,10 +17,8 @@ package autoid
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"runtime"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,9 +83,7 @@ func startScriptedAutoIDServer(t *testing.T, service *scriptedAutoIDServer) stri
 	go func() {
 		_ = server.Serve(listener)
 	}()
-	t.Cleanup(func() {
-		server.Stop()
-	})
+	t.Cleanup(server.Stop)
 	return listener.Addr().String()
 }
 
@@ -104,29 +100,17 @@ func newAutoIDTestEtcdClient(t *testing.T) *clientv3.Client {
 	return cluster.RandClient()
 }
 
-func putAutoIDLeader(t *testing.T, cli *clientv3.Client, candidate, address string) autoIDLeaderSnapshot {
+func putAutoIDServiceEndpoint(t *testing.T, cli *clientv3.Client, address string) {
 	t.Helper()
-	key := AutoIDLeaderPath + "/" + candidate
-	_, err := cli.Put(context.Background(), key, address)
+	_, err := cli.Put(autoIDTestContext(t), AutoIDLeaderPath+"/candidate", address)
 	require.NoError(t, err)
-	resp, err := cli.Get(context.Background(), key)
-	require.NoError(t, err)
-	require.Len(t, resp.Kvs, 1)
-	return autoIDLeaderSnapshot{
-		address:        address,
-		electionKey:    key,
-		createRevision: resp.Kvs[0].CreateRevision,
-	}
 }
 
-func replaceAutoIDLeader(cli *clientv3.Client, candidate, address string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := cli.Delete(ctx, AutoIDLeaderPath+"/", clientv3.WithPrefix()); err != nil {
-		return err
-	}
-	_, err := cli.Put(ctx, AutoIDLeaderPath+"/"+candidate, address)
-	return err
+func autoIDTestContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 func observeAutoIDLogs(t *testing.T) *observer.ObservedLogs {
@@ -140,16 +124,16 @@ func observeAutoIDLogs(t *testing.T) *observer.ObservedLogs {
 	return logs
 }
 
-func newNotLeaderTestAllocator(t *testing.T, etcdCli *clientv3.Client) *singlePointAlloc {
+func newRPCRetryTestAllocator(t *testing.T, etcdCli *clientv3.Client) *singlePointAlloc {
 	t.Helper()
 	allocator := &singlePointAlloc{
 		dbID:           11,
 		tblID:          22,
 		ClientDiscover: NewClientDiscover(etcdCli),
 		keyspaceID:     uint32(tikv.NullspaceID),
-		notLeaderPolicy: notLeaderRetryPolicy{
-			minConsecutive: 3,
-			minDuration:    0,
+		rpcRetryPolicy: autoIDRPCRetryPolicy{
+			minErrors:   3,
+			minDuration: 0,
 		},
 	}
 	t.Cleanup(func() {
@@ -293,629 +277,185 @@ func TestBackoffCtxAware(t *testing.T) {
 	_ = err
 }
 
-// TestAutoIDNotLeaderHelpers covers the narrow error classifier, request-local
-// count-and-duration policy, and terminal decision without real retry delays.
-func TestAutoIDNotLeaderHelpers(t *testing.T) {
+func TestAutoIDRPCRetryPolicy(t *testing.T) {
 	t.Run("production default", func(t *testing.T) {
-		policy := (&singlePointAlloc{}).effectiveNotLeaderPolicy()
-		require.Equal(t, 10, policy.minConsecutive)
+		policy := (&singlePointAlloc{}).effectiveRPCRetryPolicy()
+		require.Equal(t, 10, policy.minErrors)
 		require.Equal(t, 15*time.Second, policy.minDuration)
 	})
 
-	t.Run("handler converts revalidation failure", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
-		etcdCli, err := clientv3.New(clientv3.Config{
-			Endpoints:          []string{"127.0.0.1:1"},
-			MaxUnaryRetries:    1,
-			BackoffWaitBetween: time.Millisecond,
-			Logger:             zap.NewNop(),
-		})
-		require.NoError(t, err)
-		require.NoError(t, etcdCli.Close())
-
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
-		allocator.notLeaderPolicy.minConsecutive = 1
-		leader := autoIDLeaderSnapshot{
-			address:        "127.0.0.1:10080",
-			electionKey:    "leader/1",
-			createRevision: 10,
-		}
-		var state notLeaderRetryState
-		requestLog := newAutoIDRequestLogState("alloc", allocator.keyspaceID, allocator.dbID, allocator.tblID, time.Now())
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-
-		handled, retryImmediately, terminalErr := allocator.handleNotLeaderError(
-			ctx, "alloc", 0, leader, status.Error(codes.Unknown, "not leader"), &state, &requestLog,
-		)
-		require.NoError(t, ctx.Err())
-		require.True(t, handled)
-		require.False(t, retryImmediately)
-		require.True(t, ErrAutoincReadFailed.Equal(terminalErr))
-		require.True(t, IsNotLeaderFastFailError(terminalErr))
-		require.Regexp(t, `could not be revalidated: .+; check etcd connectivity`, terminalErr.Error())
-		require.Contains(t, terminalErr.Error(), autoIDNotLeaderAction)
-		requestLog.complete(terminalErr)
-
-		starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-		terminals := logs.FilterMessage("autoid request stopped after repeated not leader responses").All()
-		require.Len(t, starts, 1)
-		require.Len(t, terminals, 1)
-		require.Equal(t, starts[0].ContextMap()["autoid-request-id"], terminals[0].ContextMap()["autoid-request-id"])
-		require.Equal(t, "fast-failed", terminals[0].ContextMap()["outcome"])
-		require.Contains(t, terminals[0].ContextMap()["error"], "could not be revalidated")
-		require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
-	})
-
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{name: "exact status", err: status.Error(codes.Unknown, "not leader"), want: true},
-		{name: "wrapped exact status", err: fmt.Errorf("wrapped: %w", status.Error(codes.Unknown, "not leader"))},
-		{name: "unavailable", err: status.Error(codes.Unavailable, "not leader")},
-		{name: "message suffix", err: status.Error(codes.Unknown, "not leader: retry")},
-		{name: "canceled", err: status.Error(codes.Canceled, "not leader")},
-		{name: "plain error", err: errors.New("not leader")},
-		{name: "nil"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, isAutoIDNotLeaderError(test.err))
-		})
-	}
-
-	policy := notLeaderRetryPolicy{minConsecutive: 3, minDuration: 2 * time.Second}
+	policy := autoIDRPCRetryPolicy{minErrors: 3, minDuration: 2 * time.Second}
 	start := time.Unix(100, 0)
-	leader := autoIDLeaderSnapshot{address: "127.0.0.1:10080", electionKey: "leader/1", createRevision: 10}
-	var state notLeaderRetryState
+	var state autoIDRPCRetryState
 
-	require.False(t, state.observe(leader, start, policy))
-	require.False(t, state.observe(leader, start.Add(time.Second), policy))
-	require.True(t, state.observe(leader, start.Add(2*time.Second), policy))
-	require.Equal(t, 3, state.count)
-	require.Equal(t, start, state.firstSeen)
+	require.False(t, state.observe(start, policy))
+	require.False(t, state.observe(start.Add(time.Second), policy))
+	require.True(t, state.observe(start.Add(2*time.Second), policy))
+	require.Equal(t, 3, state.errorCount)
+	require.Equal(t, start, state.firstError)
 
 	t.Run("count and duration use AND semantics", func(t *testing.T) {
-		var countOnly notLeaderRetryState
-		require.False(t, countOnly.observe(leader, start, policy))
-		require.False(t, countOnly.observe(leader, start, policy))
-		require.False(t, countOnly.observe(leader, start, policy))
+		var countOnly autoIDRPCRetryState
+		require.False(t, countOnly.observe(start, policy))
+		require.False(t, countOnly.observe(start, policy))
+		require.False(t, countOnly.observe(start, policy))
 
-		var durationOnly notLeaderRetryState
-		require.False(t, durationOnly.observe(leader, start, policy))
-		require.False(t, durationOnly.observe(leader, start.Add(3*time.Second), policy))
+		var durationOnly autoIDRPCRetryState
+		require.False(t, durationOnly.observe(start, policy))
+		require.False(t, durationOnly.observe(start.Add(3*time.Second), policy))
 	})
-
-	t.Run("leader generation changes restart the sequence", func(t *testing.T) {
-		changes := []autoIDLeaderSnapshot{
-			{address: "127.0.0.2:10080", electionKey: leader.electionKey, createRevision: leader.createRevision},
-			{address: leader.address, electionKey: "leader/2", createRevision: leader.createRevision},
-			{address: leader.address, electionKey: leader.electionKey, createRevision: leader.createRevision + 1},
-		}
-		for _, changed := range changes {
-			var current notLeaderRetryState
-			require.False(t, current.observe(leader, start, policy))
-			require.False(t, current.observe(leader, start.Add(time.Second), policy))
-			require.False(t, current.observe(changed, start.Add(3*time.Second), policy))
-			require.Equal(t, 1, current.count)
-			require.Equal(t, changed, current.leader)
-			require.Equal(t, start.Add(3*time.Second), current.firstSeen)
-		}
-	})
-
-	state.reset()
-	require.Zero(t, state.count)
-	require.True(t, state.firstSeen.IsZero())
-	require.Equal(t, autoIDLeaderSnapshot{}, state.leader)
 }
 
-// TestAutoIDLeaderSnapshotCache verifies that a cached client, its election
-// metadata, and its local generation are read and reset as one unit.
-func TestAutoIDLeaderSnapshotCache(t *testing.T) {
-	discover := &ClientDiscover{}
-	firstClient := &mockAutoIDClient{}
-	firstLeader := autoIDLeaderSnapshot{address: "127.0.0.1:10080", electionKey: "leader/1", createRevision: 10}
-	discover.mu.AutoIDAllocClient = firstClient
-	discover.mu.leaderSnapshot = firstLeader
-	discover.mu.version = 7
-
-	client, version, leader, err := discover.getClientWithLeader(context.Background(), 0)
-	require.NoError(t, err)
-	require.Same(t, firstClient, client)
-	require.Equal(t, uint64(7), version)
-	require.Equal(t, firstLeader, leader)
-
-	discover.resetConn(6, nil)
-	client, version, leader, err = discover.getClientWithLeader(context.Background(), 0)
-	require.NoError(t, err)
-	require.Same(t, firstClient, client)
-	require.Equal(t, uint64(7), version)
-	require.Equal(t, firstLeader, leader)
-
-	var resets sync.WaitGroup
-	resets.Add(2)
-	go func() {
-		defer resets.Done()
-		discover.resetConn(7, nil)
-	}()
-	go func() {
-		defer resets.Done()
-		discover.resetConn(7, nil)
-	}()
-	resets.Wait()
-
-	discover.mu.RLock()
-	require.Nil(t, discover.mu.AutoIDAllocClient)
-	require.Equal(t, autoIDLeaderSnapshot{}, discover.mu.leaderSnapshot)
-	require.Equal(t, uint64(8), discover.mu.version)
-	discover.mu.RUnlock()
-
-	secondClient := &mockAutoIDClient{}
-	secondLeader := autoIDLeaderSnapshot{address: "127.0.0.2:10080", electionKey: "leader/2", createRevision: 20}
-	discover.mu.Lock()
-	discover.mu.AutoIDAllocClient = secondClient
-	discover.mu.leaderSnapshot = secondLeader
-	discover.mu.Unlock()
-	discover.resetConn(7, nil)
-
-	client, version, leader, err = discover.getClientWithLeader(context.Background(), 0)
-	require.NoError(t, err)
-	require.Same(t, secondClient, client)
-	require.Equal(t, uint64(8), version)
-	require.Equal(t, secondLeader, leader)
-
-	discover.ResetConn(nil)
-	discover.mu.RLock()
-	require.Nil(t, discover.mu.AutoIDAllocClient)
-	require.Equal(t, autoIDLeaderSnapshot{}, discover.mu.leaderSnapshot)
-	require.Equal(t, uint64(9), discover.mu.version)
-	discover.mu.RUnlock()
-}
-
-// TestAutoIDNotLeaderRetry exercises the request-local fast-fail boundary,
-// leader-generation revalidation, existing retry behavior, and bounded logs.
-func TestAutoIDNotLeaderRetry(t *testing.T) {
-	notLeader := status.Error(codes.Unknown, "not leader")
-
-	t.Run("persistent response fast-fails alloc and rebase", func(t *testing.T) {
-		for _, operation := range []string{"alloc", "rebase"} {
-			t.Run(operation, func(t *testing.T) {
-				logs := observeAutoIDLogs(t)
-				etcdCli := newAutoIDTestEtcdClient(t)
-				service := &scriptedAutoIDServer{
-					alloc:  func(int64) (*autoid.AutoIDResponse, error) { return nil, notLeader },
-					rebase: func(int64) (*autoid.RebaseResponse, error) { return nil, notLeader },
-				}
-				address := startScriptedAutoIDServer(t, service)
-				putAutoIDLeader(t, etcdCli, "candidate-1", address)
-				allocator := newNotLeaderTestAllocator(t, etcdCli)
-
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				err := runAutoIDTestOperation(ctx, operation, allocator)
-				require.Error(t, err)
-				require.False(t, errors.Is(err, context.DeadlineExceeded))
-				require.True(t, ErrAutoincReadFailed.Equal(err))
-				require.True(t, IsNotLeaderFastFailError(err))
-				require.True(t, IsNotLeaderFastFailError(fmt.Errorf("wrapped: %w", err)))
-				require.Contains(t, fmt.Sprintf("%+v", err), "repeatedNotLeaderError")
-				require.Equal(t, int64(3), autoIDOperationCallCount(operation, service))
-				require.Contains(t, err.Error(), "autoid "+operation+" failed after 3 consecutive")
-				require.Contains(t, err.Error(), `"not leader"`)
-				require.Contains(t, err.Error(), " over ")
-				require.Contains(t, err.Error(), address)
-				require.Contains(t, err.Error(), fmt.Sprintf("keyspace_id=%d, db_id=11, table_id=22", allocator.keyspaceID))
-				require.Contains(t, err.Error(), autoIDNotLeaderAction)
-
-				starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-				terminals := logs.FilterMessage("autoid request stopped after repeated not leader responses").All()
-				require.Len(t, starts, 1)
-				require.Len(t, terminals, 1)
-				require.Equal(t, starts[0].ContextMap()["autoid-request-id"], terminals[0].ContextMap()["autoid-request-id"])
-				require.Equal(t, zap.WarnLevel, terminals[0].Level)
-				terminalFields := terminals[0].ContextMap()
-				require.Equal(t, operation, terminalFields["operation"])
-				require.Equal(t, allocator.keyspaceID, terminalFields["keyspace-id"])
-				require.Equal(t, int64(11), terminalFields["db-id"])
-				require.Equal(t, int64(22), terminalFields["table-id"])
-				require.Equal(t, address, terminalFields["leader-address"])
-				require.IsType(t, time.Duration(0), terminalFields["request-elapsed"])
-				require.IsType(t, time.Duration(0), terminalFields["not-leader-elapsed"])
-				require.Equal(t, int64(3), terminalFields["consecutive-not-leader-count"])
-				require.Equal(t, "fast-failed", terminalFields["outcome"])
-				require.Equal(t, autoIDNotLeaderAction, terminalFields["action"])
-				require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
-			})
-		}
-	})
-
-	t.Run("nonzero duration gates alloc and rebase", func(t *testing.T) {
-		const minDuration = 300 * time.Millisecond
-		for _, operation := range []string{"alloc", "rebase"} {
-			t.Run(operation, func(t *testing.T) {
-				etcdCli := newAutoIDTestEtcdClient(t)
-				service := &scriptedAutoIDServer{
-					alloc:  func(int64) (*autoid.AutoIDResponse, error) { return nil, notLeader },
-					rebase: func(int64) (*autoid.RebaseResponse, error) { return nil, notLeader },
-				}
-				address := startScriptedAutoIDServer(t, service)
-				putAutoIDLeader(t, etcdCli, "candidate-1", address)
-				allocator := newNotLeaderTestAllocator(t, etcdCli)
-				allocator.notLeaderPolicy.minDuration = minDuration
-
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				start := time.Now()
-				err := runAutoIDTestOperation(ctx, operation, allocator)
-				elapsed := time.Since(start)
-				require.True(t, IsNotLeaderFastFailError(err))
-				require.GreaterOrEqual(t, elapsed, minDuration)
-			})
-		}
-	})
-
-	t.Run("transient responses recover before threshold", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
-		etcdCli := newAutoIDTestEtcdClient(t)
-		service := &scriptedAutoIDServer{
-			alloc: func(call int64) (*autoid.AutoIDResponse, error) {
-				if call < 3 {
-					return nil, notLeader
-				}
-				return successfulAutoIDResponse()
+func TestAutoIDRPCRetry(t *testing.T) {
+	t.Run("reaches the common limit", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			operation string
+			rpcErrors []error
+		}{
+			{
+				name:      "alloc repeated original RPC error",
+				operation: "alloc",
+				rpcErrors: []error{
+					status.Error(codes.Unknown, "not leader"),
+					status.Error(codes.Unknown, "not leader"),
+					status.Error(codes.Unknown, "not leader"),
+				},
+			},
+			{
+				name:      "rebase mixed RPC errors",
+				operation: "rebase",
+				rpcErrors: []error{
+					status.Error(codes.Unknown, "not leader"),
+					status.Error(codes.Unavailable, "temporary connection failure"),
+					status.Error(codes.Internal, "final retry failure at 100%"),
+				},
 			},
 		}
-		address := startScriptedAutoIDServer(t, service)
-		putAutoIDLeader(t, etcdCli, "candidate-1", address)
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		minID, maxID, err := allocator.Alloc(ctx, 1, 1, 1)
-		require.NoError(t, err)
-		require.Equal(t, int64(100), minID)
-		require.Equal(t, int64(101), maxID)
-		require.Equal(t, int64(3), service.allocCallCount.Load())
-		starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-		require.Len(t, starts, 1)
-		completions := logs.FilterMessage("autoid request completed after not-leader retry").All()
-		require.Len(t, completions, 1)
-		require.Equal(t, starts[0].ContextMap()["autoid-request-id"], completions[0].ContextMap()["autoid-request-id"])
-		require.Equal(t, "recovered", completions[0].ContextMap()["outcome"])
-		require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
-	})
-
-	t.Run("leader change before threshold records the final address", func(t *testing.T) {
-		for _, operation := range []string{"alloc", "rebase"} {
-			t.Run(operation, func(t *testing.T) {
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
 				logs := observeAutoIDLogs(t)
 				etcdCli := newAutoIDTestEtcdClient(t)
-				serving := &scriptedAutoIDServer{
+				service := &scriptedAutoIDServer{
 					alloc:  func(int64) (*autoid.AutoIDResponse, error) { return successfulAutoIDResponse() },
 					rebase: func(int64) (*autoid.RebaseResponse, error) { return successfulRebaseResponse() },
 				}
-				servingAddress := startScriptedAutoIDServer(t, serving)
-				stale := &scriptedAutoIDServer{
-					alloc: func(int64) (*autoid.AutoIDResponse, error) {
-						if err := replaceAutoIDLeader(etcdCli, "candidate-2", servingAddress); err != nil {
-							return nil, err
-						}
-						return nil, notLeader
-					},
-					rebase: func(int64) (*autoid.RebaseResponse, error) {
-						if err := replaceAutoIDLeader(etcdCli, "candidate-2", servingAddress); err != nil {
-							return nil, err
-						}
-						return nil, notLeader
-					},
+				nextError := func(call int64) error {
+					return test.rpcErrors[call-1]
 				}
-				staleAddress := startScriptedAutoIDServer(t, stale)
-				putAutoIDLeader(t, etcdCli, "candidate-1", staleAddress)
-				allocator := newNotLeaderTestAllocator(t, etcdCli)
-
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				err := runAutoIDTestOperation(ctx, operation, allocator)
-				require.NoError(t, err)
-				require.Equal(t, int64(1), autoIDOperationCallCount(operation, stale))
-				require.Equal(t, int64(1), autoIDOperationCallCount(operation, serving))
-				require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
-
-				starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-				completions := logs.FilterMessage("autoid request completed after not-leader retry").All()
-				require.Len(t, starts, 1)
-				require.Len(t, completions, 1)
-				require.Equal(t, starts[0].ContextMap()["autoid-request-id"], completions[0].ContextMap()["autoid-request-id"])
-				require.Equal(t, staleAddress, starts[0].ContextMap()["leader-address"])
-				require.Equal(t, servingAddress, completions[0].ContextMap()["leader-address"])
-				require.Equal(t, "recovered", completions[0].ContextMap()["outcome"])
-			})
-		}
-	})
-
-	t.Run("terminal revalidation follows a new leader address", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
-		etcdCli := newAutoIDTestEtcdClient(t)
-		serving := &scriptedAutoIDServer{alloc: func(int64) (*autoid.AutoIDResponse, error) {
-			return successfulAutoIDResponse()
-		}}
-		servingAddress := startScriptedAutoIDServer(t, serving)
-		stale := &scriptedAutoIDServer{}
-		stale.alloc = func(call int64) (*autoid.AutoIDResponse, error) {
-			if call == 3 {
-				if err := replaceAutoIDLeader(etcdCli, "candidate-2", servingAddress); err != nil {
-					return nil, err
+				if test.operation == "alloc" {
+					service.alloc = func(call int64) (*autoid.AutoIDResponse, error) {
+						return nil, nextError(call)
+					}
+				} else {
+					service.rebase = func(call int64) (*autoid.RebaseResponse, error) {
+						return nil, nextError(call)
+					}
 				}
-			}
-			return nil, notLeader
-		}
-		staleAddress := startScriptedAutoIDServer(t, stale)
-		putAutoIDLeader(t, etcdCli, "candidate-1", staleAddress)
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _, err := allocator.Alloc(ctx, 1, 1, 1)
-		require.NoError(t, err)
-		require.Equal(t, int64(3), stale.allocCallCount.Load())
-		require.Equal(t, int64(1), serving.allocCallCount.Load())
-		require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
-		completions := logs.FilterMessage("autoid request completed after not-leader retry").All()
-		require.Len(t, completions, 1)
-		require.Equal(t, servingAddress, completions[0].ContextMap()["leader-address"])
-	})
-
-	t.Run("same address with a new campaign gets a fresh attempt", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
-		etcdCli := newAutoIDTestEtcdClient(t)
-		service := &scriptedAutoIDServer{}
-		address := startScriptedAutoIDServer(t, service)
-		service.alloc = func(call int64) (*autoid.AutoIDResponse, error) {
-			if call == 3 {
-				if err := replaceAutoIDLeader(etcdCli, "candidate-1", address); err != nil {
-					return nil, err
-				}
-			}
-			if call <= 3 {
-				return nil, notLeader
-			}
-			return successfulAutoIDResponse()
-		}
-		first := putAutoIDLeader(t, etcdCli, "candidate-1", address)
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _, err := allocator.Alloc(ctx, 1, 1, 1)
-		require.NoError(t, err)
-		require.Equal(t, int64(4), service.allocCallCount.Load())
-		_, _, current, err := allocator.getClientWithLeader(ctx, allocator.keyspaceID)
-		require.NoError(t, err)
-		require.Equal(t, first.address, current.address)
-		require.Equal(t, first.electionKey, current.electionKey)
-		require.NotEqual(t, first.createRevision, current.createRevision)
-		require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
-		require.Len(t, logs.FilterMessage("autoid request completed after not-leader retry").All(), 1)
-	})
-
-	t.Run("an unrelated rpc error breaks the consecutive sequence", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
-		etcdCli := newAutoIDTestEtcdClient(t)
-		service := &scriptedAutoIDServer{
-			alloc: func(call int64) (*autoid.AutoIDResponse, error) {
-				switch call {
-				case 1, 2, 4, 5:
-					return nil, notLeader
-				case 3:
-					return nil, status.Error(codes.Unavailable, "temporary transport failure")
-				default:
-					return successfulAutoIDResponse()
-				}
-			},
-		}
-		address := startScriptedAutoIDServer(t, service)
-		putAutoIDLeader(t, etcdCli, "candidate-1", address)
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _, err := allocator.Alloc(ctx, 1, 1, 1)
-		require.NoError(t, err)
-		require.Equal(t, int64(6), service.allocCallCount.Load())
-		require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
-		starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-		completions := logs.FilterMessage("autoid request completed after not-leader retry").All()
-		require.Len(t, starts, 1)
-		require.Len(t, completions, 1)
-		require.Equal(t, int64(4), completions[0].ContextMap()["not-leader-count"])
-		require.Equal(t, "recovered", completions[0].ContextMap()["outcome"])
-	})
-
-	t.Run("response errmsg keeps its existing return path", func(t *testing.T) {
-		for _, operation := range []string{"alloc", "rebase"} {
-			t.Run(operation, func(t *testing.T) {
-				logs := observeAutoIDLogs(t)
-				etcdCli := newAutoIDTestEtcdClient(t)
-				service := &scriptedAutoIDServer{
-					alloc: func(int64) (*autoid.AutoIDResponse, error) {
-						return &autoid.AutoIDResponse{Errmsg: []byte("not leader")}, nil
-					},
-					rebase: func(int64) (*autoid.RebaseResponse, error) {
-						return &autoid.RebaseResponse{Errmsg: []byte("not leader")}, nil
-					},
-				}
 				address := startScriptedAutoIDServer(t, service)
-				putAutoIDLeader(t, etcdCli, "candidate-1", address)
-				allocator := newNotLeaderTestAllocator(t, etcdCli)
+				putAutoIDServiceEndpoint(t, etcdCli, address)
+				allocator := newRPCRetryTestAllocator(t, etcdCli)
 
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				err := runAutoIDTestOperation(ctx, operation, allocator)
-				require.EqualError(t, err, "not leader")
-				require.Equal(t, int64(1), autoIDOperationCallCount(operation, service))
-				require.Empty(t, logs.FilterMessage("autoid request entered not-leader retry").All())
-				require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
-				require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
+				err := runAutoIDTestOperation(autoIDTestContext(t), test.operation, allocator)
+				require.Error(t, err)
+				require.True(t, ErrAutoincReadFailed.Equal(err))
+				require.True(t, IsRPCRetryLimitError(err))
+				require.Contains(t, err.Error(), "3 RPC errors")
+				require.Contains(t, err.Error(), test.rpcErrors[2].Error())
+				require.Contains(t, err.Error(), autoIDRPCRetryAction)
+				require.Equal(t, int64(3), autoIDOperationCallCount(test.operation, service))
+
+				starts := logs.FilterMessage("autoid request entered RPC retry").All()
+				terminals := logs.FilterMessage("autoid request stopped after reaching RPC retry limit").All()
+				require.Len(t, starts, 1)
+				require.Len(t, terminals, 1)
+				require.Equal(t, starts[0].ContextMap()["autoid-request-id"], terminals[0].ContextMap()["autoid-request-id"])
+				require.Equal(t, test.operation, terminals[0].ContextMap()["operation"])
+				require.Equal(t, int64(3), terminals[0].ContextMap()["rpc-error-count"])
+				require.Equal(t, "fast-failed", terminals[0].ContextMap()["outcome"])
+				require.Empty(t, logs.FilterMessage("autoid request completed after RPC retry").All())
 			})
 		}
 	})
 
-	t.Run("response errmsg after not leader completes as failed", func(t *testing.T) {
+	t.Run("recovers before the limit", func(t *testing.T) {
 		for _, operation := range []string{"alloc", "rebase"} {
 			t.Run(operation, func(t *testing.T) {
 				logs := observeAutoIDLogs(t)
 				etcdCli := newAutoIDTestEtcdClient(t)
+				retryErr := status.Error(codes.Unavailable, "temporary connection failure")
 				service := &scriptedAutoIDServer{
 					alloc: func(call int64) (*autoid.AutoIDResponse, error) {
-						if call == 1 {
-							return nil, notLeader
+						if call < 3 {
+							return nil, retryErr
 						}
-						return &autoid.AutoIDResponse{Errmsg: []byte("service rejected request")}, nil
+						return successfulAutoIDResponse()
 					},
 					rebase: func(call int64) (*autoid.RebaseResponse, error) {
-						if call == 1 {
-							return nil, notLeader
+						if call < 3 {
+							return nil, retryErr
 						}
-						return &autoid.RebaseResponse{Errmsg: []byte("service rejected request")}, nil
+						return successfulRebaseResponse()
 					},
 				}
+
 				address := startScriptedAutoIDServer(t, service)
-				putAutoIDLeader(t, etcdCli, "candidate-1", address)
-				allocator := newNotLeaderTestAllocator(t, etcdCli)
+				putAutoIDServiceEndpoint(t, etcdCli, address)
+				allocator := newRPCRetryTestAllocator(t, etcdCli)
 
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				err := runAutoIDTestOperation(ctx, operation, allocator)
-				require.EqualError(t, err, "service rejected request")
-				require.Equal(t, int64(2), autoIDOperationCallCount(operation, service))
-				require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
-
-				starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-				completions := logs.FilterMessage("autoid request completed after not-leader retry").All()
-				require.Len(t, starts, 1)
-				require.Len(t, completions, 1)
-				require.Equal(t, starts[0].ContextMap()["autoid-request-id"], completions[0].ContextMap()["autoid-request-id"])
-				require.Equal(t, "failed", completions[0].ContextMap()["outcome"])
-			})
-		}
-	})
-
-	t.Run("context cancellation wins at the threshold boundary", func(t *testing.T) {
-		for _, operation := range []string{"alloc", "rebase"} {
-			t.Run(operation, func(t *testing.T) {
-				logs := observeAutoIDLogs(t)
-				etcdCli := newAutoIDTestEtcdClient(t)
-				ctx, cancel := context.WithCancel(context.Background())
-				service := &scriptedAutoIDServer{
-					alloc: func(call int64) (*autoid.AutoIDResponse, error) {
-						if call == 3 {
-							cancel()
-						}
-						return nil, notLeader
-					},
-					rebase: func(call int64) (*autoid.RebaseResponse, error) {
-						if call == 3 {
-							cancel()
-						}
-						return nil, notLeader
-					},
-				}
-				address := startScriptedAutoIDServer(t, service)
-				putAutoIDLeader(t, etcdCli, "candidate-1", address)
-				allocator := newNotLeaderTestAllocator(t, etcdCli)
-
-				err := runAutoIDTestOperation(ctx, operation, allocator)
-				require.ErrorIs(t, err, context.Canceled)
+				require.NoError(t, runAutoIDTestOperation(autoIDTestContext(t), operation, allocator))
 				require.Equal(t, int64(3), autoIDOperationCallCount(operation, service))
-				require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
-				starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-				completions := logs.FilterMessage("autoid request completed after not-leader retry").All()
+
+				starts := logs.FilterMessage("autoid request entered RPC retry").All()
+				completions := logs.FilterMessage("autoid request completed after RPC retry").All()
 				require.Len(t, starts, 1)
 				require.Len(t, completions, 1)
 				require.Equal(t, starts[0].ContextMap()["autoid-request-id"], completions[0].ContextMap()["autoid-request-id"])
-				require.Equal(t, "context-canceled", completions[0].ContextMap()["outcome"])
+				require.Equal(t, int64(2), completions[0].ContextMap()["rpc-error-count"])
+				require.Equal(t, "recovered", completions[0].ContextMap()["outcome"])
+				require.Empty(t, logs.FilterMessage("autoid request stopped after reaching RPC retry limit").All())
 			})
 		}
 	})
 
-	t.Run("a later request succeeds after remediation", func(t *testing.T) {
+	t.Run("non RPC errors are not retried", func(t *testing.T) {
 		logs := observeAutoIDLogs(t)
-		etcdCli := newAutoIDTestEtcdClient(t)
-		var remediated atomic.Bool
-		service := &scriptedAutoIDServer{alloc: func(int64) (*autoid.AutoIDResponse, error) {
-			if remediated.Load() {
-				return successfulAutoIDResponse()
-			}
-			return nil, notLeader
-		}}
-		address := startScriptedAutoIDServer(t, service)
-		putAutoIDLeader(t, etcdCli, "candidate-1", address)
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _, err := allocator.Alloc(ctx, 1, 1, 1)
-		require.Error(t, err)
-		remediated.Store(true)
-		_, _, err = allocator.Alloc(ctx, 1, 1, 1)
-		require.NoError(t, err)
-		require.Equal(t, int64(4), service.allocCallCount.Load())
-		require.Len(t, logs.FilterMessage("autoid request entered not-leader retry").All(), 1)
-		require.Len(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All(), 1)
-		require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
+		nonRPCErr := errors.New("local validation failed")
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		tests := []struct {
+			name      string
+			operation string
+			ctx       context.Context
+		}{
+			{name: "alloc", operation: "alloc", ctx: context.Background()},
+			{name: "rebase", operation: "rebase", ctx: context.Background()},
+			{name: "alloc with canceled context", operation: "alloc", ctx: canceledCtx},
+			{name: "rebase with canceled context", operation: "rebase", ctx: canceledCtx},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				mockCli := &mockAutoIDClient{
+					allocErr:  nonRPCErr,
+					rebaseErr: nonRPCErr,
+				}
+				allocator := newTestSinglePointAlloc(mockCli)
+				err := runAutoIDTestOperation(test.ctx, test.operation, allocator)
+				require.ErrorIs(t, err, nonRPCErr)
+				require.False(t, IsRPCRetryLimitError(err))
+				if test.operation == "alloc" {
+					require.Equal(t, int64(1), mockCli.allocCallCount.Load())
+				} else {
+					require.Equal(t, int64(1), mockCli.rebaseCallCount.Load())
+				}
+			})
+		}
+		require.Empty(t, logs.FilterMessage("autoid request entered RPC retry").All())
 	})
 
-	t.Run("concurrent callers keep independent counts and log pairs", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
-		etcdCli := newAutoIDTestEtcdClient(t)
-		service := &scriptedAutoIDServer{alloc: func(int64) (*autoid.AutoIDResponse, error) {
-			return nil, notLeader
-		}}
-		address := startScriptedAutoIDServer(t, service)
-		putAutoIDLeader(t, etcdCli, "candidate-1", address)
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
-
-		const requestCount = 4
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		errs := make(chan error, requestCount)
-		var requests sync.WaitGroup
-		for range requestCount {
-			requests.Add(1)
-			go func() {
-				defer requests.Done()
-				_, _, err := allocator.Alloc(ctx, 1, 1, 1)
-				errs <- err
-			}()
-		}
-		requests.Wait()
-		close(errs)
-		for err := range errs {
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "after 3 consecutive")
-		}
-		require.Equal(t, int64(requestCount*3), service.allocCallCount.Load())
-
-		starts := logs.FilterMessage("autoid request entered not-leader retry").All()
-		terminals := logs.FilterMessage("autoid request stopped after repeated not leader responses").All()
-		require.Len(t, starts, requestCount)
-		require.Len(t, terminals, requestCount)
-		require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
-		requestIDs := make(map[any]struct{}, requestCount)
-		for _, entry := range starts {
-			requestIDs[entry.ContextMap()["autoid-request-id"]] = struct{}{}
-		}
-		require.Len(t, requestIDs, requestCount)
-		for _, entry := range terminals {
-			_, ok := requestIDs[entry.ContextMap()["autoid-request-id"]]
-			require.True(t, ok)
-			require.Equal(t, int64(3), entry.ContextMap()["consecutive-not-leader-count"])
-		}
-	})
-
-	t.Run("normal success adds no abnormal request logs", func(t *testing.T) {
+	t.Run("normal success adds no retry logs", func(t *testing.T) {
 		logs := observeAutoIDLogs(t)
 		etcdCli := newAutoIDTestEtcdClient(t)
 		service := &scriptedAutoIDServer{
@@ -923,16 +463,13 @@ func TestAutoIDNotLeaderRetry(t *testing.T) {
 			rebase: func(int64) (*autoid.RebaseResponse, error) { return successfulRebaseResponse() },
 		}
 		address := startScriptedAutoIDServer(t, service)
-		putAutoIDLeader(t, etcdCli, "candidate-1", address)
-		allocator := newNotLeaderTestAllocator(t, etcdCli)
+		putAutoIDServiceEndpoint(t, etcdCli, address)
+		allocator := newRPCRetryTestAllocator(t, etcdCli)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _, err := allocator.Alloc(ctx, 1, 1, 1)
-		require.NoError(t, err)
-		require.NoError(t, allocator.rebase(ctx, 100, false))
-		require.Empty(t, logs.FilterMessage("autoid request entered not-leader retry").All())
-		require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
-		require.Empty(t, logs.FilterMessage("autoid request stopped after repeated not leader responses").All())
+		require.NoError(t, runAutoIDTestOperation(autoIDTestContext(t), "alloc", allocator))
+		require.NoError(t, runAutoIDTestOperation(autoIDTestContext(t), "rebase", allocator))
+		require.Empty(t, logs.FilterMessage("autoid request entered RPC retry").All())
+		require.Empty(t, logs.FilterMessage("autoid request completed after RPC retry").All())
+		require.Empty(t, logs.FilterMessage("autoid request stopped after reaching RPC retry limit").All())
 	})
 }

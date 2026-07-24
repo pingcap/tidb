@@ -17,7 +17,6 @@ package autoid
 import (
 	"context"
 	goerrors "errors"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,10 +32,8 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 )
 
 var _ Allocator = &singlePointAlloc{}
@@ -47,8 +44,8 @@ type singlePointAlloc struct {
 	lastAllocated int64
 	isUnsigned    bool
 	*ClientDiscover
-	keyspaceID      uint32
-	notLeaderPolicy notLeaderRetryPolicy
+	keyspaceID     uint32
+	rpcRetryPolicy autoIDRPCRetryPolicy
 }
 
 // ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
@@ -62,11 +59,9 @@ type ClientDiscover struct {
 		// Release the client conn to avoid resource leak!
 		// See https://github.com/grpc/grpc-go/issues/5321
 		*grpc.ClientConn
-		leaderSnapshot autoIDLeaderSnapshot
-		// version advances on every reset so stale callers cannot reset a
-		// newer connection.
-		version uint64
 	}
+	// version is increased in every ResetConn() to make the operation safe.
+	version uint64
 }
 
 var autoIDRequestSequence atomic.Uint64
@@ -75,89 +70,57 @@ const (
 	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
 	AutoIDLeaderPath = "tidb/autoid/leader"
 
-	defaultNotLeaderMinConsecutive = 10
-	// This intentionally does not follow the 60-second owner lease. It applies
-	// only when the same winning endpoint repeatedly responds "not leader".
-	defaultNotLeaderMinDuration = 15 * time.Second
-	autoIDNotLeaderAction       = "check for duplicate advertise-address:status-port or unexpected TiDB processes connected to the cluster"
+	defaultAutoIDRPCRetryMinErrors   = 10
+	defaultAutoIDRPCRetryMinDuration = 15 * time.Second
+	autoIDRPCRetryAction             = "check AutoID service availability and connectivity, then retry the statement"
 )
 
-type autoIDLeaderSnapshot struct {
-	address        string
-	electionKey    string
-	createRevision int64
+type autoIDRPCRetryPolicy struct {
+	minErrors   int
+	minDuration time.Duration
 }
 
-// equal includes campaign metadata because a new campaign can reuse the same
-// address.
-func (s autoIDLeaderSnapshot) equal(other autoIDLeaderSnapshot) bool {
-	return s.address == other.address &&
-		s.electionKey == other.electionKey &&
-		s.createRevision == other.createRevision
+type autoIDRPCRetryState struct {
+	errorCount int
+	firstError time.Time
 }
 
-type notLeaderRetryPolicy struct {
-	minConsecutive int
-	minDuration    time.Duration
+type rpcRetryLimitMarker interface {
+	AutoIDRPCRetryLimitReached()
 }
 
-type notLeaderRetryState struct {
-	leader    autoIDLeaderSnapshot
-	count     int
-	firstSeen time.Time
-}
-
-type notLeaderFastFailMarker interface {
-	AutoIDNotLeaderFastFail()
-}
-
-type notLeaderFastFailError struct {
+type rpcRetryLimitError struct {
 	cause error
 }
 
-func (e *notLeaderFastFailError) Error() string {
+func (e *rpcRetryLimitError) Error() string {
 	return e.cause.Error()
 }
 
-func (e *notLeaderFastFailError) Cause() error {
+func (e *rpcRetryLimitError) Cause() error {
 	return e.cause
 }
 
-func (e *notLeaderFastFailError) Unwrap() error {
+func (e *rpcRetryLimitError) Unwrap() error {
 	return e.cause
 }
 
-func (*notLeaderFastFailError) AutoIDNotLeaderFastFail() {}
+func (*rpcRetryLimitError) AutoIDRPCRetryLimitReached() {}
 
-// IsNotLeaderFastFailError reports whether err is a terminal error caused by
-// repeated not-leader responses reaching the fast-fail threshold.
-func IsNotLeaderFastFailError(err error) bool {
-	var marker notLeaderFastFailMarker
+// IsRPCRetryLimitError reports whether err is a terminal AutoID RPC retry-limit error.
+func IsRPCRetryLimitError(err error) bool {
+	var marker rpcRetryLimitMarker
 	return goerrors.As(err, &marker)
 }
 
-func (s *notLeaderRetryState) observe(leader autoIDLeaderSnapshot, now time.Time, policy notLeaderRetryPolicy) bool {
-	if s.count == 0 || !s.leader.equal(leader) {
-		s.leader = leader
-		s.count = 1
-		s.firstSeen = now
-	} else {
-		s.count++
+func (s *autoIDRPCRetryState) observe(now time.Time, policy autoIDRPCRetryPolicy) bool {
+	if s.errorCount == 0 {
+		s.firstError = now
 	}
-	return policy.minConsecutive > 0 &&
-		s.count >= policy.minConsecutive &&
-		now.Sub(s.firstSeen) >= policy.minDuration
-}
-
-func (s *notLeaderRetryState) reset() {
-	*s = notLeaderRetryState{}
-}
-
-// Match only the direct codes.Unknown/"not leader" wire error emitted by the
-// AutoID service; all other errors retain the existing retry behavior.
-func isAutoIDNotLeaderError(err error) bool {
-	grpcStatus, ok := status.FromError(err)
-	return ok && grpcStatus.Code() == codes.Unknown && grpcStatus.Message() == "not leader"
+	s.errorCount++
+	return policy.minErrors > 0 &&
+		s.errorCount >= policy.minErrors &&
+		now.Sub(s.firstError) >= policy.minDuration
 }
 
 type autoIDRequestLogState struct {
@@ -167,8 +130,7 @@ type autoIDRequestLogState struct {
 	tableID         int64
 	requestStarted  time.Time
 	requestID       uint64
-	leaderAddress   string
-	notLeaderCount  int
+	rpcErrorCount   int
 	active          bool
 	terminalEmitted bool
 }
@@ -188,30 +150,22 @@ func newAutoIDRequestLogState(
 	}
 }
 
-func (s *autoIDRequestLogState) observeNotLeader(leader autoIDLeaderSnapshot) {
-	s.notLeaderCount++
-	s.leaderAddress = leader.address
+func (s *autoIDRequestLogState) observeRPCRetry() {
+	s.rpcErrorCount++
 	if s.active {
 		return
 	}
 	s.active = true
 	s.requestID = autoIDRequestSequence.Add(1)
-	logutil.BgLogger().Info("autoid request entered not-leader retry",
+	logutil.BgLogger().Info("autoid request entered RPC retry",
 		zap.String("category", "autoid client"),
 		zap.Uint64("autoid-request-id", s.requestID),
 		zap.String("operation", s.operation),
 		zap.Uint32("keyspace-id", s.keyspaceID),
 		zap.Int64("db-id", s.dbID),
 		zap.Int64("table-id", s.tableID),
-		zap.String("leader-address", s.leaderAddress),
 		zap.Duration("request-elapsed", time.Since(s.requestStarted)),
-		zap.Int("not-leader-count", s.notLeaderCount))
-}
-
-func (s *autoIDRequestLogState) setLeader(leader autoIDLeaderSnapshot) {
-	if leader.address != "" {
-		s.leaderAddress = leader.address
-	}
+		zap.Int("rpc-error-count", s.rpcErrorCount))
 }
 
 func (s *autoIDRequestLogState) complete(err error) {
@@ -233,124 +187,87 @@ func (s *autoIDRequestLogState) complete(err error) {
 		zap.Uint32("keyspace-id", s.keyspaceID),
 		zap.Int64("db-id", s.dbID),
 		zap.Int64("table-id", s.tableID),
-		zap.String("leader-address", s.leaderAddress),
 		zap.Duration("request-elapsed", time.Since(s.requestStarted)),
-		zap.Int("not-leader-count", s.notLeaderCount),
+		zap.Int("rpc-error-count", s.rpcErrorCount),
 		zap.String("outcome", outcome),
 	}
 	if err != nil {
 		fields = append(fields, zap.Error(err))
 	}
-	logutil.BgLogger().Info("autoid request completed after not-leader retry", fields...)
+	logutil.BgLogger().Info("autoid request completed after RPC retry", fields...)
 }
 
-func (s *autoIDRequestLogState) fastFail(state notLeaderRetryState, elapsed time.Duration, err error) {
+func (s *autoIDRequestLogState) fastFail(state autoIDRPCRetryState, elapsed time.Duration, err error) {
 	s.terminalEmitted = true
-	logutil.BgLogger().Warn("autoid request stopped after repeated not leader responses",
+	logutil.BgLogger().Warn("autoid request stopped after reaching RPC retry limit",
 		zap.String("category", "autoid client"),
 		zap.Uint64("autoid-request-id", s.requestID),
 		zap.String("operation", s.operation),
 		zap.Uint32("keyspace-id", s.keyspaceID),
 		zap.Int64("db-id", s.dbID),
 		zap.Int64("table-id", s.tableID),
-		zap.String("leader-address", state.leader.address),
 		zap.Duration("request-elapsed", time.Since(s.requestStarted)),
-		zap.Duration("not-leader-elapsed", elapsed),
-		zap.Int("not-leader-count", s.notLeaderCount),
-		zap.Int("consecutive-not-leader-count", state.count),
+		zap.Duration("rpc-retry-elapsed", elapsed),
+		zap.Int("rpc-error-count", state.errorCount),
 		zap.String("outcome", "fast-failed"),
-		zap.String("action", autoIDNotLeaderAction),
+		zap.String("action", autoIDRPCRetryAction),
 		zap.Error(err))
 }
 
-func (sp *singlePointAlloc) effectiveNotLeaderPolicy() notLeaderRetryPolicy {
-	if sp.notLeaderPolicy.minConsecutive > 0 {
-		return sp.notLeaderPolicy
+func (sp *singlePointAlloc) effectiveRPCRetryPolicy() autoIDRPCRetryPolicy {
+	if sp.rpcRetryPolicy.minErrors > 0 {
+		return sp.rpcRetryPolicy
 	}
-	return notLeaderRetryPolicy{
-		minConsecutive: defaultNotLeaderMinConsecutive,
-		minDuration:    defaultNotLeaderMinDuration,
+	return autoIDRPCRetryPolicy{
+		minErrors:   defaultAutoIDRPCRetryMinErrors,
+		minDuration: defaultAutoIDRPCRetryMinDuration,
 	}
 }
 
-func (sp *singlePointAlloc) repeatedNotLeaderError(
+func (sp *singlePointAlloc) newRPCRetryLimitError(
 	operation string,
-	state notLeaderRetryState,
+	state autoIDRPCRetryState,
 	now time.Time,
-	revalidationErr error,
+	rpcErr error,
 ) error {
-	elapsed := now.Sub(state.firstSeen)
-	action := autoIDNotLeaderAction
-	if revalidationErr != nil {
-		action = fmt.Sprintf(
-			"fast-fail threshold reached, but the current AutoID leader could not be revalidated: %v; "+
-				"check etcd connectivity or AutoID leader election, then %s",
-			revalidationErr,
-			autoIDNotLeaderAction,
-		)
-	}
-	// TODO: Consider enriching terminal errors with the remote TiDB identity from /info.
-	message := fmt.Sprintf(
-		"autoid %s failed after %d consecutive %q responses from leader endpoint %s over %s; keyspace_id=%d, db_id=%d, table_id=%d; %s",
+	elapsed := now.Sub(state.firstError)
+	return errors.AddStack(&rpcRetryLimitError{cause: ErrAutoincReadFailed.FastGen(
+		"autoid %s failed after %d RPC errors over %s; keyspace_id=%d, db_id=%d, table_id=%d; last RPC error: %v; %s",
 		operation,
-		state.count,
-		"not leader",
-		state.leader.address,
+		state.errorCount,
 		elapsed.Round(time.Millisecond),
 		sp.keyspaceID,
 		sp.dbID,
 		sp.tblID,
-		action,
-	)
-	return errors.AddStack(&notLeaderFastFailError{cause: ErrAutoincReadFailed.FastGen(message)})
+		rpcErr,
+		autoIDRPCRetryAction,
+	)})
 }
 
-// handled is false for non-target errors. For handled errors, terminalErr stops
-// the request; retryImmediately means revalidation found and cached a different
-// leader, so the caller retries it without backoff. Otherwise it backs off.
-func (sp *singlePointAlloc) handleNotLeaderError(
+func (sp *singlePointAlloc) handleRPCRetryError(
 	ctx context.Context,
 	operation string,
 	version uint64,
-	leader autoIDLeaderSnapshot,
 	rpcErr error,
-	state *notLeaderRetryState,
+	state *autoIDRPCRetryState,
 	requestLog *autoIDRequestLogState,
-) (handled bool, retryImmediately bool, terminalErr error) {
-	if !isAutoIDNotLeaderError(rpcErr) {
-		return false, false, nil
-	}
+) error {
 	if ctx.Err() != nil {
-		return true, false, errors.Trace(ctx.Err())
+		return errors.Trace(ctx.Err())
 	}
 	now := time.Now()
-	requestLog.observeNotLeader(leader)
-	reached := state.observe(leader, now, sp.effectiveNotLeaderPolicy())
+	requestLog.observeRPCRetry()
+	reached := state.observe(now, sp.effectiveRPCRetryPolicy())
 	sp.resetConn(version, rpcErr)
 	if !reached {
-		return true, false, nil
-	}
-
-	_, _, currentLeader, err := sp.getClientWithLeader(ctx, sp.keyspaceID)
-	if err != nil {
-		if ctx.Err() != nil {
-			return true, false, errors.Trace(ctx.Err())
-		}
-		terminalErr = sp.repeatedNotLeaderError(operation, *state, now, err)
-		requestLog.fastFail(*state, now.Sub(state.firstSeen), terminalErr)
-		return true, false, terminalErr
-	}
-	requestLog.setLeader(currentLeader)
-	if !state.leader.equal(currentLeader) {
-		state.reset()
-		return true, true, nil
+		return nil
 	}
 	if ctx.Err() != nil {
-		return true, false, errors.Trace(ctx.Err())
+		return errors.Trace(ctx.Err())
 	}
-	terminalErr = sp.repeatedNotLeaderError(operation, *state, now, nil)
-	requestLog.fastFail(*state, now.Sub(state.firstSeen), terminalErr)
-	return true, false, terminalErr
+	terminalErr := sp.newRPCRetryLimitError(operation, *state, now, rpcErr)
+	requestLog.fastFail(*state, now.Sub(state.firstError), terminalErr)
+	return terminalErr
 }
 
 // NewClientDiscover creates a ClientDiscover object.
@@ -370,28 +287,18 @@ func GetAutoIDServiceLeaderEtcdPath(keyspaceID uint32) string {
 
 // GetClient gets the AutoIDAllocClient.
 func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (autoid.AutoIDAllocClient, uint64, error) {
-	cli, version, _, err := d.getClientWithLeader(ctx, keyspaceID)
-	return cli, version, err
-}
-
-func (d *ClientDiscover) getClientWithLeader(
-	ctx context.Context,
-	keyspaceID uint32,
-) (autoid.AutoIDAllocClient, uint64, autoIDLeaderSnapshot, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
 	if cli != nil {
-		version := d.mu.version
-		leader := d.mu.leaderSnapshot
 		d.mu.RUnlock()
-		return cli, version, leader, nil
+		return cli, atomic.LoadUint64(&d.version), nil
 	}
 	d.mu.RUnlock()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.mu.AutoIDAllocClient != nil {
-		return d.mu.AutoIDAllocClient, d.mu.version, d.mu.leaderSnapshot, nil
+		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
 	// write a for loop to retry in case of etcd connection error.
 	var resp *clientv3.GetResponse
@@ -400,44 +307,38 @@ func (d *ClientDiscover) getClientWithLeader(
 retry:
 	resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
 	if err != nil {
-		return nil, 0, autoIDLeaderSnapshot{}, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
 		// If the key is not found, it means the autoid service leader is not elected yet.
 		// We can retry to get the leader.
 		if err := bo.Backoff(ctx); err != nil {
-			return nil, 0, autoIDLeaderSnapshot{}, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		goto retry
 	}
 	bo.Reset()
 
 	addr := string(resp.Kvs[0].Value)
-	leader := autoIDLeaderSnapshot{
-		address:        addr,
-		electionKey:    string(resp.Kvs[0].Key),
-		createRevision: resp.Kvs[0].CreateRevision,
-	}
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
 		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
-			return nil, 0, autoIDLeaderSnapshot{}, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 	logutil.BgLogger().Info("connect to leader", zap.String("category", "autoid client"), zap.String("addr", addr))
 	grpcConn, err := grpc.NewClient(addr, opt)
 	if err != nil {
-		return nil, 0, autoIDLeaderSnapshot{}, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	cli = autoid.NewAutoIDAllocClient(grpcConn)
 	d.mu.AutoIDAllocClient = cli
 	d.mu.ClientConn = grpcConn
-	d.mu.leaderSnapshot = leader
-	return cli, d.mu.version, leader, nil
+	return cli, atomic.LoadUint64(&d.version), nil
 }
 
 // Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
@@ -462,13 +363,12 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 	defer func() {
 		requestLog.complete(retErr)
 	}()
-	var notLeaderState notLeaderRetryState
+	var rpcRetryState autoIDRPCRetryState
 retry:
-	cli, ver, leader, err := sp.getClientWithLeader(ctx, sp.keyspaceID)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	requestLog.setLeader(leader)
 
 	clientStart := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
@@ -482,39 +382,10 @@ retry:
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
-		if ctx.Err() != nil {
-			return 0, 0, errors.Trace(ctx.Err())
-		}
-		handled, retryImmediately, terminalErr := sp.handleNotLeaderError(
-			ctx,
-			"alloc",
-			ver,
-			leader,
-			err,
-			&notLeaderState,
-			&requestLog,
-		)
-		if handled {
-			if terminalErr != nil {
+		if strings.Contains(err.Error(), "rpc error") {
+			if terminalErr := sp.handleRPCRetryError(ctx, "alloc", ver, err, &rpcRetryState, &requestLog); terminalErr != nil {
 				return 0, 0, terminalErr
 			}
-			if !retryImmediately {
-				if err := bo.Backoff(ctx); err != nil {
-					return 0, 0, errors.Trace(err)
-				}
-			}
-			goto retry
-		}
-		notLeaderState.reset()
-		if strings.Contains(err.Error(), "rpc error") {
-			// If the RPC error is caused by a canceled context (e.g. KILL QUERY),
-			// return immediately instead of resetting the connection and retrying.
-			// This prevents a canceled statement from blocking for minutes due to
-			// repeated resetConn + backoff cycles.
-			if ctx.Err() != nil {
-				return 0, 0, errors.Trace(ctx.Err())
-			}
-			sp.resetConn(ver, err)
 			if err := bo.Backoff(ctx); err != nil {
 				return 0, 0, errors.Trace(err)
 			}
@@ -570,45 +441,32 @@ func (b *backoffer) Backoff(ctx ...context.Context) error {
 }
 
 func (d *ClientDiscover) resetConn(version uint64, reason error) {
-	d.mu.Lock()
-	if d.mu.version != version {
-		d.mu.Unlock()
+	// Avoid repeated Reset operation
+	if !atomic.CompareAndSwapUint64(&d.version, version, version+1) {
 		return
 	}
-	grpcConn := d.resetConnLocked()
-	d.mu.Unlock()
-	d.afterReset(grpcConn, reason)
+	d.ResetConn(reason)
 }
 
 // ResetConn reset the AutoIDAllocClient and underlying grpc connection.
 // The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
 func (d *ClientDiscover) ResetConn(reason error) {
-	d.mu.Lock()
-	grpcConn := d.resetConnLocked()
-	d.mu.Unlock()
-	d.afterReset(grpcConn, reason)
-}
-
-func (d *ClientDiscover) resetConnLocked() *grpc.ClientConn {
-	d.mu.version++
-	grpcConn := d.mu.ClientConn
-	d.mu.AutoIDAllocClient = nil
-	d.mu.ClientConn = nil
-	d.mu.leaderSnapshot = autoIDLeaderSnapshot{}
-	return grpcConn
-}
-
-func (*ClientDiscover) afterReset(grpcConn *grpc.ClientConn, reason error) {
 	if reason != nil {
 		logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
 			zap.String("reason", reason.Error()))
 	}
 
 	metrics.ResetAutoIDConnCounter.Add(1)
+	var grpcConn *grpc.ClientConn
+	d.mu.Lock()
+	grpcConn = d.mu.ClientConn
+	d.mu.AutoIDAllocClient = nil
+	d.mu.ClientConn = nil
+	d.mu.Unlock()
 	// Close grpc.ClientConn to release resource.
 	if grpcConn != nil {
 		go func() {
-			// Don't close the conn immediately, in case the other sessions are still using it.
+			// Doen't close the conn immediately, in case the other sessions are still using it.
 			time.Sleep(200 * time.Millisecond)
 			err := grpcConn.Close()
 			if err != nil {
@@ -654,13 +512,12 @@ func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force boo
 	defer func() {
 		requestLog.complete(retErr)
 	}()
-	var notLeaderState notLeaderRetryState
+	var rpcRetryState autoIDRPCRetryState
 retry:
-	cli, ver, leader, err := sp.getClientWithLeader(ctx, sp.keyspaceID)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	requestLog.setLeader(leader)
 	var resp *autoid.RebaseResponse
 	resp, err = cli.Rebase(ctx, &autoid.RebaseRequest{
 		DbID:       sp.dbID,
@@ -670,36 +527,10 @@ retry:
 		IsUnsigned: sp.isUnsigned,
 	})
 	if err != nil {
-		if ctx.Err() != nil {
-			return errors.Trace(ctx.Err())
-		}
-		handled, retryImmediately, terminalErr := sp.handleNotLeaderError(
-			ctx,
-			"rebase",
-			ver,
-			leader,
-			err,
-			&notLeaderState,
-			&requestLog,
-		)
-		if handled {
-			if terminalErr != nil {
+		if strings.Contains(err.Error(), "rpc error") {
+			if terminalErr := sp.handleRPCRetryError(ctx, "rebase", ver, err, &rpcRetryState, &requestLog); terminalErr != nil {
 				return terminalErr
 			}
-			if !retryImmediately {
-				if err := bo.Backoff(ctx); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			goto retry
-		}
-		notLeaderState.reset()
-		if strings.Contains(err.Error(), "rpc error") {
-			// Same as Alloc: check ctx before resetting connection and retrying.
-			if ctx.Err() != nil {
-				return errors.Trace(ctx.Err())
-			}
-			sp.resetConn(ver, err)
 			if err := bo.Backoff(ctx); err != nil {
 				return errors.Trace(err)
 			}

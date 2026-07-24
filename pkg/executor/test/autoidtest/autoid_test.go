@@ -35,30 +35,30 @@ import (
 	"google.golang.org/grpc"
 )
 
-type notLeaderFastFailTestError struct {
+type rpcRetryLimitTestError struct {
 	cause error
 }
 
-func (e *notLeaderFastFailTestError) Error() string {
+func (e *rpcRetryLimitTestError) Error() string {
 	return e.cause.Error()
 }
 
-func (e *notLeaderFastFailTestError) Cause() error {
+func (e *rpcRetryLimitTestError) Cause() error {
 	return e.cause
 }
 
-func (e *notLeaderFastFailTestError) Unwrap() error {
+func (e *rpcRetryLimitTestError) Unwrap() error {
 	return e.cause
 }
 
-func (*notLeaderFastFailTestError) AutoIDNotLeaderFastFail() {}
+func (*rpcRetryLimitTestError) AutoIDRPCRetryLimitReached() {}
 
-type notLeaderFastFailClient struct {
+type rpcRetryLimitClient struct {
 	autoidpb.AutoIDAllocClient
 	err error
 }
 
-func (c *notLeaderFastFailClient) AllocAutoID(
+func (c *rpcRetryLimitClient) AllocAutoID(
 	context.Context,
 	*autoidpb.AutoIDRequest,
 	...grpc.CallOption,
@@ -66,7 +66,7 @@ func (c *notLeaderFastFailClient) AllocAutoID(
 	return nil, c.err
 }
 
-func (c *notLeaderFastFailClient) Rebase(
+func (c *rpcRetryLimitClient) Rebase(
 	context.Context,
 	*autoidpb.RebaseRequest,
 	...grpc.CallOption,
@@ -593,16 +593,16 @@ func TestMockAutoIDServiceError(t *testing.T) {
 	// Cover a bug that the autoid client retry non-retryable errors forever cause dead loop.
 	tk.MustExecToErr("insert into t_mock_err values (),()") // mock error, instead of dead loop
 
-	t.Run("not leader fast fail is not ignored", func(t *testing.T) {
-		const errMessage = "autoid alloc failed after repeated not leader responses"
-		markedErr := &notLeaderFastFailTestError{
+	t.Run("RPC retry limit error is not ignored", func(t *testing.T) {
+		const errMessage = "autoid alloc failed after reaching the RPC retry limit"
+		markedErr := &rpcRetryLimitTestError{
 			cause: metaautoid.ErrAutoincReadFailed.GenWithStack(errMessage),
 		}
-		require.True(t, metaautoid.IsNotLeaderFastFailError(markedErr))
+		require.True(t, metaautoid.IsRPCRetryLimitError(markedErr))
 
 		originalMockForTest := metaautoid.MockForTest
 		metaautoid.MockForTest = func(kv.Storage) autoidpb.AutoIDAllocClient {
-			return &notLeaderFastFailClient{err: markedErr}
+			return &rpcRetryLimitClient{err: markedErr}
 		}
 		t.Cleanup(func() {
 			metaautoid.MockForTest = originalMockForTest
@@ -631,7 +631,7 @@ func TestMockAutoIDServiceError(t *testing.T) {
 					t.Errorf("expected AutoID error for %s", test.sql)
 				} else {
 					require.True(t, metaautoid.ErrAutoincReadFailed.Equal(err))
-					require.True(t, metaautoid.IsNotLeaderFastFailError(err))
+					require.True(t, metaautoid.IsRPCRetryLimitError(err))
 					require.Contains(t, err.Error(), errMessage)
 				}
 				markedTK.MustQuery("select id from " + tableName).Check(testkit.Rows())

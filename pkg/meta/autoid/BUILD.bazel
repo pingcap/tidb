@@ -31,10 +31,8 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//credentials",
         "@org_golang_google_grpc//credentials/insecure",
-        "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -52,7 +50,7 @@ go_test(
     ],
     embed = [":autoid"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 16,
     deps = [
         "//pkg/kv",
         "//pkg/meta",

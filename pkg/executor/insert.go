@@ -370,7 +370,7 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	err := insertRows(ctx, e)
 	if err != nil {
 		// Rebase errors can bypass InsertValues.handleErr.
-		if autoid.IsNotLeaderFastFailError(err) {
+		if autoid.IsRPCRetryLimitError(err) {
 			return err
 		}
 		terr, ok := errors.Cause(err).(*terror.Error)

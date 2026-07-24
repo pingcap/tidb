@@ -342,7 +342,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		return nil
 	}
 	// The allocator did not produce an ID, so INSERT IGNORE cannot safely continue.
-	if autoid.IsNotLeaderFastFailError(err) {
+	if autoid.IsRPCRetryLimitError(err) {
 		return err
 	}
 

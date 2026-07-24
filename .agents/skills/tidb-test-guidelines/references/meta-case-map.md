@@ -16,7 +16,7 @@
 
 ### Tests
 - `pkg/meta/autoid/autoid_test.go` - Tests signed auto ID.
-- `pkg/meta/autoid/autoid_service_test.go` - Tests autoid service client discovery, cancellation, and repeated not-leader retries.
+- `pkg/meta/autoid/autoid_service_test.go` - Tests autoid service client discovery, cancellation, and the request-local RPC retry limit.
 - `pkg/meta/autoid/bench_test.go` - Tests allocator alloc.
 - `pkg/meta/autoid/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/meta/autoid/memid_test.go` - Tests in-memory alloc.
