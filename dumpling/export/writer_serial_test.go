@@ -16,6 +16,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type csvOption struct {
+	nullValue      string
+	separator      []byte
+	delimiter      []byte
+	lineTerminator []byte
+}
+
 // BytesWriter is a Writer implementation on top of bytes.Buffer that is useful for testing.
 type BytesWriter struct {
 	buf *bytes.Buffer
@@ -282,6 +289,30 @@ func TestWriteInsertInCsv(t *testing.T) {
 		"2&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1253ma&;,?mahealthyma\r\n" +
 		"3&;,?mamamalema&;,?majohn@mamail.comma&;,?ma020-1256ma&;,?mahealthyma\r\n" +
 		"4&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1235ma&;,?mahealthyma\r\n"
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(len(data)), ReadGauge(m.finishedRowsGauge))
+	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))
+}
+
+func TestWriteInsertInCsvAllGeneratedColumns(t *testing.T) {
+	cfg := createMockConfig()
+
+	data := [][]driver.Value{{"1"}, {"2"}, {"3"}}
+	colTypes := []string{"INT"}
+	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+	// All columns are generated, so nothing is selected: each source row emits
+	// only a line terminator, and no header is written.
+	tableIR.selectedField = ""
+	bf := NewBufferWriter()
+
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
+	conf := configForWriteCSV(cfg, false, opt)
+	m := newMetrics(conf.PromFactory, conf.Labels)
+	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+	require.NoError(t, err)
+	require.Equal(t, uint64(len(data)), n)
+
+	expected := "\r\n\r\n\r\n"
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, float64(len(data)), ReadGauge(m.finishedRowsGauge))
 	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))

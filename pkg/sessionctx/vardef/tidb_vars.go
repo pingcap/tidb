@@ -1848,7 +1848,7 @@ const (
 	DefTiDBEnableBindingUsage                         = true
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBMemArbitratorSoftLimitText                 = memory.ArbitratorSoftLimitModDisableName
-	DefTiDBMemArbitratorModeText                      = memory.ArbitratorModeDisableName
+	DefTiDBMemArbitratorModeText                      = memory.DefaultGlobalMemArbitratorModeName
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
