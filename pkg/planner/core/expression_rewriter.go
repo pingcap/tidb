@@ -1339,10 +1339,16 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// rewrite below and forces the much slower LeftOuterSemiJoin-with-marker-column plan
 	// even though the NOTs cancel out. Detect that shape here and consume the wrapping
 	// NOTs so their Leave handlers don't try to re-negate a value that was never pushed.
+	//
+	// notDepthToConsume is kept local (not written to er.consumedNotDepth yet) because
+	// v.Expr.Accept(er) below walks the IN's left operand, which may itself contain NOT
+	// nodes (e.g. `NOT NOT (NOT a) IN (subq)`); arming the counter before that walk would
+	// let the operand's own NOT incorrectly consume one of the outer wrapper NOTs' slots.
+	notDepthToConsume := 0
 	if asScalar {
 		if notDepth, ok := er.evenNotFilterDepth(planCtx); ok {
 			asScalar = false
-			er.consumedNotDepth = notDepth
+			notDepthToConsume = notDepth
 		}
 	}
 	er.asScalar = true
@@ -1550,6 +1556,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		col := planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1]
 		er.ctxStackAppend(col, planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1])
 	}
+	// Arm the counter only now that the IN's left operand (and everything else that could
+	// still fail) has been fully rewritten, so it only ever governs the wrapper NOTs found
+	// by evenNotFilterDepth above, never any NOT nested inside v.Expr.
+	er.consumedNotDepth = notDepthToConsume
 	return v, true
 }
 

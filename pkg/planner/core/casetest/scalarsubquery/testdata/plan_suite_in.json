@@ -189,6 +189,20 @@
         "SQL": "explain format = 'plan_tree' select a from t1 where not not exists (select 1 from t2 where t2.a = t1.a)",
         "IsExplainAnalyze": false,
         "HasErr": false
+      },
+      // A NOT nested inside the IN's own left operand must not be mistaken for one of the
+      // outer wrapper NOTs found by evenNotFilterDepth: rewriting the left operand happens
+      // before the outer NOTs are consumed, so an inner NOT must not steal a consumption slot
+      // meant for an outer NOT (this previously crashed with an out-of-range index panic).
+      {
+        "SQL": "explain format = 'plan_tree' select a from t1 where not not ((not a) in (select a from t2))",
+        "IsExplainAnalyze": false,
+        "HasErr": false
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select a from t1 where (not a) in (select a from t2)",
+        "IsExplainAnalyze": false,
+        "HasErr": false
       }
     ]
   }
