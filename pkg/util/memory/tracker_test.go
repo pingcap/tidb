@@ -1080,9 +1080,12 @@ func TestGlobalMemArbitrator(t *testing.T) {
 				require.True(t, t1.MemArbitrator != nil)
 				require.False(t, t1.DetachMemArbitrator(true))
 			})
-			for t1.MemArbitrator.state.Load() != memArbitratorStateDown {
+			// Detach removes the tracker from its parent before waiting for the
+			// ongoing small-to-big budget transition to finish.
+			for t1.getParent() != nil {
 				runtime.Gosched()
 			}
+			require.Equal(t, memArbitratorStateIntoBigBudget, t1.MemArbitrator.state.Load())
 		}
 		t1.Consume(1e8)
 		wg.Wait()
@@ -1136,13 +1139,20 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			t3.InitMemArbitrator(m, t3.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false))
 		t3.Detach()
 		require.True(t, t3.MemArbitrator.state.Load() == memArbitratorStateDown)
-		t3.Consume(1677) // mock reuse the tracker
-		require.True(t, m.awaitFreePoolUsed().quota == 1677)
+		reusedMem := m.poolAllocStats.SmallPoolLimit + 1
+		require.NotPanics(t, func() {
+			t3.Consume(reusedMem) // mock reuse the tracker
+		})
+		require.Equal(t, reusedMem, t3.BytesConsumed())
+		require.Equal(t, memArbitratorStateDown, t3.MemArbitrator.state.Load())
+		require.Equal(t, int64(0), t3.MemArbitrator.smallBudgetUsed())
+		require.Equal(t, int64(0), m.awaitFreePoolUsed().quota)
+		require.Nil(t, m.FindRootPool(t3.SessionID.Load()).entry)
 		InitTracker(t3, 1, -1, &actionWithPriority{})
 		t3.AttachTo(t0)
 		require.True(t,
 			t3.InitMemArbitrator(m, t3.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false))
-		require.True(t, m.awaitFreePoolUsed().quota == 0) // reset previous mem-arbitrator
+		require.Equal(t, int64(0), m.awaitFreePoolUsed().quota)
 		t3.Detach()
 	}
 }
