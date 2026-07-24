@@ -40,4 +40,4 @@
 ## pkg/domain/serverinfo
 
 ### Tests
-- `pkg/domain/serverinfo/syncer_test.go` - Tests server info syncer.
+- `pkg/domain/serverinfo/syncer_test.go` - Tests server info syncer, stale cleanup, and advertised status endpoint claims.

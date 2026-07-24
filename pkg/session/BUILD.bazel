@@ -180,6 +180,7 @@ go_test(
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/expression",
@@ -222,10 +223,12 @@ go_test(
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_atomic//:atomic",  #keep
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

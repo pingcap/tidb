@@ -148,6 +148,16 @@ type infoschemaMinTS interface {
 	GetAndResetRecentInfoSchemaTS(now uint64) uint64
 }
 
+// ServerInfoSyncerOption configures the server-info syncer created by GlobalInfoSyncerInit.
+type ServerInfoSyncerOption = serverinfo.SyncerOption
+
+// WithoutStatusEndpointClaim prevents the InfoSyncer from claiming the configured status endpoint.
+// It is intended only for the non-serving Domain created while initializing global variables.
+// A serving primary TiDB Domain must keep the default endpoint-claim behavior.
+func WithoutStatusEndpointClaim() ServerInfoSyncerOption {
+	return serverinfo.WithoutStatusEndpointClaim()
+}
+
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,
@@ -158,6 +168,7 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 	infoCache infoschemaMinTS,
+	serverInfoOptions ...ServerInfoSyncerOption,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
@@ -173,7 +184,7 @@ func GlobalInfoSyncerInit(
 		infoCache:      infoCache,
 		tikvCodec:      codec,
 	}
-	is.svrInfoSyncer = serverinfo.NewSyncer(uuid, serverIDGetter, etcdCli, is)
+	is.svrInfoSyncer = serverinfo.NewSyncer(uuid, serverIDGetter, etcdCli, is, serverInfoOptions...)
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err

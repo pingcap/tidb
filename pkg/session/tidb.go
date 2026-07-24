@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -77,7 +78,16 @@ func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Fil
 	return dm.getWithEtcdClient(store, nil, filter)
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
+func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, infosync.WithoutStatusEndpointClaim())
+}
+
+func (dm *domainMap) getWithEtcdClient(
+	store kv.Storage,
+	etcdClient *clientv3.Client,
+	schemaFilter issyncer.Filter,
+	infoSyncerOptions ...infosync.ServerInfoSyncerOption,
+) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -112,6 +122,7 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			},
 			etcdClient,
 			schemaFilter,
+			infoSyncerOptions...,
 		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
