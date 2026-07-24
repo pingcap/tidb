@@ -267,6 +267,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
+		p.checkSelectLockInfo(node)
+		if p.err != nil {
+			return in, true
+		}
 		p.checkSelectNoopFuncs(node)
 		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
@@ -1331,6 +1335,26 @@ func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
 	p.err = checkIndexSpecs(stmt.Option, stmt.Keys)
 }
 
+// checkSelectLockInfo rejects lock clauses that are parsed but cannot be executed with their
+// documented semantics yet. Without this check, SKIP LOCKED degrades to a plain read that
+// acquires no lock at all, silently breaking the FOR UPDATE guarantee.
+func (p *preprocessor) checkSelectLockInfo(stmt *ast.SelectStmt) {
+	if stmt.LockInfo == nil {
+		return
+	}
+	switch stmt.LockInfo.LockType {
+	case ast.SelectLockForUpdateSkipLocked:
+		p.err = dbterror.ErrNotSupportedYet.GenWithStackByArgs("SKIP LOCKED")
+	case ast.SelectLockForShareSkipLocked:
+		// Without shared lock promotion, FOR SHARE SKIP LOCKED degrades to the same noop as
+		// FOR SHARE, handled by checkSelectNoopFuncs. With promotion, FOR SHARE executes as
+		// FOR UPDATE and would need real skip-locked support.
+		if p.sctx.GetSessionVars().SharedLockPromotion {
+			p.err = dbterror.ErrNotSupportedYet.GenWithStackByArgs("SKIP LOCKED")
+		}
+	}
+}
+
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode == variable.OnInt {
@@ -1338,7 +1362,8 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 		// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
 		// executed as `for update` statements despite setting of noop functions.
 		if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
-			stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+			stmt.LockInfo.LockType == ast.SelectLockForShareNoWait ||
+			stmt.LockInfo.LockType == ast.SelectLockForShareSkipLocked) &&
 			!p.sctx.GetSessionVars().SharedLockPromotion {
 			p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
 		}
@@ -1357,7 +1382,8 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 	// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
 	// executed as `for update` statements.
 	if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
-		stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+		stmt.LockInfo.LockType == ast.SelectLockForShareNoWait ||
+		stmt.LockInfo.LockType == ast.SelectLockForShareSkipLocked) &&
 		!p.sctx.GetSessionVars().SharedLockPromotion {
 		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 		if noopFuncsMode == variable.OffInt {

@@ -489,3 +489,42 @@ func TestPreprocessDeleteFromWithAlias(t *testing.T) {
 	tk.MustExec("delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 	tk.MustExec("create global binding for delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id using delete /*+ MAX_EXECUTION_TIME(10)*/ tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 }
+
+func TestSelectLockSkipLocked(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// A nonclustered PK makes _tidb_rowid the handle column: the regression shape of
+	// https://github.com/pingcap/tidb/issues/61621.
+	tk.MustExec("create table t (id varchar(10) not null, uid varchar(20), c varchar(20), " +
+		"primary key (id) /*T![clustered_index] NONCLUSTERED */, key idx_n1 (uid, c))")
+	tk.MustExec("insert into t values ('111', 'u1', 'c1')")
+
+	// FOR UPDATE SKIP LOCKED must not degrade to a plain non-locking read (issue #69720).
+	notSupportedErr := "This version of TiDB doesn't yet support 'SKIP LOCKED'"
+	tk.MustContainErrMsg("select * from t for update skip locked", notSupportedErr)
+	// The exact repro of issue #61621.
+	tk.MustContainErrMsg("select id, uid, c from t use index(primary) where id = '111' for update skip locked",
+		notSupportedErr)
+
+	// FOR SHARE SKIP LOCKED follows the FOR SHARE noop handling: rejected unless noop
+	// functions are enabled.
+	tk.MustContainErrMsg("select * from t for share skip locked",
+		"function LOCK IN SHARE MODE has only noop implementation in tidb now")
+
+	tk.MustExec("set session tidb_enable_noop_functions = 1")
+	// The noop lock type must still plan successfully on a nonclustered-PK table:
+	// LogicalLock used to prune the _tidb_rowid handle column for unsupported lock types and
+	// planning failed with "Can't find column ..._tidb_rowid" (issue #61621).
+	tk.MustQuery("select id, uid, c from t where uid = 'u1' for share skip locked").
+		Check(testkit.Rows("111 u1 c1"))
+	tk.MustQuery("select id, uid, c from t use index(primary) where id = '111' for share skip locked").
+		Check(testkit.Rows("111 u1 c1"))
+	tk.MustExec("set session tidb_enable_noop_functions = default")
+
+	// With shared lock promotion, FOR SHARE executes as FOR UPDATE, which would need real
+	// skip-locked support.
+	tk.MustExec("set session tidb_enable_shared_lock_promotion = 1")
+	tk.MustContainErrMsg("select * from t for share skip locked", notSupportedErr)
+	tk.MustExec("set session tidb_enable_shared_lock_promotion = default")
+}

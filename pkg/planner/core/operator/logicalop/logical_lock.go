@@ -52,18 +52,11 @@ func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	var err error
-	if !IsSupportedSelectLockType(p.Lock.LockType) {
-		// when use .baseLogicalPlan to call the PruneColumns, it means current plan itself has
-		// nothing to pruning or plan change, so they resort to its children's column pruning logic.
-		// so for the returned logical plan here, p is definitely determined, we just need to collect
-		// those extra deeper call error in handling children's column pruning.
-		_, err = p.BaseLogicalPlan.PruneColumns(parentUsedCols)
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
-	}
-
+	// PhysicalLock is built from this operator even when the lock type is unsupported and the
+	// lock degrades to a noop (e.g. FOR SHARE under noop functions), and its ResolveIndices
+	// resolves the TblID2Handle columns against the child schema. So the handle columns (and
+	// the extra physical table ID column for partitioned tables) must survive column pruning
+	// regardless of the lock type.
 	for tblID, cols := range p.TblID2Handle {
 		for _, col := range cols {
 			for c := range col.IterColumns() {
