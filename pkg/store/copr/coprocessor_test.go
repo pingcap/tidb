@@ -1093,7 +1093,32 @@ func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
 	}, versionByRegion)
 }
 
-func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
+func TestHandleBatchCopResponse(t *testing.T) {
+	testHandleBatchCopResponseUnansweredTasks(t)
+	testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t)
+}
+
+func testHandleBatchCopResponseUnansweredTasks(t *testing.T) {
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	var batched, fallback atomic.Uint64
+	worker := &copIteratorWorker{
+		storeBatchedNum:         &batched,
+		storeBatchedFallbackNum: &fallback,
+	}
+
+	unansweredTask := &copTask{taskID: 1}
+	responses, remains, err := worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{
+		unansweredTask.taskID: {task: unansweredTask},
+	})
+	require.NoError(t, err)
+	require.Empty(t, responses)
+	require.Len(t, remains, 1)
+	require.Same(t, unansweredTask, remains[0])
+	require.Zero(t, batched.Load())
+	require.Equal(t, uint64(1), fallback.Load())
+}
+
+func testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
