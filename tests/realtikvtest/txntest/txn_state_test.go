@@ -160,17 +160,16 @@ func TestRunning(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockStmtSlow", "return(200)"))
 	ch := make(chan struct{})
 	go func() {
-		tk.MustExec("select * from t for update /* sleep */;")
+		defer close(ch)
+		tk.MustQuery("select sleep(3) from t for update;")
 		tk.MustExec("commit;")
-		ch <- struct{}{}
 	}()
-	time.Sleep(100 * time.Millisecond)
-	info := tk.Session().TxnInfo()
-	require.Equal(t, txninfo.TxnRunning, info.State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockStmtSlow"))
+	require.Eventually(t, func() bool {
+		info := tk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnRunning
+	}, 10*time.Second, 10*time.Millisecond)
 	<-ch
 }
 
