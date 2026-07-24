@@ -32,6 +32,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/pingcap/errors"
 	"go.uber.org/atomic"
 )
 
@@ -56,6 +57,8 @@ type GCSWriter struct {
 	uploadID    string
 	chunkCh     chan chunk
 	curPart     int
+	// restCli issues the signed-URL requests; overridable in tests.
+	restCli *resty.Client
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
@@ -85,6 +88,7 @@ func NewGCSWriter(
 		},
 		chunkSize: partSize,
 		workers:   parallelCnt,
+		restCli:   resty.New(),
 	}
 	if err := w.init(); err != nil {
 		return nil, fmt.Errorf("failed to initiate GCSWriter: %w", err)
@@ -105,7 +109,7 @@ func (w *GCSWriter) init() error {
 		return fmt.Errorf("Bucket(%q).SignedURL: %s", w.bucket, err)
 	}
 
-	client := resty.New()
+	client := w.restCli
 	resp, err := client.R().Post(u)
 	if err != nil {
 		return fmt.Errorf("POST request failed: %s", err)
@@ -199,7 +203,7 @@ func (w *GCSWriter) Close() (err error) {
 	defer func() {
 		if err != nil {
 			if errC := w.cancel(); errC != nil {
-				err = fmt.Errorf("%w; failed to cancel multipart upload: %w", err, errC)
+				err = errors.Annotatef(err, "failed to cancel multipart upload: %s", errC)
 			}
 		}
 	}()
@@ -211,7 +215,7 @@ func (w *GCSWriter) Close() (err error) {
 		return nil
 	}
 	if err = w.finalizeXMLMPU(); err != nil {
-		return fmt.Errorf("failed to finalize multipart upload: %w", err)
+		return errors.Annotate(err, "failed to finalize multipart upload")
 	}
 	return nil
 }
@@ -295,7 +299,7 @@ func (w *GCSWriter) finalizeXMLMPU() error {
 		return fmt.Errorf("Bucket(%q).SignedURL: %s", w.bucket, err)
 	}
 
-	client := resty.New()
+	client := w.restCli
 	resp, err := client.R().SetBody(xmlBytes).Post(u)
 	if err != nil {
 		return fmt.Errorf("POST request failed: %s", err)
@@ -337,7 +341,7 @@ func (w *GCSWriter) cancel() error {
 		return fmt.Errorf("Bucket(%q).SignedURL: %s", w.bucket, err)
 	}
 
-	client := resty.New()
+	client := w.restCli
 	resp, err := client.R().Delete(u)
 	if err != nil {
 		return fmt.Errorf("DELETE request failed: %s", err)

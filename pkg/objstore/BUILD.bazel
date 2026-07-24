@@ -86,7 +86,7 @@ go_test(
     ],
     embed = [":objstore"],
     flaky = True,
-    shard_count = 45,
+    shard_count = 46,
     deps = [
         "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
@@ -97,10 +97,13 @@ go_test(
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//:azblob",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//bloberror",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_go_resty_resty_v2//:resty",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
+        "@com_google_cloud_go_storage//:storage",
+        "@org_golang_google_api//option",
         "@org_golang_x_sync//errgroup",
     ],
 )
