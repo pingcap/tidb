@@ -143,7 +143,7 @@
         "SQL": "select /*+ use_index_merge(t6, primary, is3, is4) */ * from t6 where s1 = 'Abc' and s2 > 'zzz' and s3 = 'A啊a' and s4 not like 'Cd_'",
         "Plan": [
           "IndexMerge root  type: intersection",
-          "├─IndexRangeScan(Build) cop[tikv] table:t6, index:PRIMARY(s1, s2) range:(\"Abc\" \"zzz\",\"Abc\" +inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) cop[tikv] table:t6, index:PRIMARY(s1, s2) range:[\"Abc\" \"zzz\",\"Abc\" +inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) cop[tikv] table:t6, index:is3(s3) range:[\"\\x0e3\\xfb@\\xd5J\\x0e3\",\"\\x0e3\\xfb@\\xd5J\\x0e3\"], keep order:false, stats:pseudo",
           "└─Selection(Probe) cop[tikv]  gt(test.t6.s2, \"zzz\"), not(like(test.t6.s4, \"Cd_\", 92))",
           "  └─TableRowIDScan cop[tikv] table:t6 keep order:false, stats:pseudo"
@@ -176,7 +176,7 @@
           "└─IndexMerge root  type: intersection",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:PRIMARY(s1) range:[\"UJ\\x00A\",\"UJ\\x00B\"), keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is2(s2) range:(\"abc\",+inf], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is3(s3) range:(\"cba\",+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is3(s3) range:[\"cba\",+inf], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is4(s4) range:[\"aA\",\"aA\"], [\"??\",\"??\"], keep order:false, stats:pseudo",
           "  └─Selection(Probe) cop[tikv]  gt(test.t8.s3, \"cba\"), like(test.t8.s1, \"啊A%\", 92)",
           "    └─TableRowIDScan cop[tikv] table:t8 keep order:false, stats:pseudo"
