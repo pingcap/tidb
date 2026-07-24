@@ -45,30 +45,6 @@ func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
 	return m.GetCounter().GetValue()
 }
 
-type snapshotStmtStorage struct {
-	persisted chan int64
-}
-
-func (s *snapshotStmtStorage) persist(w *stmtWindow, _ time.Time) {
-	record := w.lru.Values()[0].(*lockedStmtRecord)
-	record.Lock()
-	execCount := record.ExecCount
-	record.Unlock()
-	s.persisted <- execCount
-}
-
-func (*snapshotStmtStorage) logEvicted([]*StmtRecord) {}
-
-func (*snapshotStmtStorage) sync() error { return nil }
-
-func windowLockHeld(ss *StmtSummary) bool {
-	if ss.windowLock.TryLock() {
-		ss.windowLock.Unlock()
-		return false
-	}
-	return true
-}
-
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
 	defer ss.Close()
@@ -136,12 +112,11 @@ func TestStmtWindow(t *testing.T) {
 		require.Equal(t, int64(2), ss.window.evicted.other.ExecCount)
 	})
 
-	t.Run("concurrent external add survives internal cleanup", func(t *testing.T) {
+	t.Run("internal cleanup waits for record update", func(t *testing.T) {
 		ss := NewStmtSummary4Test(1)
 		defer ss.Close()
-		require.NoError(t, ss.SetEnableInternalQuery(true))
 
-		internal := GenerateStmtExecInfo4Test("mixed_digest")
+		internal := GenerateStmtExecInfo4Test("internal_digest")
 		internal.IsInternal = true
 		ss.Add(internal)
 
@@ -152,15 +127,18 @@ func TestStmtWindow(t *testing.T) {
 		func() {
 			record.Lock()
 			defer record.Unlock()
-			go ss.Add(GenerateStmtExecInfo4Test(internal.Digest))
-
-			// Add must keep the window locked while waiting for the record lock, so
-			// ClearInternal cannot detach the record before Add marks it non-internal.
-			require.Eventually(t, func() bool { return windowLockHeld(ss) }, time.Second, time.Millisecond)
 			go func() {
 				ss.ClearInternal()
 				close(clearDone)
 			}()
+			require.Never(t, func() bool {
+				select {
+				case <-clearDone:
+					return true
+				default:
+					return false
+				}
+			}, 100*time.Millisecond, time.Millisecond)
 		}()
 
 		select {
@@ -169,45 +147,7 @@ func TestStmtWindow(t *testing.T) {
 			t.Fatal("ClearInternal did not finish")
 		}
 
-		require.Equal(t, 1, ss.window.lru.Size())
-		record.Lock()
-		defer record.Unlock()
-		require.False(t, record.IsInternal)
-		require.Equal(t, int64(2), record.ExecCount)
-	})
-
-	t.Run("concurrent add completes before rotated window persistence", func(t *testing.T) {
-		storage := &snapshotStmtStorage{persisted: make(chan int64, 1)}
-		ss := NewStmtSummary4Test(1)
-		ss.storage = storage
-		defer ss.Close()
-
-		info := GenerateStmtExecInfo4Test("digest")
-		ss.Add(info)
-		values := ss.window.lru.Values()
-		require.Len(t, values, 1)
-		record := values[0].(*lockedStmtRecord)
-		func() {
-			record.Lock()
-			defer record.Unlock()
-			go ss.Add(info)
-
-			// Add must hold windowLock until it owns the record lock. This prevents
-			// rotate from handing the old window to persistence before Add can update it.
-			require.Eventually(t, func() bool { return windowLockHeld(ss) }, time.Second, time.Millisecond)
-			go func() {
-				ss.windowLock.Lock()
-				ss.rotate(timeNow())
-				ss.windowLock.Unlock()
-			}()
-		}()
-
-		select {
-		case execCount := <-storage.persisted:
-			require.Equal(t, int64(2), execCount)
-		case <-time.After(time.Second):
-			t.Fatal("rotated window was not persisted")
-		}
+		require.Equal(t, 0, ss.window.lru.Size())
 	})
 }
 

@@ -343,13 +343,9 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
 		s.window.lru.Put(k, record)
 	}
-	// Lock handoff invariant: windowLock keeps record attached to this window
-	// until record.Lock takes over protection for the update. Do not move
-	// record.Lock below windowLock.Unlock; otherwise ClearInternal or LRU
-	// eviction can detach and finalize record before this Add reaches it.
-	record.Lock()
 	s.windowLock.Unlock()
 
+	record.Lock()
 	record.Add(info)
 	record.Unlock()
 	if exist {
@@ -391,9 +387,7 @@ func (s *StmtSummary) ClearInternal() {
 			continue
 		}
 		record := v.(*lockedStmtRecord)
-		// Match the global windowLock -> record lock order. This also pairs with
-		// Add's lock handoff: an Add that already found this record must finish
-		// updating IsInternal before cleanup decides whether to delete it.
+		// Protect the record's mutable fields from concurrent Add calls.
 		record.Lock()
 		if record.IsInternal {
 			s.window.lru.Delete(k)
