@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -86,6 +87,8 @@ type enumerateState struct {
 	topNCopExist  bool
 	limitCopExist bool
 }
+
+const defaultBoundedLimitIndexLookupThreshold uint64 = 500
 
 func buildPhysPlanPartInfo(ds *logicalop.DataSource) *physicalop.PhysPlanPartInfo {
 	columnNames, err := rule.ReconstructTableColNames(ds)
@@ -140,6 +143,12 @@ func enumeratePhysicalPlans4Task(
 		} else {
 			if normalTask.Invalid() {
 				normalTask = curTask
+			} else if curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(super, curTask, normalTask); decided {
+				// This hook is intentionally scoped to LogicalTopN. It only runs after
+				// Attach2Task, where a sunk Limit can be observed as IndexLookUp.PushedLimit.
+				if curIsBetter {
+					normalTask = curTask
+				}
 			} else if curIsBetter, err := compareTaskCost(curTask, normalTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
@@ -151,6 +160,167 @@ func enumeratePhysicalPlans4Task(
 		return hintTask, true, nil
 	}
 	return normalTask, false, nil
+}
+
+// preferBoundedLimitIndexLookupForTopN lets a strictly bounded ordered IndexLookUp
+// beat a root TableReader+TopN/Sort competitor when statistics underestimates the
+// table-reader range. It is a no-op for non-TopN logical operators and never
+// overrides valid hint tasks, which are selected before normal task comparison.
+func preferBoundedLimitIndexLookupForTopN(super base.LogicalPlan, curTask, bestTask base.Task) (curIsBetter bool, decided bool) {
+	topN, ok := super.(*logicalop.LogicalTopN)
+	if !ok || topN == nil || bestTask == nil || bestTask.Invalid() {
+		return false, false
+	}
+
+	curIsLookup := isPureOrderedLimitIndexLookupForTopN(curTask, topN)
+	bestIsLookup := isPureOrderedLimitIndexLookupForTopN(bestTask, topN)
+	if curIsLookup == bestIsLookup {
+		return false, false
+	}
+	if !boundedLimitIndexLookupPreferenceEnabled(topN) {
+		return false, false
+	}
+	if curIsLookup && isBoundedLimitIndexLookupCompetitor(bestTask) {
+		return true, true
+	}
+	if bestIsLookup && isBoundedLimitIndexLookupCompetitor(curTask) {
+		return false, true
+	}
+	return false, false
+}
+
+func boundedLimitIndexLookupPreferenceEnabled(topN *logicalop.LogicalTopN) bool {
+	sessionVars := topN.SCtx().GetSessionVars()
+	// Fix69405 is the single control surface here: unset means the default
+	// threshold, "off"/"0" disables the preference, and a positive integer
+	// customizes the LIMIT+OFFSET risk bound.
+	sessionVars.RecordRelevantOptVar(vardef.TiDBOptIndexLookupCostFactor)
+	sessionVars.RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
+	sessionVars.RecordRelevantOptFix(fixcontrol.Fix69405)
+
+	threshold, ok := fixcontrol.GetPositiveUintWithDefault(
+		sessionVars.GetOptimizerFixControlMap(),
+		fixcontrol.Fix69405,
+		defaultBoundedLimitIndexLookupThreshold,
+	)
+	if !ok {
+		return false
+	}
+	if sessionVars.IndexLookupCostFactor != vardef.DefOptIndexLookupCostFactor ||
+		sessionVars.LimitCostFactor != vardef.DefOptLimitCostFactor {
+		return false
+	}
+	limitWindow := topN.Count + topN.Offset
+	return limitWindow >= topN.Count && limitWindow <= threshold
+}
+
+// isPureOrderedLimitIndexLookupForTopN accepts only the simple safe shape:
+// IndexLookUp(limit embedded) with Limit -> ordered IndexScan on the build side
+// and a plain TiKV TableScan on the probe side. Residual filters, partial-order
+// limit variants, IndexLookUpPushDown, TiFlash, and partition/range-group merge
+// shapes are deliberately rejected for the first implementation.
+func isPureOrderedLimitIndexLookupForTopN(t base.Task, topN *logicalop.LogicalTopN) bool {
+	if len(topN.PartitionBy) != 0 {
+		return false
+	}
+	root, ok := t.(*physicalop.RootTask)
+	if !ok {
+		return false
+	}
+	plan := root.GetPlan()
+	for {
+		proj, ok := plan.(*physicalop.PhysicalProjection)
+		if !ok {
+			break
+		}
+		children := proj.Children()
+		if len(children) != 1 {
+			return false
+		}
+		plan = children[0]
+	}
+
+	reader, ok := plan.(*physicalop.PhysicalIndexLookUpReader)
+	if !ok || reader.PushedLimit == nil || reader.IndexLookUpPushDown {
+		return false
+	}
+	if reader.PushedLimit.Offset != topN.Offset || reader.PushedLimit.Count != topN.Count {
+		return false
+	}
+	limitWindow := topN.Count + topN.Offset
+	if limitWindow < topN.Count {
+		return false
+	}
+
+	tableScan, ok := reader.TablePlan.(*physicalop.PhysicalTableScan)
+	if !ok || tableScan.StoreType != kv.TiKV || len(tableScan.FilterCondition) != 0 ||
+		len(tableScan.LateMaterializationFilterCondition) != 0 {
+		return false
+	}
+	if len(reader.TablePlans) != 1 {
+		return false
+	}
+	if _, ok := reader.TablePlans[0].(*physicalop.PhysicalTableScan); !ok {
+		return false
+	}
+
+	indexLimit, ok := reader.IndexPlan.(*physicalop.PhysicalLimit)
+	if !ok || indexLimit.Offset != 0 || indexLimit.Count != limitWindow ||
+		len(indexLimit.PartitionBy) != 0 || indexLimit.PrefixCol != nil || indexLimit.PrefixLen != 0 {
+		return false
+	}
+	indexChildren := indexLimit.Children()
+	if len(indexChildren) != 1 {
+		return false
+	}
+	indexScan, ok := indexChildren[0].(*physicalop.PhysicalIndexScan)
+	if !ok || !indexScan.KeepOrder || indexScan.IsPartition || len(indexScan.ByItems) != 0 ||
+		len(indexScan.GroupedRanges) != 0 || len(indexScan.GroupByColIdxs) != 0 {
+		return false
+	}
+	return indexScan.Prop == nil || indexScan.Prop.PartialOrderInfo == nil
+}
+
+// isBoundedLimitIndexLookupCompetitor keeps the preference narrow: it targets
+// root ordering over a TiKV table reader, not IndexMerge, TiFlash/MPP, point
+// gets, covering index readers, or another lookup candidate that should
+// continue to be compared by cost.
+func isBoundedLimitIndexLookupCompetitor(t base.Task) bool {
+	root, ok := t.(*physicalop.RootTask)
+	if !ok {
+		return false
+	}
+	var hasRootOrder bool
+	var hasTiKVTableReader bool
+	var hasExcludedReader bool
+	var hasCoveringOrPointOrLookup bool
+	walkPhysicalPlan(root.GetPlan(), func(p base.PhysicalPlan) {
+		switch x := p.(type) {
+		case *physicalop.PhysicalTableReader:
+			if x.StoreType == kv.TiKV && x.ReadReqType == physicalop.Cop {
+				hasTiKVTableReader = true
+			} else {
+				hasExcludedReader = true
+			}
+		case *physicalop.PhysicalTopN, *physicalop.PhysicalSort:
+			hasRootOrder = true
+		case *physicalop.PhysicalIndexMergeReader:
+			hasExcludedReader = true
+		case *physicalop.PhysicalIndexReader, *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan, *physicalop.PhysicalIndexLookUpReader:
+			hasCoveringOrPointOrLookup = true
+		}
+	})
+	return hasRootOrder && hasTiKVTableReader && !hasExcludedReader && !hasCoveringOrPointOrLookup
+}
+
+func walkPhysicalPlan(p base.PhysicalPlan, fn func(base.PhysicalPlan)) {
+	if p == nil {
+		return
+	}
+	fn(p)
+	for _, child := range p.Children() {
+		walkPhysicalPlan(child, fn)
+	}
 }
 
 func enumeratePhysicalPlans4TaskHelper(
@@ -225,6 +395,10 @@ func enumeratePhysicalPlans4TaskHelper(
 		if hintTask.Invalid() && hasNormalPreferTask(baseLP.Self(), initState, pp, childTasks) {
 			if normalPreferTask.Invalid() {
 				normalPreferTask = curTask
+			} else if curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(super, curTask, normalPreferTask); decided {
+				if curIsBetter {
+					normalPreferTask = curTask
+				}
 			} else if curIsBetter, err := compareTaskCost(curTask, normalPreferTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
@@ -235,6 +409,10 @@ func enumeratePhysicalPlans4TaskHelper(
 		if hintTask.Invalid() && normalPreferTask.Invalid() {
 			if normalIterTask.Invalid() {
 				normalIterTask = curTask
+			} else if curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(super, curTask, normalIterTask); decided {
+				if curIsBetter {
+					normalIterTask = curTask
+				}
 			} else if curIsBetter, err := compareTaskCost(curTask, normalIterTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {

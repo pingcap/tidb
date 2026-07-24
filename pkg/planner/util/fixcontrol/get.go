@@ -75,6 +75,9 @@ const (
 	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
+	// Fix69405 controls the LIMIT+OFFSET threshold for preferring bounded ordered IndexLookUp under TopN.
+	// Unset uses the default threshold, 0 disables it, and a positive integer overrides the threshold.
+	Fix69405 uint64 = 69405
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
@@ -123,7 +126,7 @@ func GetBoolWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal 
 	return value
 }
 
-// GetInt fetches the given key from the fix control map as an uint64 type.
+// GetInt fetches the given key from the fix control map as an int64 type.
 func GetInt(fixControlMap map[uint64]string, key uint64) (value int64, exists bool, parseErr error) {
 	if fixControlMap == nil {
 		return 0, false, nil
@@ -137,14 +140,28 @@ func GetInt(fixControlMap map[uint64]string, key uint64) (value int64, exists bo
 	return value, true, parseErr
 }
 
-// GetIntWithDefault fetches the given key from the fix control map as an uint64 type,
-// // and a default value would be returned when fail to fetch the expected key.
+// GetIntWithDefault fetches the given key from the fix control map as an int64 type,
+// and a default value would be returned when fail to fetch the expected key.
 func GetIntWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal int64) int64 {
 	value, exists, err := GetInt(fixControlMap, key)
 	if !exists || err != nil {
 		return defaultVal
 	}
 	return value
+}
+
+// GetPositiveUintWithDefault fetches the given key from the fix control map as a positive uint64 type.
+// Missing values use the default. Invalid and non-positive values disable the control and return false.
+func GetPositiveUintWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal uint64) (uint64, bool) {
+	rawValue, exists := GetStr(fixControlMap, key)
+	if !exists {
+		return defaultVal, defaultVal > 0
+	}
+	value := GetIntWithDefault(map[uint64]string{key: strings.TrimSpace(rawValue)}, key, 0)
+	if value <= 0 {
+		return 0, false
+	}
+	return uint64(value), true
 }
 
 // GetFloat fetches the given key from the fix control map as a float64 type.
