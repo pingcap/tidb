@@ -22,6 +22,8 @@ import (
 	"io"
 	"math/big"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,9 +36,13 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -45,11 +51,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newParquetS3StoreForTest(
+	t *testing.T,
+	fileName string,
+	data []byte,
+) (storeapi.Storage, *recording.AccessStats) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, fileName, time.Time{}, bytes.NewReader(data))
+	}))
+	t.Cleanup(server.Close)
+
+	accessStats := &recording.AccessStats{}
+	store, err := s3store.NewS3Storage(context.Background(), &backuppb.S3{
+		Endpoint:        server.URL,
+		Region:          "us-east-1",
+		Bucket:          "bucket",
+		AccessKey:       "access-key",
+		SecretAccessKey: "secret-access-key",
+		ForcePathStyle:  true,
+		Provider:        "minio",
+	}, &storeapi.Options{AccessRecording: accessStats})
+	require.NoError(t, err)
+	t.Cleanup(store.Close)
+	return store, accessStats
+}
+
 func newParquetParserForTest(
 	ctx context.Context,
 	t *testing.T,
 	dir string,
 	fileName string,
+	fileSize int64,
 	meta FileMeta,
 ) *Parser {
 	t.Helper()
@@ -57,10 +91,9 @@ func newParquetParserForTest(
 	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
-	r, err := store.Open(ctx, fileName, nil)
-	require.NoError(t, err)
-
-	parser, err := NewParser(ctx, store, r, fileName, meta)
+	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+		return store.Open(ctx, fileName, nil)
+	}, fileName, fileSize, meta)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -117,7 +150,7 @@ func TestParquetParser(t *testing.T) {
 	name := "test123.parquet"
 	testutils.WriteParquetFile(dir, name, pc, 100)
 
-	reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{})
+	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
 
 	require.Equal(t, []string{"ss", "a_a"}, reader.Columns())
 
@@ -186,7 +219,7 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	parser := newParquetParserForTest(context.Background(), t, dir, fileName, FileMeta{})
+	parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
 
 	for i := range 50 {
 		require.NoError(t, parser.ReadRow())
@@ -295,7 +328,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "test123.parquet"
 		testutils.WriteParquetFile(dir, name, pc, 1)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{Loc: time.UTC})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
 
 		require.Len(t, reader.colNames, 10)
 		require.NoError(t, reader.ReadRow())
@@ -381,7 +414,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "logical-timestamps.parquet"
 		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{Loc: asiaShanghai})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: asiaShanghai})
 		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[0].converted)
 		require.Equal(t, schema.ConvertedTypes.TimestampMicros, reader.colTypes[1].converted)
 		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[2].converted)
@@ -436,7 +469,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "logical-time-local.parquet"
 		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{Loc: asiaShanghai})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: asiaShanghai})
 		require.Equal(t, schema.ConvertedTypes.TimeMillis, reader.colTypes[0].converted)
 		require.Equal(t, schema.ConvertedTypes.TimeMicros, reader.colTypes[1].converted)
 		require.False(t, reader.colTypes[0].IsAdjustedToUTC)
@@ -474,9 +507,9 @@ func TestParquetVariousTypes(t *testing.T) {
 
 		store, err := objstore.NewLocalStorage(dir)
 		require.NoError(t, err)
-		r, err := store.Open(context.Background(), name, nil)
-		require.NoError(t, err)
-		parser, err := NewParser(context.Background(), store, r, name, FileMeta{Loc: time.UTC})
+		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+			return store.Open(ctx, name, nil)
+		}, name, 0, FileMeta{Loc: time.UTC})
 		require.ErrorContains(t, err, "unsupported timestamp time unit")
 		require.Nil(t, parser)
 	})
@@ -498,7 +531,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "int96-rounds-sub-microsecond.parquet"
 		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{Loc: time.UTC})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
 		require.Equal(t, "", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 		require.NoError(t, reader.ReadRow())
 
@@ -609,7 +642,7 @@ func TestParquetVariousTypes(t *testing.T) {
 					),
 				)
 
-				reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{Loc: time.UTC})
+				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
 				require.NotNil(t, reader.fileMeta.KeyValueMetadata().FindValue("org.apache.spark.version"))
 				if tc.name == "legacy" {
 					version := sparkVersionFromMetadata(reader.fileMeta)
@@ -785,7 +818,7 @@ func TestParquetVariousTypes(t *testing.T) {
 					),
 				)
 
-				reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{Loc: time.UTC})
+				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
 				for _, colType := range reader.colTypes {
 					require.Equal(t, tc.timeZoneID, colType.sparkRebaseMicros.timeZoneID)
 				}
@@ -834,7 +867,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			),
 		)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{Loc: time.UTC})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
 		require.Equal(t, sparkRebaseDefaultTimeZoneID, reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 		require.NoError(t, reader.ReadRow())
 
@@ -876,7 +909,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			),
 		)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, FileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
 		require.Equal(t, "Asia/Shanghai", reader.loc.String())
 		require.Equal(t, "Asia/Shanghai", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 	})
@@ -946,7 +979,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.02.parquet"
 		testutils.WriteParquetFile(dir, fileName, pc, 7)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, FileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
 
 		for i, expectValue := range expectedValues {
 			assert.NoError(t, reader.ReadRow())
@@ -981,7 +1014,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.bool.parquet"
 		testutils.WriteParquetFile(dir, fileName, pc, 2)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, FileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
 
 		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
@@ -1034,7 +1067,7 @@ func BenchmarkRebaseSparkJulianToGregorianMicros(b *testing.B) {
 
 func TestParquetAurora(t *testing.T) {
 	fileName := "aurora_snapshot.parquet"
-	parser := newParquetParserForTest(context.TODO(), t, "testfiles", fileName, FileMeta{})
+	parser := newParquetParserForTest(context.TODO(), t, "testfiles", fileName, 0, FileMeta{})
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
@@ -1090,7 +1123,7 @@ func TestParquetAurora(t *testing.T) {
 func TestHiveParquetParser(t *testing.T) {
 	name := "hive_dump.parquet"
 	dir := "./testfiles"
-	reader := newParquetParserForTest(context.TODO(), t, dir, name, FileMeta{Loc: time.UTC})
+	reader := newParquetParserForTest(context.TODO(), t, dir, name, 0, FileMeta{Loc: time.UTC})
 	// UTC+0:00
 	results := []time.Time{
 		time.Date(2022, 9, 10, 9, 9, 0, 0, time.UTC),
@@ -1170,7 +1203,7 @@ func TestBasicReadFile(t *testing.T) {
 		readBatchSize = origBatchSize
 	}()
 
-	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, FileMeta{})
+	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, 0, FileMeta{})
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
@@ -1231,13 +1264,13 @@ func TestParquetParserWrapper(t *testing.T) {
 	require.NoError(t, err)
 
 	readRows := func(threshold int) ([]string, []int64) {
-		origThreshold := rowGroupInMemoryThreshold
-		rowGroupInMemoryThreshold = threshold
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = threshold
 		defer func() {
-			rowGroupInMemoryThreshold = origThreshold
+			inMemoryThreshold = origThreshold
 		}()
 
-		parser := newParquetParserForTest(context.Background(), t, dir, fileName, FileMeta{})
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
 
 		gotFixed := make([]string, 0, rowCnt)
 		gotInt := make([]int64, 0, rowCnt)
@@ -1285,9 +1318,9 @@ func (r *ctxAwareReader) Seek(offset int64, whence int) (int64, error) {
 
 func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
 	// Force the non-in-memory path; only that branch was affected.
-	origThreshold := rowGroupInMemoryThreshold
-	rowGroupInMemoryThreshold = 1
-	t.Cleanup(func() { rowGroupInMemoryThreshold = origThreshold })
+	origThreshold := inMemoryThreshold
+	inMemoryThreshold = 1
+	t.Cleanup(func() { inMemoryThreshold = origThreshold })
 
 	testfailpoint.EnableCall(t,
 		"github.com/pingcap/tidb/pkg/dumpformat/parquetfile/interceptParquetReader",
@@ -1337,7 +1370,7 @@ func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
 	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
-	peak, err := EstimateParquetReaderMemory(context.Background(), store, fileName)
+	peak, err := EstimateParquetReaderMemory(context.Background(), store, fileName, 0)
 	require.NoError(t, err)
 	require.Greater(t, peak, int64(0))
 }
@@ -1349,9 +1382,9 @@ func TestParquetParserLargePagePeakMemory(t *testing.T) {
 		maxStreamingAllocatorPeak = 4 << 20
 	)
 
-	origThreshold := rowGroupInMemoryThreshold
-	rowGroupInMemoryThreshold = 1
-	t.Cleanup(func() { rowGroupInMemoryThreshold = origThreshold })
+	origThreshold := inMemoryThreshold
+	inMemoryThreshold = 1
+	t.Cleanup(func() { inMemoryThreshold = origThreshold })
 
 	makeValue := func(row int) []byte {
 		value := make([]byte, valueSize)
@@ -1384,7 +1417,7 @@ func TestParquetParserLargePagePeakMemory(t *testing.T) {
 	))
 
 	allocator := &trackingAllocator{}
-	reader := newParquetParserForTest(context.Background(), t, dir, fileName, FileMeta{allocator: allocator})
+	reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{allocator: allocator})
 	require.True(t, reader.prop.BufferedStreamEnabled)
 	require.True(t, reader.prop.PageStreamingEnabled)
 	require.Equal(t, int64(1024), reader.prop.BufferSize)
@@ -1401,6 +1434,92 @@ func TestParquetParserLargePagePeakMemory(t *testing.T) {
 	// Allow a few streaming chunks and decoder bookkeeping, while ensuring the
 	// 32 MiB page is never materialized in the tracking allocator.
 	require.Less(t, allocator.peakAllocation.Load(), int64(maxStreamingAllocatorPeak))
+}
+
+func TestParquetParserWholeFileInMemory(t *testing.T) {
+	const rowCnt = 64
+	dir := t.TempDir()
+	fileName := "whole-file.parquet"
+
+	pc := []testutils.ParquetColumn{
+		{
+			Name:      "v",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					defLevels[i] = 1
+					vals[i] = int64(i)
+				}
+				return vals, defLevels
+			},
+		},
+	}
+	require.NoError(t, testutils.WriteParquetFile(dir, fileName, pc, rowCnt))
+
+	info, err := os.Stat(filepath.Join(dir, fileName))
+	require.NoError(t, err)
+	fileSize := info.Size()
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
+	require.NoError(t, err)
+
+	read := func(t *testing.T, fileSize int64) (*Parser, *recording.AccessStats) {
+		store, accessStats := newParquetS3StoreForTest(t, fileName, data)
+		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+			return store.Open(ctx, fileName, nil)
+		}, fileName, fileSize, FileMeta{})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, parser.Close())
+		})
+		for i := range rowCnt {
+			require.NoError(t, parser.ReadRow())
+			require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
+		}
+		require.ErrorIs(t, parser.ReadRow(), io.EOF)
+		return parser, accessStats
+	}
+
+	// FileSize known and below threshold: whole-file path engages.
+	t.Run("engages_when_file_fits_threshold", func(t *testing.T) {
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = int(fileSize) + 1
+		defer func() { inMemoryThreshold = origThreshold }()
+
+		parser, accessStats := read(t, fileSize)
+		require.NotNil(t, parser.preloadBase, "expected whole-file in-memory path")
+		require.EqualValues(t, 1, accessStats.Requests.Get.Load())
+	})
+
+	// FileSize unset: parser skips whole-file preload and uses the row-group strategy.
+	t.Run("skipped_when_file_size_unknown", func(t *testing.T) {
+		parser, accessStats := read(t, 0)
+		require.Nil(t, parser.preloadBase)
+		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
+	})
+
+	// FileSize larger than threshold: use row-group preload even though we know the size.
+	t.Run("skipped_when_file_exceeds_threshold", func(t *testing.T) {
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = int(fileSize) - 1
+		defer func() { inMemoryThreshold = origThreshold }()
+
+		parser, accessStats := read(t, fileSize)
+		require.Nil(t, parser.preloadBase)
+		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
+	})
+
+	t.Run("streams_when_row_group_exceeds_threshold", func(t *testing.T) {
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = 1
+		defer func() { inMemoryThreshold = origThreshold }()
+
+		parser, accessStats := read(t, fileSize)
+		require.Nil(t, parser.preloadBase)
+		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
+	})
 }
 
 // getStringFromParquetByteOld is the previous implementation used to convert

@@ -17,7 +17,6 @@ package storeapi
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -93,13 +92,6 @@ type WalkOption struct {
 	// after the key. This is currently supported by S3-like storage, GCS and
 	// local storage.
 	StartAfter string
-}
-
-// ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
-type ReadSeekCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
 }
 
 // Uploader upload file with chunks.

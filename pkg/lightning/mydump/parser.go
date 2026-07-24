@@ -78,7 +78,7 @@ type blockParser struct {
 }
 
 func makeBlockParser(
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 	metrics *metric.Metrics,
@@ -163,7 +163,7 @@ type Parser interface {
 func NewChunkParser(
 	ctx context.Context,
 	sqlMode mysql.SQLMode,
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *ChunkParser {
@@ -668,7 +668,7 @@ func OpenReader(
 	fileMeta *SourceFileMeta,
 	store storeapi.Storage,
 	decompressCfg compressedio.DecompressConfig,
-) (reader storeapi.ReadSeekCloser, err error) {
+) (reader io.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Compression != CompressionNone:
 		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
@@ -680,4 +680,26 @@ func OpenReader(
 		reader, err = store.Open(ctx, fileMeta.Path, nil)
 	}
 	return
+}
+
+// NewReaderOpener creates a function that opens a reader for fileMeta.
+// It opens the reader immediately for non-Parquet files and leaves Parquet files unopened.
+func NewReaderOpener(
+	ctx context.Context,
+	fileMeta *SourceFileMeta,
+	store storeapi.Storage,
+	decompressCfg compressedio.DecompressConfig,
+) (
+	openFunc func(context.Context) (io.ReadSeekCloser, error),
+	reader io.ReadSeekCloser,
+	err error,
+) {
+	openFunc = func(ctx context.Context) (io.ReadSeekCloser, error) {
+		return OpenReader(ctx, fileMeta, store, decompressCfg)
+	}
+	if fileMeta.Type == SourceTypeParquet {
+		return openFunc, nil, nil
+	}
+	reader, err = openFunc(ctx)
+	return openFunc, reader, err
 }
