@@ -783,6 +783,17 @@ NULL	NULL	2	2	4	2
 show warnings;
 Level	Code	Message
 drop table if exists t1, t2, t3, t4;
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 TEXT);
+CREATE TABLE t1(c0 TEXT);
+INSERT INTO t0 VALUES ('s\n');
+INSERT INTO t1 VALUES ('s ');
+SELECT * FROM t0 JOIN t1 ON t0.c0 > t1.c0 WHERE true OR (CASE false WHEN true THEN FIND_IN_SET(t1.c0, t1.c0) ELSE t1.c0 END) HAVING t0.c0 <= t1.c0;
+c0	c0
+s
+	s 
+SELECT * FROM t0 JOIN t1 ON t0.c0 > t1.c0 WHERE true HAVING t0.c0 <= t1.c0;
+c0	c0
 drop table if exists t0, v0;
 drop view if exists v0;
 CREATE  TABLE  t0(c0 INTEGER);
