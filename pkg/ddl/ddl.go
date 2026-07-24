@@ -434,9 +434,6 @@ func (sv *schemaVersionManager) unlockSchemaVersion(jobCtx *jobContext, jobID in
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
 	logutil.DDLLogger().Debug("check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
-	if isOwner {
-		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
-	}
 	return isOwner
 }
 
@@ -928,8 +925,6 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	}
 
 	variable.RegisterStatistics(d)
-
-	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
