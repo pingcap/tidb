@@ -51,7 +51,10 @@ type DiskRoot interface {
 }
 
 const (
-	capacityThreshold     = 0.9
+	capacityThreshold = 0.9
+	// TiDB nodes typically have 2 GiB memory per CPU slot, and local sort flushes
+	// a similar-sized batch. Reserve 2 GiB per slot for efficient flush/import
+	// cycles, capped by tidb_ddl_disk_quota.
 	localSortBytesPerSlot = 2 * size.GB
 )
 
@@ -218,10 +221,11 @@ func RiskOfDiskFull(available, capacity uint64) bool {
 // CheckLocalSortFreeDisk ensures the local ingest temp directory has enough free
 // disk space for the incoming local-sort job.
 func CheckLocalSortFreeDisk(
+	execID string,
 	runningJobCount int,
-	runningJobRequiredSlots int,
+	runningJobRuntimeSlots int,
 	runningJobUsedBytes uint64,
-	newJobRequiredSlots int,
+	newJobRuntimeSlots int,
 ) error {
 	sortPath, err := GenIngestTempDataDir()
 	if err != nil {
@@ -233,26 +237,28 @@ func CheckLocalSortFreeDisk(
 	}
 
 	return checkLocalSortFreeDisk(
+		execID,
 		sortPath,
 		sz.Available,
 		sz.Capacity,
 		runningJobCount,
-		runningJobRequiredSlots,
+		runningJobRuntimeSlots,
 		runningJobUsedBytes,
-		newJobRequiredSlots,
+		newJobRuntimeSlots,
 	)
 }
 
 func checkLocalSortFreeDisk(
+	execID string,
 	sortPath string,
 	availableBytes uint64,
 	totalCapacityBytes uint64,
 	runningJobCount int,
-	runningJobRequiredSlots int,
+	runningJobRuntimeSlots int,
 	runningJobUsedBytes uint64,
-	newJobRequiredSlots int,
+	newJobRuntimeSlots int,
 ) error {
-	allJobsRequiredBytes := uint64(runningJobRequiredSlots+newJobRequiredSlots) * localSortBytesPerSlot
+	allJobsRequiredBytes := uint64(runningJobRuntimeSlots+newJobRuntimeSlots) * localSortBytesPerSlot
 	// Slot-based reservations and the ingest quota are shared soft budgets.
 	// Exceeding the quota triggers an import that releases disk, so check the
 	// aggregate growth until the smaller target is reached.
@@ -269,21 +275,17 @@ func checkLocalSortFreeDisk(
 			zap.String("sortPath", sortPath),
 			zap.Uint64("totalCapacityBytes", totalCapacityBytes),
 			zap.Int("runningLocalSortJobCount", runningJobCount),
-			zap.Int("newJobRequiredSlots", newJobRequiredSlots),
+			zap.Int("newJobRuntimeSlots", newJobRuntimeSlots),
 			zap.Uint64("localSortBytesPerSlot", localSortBytesPerSlot))
 		return nil
 	}
 
 	return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
 		fmt.Sprintf(
-			"local sort requires at least %d bytes free disk space, but only %d bytes are available in %s; total capacity %d bytes, running local-sort job count %d, new job required slots %d, bytes per slot %d",
-			totalRequiredBytes,
-			availableBytes,
+			"insufficient free disk space on TiDB node %s at %s: %d bytes available; the add-index job cannot start because low disk space would degrade SST ingestion. Free disk space on this TiDB node by removing unnecessary logs or files",
+			execID,
 			sortPath,
-			totalCapacityBytes,
-			runningJobCount,
-			newJobRequiredSlots,
-			localSortBytesPerSlot,
+			availableBytes,
 		),
 	)
 }

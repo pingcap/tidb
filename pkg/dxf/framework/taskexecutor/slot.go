@@ -151,7 +151,7 @@ func (sm *slotManager) executorTaskSlotsSnapshot() map[int64]int {
 
 	slots := make(map[int64]int, len(sm.executorTasks))
 	for _, task := range sm.executorTasks {
-		slots[task.ID] = task.RequiredSlots
+		slots[task.ID] = task.GetRuntimeSlots()
 	}
 	return slots
 }
