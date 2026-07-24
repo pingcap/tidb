@@ -78,7 +78,7 @@
 - `pkg/executor/trace_test.go` - executor: Tests trace exec.
 - `pkg/executor/traffic_test.go` - executor: Tests traffic form.
 - `pkg/executor/union_scan_test.go` - executor: Tests union scan for mem buffer reader.
-- `pkg/executor/update_test.go` - executor: Tests pessimistic update PK lazy check.
+- `pkg/executor/update_test.go` - executor: Tests update locking, generated columns, and decimal truncation warnings.
 - `pkg/executor/utils_test.go` - executor: Tests batch retriever helper.
 - `pkg/executor/window_test.go` - executor: Tests window functions.
 - `pkg/executor/write_concurrent_test.go` - executor: Tests batch insert with on duplicate.

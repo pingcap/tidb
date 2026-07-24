@@ -577,10 +577,17 @@ affected rows: 1
 info: Rows matched: 1  Changed: 1  Warnings: 1
 show warnings;
 Level	Code	Message
-Warning	1292	Truncated incorrect DECIMAL value: '202.23'
+Warning	1265	Data truncated for column 'a' at row 1
+prepare stmt from 'update decimals set a = a + ?';
+set @increment = 1.23;
+execute stmt using @increment;
+show warnings;
+Level	Code	Message
+Warning	1265	Data truncated for column 'a' at row 1
+deallocate prepare stmt;
 select * from decimals;
 a
-202
+203
 drop table t;
 CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`));
 UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2;

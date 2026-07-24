@@ -439,6 +439,11 @@ insert into decimals values (201);
 update decimals set a = a + 1.23;
 --disable_info
 show warnings;
+prepare stmt from 'update decimals set a = a + ?';
+set @increment = 1.23;
+execute stmt using @increment;
+show warnings;
+deallocate prepare stmt;
 select * from decimals;
 
 drop table t;

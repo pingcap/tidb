@@ -511,6 +511,38 @@ func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmod
 	return err
 }
 
+func reformatUpdateWarnings(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, expr expression.Expression, rowIdx, evalWarnCnt, castWarnCnt int) {
+	if colInfo == nil || colInfo.GetType() != mysql.TypeNewDecimal {
+		return
+	}
+
+	if con, ok := expr.(*expression.Constant); ok && con.DeferredExpr != nil {
+		expr = con.DeferredExpr
+	}
+	rewriteEvalWarnings := false
+	if cast, ok := expr.(*expression.ScalarFunction); ok && cast.FuncName.L == ast.Cast {
+		rewriteEvalWarnings = true
+		expr = cast.GetArgs()[0]
+	}
+	switch expr.GetType(sctx.GetExprCtx().GetEvalCtx()).EvalType() {
+	case types.ETInt, types.ETReal, types.ETDecimal:
+	default:
+		return
+	}
+
+	if rewriteEvalWarnings {
+		castWarnCnt = evalWarnCnt
+	}
+	sc := sctx.GetSessionVars().StmtCtx
+	newWarnings := sc.TruncateWarnings(castWarnCnt)
+	for i := range newWarnings {
+		if types.ErrTruncatedWrongVal.Equal(newWarnings[i].Err) {
+			newWarnings[i].Err = types.ErrTruncated.FastGenByArgs(colName.O, rowIdx+1)
+		}
+	}
+	sc.AppendWarnings(newWarnings)
+}
+
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for _, assign := range e.OrderedList {
@@ -524,6 +556,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
+		warnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
 		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
 		if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 			return nil, err
@@ -532,10 +565,12 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
+			castWarnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
 			}
+			reformatUpdateWarnings(e.Ctx(), assign.ColName, colInfo, assign.Expr, rowIdx, warnCnt, castWarnCnt)
 		}
 
 		val.Copy(&newRowData[assign.Col.Index])
@@ -551,6 +586,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
+		warnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
 		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
 		if err != nil {
 			return nil, err
@@ -560,10 +596,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			colInfo := cols[assign.Col.Index].ColumnInfo
+			castWarnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
 			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
 			}
+			reformatUpdateWarnings(e.Ctx(), assign.ColName, colInfo, assign.Expr, rowIdx, warnCnt, castWarnCnt)
 		}
 
 		val.Copy(&newRowData[assign.Col.Index])
