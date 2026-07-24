@@ -289,18 +289,18 @@ type ProtectionMode int
 
 const (
 	ProtectionModeMaximumPerformance ProtectionMode = iota
-	ProtectionModeMaximumProtection
 	ProtectionModeMaximumAvailability
+	ProtectionModeMaximumProtection
 )
 
 func (m ProtectionMode) String() string {
 	switch m {
 	case ProtectionModeMaximumPerformance:
 		return "MAXIMUM_PERFORMANCE"
-	case ProtectionModeMaximumProtection:
-		return "MAXIMUM_PROTECTION"
 	case ProtectionModeMaximumAvailability:
 		return "MAXIMUM_AVAILABILITY"
+	case ProtectionModeMaximumProtection:
+		return "MAXIMUM_PROTECTION"
 	default:
 		return "UNKNOWN"
 	}
