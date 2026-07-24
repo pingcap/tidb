@@ -1047,6 +1047,9 @@ const (
 
 	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
 	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
+
+	// TiDBPlanReplayerFileRetentionTime indicates how long to retain non-capture plan replayer files.
+	TiDBPlanReplayerFileRetentionTime = "tidb_plan_replayer_file_retention_time"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
@@ -1763,6 +1766,7 @@ const (
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
 	DefTiDBEnablePlanReplayerCapture                  = true
+	DefTiDBPlanReplayerFileRetentionTime              = 7 * 24 * time.Hour
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
