@@ -1593,15 +1593,17 @@ func (c *mockCollector) CollectStmtStatsMap(data stmtstats.StatementStatsMap) {
 	c.f(data)
 }
 
-func waitCollected(ch chan struct{}) {
+func waitCollected(t *testing.T, ch chan struct{}) {
+	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(time.Second * 3):
+	case <-time.After(time.Second * 10):
+		require.FailNow(t, "timed out waiting for statement stats collection")
 	}
 }
 
 func TestTopSQLStatementStats(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, _, tagChecker, collectedNotifyCh, withTotal := setupForTestTopSQLStatementStats(t)
 
 	const ExecCountPerSQL = 2
 	// Test for CRUD.
@@ -1819,31 +1821,80 @@ func TestTopSQLStatementStats(t *testing.T) {
 	}()
 
 	wg.Wait()
-	// Wait for collect.
-	waitCollected(collectedNotifyCh)
+	waitTopSQLStatementStats(t, collectedNotifyCh, withTotal, sqlDigests, ExecCountPerSQL)
 
-	found := 0
-	for digest, item := range total {
-		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
-			found++
-			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
-			require.Equal(t, uint64(ExecCountPerSQL), item.DurationCount, sqlStr)
-			require.True(t, item.SumDurationNs > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
-			require.True(t, item.SumDurationNs < uint64(time.Millisecond*300*ExecCountPerSQL), sqlStr)
-			if strings.HasPrefix(sqlStr, "set global") {
-				// set global statement use internal SQL to change global variable, so itself doesn't have KV request.
-				continue
+	withTotal(func(total stmtstats.StatementStatsMap) {
+		found := 0
+		for digest, item := range total {
+			if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
+				found++
+				require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
+				require.Equal(t, uint64(ExecCountPerSQL), item.DurationCount, sqlStr)
+				require.True(t, item.SumDurationNs > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
+				require.True(t, item.SumDurationNs < uint64(time.Millisecond*300*ExecCountPerSQL), sqlStr)
+				if strings.HasPrefix(sqlStr, "set global") {
+					// set global statement use internal SQL to change global variable, so itself doesn't have KV request.
+					continue
+				}
+				var kvSum uint64
+				for _, kvCount := range item.KvStatsItem.KvExecCount {
+					kvSum += kvCount
+				}
+				require.Equal(t, uint64(ExecCountPerSQL), kvSum)
+				tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
 			}
-			var kvSum uint64
-			for _, kvCount := range item.KvStatsItem.KvExecCount {
-				kvSum += kvCount
-			}
-			require.Equal(t, uint64(ExecCountPerSQL), kvSum)
-			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
+		}
+		require.Equal(t, len(sqlDigests), found)
+		require.Equal(t, 20, found)
+	})
+}
+
+func waitTopSQLStatementStats(
+	t *testing.T,
+	ch chan struct{},
+	withTotal func(func(stmtstats.StatementStatsMap)),
+	sqlDigests map[stmtstats.BinaryDigest]string,
+	execCountPerSQL uint64,
+) {
+	t.Helper()
+
+	deadline := time.After(time.Second * 10)
+	tick := time.NewTicker(time.Millisecond * 10)
+	defer tick.Stop()
+
+	for {
+		if topSQLStatementStatsCollected(withTotal, sqlDigests, execCountPerSQL) {
+			return
+		}
+
+		select {
+		case <-ch:
+		case <-tick.C:
+		case <-deadline:
+			require.FailNow(t, "timed out waiting for expected statement stats")
 		}
 	}
-	require.Equal(t, len(sqlDigests), found)
-	require.Equal(t, 20, found)
+}
+
+func topSQLStatementStatsCollected(
+	withTotal func(func(stmtstats.StatementStatsMap)),
+	sqlDigests map[stmtstats.BinaryDigest]string,
+	execCountPerSQL uint64,
+) bool {
+	collected := false
+	withTotal(func(total stmtstats.StatementStatsMap) {
+		found := 0
+		for digest, item := range total {
+			if _, ok := sqlDigests[digest.SQLDigest]; ok {
+				if item.ExecCount < execCountPerSQL || item.DurationCount < execCountPerSQL {
+					return
+				}
+				found++
+			}
+		}
+		collected = found >= len(sqlDigests)
+	})
+	return collected
 }
 
 type resourceTagChecker struct {
@@ -1883,7 +1934,7 @@ func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.Binary
 	}
 }
 
-func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}) {
+func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}, func(func(stmtstats.StatementStatsMap))) {
 	// Prepare stmt stats.
 	stmtstats.SetupAggregator()
 
@@ -1901,6 +1952,11 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuit
 		}
 	})
 	stmtstats.RegisterCollector(mockCollector)
+	withTotal := func(fn func(stmtstats.StatementStatsMap)) {
+		mu.Lock()
+		defer mu.Unlock()
+		fn(total)
+	}
 
 	ts := servertestkit.CreateTidbTestSuite(t)
 
@@ -1961,11 +2017,11 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuit
 		view.Stop()
 	})
 
-	return ts, total, tagChecker, collectedNotifyCh
+	return ts, total, tagChecker, collectedNotifyCh, withTotal
 }
 
 func TestTopSQLStatementStats2(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, _ := setupForTestTopSQLStatementStats(t)
 
 	const ExecCountPerSQL = 3
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
@@ -2064,7 +2120,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	}
 
 	// Wait for collect.
-	waitCollected(collectedNotifyCh)
+	waitCollected(t, collectedNotifyCh)
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
 	for digest, item := range total {
@@ -2083,7 +2139,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 }
 
 func TestTopSQLStatementStats3(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, _ := setupForTestTopSQLStatementStats(t)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2119,7 +2175,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca
 	}
 	// Wait for collect.
-	waitCollected(collectedNotifyCh)
+	waitCollected(t, collectedNotifyCh)
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
 	for digest, item := range total {
@@ -2136,7 +2192,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 	// wait sql execute finish.
 	wg.Wait()
 	// Wait for collect.
-	waitCollected(collectedNotifyCh)
+	waitCollected(t, collectedNotifyCh)
 
 	for digest, item := range total {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
@@ -2150,7 +2206,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 }
 
 func TestTopSQLStatementStats4(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, _ := setupForTestTopSQLStatementStats(t)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2196,7 +2252,7 @@ func TestTopSQLStatementStats4(t *testing.T) {
 		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.sql
 	}
 	// Wait for collect.
-	waitCollected(collectedNotifyCh)
+	waitCollected(t, collectedNotifyCh)
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
 	for digest, item := range total {
@@ -2213,7 +2269,7 @@ func TestTopSQLStatementStats4(t *testing.T) {
 	// wait sql execute finish.
 	wg.Wait()
 	// Wait for collect.
-	waitCollected(collectedNotifyCh)
+	waitCollected(t, collectedNotifyCh)
 
 	for digest, item := range total {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
@@ -2231,7 +2287,7 @@ func TestTopSQLResourceTag(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
 	})
-	ts, _, tagChecker, _ := setupForTestTopSQLStatementStats(t)
+	ts, _, tagChecker, _, _ := setupForTestTopSQLStatementStats(t)
 	defer func() {
 		topsqlstate.DisableTopSQL()
 	}()
