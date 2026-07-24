@@ -45,6 +45,7 @@ pub(crate) fn dispatch(
         "QUARTER" => quarter(vals),
         "WEEK" => week(vals, cols.default_week_format()),
         "WEEKOFYEAR" => week_of_year_builtin(vals),
+        "TIDB_PARSE_TSO_LOGICAL" => tidb_parse_tso_logical(vals),
         "YEARWEEK" => yearweek(vals),
         "MONTHNAME" => monthname(vals),
         "DAYNAME" => dayname(vals),
@@ -340,6 +341,29 @@ fn week_of_year_builtin(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     Ok(Datum::Int(week_of_year(date.0, date.1, date.2, 3, false).1))
+}
+
+/// The low 18 bits of a TSO carry its logical component (`oracle`'s
+/// `physicalShiftBits = 18`, `logicalBits = (1<<18)-1`).
+const TSO_LOGICAL_BITS: i64 = (1 << 18) - 1;
+
+/// `TIDB_PARSE_TSO_LOGICAL(tso)`. Port of `builtinTidbParseTsoLogicalSig` =
+/// `oracle.ExtractLogical`: the low 18 bits of the timestamp oracle value. A
+/// non-positive or NULL argument yields NULL. Session-independent (the physical
+/// half, `TIDB_PARSE_TSO`, is not, because it renders a datetime in the session
+/// time zone). For a positive `tso`, masking the low 18 bits as `i64` equals
+/// Go's `uint64(tso) & logicalBits`.
+fn tidb_parse_tso_logical(vals: &[Datum]) -> Result<Datum, EvalError> {
+    if vals.len() != 1 {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
+    let Some(tso) = int_arg(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    if tso <= 0 {
+        return Ok(Datum::Null);
+    }
+    Ok(Datum::Int(tso & TSO_LOGICAL_BITS))
 }
 
 /// The `GET_FORMAT` lookup table. `format_type` is one of `DATE`/`DATETIME`/
@@ -1032,6 +1056,28 @@ mod tests {
             Datum::Null
         );
         assert_eq!(week_of_year_builtin(&[Datum::Null]).unwrap(), Datum::Null);
+    }
+
+    /// `builtinTidbParseTsoLogicalSig` = low 18 bits; non-positive/NULL -> NULL.
+    #[test]
+    fn tidb_parse_tso_logical_vectors() {
+        let cases = [
+            (Datum::Int(452_605_852_463_012_352), Datum::Int(137_728)),
+            (Datum::Int(262_144), Datum::Int(0)),
+            (Datum::Int(262_143), Datum::Int(262_143)),
+            (Datum::Int(1), Datum::Int(1)),
+            (Datum::Int(i64::MAX), Datum::Int(262_143)),
+            (Datum::Int(0), Datum::Null),
+            (Datum::Int(-1), Datum::Null),
+            (Datum::Null, Datum::Null),
+        ];
+        for (arg, want) in cases {
+            assert_eq!(
+                tidb_parse_tso_logical(std::slice::from_ref(&arg)).unwrap(),
+                want,
+                "{arg:?}"
+            );
+        }
     }
 
     #[test]

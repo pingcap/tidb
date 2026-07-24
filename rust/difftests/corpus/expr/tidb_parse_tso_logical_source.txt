@@ -1,0 +1,11 @@
+## TIDB_PARSE_TSO_LOGICAL, transcreated from builtinTidbParseTsoLogicalSig in
+## pkg/expression/builtin_time.go (oracle.ExtractLogical: low 18 bits of a TSO).
+## Non-positive or NULL argument -> NULL. Session-independent.
+tidb_parse_tso_logical(452605852463012352)
+tidb_parse_tso_logical(262144)
+tidb_parse_tso_logical(262143)
+tidb_parse_tso_logical(1)
+tidb_parse_tso_logical(9223372036854775807)
+tidb_parse_tso_logical(0)
+tidb_parse_tso_logical(-1)
+tidb_parse_tso_logical(NULL)
