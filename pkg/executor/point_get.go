@@ -147,6 +147,7 @@ type PointGetExecutor struct {
 
 	stats                    *runtimeStatsWithSnapshot
 	resourceGroupTaggerCache resourceGroupTaggerCache
+	resultSet                recordSet
 }
 
 type resourceGroupTaggerCache struct {

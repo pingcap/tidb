@@ -371,6 +371,15 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		}
 	}
 
+	if pointGetExecutor, ok := executor.(*PointGetExecutor); ok {
+		pointGetExecutor.resultSet = recordSet{
+			executor:   executor,
+			schema:     executor.Schema(),
+			stmt:       a,
+			txnStartTS: startTs,
+		}
+		return &pointGetExecutor.resultSet, nil
+	}
 	return &recordSet{
 		executor:   executor,
 		schema:     executor.Schema(),
