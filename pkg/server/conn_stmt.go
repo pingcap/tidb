@@ -89,6 +89,10 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 	data = append(data, 0)
 	// warning count
 	data = append(data, 0, 0) // TODO support warning count
+	metadata := cc.resultsetMetadata()
+	if cc.optionalResultsetMetadataEnabled() {
+		data = append(data, metadata)
+	}
 
 	if err := cc.writePacket(data); err != nil {
 		return err
@@ -96,7 +100,7 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
-	if len(params) > 0 {
+	if metadata == mysql.ResultsetMetadataFull && len(params) > 0 {
 		for i := range params {
 			data = data[0:4]
 			data = params[i].Dump(data, cc.rsEncoder)
@@ -114,7 +118,7 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 		}
 	}
 
-	if len(columns) > 0 {
+	if metadata == mysql.ResultsetMetadataFull && len(columns) > 0 {
 		for i := range columns {
 			data = data[0:4]
 			data = columns[i].Dump(data, cc.rsEncoder)
