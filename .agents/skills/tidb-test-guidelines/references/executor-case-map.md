@@ -288,7 +288,7 @@
 ## pkg/executor/test/autoidtest
 
 ### Tests
-- `pkg/executor/test/autoidtest/autoid_test.go` - executor/test/autoidtest: Tests filter different allocators.
+- `pkg/executor/test/autoidtest/autoid_test.go` - executor/test/autoidtest: Tests allocator filtering, AutoID behavior, and SQL propagation of terminal AutoID service errors through INSERT IGNORE allocation and rebase paths.
 - `pkg/executor/test/autoidtest/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/executor/test/cte

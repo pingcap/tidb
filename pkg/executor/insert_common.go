@@ -341,6 +341,10 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if err == nil {
 		return nil
 	}
+	// The allocator did not produce an ID, so INSERT IGNORE cannot safely continue.
+	if autoid.IsRPCRetryLimitError(err) {
+		return err
+	}
 
 	// Convert the error with full messages.
 	var c *model.ColumnInfo

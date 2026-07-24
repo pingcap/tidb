@@ -16,19 +16,63 @@ package autoid_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	autoidpb "github.com/pingcap/kvproto/pkg/autoid"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	metaautoid "github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
+
+type rpcRetryLimitTestError struct {
+	cause error
+}
+
+func (e *rpcRetryLimitTestError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *rpcRetryLimitTestError) Cause() error {
+	return e.cause
+}
+
+func (e *rpcRetryLimitTestError) Unwrap() error {
+	return e.cause
+}
+
+func (*rpcRetryLimitTestError) AutoIDRPCRetryLimitReached() {}
+
+type rpcRetryLimitClient struct {
+	autoidpb.AutoIDAllocClient
+	err error
+}
+
+func (c *rpcRetryLimitClient) AllocAutoID(
+	context.Context,
+	*autoidpb.AutoIDRequest,
+	...grpc.CallOption,
+) (*autoidpb.AutoIDResponse, error) {
+	return nil, c.err
+}
+
+func (c *rpcRetryLimitClient) Rebase(
+	context.Context,
+	*autoidpb.RebaseRequest,
+	...grpc.CallOption,
+) (*autoidpb.RebaseResponse, error) {
+	return nil, c.err
+}
 
 // Test filter different kind of allocators.
 // In special ddl type, for example:
@@ -548,6 +592,52 @@ func TestMockAutoIDServiceError(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/autoid_service/mockErr")
 	// Cover a bug that the autoid client retry non-retryable errors forever cause dead loop.
 	tk.MustExecToErr("insert into t_mock_err values (),()") // mock error, instead of dead loop
+
+	t.Run("RPC retry limit error is not ignored", func(t *testing.T) {
+		const errMessage = "autoid alloc failed after reaching the RPC retry limit"
+		markedErr := &rpcRetryLimitTestError{
+			cause: metaautoid.ErrAutoincReadFailed.GenWithStack(errMessage),
+		}
+		require.True(t, metaautoid.IsRPCRetryLimitError(markedErr))
+
+		originalMockForTest := metaautoid.MockForTest
+		metaautoid.MockForTest = func(kv.Storage) autoidpb.AutoIDAllocClient {
+			return &rpcRetryLimitClient{err: markedErr}
+		}
+		t.Cleanup(func() {
+			metaautoid.MockForTest = originalMockForTest
+		})
+
+		markedStore := testkit.CreateMockStore(t)
+
+		cases := []struct {
+			name string
+			sql  string
+		}{
+			{name: "ordinary allocation", sql: "insert into %s (v) values (1)"},
+			{name: "ignored allocation", sql: "insert ignore into %s (v) values (1)"},
+			{name: "ignored batch allocation", sql: "insert ignore into %s (v) values (1), (2)"},
+			{name: "ignored eager allocation", sql: "insert ignore into %s (v) select 1"},
+			{name: "ignored explicit ID rebase", sql: "insert ignore into %s (id, v) values (100, 1)"},
+		}
+		for i, test := range cases {
+			t.Run(test.name, func(t *testing.T) {
+				markedTK := testkit.NewTestKit(t, markedStore)
+				markedTK.MustExec("use test")
+				tableName := "t_mock_terminal_" + strconv.Itoa(i)
+				markedTK.MustExec("create table " + tableName + " (id int key auto_increment, v int) auto_id_cache 1")
+				err := markedTK.ExecToErr(fmt.Sprintf(test.sql, tableName))
+				if err == nil {
+					t.Errorf("expected AutoID error for %s", test.sql)
+				} else {
+					require.True(t, metaautoid.ErrAutoincReadFailed.Equal(err))
+					require.True(t, metaautoid.IsRPCRetryLimitError(err))
+					require.Contains(t, err.Error(), errMessage)
+				}
+				markedTK.MustQuery("select id from " + tableName).Check(testkit.Rows())
+			})
+		}
+	})
 }
 
 func TestIssue39528(t *testing.T) {
