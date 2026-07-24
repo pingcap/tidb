@@ -22,11 +22,12 @@ import (
 	"io"
 	"math/big"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,9 +36,12 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -47,18 +51,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type openCountingStorage struct {
-	storeapi.Storage
-	openCount atomic.Int64
-}
+func newParquetS3StoreForTest(
+	t *testing.T,
+	fileName string,
+	data []byte,
+) (storeapi.Storage, *recording.AccessStats) {
+	t.Helper()
 
-func (s *openCountingStorage) Open(
-	ctx context.Context,
-	path string,
-	option *storeapi.ReaderOption,
-) (objectio.Reader, error) {
-	s.openCount.Add(1)
-	return s.Storage.Open(ctx, path, option)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, fileName, time.Time{}, bytes.NewReader(data))
+	}))
+	t.Cleanup(server.Close)
+
+	accessStats := &recording.AccessStats{}
+	store, err := s3store.NewS3Storage(context.Background(), &backuppb.S3{
+		Endpoint:        server.URL,
+		Region:          "us-east-1",
+		Bucket:          "bucket",
+		AccessKey:       "access-key",
+		SecretAccessKey: "secret-access-key",
+		ForcePathStyle:  true,
+		Provider:        "minio",
+	}, &storeapi.Options{AccessRecording: accessStats})
+	require.NoError(t, err)
+	t.Cleanup(store.Close)
+	return store, accessStats
 }
 
 func newParquetParserForTest(
@@ -1445,15 +1462,24 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 	info, err := os.Stat(filepath.Join(dir, fileName))
 	require.NoError(t, err)
 	fileSize := info.Size()
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
+	require.NoError(t, err)
 
-	read := func(fileSize int64) *Parser {
-		parser := newParquetParserForTest(context.Background(), t, dir, fileName, fileSize, FileMeta{})
+	read := func(t *testing.T, fileSize int64) (*Parser, *recording.AccessStats) {
+		store, accessStats := newParquetS3StoreForTest(t, fileName, data)
+		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+			return store.Open(ctx, fileName, nil)
+		}, fileName, fileSize, FileMeta{})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, parser.Close())
+		})
 		for i := range rowCnt {
 			require.NoError(t, parser.ReadRow())
 			require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
 		}
 		require.ErrorIs(t, parser.ReadRow(), io.EOF)
-		return parser
+		return parser, accessStats
 	}
 
 	// FileSize known and below threshold: whole-file path engages.
@@ -1462,50 +1488,41 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		inMemoryThreshold = int(fileSize) + 1
 		defer func() { inMemoryThreshold = origThreshold }()
 
-		store, err := objstore.NewLocalStorage(dir)
-		require.NoError(t, err)
-		countingStore := &openCountingStorage{Storage: store}
-		parser, err := NewParser(
-			context.Background(),
-			countingStore,
-			func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
-				return countingStore.Open(ctx, fileName, nil)
-			},
-			fileName,
-			fileSize,
-			FileMeta{},
-		)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			require.NoError(t, parser.Close())
-		})
-
+		parser, accessStats := read(t, fileSize)
 		require.NotNil(t, parser.preloadBase, "expected whole-file in-memory path")
-		require.Equal(t, int64(1), countingStore.openCount.Load(),
-			"whole-file preload should skip the ordinary reader")
-		for i := range rowCnt {
-			require.NoError(t, parser.ReadRow())
-			require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
-		}
-		require.ErrorIs(t, parser.ReadRow(), io.EOF)
+		require.EqualValues(t, 1, accessStats.Requests.Get.Load())
+		require.Zero(t, accessStats.Requests.Put.Load())
 	})
 
-	// FileSize unset: parser falls back to streaming, whole-file base must
-	// stay nil so we don't accidentally claim mode 3.
+	// FileSize unset: parser skips whole-file preload and uses the row-group strategy.
 	t.Run("skipped_when_file_size_unknown", func(t *testing.T) {
-		parser := read(0)
+		parser, accessStats := read(t, 0)
 		require.Nil(t, parser.preloadBase)
+		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
+		require.Zero(t, accessStats.Requests.Put.Load())
 	})
 
-	// FileSize larger than threshold: stay on the streaming / per-row-group
-	// path even though we know the size.
+	// FileSize larger than threshold: use row-group preload even though we know the size.
 	t.Run("skipped_when_file_exceeds_threshold", func(t *testing.T) {
 		origThreshold := inMemoryThreshold
 		inMemoryThreshold = int(fileSize) - 1
 		defer func() { inMemoryThreshold = origThreshold }()
 
-		parser := read(fileSize)
+		parser, accessStats := read(t, fileSize)
 		require.Nil(t, parser.preloadBase)
+		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
+		require.Zero(t, accessStats.Requests.Put.Load())
+	})
+
+	t.Run("streams_when_row_group_exceeds_threshold", func(t *testing.T) {
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = 1
+		defer func() { inMemoryThreshold = origThreshold }()
+
+		parser, accessStats := read(t, fileSize)
+		require.Nil(t, parser.preloadBase)
+		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
+		require.Zero(t, accessStats.Requests.Put.Load())
 	})
 }
 

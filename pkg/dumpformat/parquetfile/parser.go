@@ -900,8 +900,7 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 	return nb
 }
 
-// preloadBufferBytes reports the in-memory buffer that the parser pre-allocates
-// outside the tracking allocator.
+// preloadBufferBytes returns buffer size allocated outside the allocator.
 func (pp *Parser) preloadBufferBytes() (int64, error) {
 	if pp.preloadBase != nil {
 		return int64(len(pp.preloadBase.buffer)), nil
