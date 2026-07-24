@@ -86,14 +86,9 @@ func openParser(
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	openReader := mydump.NewReaderOpener(&chunk.FileMeta, store)
-	var reader storeapi.ReadSeekCloser
-	var err error
-	if chunk.FileMeta.Type != mydump.SourceTypeParquet {
-		reader, err = openReader(ctx)
-		if err != nil {
-			return nil, err
-		}
+	openReader, reader, err := mydump.NewReaderOpener(ctx, &chunk.FileMeta, store)
+	if err != nil {
+		return nil, err
 	}
 
 	var parser mydump.Parser

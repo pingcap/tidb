@@ -682,15 +682,26 @@ func OpenReader(
 	return
 }
 
-// NewReaderOpener creates a function that opens a reader for fileMeta on demand.
+// NewReaderOpener creates a function that opens a reader for fileMeta.
+// It opens the reader immediately for non-Parquet files and leaves Parquet files unopened.
 func NewReaderOpener(
+	ctx context.Context,
 	fileMeta *SourceFileMeta,
 	store storeapi.Storage,
-) func(context.Context) (storeapi.ReadSeekCloser, error) {
-	return func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+) (
+	openFunc func(context.Context) (storeapi.ReadSeekCloser, error),
+	reader storeapi.ReadSeekCloser,
+	err error,
+) {
+	openFunc = func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
 		return OpenReader(ctx, fileMeta, store, compressedio.DecompressConfig{
 			// Concurrent Zstd decoding can corrupt the decoded stream. See #53587.
 			ZStdDecodeConcurrency: 1,
 		})
 	}
+	if fileMeta.Type == SourceTypeParquet {
+		return openFunc, nil, nil
+	}
+	reader, err = openFunc(ctx)
+	return openFunc, reader, err
 }
