@@ -30,7 +30,7 @@
 - `pkg/planner/cardinality/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/planner/cardinality/ndv_test.go` - planner/cardinality: Tests NDV scaling, skew ratio, and exponential backoff.
 - `pkg/planner/cardinality/row_size_test.go` - planner/cardinality: Tests AvgColSize variants across formats.
-- `pkg/planner/cardinality/selectivity_test.go` - planner/cardinality: Tests selectivity estimation, collation columns, and out-of-range bounds.
+- `pkg/planner/cardinality/selectivity_test.go` - planner/cardinality: Tests selectivity estimation, virtual-column and recursive-index fallback, collation columns, and out-of-range bounds.
 
 ### Testdata
 - `pkg/planner/cardinality/testdata/cardinality_suite_in.json`
