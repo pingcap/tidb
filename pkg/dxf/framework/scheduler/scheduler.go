@@ -19,7 +19,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math/rand"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -44,12 +43,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// for a cancelled task, it's terminal state is reverted or reverted_failed,
-	// so we use a special error message to indicate that the task is cancelled
-	// by user.
-	taskCancelMsg = "cancelled by user"
-)
+const metricStateAll = "all"
 
 var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
@@ -288,7 +282,7 @@ func (s *BaseScheduler) onCancelling() error {
 	s.logger.Info("on cancelling state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 
-	return s.revertTask(errors.New(taskCancelMsg))
+	return s.revertTask(errors.New(storage.TaskCancelMessage))
 }
 
 // handle task in pausing state, cancel all running subtasks.
@@ -804,14 +798,6 @@ func (s *BaseScheduler) GetLogger() *zap.Logger {
 	return s.logger
 }
 
-// IsCancelledErr checks if the error is a cancelled error.
-func IsCancelledErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), taskCancelMsg)
-}
-
 // getEligibleNodes returns the eligible(live) nodes for the task.
 // if the task can only be scheduled to some specific nodes, return them directly,
 // we don't care liveliness of them.
@@ -829,19 +815,26 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 }
 
 func onTaskFinished(state proto.TaskState, taskErr error) {
-	// when task finishes, we classify the finished tasks into succeed/failed/cancelled
-	var metricState string
-
-	if state == proto.TaskStateSucceed || state == proto.TaskStateFailed {
-		metricState = state.String()
-	} else if state == proto.TaskStateReverted {
-		metricState = proto.TaskStateFailed.String()
-		if IsCancelledErr(taskErr) {
-			metricState = "cancelled"
-		}
-	}
+	// when task finishes, we classify the finished tasks into succeed/failed/cancelled/data-error.
+	metricState := getMetricState(state, taskErr)
 	if len(metricState) > 0 {
-		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Inc()
+		dxfmetric.FinishedTaskCounter.WithLabelValues(metricStateAll).Inc()
 		dxfmetric.FinishedTaskCounter.WithLabelValues(metricState).Inc()
+	}
+}
+
+func getMetricState(state proto.TaskState, taskErr error) string {
+	switch state {
+	case proto.TaskStateSucceed:
+		return state.String()
+	case proto.TaskStateFailed:
+		return state.String()
+	case proto.TaskStateReverted:
+		if classification := storage.ClassifyTaskError(state, taskErr); classification != "" {
+			return classification
+		}
+		return proto.TaskStateFailed.String()
+	default:
+		return ""
 	}
 }

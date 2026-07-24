@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
@@ -818,7 +819,7 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	conn.logConnectionEvent(ctx, "login_success")
 
 	defer func() {
 		terror.Log(conn.Close())
@@ -868,6 +869,16 @@ func (s *Server) onConn(conn *clientConn) {
 	if err != nil {
 		return
 	}
+}
+
+func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
+	if !vardef.EnableConnectionEventLog.Load() {
+		return
+	}
+	logutil.Logger(ctx).Info("connection event",
+		zap.String("event", event),
+		zap.Stringer("user", cc.getCtx().GetSessionVars().User),
+		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()))
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {

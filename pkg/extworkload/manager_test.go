@@ -20,6 +20,7 @@ import (
 	"math"
 	"net"
 	"testing"
+	"time"
 
 	pb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -184,11 +185,11 @@ func TestManagerMethodsSetDeadlineAndMetrics(t *testing.T) {
 	}{
 		{
 			name: "InitializeGCV2",
-			call: func(m *manager) error { return m.InitializeGCV2(context.Background()) },
+			call: func(m *manager) error { return m.InitializeGCV2(context.Background(), time.Hour) },
 			check: func(cli *fakeClient) {
 				require.Equal(t, "RegisterGCV2", cli.call)
 				require.Equal(t, uint64(0), cli.safePoint)
-				require.Equal(t, int64(defGCLifeTimeSec), cli.gcLifeTime)
+				require.Equal(t, int64(3600), cli.gcLifeTime)
 				requireLabels(t, cli, string(config.RoleGCV2Worker), metrics.WorkerActionInit)
 			},
 		},
@@ -203,7 +204,7 @@ func TestManagerMethodsSetDeadlineAndMetrics(t *testing.T) {
 		},
 		{
 			name: "RegisterGCV2",
-			call: func(m *manager) error { return m.RegisterGCV2(context.Background(), 10, 600) },
+			call: func(m *manager) error { return m.RegisterGCV2(context.Background(), 10, 10*time.Minute) },
 			check: func(cli *fakeClient) {
 				require.Equal(t, "RegisterGCV2", cli.call)
 				require.Equal(t, uint64(10), cli.safePoint)
@@ -222,7 +223,7 @@ func TestManagerMethodsSetDeadlineAndMetrics(t *testing.T) {
 		},
 		{
 			name: "UpdateGCLifeTime",
-			call: func(m *manager) error { return m.UpdateGCLifeTime(context.Background(), 60) },
+			call: func(m *manager) error { return m.UpdateGCLifeTime(context.Background(), time.Minute) },
 			check: func(cli *fakeClient) {
 				require.Equal(t, "UpdateGCLifeTime", cli.call)
 				require.Equal(t, int64(60), cli.gcLifeTime)

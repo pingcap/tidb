@@ -30,10 +30,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-// defGCLifeTimeSec is the gc_life_time (seconds) seeded to the controller
-// at InitializeGCV2 time, before the local gc_life_time variable is loaded.
-const defGCLifeTimeSec = 600
-
 // dialTimeout bounds the synchronous dial + Ping during manager creation.
 const dialTimeout = 30 * time.Second
 
@@ -138,11 +134,11 @@ func withRequestTimeout(ctx context.Context) (context.Context, context.CancelFun
 	return context.WithTimeout(ctx, requestTimeout)
 }
 
-func (m *manager) InitializeGCV2(ctx context.Context) error {
+func (m *manager) InitializeGCV2(ctx context.Context, gcLifeTime time.Duration) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionInit)
-	return m.cli.RegisterGCV2(ctx, 0, defGCLifeTimeSec)
+	return m.cli.RegisterGCV2(ctx, 0, int64(gcLifeTime.Seconds()))
 }
 
 func (m *manager) AbortGCV2(ctx context.Context) error {
@@ -153,11 +149,11 @@ func (m *manager) AbortGCV2(ctx context.Context) error {
 	return m.cli.RecycleGCV2(ctx, math.MaxUint64)
 }
 
-func (m *manager) RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime int64) error {
+func (m *manager) RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime time.Duration) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionRegister)
-	return m.cli.RegisterGCV2(ctx, safePoint, gcLifeTime)
+	return m.cli.RegisterGCV2(ctx, safePoint, int64(gcLifeTime.Seconds()))
 }
 
 func (m *manager) RecycleGCV2(ctx context.Context, safePoint uint64) error {
@@ -167,10 +163,10 @@ func (m *manager) RecycleGCV2(ctx context.Context, safePoint uint64) error {
 	return m.cli.RecycleGCV2(ctx, safePoint)
 }
 
-func (m *manager) UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) error {
+func (m *manager) UpdateGCLifeTime(ctx context.Context, gcLifeTime time.Duration) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
-	return m.cli.UpdateGCLifeTime(ctx, gcLifeTime)
+	return m.cli.UpdateGCLifeTime(ctx, int64(gcLifeTime.Seconds()))
 }
 
 func (m *manager) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error {

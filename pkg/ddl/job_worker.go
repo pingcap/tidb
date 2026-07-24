@@ -1092,6 +1092,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
+	case model.ActionModifyEngineAttribute:
+		ver, err = onModifyTableEngineAttribute(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:

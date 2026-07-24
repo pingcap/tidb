@@ -11,6 +11,11 @@
 ### Tests
 - `pkg/dxf/example/app_test.go` - dxf/example: Tests example application.
 
+## pkg/dxf/framework/dxfutil
+
+### Tests
+- `pkg/dxf/framework/dxfutil/util_test.go` - dxf/framework/dxfutil: Tests task runtime acquisition and validation.
+
 ## pkg/dxf/framework/handle
 
 ### Tests
@@ -50,7 +55,7 @@
 ### Tests
 - `pkg/dxf/framework/proto/step_test.go` - dxf/framework/proto: Tests step.
 - `pkg/dxf/framework/proto/subtask_test.go` - dxf/framework/proto: Tests subtask is done.
-- `pkg/dxf/framework/proto/task_test.go` - dxf/framework/proto: Tests task step.
+- `pkg/dxf/framework/proto/task_test.go` - dxf/framework/proto: Tests task step and runtime scheduling/cleanup limit validation.
 - `pkg/dxf/framework/proto/type_test.go` - dxf/framework/proto: Tests task type.
 
 ## pkg/dxf/framework/scheduler
@@ -60,8 +65,8 @@
 - `pkg/dxf/framework/scheduler/balancer_test.go` - dxf/framework/scheduler: Tests balance one task.
 - `pkg/dxf/framework/scheduler/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/dxf/framework/scheduler/nodes_test.go` - dxf/framework/scheduler: Tests maintain live nodes.
-- `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager schedulers ordered.
-- `pkg/dxf/framework/scheduler/scheduler_manager_test.go` - dxf/framework/scheduler: Tests clean up routine.
+- `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager scheduler ordering, isolated cleanup batch and drain failure paths, and startup cleanup.
+- `pkg/dxf/framework/scheduler/scheduler_manager_test.go` - dxf/framework/scheduler: Tests cleanup routine and bounded cleanup-batch draining.
 - `pkg/dxf/framework/scheduler/scheduler_nokit_test.go` - dxf/framework/scheduler: Tests scheduler on next stage.
 - `pkg/dxf/framework/scheduler/scheduler_test.go` - dxf/framework/scheduler: Tests task fail in manager.
 - `pkg/dxf/framework/scheduler/slots_test.go` - dxf/framework/scheduler: Tests slot manager reserve next-gen.
@@ -74,8 +79,9 @@
 ## pkg/dxf/framework/storage
 
 ### Tests
-- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task table.
-- `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state.
+- `pkg/dxf/framework/storage/history_test.go` - dxf/framework/storage: Tests history task error categorization.
+- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task/subtask tables, history transfer, task-state queries, and cleanup batch bounds.
+- `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state and cancellation error detection.
 - `pkg/dxf/framework/storage/task_table_test.go` - dxf/framework/storage: Tests task table.
 
 ## pkg/dxf/framework/taskexecutor
@@ -96,10 +102,11 @@
 ## pkg/dxf/importinto
 
 ### Tests
+- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batched file cleanup, storage credential handling, metadata redaction, and cleanup metering success, cancellation, and panic recovery.
 - `pkg/dxf/importinto/collect_conflicts_test.go` - dxf/importinto: Tests collect conflicts step executor.
 - `pkg/dxf/importinto/conflict_resolution_test.go` - dxf/importinto: Tests conflict resolution step executor.
 - `pkg/dxf/importinto/encode_and_sort_operator_test.go` - dxf/importinto: Tests encode and sort operator.
-- `pkg/dxf/importinto/job_testkit_test.go` - dxf/importinto: Tests submit task next-gen.
+- `pkg/dxf/importinto/job_testkit_test.go` - dxf/importinto: Tests cross-keyspace task submission/cancellation and exact GetJobLastUpdateTime lookups across active/history subtasks.
 - `pkg/dxf/importinto/metrics_test.go` - dxf/importinto: Tests metric manager.
 - `pkg/dxf/importinto/planner_test.go` - dxf/importinto: Tests logical plan.
 - `pkg/dxf/importinto/proto_test.go` - dxf/importinto: Tests KV conflict info aggregation.
@@ -109,10 +116,16 @@
 - `pkg/dxf/importinto/task_executor_testkit_test.go` - dxf/importinto: Tests post process step executor.
 - `pkg/dxf/importinto/wrapper_test.go` - dxf/importinto: Tests chunk convert.
 
+## pkg/dxf/importinto/jobhistory
+
+### Tests
+- `pkg/dxf/importinto/jobhistory/history_test.go` - dxf/importinto/jobhistory: Tests target-only history aggregation for adjacent task IDs around 2^53.
+
 ## pkg/dxf/importinto/conflictedkv
 
 ### Tests
 - `pkg/dxf/importinto/conflictedkv/collector_test.go` - dxf/importinto/conflictedkv: Tests collect result merge.
+- `pkg/dxf/importinto/conflictedkv/deleter_internal_test.go` - dxf/importinto/conflictedkv: Tests commit error propagation when deleting buffered keys.
 - `pkg/dxf/importinto/conflictedkv/deleter_test.go` - dxf/importinto/conflictedkv: Tests deleter.
 - `pkg/dxf/importinto/conflictedkv/handler_test.go` - dxf/importinto/conflictedkv: Tests handler.
 - `pkg/dxf/importinto/conflictedkv/row_handle_test.go` - dxf/importinto/conflictedkv: Tests handle filter.

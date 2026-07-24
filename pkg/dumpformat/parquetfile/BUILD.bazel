@@ -59,7 +59,7 @@ go_test(
     data = glob(["testfiles/**"]),
     embed = [":parquetfile"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 26,
     deps = [
         "//pkg/dumpformat/testutils",
         "//pkg/objstore",

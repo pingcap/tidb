@@ -95,6 +95,12 @@ type DDLReorgMeta struct {
 	MaxNodeCount      int                              `json:"max_node_count"`
 	AnalyzeState      int8                             `json:"analyze_state"`
 	Stage             ReorgStage                       `json:"stage"`
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// when this reorg task's persisted table snapshot was created. Reorg execution
+	// may happen in another keyspace, so key and expression encoding must use this
+	// captured value instead of the executor process default. Nil means old metadata
+	// and should fall back to the caller-provided default.
+	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.
@@ -149,6 +155,21 @@ func (dm *DDLReorgMeta) GetMaxWriteSpeed() int {
 // SetMaxWriteSpeed sets the max write speed in DDLReorgMeta.
 func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
 	dm.MaxWriteSpeed.Store(int64(maxWriteSpeed))
+}
+
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for reorg metadata generated before the field existed.
+func (dm *DDLReorgMeta) GetUseNewCollateOrDefault(defaultVal bool) bool {
+	if dm.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *dm.UseNewCollate
+}
+
+// setUseNewCollate stores the new-collation mode captured from the persisted
+// table snapshot.
+func (dm *DDLReorgMeta) setUseNewCollate(useNewCollate bool) {
+	dm.UseNewCollate = &useNewCollate
 }
 
 const (
