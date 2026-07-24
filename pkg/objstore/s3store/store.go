@@ -17,6 +17,7 @@ package s3store
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
@@ -43,6 +44,12 @@ import (
 
 const (
 	defaultRegion = "us-east-1"
+	gcsProvider   = "gcs"
+	// GCS S3 interoperability documents storage.googleapis.com as the XML API
+	// endpoint for S3-compatible tools.
+	// See https://cloud.google.com/storage/docs/interoperability and
+	// https://cloud.google.com/storage/docs/request-endpoints.
+	gcsEndpoint = "storage.googleapis.com"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
 )
@@ -50,6 +57,7 @@ const (
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Options) (obj *s3like.Storage, errRet error) {
 	qs := *backend
+	gcsS3Compatible := isGCSS3Compatible(&qs)
 
 	// Start with default configuration loading
 	var configOpts []func(*config.LoadOptions) error
@@ -124,6 +132,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 		// These logs will be printed when log level is `DEBUG`.
 		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
 	})
+	if gcsS3Compatible {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.HTTPSignerV4 = newGCSS3CompatibleSigner()
+		})
+	}
 
 	// ⚠️ Do NOT set a global endpoint in the AWS config.
 	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
@@ -225,7 +238,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 
 	// Perform region detection and validation
 	var detectedRegion string
-	officialS3 := len(qs.Provider) == 0 || qs.Provider == "aws"
+	awsProvider := len(qs.Provider) == 0 || qs.Provider == "aws"
+	// GCS S3-compatible endpoints must skip AWS bucket-region discovery:
+	// GCS interoperability can reject the HeadBucket request before normal
+	// object access starts, and the configured region is only used for signing.
+	officialS3 := awsProvider && !gcsS3Compatible
 	if officialS3 {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
@@ -303,6 +320,21 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	}
 
 	return s3Storage, nil
+}
+
+func isGCSS3Compatible(qs *backuppb.S3) bool {
+	if strings.EqualFold(qs.Provider, gcsProvider) {
+		return true
+	}
+	if qs.Endpoint == "" {
+		return false
+	}
+	u, err := url.Parse(qs.Endpoint)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == gcsEndpoint || strings.HasSuffix(host, "."+gcsEndpoint)
 }
 
 // IsObjectLockEnabled checks whether the S3 bucket has Object Lock enabled.
