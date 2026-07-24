@@ -39,6 +39,7 @@ type ResourceTracker interface {
 type DiskRoot interface {
 	Add(id int64, tracker ResourceTracker)
 	Remove(id int64)
+	Has(id int64) bool
 	Count() int
 
 	UpdateUsage()
@@ -86,6 +87,13 @@ func (d *diskRootImpl) Remove(id int64) {
 	defer d.mu.Unlock()
 	delete(d.items, id)
 	TrackerCountForTest.Add(-1)
+}
+
+func (d *diskRootImpl) Has(id int64) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	_, ok := d.items[id]
+	return ok
 }
 
 // Count is only used for test.
