@@ -128,6 +128,7 @@ type CheckpointMetadataForBackup struct {
 	GCServiceId string `json:"gc-service-id"`
 	ConfigHash  []byte `json:"config-hash"`
 	BackupTS    uint64 `json:"backup-ts"`
+	BackupID    uint64 `json:"backup-id,omitempty"`
 
 	CheckpointChecksum    map[int64]*ChecksumItem `json:"-"`
 	LoadCheckpointDataMap bool                    `json:"-"`

@@ -361,7 +361,7 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 
 	errContext := utils.NewErrorContext("test", 1)
-	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil)
+	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
@@ -376,11 +376,11 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 	// case #1: error resposne
 	// first error can be ignored due to errContext.
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 	// second error cannot be ignored.
-	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.Error(t, err)
 
 	// case #2: normal resposne
@@ -394,13 +394,13 @@ func TestOnBackupResponse(t *testing.T) {
 
 	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
 	// error due to the tree range does not match response range.
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.Nil(t, lock)
 	require.NoError(t, err)
 
 	// case #3: partial range success case, find incomplete range
 	r.Resp.StartKey = []byte("aa")
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
@@ -413,7 +413,7 @@ func TestOnBackupResponse(t *testing.T) {
 	// case #4: success case, make up incomplete range
 	r.Resp.StartKey = []byte("b")
 	r.Resp.EndKey = []byte("c")
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 	incomplete, err = tree.GetIncompleteRanges()
@@ -440,7 +440,7 @@ func TestOnBackupResponse(t *testing.T) {
 			},
 		},
 	}
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("b"), lock.Primary)
 }
