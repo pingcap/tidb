@@ -28,7 +28,7 @@
 ## pkg/store/copr/copr_test
 
 ### Tests
-- `pkg/store/copr/copr_test/coprocessor_test.go` - store/copr: Tests build cop iterator with row count hint.
+- `pkg/store/copr/copr_test/coprocessor_test.go` - store/copr: Tests cop iterator batching, hints, and Analyze merge negotiation.
 - `pkg/store/copr/copr_test/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/store/driver

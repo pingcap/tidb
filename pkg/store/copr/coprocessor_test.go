@@ -22,14 +22,32 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
+
+type recordingRunawayChecker struct {
+	resourcegroup.RunawayChecker
+	processedKeys atomic.Int64
+}
+
+func (c *recordingRunawayChecker) CheckThresholds(
+	_ *tikvutil.RUDetails,
+	processedKeys int64,
+	_ error,
+) error {
+	c.processedKeys.Add(processedKeys)
+	return nil
+}
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
 	return buildCopTasks(bo, ranges, &buildCopTaskOpt{
@@ -1094,27 +1112,66 @@ func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
 }
 
 func TestHandleBatchCopResponse(t *testing.T) {
-	testHandleBatchCopResponseUnansweredTasks(t)
+	testHandleBatchCopResponseMergedAndUnansweredTasks(t)
 	testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t)
 }
 
-func testHandleBatchCopResponseUnansweredTasks(t *testing.T) {
+func testHandleBatchCopResponseMergedAndUnansweredTasks(t *testing.T) {
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 	var batched, fallback atomic.Uint64
+	executionStats := &copIteratorRuntimeStats{}
+	runawayChecker := &recordingRunawayChecker{}
 	worker := &copIteratorWorker{
+		req:                     &kv.Request{RunawayChecker: runawayChecker},
+		kvclient:                &txnsnapshot.ClientHelper{},
 		storeBatchedNum:         &batched,
 		storeBatchedFallbackNum: &fallback,
+		stats:                   executionStats,
 	}
 
-	unansweredTask := &copTask{taskID: 1}
-	responses, remains, err := worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{
-		unansweredTask.taskID: {task: unansweredTask},
+	mergedTask := &copTask{taskID: 1}
+	inlineTask := &copTask{taskID: 2}
+	inlineData := []byte("inline-task-data")
+	responses, remains, err := worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{
+		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+			{
+				TaskId:                 mergedTask.taskID,
+				DataMergedIntoResponse: true,
+				ExecDetailsV2: &kvrpcpb.ExecDetailsV2{
+					ScanDetailV2: &kvrpcpb.ScanDetailV2{ProcessedVersions: 7},
+					TimeDetailV2: &kvrpcpb.TimeDetailV2{ProcessWallTimeNs: uint64(time.Millisecond)},
+				},
+			},
+			{TaskId: inlineTask.taskID, Data: inlineData},
+		},
+	}, map[uint64]*batchedCopTask{
+		mergedTask.taskID: {task: mergedTask},
+		inlineTask.taskID: {task: inlineTask},
 	})
+	require.NoError(t, err)
+	require.Empty(t, remains)
+	require.Len(t, responses, 1)
+	require.Equal(t, inlineData, []byte(responses[0].pbResp.Data))
+	require.Equal(t, uint64(2), batched.Load())
+	require.Zero(t, fallback.Load())
+	collectedStats := (&copIterator{stats: executionStats}).CollectUnconsumedCopRuntimeStats()
+	require.Len(t, collectedStats, 1)
+	require.Equal(t, int64(7), collectedStats[0].ScanDetail.ProcessedKeys)
+	require.Equal(t, time.Millisecond, collectedStats[0].TimeDetail.ProcessTime)
+	require.Equal(t, int64(7), runawayChecker.processedKeys.Load())
+
+	unansweredTask := &copTask{taskID: 3}
+	responses, remains, err = worker.handleBatchCopResponse(
+		bo,
+		nil,
+		&coprocessor.Response{},
+		map[uint64]*batchedCopTask{unansweredTask.taskID: {task: unansweredTask}},
+	)
 	require.NoError(t, err)
 	require.Empty(t, responses)
 	require.Len(t, remains, 1)
 	require.Same(t, unansweredTask, remains[0])
-	require.Zero(t, batched.Load())
+	require.Equal(t, uint64(2), batched.Load())
 	require.Equal(t, uint64(1), fallback.Load())
 }
 

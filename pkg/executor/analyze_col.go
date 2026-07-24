@@ -114,13 +114,17 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		startTS = e.snapshot
 		isoLevel = kv.SI
 	}
-	// Always set KeepOrder of the request to be true, in order to compute
-	// correct `correlation` of columns.
+	// KeepOrder is intentionally not set: this request is only built for V2
+	// full-sampling analyze, whose consumers derive everything (histograms,
+	// TopN, correlation) from the collected samples and never rely on scan
+	// order, and keep-order would rule out store batching.
+	concurrency, storeBatchSize := analyzeBatchScanBudget(e.concurrency)
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
-		SetKeepOrder(true).
-		SetConcurrency(e.concurrency).
+		SetConcurrency(concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(true).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
@@ -133,6 +137,23 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		return nil, err
 	}
 	return result, nil
+}
+
+// maxAnalyzeStoreBatchWidth bounds each store-batched Analyze request to one
+// primary region and four child regions. This keeps the merge and response
+// lifetime within the established default store-batch envelope.
+const maxAnalyzeStoreBatchWidth = 5
+
+// analyzeBatchScanBudget converts the Analyze scan concurrency into an outer
+// RPC concurrency and a number of child regions per store-batched request.
+// The input is the already-resolved Analyze scan budget; a system Analyze
+// substitutes tidb_sysproc_scan_concurrency before that resolution. Counting
+// every logical region in a batch keeps outerConcurrency * batchWidth within
+// the existing budget instead of multiplying it.
+func analyzeBatchScanBudget(concurrency int) (outerConcurrency, storeBatchSize int) {
+	concurrency = max(concurrency, 1)
+	batchWidth := min(concurrency, maxAnalyzeStoreBatchWidth)
+	return concurrency / batchWidth, batchWidth - 1
 }
 
 func hasPkHist(handleCols plannerutil.HandleCols) bool {

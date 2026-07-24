@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -72,6 +73,36 @@ func TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints(t *testing.T) {
 	// multiple server infos with an empty IP/default :10080 but no TiDB RPC
 	// listener. Such targets must not take the broadcast path.
 	require.False(t, canBroadcastToTiDBRPCForTest(context.Background(), []string{"", ""}))
+}
+
+func TestAnalyzeBatchScanBudget(t *testing.T) {
+	tests := []struct {
+		name            string
+		scanConcurrency int
+		wantOuter       int
+		wantBatch       int
+	}{
+		{"non-positive concurrency", 0, 1, 0},
+		{"single scan", 1, 1, 0},
+		{"two scans", 2, 1, 1},
+		{"manual analyze default", vardef.DefAnalyzeDistSQLScanConcurrency, 1, 3},
+		{"system analyze default", vardef.DefTiDBSysProcScanConcurrency, 1, 3},
+		{"one full-width group", 5, 1, 4},
+		{"partial-width slack", 7, 1, 4},
+		{"adaptive large-cluster budget", 15, 3, 4},
+		{"wide budget", 32, 6, 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outer, batch := analyzeBatchScanBudget(tt.scanConcurrency)
+			require.Equal(t, tt.wantOuter, outer)
+			require.Equal(t, tt.wantBatch, batch)
+
+			budget := max(tt.scanConcurrency, 1)
+			require.LessOrEqual(t, outer*(batch+1), budget)
+			require.LessOrEqual(t, batch+1, maxAnalyzeStoreBatchWidth)
+		})
+	}
 }
 
 // BuildExecutorForTest builds stmt's executor tree. It is exported only for
