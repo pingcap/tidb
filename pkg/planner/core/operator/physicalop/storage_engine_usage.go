@@ -30,7 +30,9 @@ func StorageEngineUsage(plan base.PhysicalPlan) (hasTiKV, hasTiFlash bool) {
 	}
 	switch x := plan.(type) {
 	case *PhysicalTableReader:
-		return x.StoreType != kv.TiFlash, x.StoreType == kv.TiFlash
+		// StoreType can also be kv.TiDB (cluster/memory tables), which is a
+		// TiDB-side read and counts as neither engine per the doc above.
+		return x.StoreType == kv.TiKV, x.StoreType == kv.TiFlash
 	case *PhysicalIndexReader, *PhysicalIndexLookUpReader, *PhysicalIndexMergeReader,
 		*PointGetPlan, *BatchPointGetPlan:
 		return true, false
