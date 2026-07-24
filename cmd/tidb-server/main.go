@@ -1243,6 +1243,7 @@ func printInfo() {
 	level := log.GetLevel()
 	log.SetLevel(zap.InfoLevel)
 	printer.PrintTiDBInfo()
+	log.Info("agent-test source probe", zap.String("marker", "tcms-code-test-v1"))
 	log.SetLevel(level)
 }
 
