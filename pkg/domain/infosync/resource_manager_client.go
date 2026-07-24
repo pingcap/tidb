@@ -26,6 +26,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	pd "github.com/tikv/pd/client"
+	metastorage "github.com/tikv/pd/client/clients/metastorage"
 	"github.com/tikv/pd/client/opt"
 )
 
@@ -33,7 +34,7 @@ type mockResourceManagerClient struct {
 	sync.RWMutex
 	keyspaceID uint32
 	groups     map[string]*rmpb.ResourceGroup
-	eventCh    chan []*meta_storagepb.Event
+	eventCh    chan *metastorage.WatchResponse
 }
 
 // NewMockResourceManagerClient return a mock ResourceManagerClient for test usage.
@@ -41,7 +42,7 @@ func NewMockResourceManagerClient(keyspaceID uint32) pd.ResourceManagerClient {
 	mockMgr := &mockResourceManagerClient{
 		keyspaceID: keyspaceID,
 		groups:     make(map[string]*rmpb.ResourceGroup),
-		eventCh:    make(chan []*meta_storagepb.Event, 100),
+		eventCh:    make(chan *metastorage.WatchResponse, 100),
 	}
 	mockMgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
 		Name: resourcegroup.DefaultResourceGroupName,
@@ -92,11 +93,11 @@ func (m *mockResourceManagerClient) AddResourceGroup(_ context.Context, group *r
 	if err != nil {
 		return "", err
 	}
-	m.eventCh <- []*meta_storagepb.Event{{
+	m.eventCh <- &metastorage.WatchResponse{Events: []*meta_storagepb.Event{{
 		Type: meta_storagepb.Event_PUT,
 		Kv: &meta_storagepb.KeyValue{
 			Value: value,
-		}}}
+		}}}}
 
 	return "Success!", nil
 }
@@ -110,11 +111,11 @@ func (m *mockResourceManagerClient) ModifyResourceGroup(_ context.Context, group
 	if err != nil {
 		return "", err
 	}
-	m.eventCh <- []*meta_storagepb.Event{{
+	m.eventCh <- &metastorage.WatchResponse{Events: []*meta_storagepb.Event{{
 		Type: meta_storagepb.Event_PUT,
 		Kv: &meta_storagepb.KeyValue{
 			Value: value,
-		}}}
+		}}}}
 	return "Success!", nil
 }
 
@@ -127,11 +128,11 @@ func (m *mockResourceManagerClient) DeleteResourceGroup(_ context.Context, name 
 	if err != nil {
 		return "", err
 	}
-	m.eventCh <- []*meta_storagepb.Event{{
+	m.eventCh <- &metastorage.WatchResponse{Events: []*meta_storagepb.Event{{
 		Type: meta_storagepb.Event_DELETE,
 		Kv: &meta_storagepb.KeyValue{
 			Value: value,
-		}}}
+		}}}}
 	return "Success!", nil
 }
 
@@ -147,7 +148,7 @@ func (*mockResourceManagerClient) LoadResourceGroups(context.Context) ([]*rmpb.R
 	return nil, 0, nil
 }
 
-func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
+func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...opt.MetaStorageOption) (chan *metastorage.WatchResponse, error) {
 	if bytes.Equal(pd.GroupSettingsPathPrefixBytes(m.keyspaceID), key) {
 		return m.eventCh, nil
 	}

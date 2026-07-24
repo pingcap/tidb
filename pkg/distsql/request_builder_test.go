@@ -325,7 +325,7 @@ func TestRequestBuilder1(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -409,7 +409,7 @@ func TestRequestBuilder2(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -459,7 +459,7 @@ func TestRequestBuilder3(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -508,7 +508,7 @@ func TestRequestBuilder4(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -618,7 +618,7 @@ func TestRequestBuilder7(t *testing.T) {
 				ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 			}
 			expect.Paging.MinPagingSize = paging.MinPagingSize
-			expect.Paging.MaxPagingSize = paging.MaxPagingSize
+			expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 			actual.ResourceGroupTagger = nil
 			require.Equal(t, expect, actual)
 		})
@@ -646,9 +646,22 @@ func TestRequestBuilder8(t *testing.T) {
 		ResourceGroupName: "test",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
+}
+
+func TestRequestBuilderKeepsPagingSizeBytesWhenPagingDisabled(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	dctx.EnablePaging = false
+	dctx.PagingSizeBytes = 4 * 1024 * 1024
+
+	actual, err := (&RequestBuilder{}).
+		SetFromSessionVars(dctx).
+		Build()
+	require.NoError(t, err)
+	require.False(t, actual.Paging.Enable)
+	require.Equal(t, uint64(4*1024*1024), actual.Paging.PagingSizeBytes)
 }
 
 func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
@@ -673,7 +686,7 @@ func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 		ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -700,7 +713,7 @@ func TestRequestBuilderMaxExecutionTime(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }

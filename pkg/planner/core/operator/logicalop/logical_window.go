@@ -158,7 +158,7 @@ func (fb *FrameBound) Equals(other any) bool {
 	if fb.Type != fb2.Type || fb.UnBounded != fb2.UnBounded || fb.Num != fb2.Num {
 		return false
 	}
-	if fb.CalcFuncs == nil && fb2.CalcFuncs != nil || fb.CalcFuncs != nil && fb2.CalcFuncs == nil || len(fb.CalcFuncs) != len(fb2.CmpFuncs) {
+	if fb.CalcFuncs == nil && fb2.CalcFuncs != nil || fb.CalcFuncs != nil && fb2.CalcFuncs == nil || len(fb.CalcFuncs) != len(fb2.CalcFuncs) {
 		return false
 	}
 	for i, one := range fb.CalcFuncs {
@@ -191,9 +191,17 @@ func (fb *FrameBound) Clone() *FrameBound {
 	cloned := new(FrameBound)
 	*cloned = *fb
 
-	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
-	for _, it := range fb.CalcFuncs {
-		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+	if fb.CalcFuncs != nil {
+		cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+		for _, it := range fb.CalcFuncs {
+			cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+		}
+	}
+	if fb.CompareCols != nil {
+		cloned.CompareCols = make([]expression.Expression, 0, len(fb.CompareCols))
+		for _, it := range fb.CompareCols {
+			cloned.CompareCols = append(cloned.CompareCols, it.Clone())
+		}
 	}
 	cloned.CmpFuncs = fb.CmpFuncs
 
@@ -294,6 +302,26 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 	}
 	for i, item := range p.OrderBy {
 		p.OrderBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	}
+	if p.Frame == nil {
+		return
+	}
+	// RANGE frames keep order-by dependent expressions in frame bounds as well.
+	// When projection elimination rewrites window columns, update frame expressions
+	// together with PartitionBy/OrderBy so later ResolveIndices sees the same column IDs.
+	replaceFrameBoundColumns(p.Frame.Start, replace)
+	replaceFrameBoundColumns(p.Frame.End, replace)
+}
+
+func replaceFrameBoundColumns(bound *FrameBound, replace map[string]*expression.Column) {
+	if bound == nil {
+		return
+	}
+	for i, expr := range bound.CalcFuncs {
+		bound.CalcFuncs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
+	}
+	for i, expr := range bound.CompareCols {
+		bound.CompareCols[i] = ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -413,7 +441,8 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	p.hasTiFlash = infos[0].HasTiFlash
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
 	for i := range p.PartitionBy {
 		result = append(result, p.PartitionBy[i].Col)
@@ -421,7 +450,10 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 	for i := range p.OrderBy {
 		result = append(result, p.OrderBy[i].Col)
 	}
-	return [][]*expression.Column{result}
+	return &base.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{result},
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

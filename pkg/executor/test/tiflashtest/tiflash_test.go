@@ -469,7 +469,6 @@ func TestPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -1360,6 +1359,8 @@ func TestIssue41014(t *testing.T) {
 	tk.MustExec("alter table tai2 set tiflash replica 1")
 	tk.MustExec("alter table tai2 add index idx((lower(prilan)));")
 	tk.MustExec("set @@tidb_opt_distinct_agg_push_down = 1;")
+	// Keep the estimate stable; this regression checks that a physical plan can be found.
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 
 	tk.MustQuery("explain format='brief' select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("HashAgg 1.00 root  funcs:count(distinct test.tai1.aid)->Column#10",
@@ -2150,7 +2151,7 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 		{"select * from t t1 join t t2 on t1.b=t2.b", 1, 1},
 
 		// Cache miss
-		{"select * from t union all select * from t", 0, 2},                      // different mpp task root
+		{"select * from t union all select * from t", 0, 2},                      // different MPP task requests
 		{"select * from t where a <= 3 union select * from t where a > 3", 0, 2}, // different range
 
 		// Partition

@@ -11,7 +11,7 @@
 ### Tests
 - `pkg/bindinfo/binding_auto_test.go` - Tests plan generation with stmt ctx.
 - `pkg/bindinfo/binding_cache_test.go` - Tests cross-DB binding cache.
-- `pkg/bindinfo/binding_operator_test.go` - Tests binding cache.
+- `pkg/bindinfo/binding_operator_test.go` - Tests binding operators, normalization digests, and redundant-parentheses restore behavior for binding SQL.
 - `pkg/bindinfo/binding_plan_evolution_test.go` - Tests rule-based plan performance predictor.
 - `pkg/bindinfo/binding_plan_generation_test.go` - Tests fix control adjustments.
 - `pkg/bindinfo/main_test.go` - Configures default goleak settings and registers testdata.

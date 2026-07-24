@@ -16,6 +16,7 @@ package tikvhandler
 
 import (
 	"context"
+	goerrors "errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -92,6 +94,112 @@ func (*DXFActiveTaskHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	handler.WriteData(w, summary)
+}
+
+// DXFTaskHistoryHandler handles listing history tasks in `mysql.tidb_global_task_history`.
+type DXFTaskHistoryHandler struct{}
+
+// NewDXFTaskHistoryHandler creates a new DXFTaskHistoryHandler.
+func NewDXFTaskHistoryHandler() *DXFTaskHistoryHandler {
+	return &DXFTaskHistoryHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (*DXFTaskHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		handler.WriteError(w, errors.Errorf("This api only support GET method"))
+		return
+	}
+	pageSize, pageToken, keyspace, err := parseTaskHistoryQuery(req)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), requestDefaultTimeout)
+	defer cancel()
+	page, err := handle.ListHistoryTasks(ctx, pageSize, pageToken, keyspace)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to list DXF history tasks", zap.Error(err))
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	handler.WriteData(w, page)
+}
+
+func parseTaskHistoryQuery(req *http.Request) (pageSize int, pageToken int64, keyspace string, err error) {
+	pageSize = storage.DefaultHistoryTaskPageSize
+	pageSizeStr := req.URL.Query().Get("page_size")
+	if pageSizeStr != "" {
+		pageSize, err = strconv.Atoi(pageSizeStr)
+		if err != nil {
+			return 0, 0, "", errors.Errorf("invalid page_size %s", pageSizeStr)
+		}
+	}
+	if err := storage.ValidateHistoryTaskPageSize(pageSize); err != nil {
+		pageSizeStr = strconv.Itoa(pageSize)
+		return 0, 0, "", errors.Errorf("invalid page_size %s", pageSizeStr)
+	}
+
+	pageTokenStr := req.URL.Query().Get("page_token")
+	if pageTokenStr != "" {
+		pageToken, err = strconv.ParseInt(pageTokenStr, 10, 64)
+		if err != nil || pageToken <= 0 {
+			return 0, 0, "", errors.Errorf("invalid page_token %s", pageTokenStr)
+		}
+	}
+
+	keyspace = req.URL.Query().Get("keyspace")
+	if keyspace != "" && naming.CheckKeyspaceName(keyspace) != nil {
+		return 0, 0, "", errors.Errorf("invalid keyspace %s", keyspace)
+	}
+	return pageSize, pageToken, keyspace, nil
+}
+
+// DXFImportIntoHistoryJobInfoHandler handles getting IMPORT INTO history job details.
+type DXFImportIntoHistoryJobInfoHandler struct{}
+
+// NewDXFImportIntoHistoryJobInfoHandler creates a new DXFImportIntoHistoryJobInfoHandler.
+func NewDXFImportIntoHistoryJobInfoHandler() *DXFImportIntoHistoryJobInfoHandler {
+	return &DXFImportIntoHistoryJobInfoHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (*DXFImportIntoHistoryJobInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		handler.WriteError(w, errors.Errorf("This api only support GET method"))
+		return
+	}
+	params := mux.Vars(req)
+	targetKeyspace := params["keyspace"]
+	if targetKeyspace == "" || naming.CheckKeyspaceName(targetKeyspace) != nil {
+		handler.WriteError(w, errors.Errorf("invalid or empty target keyspace %s", targetKeyspace))
+		return
+	}
+	jobID, err := strconv.ParseInt(params["job_id"], 10, 64)
+	if err != nil || jobID <= 0 {
+		handler.WriteError(w, errors.Errorf("invalid job id %s", params["job_id"]))
+		return
+	}
+
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
+	defer cancel()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	info, err := jobhistory.GetFromHistory(ctx, taskMgr, targetKeyspace, jobID)
+	if err != nil {
+		if goerrors.Is(err, storage.ErrTaskNotFound) {
+			handler.WriteErrorWithCode(w, http.StatusNotFound, err)
+			return
+		}
+		handler.WriteError(w, err)
+		return
+	}
+	handler.WriteData(w, info)
 }
 
 // DXFScheduleHandler handles the DXF schedule actions.
@@ -236,6 +344,90 @@ func (h *DXFScheduleTuneHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 	}
 }
 
+// DXFTaskMaxConcurrentHandler handles the in-memory DXF task concurrency limit.
+type DXFTaskMaxConcurrentHandler struct{}
+
+// NewDXFTaskMaxConcurrentHandler creates a new DXFTaskMaxConcurrentHandler.
+func NewDXFTaskMaxConcurrentHandler() *DXFTaskMaxConcurrentHandler {
+	return &DXFTaskMaxConcurrentHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+//
+// The configured value is local to the TiDB process that handles the request
+// and is kept in memory only. Send the request to the current DXF owner when
+// tuning scheduler concurrency.
+func (*DXFTaskMaxConcurrentHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		writeMaxConcurrentTask(w)
+	case http.MethodPost:
+		valueStr := req.FormValue("value")
+		value, err := strconv.Atoi(valueStr)
+		if err != nil {
+			handler.WriteError(w, errors.Errorf("invalid value %s, error %v", valueStr, err))
+			return
+		}
+		if err := proto.SetMaxConcurrentTask(value); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		logutil.BgLogger().Info("set in-memory DXF max concurrent task", zap.Int("maxConcurrentTask", value))
+		writeMaxConcurrentTask(w)
+	default:
+		handler.WriteError(w, errors.Errorf("This api only support GET and POST method"))
+	}
+}
+
+func writeMaxConcurrentTask(w http.ResponseWriter) {
+	handler.WriteData(w, map[string]any{
+		"max_concurrent_task": proto.GetMaxConcurrentTask(),
+		"persistence":         "memory_only",
+	})
+}
+
+// DXFTaskCleanupBatchSizeHandler handles the in-memory DXF task cleanup batch size.
+type DXFTaskCleanupBatchSizeHandler struct{}
+
+// NewDXFTaskCleanupBatchSizeHandler creates a new DXFTaskCleanupBatchSizeHandler.
+func NewDXFTaskCleanupBatchSizeHandler() *DXFTaskCleanupBatchSizeHandler {
+	return &DXFTaskCleanupBatchSizeHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+//
+// The configured value is local to the TiDB process that handles the request
+// and is kept in memory only. Send the request to the current DXF owner when
+// tuning task cleanup.
+func (*DXFTaskCleanupBatchSizeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		writeTaskCleanupBatchSize(w)
+	case http.MethodPost:
+		valueStr := req.FormValue("value")
+		value, err := strconv.Atoi(valueStr)
+		if err != nil {
+			handler.WriteError(w, errors.Errorf("invalid value %s, error %v", valueStr, err))
+			return
+		}
+		if err := proto.SetTaskCleanupBatchSize(value); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		logutil.BgLogger().Info("set in-memory DXF task cleanup batch size", zap.Int("taskCleanupBatchSize", value))
+		writeTaskCleanupBatchSize(w)
+	default:
+		handler.WriteError(w, errors.Errorf("This api only support GET and POST method"))
+	}
+}
+
+func writeTaskCleanupBatchSize(w http.ResponseWriter) {
+	handler.WriteData(w, map[string]any{
+		"task_cleanup_batch_size": proto.GetTaskCleanupBatchSize(),
+		"persistence":             "memory_only",
+	})
+}
+
 // DXFTaskMaxRuntimeSlotsHandler handles changing max runtime slots of DXF task.
 type DXFTaskMaxRuntimeSlotsHandler struct{}
 
@@ -315,17 +507,16 @@ func (*DXFTaskMaxRuntimeSlotsHandler) ServeHTTP(w http.ResponseWriter, req *http
 	}
 	stepStrs := make([]string, 0, len(steps))
 	for _, step := range steps {
-		if !proto.IsValidStep(task.Type, step) {
+		if !proto.IsValidBusinessStep(task.Type, step) {
 			handler.WriteError(w, errors.Errorf("invalid target step %d for task type %s", step, task.Type.String()))
 			return
 		}
 		stepStrs = append(stepStrs, proto.Step2Str(task.Type, step))
 	}
-	params := proto.ExtraParams{
-		MaxRuntimeSlots: maxRuntimeSlots,
-		TargetSteps:     steps,
-	}
-	if err := taskMgr.UpdateTaskExtraParams(ctx, taskID, params); err != nil {
+	extraParams := task.ExtraParams
+	extraParams.MaxRuntimeSlots = maxRuntimeSlots
+	extraParams.TargetSteps = steps
+	if err := taskMgr.UpdateTaskExtraParams(ctx, taskID, extraParams); err != nil {
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}

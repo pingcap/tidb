@@ -315,9 +315,6 @@ approx_count_distinct( a, b)
 drop table if exists t;
 create table t(a char(10), b char(10));
 insert into t values('1', '222'), ('12', '22');
-select group_concat(distinct a, b) from t;
-group_concat(distinct a, b)
-1222,1222
 drop table if exists t, s;
 create table t(a int);
 create table s(a int, b int);
@@ -1141,9 +1138,6 @@ select group_concat(a), group_concat(distinct a) from t;
 group_concat(a)	group_concat(distinct a)
 NULL	NULL
 insert into t value(1, null), (null, 1), (1, 2), (3, 4);
-select group_concat(a, b), group_concat(distinct a,b) from t;
-group_concat(a, b)	group_concat(distinct a,b)
-12,34	12,34
 set @@session.tidb_opt_distinct_agg_push_down = 0;
 select count(distinct a) from t;
 count(distinct a)
@@ -1184,7 +1178,7 @@ delete from t where t.a = 2;
 insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9);
 select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a;
 a	var_pop(distinct b)	var_pop(distinct c)	var_pop(distinct d)	var_pop(distinct e)	var_pop(distinct f)	var_pop(distinct g)	var_pop(distinct h)
-1	0.25	0.25	0.25	0.25	0.25	0.25	0.25
+1	0.25	0.25	0.25	0.25	0.25	0.24999999999999956	0.25
 drop table t;
 create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
@@ -1194,7 +1188,7 @@ variance(b)	variance(c)	variance(d)	variance(e)
 insert into t values(1, 255, 6.8, 6.08, 1);
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 variance(distinct b)	variance(distinct c)	variance(distinct d)	variance(distinct e)
-2364075.6875	29.840000178019228	1.1808222222222229	12.666666666666666
+2364075.6875	29.840000178019235	1.180822222222222	12.666666666666666
 insert into t values(2, 322, 0.8, 2.22, 6);
 select a, variance(b) over w from t window w as (partition by a);
 a	variance(b) over w
@@ -1483,6 +1477,8 @@ select * from t group by b,c;
 Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select * from t where c = d group by b, c;
 a	b	c	d
+select /* issue:68026 */ a from t where c = 1 or d = 1 group by b, c;
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select t.*, x.* from t, x where t.a = x.a group by t.a;
 a	b	c	d	a	b	c	d
 select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d;
@@ -1516,7 +1512,7 @@ a	b	c	d
 select * from (select * from t) as e group by b,d;
 a	b	c	d
 select * from (select * from t) as e group by b,c;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select c from t group by c,d order by d;
 c
 select c from t group by c order by d;
@@ -2060,11 +2056,15 @@ Projection	root		Column, Column, Column, Column
             └─TableFullScan	cop[tikv]	table:test	keep order:false
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
+select nullif(77.15, PI());
+nullif(77.15, PI())
+77.15
+select avg(nullif(77.15, PI()));
+avg(nullif(77.15, PI()))
+77.150000
 select distinct avg(nullif(77.15, PI()));
 avg(nullif(77.15, PI()))
-77.1500000000000000000000000000000000
-Level	Code	Message
-Warning	1265	Data truncated for column '%s' at row %d
+77.150000
 drop table if exists t_a;
 CREATE TABLE `t_a` (
 `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',

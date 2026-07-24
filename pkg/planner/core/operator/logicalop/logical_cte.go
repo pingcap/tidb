@@ -183,7 +183,10 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		// Build push-downed predicates.
 		if len(p.Cte.PushDownPredicates) > 0 {
 			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.PushDownPredicates...)
-			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
+			// Pull common filters out of the per-reference DNF before the seed is optimized,
+			// so the seed plan can see them as ordinary conjunctive predicates.
+			newConds := expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), []expression.Expression{newCond})
+			newSel := LogicalSelection{Conditions: newConds}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.Cte.SeedPartLogicalPlan)
 			p.Cte.SeedPartLogicalPlan = newSel
 			p.Cte.OptFlag = ruleutil.SetPredicatePushDownFlag(p.Cte.OptFlag)
@@ -208,7 +211,18 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 	if p.Cte.RecursivePartLogicalPlan != nil {
 		if p.Cte.RecursivePartPhysicalPlan == nil {
-			_, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
+			// TODO: parallel apply inside a recursive CTE body produces incorrect results
+			// (grandchildren are silently dropped) because the CTE iteration model shares
+			// mutable state (the working-table buffer) across goroutines, causing rows from
+			// deeper recursion levels to be lost.  Disable parallel apply for the recursive
+			// body until the executor is fixed to handle this safely.
+			// See: TestLateralHierarchyParallelApply (flat query verifies concurrency > 1
+			// for non-recursive LATERAL; recursive correctness is tracked separately).
+			vars := p.SCtx().GetSessionVars()
+			savedParallelApply := vars.EnableParallelApply
+			vars.EnableParallelApply = false
+			defer func() { vars.EnableParallelApply = savedParallelApply }()
+			p.Cte.RecursivePartLogicalPlan, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
 			if err != nil {
 				return nil, false, err
 			}
@@ -229,7 +243,35 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
-// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+// PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalCTE) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	if len(childrenProperties) > 0 {
+		hasTiFlash := false
+		hasValidChild := false
+		for _, child := range childrenProperties {
+			if child == nil {
+				continue
+			}
+			if !hasValidChild {
+				hasTiFlash = child.HasTiFlash
+				hasValidChild = true
+				continue
+			}
+			hasTiFlash = hasTiFlash && child.HasTiFlash
+		}
+		if hasValidChild {
+			p.hasTiFlash = hasTiFlash
+			return &base.PossiblePropertiesInfo{HasTiFlash: p.hasTiFlash}
+		}
+	}
+
+	hasTiFlash := false
+	if p.Cte != nil && p.Cte.SeedPartLogicalPlan != nil {
+		hasTiFlash = GetHasTiFlash(p.Cte.SeedPartLogicalPlan)
+	}
+	p.hasTiFlash = hasTiFlash
+	return &base.PossiblePropertiesInfo{HasTiFlash: p.hasTiFlash}
+}
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
 func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {

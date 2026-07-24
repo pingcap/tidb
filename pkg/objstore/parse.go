@@ -25,6 +25,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
@@ -95,7 +96,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "s3", "ks3", "oss":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", ast.RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
@@ -117,7 +118,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "gs", "gcs":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", rawURL)
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", ast.RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
@@ -133,7 +134,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "azure", "azblob":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", rawURL)
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", ast.RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
@@ -182,7 +183,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 			continue
 		}
 		param := params[0]
-		normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+		normalizedKey := NormalizeQueryParameterKey(key)
 		if f, ok := tagToField[normalizedKey]; ok {
 			field := o.Field(f.index)
 			switch f.kind {
@@ -200,6 +201,12 @@ func ExtractQueryParameters(u *url.URL, options any) {
 
 	// Clean up the URL finally.
 	u.RawQuery = ""
+}
+
+// NormalizeQueryParameterKey normalizes object storage URL query parameter keys
+// to match backend option tags.
+func NormalizeQueryParameterKey(key string) string {
+	return strings.ToLower(strings.ReplaceAll(key, "_", "-"))
 }
 
 // FormatBackendURL obtains the raw URL which can be used the reconstruct the

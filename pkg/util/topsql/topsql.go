@@ -53,15 +53,19 @@ func init() {
 
 // SetupTopProfiling sets up the Top Profiling pipeline.
 //
-// NOTE: Despite the legacy package name, this initializer wires the collectors
-// and reporters shared by TopSQL (and future TopRU).
-func SetupTopProfiling(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater) {
+// NOTE: Despite the package name, this initializer wires the shared TopSQL and
+// TopRU pipeline.
+func SetupTopProfiling(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater, ruVersionProvider stmtstats.RUVersionProvider) {
 	globalTopProfilingReport.BindKeyspaceName(keyspaceName)
 	globalTopProfilingReport.BindProcessCPUTimeUpdater(updater)
 	globalTopProfilingReport.Start()
 	singleTargetDataSink.Start()
 
 	stmtstats.RegisterCollector(globalTopProfilingReport)
+	if ruCollector, ok := globalTopProfilingReport.(stmtstats.RUCollector); ok {
+		stmtstats.RegisterRUCollector(ruCollector)
+	}
+	stmtstats.BindRUVersionProvider(ruVersionProvider)
 	stmtstats.SetupAggregator()
 }
 
@@ -80,9 +84,13 @@ func RegisterPubSubServer(s *grpc.Server) {
 
 // Close uses to close and release the top sql resource.
 func Close() {
+	if ruCollector, ok := globalTopProfilingReport.(stmtstats.RUCollector); ok {
+		stmtstats.UnregisterRUCollector(ruCollector)
+	}
 	singleTargetDataSink.Close()
 	globalTopProfilingReport.Close()
 	stmtstats.CloseAggregator()
+	stmtstats.BindRUVersionProvider(nil)
 }
 
 // RegisterSQL uses to register SQL information into Top Profiling.

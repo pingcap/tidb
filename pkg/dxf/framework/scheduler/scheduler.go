@@ -19,7 +19,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math/rand"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -28,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -42,12 +43,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// for a cancelled task, it's terminal state is reverted or reverted_failed,
-	// so we use a special error message to indicate that the task is cancelled
-	// by user.
-	taskCancelMsg = "cancelled by user"
-)
+const metricStateAll = "all"
 
 var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
@@ -85,8 +81,9 @@ type BaseScheduler struct {
 	Param
 	// task might be accessed by multiple goroutines, so don't change its fields
 	// directly, make a copy, update and store it back to the atomic pointer.
-	task   atomic.Pointer[proto.Task]
-	logger *zap.Logger
+	task         atomic.Pointer[proto.Task]
+	logger       *zap.Logger
+	sampleLogger *zap.Logger
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
@@ -97,36 +94,42 @@ type BaseScheduler struct {
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
 	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
+	sampleLogger := handle.NewSampleErrVerboseLogger(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
+		sampleLogger = sampleLogger.With(zap.String("server-id", param.serverID))
 	}
 	ctx = logutil.WithLogger(ctx, logger)
 	s := &BaseScheduler{
-		ctx:    ctx,
-		Param:  param,
-		logger: logger,
-		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
+		ctx:          ctx,
+		Param:        param,
+		logger:       logger,
+		sampleLogger: sampleLogger,
+		rand:         rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	s.task.Store(task)
-	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
+	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type),
+		zap.Bool("allocated-slots", param.allocatedSlots))
 	return s
 }
 
 // Init implements the Scheduler interface.
 func (s *BaseScheduler) Init() error {
-	if s.TaskStore.GetKeyspace() != s.GetTask().Keyspace {
-		// shouldn't happen normally, but since keyspace mismatch might cause
-		// correctness error, we check it at runtime too.
-		return errors.New("store keyspace mismatch with task")
-	}
-	return nil
+	return dxfutil.CheckTaskRuntime(s.TaskRuntime, s.GetTask().Keyspace)
 }
 
 // ScheduleTask implements the Scheduler interface.
 func (s *BaseScheduler) ScheduleTask() {
 	task := s.GetTask()
 	s.logger.Info("schedule task",
-		zap.Stringer("state", task.State), zap.Int("requiredSlots", task.RequiredSlots))
+		zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
+		zap.Int("requiredSlots", task.RequiredSlots),
+		zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode),
+	)
 	s.scheduleTask()
 }
 
@@ -194,7 +197,7 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}
-			s.logger.Error("refresh task failed", zap.Error(err))
+			s.sampleLogger.Warn("refresh task failed", zap.Error(err))
 			continue
 		}
 		failpoint.InjectCall("afterRefreshTask", s.GetTask())
@@ -266,7 +269,7 @@ func (s *BaseScheduler) scheduleTask() {
 			return
 		}
 		if err != nil {
-			s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
+			s.sampleLogger.Info("schedule task meet err, reschedule it", zap.Error(err))
 		}
 
 		failpoint.InjectCall("mockOwnerChange")
@@ -279,13 +282,13 @@ func (s *BaseScheduler) onCancelling() error {
 	s.logger.Info("on cancelling state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 
-	return s.revertTask(errors.New(taskCancelMsg))
+	return s.revertTask(errors.New(storage.TaskCancelMessage))
 }
 
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
 	task := s.getTaskClone()
-	s.logger.Info("on pausing state", zap.Stringer("state", task.State),
+	s.sampleLogger.Info("on pausing state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
@@ -297,6 +300,19 @@ func (s *BaseScheduler) onPausing() error {
 		s.logger.Debug("on pausing state, this task keeps current state", zap.Stringer("state", task.State))
 		return nil
 	}
+	subTaskErrs, err := s.getSubtaskErrorsIfAnyFailedOrCanceled(task, cntByStates)
+	if err != nil {
+		return err
+	}
+	pausedFailed, err := s.pauseFailedSubtasksOnKVDiskFull(task, cntByStates, subTaskErrs)
+	if err != nil {
+		return err
+	}
+	if pausedFailed {
+		s.logger.Info("converted failed disk-full subtasks to paused, keep task pausing",
+			zap.Stringer("state", task.State))
+		return nil
+	}
 
 	s.logger.Info("all running subtasks paused, update the task to paused state")
 	if err = s.taskMgr.PausedTask(s.ctx, task.ID); err != nil {
@@ -305,6 +321,21 @@ func (s *BaseScheduler) onPausing() error {
 	task.State = proto.TaskStatePaused
 	s.task.Store(task)
 	return nil
+}
+
+func (s *BaseScheduler) pauseFailedSubtasksOnKVDiskFull(task *proto.Task, cntByStates map[proto.SubtaskState]int64, subTaskErrs []error) (bool, error) {
+	if cntByStates[proto.SubtaskStateFailed] == 0 {
+		return false, nil
+	}
+	if !shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
+		return false, nil
+	}
+	if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
+		return false, errors.Trace(err)
+	}
+	task.Error = subTaskErrs[0]
+	s.task.Store(task)
+	return true, nil
 }
 
 // handle task in paused state.
@@ -319,7 +350,7 @@ func (s *BaseScheduler) onPaused() error {
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
 	task := s.getTaskClone()
-	s.logger.Info("on resuming state", zap.Stringer("state", task.State),
+	s.sampleLogger.Info("on resuming state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
@@ -371,9 +402,26 @@ func (s *BaseScheduler) onReverting() error {
 
 // handle task in pending state, schedule subtasks.
 func (s *BaseScheduler) onPending() error {
-	task := s.GetTask()
+	task := s.getTaskClone()
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+		if err := s.OnPrepare(s.ctx, s, task); err != nil {
+			return s.handlePrepareOrPlanErr(err)
+		}
+		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !switched {
+			return nil
+		}
+		task.Step = proto.StepPrepared
+		s.task.Store(task)
+		failpoint.InjectCall("afterTaskPrepared", task)
+		// fall through to switch to next step to avoid wait another tick to
+		// schedule subtasks after prepare.
+	}
 	return s.switch2NextStep()
 }
 
@@ -391,16 +439,29 @@ func (s *BaseScheduler) onRunning() error {
 		return err
 	}
 	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
-		subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
+		subTaskErrs, err := s.getSubtaskErrorsIfAnyFailedOrCanceled(task, cntByStates)
 		if err != nil {
-			s.logger.Warn("collect subtask error failed", zap.Error(err))
 			return err
 		}
-		if len(subTaskErrs) > 0 {
-			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
-			// we only store the first error as task error.
-			return s.revertTaskOrManualRecover(subTaskErrs[0])
+		if len(subTaskErrs) == 0 {
+			taskErr := errors.Errorf("subtasks in failed/canceled state without error, taskID %d, step %d, failed %d, canceled %d",
+				task.ID, task.Step, cntByStates[proto.SubtaskStateFailed], cntByStates[proto.SubtaskStateCanceled])
+			s.logger.Warn("subtasks encounter failed/canceled states without error", zap.Error(taskErr))
+			return s.revertTaskOrManualRecover(taskErr)
 		}
+		s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
+		if shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
+			if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
+				return errors.Trace(err)
+			}
+			taskClone := *task
+			taskClone.State = proto.TaskStatePausing
+			taskClone.Error = subTaskErrs[0]
+			s.task.Store(&taskClone)
+			return nil
+		}
+		// we only store the first error as task error.
+		return s.revertTaskOrManualRecover(subTaskErrs[0])
 	} else if s.isStepSucceed(cntByStates) {
 		return s.switch2NextStep()
 	}
@@ -411,11 +472,38 @@ func (s *BaseScheduler) onRunning() error {
 	return nil
 }
 
+func (s *BaseScheduler) getSubtaskErrorsIfAnyFailedOrCanceled(task *proto.Task, cntByStates map[proto.SubtaskState]int64) ([]error, error) {
+	if cntByStates[proto.SubtaskStateFailed] == 0 && cntByStates[proto.SubtaskStateCanceled] == 0 {
+		return nil, nil
+	}
+	subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
+	if err != nil {
+		s.logger.Warn("collect subtask error failed", zap.Error(err))
+		return nil, err
+	}
+	return subTaskErrs, nil
+}
+
+func shouldPauseOnKVDiskFull(task *proto.Task, cntByStates map[proto.SubtaskState]int64, subTaskErrs []error) bool {
+	if !task.ExtraParams.PauseOnKVDiskFull || cntByStates[proto.SubtaskStateCanceled] > 0 || len(subTaskErrs) == 0 {
+		return false
+	}
+	if cntByStates[proto.SubtaskStateFailed] != int64(len(subTaskErrs)) {
+		return false
+	}
+	for _, err := range subTaskErrs {
+		if !errdef.IsKVDiskFullError(err) {
+			return false
+		}
+	}
+	return true
+}
+
 // onModifying is called when task is in modifying state.
 // the first return value indicates whether the scheduler should be recreated.
 func (s *BaseScheduler) onModifying() (bool, error) {
 	task := s.getTaskClone()
-	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
+	s.sampleLogger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
 	recreateScheduler := false
 	metaModifies := make([]proto.Modification, 0, len(task.ModifyParam.Modifications))
 	for _, m := range task.ModifyParam.Modifications {
@@ -507,7 +595,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
-		return s.handlePlanErr(err)
+		return s.handlePrepareOrPlanErr(err)
 	}
 
 	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {
@@ -589,9 +677,9 @@ func (s *BaseScheduler) scheduleSubTask(
 	)
 }
 
-func (s *BaseScheduler) handlePlanErr(err error) error {
+func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {
 	task := s.getTaskClone()
-	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
+	s.logger.Warn("prepare or generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventRetry).Inc()
 		return err
@@ -710,14 +798,6 @@ func (s *BaseScheduler) GetLogger() *zap.Logger {
 	return s.logger
 }
 
-// IsCancelledErr checks if the error is a cancelled error.
-func IsCancelledErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), taskCancelMsg)
-}
-
 // getEligibleNodes returns the eligible(live) nodes for the task.
 // if the task can only be scheduled to some specific nodes, return them directly,
 // we don't care liveliness of them.
@@ -735,19 +815,26 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 }
 
 func onTaskFinished(state proto.TaskState, taskErr error) {
-	// when task finishes, we classify the finished tasks into succeed/failed/cancelled
-	var metricState string
-
-	if state == proto.TaskStateSucceed || state == proto.TaskStateFailed {
-		metricState = state.String()
-	} else if state == proto.TaskStateReverted {
-		metricState = proto.TaskStateFailed.String()
-		if IsCancelledErr(taskErr) {
-			metricState = "cancelled"
-		}
-	}
+	// when task finishes, we classify the finished tasks into succeed/failed/cancelled/data-error.
+	metricState := getMetricState(state, taskErr)
 	if len(metricState) > 0 {
-		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Inc()
+		dxfmetric.FinishedTaskCounter.WithLabelValues(metricStateAll).Inc()
 		dxfmetric.FinishedTaskCounter.WithLabelValues(metricState).Inc()
+	}
+}
+
+func getMetricState(state proto.TaskState, taskErr error) string {
+	switch state {
+	case proto.TaskStateSucceed:
+		return state.String()
+	case proto.TaskStateFailed:
+		return state.String()
+	case proto.TaskStateReverted:
+		if classification := storage.ClassifyTaskError(state, taskErr); classification != "" {
+			return classification
+		}
+		return proto.TaskStateFailed.String()
+	default:
+		return ""
 	}
 }

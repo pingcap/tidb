@@ -92,6 +92,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionDropResourceGroup:
 		return applyDropResourceGroup(b, m, diff), nil
+	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+		return applyMaskingPolicyChange(b, m, diff)
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -406,6 +408,11 @@ func applyRecoverTable(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
+func applyMaskingPolicyChange(b *Builder, _ meta.Reader, _ *model.SchemaDiff) ([]int64, error) {
+	b.infoSchema.resetMaskingPolicyCache()
+	return nil, nil
+}
+
 func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
@@ -608,7 +615,35 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			return nil, errors.Trace(err)
 		}
 	}
+	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return tblIDs, nil
+}
+
+func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionCreateMaskingPolicy,
+		model.ActionAlterMaskingPolicy,
+		model.ActionDropMaskingPolicy,
+		model.ActionDropTable,
+		model.ActionDropColumn,
+		model.ActionModifyColumn,
+		model.ActionRenameTable,
+		model.ActionRenameTables,
+		model.ActionTruncateTable,
+		model.ActionDropSchema:
+		return true
+	default:
+		return false
+	}
+}
+
+func refreshMaskingPoliciesForTableIDs(b *Builder, _ ...int64) error {
+	b.infoSchema.resetMaskingPolicyCache()
+	return nil
 }
 
 // getKeptAllocators get allocators that is not changed by the DDL.
@@ -857,6 +892,23 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		metrics.DDLResetTempIndexWrite(tblInfo.ID)
 	}
 
+	allColumnPublic := !slices.ContainsFunc(tblInfo.Columns,
+		func(col *model.ColumnInfo) bool {
+			return col.State != model.StatePublic
+		})
+	allIndexPublic = !slices.ContainsFunc(tblInfo.Indices,
+		func(idx *model.IndexInfo) bool {
+			return idx.State != model.StatePublic
+		})
+	if allColumnPublic && allIndexPublic && metrics.DDLHasBackfillMetrics() {
+		metrics.DDLClearBackfillMetrics(tblInfo.ID)
+		if tblInfo.Partition != nil {
+			for _, def := range tblInfo.Partition.Definitions {
+				metrics.DDLClearBackfillMetrics(def.ID)
+			}
+		}
+	}
+
 	if !b.enableV2 {
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
 		tableNames.tables[tblInfo.Name.L] = tbl
@@ -954,9 +1006,11 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
+		b.infoschemaV2.infoSchema.ts = schemaTS
 		updateInfoSchemaBundles(b)
 		return &b.infoschemaV2
 	}
+	b.infoSchema.ts = schemaTS
 	updateInfoSchemaBundles(b)
 	return b.infoSchema
 }
@@ -972,15 +1026,32 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
 		b.infoschemaV2.ts = schemaV2.ts
+		// Ensure the embedded infoSchema.ts is set even if the old v2 schema
+		// was built before the ts field was added to infoSchema.
+		if schemaV2.ts > 0 && schemaV2.infoSchema.ts == 0 {
+			schemaV2.infoSchema.ts = schemaV2.ts
+		}
 	}
 	oldIS := oldSchema.base()
 	b.initBundleInfoBuilder()
+	b.infoSchema.ts = oldIS.ts
 	b.infoSchema.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.infoSchema.schemaMap = maps.Clone(oldIS.schemaMap)
 	b.infoSchema.schemaID2Name = maps.Clone(oldIS.schemaID2Name)
 	b.infoSchema.ruleBundleMap = maps.Clone(oldIS.ruleBundleMap)
 	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
+	oldIS.maskingPolicyMutex.RLock()
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo, len(oldIS.maskingPolicyTableColumnMap))
+	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
+		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
+	}
+	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
+	if oldIS.maskingPoliciesLoadCh != nil {
+		b.infoSchema.maskingPoliciesLoaded = false
+	}
+	b.infoSchema.maskingPoliciesLoadCh = nil
+	oldIS.maskingPolicyMutex.RUnlock()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
@@ -1030,8 +1101,8 @@ func (b *Builder) sortAllTablesByID() {
 	}
 }
 
-// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
+// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, misc metadata, and schema version.
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, maskingPolicies []*model.MaskingPolicyInfo, schemaVersion int64) error {
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
@@ -1064,7 +1135,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
-	b.initMisc(policies, resourceGroups)
+	b.initMisc(policies, resourceGroups, maskingPolicies)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {

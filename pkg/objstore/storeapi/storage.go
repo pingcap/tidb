@@ -89,7 +89,8 @@ type WalkOption struct {
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
 	// StartAfter is the key to start after. If not empty, the walk will start
-	// after the key. Currently only S3-like storage supports this option.
+	// after the key. This is currently supported by S3-like storage, GCS and
+	// local storage.
 	StartAfter string
 }
 
@@ -200,7 +201,7 @@ type Options struct {
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
 
-	// S3Retryer is the retryer for create s3 storage, if it is nil,
+	// S3Retryer is the retryer for the created s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
 	S3Retryer aws.Retryer
 

@@ -20,7 +20,19 @@
 
 set -o pipefail
 
-bazel_collect
+coverage_report=./bazel-out/_coverage/_coverage_report.dat
+junit_report=./bazel.xml
+
+go install github.com/hawkingrei/bazel_collect@89393073f416d5a8106d4393d918c7f6d4d9e308
 mkdir -p test_coverage
-cp ./bazel-out/_coverage/_coverage_report.dat ./coverage.dat
-mv bazel.xml test_coverage/bazel.xml
+if [ -f "${coverage_report}" ]; then
+    cp "${coverage_report}" ./coverage.dat
+else
+    : > ./coverage.dat
+    echo "warning: coverage report ${coverage_report} not found, created empty coverage.dat" >&2
+fi
+if [ -f "${junit_report}" ]; then
+    mv "${junit_report}" test_coverage/bazel.xml
+else
+    echo "warning: junit report ${junit_report} not found, skipping junit artifact collection" >&2
+fi

@@ -281,6 +281,11 @@ func (p *BasePhysicalAgg) NewPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.Self
 	}
+	// max_count/min_count currently support only one-stage execution on TiFlash.
+	// Do not split them into partial/final here.
+	if copTaskType == kv.TiFlash && containsMaxMinCountAgg(p.AggFuncs) {
+		return nil, p.Self
+	}
 	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
@@ -515,6 +520,15 @@ func computePartialCursorOffset(name string) int {
 		offset++
 	}
 	return offset
+}
+
+func containsMaxMinCountAgg(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, aggFunc := range aggFuncs {
+		if aggregation.IsMaxMinCount(aggFunc.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
@@ -787,9 +801,15 @@ func BuildFinalModeAggregation(
 				partialCursor++
 			}
 			if aggregation.NeedValue(finalAggFunc.Name) {
+				valueRetType := original.Schema.Columns[i].GetType(ectx)
+				if finalAggFunc.Name == ast.AggFuncMaxCount || finalAggFunc.Name == ast.AggFuncMinCount {
+					// max_count/min_count partial result contains [count, extrema value].
+					// The value column should keep the original argument type for final-phase comparison.
+					valueRetType = aggFunc.Args[0].GetType(ectx).Clone()
+				}
 				partial.Schema.Append(&expression.Column{
 					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  original.Schema.Columns[i].GetType(ectx),
+					RetType:  valueRetType,
 				})
 				args = append(args, partial.Schema.Columns[partialCursor])
 				partialCursor++
@@ -959,11 +979,13 @@ func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 		if agg.HasDistinct {
 			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
 				hasUnsupportedDistinct = true
+				break
 			}
 		}
 		// MPP does not support AggFuncApproxCountDistinct now
 		if agg.Name == ast.AggFuncApproxCountDistinct {
 			hasUnsupportedDistinct = true
+			break
 		}
 	}
 	if hasUnsupportedDistinct {

@@ -14,8 +14,10 @@ go_library(
         "//pkg/session/cursor",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
 )

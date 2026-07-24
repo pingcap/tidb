@@ -54,7 +54,11 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
-	if prop.TaskTp == property.MppTaskType && !checkCanPushDownToMPP(la) {
+	var canPushDownToMPP bool
+	if util2.ShouldCheckTiFlashPushDown(la.SCtx(), logicalop.GetHasTiFlash(lp)) {
+		canPushDownToMPP = checkCanPushDownToMPP(la)
+	}
+	if prop.TaskTp == property.MppTaskType && !canPushDownToMPP {
 		return nil
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
@@ -64,7 +68,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	// lift the recursive check of canPushToCop(tiFlash)
-	canPushDownToMPP := la.SCtx().GetSessionVars().IsMPPAllowed() && checkCanPushDownToMPP(la)
+	canPushDownToMPP = canPushDownToMPP && la.SCtx().GetSessionVars().IsMPPAllowed()
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
 	} else {
@@ -121,6 +125,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 	// Is this aggregate a final stage aggregate?
 	// Final agg can't be split into multi-stage aggregate
 	hasFinalAgg := len(la.AggFuncs) > 0 && la.AggFuncs[0].Mode == aggregation.FinalMode
+	containsMaxMinCount := containsMaxMinCountAgg(la.AggFuncs)
 	// count final agg should become sum for MPP execution path.
 	// In the traditional case, TiDB take up the final agg role and push partial agg to TiKV,
 	// while TiDB can tell the partialMode and do the sum computation rather than counting but MPP doesn't
@@ -195,8 +200,8 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			}
 		}
 
-		// Final agg can't be split into multi-stage aggregate, so exit early
-		if hasFinalAgg {
+		// Final agg and max_count/min_count can't be split into multi-stage aggregate, so exit early.
+		if hasFinalAgg || containsMaxMinCount {
 			return
 		}
 
@@ -239,7 +244,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
-		if la.HasDistinct() || la.HasOrderBy() {
+		if la.HasDistinct() || la.HasOrderBy() || containsMaxMinCount {
 			// mpp scalar mode means the data will be pass through to only one tiFlash node at last.
 			agg.MppRunMode = MppScalar
 		} else {

@@ -35,17 +35,20 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	kv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -64,6 +67,31 @@ type mockGCWorkerLockResolver struct {
 	tikvStore         tikv.Storage
 	scanLocks         func([]*txnlock.Lock, []byte) ([]*txnlock.Lock, *tikv.KeyLocation)
 	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+}
+
+type stubGCV2Manager struct {
+	extworkload.Manager
+
+	role             config.ExternalWorkloadRole
+	meta             *keyspacepb.KeyspaceMeta
+	err              error
+	recycleSafePoint uint64
+	registerCount    int
+	recycleCount     int
+}
+
+func (m *stubGCV2Manager) Role() config.ExternalWorkloadRole { return m.role }
+func (m *stubGCV2Manager) Meta() *keyspacepb.KeyspaceMeta    { return m.meta }
+
+func (m *stubGCV2Manager) RegisterGCV2(_ context.Context, _ uint64, _ time.Duration) error {
+	m.registerCount++
+	return m.err
+}
+
+func (m *stubGCV2Manager) RecycleGCV2(_ context.Context, safePoint uint64) error {
+	m.recycleSafePoint = safePoint
+	m.recycleCount++
+	return m.err
 }
 
 func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
@@ -222,6 +250,60 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 	return s
 }
 
+func TestNotifyGCV2AfterGCForDedicatedWorker(t *testing.T) {
+	const safePoint = 123
+	for _, tc := range []struct {
+		name             string
+		gcManagementType string
+		recycleErr       error
+		wantRecycleCount int
+	}{
+		{
+			name:             "keyspace level GC",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			wantRecycleCount: 1,
+		},
+		{
+			name:             "recycle failure is best effort",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			recycleErr:       errors.New("mock recycle GCV2 failure"),
+			wantRecycleCount: 1,
+		},
+		{
+			name:             "unified GC",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeUnified,
+			wantRecycleCount: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+				Id:     1,
+				Name:   "ks",
+				Config: map[string]string{pd.KeyspaceConfigGCManagementType: tc.gcManagementType},
+			}))
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, store.Close())
+			})
+
+			mgr := &stubGCV2Manager{
+				role: config.RoleGCV2Worker,
+				meta: store.GetCodec().GetKeyspaceMeta(),
+				err:  tc.recycleErr,
+			}
+			extworkload.SetManagerForStore(store, mgr)
+			worker := &GCWorker{store: store}
+
+			worker.notifyGCV2AfterGC(context.Background(), safePoint)
+			require.Zero(t, mgr.registerCount)
+			require.Equal(t, tc.wantRecycleCount, mgr.recycleCount)
+			if tc.wantRecycleCount > 0 {
+				require.Equal(t, uint64(safePoint), mgr.recycleSafePoint)
+			}
+		})
+	}
+}
+
 func (s *mockGCWorkerSuite) mustPut(t *testing.T, key, value string) {
 	txn, err := s.store.Begin()
 	require.NoError(t, err)
@@ -366,6 +448,14 @@ func TestPrepareGC(t *testing.T) {
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
+	lastRunBefore, err := s.gcWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.NotNil(t, lastRunBefore)
+	safePointBefore, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.NotNil(t, safePointBefore)
+	timeEqual(t, safePointBefore.Add(gcDefaultLifeTime), now, 2*time.Second)
+
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare(gcContext())
 	require.NoError(t, err)
@@ -375,7 +465,9 @@ func TestPrepareGC(t *testing.T) {
 	require.NotNil(t, lastRun)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
+	require.Equal(t, *lastRunBefore, *lastRun)
+	require.Equal(t, *safePointBefore, *safePoint)
+	timeEqual(t, safePoint.Add(gcDefaultLifeTime), *lastRun, 2*time.Second)
 
 	// Change GC run interval.
 	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
@@ -397,14 +489,15 @@ func TestPrepareGC(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 	s.oracle.AddOffset(time.Minute * 40)
-	now, err = s.gcWorker.getOracleTime()
-	require.NoError(t, err)
 	ok, _, err = s.gcWorker.prepare(gcContext())
 	require.NoError(t, err)
 	require.True(t, ok)
+	lastRun, err = s.gcWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.NotNil(t, lastRun)
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey)
 	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(time.Minute*30), now, 2*time.Second)
+	timeEqual(t, safePoint.Add(time.Minute*30), *lastRun, 2*time.Second)
 
 	// Change GC concurrency.
 	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
@@ -992,6 +1085,15 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
+	// Disable the background txn safe-point cache updater (10 s poll) so it
+	// does not race with snapshot reads in checkCollected/mustGetNone.
+	// Without this, the updater may cache the advanced safe point before the
+	// test reads old probe timestamps, causing [tikv:9006] errors.
+	require.NoError(t, failpoint.Enable("tikvclient/noBuiltInTxnSafePointUpdater", "return"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
+	})
+
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(time.Hour))
@@ -1038,6 +1140,12 @@ func TestLeaderTick(t *testing.T) {
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)
+	// The "skip gcWaitTime" leaderTick above ran prepare() which advanced the
+	// PD txn safe point as a side effect. Bump the oracle so the next
+	// prepare() computes a strictly higher target (GoTimeToTS truncates to ms,
+	// so without this bump both calls can land in the same millisecond and
+	// AdvanceTxnSafePoint returns NewSafePoint == OldSafePoint → GC skipped).
+	s.oracle.AddOffset(time.Second)
 
 	// Continue GC if all those checks passed.
 	err = s.gcWorker.leaderTick(gcContext())
@@ -1082,6 +1190,72 @@ func TestLeaderTick(t *testing.T) {
 		break
 	}
 	require.NoError(t, err)
+}
+
+func TestUnifiedGCNeedsToWait(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("starter deploy mode is only available in nextgen kernel")
+	}
+
+	originInTest := intest.InTest
+	originDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		intest.InTest = originInTest
+		require.NoError(t, deploymode.Set(originDeployMode))
+	})
+
+	// Starter unified GC skips the initial gcWaitTime only in production and
+	// only before the first GC job has completed. Other modes, and intest by
+	// default, keep the normal cooldown semantics.
+	testCases := []struct {
+		name                  string
+		deployMode            deploymode.Mode
+		inTest                bool
+		hasFinishedFirstGCJob bool
+		expected              bool
+	}{
+		{
+			name:                  "starter still waits in intest",
+			deployMode:            deploymode.Starter,
+			inTest:                true,
+			hasFinishedFirstGCJob: false,
+			expected:              true,
+		},
+		{
+			name:                  "starter skips initial wait in production",
+			deployMode:            deploymode.Starter,
+			inTest:                false,
+			hasFinishedFirstGCJob: false,
+			expected:              false,
+		},
+		{
+			name:                  "starter waits after first gc job in production",
+			deployMode:            deploymode.Starter,
+			inTest:                false,
+			hasFinishedFirstGCJob: true,
+			expected:              true,
+		},
+		{
+			name:                  "premium still waits in production",
+			deployMode:            deploymode.Premium,
+			inTest:                false,
+			hasFinishedFirstGCJob: false,
+			expected:              true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			intest.InTest = tc.inTest
+			require.NoError(t, deploymode.Set(tc.deployMode))
+
+			worker := &GCWorker{
+				lastFinish:            time.Now(),
+				hasFinishedFirstGCJob: tc.hasFinishedFirstGCJob,
+			}
+			require.Equal(t, tc.expected, worker.needsToWait())
+		})
+	}
 }
 
 func TestResolveLockRangeInfine(t *testing.T) {
@@ -1726,9 +1900,18 @@ func TestResolveLocksNearTxnSafePoint(t *testing.T) {
 }
 
 func TestRunGCJob(t *testing.T) {
+	require.NoError(t, failpoint.Enable("tikvclient/noBuiltInTxnSafePointUpdater", "return"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
+	})
+
 	s := createGCWorkerSuite(t)
 
+	originalTxnSafePointSyncWaitTime := txnSafePointSyncWaitTime
 	txnSafePointSyncWaitTime = 0
+	t.Cleanup(func() {
+		txnSafePointSyncWaitTime = originalTxnSafePointSyncWaitTime
+	})
 
 	// Test distributed mode
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()

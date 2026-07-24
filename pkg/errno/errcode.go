@@ -919,6 +919,7 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrInvalidLateralJoin                                    = 3809
 	ErrNonBooleanExprForCheckConstraint                      = 3812
 	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
 	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
@@ -944,6 +945,11 @@ const (
 	ErrEngineAttributeNotSupported                           = 3981
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
+	// Dual-password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) — match MySQL 8.0
+	// error numbers from mysql/mysql-server share/messages_to_clients.txt.
+	ErrSecondPasswordCannotBeEmpty            = 3878
+	ErrPasswordCannotBeRetainedOnPluginChange = 3894
+	ErrCurrentPasswordCannotBeRetained        = 3895
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -1153,6 +1159,8 @@ const (
 	ErrForbiddenDDL                       = 8267
 	ErrMaskingPolicyExists                = 8268
 	ErrMaskingPolicyNotExists             = 8269
+	ErrMaskingPolicyExprInvalidColumn     = 8275
+	ErrDDLAutoPausedByKVDiskFull          = 8276
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1170,6 +1178,9 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrMaxKeysReadExceeded                      = 8274
+
+	// [8800, 8900) are reserved for a downstream fork
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
@@ -1186,4 +1197,5 @@ const (
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
 	ErrTiFlashBackfillIndex      = 9014
+	ErrUserPrefixMismatch        = 20003
 )

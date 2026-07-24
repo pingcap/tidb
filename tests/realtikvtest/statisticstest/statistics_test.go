@@ -15,21 +15,31 @@
 package statisticstest
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/bazelbuild/rules_go/go/runfiles"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
+
+const analyzeV1CompatFixturePath = "tests/realtikvtest/statisticstest/analyze_v1_compat_v855.json.gz"
 
 func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
@@ -55,7 +65,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("insert into t values('b'), ('bBb'), ('Bb'), ('bA'), ('BBBB'), ('BBBBBDDDDDdd'), ('bbbbBBBBbbBBR'), ('BBbbBBbbBBbbBBRRR')")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := dom.StatsHandle()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	tk.MustExec("analyze table t")
 	// Wait for stats to be fully persisted and loaded
@@ -181,7 +191,7 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	// 3. Insert some data and wait for the modify_count and the count is not null in the mysql.stats_meta.
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	// 4. Try to select some data from this table by ID, it would trigger an async load.
 	tk.MustExec("set tidb_opt_objective='determinate';")
@@ -247,7 +257,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	tk.MustExec("alter table t add index ia(a);")
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	ctx := context.Background()
 	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
 	// Trigger async load of index histogram by using the index in a query.
@@ -287,4 +297,156 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	// Verify all items were removed from AsyncLoadHistogramNeededItems after loading.
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	require.Equal(t, len(items), 0, "AsyncLoadHistogramNeededItems should be empty after loading")
+}
+
+func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists analyze_v1_compat")
+	tk.MustExec("create table analyze_v1_compat(a int, b int, c int, primary key(a), key idx(b))")
+	t.Cleanup(func() {
+		tk.MustExec("set @@tidb_stats_load_sync_wait = default")
+	})
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, readAnalyzeV1CompatStatsJSON(t), 0))
+
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("analyze_v1_compat"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tableID := tblInfo.ID
+	colCID := tblInfo.Columns[2].ID
+	idxBID := tblInfo.Indices[0].ID
+
+	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where table_id = ? order by stats_ver", tableID).
+		Check(testkit.Rows("1"))
+
+	h.Clear()
+	// Test init stats.
+	require.NoError(t, h.InitStats(context.Background(), is, tableID))
+	statsTbl := h.GetPhysicalTableStats(tableID, tblInfo)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
+	require.True(t, statsTbl.GetIdx(idxBID).IsFullLoad())
+	require.Equal(t, int64(statistics.Version1), statsTbl.GetIdx(idxBID).StatsVer)
+	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
+	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
+
+	// Test ColumnStatsIsInvalid to trigger async load of column stats.
+	statistics.ColumnStatsIsInvalid(statsTbl.GetCol(colCID), tk.Session().GetPlanCtx(), &statsTbl.HistColl, colCID)
+	require.NoError(t, h.LoadNeededHistograms(is))
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
+	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is, tableID))
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
+
+	// Test real async load path.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustQuery("select * from analyze_v1_compat where c = 200").Check(testkit.Rows())
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		for _, item := range items {
+			if !item.IsIndex && item.TableID == tableID && item.ID == colCID {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, h.LoadNeededHistograms(is))
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		for _, item := range items {
+			if !item.IsIndex && item.TableID == tableID && item.ID == colCID {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
+	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is, tableID))
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
+
+	// Test sync load path.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustQuery("select * from analyze_v1_compat where c = 200").Check(testkit.Rows())
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
+	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
+
+	// Test re-analyzing the loaded v1 stats with analyze version 2.
+	tk.MustExec("insert into analyze_v1_compat values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+	tk.MustExec("analyze table analyze_v1_compat")
+	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where is_index = 0 and table_id = ? order by stats_ver", tableID).
+		Check(testkit.Rows("2"))
+	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where is_index = 1 and table_id = ? order by stats_ver", tableID).
+		Check(testkit.Rows("2"))
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is, tableID))
+	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
+	require.Equal(t, statistics.Version2, statsTbl.StatsVer)
+	require.True(t, statsTbl.GetIdx(idxBID).IsFullLoad())
+	require.Equal(t, int64(statistics.Version2), statsTbl.GetIdx(idxBID).StatsVer)
+	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
+	require.Equal(t, int64(statistics.Version2), statsTbl.GetCol(colCID).StatsVer)
+}
+
+func readAnalyzeV1CompatStatsJSON(t *testing.T) *statsutil.JSONTable {
+	t.Helper()
+
+	var paths []string
+	if rf, err := runfiles.New(); err == nil {
+		if path := tryResolveRunfile(rf, analyzeV1CompatFixturePath); path != "" {
+			paths = append(paths, path)
+		}
+		if workspace := os.Getenv("TEST_WORKSPACE"); workspace != "" {
+			if path := tryResolveRunfile(rf, workspace+"/"+analyzeV1CompatFixturePath); path != "" {
+				paths = append(paths, path)
+			}
+		}
+	}
+	paths = append(paths, analyzeV1CompatFixturePath, filepath.Base(analyzeV1CompatFixturePath))
+
+	var (
+		data    []byte
+		lastErr error
+	)
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		data, lastErr = os.ReadFile(path)
+		if lastErr == nil {
+			break
+		}
+	}
+	require.NoError(t, lastErr)
+
+	var jsonTbl statsutil.JSONTable
+	zr, err := gzip.NewReader(bytes.NewReader(data))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, zr.Close())
+	}()
+	require.NoError(t, json.NewDecoder(zr).Decode(&jsonTbl))
+	return &jsonTbl
+}
+
+func tryResolveRunfile(rf *runfiles.Runfiles, name string) string {
+	path, err := rf.Rlocation(name)
+	if err != nil {
+		return ""
+	}
+	return path
 }

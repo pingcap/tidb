@@ -24,10 +24,15 @@ type Step int64
 
 // TaskStep is the step of task.
 // DO NOT change the value of the constants, will break backward compatibility.
-// successfully task MUST go from StepInit to business steps, then StepDone.
+// Successful task has two framework flows:
+//  1. default flow: StepInit -> business steps -> StepDone.
+//  2. prepare-mode flow: StepInit -> StepPrepared -> business steps -> StepDone.
 const (
 	StepInit Step = -1
 	StepDone Step = -2
+	// StepPrepared marks that framework prepare logic has finished while task
+	// state is still pending.
+	StepPrepared Step = -3
 
 	unknownStepPrefix = "unknown step"
 )
@@ -35,11 +40,15 @@ const (
 // Step2Str converts step to string.
 // it's too bad that we define step as int 🙃.
 func Step2Str(t TaskType, s Step) string {
-	// StepInit and StepDone are special steps, we don't check task type for them.
-	if s == StepInit {
+	// StepInit, StepDone and StepPrepared are special steps, we don't check task
+	// type for them.
+	switch s {
+	case StepInit:
 		return "init"
-	} else if s == StepDone {
+	case StepDone:
 		return "done"
+	case StepPrepared:
+		return "prepared"
 	}
 	switch t {
 	case Backfill:
@@ -56,6 +65,15 @@ func Step2Str(t TaskType, s Step) string {
 func IsValidStep(t TaskType, s Step) bool {
 	str := Step2Str(t, s)
 	return !strings.Contains(str, unknownStepPrefix)
+}
+
+// IsValidBusinessStep returns whether the step is a business step valid for
+// the task type. Framework marker steps are excluded.
+func IsValidBusinessStep(t TaskType, s Step) bool {
+	if s == StepInit || s == StepDone || s == StepPrepared {
+		return false
+	}
+	return IsValidStep(t, s)
 }
 
 // Steps of example task type.
