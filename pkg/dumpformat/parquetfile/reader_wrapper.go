@@ -50,7 +50,7 @@ type readerAtSeekerCloser interface {
 
 // readerWrapper implements parquet.ReaderAtSeeker.
 type readerWrapper struct {
-	storeapi.ReadSeekCloser
+	io.ReadSeekCloser
 	lastOff int64
 	skipBuf []byte
 }
@@ -247,10 +247,10 @@ func (*inMemoryReaderWrapper) Close() error {
 func prepareReader(
 	ctx context.Context,
 	store storeapi.Storage,
-	openReader func(context.Context) (storeapi.ReadSeekCloser, error),
+	openReader func(context.Context) (io.ReadSeekCloser, error),
 	path string,
 	fileSize int64,
-) (parquet.ReaderAtSeeker, *inMemoryReaderBase, storeapi.ReadSeekCloser, error) {
+) (parquet.ReaderAtSeeker, *inMemoryReaderBase, io.ReadSeekCloser, error) {
 	if fileSize > 0 && fileSize <= int64(inMemoryThreshold) {
 		base, err := newInMemoryReaderBase(ctx, store, path, rowGroupRange{start: 0, end: fileSize})
 		if err != nil {

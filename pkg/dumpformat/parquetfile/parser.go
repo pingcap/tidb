@@ -629,7 +629,7 @@ func ReadRowCount(
 func NewParser(
 	ctx context.Context,
 	store storeapi.Storage,
-	openReader func(context.Context) (storeapi.ReadSeekCloser, error),
+	openReader func(context.Context) (io.ReadSeekCloser, error),
 	path string,
 	fileSize int64,
 	meta FileMeta,
@@ -778,7 +778,7 @@ func SampleStatisticsFromParquet(
 	avgRowSize float64,
 	err error,
 ) {
-	parser, err := NewParser(ctx, store, func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 		return store.Open(ctx, path, nil)
 	}, path, 0, FileMeta{})
 	if err != nil {
@@ -927,7 +927,7 @@ func EstimateParquetReaderMemory(
 	fileSize int64,
 ) (int64, error) {
 	allocator := &trackingAllocator{}
-	parser, err := NewParser(ctx, store, func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 		return store.Open(ctx, path, nil)
 	}, path, fileSize, FileMeta{allocator: allocator})
 	if err != nil {

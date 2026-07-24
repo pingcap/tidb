@@ -1804,9 +1804,7 @@ func newLoadDataParser(
 		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
-			func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
-				return dataFileInfo.Opener(ctx)
-			},
+			dataFileInfo.Opener,
 			dataFileInfo.Remote.Path,
 			dataFileInfo.Remote.FileSize,
 			dataFileInfo.Remote.ParquetMeta,

@@ -91,7 +91,7 @@ func newParquetParserForTest(
 	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
-	parser, err := NewParser(ctx, store, func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 		return store.Open(ctx, fileName, nil)
 	}, fileName, fileSize, meta)
 	require.NoError(t, err)
@@ -507,7 +507,7 @@ func TestParquetVariousTypes(t *testing.T) {
 
 		store, err := objstore.NewLocalStorage(dir)
 		require.NoError(t, err)
-		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 			return store.Open(ctx, name, nil)
 		}, name, 0, FileMeta{Loc: time.UTC})
 		require.ErrorContains(t, err, "unsupported timestamp time unit")
@@ -1467,7 +1467,7 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 
 	read := func(t *testing.T, fileSize int64) (*Parser, *recording.AccessStats) {
 		store, accessStats := newParquetS3StoreForTest(t, fileName, data)
-		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
+		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 			return store.Open(ctx, fileName, nil)
 		}, fileName, fileSize, FileMeta{})
 		require.NoError(t, err)
