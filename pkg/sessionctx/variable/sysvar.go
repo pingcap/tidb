@@ -419,6 +419,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBFoundInPlanCache, Value: BoolToOnOff(vardef.DefTiDBFoundInPlanCache), Type: vardef.TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.PrevFoundInPlanCache), nil
 	}},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBFoundInTrivialPlan, Value: BoolToOnOff(false), Type: vardef.TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(s.PrevFoundInTrivialPlan), nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBFoundInBinding, Value: BoolToOnOff(vardef.DefTiDBFoundInBinding), Type: vardef.TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.PrevFoundInBinding), nil
 	}},

@@ -1440,6 +1440,11 @@ type SessionVars struct {
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
 
+	// FoundInTrivialPlan indicates whether this statement used the trivial plan fast path.
+	FoundInTrivialPlan bool
+	// PrevFoundInTrivialPlan indicates whether the last statement used the trivial plan fast path.
+	PrevFoundInTrivialPlan bool
+
 	// FoundInBinding indicates whether the execution plan is matched with the hints in the binding.
 	FoundInBinding bool
 	// PrevFoundInBinding indicates whether the last execution plan is matched with the hints in the binding.
