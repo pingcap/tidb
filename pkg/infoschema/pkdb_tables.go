@@ -51,13 +51,13 @@ var (
 var (
 	ProtectionModeStrs = []string{
 		pdpb.ProtectionMode_MAXIMUM_PERFORMANCE.String(),
-		pdpb.ProtectionMode_MAXIMUM_PROTECTION.String(),
 		pdpb.ProtectionMode_MAXIMUM_AVAILABILITY.String(),
+		pdpb.ProtectionMode_MAXIMUM_PROTECTION.String(),
 		pkdb.LogReplicationUnknown,
 	}
 	ProtectionModeMaximumPerformanceEnum, _  = types.ParseEnumName(ProtectionModeStrs, pdpb.ProtectionMode_MAXIMUM_PERFORMANCE.String(), mysql.DefaultCollationName)
-	ProtectionModeMaximumProtectionEnum, _   = types.ParseEnumName(ProtectionModeStrs, pdpb.ProtectionMode_MAXIMUM_PROTECTION.String(), mysql.DefaultCollationName)
 	ProtectionModeMaximumAvailabilityEnum, _ = types.ParseEnumName(ProtectionModeStrs, pdpb.ProtectionMode_MAXIMUM_AVAILABILITY.String(), mysql.DefaultCollationName)
+	ProtectionModeMaximumProtectionEnum, _   = types.ParseEnumName(ProtectionModeStrs, pdpb.ProtectionMode_MAXIMUM_PROTECTION.String(), mysql.DefaultCollationName)
 	ProtectionModeMaximumUnknownEnum, _      = types.ParseEnumName(ProtectionModeStrs, pkdb.LogReplicationUnknown, mysql.DefaultCollationName)
 )
 
