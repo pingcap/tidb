@@ -437,11 +437,9 @@ func (pp *Parser) getBuilder() (columnReaderBuilder, error) {
 	}
 	fileSize := pp.fileMeta.GetSourceFileSize()
 
-	switch {
-	case pp.preloadBase != nil:
-		return inMemoryColumnBuilder(pp.preloadBase, ranges, fileSize), nil
-	case ranges.end-ranges.start <= int64(inMemoryThreshold):
-		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
+	base := pp.preloadBase
+	if base == nil && ranges.end-ranges.start <= int64(inMemoryThreshold) {
+		base, err = newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -449,10 +447,23 @@ func (pp *Parser) getBuilder() (columnReaderBuilder, error) {
 			zap.String("path", pp.path),
 			zap.Int("rowGroup", pp.curRowGroup),
 			zap.Int64("size", ranges.end-ranges.start))
-		return inMemoryColumnBuilder(base, ranges, fileSize), nil
-	default:
-		return streamingColumnBuilder(pp.ctx, pp.store, pp.path, ranges), nil
 	}
+	if base != nil {
+		return func(c int) (readerAtSeekerCloser, error) {
+			return &inMemoryReaderWrapper{
+				base:     base,
+				pos:      ranges.columnStarts[c],
+				fileSize: fileSize,
+			}, nil
+		}, nil
+	}
+	return func(c int) (readerAtSeekerCloser, error) {
+		return newReaderWrapper(pp.ctx, pp.store, pp.path,
+			&storeapi.ReaderOption{
+				StartOffset: &ranges.columnStarts[c],
+				EndOffset:   &ranges.columnEnds[c],
+			})
+	}, nil
 }
 
 func (pp *Parser) moveToNextRowGroup() error {

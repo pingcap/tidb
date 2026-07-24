@@ -247,28 +247,6 @@ func (*inMemoryReaderWrapper) Close() error {
 // columnReaderBuilder constructs a per-column reader for one row group.
 type columnReaderBuilder func(c int) (readerAtSeekerCloser, error)
 
-// inMemoryColumnBuilder serves every column from an in-memory buffer.
-func inMemoryColumnBuilder(base *inMemoryReaderBase, ranges rowGroupRange, fileSize int64) columnReaderBuilder {
-	return func(c int) (readerAtSeekerCloser, error) {
-		return &inMemoryReaderWrapper{
-			base:     base,
-			pos:      ranges.columnStarts[c],
-			fileSize: fileSize,
-		}, nil
-	}
-}
-
-// streamingColumnBuilder issues one range GET per column.
-func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path string, ranges rowGroupRange) columnReaderBuilder {
-	return func(c int) (readerAtSeekerCloser, error) {
-		return newReaderWrapper(ctx, store, path,
-			&storeapi.ReaderOption{
-				StartOffset: &ranges.columnStarts[c],
-				EndOffset:   &ranges.columnEnds[c],
-			})
-	}
-}
-
 // prepareReader picks the reader strategy: whole-file preload or streaming.
 func prepareReader(
 	ctx context.Context,
