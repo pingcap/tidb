@@ -90,7 +90,7 @@ func DebugTraceReceivedCommand(s base.PlanContext, cmd byte, stmtNode ast.StmtNo
 			planCacheStmt, _ = execStmt.PrepStmt.(*PlanCacheStmt)
 		}
 		if execStmt.BinaryArgs != nil {
-			binaryParams, _ = execStmt.BinaryArgs.([]expression.Expression)
+			binaryParams, _ = getExecuteBinaryParams(execStmt.BinaryArgs)
 		}
 	}
 	useCursor := sessionVars.HasStatusFlag(mysql.ServerStatusCursorExists)

@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -31,7 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
@@ -361,6 +364,69 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs, alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		alloc.Reset()
+	}
+	b.StopTimer()
+}
+
+func BenchmarkExecuteStmtBinaryPointGet(b *testing.B) {
+	ctx := context.Background()
+	logLevel := log.GetLevel()
+	log.SetLevel(zap.FatalLevel)
+	defer log.SetLevel(logLevel)
+	se, do, st := prepareBenchSession()
+	log.SetLevel(zap.FatalLevel)
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk bigint unsigned primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+
+	stmtID, _, _, err := se.PrepareStmt("select * from t where pk = ?")
+	if err != nil {
+		b.Fatal(err)
+	}
+	prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var value [8]byte
+	binary.LittleEndian.PutUint64(value[:], 64)
+	params := []param.BinaryParam{{
+		Tp:         mysql.TypeLonglong,
+		IsUnsigned: true,
+		Val:        value[:],
+	}}
+	alloc := chunk.NewAllocator()
+	checkStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: params}
+	rs, err := se.ExecuteStmt(ctx, checkStmt)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rows, err := drainRecordSet(ctx, se.(*session), rs, alloc)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].GetUint64(0) != 64 {
+		b.Fatalf("unexpected point-get result: %v", rows)
+	}
+	alloc.Reset()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: params}
+		rs, err := se.ExecuteStmt(ctx, execStmt)
 		if err != nil {
 			b.Fatal(err)
 		}

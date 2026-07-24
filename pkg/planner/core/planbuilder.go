@@ -618,9 +618,24 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 	}
 	exe := &Execute{Name: v.Name, Params: vars, PrepStmt: prepStmt}
 	if v.BinaryArgs != nil {
-		exe.Params = v.BinaryArgs.([]expression.Expression)
+		var ok bool
+		exe.Params, ok = getExecuteBinaryParams(v.BinaryArgs)
+		if !ok {
+			exe.Params = v.BinaryArgs.([]expression.Expression)
+		}
 	}
 	return exe, nil
+}
+
+func getExecuteBinaryParams(binaryArgs any) ([]expression.Expression, bool) {
+	switch args := binaryArgs.(type) {
+	case []expression.Expression:
+		return args, true
+	case *[1]expression.Expression:
+		return args[:], true
+	default:
+		return nil, false
+	}
 }
 
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {

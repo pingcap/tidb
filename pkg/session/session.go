@@ -2091,7 +2091,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			if err != nil {
 				return nil, err
 			}
-			execStmt.BinaryArgs = args
+			if len(args) == 1 {
+				execStmt.BinaryArgs = (*[1]expression.Expression)(args)
+			} else {
+				execStmt.BinaryArgs = args
+			}
 		}
 	}
 
