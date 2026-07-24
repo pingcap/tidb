@@ -195,17 +195,21 @@ func TestRole(t *testing.T) {
 	result.Check(nil)
 	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
 	result.Check(nil)
+}
 
+func TestGrantRole(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	// Test for GRANT ROLE
-	createRoleSQL = `CREATE ROLE 'r_1'@'localhost', 'r_2'@'localhost', 'r_3'@'localhost';`
+	createRoleSQL := `CREATE ROLE 'r_1'@'localhost', 'r_2'@'localhost', 'r_3'@'localhost';`
 	tk.MustExec(createRoleSQL)
 	grantRoleSQL := `GRANT 'r_1'@'localhost' TO 'r_2'@'localhost';`
 	tk.MustExec(grantRoleSQL)
-	result = tk.MustQuery(`SELECT TO_USER FROM mysql.role_edges WHERE FROM_USER="r_1" and FROM_HOST="localhost"`)
+	result := tk.MustQuery(`SELECT TO_USER FROM mysql.role_edges WHERE FROM_USER="r_1" and FROM_HOST="localhost"`)
 	result.Check(testkit.Rows("r_2"))
 
 	grantRoleSQL = `GRANT 'r_1'@'localhost' TO 'r_3'@'localhost', 'r_4'@'localhost';`
-	err = tk.ExecToErr(grantRoleSQL)
+	err := tk.ExecToErr(grantRoleSQL)
 	require.Error(t, err)
 
 	// Test grant role for current_user();
@@ -225,16 +229,20 @@ func TestRole(t *testing.T) {
 	tk.MustExec(dropRoleSQL)
 	dropRoleSQL = `DROP ROLE IF EXISTS 'r_3'@'localhost' ;`
 	tk.MustExec(dropRoleSQL)
+}
 
+func TestRevokeRole(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	// Test for revoke role
-	createRoleSQL = `CREATE ROLE 'test'@'localhost', r_1, r_2;`
+	createRoleSQL := `CREATE ROLE 'test'@'localhost', r_1, r_2;`
 	tk.MustExec(createRoleSQL)
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test','%','root')")
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','root')")
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','root')")
 	tk.MustExec("flush privileges")
 	tk.MustExec("SET DEFAULT ROLE r_1, r_2 TO root")
-	err = tk.ExecToErr("revoke test@localhost, r_1 from root;")
+	err := tk.ExecToErr("revoke test@localhost, r_1 from root;")
 	require.NoError(t, err)
 	err = tk.ExecToErr("revoke `r_2`@`%` from root, u_2;")
 	require.Error(t, err)
@@ -242,13 +250,17 @@ func TestRole(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("revoke `r_1`@`%` from root;")
 	require.NoError(t, err)
-	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
+	result := tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
 	result.Check(nil)
 	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE USER="root" and HOST="%"`)
 	result.Check(nil)
-	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
+	dropRoleSQL := `DROP ROLE 'test'@'localhost', r_1, r_2;`
 	tk.MustExec(dropRoleSQL)
+}
 
+func TestSetRole(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
 	require.NotNil(t, tk.ExecToErr("SET ROLE role1, role2"))
