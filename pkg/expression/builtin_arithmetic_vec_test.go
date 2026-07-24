@@ -198,6 +198,20 @@ func TestVectorizedBuiltinArithmeticFunc(t *testing.T) {
 
 func TestVectorizedDecimalErrOverflow(t *testing.T) {
 	ctx := mock.NewContext()
+	t.Run("int_minus", func(t *testing.T) {
+		fts := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)}
+		input := chunk.New(fts, 1, 1)
+		input.AppendInt64(0, 0)
+		input.AppendInt64(1, math.MinInt64)
+		cols := []Expression{&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]}}
+		baseFunc, err := funcs[ast.Minus].getFunction(ctx, cols)
+		require.NoError(t, err)
+		require.True(t, baseFunc.vectorized() && baseFunc.isChildrenVectorized())
+		result := chunk.NewColumn(eType2FieldType(types.ETInt), 1)
+		err = vecEvalType(ctx, baseFunc, types.ETInt, input, result)
+		require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(Column#0 - Column#0)'")
+	})
+
 	testCases := []struct {
 		args     []float64
 		funcName string
