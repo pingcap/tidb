@@ -212,6 +212,7 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	parentStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(parentPlanID)
 	reqStats := tikv.NewRegionRequestRuntimeStats()
 	reqStats.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Millisecond)
+	reqStats.RecordRPCRuntimeStats(tikvrpc.CmdCopStream, time.Millisecond)
 	closeErr := fmt.Errorf("close failed")
 	resp := &closeAppendingRuntimeStatsResponse{
 		statsOnClose: &copr.CopRuntimeStats{ReqStats: reqStats},
@@ -222,6 +223,8 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.True(t, resp.closed)
 	require.Equal(t, 1, resp.collectCalls)
 	require.Equal(t, uint32(1), sr.stats.reqStat.GetCmdRPCCount(tikvrpc.CmdCop))
+	require.Equal(t, int64(1), sr.stats.GetCmdRPCCount(tikvrpc.CmdCop))
+	require.Equal(t, int64(1), sr.stats.GetCmdRPCCount(tikvrpc.CmdCopStream))
 	require.Equal(t, int64(4), scanStats.GetActRows())
 	require.Equal(t, int32(1), scanStats.GetTasks())
 	require.Equal(t, int64(2), parentStats.GetActRows())

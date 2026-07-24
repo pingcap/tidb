@@ -324,16 +324,17 @@ func readBillingDemoResolveWeights(site, opClass, version string) (legacyReadBil
 	return w, true
 }
 
-type readBillingDemoPointLookupRPCStatsForTest struct {
+type readBillingDemoRPCStatsForTest struct {
 	counts map[tikvrpc.CmdType]int64
+	tp     int
 }
 
-func (*readBillingDemoPointLookupRPCStatsForTest) String() string {
+func (*readBillingDemoRPCStatsForTest) String() string {
 	return ""
 }
 
-func (s *readBillingDemoPointLookupRPCStatsForTest) Merge(other execdetails.RuntimeStats) {
-	otherStats, ok := other.(*readBillingDemoPointLookupRPCStatsForTest)
+func (s *readBillingDemoRPCStatsForTest) Merge(other execdetails.RuntimeStats) {
+	otherStats, ok := other.(*readBillingDemoRPCStatsForTest)
 	if !ok {
 		return
 	}
@@ -342,9 +343,10 @@ func (s *readBillingDemoPointLookupRPCStatsForTest) Merge(other execdetails.Runt
 	}
 }
 
-func (s *readBillingDemoPointLookupRPCStatsForTest) Clone() execdetails.RuntimeStats {
-	cloned := &readBillingDemoPointLookupRPCStatsForTest{
+func (s *readBillingDemoRPCStatsForTest) Clone() execdetails.RuntimeStats {
+	cloned := &readBillingDemoRPCStatsForTest{
 		counts: make(map[tikvrpc.CmdType]int64, len(s.counts)),
+		tp:     s.tp,
 	}
 	for cmd, count := range s.counts {
 		cloned.counts[cmd] = count
@@ -352,11 +354,14 @@ func (s *readBillingDemoPointLookupRPCStatsForTest) Clone() execdetails.RuntimeS
 	return cloned
 }
 
-func (*readBillingDemoPointLookupRPCStatsForTest) Tp() int {
+func (s *readBillingDemoRPCStatsForTest) Tp() int {
+	if s.tp != 0 {
+		return s.tp
+	}
 	return execdetails.TpRuntimeStatsWithSnapshot
 }
 
-func (s *readBillingDemoPointLookupRPCStatsForTest) GetCmdRPCCount(cmd tikvrpc.CmdType) int64 {
+func (s *readBillingDemoRPCStatsForTest) GetCmdRPCCount(cmd tikvrpc.CmdType) int64 {
 	return s.counts[cmd]
 }
 
@@ -461,8 +466,22 @@ func TestReadBillingDemoV4FormulaContract(t *testing.T) {
 		runtimeStats.RecordExpectedCopTasks([]int{scan.ID()})
 		op, _ = readBillingDemoReaderTransport(flat, runtimeStats, execdetails.NewRUV2Metrics(), false)
 		require.Equal(t, readBillingDemoReasonMissingReaderTransport, op.reason)
-		op, _ = readBillingDemoReaderTransport(flat, runtimeStats, metrics, true)
-		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, op.reason)
+
+		runtimeStats.RegisterStats(reader.ID(), &readBillingDemoRPCStatsForTest{
+			counts: map[tikvrpc.CmdType]int64{
+				tikvrpc.CmdCop:       2,
+				tikvrpc.CmdCopStream: 1,
+			},
+			tp: execdetails.TpSelectResultRuntimeStats,
+		})
+		dmlMetrics := execdetails.NewRUV2Metrics()
+		dmlMetrics.AddResourceManagerReadCnt(99)
+		dmlMetrics.AddTiKVCoprocessorResponseBytes(128)
+		op, _ = readBillingDemoReaderTransport(flat, runtimeStats, dmlMetrics, true)
+		require.Equal(t, readBillingDemoStatusOperatorOK, op.status)
+		require.Equal(t, 128.0, readBillingDemoUnitValue(op.units, readBillingDemoUnitNetBytes, readBillingDemoInputSideAll))
+		require.Equal(t, 3.0, readBillingDemoUnitValue(op.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
+		require.Equal(t, readBillingDemoInputSourceDistSQLRuntimeStats, op.units[1].source)
 	})
 
 	t.Run("point lookup transport is rpc only and emitted once", func(t *testing.T) {
@@ -528,10 +547,10 @@ func TestReadBillingDemoV4FormulaContract(t *testing.T) {
 		require.Equal(t, readBillingDemoReasonMissingReaderTransport, bypassedOp.reason)
 
 		dmlRuntimeStats := execdetails.NewRuntimeStatsColl(nil)
-		dmlRuntimeStats.RegisterStats(point.ID(), &readBillingDemoPointLookupRPCStatsForTest{
+		dmlRuntimeStats.RegisterStats(point.ID(), &readBillingDemoRPCStatsForTest{
 			counts: map[tikvrpc.CmdType]int64{tikvrpc.CmdGet: 3},
 		})
-		dmlRuntimeStats.RegisterStats(batch.ID(), &readBillingDemoPointLookupRPCStatsForTest{
+		dmlRuntimeStats.RegisterStats(batch.ID(), &readBillingDemoRPCStatsForTest{
 			counts: map[tikvrpc.CmdType]int64{tikvrpc.CmdBatchGet: 3},
 		})
 		for i, expectedRequests := range []int64{3, 3, 6} {

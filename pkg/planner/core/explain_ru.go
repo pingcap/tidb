@@ -176,6 +176,7 @@ const (
 	readBillingDemoInputSourceStmtMemDBMutation       = "stmt_memdb_mutation_calls"
 	readBillingDemoInputSourceCommitDetail            = "commit_detail"
 	readBillingDemoInputSourceRUV2Metrics             = "ruv2_metrics"
+	readBillingDemoInputSourceDistSQLRuntimeStats     = "distsql_runtime_stats"
 	readBillingDemoInputSourceSnapshotRuntimeStats    = "snapshot_runtime_stats"
 	readBillingDemoInputSourcePhysicalPlan            = "physical_plan"
 	readBillingDemoInputSourceHashJoinRuntime         = "hash_join_runtime_stats"
@@ -723,6 +724,35 @@ func readBillingDemoReaderTransport(flat *FlatPhysicalPlan, runtimeStats *execde
 			op.operatorKind = kind
 		}
 	}
+	if dml {
+		if ruv2Metrics == nil || ruv2Metrics.Bypass() {
+			op.status = readBillingDemoStatusUnknownInput
+			op.reason = readBillingDemoReasonMissingReaderTransport
+			return op, true
+		}
+		requests, ok := readBillingDemoCopRPCCount(flat, runtimeStats)
+		if !ok {
+			if hasTasks || !allReaderRowsZero {
+				op.status = readBillingDemoStatusUnknownInput
+				op.reason = readBillingDemoReasonMissingReaderTransport
+				return op, true
+			}
+			requests = 0
+		}
+		netBytes := ruv2Metrics.TiKVCoprocessorResponseBytes()
+		if netBytes < 0 || requests < 0 || (netBytes > 0 && requests == 0) {
+			op.status = readBillingDemoStatusUnknownInput
+			op.reason = readBillingDemoReasonMissingReaderTransport
+			return op, true
+		}
+		op.status = readBillingDemoStatusOperatorOK
+		op.reason = readBillingDemoReasonNone
+		op.units = []readBillingDemoUnit{
+			{unit: readBillingDemoUnitNetBytes, source: readBillingDemoInputSourceRUV2Metrics, side: readBillingDemoInputSideAll, value: float64(netBytes), widthSource: explainRUWidthSourceNotApplicable},
+			{unit: readBillingDemoUnitReadRequestCount, source: readBillingDemoInputSourceDistSQLRuntimeStats, side: readBillingDemoInputSideAll, value: float64(requests), widthSource: explainRUWidthSourceNotApplicable},
+		}
+		return op, true
+	}
 	if openProducerSet {
 		op.status = readBillingDemoStatusUnknownInput
 		op.reason = readBillingDemoReasonAmbiguousReaderTransport
@@ -749,8 +779,48 @@ func readBillingDemoReaderTransport(flat *FlatPhysicalPlan, runtimeStats *execde
 	return op, true
 }
 
-type readBillingDemoPointLookupRPCStats interface {
+type readBillingDemoRPCStats interface {
 	GetCmdRPCCount(tikvrpc.CmdType) int64
+}
+
+func readBillingDemoCopRPCCount(flat *FlatPhysicalPlan, runtimeStats *execdetails.RuntimeStatsColl) (int64, bool) {
+	if flat == nil || runtimeStats == nil {
+		return 0, false
+	}
+	planIDs := make(map[int]struct{})
+	for _, tree := range readBillingDemoAllTrees(flat) {
+		for _, node := range tree {
+			if node != nil && node.Origin != nil {
+				planIDs[node.Origin.ID()] = struct{}{}
+			}
+		}
+	}
+	var total int64
+	found := false
+	for planID := range planIDs {
+		if !runtimeStats.ExistsRootStats(planID) {
+			continue
+		}
+		_, groups := runtimeStats.GetRootStats(planID).MergeStats()
+		for _, group := range groups {
+			if group.Tp() != execdetails.TpSelectResultRuntimeStats {
+				continue
+			}
+			rpcStats, ok := group.(readBillingDemoRPCStats)
+			if !ok {
+				return 0, false
+			}
+			found = true
+			for _, cmd := range []tikvrpc.CmdType{tikvrpc.CmdCop, tikvrpc.CmdCopStream} {
+				count := rpcStats.GetCmdRPCCount(cmd)
+				if count < 0 || count > math.MaxInt64-total {
+					return 0, false
+				}
+				total += count
+			}
+		}
+	}
+	return total, found
 }
 
 func readBillingDemoPointLookupTransport(
@@ -852,7 +922,7 @@ func readBillingDemoPointLookupRPCCount(runtimeStats *execdetails.RuntimeStatsCo
 		_, groups := runtimeStats.GetRootStats(planID).MergeStats()
 		found := false
 		for _, group := range groups {
-			rpcStats, ok := group.(readBillingDemoPointLookupRPCStats)
+			rpcStats, ok := group.(readBillingDemoRPCStats)
 			if !ok {
 				continue
 			}
