@@ -318,7 +318,14 @@ func TestFormatBytes(t *testing.T) {
 		Ret any
 	}{
 		{nil, nil},
-		{float64(0), "0 bytes"},
+		{float64(0), "   0 bytes"},
+		{float64(0.9), "   0 bytes"},
+		{float64(-0.9), "   0 bytes"},
+		{float64(1), "   1 bytes"},
+		{float64(-1), "  -1 bytes"},
+		{float64(1023), "1023 bytes"},
+		{float64(1023.999999999), "1023 bytes"},
+		{float64(-1023.999999999), "-1023 bytes"},
 		{float64(2048), "2.00 KiB"},
 		{float64(75295729), "71.81 MiB"},
 		{float64(5287242702), "4.92 GiB"},
