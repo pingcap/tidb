@@ -305,6 +305,64 @@ func TestPartitionsTable(t *testing.T) {
 	tk.MustExec("drop table test_partitions")
 }
 
+// TestTableRowsOnlySkipsColumnLengthRead checks which stats system tables are
+// read when querying row count and size related columns from
+// information_schema.tables and information_schema.partitions. Querying only
+// TABLE_ROWS must not scan mysql.stats_histograms, which can be very expensive
+// on clusters with many tables. See issue #69818.
+func TestTableRowsOnlySkipsColumnLengthRead(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+
+	// Count reads of mysql.stats_histograms performed by the stats table row
+	// cache. The values below are populated by flush stats_delta and analyze,
+	// which write directly to the mysql stats tables the cache queries, so no
+	// stats-handle refresh is needed for the assertions.
+	var colLengthReads atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/cache/getColLengthTables",
+		func() { colLengthReads.Add(1) })
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_rows (a int, b int, c varchar(5), primary key(a), index idx(c))")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("create table t_rows_part (a int, b varchar(5), unique key ub(b) global, key ia(a))" +
+		" partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec(`insert into t_rows values (1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
+	tk.MustExec(`insert into t_rows_part values (1, "a"), (12, "bb")`)
+	tk.MustExec("flush stats_delta *.*")
+	// Analyze so that the varchar columns get a non-zero tot_col_size in
+	// mysql.stats_histograms and the size columns below really depend on it.
+	tk.MustExec("analyze table t_rows all columns")
+	tk.MustExec("analyze table t_rows_part all columns")
+
+	// Only TABLE_ROWS is requested: mysql.stats_histograms must not be read.
+	base := colLengthReads.Load()
+	tk.MustQuery("select table_rows from information_schema.tables where table_name='t_rows'").Check(
+		testkit.Rows("3"))
+	tk.MustQuery("select table_rows from information_schema.tables where table_name='t_rows_part'").Check(
+		testkit.Rows("2"))
+	tk.MustQuery("select partition_name, table_rows from information_schema.partitions where table_name='t_rows_part'").Check(
+		testkit.Rows("p0 1", "p1 1"))
+	require.Equal(t, base, colLengthReads.Load())
+
+	// Size related columns are requested: mysql.stats_histograms is read and
+	// the results are correct even though the previous queries only refreshed
+	// the row counts.
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t_rows'").Check(
+		testkit.Rows("3 18 54 6"))
+	// INDEX_LENGTH of the partitioned table includes the global index length,
+	// which is calculated on the table level. See issue #54173.
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t_rows_part'").Check(
+		testkit.Rows("2 10 21 21"))
+	afterTables := colLengthReads.Load()
+	require.Greater(t, afterTables, base)
+	tk.MustQuery("select partition_name, table_rows, data_length, index_length from information_schema.partitions where table_name='t_rows_part'").Check(
+		testkit.Rows("p0 1 10 8", "p1 1 11 8"))
+	require.Greater(t, colLengthReads.Load(), afterTables)
+}
+
 func TestForAnalyzeStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
