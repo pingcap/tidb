@@ -202,7 +202,20 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			return
 		}
 
-		probeSideResource.dest <- probeSideResult
+		failpoint.Inject("holdProbeFetcherBeforeSend", func(val failpoint.Value) {
+			if d, ok := val.(int); ok && d > 0 {
+				time.Sleep(time.Duration(d) * time.Millisecond)
+			}
+		})
+		// Probe workers honor closeCh in their receive select, so once Close fires
+		// they may exit before draining probeResultChs. Without this closeCh case,
+		// the send below blocks forever and prevents handleProbeSideFetcherPanic from
+		// running, which in turn blocks Close at channel.Clear(probeResultChs[i]).
+		select {
+		case <-hashJoinCtx.closeCh:
+			return
+		case probeSideResource.dest <- probeSideResult:
+		}
 	}
 }
 

@@ -572,6 +572,20 @@ func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 		}
 	}()
 	for task := range taskCh {
+		// Stop processing queued tasks once the executor is being closed. Without this,
+		// a slow per-task build keeps running through every queued task before the
+		// worker returns, which keeps buildTaskCh's deferred close from running and
+		// stalls HashJoinV2Exec.Close on channel.Clear(buildFinished).
+		select {
+		case <-b.HashJoinCtx.closeCh:
+			return nil
+		default:
+		}
+		failpoint.Inject("slowBuildTask", func(val failpoint.Value) {
+			if d, ok := val.(int); ok && d > 0 {
+				time.Sleep(time.Duration(d) * time.Millisecond)
+			}
+		})
 		start := time.Now()
 		b.HashJoinCtx.hashTableContext.build(task)
 		failpoint.Inject("buildHashTablePanic", nil)
@@ -1228,6 +1242,8 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 			select {
 			case <-doneCh:
 				return
+			case <-e.closeCh:
+				return
 			case buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen):
 			}
 		}
@@ -1250,6 +1266,8 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 				endIndex := min(startIndex+segStep, partitionSegmentLength[partIdx])
 				select {
 				case <-doneCh:
+					return
+				case <-e.closeCh:
 					return
 				case buildTaskCh <- createBuildTask(partIdx, startIndex, endIndex):
 				}
