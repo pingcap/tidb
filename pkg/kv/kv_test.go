@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var resourceGroupTagBenchmarkResult []byte
+
 func genRandHex(length int) []byte {
 	const chars = "0123456789abcdef"
 	res := make([]byte, length)
@@ -77,4 +79,55 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	err = resTag.Unmarshal(tag)
 	require.NoError(t, err)
 	require.Nil(t, resTag.KeyspaceName)
+
+	labelCases := []struct {
+		name  string
+		key   []byte
+		label tipb.ResourceGroupTagLabel
+	}{
+		{
+			name:  "row",
+			key:   []byte{116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 114},
+			label: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+		},
+		{
+			name:  "index",
+			key:   []byte{116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 105, 128, 0, 0, 0, 0, 0, 0, 0},
+			label: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+		},
+		{
+			name:  "unknown",
+			key:   []byte{1},
+			label: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown,
+		},
+	}
+	for _, ca := range labelCases {
+		t.Run(ca.name, func(t *testing.T) {
+			tag := NewResourceGroupTagBuilder(nil).SetSQLDigest(sqlDigest).EncodeTagWithKey(ca.key)
+			resTag := &tipb.ResourceGroupTag{}
+			require.NoError(t, resTag.Unmarshal(tag))
+			require.NotNil(t, resTag.Label)
+			require.Equal(t, ca.label, *resTag.Label)
+		})
+	}
+}
+
+func BenchmarkResourceGroupTagBuilderEncodeTagWithKey(b *testing.B) {
+	builder := NewResourceGroupTagBuilder([]byte("keyspace")).
+		SetSQLDigest(parser.NewDigest(genRandHex(64))).
+		SetPlanDigest(parser.NewDigest(genRandHex(64)))
+	cases := map[string][]byte{
+		"empty":   nil,
+		"row":     {116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 114},
+		"index":   {116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 105, 128, 0, 0, 0, 0, 0, 0, 0},
+		"unknown": {1},
+	}
+	for name, key := range cases {
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				resourceGroupTagBenchmarkResult = builder.EncodeTagWithKey(key)
+			}
+		})
+	}
 }
