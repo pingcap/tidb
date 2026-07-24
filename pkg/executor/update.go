@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime/trace"
 	"slices"
 
@@ -257,7 +256,7 @@ func (e *UpdateExec) exec(
 	_ *expression.Schema,
 	rowIdx int, row, newData []types.Datum,
 	dupKeyCheck table.DupKeyCheckMode,
-) error {
+) (int64, error) {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
 	bAssignFlag := make([]bool, len(e.assignFlag))
 	for i, flag := range e.assignFlag {
@@ -269,6 +268,7 @@ func (e *UpdateExec) exec(
 	}
 
 	var totalMemDelta int64
+	var rowsColMultiply int64
 	defer func() { e.memTracker.Consume(totalMemDelta) }()
 
 	for i, content := range e.tblColPosInfos {
@@ -300,7 +300,7 @@ func (e *UpdateExec) exec(
 
 		// Copy data from merge row to old and new rows
 		if err := e.mergeGenerated(row, newData, i, true); err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		// Update row
@@ -315,7 +315,7 @@ func (e *UpdateExec) exec(
 
 		// Copy data from new row to merge row
 		if err := e.mergeGenerated(row, newData, i, false); err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		if ignored {
@@ -329,22 +329,27 @@ func (e *UpdateExec) exec(
 				memDelta += int64(handle.ExtraMemSize())
 			}
 			totalMemDelta += memDelta
+			if changed {
+				rowsColMultiply = addDMLRowsColMultiply(rowsColMultiply, int64(content.End-content.Start))
+			}
 			continue
 		}
 
 		if kv.ErrKeyExists.Equal(err) || table.ErrCheckConstraintViolated.Equal(err) {
 			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
 			if err = ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err); err != nil {
-				return err
+				return 0, err
 			}
 			continue
 		}
-		return err
+		return 0, err
 	}
 	if txn, _ := e.Ctx().Txn(false); txn != nil {
-		return txn.MayFlush()
+		if err := txn.MayFlush(); err != nil {
+			return 0, err
+		}
 	}
-	return nil
+	return rowsColMultiply, nil
 }
 
 // unmatchedOuterRow checks the tableCols of a record to decide whether that record
@@ -374,19 +379,6 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
 	}
 	return nil
-}
-
-func (e *UpdateExec) rowsColMultiplyForPreparedRow() int64 {
-	var columnCount int64
-	for i, content := range e.tblColPosInfos {
-		if i >= len(e.tableUpdatable) || !e.tableUpdatable[i] || i >= len(e.changed) || e.changed[i] {
-			continue
-		}
-		if content.End > content.Start {
-			columnCount += int64(content.End - content.Start)
-		}
-	}
-	return columnCount
 }
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
@@ -458,12 +450,6 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 			if err := e.prepare(datumRow); err != nil {
 				return 0, 0, err
 			}
-			rowColMultiply := e.rowsColMultiplyForPreparedRow()
-			if rowsColMultiply > math.MaxInt64-rowColMultiply {
-				rowsColMultiply = math.MaxInt64
-			} else {
-				rowsColMultiply += rowColMultiply
-			}
 			// compose non-generated columns
 			newRow, err := composeFunc(globalRowIdx, datumRow, colsInfo)
 			if err != nil {
@@ -478,11 +464,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 				e.evalBuffer.SetDatums(newRow...)
 			}
 
-			if err := e.exec(
+			rowColMultiply, err := e.exec(
 				ctx, e.Children(0).Schema(),
-				globalRowIdx, datumRow, newRow, dupKeyCheck); err != nil {
+				globalRowIdx, datumRow, newRow, dupKeyCheck)
+			if err != nil {
 				return 0, 0, err
 			}
+			rowsColMultiply = addDMLRowsColMultiply(rowsColMultiply, rowColMultiply)
 			globalRowIdx++
 		}
 		totalNumRows += chk.NumRows()

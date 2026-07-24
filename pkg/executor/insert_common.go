@@ -60,6 +60,7 @@ type InsertValues struct {
 	maxRowsInBatch              uint64
 	lastInsertID                uint64
 	recordRUV2RowsColMultiply   bool
+	ruv2RowsColMultiply         int64
 	ruv2RecordedRowsColMultiply int64
 
 	SelectExec exec.Executor
@@ -101,24 +102,26 @@ type InsertValues struct {
 	ignoreErr bool
 }
 
-func (e *InsertValues) rowsColMultiply() int64 {
-	colCount := len(e.insertColumns)
-	if e.rowCount == 0 || colCount == 0 {
-		return 0
+func (e *InsertValues) addWrittenRowsColMultiply(rowCount int64) {
+	if !e.recordRUV2RowsColMultiply {
+		return
 	}
-
-	const maxInt64 = uint64(1<<63 - 1)
-	if e.rowCount > maxInt64/uint64(colCount) {
-		return int64(maxInt64)
+	colCount := int64(len(e.insertColumns))
+	if rowCount <= 0 || colCount <= 0 {
+		return
 	}
-	return int64(e.rowCount * uint64(colCount))
+	rowsColMultiply := rowCount * colCount
+	if rowCount > math.MaxInt64/colCount {
+		rowsColMultiply = math.MaxInt64
+	}
+	e.ruv2RowsColMultiply = addDMLRowsColMultiply(e.ruv2RowsColMultiply, rowsColMultiply)
 }
 
 func (e *InsertValues) recordRowsColMultiply2RUV2Metrics() {
 	if !e.recordRUV2RowsColMultiply {
 		return
 	}
-	current := e.rowsColMultiply()
+	current := e.ruv2RowsColMultiply
 	delta := current - e.ruv2RecordedRowsColMultiply
 	if delta <= 0 {
 		return
@@ -1482,6 +1485,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
+	e.addWrittenRowsColMultiply(1)
 	if dupKeyCheck != table.DupKeyCheckSkip {
 		for _, fkc := range e.fkChecks {
 			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
