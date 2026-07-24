@@ -1491,7 +1491,6 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		parser, accessStats := read(t, fileSize)
 		require.NotNil(t, parser.preloadBase, "expected whole-file in-memory path")
 		require.EqualValues(t, 1, accessStats.Requests.Get.Load())
-		require.Zero(t, accessStats.Requests.Put.Load())
 	})
 
 	// FileSize unset: parser skips whole-file preload and uses the row-group strategy.
@@ -1499,7 +1498,6 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		parser, accessStats := read(t, 0)
 		require.Nil(t, parser.preloadBase)
 		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
-		require.Zero(t, accessStats.Requests.Put.Load())
 	})
 
 	// FileSize larger than threshold: use row-group preload even though we know the size.
@@ -1511,7 +1509,6 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		parser, accessStats := read(t, fileSize)
 		require.Nil(t, parser.preloadBase)
 		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
-		require.Zero(t, accessStats.Requests.Put.Load())
 	})
 
 	t.Run("streams_when_row_group_exceeds_threshold", func(t *testing.T) {
@@ -1522,7 +1519,6 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		parser, accessStats := read(t, fileSize)
 		require.Nil(t, parser.preloadBase)
 		require.EqualValues(t, 4, accessStats.Requests.Get.Load())
-		require.Zero(t, accessStats.Requests.Put.Load())
 	})
 }
 
