@@ -3150,3 +3150,88 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	tk.MustExec("create table t(id int, a json DEFAULT NULL, b varchar(2) DEFAULT NULL);")
 	tk.MustGetErrMsg("CREATE INDEX idx_test on t ((cast(a as char(2000) array)),b);", "[ddl:1071]Specified key was too long (2000 bytes); max key length is 1000 bytes")
 }
+
+// TestModifyColumnWithGeneratedColumnNoReorg tests that column modifications which do NOT
+// require data reorganization are allowed for generated column dependencies only when they
+// cannot change existing dependent expression results. Modifications that DO require
+// reorganization remain blocked. See https://github.com/pingcap/tidb/issues/43455
+func TestModifyColumnWithGeneratedColumnNoReorg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Case 1: original issue 43455, collation change + concat virtual generated column → success
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a char, b varchar(10), c varchar(20) as (concat(a, b)), d varchar(20) as (concat(b, 'À')) stored, index idx(c), unique key (d)) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("alter table t1 modify column a char character set utf8mb4 collate utf8mb4_unicode_ci")
+	tk.MustExec("insert into t1(a, b) values ('a', 'abc'), ('A', 'ABC')")
+	tk.MustQuery("select a, b, c, d from t1 where a = 'a' order by b").Check(testkit.Rows("A ABC AABC ABCÀ", "a abc aabc abcÀ"))
+	tk.MustExec("admin check table t1")
+
+	// Case 2: collation change + stored generated column with byte-preserving concat → success
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a varchar(20), b varchar(20) as (concat(a, 'suffix')) stored, index idx(b)) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("alter table t2 modify column a varchar(20) character set utf8mb4 collate utf8mb4_unicode_ci")
+	tk.MustExec("insert into t2(a) values ('test')")
+	tk.MustQuery("select a, b from t2").Check(testkit.Rows("test testsuffix"))
+	tk.MustExec("admin check table t2")
+
+	// Case 3: collation change + collation-sensitive expression index → error
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3(a char(20), index idx((lower(a)))) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustGetErrCode("alter table t3 modify column a char(20) character set utf8mb4 collate utf8mb4_unicode_ci", errno.ErrUnsupportedDDLOperation)
+
+	// Case 3b: collation change + collation-sensitive stored generated column → error
+	tk.MustExec("drop table if exists t3b")
+	tk.MustExec("create table t3b(a varchar(20), b bool as (a = 'A') stored, index idx(b)) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustGetErrCode("alter table t3b modify column a varchar(20) character set utf8mb4 collate utf8mb4_unicode_ci", errno.ErrUnsupportedDDLOperation)
+
+	// Case 4: default value change + generated column → success
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(a int, b int as (a+1))")
+	tk.MustExec("alter table t4 modify column a int default 42")
+	tk.MustExec("insert into t4(a) values (1)")
+	tk.MustQuery("select a, b from t4").Check(testkit.Rows("1 2"))
+	tk.MustExec("admin check table t4")
+
+	// Case 5: INT -> BIGINT + generated column → error (outside the narrow allow list)
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(a int, b int as (abs(a)) virtual)")
+	tk.MustGetErrCode("alter table t5 modify column a bigint", errno.ErrUnsupportedDDLOperation)
+
+	// Case 6: VARCHAR(10) -> VARCHAR(20) + generated column → error (outside the narrow allow list)
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6(a varchar(10), b varchar(20) as (concat(a, 'x')))")
+	tk.MustGetErrCode("alter table t6 modify column a varchar(20)", errno.ErrUnsupportedDDLOperation)
+
+	// Case 7: INT -> MEDIUMINT + generated column → error (reorg needed)
+	tk.MustExec("drop table if exists t7")
+	tk.MustExec("create table t7(a int, b int as (abs(a)) virtual)")
+	tk.MustGetErrCode("alter table t7 modify column a mediumint", errno.ErrUnsupportedDDLOperation)
+
+	// Case 8: VARCHAR(10) -> VARCHAR(5) + generated column → error (reorg needed)
+	tk.MustExec("drop table if exists t8")
+	tk.MustExec("create table t8(a varchar(10), b varchar(20) as (concat(a, 'x')))")
+	tk.MustGetErrCode("alter table t8 modify column a varchar(5)", errno.ErrUnsupportedDDLOperation)
+
+	// Case 9: rename + generated column → error (always blocked)
+	tk.MustExec("drop table if exists t9")
+	tk.MustExec("create table t9(a int, b int as (a+1))")
+	tk.MustGetErrCode("alter table t9 change column a anew int", errno.ErrDependentByGeneratedColumn)
+
+	// Case 10: modify stored generated column itself, expression unchanged → allowed
+	// (checkModifyGeneratedColumn permits this when expression is unchanged and no index)
+	tk.MustExec("drop table if exists t10")
+	tk.MustExec("create table t10(a int, b int as (a+1) stored)")
+	tk.MustExec("alter table t10 modify column b bigint")
+
+	// Case 10b: modify generated column expression (stored) → error
+	tk.MustExec("drop table if exists t10b")
+	tk.MustExec("create table t10b(a int, b int as (a+1) stored)")
+	tk.MustGetErrCode("alter table t10b modify column b bigint as (a+2) stored", errno.ErrUnsupportedOnGeneratedColumn)
+
+	// Case 11: expression index + reorg-needed type change → error
+	tk.MustExec("drop table if exists t11")
+	tk.MustExec("create table t11(a int, index idx((a+1)))")
+	tk.MustGetErrCode("alter table t11 modify column a varchar(20)", errno.ErrUnsupportedDDLOperation)
+}
