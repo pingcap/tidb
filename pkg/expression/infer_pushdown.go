@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -147,6 +148,15 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 
 func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
 	pc := ctx.PbConverter()
+	// Some collations are implemented only in TiDB; the TiKV/TiFlash coprocessor cannot interpret
+	// them and would compare the raw sort-key bytes incorrectly. Keep such expressions in TiDB.
+	if storeType != kv.TiDB {
+		if coll := expr.GetType(ctx.EvalCtx()).GetCollate(); collate.IsTiDBOnlyCollation(coll) {
+			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed down because collation '" + coll + "' is only supported in TiDB.")
+			ctx.AppendWarning(warnErr)
+			return false
+		}
+	}
 	if storeType == kv.TiFlash {
 		switch expr.GetType(ctx.EvalCtx()).GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:

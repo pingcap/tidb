@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "icugen_lib",
+    srcs = ["disabled.go"],
+    cgo = True,
+    importpath = "github.com/pingcap/tidb/pkg/util/collate/icudata/icugen",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "icugen",
+    embed = [":icugen_lib"],
+    visibility = ["//visibility:public"],
+)
