@@ -6564,15 +6564,45 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 	return e.createMaskingPolicyWithInfo(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyInfo, OnExistError)
 }
 
-func (e *executor) getMaskingPolicyByNameForTable(tableID int64, cols []*model.ColumnInfo, policyName ast.CIStr) (*model.MaskingPolicyInfo, bool) {
+// getMaskingPolicyByNameForDDL finds a masking policy by name. It first checks the
+// infoSchema cache, then falls back to querying mysql.tidb_masking_policy directly.
+// The fallback is necessary because DDL operations like TRUNCATE TABLE update the
+// system table outside the infoSchema's snapshot window.
+func (e *executor) getMaskingPolicyByNameForDDL(
+	ctx sessionctx.Context,
+	tableID int64,
+	columns []*model.ColumnInfo,
+	policyName ast.CIStr,
+) (*model.MaskingPolicyInfo, bool) {
+	// Fast path: check infoSchema cache.
 	is := e.infoCache.GetLatest()
-	for _, col := range cols {
+	for _, col := range columns {
 		policy, ok := is.MaskingPolicyByTableColumn(tableID, col.ID)
 		if ok && policy != nil && policy.Name.L == policyName.L {
 			return policy, true
 		}
 	}
-	return nil, false
+	// Slow path: query system table directly. This handles cases where the
+	// infoSchema's delayed loading has stale data after DDL operations.
+	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+		nil,
+		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+FROM mysql.tidb_masking_policy
+WHERE table_id = %? AND LOWER(policy_name) = %?
+ORDER BY policy_id
+LIMIT 1`,
+		tableID,
+		policyName.L,
+	)
+	if err != nil || len(rows) == 0 {
+		return nil, false
+	}
+	policy, err := maskingPolicyFromSysTableRow(rows[0])
+	if err != nil {
+		return nil, false
+	}
+	return policy, true
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
@@ -6581,7 +6611,7 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
 		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
 	}
@@ -6627,7 +6657,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
 		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
 	}
@@ -6666,7 +6696,7 @@ func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident a
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
 		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
 	}
@@ -6719,7 +6749,7 @@ func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident a
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
 		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
 	}
@@ -6763,7 +6793,7 @@ func (e *executor) createMaskingPolicyWithInfo(
 	onExist OnExist,
 ) error {
 	is := e.infoCache.GetLatest()
-	if existPolicy, ok := e.getMaskingPolicyByNameForTable(tableID, cols, policy.Name); ok {
+	if existPolicy, ok := e.getMaskingPolicyByNameForDDL(ctx, tableID, cols, policy.Name); ok {
 		if existPolicy.ColumnID != policy.ColumnID {
 			return errors.Errorf("masking policy %s already exists on another column", existPolicy.Name.O)
 		}
