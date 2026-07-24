@@ -244,10 +244,6 @@ func (*inMemoryReaderWrapper) Close() error {
 	return nil
 }
 
-// columnReaderBuilder constructs a per-column reader for one row group.
-type columnReaderBuilder func(c int) (readerAtSeekerCloser, error)
-
-// prepareReader picks the reader strategy: whole-file preload or streaming.
 func prepareReader(
 	ctx context.Context,
 	store storeapi.Storage,

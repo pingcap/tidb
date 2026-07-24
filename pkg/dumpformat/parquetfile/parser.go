@@ -430,12 +430,11 @@ func (pp *Parser) buildRowGroupParser() (err error) {
 //   - whole-file preload, when prepareReader has already loaded the file;
 //   - per-row-group preload, when the row group fits inMemoryThreshold;
 //   - per-column streaming, otherwise.
-func (pp *Parser) getBuilder() (columnReaderBuilder, error) {
+func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fileSize := pp.fileMeta.GetSourceFileSize()
 
 	base := pp.preloadBase
 	if base == nil && ranges.end-ranges.start <= int64(inMemoryThreshold) {
@@ -453,10 +452,11 @@ func (pp *Parser) getBuilder() (columnReaderBuilder, error) {
 			return &inMemoryReaderWrapper{
 				base:     base,
 				pos:      ranges.columnStarts[c],
-				fileSize: fileSize,
+				fileSize: pp.fileMeta.GetSourceFileSize(),
 			}, nil
 		}, nil
 	}
+
 	return func(c int) (readerAtSeekerCloser, error) {
 		return newReaderWrapper(pp.ctx, pp.store, pp.path,
 			&storeapi.ReaderOption{
@@ -642,11 +642,12 @@ func NewParser(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if r != nil {
-		defer func() {
+
+	defer func() {
+		if r != nil {
 			_ = r.Close()
-		}()
-	}
+		}
+	}()
 
 	allocator := meta.allocator
 	if allocator == nil {
@@ -900,8 +901,7 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 }
 
 // preloadBufferBytes reports the in-memory buffer that the parser pre-allocates
-// outside the tracking allocator for the first row group. The estimator adds
-// this to the tracked peak so concurrency sizing matches runtime behavior.
+// outside the tracking allocator.
 func (pp *Parser) preloadBufferBytes() (int64, error) {
 	if pp.preloadBase != nil {
 		return int64(len(pp.preloadBase.buffer)), nil
