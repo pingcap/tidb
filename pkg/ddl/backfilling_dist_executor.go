@@ -221,30 +221,35 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	s.taskMeta = bgm
 	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
 	if len(s.taskMeta.CloudStorageURI) == 0 && s.task.Step == proto.BackfillStepReadIndex {
-		runningLocalSortJobs, err := s.getRunningLocalSortJobDiskRequirements(ctx)
+		runningJobCount, runningJobRequiredSlots, runningJobUsedBytes, err :=
+			s.getRunningLocalSortJobDiskUsage(ctx)
 		if err != nil {
 			return err
 		}
-		if err := ingest.CheckLocalSortFreeDisk(runningLocalSortJobs, s.task.RequiredSlots); err != nil {
+		if err := ingest.CheckLocalSortFreeDisk(
+			runningJobCount,
+			runningJobRequiredSlots,
+			runningJobUsedBytes,
+			s.task.RequiredSlots,
+		); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *backfillDistExecutor) getRunningLocalSortJobDiskRequirements(
+func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 	ctx context.Context,
-) ([]ingest.LocalSortJobDiskRequirement, error) {
+) (jobCount int, requiredSlots int, usedBytes uint64, err error) {
 	taskSlots := s.ExecutorTaskSlotsSnapshot()
-	requirements := make([]ingest.LocalSortJobDiskRequirement, 0, len(taskSlots))
-	for _, taskSlot := range taskSlots {
-		if taskSlot.ID == s.task.ID {
+	for taskID, taskRequiredSlots := range taskSlots {
+		if taskID == s.task.ID {
 			continue
 		}
 
-		task, err := s.GetTaskTable().GetTaskByID(ctx, taskSlot.ID)
+		task, err := s.GetTaskTable().GetTaskByID(ctx, taskID)
 		if err != nil {
-			return nil, err
+			return 0, 0, 0, err
 		}
 		if task.Type != proto.Backfill || task.Step != proto.BackfillStepReadIndex {
 			continue
@@ -252,18 +257,19 @@ func (s *backfillDistExecutor) getRunningLocalSortJobDiskRequirements(
 
 		taskMeta := &BackfillTaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
-			return nil, errors.Trace(err)
+			return 0, 0, 0, errors.Trace(err)
 		}
 		if len(taskMeta.CloudStorageURI) > 0 {
 			continue
 		}
 
-		requirements = append(requirements, ingest.LocalSortJobDiskRequirement{
-			RequiredSlots: taskSlot.RequiredSlots,
-			UsedBytes:     ingest.GetTrackedJobDiskUsage(taskMeta.Job.ID),
-		})
+		jobCount++
+		requiredSlots += taskRequiredSlots
+		if ingest.LitDiskRoot != nil {
+			usedBytes += ingest.LitDiskRoot.GetUsage(taskMeta.Job.ID)
+		}
 	}
-	return requirements, nil
+	return jobCount, requiredSlots, usedBytes, nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {

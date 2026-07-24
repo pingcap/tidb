@@ -22,7 +22,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -46,15 +45,12 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
-
-const localSortDiskUsageSampleInterval = time.Second
 
 type readIndexStepExecutor struct {
 	taskexecutor.BaseStepExecutor
@@ -83,104 +79,6 @@ type readIndexStepExecutor struct {
 type readIndexSummary struct {
 	metaGroups []*globalsort.SortedKVMeta
 	mu         sync.Mutex
-}
-
-// localSortDiskUsageSnapshot is the immutable sampling result returned after a
-// localSortDiskUsageSampler has been stopped.
-type localSortDiskUsageSnapshot struct {
-	Duration  time.Duration
-	SampleCnt uint64
-	AvgBytes  uint64
-	PeakBytes uint64
-	LastBytes uint64
-}
-
-// localSortDiskUsageSampler samples local-sort disk usage for one pipeline run.
-// It is single-use: start must be called once before stopAndSnapshot, and
-// stopAndSnapshot must be called once to stop the background sampler. stopCh and
-// doneCh are owned by the sampler lifecycle. getUsage is called by start,
-// stopAndSnapshot, and the sampling goroutine; mu protects the timing and byte
-// counters that are captured in localSortDiskUsageSnapshot.
-type localSortDiskUsageSampler struct {
-	interval time.Duration
-	getUsage func() uint64
-
-	stopCh chan struct{}
-	doneCh chan struct{}
-
-	mu        sync.Mutex
-	startTime time.Time
-	endTime   time.Time
-	sumBytes  uint64
-	sampleCnt uint64
-	peakBytes uint64
-	lastBytes uint64
-}
-
-func newLocalSortDiskUsageSampler(interval time.Duration, getUsage func() uint64) *localSortDiskUsageSampler {
-	return &localSortDiskUsageSampler{
-		interval: interval,
-		getUsage: getUsage,
-		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}),
-	}
-}
-
-func (s *localSortDiskUsageSampler) start() {
-	s.mu.Lock()
-	s.startTime = time.Now()
-	s.mu.Unlock()
-	s.sampleOnce()
-
-	go func() {
-		ticker := time.NewTicker(s.interval)
-		defer func() {
-			ticker.Stop()
-			close(s.doneCh)
-		}()
-		for {
-			select {
-			case <-ticker.C:
-				s.sampleOnce()
-			case <-s.stopCh:
-				return
-			}
-		}
-	}()
-}
-
-func (s *localSortDiskUsageSampler) sampleOnce() {
-	usage := s.getUsage()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sumBytes += usage
-	s.sampleCnt++
-	s.lastBytes = usage
-	if usage > s.peakBytes {
-		s.peakBytes = usage
-	}
-}
-
-func (s *localSortDiskUsageSampler) stopAndSnapshot() localSortDiskUsageSnapshot {
-	s.sampleOnce()
-	close(s.stopCh)
-	<-s.doneCh
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.endTime = time.Now()
-
-	avgBytes := uint64(0)
-	if s.sampleCnt > 0 {
-		avgBytes = s.sumBytes / s.sampleCnt
-	}
-	return localSortDiskUsageSnapshot{
-		Duration:  s.endTime.Sub(s.startTime),
-		SampleCnt: s.sampleCnt,
-		AvgBytes:  avgBytes,
-		PeakBytes: s.peakBytes,
-		LastBytes: s.lastBytes,
-	}
 }
 
 func newReadIndexExecutor(
@@ -280,15 +178,11 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	if err != nil {
 		return err
 	}
-	sampler := newLocalSortDiskUsageSampler(localSortDiskUsageSampleInterval, bCtx.GetDiskUsage)
-	sampler.start()
 	r.currPipe.Store(pipe)
 	defer func() {
 		r.currPipe.Store(nil)
 	}()
 	err = executeAndClosePipeline(wctx, pipe, nil, nil, r.avgRowSize)
-	snapshot := sampler.stopAndSnapshot()
-	r.logLocalSortDiskUsageSummary(subtask, sm, concurrency, snapshot, err)
 	if err != nil {
 		// For dist task local based ingest, checkpoint is unsupported.
 		// If there is an error we should keep local sort dir clean.
@@ -449,47 +343,6 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 
 func (r *readIndexStepExecutor) isGlobalSort() bool {
 	return len(r.cloudStorageURI) > 0
-}
-
-func (r *readIndexStepExecutor) logLocalSortDiskUsageSummary(
-	subtask *proto.Subtask,
-	sm *BackfillSubTaskMeta,
-	concurrency int,
-	snapshot localSortDiskUsageSnapshot,
-	runErr error,
-) {
-	indexIDs := make([]int64, 0, len(r.indexes))
-	for _, idx := range r.indexes {
-		indexIDs = append(indexIDs, idx.ID)
-	}
-
-	fields := []zap.Field{
-		zap.Int64("job_id", r.job.ID),
-		zap.Int64("task_id", subtask.TaskID),
-		zap.Int64("subtask_id", subtask.ID),
-		zap.String("exec_id", subtask.ExecID),
-		zap.String("step", proto.Step2Str(proto.Backfill, subtask.Step)),
-		zap.Int64("physical_table_id", sm.PhysicalTableID),
-		zap.Int64s("index_ids", indexIDs),
-		zap.Int("index_count", len(indexIDs)),
-		zap.Int("worker_concurrency", concurrency),
-		zap.Int("job_reorg_concurrency", r.job.ReorgMeta.GetConcurrency()),
-		zap.Int("estimate_row_size", r.avgRowSize),
-		zap.Bool("cloud_storage_enabled", r.isGlobalSort()),
-		zap.Uint64("disk_quota_bytes", vardef.DDLDiskQuota.Load()),
-		zap.Uint64("avg_local_disk_bytes", snapshot.AvgBytes),
-		zap.Uint64("peak_local_disk_bytes", snapshot.PeakBytes),
-		zap.Uint64("last_local_disk_bytes", snapshot.LastBytes),
-		zap.Uint64("sample_count", snapshot.SampleCnt),
-		zap.Int64("sample_interval_ms", localSortDiskUsageSampleInterval.Milliseconds()),
-		zap.Int64("observed_duration_ms", snapshot.Duration.Milliseconds()),
-		zap.Bool("pipeline_success", runErr == nil),
-	}
-	if runErr != nil {
-		fields = append(fields, zap.Error(runErr))
-	}
-
-	logutil.DDLLogger().Info("local sort disk usage summary", fields...)
 }
 
 func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
