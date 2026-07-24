@@ -20,6 +20,7 @@
 
 pub mod arena;
 pub mod backoff;
+pub mod bitmap;
 pub mod checksum;
 pub mod disjointset;
 pub mod encrypt;
