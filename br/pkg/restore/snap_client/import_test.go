@@ -37,6 +37,8 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestGetKeyRangeByMode(t *testing.T) {
@@ -145,6 +147,14 @@ func (client *fakeImporterClient) SetDownloadSpeedLimit(
 
 func (client *fakeImporterClient) CheckMultiIngestSupport(ctx context.Context, stores []uint64) error {
 	return nil
+}
+
+func (client *fakeImporterClient) CheckBatchDownloadLatestMVCCSupport(ctx context.Context, stores []uint64) error {
+	return nil
+}
+
+func (client *fakeImporterClient) IsBatchDownloadLatestMVCCSupported(ctx context.Context, stores []uint64) (bool, error) {
+	return true, nil
 }
 
 func (client *fakeImporterClient) CloseGrpcClient() error {
@@ -385,6 +395,154 @@ func makeCompactedFileSets(fileGroupCount, filesPerGroup int) []restore.BackupFi
 		})
 	}
 	return fileSets
+}
+
+type retryDownloadImporterClient struct {
+	fakeImporterClient
+
+	supportLatestMVCC bool
+	probeErr          error
+	firstErr          error
+	calls             atomic.Int32
+	mu                sync.Mutex
+	uuids             [][]byte
+}
+
+func newRetryDownloadImporterClient(supportLatestMVCC bool, firstErr error) *retryDownloadImporterClient {
+	return &retryDownloadImporterClient{
+		fakeImporterClient: *newFakeImporterClient(),
+		supportLatestMVCC:  supportLatestMVCC,
+		firstErr:           firstErr,
+	}
+}
+
+func (client *retryDownloadImporterClient) IsBatchDownloadLatestMVCCSupported(
+	ctx context.Context,
+	stores []uint64,
+) (bool, error) {
+	if client.probeErr != nil {
+		return false, client.probeErr
+	}
+	return client.supportLatestMVCC, nil
+}
+
+func (client *retryDownloadImporterClient) DownloadSST(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.DownloadRequest,
+) (*import_sstpb.DownloadResponse, error) {
+	client.mu.Lock()
+	client.uuids = append(client.uuids, append([]byte(nil), req.Sst.GetUuid()...))
+	client.mu.Unlock()
+
+	if client.calls.Add(1) == 1 {
+		return nil, client.firstErr
+	}
+	return &import_sstpb.DownloadResponse{Range: *req.Sst.GetRange()}, nil
+}
+
+func (client *retryDownloadImporterClient) recordedUUIDs() [][]byte {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	uuids := make([][]byte, 0, len(client.uuids))
+	for _, id := range client.uuids {
+		uuids = append(uuids, append([]byte(nil), id...))
+	}
+	return uuids
+}
+
+func runDownloadRetryUUIDTest(
+	t *testing.T,
+	supportPeerRetry bool,
+	firstErr error,
+) [][]byte {
+	t.Helper()
+	ctx := context.Background()
+	splitClient := split.NewFakeSplitClient()
+	splitClient.AppendPdRegion(&router.Region{
+		Meta: &metapb.Region{
+			Id:       1,
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(1)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(2)),
+			Peers:    []*metapb.Peer{{StoreId: 1}},
+		},
+		Leader: &metapb.Peer{StoreId: 1},
+	})
+	stores := []*metapb.Store{{Id: 1, State: metapb.StoreState_Up}}
+	importClient := newRetryDownloadImporterClient(supportPeerRetry, firstErr)
+	opt := snapclient.NewSnapFileImporterOptions(
+		nil,
+		splitClient,
+		importClient,
+		nil,
+		snapclient.RewriteModeKeyspace,
+		stores,
+		1,
+		0,
+		false,
+		nil,
+		nil,
+	)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, importer.Close())
+	}()
+	require.NoError(t, importer.CheckPeerDownloadRetrySupport(ctx, stores))
+
+	require.NoError(t, importer.Import(ctx, makeCompactedFileSets(1, 1)...))
+	return importClient.recordedUUIDs()
+}
+
+func TestDownloadRetriesWithinPeerWhenSupported(t *testing.T) {
+	uuids := runDownloadRetryUUIDTest(t, true, status.Error(codes.Canceled, "context canceled"))
+	require.Len(t, uuids, 2)
+	require.Equal(t, uuids[0], uuids[1])
+}
+
+func TestDownloadKeepsExistingPeerBackoffWhenPeerRetryUnsupported(t *testing.T) {
+	uuids := runDownloadRetryUUIDTest(t, false, status.Error(codes.Unavailable, "transport is closing"))
+	require.Len(t, uuids, 2)
+	require.Equal(t, uuids[0], uuids[1])
+}
+
+func TestCheckPeerDownloadRetrySupportFallsBackOnProbeError(t *testing.T) {
+	ctx := context.Background()
+	splitClient := split.NewFakeSplitClient()
+	splitClient.AppendPdRegion(&router.Region{
+		Meta: &metapb.Region{
+			Id:       1,
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(1)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(2)),
+			Peers:    []*metapb.Peer{{StoreId: 1}},
+		},
+		Leader: &metapb.Peer{StoreId: 1},
+	})
+	stores := []*metapb.Store{{Id: 1, State: metapb.StoreState_Up}}
+	importClient := newRetryDownloadImporterClient(true, status.Error(codes.Canceled, "context canceled"))
+	importClient.probeErr = status.Error(codes.Unavailable, "probe unavailable")
+	opt := snapclient.NewSnapFileImporterOptions(
+		nil,
+		splitClient,
+		importClient,
+		nil,
+		snapclient.RewriteModeKeyspace,
+		stores,
+		1,
+		0,
+		false,
+		nil,
+		nil,
+	)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, importer.Close())
+	}()
+
+	require.NoError(t, importer.CheckPeerDownloadRetrySupport(ctx, stores))
+	require.Error(t, importer.Import(ctx, makeCompactedFileSets(1, 1)...))
+	require.Len(t, importClient.recordedUUIDs(), 1)
 }
 
 func waitForConcurrentDownloads(t *testing.T, importClient *blockingBatchDownloadImporterClient, errCh <-chan error) {

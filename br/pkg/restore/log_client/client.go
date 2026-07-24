@@ -598,6 +598,10 @@ func (rc *LogClient) InitClients(
 		createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 			return importer.CheckBatchDownloadLatestMVCCSupport(ctx, stores)
 		})
+	} else {
+		createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+			return importer.CheckPeerDownloadRetrySupport(ctx, stores)
+		})
 	}
 	if rc.rateLimit != 0 {
 		createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, rc.pdClient, sstWorkerPool, rc.rateLimit)
