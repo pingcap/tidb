@@ -3148,7 +3148,9 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 	cursorHandle := rs.se.GetCursorTracker().NewCursor(
 		cursor.State{StartTS: rs.se.GetSessionVars().TxnCtx.StartTS},
 	)
-	crs := staticrecordset.WrapRecordSetWithCursor(cursorHandle, detachedRS)
+	// Pass the runaway checker so the final deadline check runs when the cursor is
+	// closed: this detached path finishes without reaching `ExecStmt.FinishExecuteStmt`.
+	crs := staticrecordset.WrapRecordSetWithCursor(cursorHandle, detachedRS, rs.se.GetSessionVars().StmtCtx.RunawayChecker)
 
 	// Now, a transaction is not needed for the detached record set, so we commit the transaction and cleanup
 	// the session state.
