@@ -51,6 +51,7 @@ func TestMain(m *testing.M) {
 			goleak.IgnoreTopFunction("google.golang.org/grpc/internal/grpcsync.NewCallbackSerializer"),
 			goleak.IgnoreTopFunction("google.golang.org/grpc/internal/grpcsync.(*CallbackSerializer).run"),
 			goleak.IgnoreTopFunction("google.golang.org/grpc/test/bufconn.(*Listener).Accept"),
+			goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/util/memory.(*MemArbitrator).asyncRun.func1"),
 		)
 	}
 
