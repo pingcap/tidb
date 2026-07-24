@@ -3555,7 +3555,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 	}
 
 	for {
-		rows, err := e.dataForTiFlashSystemTables(ctx, sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables)
+		rows, err := e.dataForTiFlashSystemTables(ctx, sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables, e.extractor.TableIDs, e.extractor.IndexIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -3606,7 +3606,18 @@ var tiflashTargetTableName = map[string]string{
 	"tiflash_indexes":  "dt_local_indexes",
 }
 
-func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
+// joinInt64s renders a sorted []int64 (as produced by the
+// TiFlashSystemTableExtractor) into a comma-separated decimal list suitable
+// for embedding inside a TiFlash SQL `IN (...)` filter.
+func joinInt64s(ids []int64) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string, tableIDs []int64, indexIDs []int64) ([][]types.Datum, error) {
 	maxCount := 1024
 	targetTable := tiflashTargetTableName[e.table.Name.L]
 
@@ -3621,6 +3632,12 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	}
 	if len(tidbTables) > 0 {
 		filters = append(filters, fmt.Sprintf("tidb_table IN (%s)", strings.ReplaceAll(tidbTables, "\"", "'")))
+	}
+	if len(tableIDs) > 0 {
+		filters = append(filters, fmt.Sprintf("table_id IN (%s)", joinInt64s(tableIDs)))
+	}
+	if len(indexIDs) > 0 {
+		filters = append(filters, fmt.Sprintf("index_id IN (%s)", joinInt64s(indexIDs)))
 	}
 	sql := fmt.Sprintf("SELECT * FROM system.%s", targetTable)
 	if len(filters) > 0 {

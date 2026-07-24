@@ -1625,6 +1625,118 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 	}
 }
 
+func TestTiFlashSystemTableExtractor(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	cases := []struct {
+		sql              string
+		tableIDs         []int64
+		indexIDs         []int64
+		tiflashInstances set.StringSet
+		tidbDatabases    string
+		tidbTables       string
+		skipRequest      bool
+	}{
+		// Equality on table_id / index_id for tiflash_indexes.
+		{
+			sql:      "select * from information_schema.tiflash_indexes where table_id = 12345",
+			tableIDs: []int64{12345},
+		},
+		{
+			sql:      "select * from information_schema.tiflash_indexes where index_id = 7",
+			indexIDs: []int64{7},
+		},
+		{
+			sql:      "select * from information_schema.tiflash_indexes where table_id = 1 and index_id = 2",
+			tableIDs: []int64{1},
+			indexIDs: []int64{2},
+		},
+		// IN predicates and disjunctions on table_id / index_id.
+		{
+			sql:      "select * from information_schema.tiflash_indexes where table_id in (1, 2, 3)",
+			tableIDs: []int64{1, 2, 3},
+		},
+		{
+			sql:      "select * from information_schema.tiflash_indexes where index_id in (10, 20)",
+			indexIDs: []int64{10, 20},
+		},
+		{
+			sql:      "select * from information_schema.tiflash_indexes where table_id = 1 or table_id = 2",
+			tableIDs: []int64{1, 2},
+		},
+		// Mixed with the existing string predicates.
+		{
+			sql:           "select * from information_schema.tiflash_indexes where table_id = 1 and tidb_database = 'test'",
+			tableIDs:      []int64{1},
+			tidbDatabases: "\"test\"",
+		},
+		{
+			sql:        "select * from information_schema.tiflash_indexes where table_id in (1, 2) and tidb_table = 't'",
+			tableIDs:   []int64{1, 2},
+			tidbTables: "\"t\"",
+		},
+		// table_id is also exposed by tiflash_tables / tiflash_segments;
+		// extraction should work there too. index_id is unique to tiflash_indexes
+		// and on the other tables it is silently ignored (no-op via extractCol's
+		// missing-column fast path).
+		{
+			sql:      "select * from information_schema.tiflash_tables where table_id = 99",
+			tableIDs: []int64{99},
+		},
+		{
+			sql:      "select * from information_schema.tiflash_segments where table_id in (5, 6)",
+			tableIDs: []int64{5, 6},
+		},
+		// Queries without table_id / index_id should not be affected.
+		{
+			sql:           "select * from information_schema.tiflash_indexes where tidb_database = 'test'",
+			tidbDatabases: "\"test\"",
+		},
+		{
+			sql: "select * from information_schema.tiflash_indexes",
+		},
+		// Contradictory predicates short-circuit via SkipRequest, mirroring the
+		// behavior of the existing string-column extraction.
+		{
+			sql:         "select * from information_schema.tiflash_indexes where table_id = 1 and table_id = 2",
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from information_schema.tiflash_indexes where index_id = 1 and index_id = 2",
+			skipRequest: true,
+		},
+		{
+			sql:      "select * from information_schema.tiflash_indexes where table_id in (1, 2) and table_id in (2, 3)",
+			tableIDs: []int64{2},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if !ok {
+			// Contradictory predicates may be pruned away above the LogicalMemTable
+			// (the planner produces a TableDual). That is a valid form of
+			// `SkipRequest` for this extractor, mirroring TestTikvRegionPeersExtractor.
+			require.True(t, ca.skipRequest, "SQL: %v", ca.sql)
+			continue
+		}
+		require.NotNil(t, logicalMemTable.Extractor, "SQL: %v", ca.sql)
+
+		extractor := logicalMemTable.Extractor.(*plannercore.TiFlashSystemTableExtractor)
+		require.Equal(t, ca.skipRequest, extractor.SkipRequest, "SQL: %v", ca.sql)
+		if ca.skipRequest {
+			continue
+		}
+		require.EqualValues(t, ca.tableIDs, extractor.TableIDs, "SQL: %v", ca.sql)
+		require.EqualValues(t, ca.indexIDs, extractor.IndexIDs, "SQL: %v", ca.sql)
+		require.Equal(t, ca.tidbDatabases, extractor.TiDBDatabases, "SQL: %v", ca.sql)
+		require.Equal(t, ca.tidbTables, extractor.TiDBTables, "SQL: %v", ca.sql)
+	}
+}
+
 func TestColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
