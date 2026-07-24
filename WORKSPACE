@@ -42,7 +42,6 @@ http_archive(
     name = "io_bazel_rules_go",
     sha256 = "68af54cb97fbdee5e5e8fe8d210d15a518f9d62abfd71620c3eaff3b26a5ff86",
     urls = [
-        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
         "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
         "https://github.com/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
     ],
@@ -53,7 +52,6 @@ http_archive(
     sha256 = "675114d8b433d0a9f54d81171833be96ebc4113115664b791e6f204d58e93446",
     urls = [
         "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.47.0/bazel-gazelle-v0.47.0.tar.gz",
-        "https://cache.hawkingrei.com/bazel-contrib/bazel-gazelle/releases/download/v0.47.0/bazel-gazelle-v0.47.0.tar.gz",
     ],
 )
 
@@ -72,7 +70,6 @@ http_archive(
     strip_prefix = "rules_python-1.4.1",
     urls = [
         "https://github.com/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
-        "https://cache.hawkingrei.com/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
     ],
 )
 
@@ -92,7 +89,6 @@ go_rules_dependencies()
 go_download_sdk(
     name = "go_sdk",
     urls = [
-        "https://cache.hawkingrei.com/golang/{}",
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
