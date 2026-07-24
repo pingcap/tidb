@@ -614,6 +614,11 @@ func (c *SortedRowContainer) SpillToDisk() {
 }
 
 func (c *SortedRowContainer) hasEnoughDataToSpill(t *memory.Tracker) bool {
+	failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true)
+		}
+	})
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
 	return c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
 }
