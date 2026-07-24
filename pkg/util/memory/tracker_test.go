@@ -1085,7 +1085,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			for t1.getParent() != nil {
 				runtime.Gosched()
 			}
-			require.Equal(t, int32(memArbitratorStateIntoBigBudget), t1.MemArbitrator.state.Load())
+			require.Equal(t, memArbitratorStateIntoBigBudget, t1.MemArbitrator.state.Load())
 		}
 		t1.Consume(1e8)
 		wg.Wait()
@@ -1144,7 +1144,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			t3.Consume(reusedMem) // mock reuse the tracker
 		})
 		require.Equal(t, reusedMem, t3.BytesConsumed())
-		require.Equal(t, int32(memArbitratorStateDown), t3.MemArbitrator.state.Load())
+		require.Equal(t, memArbitratorStateDown, t3.MemArbitrator.state.Load())
 		require.Equal(t, int64(0), t3.MemArbitrator.smallBudgetUsed())
 		require.Equal(t, int64(0), m.awaitFreePoolUsed().quota)
 		require.Nil(t, m.FindRootPool(t3.SessionID.Load()).entry)
