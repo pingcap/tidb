@@ -60,7 +60,19 @@
       "select A.id, B.id from A left join B on A.id < B.a_id where B.id is null",
       "select A.val, B.val from A left join B on A.val = B.val where B.non_null_col IS NULL",
       "select A.id, B.val from A left join B on A.id = B.a_id where B.val > 0",
-      "SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN t3 ON t3.i = t2.i) ON t2.i = t1.i WHERE t3.i IS NULL"
+      "SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN t3 ON t3.i = t2.i) ON t2.i = t1.i WHERE t3.i IS NULL",
+
+      // GROUP 9: issue:69919, `x IN (subquery)` used as a scalar operand of OR/AND builds a
+      // LeftOuterSemiJoin/AntiLeftOuterSemiJoin flag column; filtering directly on that flag
+      // column should collapse back to a plain SemiJoin/AntiSemiJoin (Positive cases).
+      "select A.id from A where (A.val in (select val from B)) or false",
+      "select A.id from A where (A.val in (select val from B)) or 1 = 0",
+      "select A.id from A where false or (A.val in (select val from B))",
+      "select A.id from A where (A.val not in (select val from B where val is not null)) or false",
+      "select A.id from A where (A.val in (select val from B)) and true",
+      // Negative case: the flag column is also projected, so SemiJoin cannot be used
+      // (it does not produce that column).
+      "select A.id, (A.val in (select val from B)) or false from A"
     ]
   }
 ]
