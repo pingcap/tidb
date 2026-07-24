@@ -24,6 +24,26 @@ import (
 )
 
 var benchmarkColumnInfoDumpSink []byte
+var benchmarkResultEncoderSink *ResultEncoder
+
+func BenchmarkNewResultEncoder(b *testing.B) {
+	for _, testCase := range []struct {
+		name string
+		chs  string
+	}{
+		{name: "utf8mb4", chs: charset.CharsetUTF8MB4},
+		{name: "binary", chs: charset.CharsetBin},
+		{name: "gbk", chs: "gbk"},
+		{name: "null", chs: ""},
+	} {
+		b.Run(testCase.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				benchmarkResultEncoderSink = NewResultEncoder(testCase.chs)
+			}
+		})
+	}
+}
 
 func BenchmarkColumnInfoDump(b *testing.B) {
 	pointSelectInfo := Info{

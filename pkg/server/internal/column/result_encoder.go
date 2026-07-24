@@ -51,7 +51,7 @@ type ResultEncoder struct {
 	// dataEncoding can be updated to match the column data charset.
 	dataEncoding charset.Encoding
 
-	buffer *bytes.Buffer
+	buffer bytes.Buffer
 
 	// chsName and encoding are unchanged after the initialization from
 	// session variable @@character_set_results.
@@ -67,7 +67,6 @@ func NewResultEncoder(chs string) *ResultEncoder {
 	return &ResultEncoder{
 		chsName:  chs,
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
-		buffer:   &bytes.Buffer{},
 		isBinary: chs == charset.CharsetBin,
 		isNull:   len(chs) == 0,
 	}
@@ -75,7 +74,7 @@ func NewResultEncoder(chs string) *ResultEncoder {
 
 // Clean prevent the ResultEncoder from holding too much memory.
 func (d *ResultEncoder) Clean() {
-	d.buffer = nil
+	d.buffer = bytes.Buffer{}
 }
 
 // UpdateDataEncoding updates the data encoding.
@@ -125,7 +124,7 @@ func (d *ResultEncoder) EncodeData(src []byte) []byte {
 
 // EncodeWith encodes bytes with the given encoding.
 func (d *ResultEncoder) EncodeWith(src []byte, enc charset.Encoding) []byte {
-	data, err := enc.Transform(d.buffer, src, charset.OpEncodeReplace)
+	data, err := enc.Transform(&d.buffer, src, charset.OpEncodeReplace)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}

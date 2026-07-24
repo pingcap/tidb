@@ -37,3 +37,14 @@ func TestResultEncoder(t *testing.T) {
 	result = d.EncodeMeta([]byte("一"))
 	require.Equal(t, "一", string(result))
 }
+
+func TestResultEncoderCleanReleasesBuffer(t *testing.T) {
+	d := NewResultEncoder("gbk")
+	result := d.EncodeMeta([]byte("一"))
+	require.Equal(t, []byte{0xd2, 0xbb}, result)
+	require.Positive(t, d.buffer.Cap())
+
+	d.Clean()
+	require.Zero(t, d.buffer.Cap())
+	require.Zero(t, d.buffer.Len())
+}
