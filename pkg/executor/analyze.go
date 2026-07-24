@@ -324,12 +324,16 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if len(tasks) == 0 {
 		return nil
 	}
-	tableAndPartitionIDs := make([]int64, 0, len(tasks))
+	// Analyze results are persisted under physical statistics IDs. Logical
+	// partition-table metadata is refreshed separately unless a global stats
+	// merge persists a new histogram that requires a full reload.
+	statsIDsToRefresh := make([]int64, 0, len(tasks))
+	logicalTableMetaIDsToRefresh := make(map[int64]struct{})
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
-		tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.TableID)
+		statsIDsToRefresh = append(statsIDsToRefresh, tableID.GetStatisticsID())
 		if tableID.IsPartitionTable() {
-			tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.PartitionID)
+			logicalTableMetaIDsToRefresh[tableID.TableID] = struct{}{}
 		}
 	}
 
@@ -423,9 +427,10 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
-		err = e.handleGlobalStats(statsHandle, globalStatsMap)
-		if err != nil {
-			return err
+		globalStatsIDs := e.handleGlobalStats(statsHandle, globalStatsMap)
+		statsIDsToRefresh = append(statsIDsToRefresh, globalStatsIDs...)
+		for _, tableID := range globalStatsIDs {
+			delete(logicalTableMetaIDsToRefresh, tableID)
 		}
 	}
 
@@ -446,7 +451,14 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
+	if err := statsHandle.Update(ctx, infoSchema, statsIDsToRefresh...); err != nil {
+		return err
+	}
+	logicalTableMetaIDs := make([]int64, 0, len(logicalTableMetaIDsToRefresh))
+	for tableID := range logicalTableMetaIDsToRefresh {
+		logicalTableMetaIDs = append(logicalTableMetaIDs, tableID)
+	}
+	return statsHandle.UpdateTableStatsMeta(ctx, infoSchema, logicalTableMetaIDs...)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {

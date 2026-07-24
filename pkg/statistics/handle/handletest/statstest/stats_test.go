@@ -168,13 +168,15 @@ func checkPredicateColumnStats(t *testing.T, tableStats *statistics.Table, table
 	})
 }
 
+// TestStatsCacheProcess verifies that targeted updates refresh analyzed tables
+// without advancing the cache-wide version, while full updates advance it.
 func TestStatsCacheProcess(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
-	testKit.MustExec("insert into t values(1, 2)")
-	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int, c2 int)")
+	tk.MustExec("insert into t values(1, 2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c1", "c2")
 	do := dom
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -184,7 +186,7 @@ func TestStatsCacheProcess(t *testing.T) {
 	require.True(t, statsTbl.Pseudo)
 	require.Zero(t, statsTbl.Version)
 	currentVersion := do.StatsHandle().MaxTableStatsVersion()
-	testKit.MustExec("analyze table t")
+	tk.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.NotZero(t, statsTbl.Version)
@@ -193,11 +195,37 @@ func TestStatsCacheProcess(t *testing.T) {
 	require.Equal(t, currentVersion, newVersion, "analyze should not move forward the stats cache version")
 
 	// Insert more rows
-	testKit.MustExec("insert into t values(2, 3)")
-	testKit.MustExec("flush stats_delta *.*")
+	tk.MustExec("insert into t values(2, 3)")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
 	newVersion = do.StatsHandle().MaxTableStatsVersion()
 	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
+
+	// Reproduce a targeted ANALYZE refresh after an unrelated table has advanced
+	// the cache-wide version: cache pseudo stats, advance the max with another
+	// table, then require the requested lower-version row to be loaded.
+	const (
+		analyzedTableVersion uint64 = 100
+		cacheWideMaxVersion  uint64 = 200
+	)
+	tk.MustExec("update mysql.stats_meta set version = ? where table_id = ?", analyzedTableVersion, tableInfo.ID)
+	handle := do.StatsHandle()
+	handle.Clear()
+	statsTbl = handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.True(t, statsTbl.Pseudo)
+	handle.Put(tableInfo.ID+1000, &statistics.Table{
+		HistColl:              statistics.HistColl{PhysicalID: tableInfo.ID + 1000},
+		Version:               cacheWideMaxVersion,
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
+	})
+	handle.WaitForAsyncUpdates()
+	require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+
+	require.NoError(t, handle.Update(context.Background(), is, tableInfo.ID))
+	statsTbl = handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, analyzedTableVersion, statsTbl.Version)
+	require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
 }
 
 func TestStatsCache(t *testing.T) {
