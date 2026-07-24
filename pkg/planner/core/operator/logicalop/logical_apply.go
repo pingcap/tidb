@@ -180,7 +180,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		if len(leftJoinKeys) > 0 {
 			// Explicit ON-clause join keys: use the same join cardinality estimation as
 			// LogicalJoin so that key NDV selectivity is reflected in the row count.
-			la.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(la.SCtx(),
+			la.EqualCondOutCnt = cardinality.EstimateJoinMatchedRowCount(la.SCtx(),
 				false,
 				leftProfile, rightProfile,
 				leftJoinKeys, rightJoinKeys,
@@ -193,7 +193,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 			// (total rows of that plan), not a per-outer-row execution count.
 			// Dividing by the NDV of the outer correlated columns converts it to a
 			// per-outer-row estimate before multiplying by the left row count, mirroring
-			// the key-based selectivity division in EstimateFullJoinRowCount.
+			// the key-based selectivity division in EstimateJoinMatchedRowCount.
 			//
 			// TODO: when the inner plan is bounded by LIMIT or a scalar aggregate,
 			// rightProfile.RowCount is already effectively per-outer-row (LIMIT caps it;
