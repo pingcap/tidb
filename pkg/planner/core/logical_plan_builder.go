@@ -635,6 +635,9 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		}
 	}
+	if ds.PreferStoreType != 0 {
+		ds.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanHasStoreTypeHint()
+	}
 }
 
 // findJoinFullSchema walks through single-child wrapper operators (e.g., LogicalSelection
@@ -5086,13 +5089,30 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// remain tikv access path to generate point get acceess path if existed
 	// see detail in issue: https://github.com/pingcap/tidb/issues/39543
-	if !(b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
+	isForUpdateReadInExplicitTxn := b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit
+	if !isForUpdateReadInExplicitTxn {
 		// Skip storage engine check for CreateView.
 		if b.capFlag&canExpandAST == 0 {
 			possiblePaths, err = util.FilterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
 			if err != nil {
 				return nil, err
 			}
+		}
+	}
+	if b.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		// A table with no TiFlash access path rules out a fully-TiFlash plan for
+		// the whole statement, so the tiflash-only round is not worth building.
+		// FOR UPDATE reads in explicit transactions drop their TiFlash paths
+		// later during physical optimization, so treat them as missing one too.
+		hasTiFlashPath := false
+		for _, path := range possiblePaths {
+			if path.StoreType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		if !hasTiFlashPath || isForUpdateReadInExplicitTxn {
+			b.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanMissingTiFlashPath()
 		}
 	}
 
