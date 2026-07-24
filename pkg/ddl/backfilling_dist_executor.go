@@ -221,17 +221,21 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	s.taskMeta = bgm
 	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
 	if len(s.taskMeta.CloudStorageURI) == 0 && s.task.Step == proto.BackfillStepReadIndex {
-		runningJobCount, runningJobRequiredSlots, runningJobUsedBytes, err :=
+		runningJobCount, runningJobRuntimeSlots, runningJobUsedBytes, err :=
 			s.getRunningLocalSortJobDiskUsage(ctx)
 		if err != nil {
 			return err
 		}
 		if err := ingest.CheckLocalSortFreeDisk(
+			s.GetExecutorID(),
 			runningJobCount,
-			runningJobRequiredSlots,
+			runningJobRuntimeSlots,
 			runningJobUsedBytes,
-			s.task.RequiredSlots,
+			s.task.GetRuntimeSlots(),
 		); err != nil {
+			// Running add-index disk usage is subtracted from the remaining growth budget, so admission failures
+			// indicate persistent non-DDL disk pressure and must remain fatal; operators
+			// must remove logs or other files to resolve it.
 			return err
 		}
 	}
@@ -240,9 +244,9 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 
 func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 	ctx context.Context,
-) (jobCount int, requiredSlots int, usedBytes uint64, err error) {
+) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
 	taskSlots := s.ExecutorTaskSlotsSnapshot()
-	for taskID, taskRequiredSlots := range taskSlots {
+	for taskID, taskRuntimeSlots := range taskSlots {
 		if taskID == s.task.ID {
 			continue
 		}
@@ -264,12 +268,12 @@ func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 		}
 
 		jobCount++
-		requiredSlots += taskRequiredSlots
+		runtimeSlots += taskRuntimeSlots
 		if ingest.LitDiskRoot != nil {
 			usedBytes += ingest.LitDiskRoot.GetUsage(taskMeta.Job.ID)
 		}
 	}
-	return jobCount, requiredSlots, usedBytes, nil
+	return jobCount, runtimeSlots, usedBytes, nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
