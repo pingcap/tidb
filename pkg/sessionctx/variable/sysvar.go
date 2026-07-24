@@ -2621,6 +2621,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBStrictCompatibility80, Value: BoolToOnOff(vardef.DefTiDBStrictCompatibility80), Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictNotNullCheck, Value: BoolToOnOff(vardef.DefTiDBEnableStrictNotNullCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictNotNullCheck = TiDBOptOn(val)
 		return nil

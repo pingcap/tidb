@@ -183,7 +183,8 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 		if !exists {
-			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
+			strictCompatibility80, _ := e.Ctx().GetSessionVars().GetSystemVar(vardef.TiDBStrictCompatibility80)
+			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() || strings.EqualFold(strictCompatibility80, vardef.On) {
 				return exeerrors.ErrCantCreateUserWithGrant
 			}
 			if err := keyspace.GetUsernamePolicy().ValidateUsername(user.User.Username); err != nil {

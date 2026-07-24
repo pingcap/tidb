@@ -80,6 +80,7 @@ const (
 	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
 	smallTaskSigma         = 0.5
 	smallConcPerCore       = 20
+	staleEpochRetryBackoff = 50
 )
 
 var liteWorkerFallbackHook atomic.Pointer[func()]
@@ -2143,9 +2144,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
-		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
-			return nil, errors.Trace(err)
-		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 			req:                         worker.req,
@@ -2156,6 +2154,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		})
 		if err != nil {
 			return nil, err
+		}
+		if err := backoffRegionError(bo, regionErr, task.region.GetID(), remains, errStr); err != nil {
+			return nil, errors.Trace(err)
 		}
 		return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
 	}
@@ -2334,6 +2335,21 @@ func getRegionError(ctx context.Context, resp interface{ GetRegionError() *error
 	return nil
 }
 
+func backoffRegionError(bo *Backoffer, regionErr *errorpb.Error, regionID uint64, remains []*copTask, errStr string) error {
+	if regionErr.GetEpochNotMatch() == nil || remainInSameRegion(regionID, remains) {
+		return bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr))
+	}
+	err := bo.TiKVBackoffer().BackoffWithCfgAndMaxSleep(tikv.BoRegionMiss(), staleEpochRetryBackoff, errors.New(errStr))
+	return derr.ToTiDBErr(err)
+}
+
+func remainInSameRegion(regionID uint64, remains []*copTask) bool {
+	if len(remains) != 1 {
+		return false
+	}
+	return remains[0].region.GetID() == regionID
+}
+
 // handle the batched cop response.
 // tasks will be changed, so the input tasks should not be used after calling this function.
 func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response,
@@ -2389,9 +2405,6 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			worker.handleBatchBucketVersionNotMatch(bo, task, regionErr)
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
-			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
-				return batchRespList, nil, errors.Trace(err)
-			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,
 				cache:                       worker.store.GetRegionCache(),
@@ -2403,6 +2416,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			})
 			if err != nil {
 				return batchRespList, nil, err
+			}
+			if err := backoffRegionError(bo, regionErr, task.region.GetID(), remains, errStr); err != nil {
+				return batchRespList, nil, errors.Trace(err)
 			}
 			appendRemainTasks(remains...)
 			continue

@@ -665,6 +665,9 @@ const (
 	// TiDBEnableStrictDoubleTypeCheck is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
+	// TiDBStrictCompatibility80 enables MySQL 8.0 strict-compatibility behavior for selected semantics.
+	TiDBStrictCompatibility80 = "tidb_strict_compatibility_80"
+
 	// TiDBOptProjectionPushDown is used to control whether to pushdown projection to coprocessor.
 	TiDBOptProjectionPushDown = "tidb_opt_projection_push_down"
 
@@ -1586,6 +1589,7 @@ const (
 	DefEnablePipelinedWindowFunction        = true
 	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableStrictDoubleTypeCheck          = true
+	DefTiDBStrictCompatibility80            = false
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true

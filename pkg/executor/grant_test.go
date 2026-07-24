@@ -96,6 +96,25 @@ func TestGrantGlobal(t *testing.T) {
 	}
 }
 
+func TestGrantCreateUserWithStrictCompatibility80(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`DROP USER IF EXISTS 'grantStrict80'@'%'`)
+	tk.MustExec(`SET sql_mode=''`)
+	tk.MustExec(`SET tidb_strict_compatibility_80=ON`)
+	tk.MustGetErrCode(`GRANT ALL PRIVILEGES ON *.* TO 'grantStrict80'@'%'`, mysql.ErrCantCreateUserWithGrant)
+	tk.MustQuery(`SELECT user FROM mysql.user WHERE user='grantStrict80' AND host='%'`).Check(testkit.Rows())
+
+	tk.MustExec(`SET tidb_strict_compatibility_80=OFF`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* TO 'grantStrict80'@'%'`)
+	tk.MustQuery(`SELECT user FROM mysql.user WHERE user='grantStrict80' AND host='%'`).Check(testkit.Rows("grantStrict80"))
+
+	tk.MustExec(`DROP USER IF EXISTS 'grantStrict80'@'%'`)
+	tk.MustExec(`SET tidb_strict_compatibility_80=DEFAULT`)
+	tk.MustExec(`SET sql_mode=DEFAULT`)
+}
+
 func TestGrantDBScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
