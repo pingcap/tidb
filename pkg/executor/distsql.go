@@ -864,6 +864,17 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
 		growWorkerStack16K()
 		defer func() {
+			// The closure runs on a workerPool goroutine (workerPool.run does not
+			// recover), and its prologue/merge-sort regions sit outside the inner
+			// fetchHandles/fetchHandlesRolling recovers. Catch any panic here and
+			// route it to resultCh (before the close below) so it surfaces as a
+			// query error instead of crashing the whole tidb-server.
+			if r := recover(); r != nil {
+				logutil.Logger(ctx).Warn("indexWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+				doneCh := make(chan error, 1)
+				doneCh <- util.GetRecoverError(r)
+				e.resultCh <- &lookupTableTask{doneCh: doneCh}
+			}
 			close(e.resultCh)
 			e.idxWorkerWg.Done()
 		}()
