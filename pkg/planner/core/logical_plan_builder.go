@@ -3176,7 +3176,7 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 
 	// similar to process in PlanBuilder.buildSelect
 	originalFields := sel.Fields.Fields
-	sel.Fields.Fields, err = r.b.unfoldWildStar(p, sel.Fields.Fields)
+	sel.Fields.Fields, err = r.b.unfoldWildStar(p, sel.Fields.Fields, sel.From)
 	if err != nil {
 		return err
 	}
@@ -4078,7 +4078,7 @@ func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, g
 	return p, exprs, gby.Rollup, nil
 }
 
-func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField, err error) {
+func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.SelectField, from *ast.TableRefsClause) (resultList []*ast.SelectField, err error) {
 	// Extract FullSchema/FullNames from LogicalJoin or LogicalApply (which embeds LogicalJoin).
 	var fullSchema *expression.Schema
 	var fullNames types.NameSlice
@@ -4088,6 +4088,7 @@ func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.Selec
 	case *logicalop.LogicalApply:
 		fullSchema, fullNames = x.FullSchema, x.FullNames
 	}
+	tableAliases := collectTableAliasesInFrom(from)
 	resultList = make([]*ast.SelectField, 0, max(2, len(selectFields)))
 	for i, field := range selectFields {
 		if field.WildCard == nil {
@@ -4097,12 +4098,12 @@ func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.Selec
 		if field.WildCard.Table.L == "" && i > 0 {
 			return nil, plannererrors.ErrInvalidWildCard
 		}
-		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
+		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns, tableAliases)
 		// For sql like `select t1.*, t2.* from t1 join t2 using(a)` or `select t1.*, t2.* from t1 natual join t2`,
 		// the schema of the Join doesn't contain enough columns because the join keys are coalesced in this schema.
 		// We should collect the columns from the FullSchema.
 		if fullSchema != nil && field.WildCard.Table.L != "" {
-			list = unfoldWildStar(field, fullNames, fullSchema.Columns)
+			list = unfoldWildStar(field, fullNames, fullSchema.Columns, tableAliases)
 		}
 		if len(list) == 0 {
 			return nil, plannererrors.ErrBadTable.GenWithStackByArgs(field.WildCard.Table)
@@ -4112,7 +4113,33 @@ func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.Selec
 	return resultList, nil
 }
 
-func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column []*expression.Column) (resultList []*ast.SelectField) {
+// collectTableAliasesInFrom collects the lower-case aliases introduced by `AS` in the FROM clause.
+func collectTableAliasesInFrom(from *ast.TableRefsClause) map[string]struct{} {
+	if from == nil {
+		return nil
+	}
+	aliases := make(map[string]struct{})
+	var collect func(node ast.ResultSetNode)
+	collect = func(node ast.ResultSetNode) {
+		switch x := node.(type) {
+		case *ast.Join:
+			if x.Left != nil {
+				collect(x.Left)
+			}
+			if x.Right != nil {
+				collect(x.Right)
+			}
+		case *ast.TableSource:
+			if x.AsName.L != "" {
+				aliases[x.AsName.L] = struct{}{}
+			}
+		}
+	}
+	collect(from.TableRefs)
+	return aliases
+}
+
+func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column []*expression.Column, tableAliases map[string]struct{}) (resultList []*ast.SelectField) {
 	dbName := field.WildCard.Schema
 	tblName := field.WildCard.Table
 	for i, name := range outputName {
@@ -4123,9 +4150,18 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
 			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTSID {
+			schemaName := name.DBName
+			if _, ok := tableAliases[name.TblName.L]; ok {
+				// name.TblName is an alias introduced in the FROM clause rather than a
+				// real table name. A column reference like `db`.`alias`.`col` cannot be
+				// resolved again when the rewritten statement text is restored (e.g. the
+				// SELECT statement stored in a view definition), so keep the reference
+				// unqualified. See https://github.com/pingcap/tidb/issues/69547.
+				schemaName = ast.CIStr{}
+			}
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
-					Schema: name.DBName,
+					Schema: schemaName,
 					Table:  name.TblName,
 					Name:   name.ColName,
 				}}
@@ -4345,7 +4381,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 
 	originalFields := sel.Fields.Fields
-	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
+	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields, sel.From)
 	if err != nil {
 		return nil, err
 	}
