@@ -43,6 +43,7 @@ go_test(
         "collate_bench_test.go",
         "collate_test.go",
         "main_test.go",
+        "unicode_0900_ai_ci_impl_test.go",
     ],
     embed = [":collate"],
     flaky = True,
