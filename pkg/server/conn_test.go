@@ -2657,10 +2657,23 @@ func TestIssue54335(t *testing.T) {
 		session.MustExec(t, se, "insert into testTable2 select * from testTable2")
 	}
 
+	// handleQuery bypasses dispatch's per-request cleanup, so mirror it here.
+	runQuery := func(sql string) error {
+		defer func() {
+			cc.ctx.SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+			cc.ctx.GetSessionVars().SQLKiller.Reset()
+		}()
+		return cc.handleQuery(context.Background(), sql)
+	}
+
+	_ = runQuery("select /*+ MAX_EXECUTION_TIME(1)*/  * FROM testTable2;")
+	time.Sleep(150 * time.Millisecond)
+	require.Zero(t, cc.ctx.GetSessionVars().SQLKiller.GetKillSignal())
+
 	times := 100
 	for ; times > 0; times-- {
 		// Test with -race
-		_ = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(1)*/  * FROM testTable2;")
+		_ = runQuery("select /*+ MAX_EXECUTION_TIME(1)*/  * FROM testTable2;")
 	}
 }
 
