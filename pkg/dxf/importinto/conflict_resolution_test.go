@@ -171,21 +171,28 @@ func runConflictedKVHandleStep(t *testing.T, subtask *proto.Subtask, stepExe exe
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
 	ctx := context.Background()
 	require.NoError(t, stepExe.Init(ctx))
+	t.Cleanup(func() {
+		if err := stepExe.Cleanup(context.Background()); err != nil {
+			t.Errorf("cleanup conflict resolution step executor: %v", err)
+		}
+	})
 	require.NoError(t, stepExe.RunSubtask(ctx, subtask))
 }
 
 func TestConflictResolutionStepExecutor(t *testing.T) {
-	origin := config.GetGlobalConfig().TempDir
-	defer func() {
-		config.GetGlobalConfig().TempDir = origin
-	}()
-	config.GetGlobalConfig().TempDir = t.TempDir()
+	origin := *config.GetGlobalConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempDir = t.TempDir()
+	})
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&origin)
+	})
 	hdlCtx := prepareConflictedKVHandleContext(t)
 	stMeta := importinto.ConflictResolutionStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)
 	require.NoError(t, err)
 	st := &proto.Subtask{SubtaskBase: proto.SubtaskBase{}, Meta: bytes}
-	stepExe := importinto.NewConflictResolutionStepExecutor(&proto.TaskBase{RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
+	stepExe := importinto.NewConflictResolutionStepExecutor(&proto.TaskBase{ID: 1, RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
 	runConflictedKVHandleStep(t, st, stepExe)
 	hdlCtx.tk.MustQuery("select * from tc").Sort().Check(testkit.Rows("4 4 4", "5 5 5"))
 }
