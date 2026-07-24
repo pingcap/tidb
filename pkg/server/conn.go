@@ -203,7 +203,29 @@ type clientConn struct {
 	extensions *extension.SessionExtensions
 
 	// Proxy Protocol Enabled
-	ppEnabled bool
+	ppEnabled         bool
+	queryMetricsCache queryMetricsObserverCache
+}
+
+type queryMetricsObserverCache struct {
+	sqlType  string
+	duration prometheus.Observer
+	rpc      prometheus.Observer
+}
+
+func (c *queryMetricsObserverCache) get(
+	sqlType, dbName, resourceGroupName string,
+) (duration, rpc prometheus.Observer) {
+	if dbName != "" || resourceGroupName != resourcegroup.DefaultResourceGroupName {
+		return metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, resourceGroupName),
+			metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName)
+	}
+	if c.duration == nil || c.sqlType != sqlType {
+		c.sqlType = sqlType
+		c.duration = metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, resourceGroupName)
+		c.rpc = metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName)
+	}
+	return c.duration, c.rpc
 }
 
 type userResourceLimits struct {
@@ -1268,8 +1290,9 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	}
 
 	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
-		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
+		durationObserver, rpcObserver := cc.queryMetricsCache.get(sqlType, dbName, vars.StmtCtx.ResourceGroupName)
+		durationObserver.Observe(cost.Seconds())
+		rpcObserver.Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
 		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))
 		}
