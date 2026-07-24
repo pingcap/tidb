@@ -4815,7 +4815,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, tblInfo.Name.L)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5002,7 +5002,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType, tblInfo.Name.L)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5126,7 +5126,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA, tblInfo.Name.L)
 	if err != nil {
 		return errors.Trace(err)
 	}
