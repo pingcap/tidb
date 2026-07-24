@@ -441,8 +441,11 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test"
 	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
-		{[]byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
-		{[]byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{
+			[]byte("-1\n-18446744073709551615\n-18446744073709551616\n-9223372036854775809\n18446744073709551616\n"),
+			[]string{"0", "0", "0", "0", "18446744073709551615"},
+			"Records: 5  Deleted: 0  Skipped: 0  Warnings: 5",
+		},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
