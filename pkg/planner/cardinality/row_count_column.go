@@ -15,6 +15,8 @@
 package cardinality
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
@@ -32,17 +34,134 @@ func init() {
 	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
 }
 
+// colEstimateCacheKey identifies a column estimate lookup. realtimeCount and
+// modifyCount are included because they affect the estimate through the
+// out-of-range and uniform-distribution fallback logic, and through the
+// table-growth increase factor applied per range.
+//
+// TODO: remove realtimeCount and modifyCount from the key. Two possible routes:
+//  1. Pin the stats snapshot per statement (suggested by @qw4990 in #67098):
+//     memoize GetStatsTable on StmtCtx as a lazy physicalID -> *statistics.Table
+//     map, populated at first use after the sync-load point (SyncWaitStatsLoadPoint
+//     deliberately observes newer stats mid-statement, so the pin cannot be taken
+//     at statement start). Pin the whole snapshot rather than only the two counts,
+//     so a histogram loaded mid-statement is never paired with stale counts. With
+//     the counts constant per physicalID for the whole optimization, they add no
+//     discriminating power and drop out of the key; as a bonus, repeated references
+//     to the same table (e.g. self-joins) get identical estimates.
+//  2. Refactor OutOfRangeRowCount (and related helpers) to return a selectivity
+//     ratio in stats-count space rather than an absolute row count already scaled
+//     to realtimeCount. Once those functions no longer take realtimeCount/modifyCount
+//     as inputs, GetIncreaseFactor can be applied once at the GetRowCountByColumnRanges
+//     call site.
+//
+// Either way the key reduces to (physicalID, colInfoID, pkIsHandle, rangesKey).
+type colEstimateCacheKey struct {
+	physicalID    int64
+	colInfoID     int64
+	pkIsHandle    bool
+	realtimeCount int64
+	modifyCount   int64
+	rangesKey     string // serialized form of the range slice
+}
+
+// colEstimateCacheMap is the concrete type stored in StmtCtx.ColEstimateCache.
+// Each distinct (column, ranges) tuple maps directly to its cached stats-based
+// result, giving O(1) lookup and storage with no per-key linear scan.
+type colEstimateCacheMap map[colEstimateCacheKey]statistics.RowEstimate
+
+// colEstimateCacheRangesKeyLimit caps the serialized rangesKey length so a
+// single pathological statement (e.g. an enormous IN-list under
+// tidb_opt_range_max_size=0) cannot make the statement-scoped cache retain
+// arbitrary memory. Calls whose serialized ranges exceed this limit bypass the
+// cache entirely — the underlying histogram computation still runs, just
+// without memoization. 16 KiB comfortably fits typical predicates (tens of
+// ranges, each Redact()'d to a few dozen bytes).
+const colEstimateCacheRangesKeyLimit = 16 * 1024
+
+// buildColEstimateCacheKey constructs the cache key for a column estimate.
+// Ranges are serialized to a string so the key is comparable without storing or
+// scanning the range slice. The Collators field of each Range is intentionally
+// omitted: getColumnRowCount uses the collation embedded in each Datum value,
+// not the Range.Collators slice, so it does not affect the estimate result.
+//
+// For string/bytes datums we also append Datum.Collation() because Range.Redact
+// formats only the raw value, while getColumnRowCount transforms string bounds
+// via collate.GetCollator(datum.Collation()).Key(...). Two ranges with the same
+// literal value but different effective collations must therefore land at
+// different cache keys. Range construction normally routes string types through
+// convertStringFTToBinaryCollate (forcing bin collation), so this is defensive
+// rather than load-bearing today — but it removes a future-fragility footgun
+// and the few extra bytes per string range are negligible.
+//
+// Returns ok=false when the serialized rangesKey would exceed
+// colEstimateCacheRangesKeyLimit; the caller must then skip the cache.
+func buildColEstimateCacheKey(physicalID, colInfoID int64, pkIsHandle bool, ranges []*ranger.Range, realtimeCount, modifyCount int64) (colEstimateCacheKey, bool) {
+	// Fast path: each range serializes to at least 4 bytes (Range.Redact always
+	// emits the enclosing brackets and the low/high separator, plus the comma
+	// joining consecutive ranges), so this many ranges is guaranteed to exceed
+	// the byte limit. Bail before serializing so repeated estimate calls on a
+	// pathological statement don't each pay the (bounded) serialization cost
+	// only to fail the limit check.
+	if len(ranges) > colEstimateCacheRangesKeyLimit/4 {
+		return colEstimateCacheKey{}, false
+	}
+	var b strings.Builder
+	appendDatumCollations := func(vals []types.Datum) {
+		for i := range vals {
+			k := vals[i].Kind()
+			if k == types.KindString || k == types.KindBytes {
+				b.WriteByte('|')
+				b.WriteString(vals[i].Collation())
+			}
+		}
+	}
+	for i, r := range ranges {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(r.Redact(errors.RedactLogDisable))
+		appendDatumCollations(r.LowVal)
+		appendDatumCollations(r.HighVal)
+		if b.Len() > colEstimateCacheRangesKeyLimit {
+			return colEstimateCacheKey{}, false
+		}
+	}
+	return colEstimateCacheKey{
+		physicalID:    physicalID,
+		colInfoID:     colInfoID,
+		pkIsHandle:    pkIsHandle,
+		realtimeCount: realtimeCount,
+		modifyCount:   modifyCount,
+		rangesKey:     b.String(),
+	}, true
+}
+
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
 // PKIsHandle indicates whether the column is the single primary key column.
+// Results from valid (non-pseudo) column stats are cached on the statement context
+// so that subsequent calls with the same column and ranges — including calls from
+// different plan candidates exploring the same physical table — can skip recomputation.
 func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range, pkIsHandle bool) (result statistics.RowEstimate, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c := coll.GetCol(colUniqueID)
+	// Two-value lookup: a non-empty UniqueID2colInfoID that happens to be
+	// missing this UniqueID would otherwise silently zero out colInfoID and
+	// cause collisions on cache keys and wrong-column async-load enqueues.
 	colInfoID := colUniqueID
-	if len(coll.UniqueID2colInfoID) > 0 {
-		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
+	if id, ok := coll.UniqueID2colInfoID[colUniqueID]; ok {
+		colInfoID = id
 	}
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
+	// Pass colInfoID (metadata column ID), not colUniqueID. ColumnStatsIsInvalid
+	// enqueues async histogram loads keyed by TableItemID.ID, which the loader
+	// interprets as a metadata column ID (GetColumnByID). When callers pass a
+	// plan-assigned UniqueID — e.g. the table-path PK case in
+	// deriveTablePathStats — the loader cannot resolve it and silently bails,
+	// leaving the column on pseudo estimates forever.
+	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colInfoID) {
+		// Do not cache pseudo/invalid results — they should not be reused
+		// by index estimation paths that require real column stats.
 		var pseudoResult float64
 		if pkIsHandle {
 			if len(colRanges) == 0 {
@@ -61,14 +180,129 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		}
 		return statistics.DefaultRowEst(pseudoResult), nil
 	}
+
+	// Check the statement-scoped cache before computing. cacheable is false when
+	// the serialized rangesKey would exceed the size cap; in that case we skip
+	// both the lookup and the insert below, so a pathological caller cannot make
+	// the cache retain arbitrarily large keys.
+	key, cacheable := buildColEstimateCacheKey(coll.PhysicalID, colInfoID, pkIsHandle, colRanges, coll.RealtimeCount, coll.ModifyCount)
+	cache, _ := sc.ColEstimateCache.(colEstimateCacheMap)
+	if cacheable && cache != nil {
+		if cached, ok := cache[key]; ok {
+			return cached, nil
+		}
+	}
+
 	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, pkIsHandle)
 	if err != nil {
 		return statistics.DefaultRowEst(0), errors.Trace(err)
 	}
+
+	if cacheable {
+		if cache == nil {
+			// Pre-size for a typical multi-index sweep so a 15-ish-index
+			// access-path scan does not rehash. Small enough that simple
+			// queries with one or two entries waste only a few hundred bytes.
+			cache = make(colEstimateCacheMap, 16)
+			sc.ColEstimateCache = cache
+		}
+		cache[key] = result
+	}
 	return result, nil
 }
 
-// equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
+// tryColumnEstimateForSingleColRanges checks whether column statistics can be
+// used instead of index statistics for the given single-column ranges. This is
+// preferred over index histogram estimation because column histograms retain
+// original data types, avoiding the lossy string encoding that index histograms
+// use.
+//
+// Returns (result, true) if column stats are valid and the estimate was
+// produced. Returns (zero, false) if column stats are unavailable, the ranges
+// are not single-column, or the index uses a prefix length on the column, in
+// which case the caller should fall back to index-based estimation.
+func tryColumnEstimateForSingleColRanges(
+	sctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	idx *statistics.Index,
+	indexRanges []*ranger.Range,
+) (statistics.RowEstimate, bool) {
+	if coll == nil || len(indexRanges) == 0 {
+		return statistics.RowEstimate{}, false
+	}
+	// All ranges must be single-column on both bounds. Range intersection
+	// (fix control 54337) can produce ranges whose LowVal and HighVal have
+	// different lengths; a longer bound constrains later index columns, so
+	// reading only its first value would silently drop that constraint.
+	for _, r := range indexRanges {
+		if len(r.LowVal) != 1 || len(r.HighVal) != 1 {
+			return statistics.RowEstimate{}, false
+		}
+	}
+	// Not applicable for prefix indexes — ranges are truncated to the prefix
+	// length, so column-level ranges would not match.
+	if idx.Info.Columns[0].Length != types.UnspecifiedLength {
+		return statistics.RowEstimate{}, false
+	}
+	// Not applicable for partial indexes (ConditionExprString != "") — column
+	// stats cover all rows, but a partial index only covers rows satisfying its
+	// predicate, so the estimates would not match.
+	// Not applicable for MV indexes — a single row can produce multiple index
+	// entries, so column-level cardinality does not reflect index row counts.
+	if idx.Info.ConditionExprString != "" || idx.Info.MVIndex {
+		return statistics.RowEstimate{}, false
+	}
+	colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
+	if len(colIDs) == 0 {
+		return statistics.RowEstimate{}, false
+	}
+	colID := colIDs[0]
+	// Check column stats validity — do not use pseudo estimates here.
+	c := coll.GetCol(colID)
+	// Derive metadata column ID for the async-load path inside
+	// ColumnStatsIsInvalid (the loader keys TableItemID.ID by metadata ID,
+	// not by plan UniqueID). When UniqueID2colInfoID is empty (e.g. mock
+	// HistColls), the IDs coincide.
+	colInfoID := colID
+	if len(coll.UniqueID2colInfoID) > 0 {
+		if id, ok := coll.UniqueID2colInfoID[colID]; ok {
+			colInfoID = id
+		}
+	}
+	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colInfoID) {
+		return statistics.RowEstimate{}, false
+	}
+	// For a single-column unique index, the index-based path returns exactly 1
+	// for every non-null point probe, which is more accurate than histogram
+	// estimation (the histogram cannot know about uniqueness, and the increase
+	// factor would scale the point estimate above 1 on stale stats). Bail out
+	// if any range is a non-null point so those probes keep the uniqueness
+	// guarantee; mixed range sets (e.g. a = 1 OR a BETWEEN 10 AND 20) give up
+	// the column estimate for their interval portion as the price. Multi-column
+	// unique indexes are not eligible because single-column ranges don't cover
+	// the full index, so the "exactly 1" guarantee does not apply. Column
+	// nullability does not matter: a unique index only enforces uniqueness on
+	// non-null values, but IsPointNonNullable already filters out NULL ranges,
+	// so any range it accepts is a non-null point and the constraint applies.
+	if len(idx.Info.Columns) == 1 && idx.Info.Unique {
+		tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
+		for _, r := range indexRanges {
+			if r.IsPointNonNullable(tc) {
+				return statistics.RowEstimate{}, false
+			}
+		}
+	}
+	// Compute or retrieve from cache.
+	result, err := GetRowCountByColumnRanges(sctx, coll, colID, indexRanges, false)
+	if err != nil {
+		return statistics.RowEstimate{}, false
+	}
+	return result, true
+}
+
+// equalRowCountOnColumn estimates the row count for a single value.
+// The returned value is in stats-count space; callers are responsible for applying
+// GetIncreaseFactor when accumulating into a per-range total.
 func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate, err error) {
 	if val.IsNull() {
 		return statistics.DefaultRowEst(float64(c.NullCount)), nil
@@ -118,6 +352,9 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 }
 
 // getColumnRowCount estimates the row count by a slice of Range.
+// GetIncreaseFactor is applied per range, before the out-of-range contribution,
+// so that histogram-based estimates are scaled to the current table size while
+// OutOfRangeRowCount (which already operates in current-count space) is not double-scaled.
 func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	var totalCount statistics.RowEstimate
@@ -157,7 +394,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 				if err != nil {
 					return statistics.DefaultRowEst(0), errors.Trace(err)
 				}
-				// If the current table row count has changed, we should scale the row count accordingly.
+				// If the current table row count has changed, scale the estimate accordingly.
 				cnt.MultiplyAll(c.GetIncreaseFactor(realtimeRowCount))
 				totalCount.Add(cnt)
 			}
@@ -175,7 +412,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 					if err != nil {
 						return statistics.DefaultRowEst(0), err
 					}
-					// If the current table row count has changed, we should scale the row count accordingly.
+					// If the current table row count has changed, scale the estimate accordingly.
 					cnt.MultiplyAll(c.GetIncreaseFactor(realtimeRowCount))
 					totalCount.Add(cnt)
 				}
@@ -209,10 +446,11 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			}
 			cnt.Add(highCnt)
 		}
-		// Clamp all 3 fields of RowEstimate to [0, realtimeRowCount]
 		cnt.Clamp(0, float64(realtimeRowCount))
 
-		// If the current table row count has changed, we should scale the row count accordingly.
+		// If the current table row count has changed, scale the estimate accordingly.
+		// This must happen before the out-of-range contribution because OutOfRangeRowCount
+		// already returns values in current-count space.
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt.MultiplyAll(increaseFactor)
 
@@ -239,14 +477,17 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
 func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) statistics.RowEstimate {
-	// TODO: Track min/max range for column estimates, currently only used for indexes.
 	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
 	}
 	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))
-	// Only add TopN count to the main estimate, keep min/max estimates from histogram
-	histBetweenCnt.Est += topNCnt
+	// TopN counts are exact observed frequencies, so they shift the whole
+	// estimate band: add to Est, MinEst, and MaxEst alike, matching
+	// betweenRowCountOnIndex. Column min/max now feeds index estimation via
+	// tryColumnEstimateForSingleColRanges, so the fields must stay consistent
+	// between the two paths.
+	histBetweenCnt.AddAll(topNCnt)
 	return histBetweenCnt
 }
 

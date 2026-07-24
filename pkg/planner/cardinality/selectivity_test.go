@@ -132,6 +132,131 @@ func BenchmarkSelectivity(b *testing.B) {
 	pprof.StopCPUProfile()
 }
 
+// BenchmarkColEstimateCacheManyIndexes measures the cost of estimating
+// single-column index range row counts across many indexes that all share a
+// common leading column referenced by the query predicate.
+//
+// Workload model: the optimizer evaluates each candidate access path for a
+// SELECT with a predicate on column `a`. With 15 indexes leading on `a`, every
+// candidate routes through tryColumnEstimateForSingleColRanges and calls
+// GetRowCountByColumnRanges with identical (column, range) arguments. With
+// ColEstimateCache the first index pays the histogram-lookup cost and the rest
+// reuse the cached result; without it every index pays in full.
+//
+// Two sub-benchmarks compare cached vs uncached behavior in a single binary by
+// toggling StmtCtx.ColEstimateCache directly:
+//
+//   - cached: reset once per outer iteration (mirrors per-statement lifecycle),
+//     so the inner sweep across N indexes shares cache entries.
+//   - uncached: reset before each per-index call, so no entries are ever reused.
+func BenchmarkColEstimateCacheManyIndexes(b *testing.B) {
+	store, dom := testkit.CreateMockStoreAndDomain(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(
+		a int, b int, c int, d int, e int, f int, g int, h int,
+		index idx_a(a),
+		index idx_ab(a, b),
+		index idx_ac(a, c),
+		index idx_ad(a, d),
+		index idx_ae(a, e),
+		index idx_abc(a, b, c),
+		index idx_acd(a, c, d),
+		index idx_abd(a, b, d),
+		index idx_abe(a, b, e),
+		index idx_acf(a, c, f),
+		index idx_adg(a, d, g),
+		index idx_aeh(a, e, h),
+		index idx_abcd(a, b, c, d),
+		index idx_acdf(a, c, d, f),
+		index idx_adef(a, d, e, f)
+	)`)
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(b, err)
+	tblInfo := tb.Meta()
+
+	const rowCount int64 = 100000
+	statsTbl := mockStatsTable(tblInfo, rowCount)
+
+	colValues, err := generateIntDatum(1, 200)
+	require.NoError(b, err)
+	colRepeat := rowCount / int64(len(colValues))
+	for _, col := range tblInfo.Columns {
+		statsTbl.SetCol(col.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(col.ID, colValues, colRepeat, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              col,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+
+	idxValues, err := generateIntDatum(2, 14)
+	require.NoError(b, err)
+	idxRepeat := rowCount / int64(len(idxValues))
+	tp := types.NewFieldType(mysql.TypeBlob)
+	for _, idx := range tblInfo.Indices {
+		statsTbl.SetIdx(idx.ID, &statistics.Index{
+			Histogram: *mockStatsHistogram(idx.ID, idxValues, idxRepeat, tp),
+			Info:      idx,
+			StatsVer:  2,
+		})
+	}
+
+	// Build Idx2ColUniqueIDs keyed by the actual column IDs so coll.GetCol()
+	// finds the column histograms set above. The shared generateMapsForMockStatsTbl
+	// helper stores idxCol.Offset instead, which would miss the SetCol(col.ID,...)
+	// entries when column IDs are not contiguous from 0.
+	idx2Cols := make(map[int64][]int64, len(tblInfo.Indices))
+	col2Idxs := make(map[int64][]int64)
+	for _, idx := range tblInfo.Indices {
+		ids := make([]int64, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			ids = append(ids, tblInfo.Columns[idxCol.Offset].ID)
+		}
+		idx2Cols[idx.ID] = ids
+		col2Idxs[ids[0]] = append(col2Idxs[ids[0]], idx.ID)
+	}
+	statsTbl.Idx2ColUniqueIDs = idx2Cols
+	statsTbl.ColUniqueID2IdxIDs = col2Idxs
+
+	indexIDs := make([]int64, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		indexIDs = append(indexIDs, idx.ID)
+	}
+
+	sctx := tk.Session().GetPlanCtx()
+	sc := tk.Session().GetSessionVars().StmtCtx
+	ranges := getRange(10, 50)
+
+	b.Run("cached", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			sc.ColEstimateCache = nil
+			for _, idxID := range indexIDs {
+				_, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, ranges, nil)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+
+	b.Run("uncached", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for _, idxID := range indexIDs {
+				sc.ColEstimateCache = nil
+				_, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, ranges, nil)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+}
+
 func TestOutOfRangeEstimation(t *testing.T) {
 	// Create mock table info
 	tblInfo := &model.TableInfo{
@@ -920,6 +1045,235 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.Equal(t, 1.0, count)
 }
 
+// TestTryColumnEstimateGuards verifies that tryColumnEstimateForSingleColRanges
+// bails out (returns false) for partial indexes, MV indexes, and single-column
+// unique indexes whose range set contains a point probe (including mixed
+// point + interval range sets), deferring to the index-based estimation path
+// in each case.
+func TestTryColumnEstimateGuards(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int not null, key idx(a))")
+
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	colValues, err := generateIntDatum(1, 10)
+	require.NoError(t, err)
+	idxValues := make([]types.Datum, 10)
+	for i := range 10 {
+		enc, encErr := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i+1)))
+		require.NoError(t, encErr)
+		idxValues[i].SetBytes(enc)
+	}
+
+	buildStatsTbl := func(idxInfo *model.IndexInfo) *statistics.Table {
+		statsTbl := mockStatsTable(tblInfo, 10)
+		statsTbl.SetCol(tblInfo.Columns[0].ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(tblInfo.Columns[0].ID, colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[0],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+		statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+			Histogram: *mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
+			Info:      idxInfo,
+			StatsVer:  2,
+		})
+		generateMapsForMockStatsTbl(statsTbl)
+		return statsTbl
+	}
+
+	sctx := mock.NewContext()
+	idxID := tblInfo.Indices[0].ID
+	pointRanges := getRange(5, 5)
+
+	// Partial index: ConditionExprString != "" should bypass column stats and fall
+	// through to index histogram estimation.
+	partialIdxInfo := tblInfo.Indices[0].Clone()
+	partialIdxInfo.ConditionExprString = "a > 0"
+	partialStatsTbl := buildStatsTbl(partialIdxInfo)
+	_, err = cardinality.GetRowCountByIndexRanges(sctx, &partialStatsTbl.HistColl, idxID, pointRanges, nil)
+	require.NoError(t, err)
+	// Guard fired before column path: no cache written.
+	require.Nil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+
+	// MV index: MVIndex = true should bypass column stats and fall through to index
+	// histogram estimation.
+	mvIdxInfo := tblInfo.Indices[0].Clone()
+	mvIdxInfo.MVIndex = true
+	mvStatsTbl := buildStatsTbl(mvIdxInfo)
+	_, err = cardinality.GetRowCountByIndexRanges(sctx, &mvStatsTbl.HistColl, idxID, pointRanges, nil)
+	require.NoError(t, err)
+	// Guard fired before column path: no cache written.
+	require.Nil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+
+	// Unique NOT NULL single-column index with a point probe:
+	// tryColumnEstimateForSingleColRanges should bail out so the index path can
+	// apply the "exactly 1 row" guarantee.
+	//
+	// Real stats tables from GetPhysicalTableStats do not populate Idx2ColUniqueIDs
+	// (that map is only built by GenerateHistCollFromColumnInfo during planning), so
+	// the guard would never be reached via that path. Use a mock HistColl with the
+	// map correctly keyed by column info ID so the guard is actually exercised.
+	uniqIdxInfo := tblInfo.Indices[0].Clone()
+	uniqIdxInfo.Unique = true
+	uniqStatsTbl := buildStatsTbl(uniqIdxInfo)
+	// Override Idx2ColUniqueIDs with the real column info ID (generateMapsForMockStatsTbl
+	// stores idxCol.Offset instead, which would miss the GetCol lookup).
+	uniqStatsTbl.Idx2ColUniqueIDs = map[int64][]int64{idxID: {tblInfo.Columns[0].ID}}
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &uniqStatsTbl.HistColl, idxID, pointRanges, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, countResult.Est)
+	// Guard fired: tryColumnEstimateForSingleColRanges bailed out, so no column cache written.
+	require.Nil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+
+	// Non-point range on the same unique index: guard does not fire, column stats are used.
+	nonPointRanges := getRange(3, 7)
+	_, err = cardinality.GetRowCountByIndexRanges(sctx, &uniqStatsTbl.HistColl, idxID, nonPointRanges, nil)
+	require.NoError(t, err)
+	// Column path was taken: cache now has an entry for the column.
+	require.NotNil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+
+	// Mixed point + interval ranges on the unique index (a = 1 OR a BETWEEN 3
+	// AND 7): the guard must still bail out so the point probe keeps the index
+	// path's "exactly 1 row" guarantee. Stale stats make the difference
+	// observable: with the realtime count at twice the histogram total, the
+	// column path would scale the point estimate by the increase factor
+	// (1 -> 2), while the index path pins it at 1 and only scales the interval
+	// portion.
+	uniqStatsTbl.RealtimeCount = 20
+	uniqStatsTbl.ModifyCount = 10
+	mixedRanges := append(getRange(1, 1), getRange(3, 7)...)
+	mixedSctx := mock.NewContext()
+	mixedResult, err := cardinality.GetRowCountByIndexRanges(mixedSctx, &uniqStatsTbl.HistColl, idxID, mixedRanges, nil)
+	require.NoError(t, err)
+	// Point probe contributes exactly 1 (no increase factor); interval [3, 7]
+	// covers 5 histogram rows scaled by the increase factor 20/10 = 2.
+	require.Equal(t, 11.0, mixedResult.Est)
+	// Guard fired: the index path was used and no column estimate was cached.
+	require.Nil(t, mixedSctx.GetSessionVars().StmtCtx.ColEstimateCache)
+
+	// Asymmetric bounds: range intersection (fix control 54337) can produce index
+	// ranges whose LowVal and HighVal have different lengths, e.g. intersecting
+	// a >= 2 with an (a, b) range gives LowVal=[2], HighVal=[5 3]. Such a range is
+	// not a single-column range — HighVal[1] constrains the second index column —
+	// so the guard must bail out to index-based estimation. Reading only HighVal[0]
+	// on the column path would silently drop the second-column bound.
+	testKit.MustExec("create table t2(a int not null, b int not null, key idx2(a, b))")
+	is = dom.InfoSchema()
+	tb2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl2Info := tb2.Meta()
+	idx2Values := make([]types.Datum, 10)
+	for i := range 10 {
+		enc, encErr := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i+1)), types.NewIntDatum(int64(i+1)))
+		require.NoError(t, encErr)
+		idx2Values[i].SetBytes(enc)
+	}
+	statsTbl2 := mockStatsTable(tbl2Info, 10)
+	statsTbl2.SetCol(tbl2Info.Columns[0].ID, &statistics.Column{
+		Histogram:         *mockStatsHistogram(tbl2Info.Columns[0].ID, colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tbl2Info.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+	statsTbl2.SetIdx(tbl2Info.Indices[0].ID, &statistics.Index{
+		Histogram: *mockStatsHistogram(tbl2Info.Indices[0].ID, idx2Values, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:      tbl2Info.Indices[0],
+		StatsVer:  2,
+	})
+	// Key Idx2ColUniqueIDs by the real column info ID so the column stats set
+	// above are resolvable and the guard's bail-out is what is actually tested.
+	statsTbl2.Idx2ColUniqueIDs = map[int64][]int64{tbl2Info.Indices[0].ID: {tbl2Info.Columns[0].ID, tbl2Info.Columns[1].ID}}
+	asymRanges := []*ranger.Range{{
+		LowVal:    []types.Datum{types.NewIntDatum(2)},
+		HighVal:   []types.Datum{types.NewIntDatum(5), types.NewIntDatum(3)},
+		Collators: []collate.Collator{collate.GetBinaryCollator(), collate.GetBinaryCollator()},
+	}}
+	asymSctx := mock.NewContext()
+	_, err = cardinality.GetRowCountByIndexRanges(asymSctx, &statsTbl2.HistColl, tbl2Info.Indices[0].ID, asymRanges, nil)
+	require.NoError(t, err)
+	// Guard fired: index-based estimation was used and no column estimate was cached.
+	require.Nil(t, asymSctx.GetSessionVars().StmtCtx.ColEstimateCache)
+}
+
+// TestColEstimateCacheSharingAcrossDataSources verifies that ColEstimateCache is keyed
+// by (physicalID, colInfoID) — the physical column identity — not by the per-query
+// colUniqueID assigned by the planner. Two DataSource nodes that reference the same
+// physical table column (as occurs during join reordering) must share a cached estimate
+// rather than recompute independently.
+//
+// The test builds two HistColl instances that share a physicalID and colInfoID
+// (via UniqueID2colInfoID) but have different colUniqueIDs and different underlying
+// histograms. A first call populates the cache via HistColl1. A second call via HistColl2
+// must return the cached result from HistColl1, not the result that HistColl2's different
+// histogram would produce if computed fresh.
+func TestColEstimateCacheSharingAcrossDataSources(t *testing.T) {
+	const (
+		physicalID   = int64(100) // physical table ID shared by both DataSource nodes
+		colInfoID    = int64(42)  // physical column metadata ID
+		colUniqueID1 = int64(1000)
+		colUniqueID2 = int64(2000)
+		rowCount     = int64(10)
+	)
+
+	colInfo := &model.ColumnInfo{ID: colInfoID}
+	colInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+
+	// HistColl1: histogram with values 0..9. For getRange(3, 7), the estimate is ~5 rows.
+	values1, err := generateIntDatum(1, 10)
+	require.NoError(t, err)
+	coll1 := statistics.NewHistColl(physicalID, rowCount, 0, 1, 0)
+	coll1.UniqueID2colInfoID[colUniqueID1] = colInfoID
+	coll1.SetCol(colUniqueID1, &statistics.Column{
+		Histogram:         *mockStatsHistogram(colInfoID, values1, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              colInfo,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+
+	// HistColl2: histogram with values 100..109 (all above the query range [3, 7]).
+	// Fresh computation on this histogram would return a near-zero out-of-range
+	// estimate — demonstrably different from HistColl1's result.
+	values2 := make([]types.Datum, 10)
+	for i := range 10 {
+		values2[i] = types.NewIntDatum(int64(100 + i))
+	}
+	coll2 := statistics.NewHistColl(physicalID, rowCount, 0, 1, 0)
+	coll2.UniqueID2colInfoID[colUniqueID2] = colInfoID
+	coll2.SetCol(colUniqueID2, &statistics.Column{
+		Histogram:         *mockStatsHistogram(colInfoID, values2, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              colInfo,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+
+	sctx := mock.NewContext()
+	ranges := getRange(3, 7)
+
+	// First call: DataSource 1. Cache is empty; result computed from HistColl1 (values 0-9).
+	require.Nil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+	result1, err := cardinality.GetRowCountByColumnRanges(sctx, coll1, colUniqueID1, ranges, false)
+	require.NoError(t, err)
+	require.NotNil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+	require.Positive(t, result1.Est, "HistColl1 histogram covers [3,7]; estimate should be > 0")
+
+	// Second call: DataSource 2. Same physicalID and colInfoID, different colUniqueID.
+	// The cache must be hit (returning result1). If sharing is broken and the call
+	// computes fresh from HistColl2 (values 100-109, entirely above [3,7]), the
+	// result would be near-zero — not equal to result1.
+	result2, err := cardinality.GetRowCountByColumnRanges(sctx, coll2, colUniqueID2, ranges, false)
+	require.NoError(t, err)
+	require.Equal(t, result1, result2,
+		"DataSource 2 (different colUniqueID, same physicalID+colInfoID) should return "+
+			"the cached result from DataSource 1, not recompute from its different histogram")
+}
+
 func TestColumnIndexNullEstimation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1009,13 +1363,13 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
-			selectivity:              0.006358024691358024,
-			selectivityAfterIncrease: 0.011302469135802469,
+			selectivity:              0.018017832647462276,
+			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
-			selectivity:              0.012530864197530862,
-			selectivityAfterIncrease: 0.017475308641975308,
+			selectivity:              0.01836076817558299,
+			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -1029,8 +1383,8 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              0.001851851851851852,
-			selectivityAfterIncrease: 0.11122575925925926,
+			selectivity:              0.0032370234709773148,
+			selectivityAfterIncrease: 0.17610373422496575,
 		},
 		{
 			exprs:                    longExpr,

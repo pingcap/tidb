@@ -427,7 +427,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
 		var countEst statistics.RowEstimate
-		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
+		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), ds.TableStats.HistColl, pkCol.UniqueID, path.Ranges, true)
 		path.CountAfterAccess = countEst.Est
 	}
 	if !isIm {
