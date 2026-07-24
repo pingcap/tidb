@@ -146,6 +146,19 @@ type DataSource struct {
 	// index pruning early in the planning phase - which is an approximate heuristic.
 	InterestingColumns []*expression.Column
 
+	// CrossSkylineCache stores skyline pruning candidates from a sort-property call for
+	// cross-comparison with subsequent empty-property calls. This prevents non-ordered plans
+	// from being selected purely on cost when the cost may be underestimated and a sort-ordered
+	// plan exists that dominates on other skyline dimensions (match, risk, scan).
+	// The concrete type is *skylineCrossCache from the planner/core package.
+	CrossSkylineCache any
+
+	// SkylineBaseCache caches property-independent column maps (accessCondsColMap,
+	// indexCondsColMap) computed during skyline pruning, keyed by *AccessPath pointer.
+	// These maps depend only on the path's conditions/columns and are identical across
+	// all skylinePruning calls with different physical properties.
+	// The concrete type is *skylineBaseCache from the planner/core package.
+	SkylineBaseCache any
 	// FtsPushDown stores extracted FTS query metadata, when FTS_MATCH_WORD() can
 	// be planned as a TiFlash full-text search scan.
 	FtsPushDown *FTSPushDown
