@@ -254,6 +254,9 @@ func TestPostProcess(t *testing.T) {
 	table, err = do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("db"), ast.NewCIStr("tb2"))
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
+	// The checksum path is covered above; keep this branch focused on allocator rebase.
+	plan.Checksum = config.OpLevelOff
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone", "return(true)")
 	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	t.Cleanup(func() {
