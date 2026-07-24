@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -40,8 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
-	metastorage "github.com/tikv/pd/client/clients/metastorage"
 	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -452,7 +450,18 @@ func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 }
 
 type mockResourceGroupProvider struct {
+	rmclient.ResourceGroupProvider
 	config *rmclient.Config
+}
+
+func newMockResourceGroupProvider(t *testing.T, config *rmclient.Config) *mockResourceGroupProvider {
+	t.Helper()
+	baseProvider, ok := infosync.NewMockResourceManagerClient(1).(rmclient.ResourceGroupProvider)
+	require.True(t, ok)
+	return &mockResourceGroupProvider{
+		ResourceGroupProvider: baseProvider,
+		config:                config,
+	}
 }
 
 func newMockDomainWithRUVersion(t *testing.T, version rmclient.RUVersion) *domain.Domain {
@@ -462,7 +471,7 @@ func newMockDomainWithRUVersion(t *testing.T, version rmclient.RUVersion) *domai
 
 	cfg := rmclient.DefaultConfig()
 	cfg.RUVersionPolicy = &rmclient.RUVersionPolicy{Default: version}
-	provider := &mockResourceGroupProvider{config: cfg}
+	provider := newMockResourceGroupProvider(t, cfg)
 	controller, err := rmclient.NewResourceGroupController(ctx, 1, provider, nil, 1)
 	require.NoError(t, err)
 
@@ -481,48 +490,4 @@ func (m *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ..
 	}, nil
 }
 
-func (*mockResourceGroupProvider) Watch(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (chan *metastorage.WatchResponse, error) {
-	ch := make(chan *metastorage.WatchResponse)
-	go func() {
-		<-ctx.Done()
-		close(ch)
-	}()
-	return ch, nil
-}
-
-func (*mockResourceGroupProvider) Put(context.Context, []byte, []byte, ...opt.MetaStorageOption) (*meta_storagepb.PutResponse, error) {
-	return &meta_storagepb.PutResponse{}, nil
-}
-
-func (*mockResourceGroupProvider) GetResourceGroup(context.Context, string, ...pd.GetResourceGroupOption) (*rmpb.ResourceGroup, error) {
-	return nil, nil
-}
-
-func (*mockResourceGroupProvider) ListResourceGroups(context.Context, ...pd.GetResourceGroupOption) ([]*rmpb.ResourceGroup, error) {
-	return nil, nil
-}
-
-func (*mockResourceGroupProvider) AddResourceGroup(context.Context, *rmpb.ResourceGroup) (string, error) {
-	return "", nil
-}
-
-func (*mockResourceGroupProvider) ModifyResourceGroup(context.Context, *rmpb.ResourceGroup) (string, error) {
-	return "", nil
-}
-
-func (*mockResourceGroupProvider) DeleteResourceGroup(context.Context, string) (string, error) {
-	return "", nil
-}
-
-func (*mockResourceGroupProvider) AcquireTokenBuckets(context.Context, *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
-	return nil, nil
-}
-
-func (*mockResourceGroupProvider) LoadResourceGroups(context.Context) ([]*rmpb.ResourceGroup, int64, error) {
-	return nil, 0, nil
-}
-
-var (
-	_ metastorage.Client             = (*mockResourceGroupProvider)(nil)
-	_ rmclient.ResourceGroupProvider = (*mockResourceGroupProvider)(nil)
-)
+var _ rmclient.ResourceGroupProvider = (*mockResourceGroupProvider)(nil)

@@ -760,6 +760,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	fset.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
 	})
+	if actualFlags[nmStarterParams] && cfg.DeployMode == deploymode.Starter {
+		terror.MustNil(applyStarterAdditionalParams(cfg, getStarterAdditionalParams()))
+	}
 
 	// Base
 	if actualFlags[nmHost] {
@@ -1402,6 +1405,7 @@ type starterParams struct {
 	podName          string
 	podIP            string
 	podNamespace     string
+	enableRGFallback bool
 }
 
 func parseStarterAdditionalParams(raw string) (starterParams, error) {
@@ -1444,11 +1448,26 @@ func parseStarterAdditionalParams(raw string) (starterParams, error) {
 			params.podIP = value
 		case "pod-namespace":
 			params.podNamespace = value
+		case "enable-rg-fallback":
+			enable, err := strconv.ParseBool(value)
+			if err != nil {
+				return params, fmt.Errorf("starter additional param %q must be a bool: %w", key, err)
+			}
+			params.enableRGFallback = enable
 		default:
 			return params, fmt.Errorf("unknown starter additional param %q", key)
 		}
 	}
 	return params, nil
+}
+
+func applyStarterAdditionalParams(cfg *config.Config, raw string) error {
+	params, err := parseStarterAdditionalParams(raw)
+	if err != nil {
+		return err
+	}
+	cfg.StarterParams.EnableRGFallback = params.enableRGFallback
+	return nil
 }
 
 func getStarterAdditionalParams() string {

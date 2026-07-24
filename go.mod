@@ -123,7 +123,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20260708122311-01bd8f99f4da
-	github.com/tikv/pd/client v0.0.0-20260708075407-4e05b9d2c2d3
+	github.com/tikv/pd/client v0.0.0-20260720043438-0b37df9a48ed
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
