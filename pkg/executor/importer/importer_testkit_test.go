@@ -188,7 +188,8 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
 	storage.SetNodeResource(proto.NewNodeResource(16, 16*units.GiB, 100*units.GiB))
-	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
+	// Keep the fixture node first if the test harness starts a domain-owned DXF node.
+	require.NoError(t, tm.InitMeta(ctx, "0_tidb1", ""))
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 	targetNodeCPUCnt, err := importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeQuery, "")
