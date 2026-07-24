@@ -247,7 +247,7 @@ func (*inMemoryReaderWrapper) Close() error {
 func prepareReader(
 	ctx context.Context,
 	store storeapi.Storage,
-	openReader ReaderOpener,
+	openReader func(context.Context) (storeapi.ReadSeekCloser, error),
 	path string,
 	fileSize int64,
 ) (parquet.ReaderAtSeeker, *inMemoryReaderBase, storeapi.ReadSeekCloser, error) {
