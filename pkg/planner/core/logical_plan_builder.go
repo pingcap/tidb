@@ -488,6 +488,9 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
 			isTableName = true
+		case *ast.JSONTableExpr:
+			err = expression.ErrNotSupportedYet.GenWithStackByArgs("JSON_TABLE function")
+			return nil, err
 		default:
 			err = plannererrors.ErrUnsupportedType.GenWithStackByArgs(v)
 		}
