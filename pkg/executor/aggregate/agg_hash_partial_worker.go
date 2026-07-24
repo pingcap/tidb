@@ -30,6 +30,9 @@ import (
 	"github.com/twmb/murmur3"
 )
 
+// SpillChunkSizeThreshold describes the threshold that a chunk needs to be spilled
+const SpillChunkSizeThreshold = 64 * 1024 // 64 KiB
+
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
@@ -338,8 +341,8 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 		for key, partialResults := range partialResultsMap.M {
 			partitionNum := int(murmur3.Sum32(hack.Slice(key))) % spilledPartitionNum
 
-			// Spill data when tmp chunk is full
-			if w.tmpChksForSpill[partitionNum].IsFull() {
+			// Spill data when tmp chunk is full or the memory usage exceeds the threshold
+			if CheckChunkSpill(w.tmpChksForSpill[partitionNum]) {
 				err := w.spilledChunksIO[partitionNum].Add(w.tmpChksForSpill[partitionNum])
 				if err != nil {
 					return err
@@ -382,4 +385,9 @@ func (w *HashAggPartialWorker) spillRemainingDataToDisk() error {
 func (w *HashAggPartialWorker) processError(err error) {
 	w.globalOutputCh <- &AfFinalResult{err: err}
 	w.spillHelper.setError()
+}
+
+// CheckChunkSpill checks if this spill chunk need to be spilled
+func CheckChunkSpill(chk *chunk.Chunk) bool {
+	return chk.NumRows() > 0 && (chk.UsedMemoryUsage() >= SpillChunkSizeThreshold || chk.IsFull())
 }
