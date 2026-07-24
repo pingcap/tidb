@@ -132,6 +132,155 @@ type JobInfo struct {
 	GroupKey     string
 }
 
+// RawImportJobStatsContractVersion is the version of the machine-oriented
+// Raw_Stats JSON contract returned by SHOW RAW IMPORT JOB(S).
+const RawImportJobStatsContractVersion = 1
+
+// Raw import job status categories. They are intentionally coarser than the
+// raw status strings so clients can make stable control-plane decisions even if
+// new status values are added later.
+const (
+	RawImportJobStatusCategoryPending         = "pending"
+	RawImportJobStatusCategoryRunning         = "running"
+	RawImportJobStatusCategoryTerminal        = "terminal"
+	RawImportJobStatusCategoryAttentionNeeded = "attention_needed"
+	RawImportJobStatusCategoryUnknown         = "unknown"
+)
+
+// Raw import job error categories. These are public, domain-level categories
+// for machine consumers; the original error string remains available as the
+// message for display and diagnostics.
+const (
+	RawImportJobErrorCategoryFailed             = "failed"
+	RawImportJobErrorCategoryCancelled          = "cancelled"
+	RawImportJobErrorCategoryUserActionRequired = "user_action_required"
+	RawImportJobErrorCategoryUnknown            = "unknown"
+)
+
+// RawImportJobStats is a machine-oriented contract for import job stats.
+// It is serialized into the `Raw_Stats` JSON column returned by:
+//   - SHOW RAW IMPORT JOB <job_id>
+//   - SHOW RAW IMPORT JOBS ...
+//
+// Keep JSON fields stable and evolve the contract additively (new fields only)
+// so external consumers (Import SDK / Lightning import-into backend) can rely on
+// it. Existing JSON field meanings must not drift across contract versions.
+type RawImportJobStats struct {
+	// JobID and GroupKey come from the top-level SQL columns. They are kept on
+	// this Go struct so SDK code can use one normalized status object, but they
+	// are intentionally not duplicated inside Raw_Stats JSON.
+	JobID    int64  `json:"-"`
+	GroupKey string `json:"-"`
+
+	// Version is the Raw_Stats contract version. Clients should ignore unknown
+	// fields, but may use Version to branch on semantic changes if a future
+	// non-additive change ever requires a new contract.
+	Version int `json:"version"`
+
+	DataSource  string `json:"data_source,omitempty"`
+	TargetTable string `json:"target_table,omitempty"`
+	TableID     int64  `json:"table_id,omitempty"`
+
+	// Phase is the public import-job phase. It is intentionally named job_phase
+	// in JSON to distinguish it from current_step.name, which is runtime subtask
+	// progress for the currently running step.
+	Phase          string `json:"job_phase,omitempty"`
+	Status         string `json:"status,omitempty"`
+	StatusCategory string `json:"status_category,omitempty"`
+	Terminal       bool   `json:"terminal"`
+
+	SourceFileSizeBytes int64 `json:"source_file_size_bytes,omitempty"`
+
+	// ImportedRows is:
+	//   - running job: runtime.ImportRows
+	//   - finished job: summary.ImportedRows (if summary exists)
+	//   - otherwise: omitted
+	ImportedRows *int64 `json:"imported_rows,omitempty"`
+
+	ErrorMessage string               `json:"error_message,omitempty"`
+	Error        *RawImportJobError   `json:"error,omitempty"`
+	Summary      *RawImportJobSummary `json:"summary,omitempty"`
+
+	CurrentStep *RawImportJobStepStats `json:"current_step,omitempty"`
+
+	// Times are UNIX seconds to avoid time zone / formatting concerns.
+	CreateTimeUnix int64 `json:"create_time_unix,omitempty"`
+	StartTimeUnix  int64 `json:"start_time_unix,omitempty"`
+	EndTimeUnix    int64 `json:"end_time_unix,omitempty"`
+	UpdateTimeUnix int64 `json:"update_time_unix,omitempty"`
+
+	CreatedBy string `json:"created_by,omitempty"`
+}
+
+// RawImportJobError describes machine-friendly error metadata. It is present
+// only when the job has an error-like status or an error message.
+type RawImportJobError struct {
+	Message            string `json:"message,omitempty"`
+	Category           string `json:"category,omitempty"`
+	Terminal           bool   `json:"terminal"`
+	Retryable          *bool  `json:"retryable,omitempty"`
+	UserActionRequired bool   `json:"user_action_required,omitempty"`
+}
+
+// RawImportJobSummary is a public, domain-level summary shape for finished jobs.
+// It deliberately avoids exposing the persisted mysql.tidb_import_jobs.summary
+// JSON tags/shape directly.
+type RawImportJobSummary struct {
+	Steps            []RawImportJobStepSummary `json:"steps,omitempty"`
+	ImportedRows     int64                     `json:"imported_rows,omitempty"`
+	ConflictRows     uint64                    `json:"conflict_rows,omitempty"`
+	TooManyConflicts bool                      `json:"too_many_conflicts,omitempty"`
+}
+
+// RawImportJobStepSummary describes persisted per-step job-domain totals.
+type RawImportJobStepSummary struct {
+	Name           string `json:"name,omitempty"`
+	InputBytes     int64  `json:"input_bytes,omitempty"`
+	InputRows      int64  `json:"input_rows,omitempty"`
+	InputConflicts int64  `json:"input_conflicts,omitempty"`
+}
+
+// RawImportJobStepStats describes machine-friendly progress stats for the
+// currently running import step (if any).
+type RawImportJobStepStats struct {
+	Name string `json:"name,omitempty"` // proto.Step2Str(...)
+
+	// Byte counters are populated for normal import steps.
+	ProcessedBytes   int64 `json:"processed_bytes,omitempty"`
+	TotalBytes       int64 `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64 `json:"speed_bytes_per_sec,omitempty"`
+
+	// Conflict counters are populated for conflict collection/resolution steps.
+	// These fields preserve SHOW IMPORT JOB(S)' current conflict-progress behavior
+	// without overloading byte fields with row-conflict counts.
+	ProcessedConflicts   int64 `json:"processed_conflicts,omitempty"`
+	TotalConflicts       int64 `json:"total_conflicts,omitempty"`
+	SpeedConflictsPerSec int64 `json:"speed_conflicts_per_sec,omitempty"`
+
+	// RemainingSeconds is derived if speed>0 and total>0, else omitted.
+	RemainingSeconds *int64 `json:"remaining_seconds,omitempty"`
+}
+
+// IsFinished returns true if the job is finished successfully.
+func (s *RawImportJobStats) IsFinished() bool {
+	return s.Status == JobStatusFinished
+}
+
+// IsFailed returns true if the job failed.
+func (s *RawImportJobStats) IsFailed() bool {
+	return s.Status == jobStatusFailed
+}
+
+// IsCancelled returns true if the job was cancelled.
+func (s *RawImportJobStats) IsCancelled() bool {
+	return s.Status == jogStatusCancelled
+}
+
+// IsCompleted returns true if the job is in a terminal state.
+func (s *RawImportJobStats) IsCompleted() bool {
+	return s.IsFinished() || s.IsFailed() || s.IsCancelled()
+}
+
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
@@ -474,6 +623,21 @@ func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, grou
 		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
 	}
 
+	return getJobInfoFromSQL(ctx, conn, sql, args...)
+}
+
+// GetJobsByGroupKeyExact gets jobs whose group key exactly matches groupKey.
+func GetJobsByGroupKeyExact(ctx context.Context, conn sqlexec.SQLExecutor, user, groupKey string, hasSuperPriv bool) ([]*JobInfo, error) {
+	sql := baseQuerySQL
+	args := []any{}
+	whereClause := []string{"GROUP_KEY = %?"}
+	args = append(args, groupKey)
+	if !hasSuperPriv {
+		whereClause = append(whereClause, "created_by = %?")
+		args = append(args, user)
+	}
+
+	sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
 	return getJobInfoFromSQL(ctx, conn, sql, args...)
 }
 

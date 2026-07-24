@@ -3529,6 +3529,92 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	return conditions
 }
 
+func extractRawImportJobFilters(where ast.ExprNode) (jobID *int64, groupKey *string, remained ast.ExprNode) {
+	for _, condition := range splitWhere(where) {
+		conditionJobID, conditionGroupKey, ok := extractRawImportJobEqFilter(condition)
+		if !ok {
+			remained = combineWhereWithAnd(remained, condition)
+			continue
+		}
+
+		switch {
+		case conditionJobID != nil:
+			if jobID == nil {
+				id := *conditionJobID
+				jobID = &id
+				continue
+			}
+			if *jobID == *conditionJobID {
+				continue
+			}
+		case conditionGroupKey != nil:
+			if groupKey == nil {
+				gk := *conditionGroupKey
+				groupKey = &gk
+				continue
+			}
+			if *groupKey == *conditionGroupKey {
+				continue
+			}
+		}
+
+		// Keep conflicting duplicate filters in the remaining WHERE expression
+		// so normal SHOW selection preserves SQL semantics (for example
+		// GROUP_KEY = 'a' AND GROUP_KEY = 'b' should return no rows).
+		remained = combineWhereWithAnd(remained, condition)
+	}
+	return jobID, groupKey, remained
+}
+
+func combineWhereWithAnd(left, right ast.ExprNode) ast.ExprNode {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	return &ast.BinaryOperationExpr{Op: opcode.LogicAnd, L: left, R: right}
+}
+
+func extractRawImportJobEqFilter(where ast.ExprNode) (jobID *int64, groupKey *string, ok bool) {
+	expr, ok := where.(*ast.BinaryOperationExpr)
+	if !ok || expr.Op != opcode.EQ {
+		return nil, nil, false
+	}
+	column, value, ok := rawImportJobColumnAndValue(expr.L, expr.R)
+	if !ok {
+		column, value, ok = rawImportJobColumnAndValue(expr.R, expr.L)
+	}
+	if !ok {
+		return nil, nil, false
+	}
+	switch column {
+	case "jobid":
+		id, err := strconv.ParseInt(value.GetString(), 10, 64)
+		if err != nil {
+			return nil, nil, false
+		}
+		return &id, nil, true
+	case "groupkey":
+		gk := value.GetString()
+		return nil, &gk, true
+	}
+	return nil, nil, false
+}
+
+func rawImportJobColumnAndValue(columnExpr, valueExpr ast.ExprNode) (column string, value *driver.ValueExpr, ok bool) {
+	columnName, ok := columnExpr.(*ast.ColumnNameExpr)
+	if !ok {
+		return "", nil, false
+	}
+	value, ok = valueExpr.(*driver.ValueExpr)
+	if !ok {
+		return "", nil, false
+	}
+	normalized := strings.ReplaceAll(columnName.Name.Name.L, "_", "")
+	return normalized, value, true
+}
+
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(show.Table)
 	p := logicalop.LogicalShow{
@@ -3550,10 +3636,22 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
+			ImportJobRaw:          show.ImportJobRaw,
 			DistributionJobID:     show.DistributionJobID,
 			ImportGroupKey:        show.ShowGroupKey,
 		},
 	}.Init(b.ctx)
+	if show.Tp == ast.ShowImportJobs && show.ImportJobRaw && show.Where != nil {
+		var groupKey *string
+		p.ImportJobID, groupKey, show.Where = extractRawImportJobFilters(show.Where)
+		if p.ImportJobID != nil && show.ImportJobID == nil {
+			p.ImportJobIDFilter = true
+		}
+		if groupKey != nil {
+			p.ImportGroupKey = *groupKey
+			p.ImportGroupKeySet = true
+		}
+	}
 	isView := false
 	isSequence := false
 	isTempTableLocal := false
@@ -4593,6 +4691,8 @@ var (
 		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By", "Last_Update_Time",
 		"Cur_Step", "Cur_Step_Processed_Size", "Cur_Step_Total_Size", "Cur_Step_Progress_Pct", "Cur_Step_Speed", "Cur_Step_ETA",
 	}
+	rawImportIntoSchemaNames  = []string{"Job_ID", "Group_Key", "Raw_Stats"}
+	rawImportIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeJSON}
 	// ImportIntoSchemaFTypes store the field types of the show import jobs schema.
 	ImportIntoSchemaFTypes = []byte{
 		mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
@@ -6096,8 +6196,13 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
-		names = importIntoSchemaNames
-		ftypes = ImportIntoSchemaFTypes
+		if s.ImportJobRaw {
+			names = rawImportIntoSchemaNames
+			ftypes = rawImportIntoSchemaFTypes
+		} else {
+			names = importIntoSchemaNames
+			ftypes = ImportIntoSchemaFTypes
+		}
 	case ast.ShowImportGroups:
 		names = showImportGroupsNames
 		ftypes = showImportGroupsFTypes
