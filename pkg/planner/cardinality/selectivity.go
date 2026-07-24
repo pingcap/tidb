@@ -108,6 +108,13 @@ func Selectivity(
 			// column stats can be ignored.
 			continue
 		}
+		if col.RetType != nil && col.RetType.EvalType() == types.ETJson {
+			// JSON columns have no column statistics (ANALYZE builds none; only
+			// multi-valued indexes over them are analyzed), so they contribute no
+			// selectivity. Skip them to avoid recording a meaningless, stats-load-
+			// timing-dependent status that surfaces as stats:partial[<json col>:...].
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {

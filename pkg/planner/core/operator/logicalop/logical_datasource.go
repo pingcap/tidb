@@ -600,6 +600,84 @@ func (ds *DataSource) GetPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.Schema(), ds.TableInfo.PKIsHandle)
 }
 
+// HasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
+// with new collation enabled and at least one non-binary string column in the
+// handle. In this combination the handle bytes stored in the index are collation
+// sortKey weights, not original values, so collation-aware comparison on those
+// bytes during merge-sort would be incorrect.
+func (ds *DataSource) HasV0NewCollationStringHandle() bool {
+	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
+		return false
+	}
+	for _, col := range ds.CommonHandleCols {
+		if col != nil && col.RetType.EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.RetType.GetFlag()) {
+			return true
+		}
+	}
+	return false
+}
+
+// HandleColsToAppend returns the clustered-handle columns (and their lengths) that TiKV
+// physically appends to a non-unique secondary index's key beyond its declared columns,
+// or nil when no append applies. declaredCols are the declared index columns (the result
+// of util.IndexInfo2Cols for this index); nil entries mark unresolved columns and
+// suppress the append.
+//
+// This is the single source of truth for that layout, shared by fillIndexPath — which
+// mutates the path so ranger turns predicates on these columns into scan ranges — and by
+// index pruning, which runs before fillIndexPath and needs the same layout to score access
+// conditions. Keeping both on this one method ensures scoring never credits an access
+// condition the ranger cannot realize. The append is skipped entirely (rather than
+// partially) when any handle column already appears among the declared columns, because
+// repeating a column in the physical key breaks range building.
+func (ds *DataSource) HandleColsToAppend(path *util.AccessPath, declaredCols []*expression.Column) ([]*expression.Column, []int) {
+	if path.Index == nil || path.Index.Unique || path.Index.Primary ||
+		len(path.Index.Columns) != len(declaredCols) {
+		return nil, nil
+	}
+	// A nil entry means an index column could not be resolved to a schema column
+	// (util.IndexInfo2FullCols leaves such placeholders). The physical key layout past
+	// that point is unknowable, so no append applies.
+	if slices.Contains(declaredCols, nil) {
+		return nil, nil
+	}
+	if ds.TableInfo != nil && ds.TableInfo.IsCommonHandle {
+		if len(ds.CommonHandleCols) == 0 || len(ds.CommonHandleLens) != len(ds.CommonHandleCols) {
+			return nil, nil
+		}
+		// Global indexes (V1+) encode the partition ID between the index columns and the
+		// handle, and MV/columnar indexes build their ranges specially, so appended columns
+		// would not align with the physical key layout. V0-new-collation string handles are
+		// stored as sortKey bytes without restored data and cannot be ranged over.
+		if path.Index.Global || path.Index.MVIndex || path.Index.IsColumnarIndex() ||
+			ds.HasV0NewCollationStringHandle() {
+			return nil, nil
+		}
+		for _, handleCol := range ds.CommonHandleCols {
+			if handleCol == nil {
+				return nil, nil
+			}
+			for _, col := range declaredCols {
+				if col.EqualColumn(handleCol) {
+					return nil, nil
+				}
+			}
+		}
+		return ds.CommonHandleCols, ds.CommonHandleLens
+	}
+	handleCol := ds.GetPKIsHandleCol()
+	if handleCol == nil || mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
+		return nil, nil
+	}
+	for _, col := range declaredCols {
+		if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
+			return nil, nil
+		}
+	}
+	return []*expression.Column{handleCol}, []int{types.UnspecifiedLength}
+}
+
 // NewExtraHandleSchemaCol creates a new column for extra handle.
 func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
