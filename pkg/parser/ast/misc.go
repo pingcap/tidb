@@ -4162,15 +4162,13 @@ func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needP
 
 		switch t := item.(type) {
 		case *HintTable:
-			if i == 0 && currentQBName.L != "" && !qbOnTable {
+			if i == 0 && currentQBName.L != "" {
 				ctx.WriteKeyWord("@")
 				ctx.WriteName(currentQBName.String())
 				ctx.WritePlain(" ")
-				t.Restore(ctx)
-				currentQBName = CIStr{}
-			} else {
-				t.Restore(ctx)
 			}
+			t.Restore(ctx)
+			currentQBName = CIStr{}
 		case *LeadingList:
 			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
 				return err

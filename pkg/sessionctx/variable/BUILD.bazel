@@ -55,6 +55,7 @@ go_library(
         "//pkg/util/disk",
         "//pkg/util/execdetails",
         "//pkg/util/gctuner",
+        "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
