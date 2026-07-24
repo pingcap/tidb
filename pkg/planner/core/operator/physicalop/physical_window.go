@@ -47,9 +47,28 @@ type PhysicalWindow struct {
 	StoreTp kv.StoreType
 }
 
+// PhysicalOrderedWindow is a window operator for inputs that are already ordered
+// by the window partition/order keys. It is only valid when the child plan can
+// provide that property by itself, for example from an ordered index scan.
+//
+// Unlike PhysicalWindow, this operator must not rely on a Sort enforcer. If a
+// sort is needed to satisfy the window property, the optimizer should use the
+// regular PhysicalWindow path instead.
+type PhysicalOrderedWindow struct {
+	PhysicalWindow
+}
+
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
 	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
+	p.SetChildrenReqProps(props)
+	p.SetStats(stats)
+	return &p
+}
+
+// Init initializes PhysicalOrderedWindow.
+func (p PhysicalOrderedWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalOrderedWindow {
+	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, "OrderedWindow", &p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
 	return &p
@@ -82,29 +101,45 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalWindow)
 	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
+	if err := clonePhysicalWindowWithSelf(p, cloned, newCtx, cloned); err != nil {
 		return nil, err
 	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
-	for _, it := range p.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
-	for _, it := range p.OrderBy {
-		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
-	}
-	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
-	for _, it := range p.WindowFuncDescs {
-		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
-	}
-	if p.Frame != nil {
-		cloned.Frame = p.Frame.Clone()
-	}
-
 	return cloned, nil
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalOrderedWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalOrderedWindow)
+	*cloned = *p
+	if err := clonePhysicalWindowWithSelf(&p.PhysicalWindow, &cloned.PhysicalWindow, newCtx, cloned); err != nil {
+		return nil, err
+	}
+	return cloned, nil
+}
+
+func clonePhysicalWindowWithSelf(src, dst *PhysicalWindow, newCtx base.PlanContext, newSelf base.PhysicalPlan) error {
+	dst.SetSCtx(newCtx)
+	base, err := src.PhysicalSchemaProducer.CloneWithSelf(newCtx, newSelf)
+	if err != nil {
+		return err
+	}
+	dst.PhysicalSchemaProducer = *base
+	dst.PartitionBy = make([]property.SortItem, 0, len(src.PartitionBy))
+	for _, it := range src.PartitionBy {
+		dst.PartitionBy = append(dst.PartitionBy, it.Clone())
+	}
+	dst.OrderBy = make([]property.SortItem, 0, len(src.OrderBy))
+	for _, it := range src.OrderBy {
+		dst.OrderBy = append(dst.OrderBy, it.Clone())
+	}
+	dst.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(src.WindowFuncDescs))
+	for _, it := range src.WindowFuncDescs {
+		dst.WindowFuncDescs = append(dst.WindowFuncDescs, it.Clone())
+	}
+	if src.Frame != nil {
+		dst.Frame = src.Frame.Clone()
+	}
+	return nil
 }
 
 // MemoryUsage return the memory usage of PhysicalWindow
@@ -284,6 +319,11 @@ func (p *PhysicalWindow) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalWindow(p, tasks...)
 }
 
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalOrderedWindow) Attach2Task(tasks ...base.Task) base.Task {
+	return utilfuncp.Attach2Task4PhysicalWindow(p, tasks...)
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
@@ -459,13 +499,43 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	if prop.TaskTp == property.MppTaskType {
 		return windows, true, nil
 	}
-	var byItems []property.SortItem
-	byItems = append(byItems, lw.PartitionBy...)
-	byItems = append(byItems, lw.OrderBy...)
+	// Prefer OrderedWindow only when the child naturally satisfies the full
+	// partition/order requirement. Once a Sort enforcer is needed, the plan must
+	// fall back to the regular window path. If there is no partition/order
+	// requirement, use the regular window path to avoid implying ordered input.
+	byItems := buildWindowChildSortItems(lw.PartitionBy, lw.OrderBy)
+	if len(byItems) > 0 && CanUseOrderedWindow(lw) {
+		for _, orderedByItems := range buildOrderedWindowChildSortItems(byItems, lw.PartitionBy, lw.OrderBy) {
+			orderedChildProperty := &property.PhysicalProperty{
+				ExpectedCnt:       math.MaxFloat64,
+				SortItems:         orderedByItems,
+				CanAddEnforcer:    false,
+				CTEProducerStatus: prop.CTEProducerStatus,
+				NoCopPushDown:     prop.NoCopPushDown,
+				IndexJoinProp:     prop.IndexJoinProp,
+			}
+			if !prop.IsPrefix(orderedChildProperty) {
+				continue
+			}
+			orderedWindow := PhysicalOrderedWindow{
+				PhysicalWindow: PhysicalWindow{
+					WindowFuncDescs: lw.WindowFuncDescs,
+					PartitionBy:     lw.PartitionBy,
+					OrderBy:         lw.OrderBy,
+					Frame:           lw.Frame,
+				},
+			}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), orderedChildProperty)
+			orderedWindow.SetSchema(lw.Schema())
+			windows = append(windows, orderedWindow)
+		}
+	}
+	if prop.IndexJoinProp != nil {
+		return windows, true, nil
+	}
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems,
 		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 	if !prop.IsPrefix(childProperty) {
-		return nil, true, nil
+		return windows, true, nil
 	}
 	window := PhysicalWindow{
 		WindowFuncDescs: lw.WindowFuncDescs,
@@ -477,4 +547,58 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
+}
+
+func buildWindowChildSortItems(partitionBy, orderBy []property.SortItem) []property.SortItem {
+	byItems := make([]property.SortItem, 0, len(partitionBy)+len(orderBy))
+	byItems = append(byItems, partitionBy...)
+	byItems = append(byItems, orderBy...)
+	return byItems
+}
+
+// Partition key direction does not affect window partition boundaries. When all
+// order keys are DESC, also try DESC partition keys so a backward index scan can
+// satisfy the whole ordered-window property.
+func buildOrderedWindowChildSortItems(byItems, partitionBy, orderBy []property.SortItem) [][]property.SortItem {
+	candidates := [][]property.SortItem{byItems}
+	if len(partitionBy) == 0 || len(orderBy) == 0 {
+		return candidates
+	}
+	orderDesc := orderBy[0].Desc
+	if !orderDesc {
+		return candidates
+	}
+	for _, item := range orderBy[1:] {
+		if item.Desc != orderDesc {
+			return candidates
+		}
+	}
+	alignedByItems := make([]property.SortItem, 0, len(byItems))
+	for _, item := range partitionBy {
+		alignedByItems = append(alignedByItems, property.SortItem{Col: item.Col, Desc: orderDesc})
+	}
+	alignedByItems = append(alignedByItems, orderBy...)
+	candidates = append(candidates, alignedByItems)
+	return candidates
+}
+
+// CanUseOrderedWindow reports whether the logical window belongs to the subset
+// currently supported by PhysicalOrderedWindow. The property requirement is
+// checked separately during physical plan enumeration.
+func CanUseOrderedWindow(lw *logicalop.LogicalWindow) bool {
+	if len(lw.WindowFuncDescs) != 1 {
+		return false
+	}
+	if lw.WindowFuncDescs[0].Name != ast.WindowFuncRowNumber {
+		return false
+	}
+	if lw.Frame == nil {
+		return false
+	}
+	// Keep the admission rule aligned with the current execution contract: the
+	// ordered-input path only handles the default row_number frame and should
+	// fall back to the generic window executor for explicit frame variants.
+	return lw.Frame.Type == ast.Rows &&
+		lw.Frame.Start != nil && lw.Frame.Start.Type == ast.CurrentRow && !lw.Frame.Start.UnBounded &&
+		lw.Frame.End != nil && lw.Frame.End.Type == ast.CurrentRow && !lw.Frame.End.UnBounded
 }
