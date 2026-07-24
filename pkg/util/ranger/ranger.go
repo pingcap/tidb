@@ -681,7 +681,11 @@ func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive 
 		return bytes.Compare(i.encodedStart, j.encodedStart)
 	})
 	ranges = ranges[:0]
-	lastRange := objects[0]
+	lastRange := &sortRange{
+		originalValue: objects[0].originalValue.Clone(),
+		encodedStart:  objects[0].encodedStart,
+		encodedEnd:    objects[0].encodedEnd,
+	}
 	for i := 1; i < len(objects); i++ {
 		if (mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0) ||
 			(!mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) > 0) {
@@ -692,7 +696,9 @@ func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive 
 			}
 		} else {
 			ranges = append(ranges, lastRange.originalValue)
-			lastRange = objects[i]
+			lastRange.encodedStart = objects[i].encodedStart
+			lastRange.encodedEnd = objects[i].encodedEnd
+			lastRange.originalValue = objects[i].originalValue.Clone()
 		}
 	}
 	ranges = append(ranges, lastRange.originalValue)
