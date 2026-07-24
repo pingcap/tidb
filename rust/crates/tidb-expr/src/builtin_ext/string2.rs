@@ -28,8 +28,56 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("EXPORT_SET", 3..=5) => Some(export_set(vals)),
         ("LTRIM", 1) => Some(ltrim(&vals[0])),
         ("RTRIM", 1) => Some(rtrim(&vals[0])),
+        ("TRANSLATE", 3) => Some(translate(vals)),
         _ => None,
     }
+}
+
+/// `TRANSLATE(str, from_str, to_str)`, ported from `builtinTranslateUTF8Sig`
+/// (`buildTranslateMap4UTF8`) in `pkg/expression/builtin_string.go` — the
+/// default, non-binary charset path. Each character of `from_str` maps to the
+/// character at the same index in `to_str`; characters of `from_str` beyond
+/// `to_str`'s length are deleted; and for a repeated `from_str` character the
+/// first occurrence wins. Any NULL argument yields NULL.
+///
+/// The binary-collation signature (`builtinTranslateBinarySig`, byte-based) is a
+/// charset boundary the value-only domain does not represent, so only the UTF-8
+/// rune path is ported.
+fn translate(vals: &[Datum]) -> Result<Datum, EvalError> {
+    let Some(src) = coerce_str(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    let Some(from) = coerce_str(&vals[1])? else {
+        return Ok(Datum::Null);
+    };
+    let Some(to) = coerce_str(&vals[2])? else {
+        return Ok(Datum::Null);
+    };
+
+    let from: Vec<char> = from.chars().collect();
+    let to: Vec<char> = to.chars().collect();
+    let min_len = from.len().min(to.len());
+
+    // Build the map in Go's descending order so that, for a repeated `from`
+    // character, the first occurrence (lowest index, inserted last) wins.
+    // Characters beyond `to`'s length delete (`None`); the rest map to `to`.
+    let mut map: std::collections::HashMap<char, Option<char>> = std::collections::HashMap::new();
+    for idx in (to.len()..from.len()).rev() {
+        map.insert(from[idx], None);
+    }
+    for idx in (0..min_len).rev() {
+        map.insert(from[idx], Some(to[idx]));
+    }
+
+    let mut out = String::with_capacity(src.len());
+    for ch in src.chars() {
+        match map.get(&ch) {
+            Some(Some(replacement)) => out.push(*replacement),
+            Some(None) => {} // character deleted
+            None => out.push(ch),
+        }
+    }
+    Ok(Datum::new_string(out))
 }
 
 /// `LTRIM(str)`, ported from `builtinLTrimSig.evalString` in
@@ -172,6 +220,40 @@ mod tests {
         dispatch(name, vals)
             .expect("string2 name/arity should dispatch")
             .expect("Go-derived vector should evaluate")
+    }
+
+    /// `builtinTranslateUTF8Sig` (rune path): map, delete-past-`to`, first
+    /// occurrence wins, multi-byte, and NULL propagation.
+    #[test]
+    fn translate_utf8_vectors() {
+        let cases: &[(&str, &str, &str, &str)] = &[
+            ("abcabc", "ab", "xy", "xycxyc"),
+            ("hello", "lo", "L", "heLL"), // 'o' has no counterpart -> deleted
+            ("中文测试", "中试", "XY", "X文测Y"), // rune-based multi-byte
+            ("aaa", "aa", "xy", "xxx"),   // first occurrence of 'a' wins
+            ("hello", "", "x", "hello"),  // empty from -> unchanged
+            ("mississippi", "sp", "SP", "miSSiSSiPPi"),
+        ];
+        for (src, from, to, want) in cases {
+            assert_eq!(
+                call("TRANSLATE", &[string(src), string(from), string(to)]),
+                string(want),
+                "TRANSLATE({src:?}, {from:?}, {to:?})"
+            );
+        }
+        assert_eq!(
+            call("TRANSLATE", &[Datum::Null, string("a"), string("b")]),
+            Datum::Null
+        );
+        assert_eq!(
+            call("TRANSLATE", &[string("x"), Datum::Null, string("y")]),
+            Datum::Null
+        );
+        assert_eq!(
+            call("TRANSLATE", &[string("x"), string("y"), Datum::Null]),
+            Datum::Null
+        );
+        assert!(dispatch("TRANSLATE", &[string("x"), string("y")]).is_none());
     }
 
     #[test]

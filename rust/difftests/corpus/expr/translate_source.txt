@@ -1,0 +1,15 @@
+## TRANSLATE(str, from, to), transcreated from builtinTranslateUTF8Sig in
+## pkg/expression/builtin_string.go (buildTranslateMap4UTF8) -- the default
+## non-binary charset (rune) path. from[i]->to[i]; from chars beyond len(to)
+## are deleted; first occurrence of a repeated from char wins.
+translate('abcabc','ab','xy')
+translate('hello','lo','L')
+translate('中文测试','中试','XY')
+translate('aaa','aa','xy')
+translate('hello','','x')
+translate('hello','xyz','abc')
+translate('a-b-c','-','_')
+translate('mississippi','sp','SP')
+translate(NULL,'a','b')
+translate('x',NULL,'y')
+translate('x','y',NULL)
