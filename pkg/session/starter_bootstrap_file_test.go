@@ -372,7 +372,9 @@ func TestStarterBootstrapStoreVersionGate(t *testing.T) {
 	mappedDomain, err := domap.Get(store)
 	require.NoError(t, err)
 	require.Same(t, dom, mappedDomain)
-	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
+	currentBootstrapFile := *bootstrapFile
+	currentBootstrapFile.BootstrapSQLBlocks = []string{"CREATE TABLE mysql.starter_file_noop (id INT)"}
+	require.NoError(t, upgradeStarterBootstrapWithFile(store, &currentBootstrapFile))
 	mappedDomain, err = domap.Get(store)
 	require.NoError(t, err)
 	require.Same(t, dom, mappedDomain)
@@ -384,6 +386,204 @@ func TestStarterBootstrapStoreVersionGate(t *testing.T) {
 	completedVersion, err = getStoreStarterBootstrapVersion(store)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), completedVersion)
+}
+
+func TestStarterPrivilegeResetMetadataState(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         map[string]string
+		pendingMarkers map[string]string
+	}{
+		{
+			name: "ordinary keyspace",
+		},
+		{
+			name: "restore pending",
+			config: map[string]string{
+				starterRestoreResetCompleteKey: "False",
+			},
+			pendingMarkers: map[string]string{
+				starterRestoreResetCompleteKey: "False",
+			},
+		},
+		{
+			name: "restore complete",
+			config: map[string]string{
+				starterRestoreResetCompleteKey: "true",
+			},
+		},
+		{
+			name: "branch pending",
+			config: map[string]string{
+				starterBranchResetCompleteKey: "False",
+			},
+			pendingMarkers: map[string]string{
+				starterBranchResetCompleteKey: "False",
+			},
+		},
+		{
+			name: "branch complete",
+			config: map[string]string{
+				starterBranchResetCompleteKey: "true",
+			},
+		},
+		{
+			name: "branch complete and restore pending",
+			config: map[string]string{
+				starterBranchResetCompleteKey:  "true",
+				starterRestoreResetCompleteKey: "False",
+			},
+			pendingMarkers: map[string]string{
+				starterRestoreResetCompleteKey: "False",
+			},
+		},
+		{
+			name: "branch and restore pending",
+			config: map[string]string{
+				starterBranchResetCompleteKey:  "False",
+				starterRestoreResetCompleteKey: "invalid",
+			},
+			pendingMarkers: map[string]string{
+				starterBranchResetCompleteKey:  "False",
+				starterRestoreResetCompleteKey: "invalid",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state, pending := pendingStarterPrivilegeReset(tt.config)
+			require.Equal(t, len(tt.pendingMarkers) > 0, pending)
+			require.Equal(t, tt.pendingMarkers, state.pendingMarkers)
+		})
+	}
+}
+
+func TestStarterPrivilegeReset(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("classic mock store is sufficient for starter privilege reset")
+	}
+
+	originConfig := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "restored_keyspace"
+	})
+
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	se := CreateSessionAndSetID(t, store)
+	t.Cleanup(func() {
+		se.Close()
+	})
+	seedStarterPrivilegeRows(t, se, "source_keyspace.user")
+	require.NoError(t, updateStarterBootstrapVersion(se, 3))
+	MustExec(t, se, "COMMIT")
+	require.NoError(t, finishStarterBootstrap(store, 3))
+	require.ErrorContains(t, runStarterPrivilegeResetLocked(se, &starterBootstrapFileSpec{Version: 3}),
+		"must contain bootstrap SQL")
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "source_keyspace.user"))
+
+	nonTransactionalFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": ["CREATE TABLE mysql.starter_reset_ddl (id INT)"]
+	}`))
+	require.NoError(t, err)
+	require.ErrorContains(t, runStarterPrivilegeResetLocked(se, nonTransactionalFile),
+		"must be INSERT, REPLACE, UPDATE, or DELETE")
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "source_keyspace.user"))
+
+	missingRootFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": [
+			"INSERT INTO mysql.user (Host, User) VALUES ('%', '<keyspace>.not_root')"
+		]
+	}`))
+	require.NoError(t, err)
+	require.ErrorContains(t, runStarterPrivilegeResetLocked(se, missingRootFile),
+		"must create 'restored_keyspace.root'@'%'")
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "source_keyspace.user"))
+	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "restored_keyspace.not_root"))
+
+	bootstrapFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": [
+			"INSERT INTO mysql.user (Host, User, authentication_string, plugin) VALUES ('%', '<keyspace>.root', '', 'mysql_native_password')"
+		]
+	}`))
+	require.NoError(t, err)
+
+	require.NoError(t, runStarterPrivilegeResetLocked(se, bootstrapFile))
+	for _, table := range []string{
+		"db",
+		"default_roles",
+		"global_grants",
+		"global_priv",
+		"user",
+	} {
+		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
+			"SELECT COUNT(*) FROM mysql."+table+" WHERE User = ?", "source_keyspace.user"), table)
+	}
+	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.role_edges WHERE TO_USER = ?", "source_keyspace.user"), "role_edges")
+	for _, table := range []string{"columns_priv", "password_history", "tables_priv"} {
+		require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+			"SELECT COUNT(*) FROM mysql."+table+" WHERE User = ?", "source_keyspace.user"), table)
+	}
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ? AND authentication_string = ''",
+		"restored_keyspace.root"))
+	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
+
+	failingBootstrapFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": [
+			"INSERT INTO mysql.user (Host, User) VALUES ('%', '<keyspace>.failed')",
+			"INSERT INTO mysql.user (Host, User) VALUES ('%', '<keyspace>.failed')"
+		]
+	}`))
+	require.NoError(t, err)
+	require.Error(t, runStarterPrivilegeResetLocked(se, failingBootstrapFile))
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ?", "restored_keyspace.root"))
+	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ?", "restored_keyspace.failed"))
+}
+
+func seedStarterPrivilegeRows(t *testing.T, se sessionapi.Session, user string) {
+	t.Helper()
+	MustExec(t, se, "INSERT INTO mysql.columns_priv (Host, DB, User, Table_name, Column_name) VALUES ('%', 'test', ?, 't', 'c')", user)
+	MustExec(t, se, "INSERT INTO mysql.db (Host, DB, User) VALUES ('%', 'test', ?)", user)
+	MustExec(t, se, "INSERT INTO mysql.default_roles (Host, User, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER) VALUES ('%', ?, '%', 'source_role')", user)
+	MustExec(t, se, "INSERT INTO mysql.global_grants (User, Host, Priv) VALUES (?, '%', 'BACKUP_ADMIN')", user)
+	MustExec(t, se, "INSERT INTO mysql.global_priv (Host, User, Priv) VALUES ('%', ?, '{}')", user)
+	MustExec(t, se, "INSERT INTO mysql.password_history (Host, User, Password) VALUES ('%', ?, 'hash')", user)
+	MustExec(t, se, "INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%', 'source_role', '%', ?)", user)
+	MustExec(t, se, "INSERT INTO mysql.user (Host, User) VALUES ('%', ?)", user)
+	MustExec(t, se, "INSERT INTO mysql.tables_priv (Host, DB, User, Table_name) VALUES ('%', 'test', ?, 't')", user)
+}
+
+func mustCountStarterPrivilegeRows(t *testing.T, se sessionapi.Session, sql string, args ...any) int64 {
+	t.Helper()
+	rs := MustExecToRecodeSet(t, se, sql, args...)
+	t.Cleanup(func() {
+		require.NoError(t, rs.Close())
+	})
+	req := rs.NewChunk(nil)
+	err := rs.Next(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	return req.GetRow(0).GetInt64(0)
 }
 
 func mustGetTiDBVarForStarterFile(t *testing.T, se sessionapi.Session, name string) string {

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -51,7 +53,23 @@ const (
 	starterBootstrapVersionComment      = "Starter bootstrap file version. Do not delete."
 )
 
-var starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
+// These values are part of the existing PD keyspace metadata contract.
+const (
+	starterBranchResetCompleteKey  = "serverless_is_branch_bootstrapped"
+	starterRestoreResetCompleteKey = "serverless_is_bootstrapped_for_restore"
+)
+
+var (
+	starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
+	starterPrivilegeResetSQL      = []string{
+		"DELETE FROM mysql.db",
+		"DELETE FROM mysql.default_roles",
+		"DELETE FROM mysql.global_grants",
+		"DELETE FROM mysql.global_priv",
+		"DELETE FROM mysql.role_edges",
+		"DELETE FROM mysql.user",
+	}
+)
 
 type starterBootstrapFileSpec struct {
 	Version            int64                         `json:"version"`
@@ -64,7 +82,33 @@ type starterBootstrapUpgradeSpec struct {
 	SQLBlocks []string `json:"sql,omitempty"`
 }
 
+type starterPrivilegeResetState struct {
+	keyspaceName   string
+	pendingMarkers map[string]string
+}
+
 func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
+	stmts, err := prepareStarterBootstrapStatements(s, bootstrapFile.BootstrapSQLBlocks)
+	if err != nil {
+		return err
+	}
+	return runStarterBootstrapTransaction(s, bootstrapFile, stmts, false)
+}
+
+func runStarterPrivilegeResetLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
+	stmts, err := prepareStarterBootstrapStatements(s, bootstrapFile.BootstrapSQLBlocks)
+	if err != nil {
+		return err
+	}
+	return runStarterBootstrapTransaction(s, bootstrapFile, stmts, true)
+}
+
+func runStarterBootstrapTransaction(
+	s sessionapi.Session,
+	bootstrapFile *starterBootstrapFileSpec,
+	bootstrapStmts []ast.StmtNode,
+	resetPrivileges bool,
+) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if _, err := s.ExecuteInternal(ctx, "BEGIN"); err != nil {
 		return errors.Annotate(err, "begin starter bootstrap file")
@@ -78,8 +122,18 @@ func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBoots
 			logutil.BgLogger().Warn("rollback starter bootstrap file failed", zap.Error(err))
 		}
 	}()
-	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.BootstrapSQLBlocks); err != nil {
+	if resetPrivileges {
+		if err := executeStarterBootstrapSQLBlocks(s, starterPrivilegeResetSQL); err != nil {
+			return errors.Annotate(err, "reset starter privilege tables")
+		}
+	}
+	if err := executeStarterBootstrapStatements(s, bootstrapStmts); err != nil {
 		return err
+	}
+	if resetPrivileges {
+		if err := verifyStarterRootUser(s); err != nil {
+			return err
+		}
 	}
 	if err := updateStarterBootstrapVersion(s, bootstrapFile.Version); err != nil {
 		return err
@@ -98,17 +152,28 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 		return err
 	}
 	if bootstrapFile == nil {
+		_, pending, err := readStarterPrivilegeResetState(store, false)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return errors.New("starter bootstrap file is required for pending privilege reset")
+		}
 		return nil
 	}
 	return upgradeStarterBootstrapWithFile(store, bootstrapFile)
 }
 
 func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBootstrapFileSpec) error {
+	resetState, privilegeResetPending, err := readStarterPrivilegeResetState(store, false)
+	if err != nil {
+		return err
+	}
 	completedVersion, err := getStoreStarterBootstrapVersion(store)
 	if err != nil {
 		return err
 	}
-	if !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
+	if !privilegeResetPending && !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
 		return nil
 	}
 
@@ -119,11 +184,17 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 	}
 	defer releaseFn()
 
+	if privilegeResetPending {
+		resetState, privilegeResetPending, err = readStarterPrivilegeResetState(store, true)
+		if err != nil {
+			return err
+		}
+	}
 	completedVersion, err = getStoreStarterBootstrapVersion(store)
 	if err != nil {
 		return err
 	}
-	if !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
+	if !privilegeResetPending && !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
 		return nil
 	}
 
@@ -152,6 +223,27 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 	if err != nil {
 		return err
 	}
+	if privilegeResetPending {
+		copiedVersion := max(completedVersion, storedVersion)
+		if copiedVersion > bootstrapFile.Version {
+			return errors.Errorf("starter bootstrap file version %d is older than copied version %d", bootstrapFile.Version, copiedVersion)
+		}
+		if err = runStarterPrivilegeResetLocked(s, bootstrapFile); err != nil {
+			return err
+		}
+		if err = finishStarterBootstrap(store, bootstrapFile.Version); err != nil {
+			return err
+		}
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+		if err = markStarterPrivilegeResetComplete(ctx, resetState); err != nil {
+			return errors.Annotate(err, "complete starter privilege reset")
+		}
+		logutil.BgLogger().Info("starter privilege reset finished",
+			zap.String("keyspace", resetState.keyspaceName),
+			zap.Int64("version", bootstrapFile.Version),
+			zap.Duration("cost", time.Since(startTime)))
+		return nil
+	}
 	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
 		// The SQL version can be ahead after a crash before the completion key is written.
 		return finishStarterBootstrap(store, storedVersion)
@@ -179,6 +271,61 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 		zap.Int64("version", bootstrapFile.Version),
 		zap.Duration("cost", time.Since(startTime)))
 	return nil
+}
+
+func pendingStarterPrivilegeReset(keyspaceConfig map[string]string) (starterPrivilegeResetState, bool) {
+	state := starterPrivilegeResetState{}
+	for _, key := range []string{starterBranchResetCompleteKey, starterRestoreResetCompleteKey} {
+		value, ok := keyspaceConfig[key]
+		if !ok || value == "" {
+			continue
+		}
+		complete, _ := strconv.ParseBool(value)
+		if complete {
+			continue
+		}
+		if state.pendingMarkers == nil {
+			state.pendingMarkers = make(map[string]string)
+		}
+		state.pendingMarkers[key] = value
+	}
+	return state, len(state.pendingMarkers) > 0
+}
+
+func readStarterPrivilegeResetState(store kv.Storage, refreshFromPD bool) (starterPrivilegeResetState, bool, error) {
+	keyspaceMeta := store.GetCodec().GetKeyspaceMeta()
+	if keyspaceMeta == nil {
+		return starterPrivilegeResetState{}, false, nil
+	}
+	if refreshFromPD {
+		if storeWithPD, ok := store.(kv.StorageWithPD); ok && storeWithPD.GetPDClient() != nil {
+			latestMeta, err := storeWithPD.GetPDClient().LoadKeyspace(context.Background(), keyspaceMeta.GetName())
+			if err != nil {
+				return starterPrivilegeResetState{}, false, errors.Annotate(err, "refresh starter privilege reset metadata")
+			}
+			if latestMeta != nil {
+				keyspaceMeta = latestMeta
+			}
+		}
+	}
+	state, pending := pendingStarterPrivilegeReset(keyspaceMeta.GetConfig())
+	state.keyspaceName = keyspaceMeta.GetName()
+	return state, pending, nil
+}
+
+func markStarterPrivilegeResetComplete(ctx context.Context, state starterPrivilegeResetState) error {
+	completeValue := "True"
+	config := make(map[string]*string, len(state.pendingMarkers))
+	preconditions := make(map[string]*string, len(state.pendingMarkers))
+	for key, value := range state.pendingMarkers {
+		observedValue := value
+		config[key] = &completeValue
+		preconditions[key] = &observedValue
+	}
+	return infosync.SetKeyspaceConfig(ctx, state.keyspaceName, pdhttp.UpdateKeyspaceConfigParams{
+		Config:        config,
+		Preconditions: preconditions,
+	})
 }
 
 func getStoreStarterBootstrapVersion(store kv.Storage) (int64, error) {
@@ -354,9 +501,28 @@ func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 }
 
 func executeStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) error {
-	if len(blocks) == 0 {
-		return nil
+	stmts, err := parseStarterBootstrapSQLBlocks(s, blocks)
+	if err != nil {
+		return err
 	}
+	return executeStarterBootstrapStatements(s, stmts)
+}
+
+func prepareStarterBootstrapStatements(s sessionapi.Session, blocks []string) ([]ast.StmtNode, error) {
+	if len(blocks) == 0 {
+		return nil, errors.New("starter bootstrap file must contain bootstrap SQL")
+	}
+	stmts, err := parseStarterBootstrapSQLBlocks(s, blocks)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateStarterBootstrapStatements(stmts); err != nil {
+		return nil, err
+	}
+	return stmts, nil
+}
+
+func parseStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) ([]ast.StmtNode, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	sessionVars := s.GetSessionVars()
 	originalInRestrictedSQL := sessionVars.InRestrictedSQL
@@ -365,24 +531,77 @@ func executeStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) err
 		sessionVars.InRestrictedSQL = originalInRestrictedSQL
 	}()
 
+	stmts := make([]ast.StmtNode, 0, len(blocks))
 	for blockIdx, block := range blocks {
 		rendered := renderStarterBootstrapSQL(block)
-		stmts, err := s.Parse(ctx, rendered)
+		parsed, err := s.Parse(ctx, rendered)
 		if err != nil {
-			return errors.Annotatef(err, "parse SQL block %d", blockIdx)
+			return nil, errors.Annotatef(err, "parse SQL block %d", blockIdx)
 		}
-		if len(stmts) != 1 {
-			return errors.Errorf("SQL block %d must contain exactly one statement", blockIdx)
+		if len(parsed) != 1 {
+			return nil, errors.Errorf("SQL block %d must contain exactly one statement", blockIdx)
 		}
-		rs, err := s.ExecuteStmt(ctx, stmts[0])
+		stmts = append(stmts, parsed[0])
+	}
+	return stmts, nil
+}
+
+func validateStarterBootstrapStatements(stmts []ast.StmtNode) error {
+	for i, stmt := range stmts {
+		switch stmt.(type) {
+		case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		default:
+			return errors.Errorf("bootstrap SQL block %d must be INSERT, REPLACE, UPDATE, or DELETE", i)
+		}
+	}
+	return nil
+}
+
+func executeStarterBootstrapStatements(s sessionapi.Session, stmts []ast.StmtNode) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	sessionVars := s.GetSessionVars()
+	originalInRestrictedSQL := sessionVars.InRestrictedSQL
+	sessionVars.InRestrictedSQL = true
+	defer func() {
+		sessionVars.InRestrictedSQL = originalInRestrictedSQL
+	}()
+
+	for i, stmt := range stmts {
+		rs, err := s.ExecuteStmt(ctx, stmt)
 		if err != nil {
-			return errors.Annotatef(err, "execute SQL block %d", blockIdx)
+			return errors.Annotatef(err, "execute SQL block %d", i)
 		}
 		if rs != nil {
 			if err := rs.Close(); err != nil {
 				return errors.Annotate(err, "close SQL result")
 			}
 		}
+	}
+	return nil
+}
+
+func verifyStarterRootUser(s sessionapi.Session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rootUser := config.GetGlobalKeyspaceName() + ".root"
+	rs, err := s.ExecuteInternal(ctx,
+		"SELECT 1 FROM mysql.user WHERE Host = '%' AND User = %? LIMIT 1", rootUser)
+	if err != nil {
+		return errors.Annotate(err, "verify starter root user")
+	}
+	if rs == nil {
+		return errors.New("verify starter root user returned no result")
+	}
+	req := rs.NewChunk(nil)
+	nextErr := rs.Next(ctx, req)
+	closeErr := rs.Close()
+	if nextErr != nil {
+		return errors.Annotate(nextErr, "verify starter root user")
+	}
+	if closeErr != nil {
+		return errors.Annotate(closeErr, "close starter root verification result")
+	}
+	if req.NumRows() == 0 {
+		return errors.Errorf("starter bootstrap file must create '%s'@'%%' for privilege reset", rootUser)
 	}
 	return nil
 }
