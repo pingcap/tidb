@@ -118,6 +118,12 @@ func TestMockPDServiceDiscovery(t *testing.T) {
 
 func TestMockKeyspaceManager(t *testing.T) {
 	re := require.New(t)
+	newKeyspaceMeta := func(id uint32, name string) *keyspacepb.KeyspaceMeta {
+		return &keyspacepb.KeyspaceMeta{
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id},
+			Name:     name,
+		}
+	}
 
 	checkElements := func(m *mockKeyspaceManager, ids []uint32, names []string) {
 		re.NotNil(m)
@@ -127,13 +133,13 @@ func TestMockKeyspaceManager(t *testing.T) {
 		for i, keyspace := range m.keyspaces {
 			// The array should be sorted by ID, and the ID is distinct.
 			if i > 0 {
-				re.Greater(keyspace.Id, m.keyspaces[i-1].Id)
+				re.Greater(keyspace.GetId(), m.keyspaces[i-1].GetId())
 			}
-			re.Equal(ids[i], keyspace.Id)
+			re.Equal(ids[i], keyspace.GetId())
 			re.Equal(names[i], keyspace.Name)
 			nameMapEntry, exists := m.keyspaceNamesMap[keyspace.Name]
 			re.True(exists)
-			re.Equal(keyspace.Id, nameMapEntry)
+			re.Equal(keyspace.GetId(), nameMapEntry)
 		}
 	}
 
@@ -142,7 +148,7 @@ func TestMockKeyspaceManager(t *testing.T) {
 		if expectedExists {
 			re.NoError(err)
 			re.Equal(name, meta.Name)
-			re.Equal(expectedID, meta.Id)
+			re.Equal(expectedID, meta.GetId())
 		} else {
 			re.Error(err)
 			re.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
@@ -155,7 +161,7 @@ func TestMockKeyspaceManager(t *testing.T) {
 		re.NoError(err)
 		re.Len(keyspaces, len(expectedIDs))
 		for i, keyspace := range keyspaces {
-			re.Equal(expectedIDs[i], keyspace.Id)
+			re.Equal(expectedIDs[i], keyspace.GetId())
 			re.Equal(expectedNames[i], keyspace.Name)
 		}
 	}
@@ -166,10 +172,7 @@ func TestMockKeyspaceManager(t *testing.T) {
 	mustLoadKeyspace(m, "DEFAULT", false, 0)
 	mustListKeyspaces(m, 0, 0, []uint32{}, []string{})
 
-	m, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{{
-		Id:   0,
-		Name: "DEFAULT",
-	}})
+	m, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{newKeyspaceMeta(0, "DEFAULT")})
 	re.NoError(err)
 	checkElements(m, []uint32{0}, []string{"DEFAULT"})
 	mustLoadKeyspace(m, "DEFAULT", true, 0)
@@ -178,11 +181,11 @@ func TestMockKeyspaceManager(t *testing.T) {
 	mustListKeyspaces(m, 1, 0, []uint32{}, []string{})
 
 	m, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{
-		{Id: 1, Name: "ks1"},
-		{Id: 4, Name: "ks4"},
-		{Id: 2, Name: "ks2"},
-		{Id: 5, Name: "ks5"},
-		{Id: 3, Name: "ks3"},
+		newKeyspaceMeta(1, "ks1"),
+		newKeyspaceMeta(4, "ks4"),
+		newKeyspaceMeta(2, "ks2"),
+		newKeyspaceMeta(5, "ks5"),
+		newKeyspaceMeta(3, "ks3"),
 	})
 	re.NoError(err)
 	checkElements(m, []uint32{1, 2, 3, 4, 5}, []string{"ks1", "ks2", "ks3", "ks4", "ks5"})
@@ -198,10 +201,10 @@ func TestMockKeyspaceManager(t *testing.T) {
 	mustListKeyspaces(m, 5, 0, []uint32{5}, []string{"ks5"})
 
 	m, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{
-		{Id: 100, Name: "ks100"},
-		{Id: 1, Name: "ks1"},
-		{Id: constants.MaxKeyspaceID, Name: "lastks"},
-		{Id: 10, Name: "ks10"},
+		newKeyspaceMeta(100, "ks100"),
+		newKeyspaceMeta(1, "ks1"),
+		newKeyspaceMeta(constants.MaxKeyspaceID, "lastks"),
+		newKeyspaceMeta(10, "ks10"),
 	})
 	re.NoError(err)
 	checkElements(m, []uint32{1, 10, 100, constants.MaxKeyspaceID}, []string{"ks1", "ks10", "ks100", "lastks"})
@@ -216,31 +219,31 @@ func TestMockKeyspaceManager(t *testing.T) {
 
 	// Rejects duplicated ID.
 	_, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{
-		{Id: 1, Name: "ks1"},
-		{Id: 2, Name: "ks2"},
-		{Id: 3, Name: "ks3"},
-		{Id: 1, Name: "ks4"},
+		newKeyspaceMeta(1, "ks1"),
+		newKeyspaceMeta(2, "ks2"),
+		newKeyspaceMeta(3, "ks3"),
+		newKeyspaceMeta(1, "ks4"),
 	})
 	re.Error(err)
 
 	// Rejects duplicated name.
 	_, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{
-		{Id: 1, Name: "ks1"},
-		{Id: 2, Name: "ks2"},
-		{Id: 3, Name: "ks3"},
-		{Id: 4, Name: "ks1"},
+		newKeyspaceMeta(1, "ks1"),
+		newKeyspaceMeta(2, "ks2"),
+		newKeyspaceMeta(3, "ks3"),
+		newKeyspaceMeta(4, "ks1"),
 	})
 	re.Error(err)
 
 	_, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{
 		// Exceeds the current value of max allowed keyspace id
-		{Id: 0x1000000, Name: "illegal"},
+		newKeyspaceMeta(0x1000000, "illegal"),
 	})
 	re.Error(err)
 
 	_, err = newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{
 		// Null keyspace id is not allowed
-		{Id: constants.NullKeyspaceID, Name: ""},
+		newKeyspaceMeta(constants.NullKeyspaceID, ""),
 	})
 	re.Error(err)
 }

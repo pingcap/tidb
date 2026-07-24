@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -43,7 +44,8 @@ type singlePointAlloc struct {
 	lastAllocated int64
 	isUnsigned    bool
 	*ClientDiscover
-	keyspaceID uint32
+	keyspaceID       uint32
+	keyspaceIdentity *apipb.KeyspaceIdentity
 }
 
 // ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
@@ -163,15 +165,20 @@ retry:
 	}
 
 	clientStart := time.Now()
-	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
+	req := &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
 		N:          n,
 		Increment:  increment,
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
-		KeyspaceID: sp.keyspaceID,
-	})
+	}
+	if sp.keyspaceIdentity != nil {
+		req.Keyspace = &autoid.AutoIDRequest_KeyspaceIdentity{KeyspaceIdentity: sp.keyspaceIdentity}
+	} else {
+		req.Keyspace = &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: sp.keyspaceID}
+	}
+	resp, err := cli.AllocAutoID(ctx, req)
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
@@ -310,13 +317,19 @@ retry:
 		return errors.Trace(err)
 	}
 	var resp *autoid.RebaseResponse
-	resp, err = cli.Rebase(ctx, &autoid.RebaseRequest{
+	req := &autoid.RebaseRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
 		Base:       newBase,
 		Force:      force,
 		IsUnsigned: sp.isUnsigned,
-	})
+	}
+	if sp.keyspaceIdentity != nil {
+		req.Keyspace = &autoid.RebaseRequest_KeyspaceIdentity{KeyspaceIdentity: sp.keyspaceIdentity}
+	} else {
+		req.Keyspace = &autoid.RebaseRequest_KeyspaceID{KeyspaceID: sp.keyspaceID}
+	}
+	resp, err = cli.Rebase(ctx, req)
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			// Same as Alloc: check ctx before resetting connection and retrying.

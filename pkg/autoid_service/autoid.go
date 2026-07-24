@@ -21,8 +21,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -426,12 +428,32 @@ func calcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 
 const batch = 4000
 
+func (s *Service) validateRequestKeyspace(requestKeyspaceID uint32, requestIdentity *apipb.KeyspaceIdentity) error {
+	serviceMeta := s.store.GetCodec().GetKeyspaceMeta()
+	if serviceIdentity := serviceMeta.GetKeyspaceIdentity(); serviceIdentity != nil {
+		if proto.Equal(serviceIdentity, requestIdentity) {
+			return nil
+		}
+		logutil.BgLogger().Info("current service is not request keyspace leader",
+			zap.Any("request-keyspace-identity", requestIdentity),
+			zap.Any("service-keyspace-identity", serviceIdentity))
+		return errors.New("not leader")
+	}
+
+	serviceKeyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
+	if requestIdentity == nil && requestKeyspaceID == serviceKeyspaceID {
+		return nil
+	}
+	logutil.BgLogger().Info("current service is not request keyspace leader",
+		zap.Uint32("request-keyspace-id", requestKeyspaceID),
+		zap.Uint32("service-keyspace-id", serviceKeyspaceID))
+	return errors.New("not leader")
+}
+
 // AllocAutoID implements gRPC AutoIDAlloc interface.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
-	serviceKeyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
-	if req.KeyspaceID != serviceKeyspaceID {
-		logutil.BgLogger().Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
-		return nil, errors.Trace(errors.New("not leader"))
+	if err := s.validateRequestKeyspace(req.GetKeyspaceID(), req.GetKeyspaceIdentity()); err != nil {
+		return nil, errors.Trace(err)
 	}
 	var res *autoid.AutoIDResponse
 	for {
@@ -564,6 +586,9 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 // Rebase implements gRPC AutoIDAlloc interface.
 // req.N = 0 is handled specially, it is used to return the current auto ID value.
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
+	if err := s.validateRequestKeyspace(req.GetKeyspaceID(), req.GetKeyspaceIdentity()); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
 		logutil.BgLogger().Info("Rebase() fail, not leader", zap.String("category", "autoid service"))
 		return nil, errors.New("not leader")

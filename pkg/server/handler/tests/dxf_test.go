@@ -584,8 +584,8 @@ func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
 		userKeyspaceID   = 2
 	)
 	keyspaces := []*keyspacepb.KeyspaceMeta{
-		{Id: systemKeyspaceID, Name: keyspace.System},
-		{Id: userKeyspaceID, Name: "user_keyspace"},
+		{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: systemKeyspaceID}, Name: keyspace.System},
+		{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: userKeyspaceID}, Name: "user_keyspace"},
 	}
 	oldSystemStore := kvstore.GetSystemStorage()
 	systemStore, err := mockstore.NewMockStore(mockstore.WithKeyspacesAndCurrentKeyspaceID(keyspaces, systemKeyspaceID))

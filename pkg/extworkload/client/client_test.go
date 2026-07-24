@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/apipb"
 	pb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -237,6 +238,22 @@ func TestClientRoundTrip(t *testing.T) {
 func requireHeader(t *testing.T, header *pb.RequestHeader) {
 	t.Helper()
 	require.Equal(t, uint32(42), header.GetKeyspaceId())
+	require.Equal(t, "starter-ks", header.GetKeyspaceName())
+	require.Equal(t, "starter-pool", header.GetTidbPool())
+}
+
+func TestV3RequestHeader(t *testing.T) {
+	stub := &stubServer{}
+	identity := &apipb.KeyspaceIdentity{NamespaceId: 7, KeyspaceId: 42}
+	cli, cleanup := startStubServerWithOption(t, stub, func(opt *Option) {
+		opt.KeyspaceIdentity = identity
+	})
+	defer cleanup()
+
+	require.NoError(t, cli.RegisterGCV2(newTestContext(t), 100, 200))
+	header := stub.registerGCV2Req.GetHeader()
+	require.Zero(t, header.GetKeyspaceId())
+	require.Equal(t, identity, header.GetKeyspaceIdentity())
 	require.Equal(t, "starter-ks", header.GetKeyspaceName())
 	require.Equal(t, "starter-pool", header.GetTidbPool())
 }

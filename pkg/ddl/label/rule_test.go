@@ -117,7 +117,7 @@ func TestReset(t *testing.T) {
 
 func TestResetWithKeyspaceCodec(t *testing.T) {
 	keyspaceID := uint32(42)
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: keyspaceID})
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID}})
 	require.NoError(t, err)
 
 	spec := &ast.AttributesSpec{Attributes: "key=value"}
