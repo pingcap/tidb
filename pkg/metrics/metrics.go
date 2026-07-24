@@ -290,6 +290,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
 	prometheus.MustRegister(TTLJobStatus)
+	prometheus.MustRegister(TTLJobFinishCounter)
 	prometheus.MustRegister(TTLTaskStatus)
 	prometheus.MustRegister(TTLPhaseTime)
 	prometheus.MustRegister(TTLInsertRowsCount)
