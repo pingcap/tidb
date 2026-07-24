@@ -1094,7 +1094,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			if col.GetCharset() != tblCharset {
 				fmt.Fprintf(buf, " CHARACTER SET %s", col.GetCharset())
 			}
-			if col.GetCollate() != tblCollate {
+			if col.GetCollate() != tblCollate || (col.GetFlag()&mysql.ExplicitCollateFlag != 0) {
 				fmt.Fprintf(buf, " COLLATE %s", col.GetCollate())
 			} else {
 				defcol, err := charset.GetDefaultCollation(col.GetCharset())
