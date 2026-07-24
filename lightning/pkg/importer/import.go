@@ -1344,6 +1344,11 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			err       error
 		)
 
+		// pausePDScheduler is false when scope="off": Lightning skips PD task
+		// registration and the scheduler pause/restore lifecycle entirely, which
+		// avoids contention when many Lightning jobs run concurrently.
+		pausePDScheduler := rc.cfg.TikvImporter.PausePDSchedulerScope != config.PausePDSchedulerScopeOff
+
 		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeGlobal {
 			logTask.Info("pause pd scheduler of global scope")
 
@@ -1360,10 +1365,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
 			if err != nil {
 				logTask.Warn("check restore pd schedulers failed", zap.Error(err))
-				return
+			} else {
+				switchBack = needSwitchBack
+				cleanup = needCleanup
 			}
-			switchBack = needSwitchBack
-			cleanup = needCleanup
 
 			if needSwitchBack && restoreFn != nil {
 				logTask.Info("add back PD leader&region schedulers")
@@ -1425,11 +1430,13 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
-		undo, err := rc.registerTaskToPD(ctx)
-		if err != nil {
-			return errors.Trace(err)
+		if pausePDScheduler {
+			undo, err := rc.registerTaskToPD(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer undo()
 		}
-		defer undo()
 	}
 
 	type task struct {
