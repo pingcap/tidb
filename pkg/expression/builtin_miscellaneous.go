@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -822,12 +823,27 @@ func (b *builtinInet6NtoaSig) Clone() builtinFunc {
 	return newSig
 }
 
+// inet6NtoaArgInvalid reports whether an INET6_NTOA argument violates MySQL's
+// requirement that it be a binary string of exactly 4 or 16 bytes. MySQL keys
+// this on the argument collation being binary, so a non-binary argument such as
+// INET6_NTOA(1234) or INET6_NTOA('abcdefghijklmnop') is rejected even though its
+// length is 4 or 16 bytes; a wrong length is rejected too. Such input yields
+// NULL with warning 1411, see https://github.com/pingcap/tidb/issues/59461.
+func inet6NtoaArgInvalid(argTp *types.FieldType, valLen int) bool {
+	return argTp.GetCharset() != charset.CharsetBin || (valLen != net.IPv4len && valLen != net.IPv6len)
+}
+
 // evalString evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
 func (b *builtinInet6NtoaSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return "", true, err
+	}
+	if inet6NtoaArgInvalid(b.args[0].GetType(ctx), len(val)) {
+		tc := typeCtx(ctx)
+		tc.AppendWarning(errWrongValueForType.FastGenByArgs("string", val, "inet6_ntoa"))
+		return "", true, nil
 	}
 	ip := net.IP(val).String()
 	if len(val) == net.IPv6len && !strings.Contains(ip, ":") {
