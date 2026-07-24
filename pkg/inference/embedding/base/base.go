@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -100,6 +102,29 @@ type APIKeyProviderConfig struct {
 	// MaxResponseBodyBytes limits both successful and error response bodies.
 	// Non-positive values use DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
+}
+
+// JSONEmbeddingCall describes one conventional JSON embedding provider call.
+// Provider must be a stable, non-sensitive label because it is used in logs
+// and generic response errors. Provider-specific wire schemas stay in the
+// decoder functions supplied by the provider package.
+type JSONEmbeddingCall struct {
+	Provider             string
+	Client               *http.Client
+	Endpoint             string
+	Payload              any
+	Headers              http.Header
+	MaxResponseBodyBytes int64
+	Secrets              []string
+
+	// DecodeErrorMessage parses a non-200 response and returns an unsanitized
+	// provider message. ExecuteJSONEmbeddingCall owns sanitization and logging.
+	DecodeErrorMessage func(body []byte) (string, error)
+	// StatusErrors maps special HTTP statuses to provider-specific errors.
+	// Nil or missing entries use NewProviderResponseError.
+	StatusErrors map[int]error
+	// DecodeEmbeddings parses and validates a successful response.
+	DecodeEmbeddings func(body []byte, expectedCount int) ([][]float32, error)
 }
 
 // WithDefaults returns a copy with default values applied.
@@ -256,6 +281,54 @@ func PostJSON(
 	req.Header.Set("Content-Type", "application/json")
 
 	return DoRequest(ctx, client, provider, req, maxResponseBodyBytes)
+}
+
+// ExecuteJSONEmbeddingCall executes a conventional JSON provider call and
+// applies the common response lifecycle. Provider-specific error and success
+// schemas are delegated to the supplied decoder functions.
+func ExecuteJSONEmbeddingCall(
+	ctx context.Context,
+	expectedCount int,
+	call JSONEmbeddingCall,
+) ([][]float32, error) {
+	if call.DecodeErrorMessage == nil {
+		return nil, fmt.Errorf("%s error response decoder is not configured", call.Provider)
+	}
+	if call.DecodeEmbeddings == nil {
+		return nil, fmt.Errorf("%s success response decoder is not configured", call.Provider)
+	}
+
+	statusCode, body, err := PostJSON(
+		ctx,
+		call.Client,
+		call.Provider,
+		call.Endpoint,
+		call.Payload,
+		call.Headers,
+		call.MaxResponseBodyBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode == http.StatusOK {
+		return call.DecodeEmbeddings(body, expectedCount)
+	}
+
+	message, parseErr := call.DecodeErrorMessage(body)
+	message = SanitizeErrorText(message, call.Secrets...)
+	logFields := []zap.Field{zap.Int("status", statusCode)}
+	if message != "" {
+		logFields = append(logFields, zap.String("message", message))
+	}
+	if parseErr != nil {
+		logFields = append(logFields, zap.String("parse_error", SanitizeErrorText(parseErr.Error(), call.Secrets...)))
+	}
+	logutil.BgLogger().Error(call.Provider+" API request failed", logFields...)
+
+	if statusErr := call.StatusErrors[statusCode]; statusErr != nil {
+		return nil, statusErr
+	}
+	return nil, NewProviderResponseError(call.Provider, statusCode, message)
 }
 
 // NewProviderResponseError returns a consistent generic provider error. The

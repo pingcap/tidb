@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,7 +60,7 @@ func TestHuggingFaceEmbedder_Success(t *testing.T) {
 	defer server.Close()
 
 	// Create embedder with mock server URL
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -80,7 +81,7 @@ func TestHuggingFaceEmbedder_Success(t *testing.T) {
 func TestHuggingFaceEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusUnauthorized, `{"error":"Invalid credentials in Authorization header"}`)
 
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -94,7 +95,7 @@ func TestHuggingFaceEmbedder_UnauthorizedAPIKey(t *testing.T) {
 func TestHuggingFaceEmbedder_InvalidModel(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusNotFound, "")
 
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -108,7 +109,7 @@ func TestHuggingFaceEmbedder_InvalidModel(t *testing.T) {
 func TestHuggingFaceEmbedder_ErrorWithMessage(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusServiceUnavailable, `{"error":"Model is currently loading"}`)
 
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -120,7 +121,7 @@ func TestHuggingFaceEmbedder_ErrorWithMessage(t *testing.T) {
 }
 
 func TestHuggingFaceEmbedder_NoAPIKey(t *testing.T) {
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey: func() string { return "" },
 	})
 
@@ -132,7 +133,7 @@ func TestHuggingFaceEmbedder_NoAPIKey(t *testing.T) {
 
 func TestHuggingFaceEmbedder_CustomErrorHandling(t *testing.T) {
 	customErr := fmt.Errorf("custom missing API key error")
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:        func() string { return "" },
 		ErrMissingAPIKey: customErr,
 	})
@@ -146,7 +147,7 @@ func TestHuggingFaceEmbedder_CustomUnauthorizedError(t *testing.T) {
 	customErr := fmt.Errorf("custom unauthorized error")
 	serverURL := testutil.NewJSONServer(t, http.StatusUnauthorized, "")
 
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:       func() string { return "invalid-key" },
 		GetBaseURL:      func() string { return serverURL },
 		ErrUnauthorized: customErr,
@@ -163,7 +164,7 @@ func TestHuggingFaceEmbedder_MismatchedResponseLength(t *testing.T) {
 	]`
 	serverURL := testutil.NewJSONServer(t, http.StatusOK, mockResponse)
 
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -186,7 +187,7 @@ func TestHuggingFaceEmbedder_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+	embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -220,7 +221,7 @@ func TestHuggingFaceEmbedderContract(t *testing.T) {
 	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
 		Model: "org/model",
 		New: func(cfg testutil.EmbedderConfig) *Embedder {
-			embedder := NewHuggingFaceEmbedder(EmbedderConfig{
+			embedder := NewHuggingFaceEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:            func() string { return cfg.APIKey },
 				GetBaseURL:           func() string { return cfg.BaseURL },
 				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,

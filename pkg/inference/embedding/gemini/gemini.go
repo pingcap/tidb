@@ -23,8 +23,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // DefaultAPIBaseURL is the default base URL for the Gemini embeddings API.
@@ -39,6 +37,9 @@ type Embedder struct {
 var _ base.Embedder = (*Embedder)(nil)
 
 // EmbedderConfig holds the configuration for GeminiEmbedder.
+// It remains provider-specific because Gemini handles non-200 responses
+// through its regular error schema and does not expose the configurable
+// unauthorized-error mapping provided by base.APIKeyProviderConfig.
 type EmbedderConfig struct {
 	GetAPIKey func() string
 	// GetBaseURL returns the API base ending before the model name. The
@@ -78,6 +79,29 @@ func batchEmbeddingsEndpoint(configured, model string) (string, error) {
 		return "", err
 	}
 	return u.String(), nil
+}
+
+func decodeErrorMessage(body []byte) (string, error) {
+	var response ErrorResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+	return response.Error.Message, nil
+}
+
+func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
+	var response BatchResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
+	}
+	if len(response.Embeddings) != expectedCount {
+		return nil, fmt.Errorf("response embeddings length %d does not match input texts length %d", len(response.Embeddings), expectedCount)
+	}
+	embeddings := make([][]float32, len(response.Embeddings))
+	for i, embedding := range response.Embeddings {
+		embeddings[i] = embedding.Values
+	}
+	return embeddings, nil
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
@@ -121,48 +145,17 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, err
 	}
 
-	statusCode, body, err := base.PostJSON(ctx, &e.client, "Gemini", fullURL, map[string]any{
-		"requests": requests,
-	}, http.Header{
-		"x-goog-api-key": {apiKey},
-	}, e.cfg.MaxResponseBodyBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	if statusCode != http.StatusOK {
-		var errResp ErrorResponse
-		message := ""
-		var parseErr error
-		if err := json.Unmarshal(body, &errResp); err != nil {
-			parseErr = err
-		} else if errResp.Error.Message != "" {
-			message = base.SanitizeErrorText(errResp.Error.Message, apiKey)
-		}
-		logFields := []zap.Field{zap.Int("status", statusCode)}
-		if message != "" {
-			logFields = append(logFields, zap.String("message", message))
-		}
-		if parseErr != nil {
-			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
-		}
-		logutil.BgLogger().Error("Gemini API request failed", logFields...)
-		return nil, base.NewProviderResponseError("Gemini", statusCode, message)
-	}
-
-	var respObj BatchResponse
-	if err := json.Unmarshal(body, &respObj); err != nil {
-		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
-	}
-
-	if len(respObj.Embeddings) != len(texts) {
-		return nil, fmt.Errorf("response embeddings length %d does not match input texts length %d", len(respObj.Embeddings), len(texts))
-	}
-
-	embeddings := make([][]float32, len(respObj.Embeddings))
-	for i, embedding := range respObj.Embeddings {
-		embeddings[i] = embedding.Values
-	}
-
-	return embeddings, nil
+	return base.ExecuteJSONEmbeddingCall(ctx, len(texts), base.JSONEmbeddingCall{
+		Provider: "Gemini",
+		Client:   &e.client,
+		Endpoint: fullURL,
+		Payload: map[string]any{
+			"requests": requests,
+		},
+		Headers:              http.Header{"x-goog-api-key": {apiKey}},
+		MaxResponseBodyBytes: e.cfg.MaxResponseBodyBytes,
+		Secrets:              []string{apiKey},
+		DecodeErrorMessage:   decodeErrorMessage,
+		DecodeEmbeddings:     decodeEmbeddings,
+	})
 }

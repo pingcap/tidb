@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,7 +71,7 @@ func TestCohereEmbedder_Success(t *testing.T) {
 	defer server.Close()
 
 	// Create embedder with mock server URL
-	embedder := NewCohereEmbedder(EmbedderConfig{
+	embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -112,7 +113,7 @@ func TestCohereEmbedder_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewCohereEmbedder(EmbedderConfig{
+	embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -142,7 +143,7 @@ func TestCohereEmbedderEmbeddingTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			embedder := NewCohereEmbedder(EmbedderConfig{
+			embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:  func() string { panic("request validation should happen before reading the API key") },
 				GetBaseURL: func() string { panic("invalid options must not issue a request") },
 			})
@@ -159,7 +160,7 @@ func TestCohereEmbedderEmbeddingTypes(t *testing.T) {
 }
 
 func TestCohereEmbedder_NoAPIKey(t *testing.T) {
-	embedder := NewCohereEmbedder(EmbedderConfig{
+	embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey: func() string { return "" },
 	})
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "embed-v4.0", []string{"hello world"}, nil)
@@ -172,7 +173,7 @@ func TestCohereEmbedder_NoAPIKey(t *testing.T) {
 func TestCohereEmbedder_InvalidAPIKey(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusUnauthorized, `{"message":"invalid api token"}`)
 
-	embedder := NewCohereEmbedder(EmbedderConfig{
+	embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -187,7 +188,7 @@ func TestCohereEmbedder_InvalidModel(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusNotFound,
 		`{"message":"model 'embed-v4.0x' not found, make sure the correct model ID was used and that you have access to the model."}`)
 
-	embedder := NewCohereEmbedder(EmbedderConfig{
+	embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -212,7 +213,7 @@ func TestCohereEmbedderEndpoint(t *testing.T) {
 func TestCohereEmbedderMismatchedResponseLength(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusOK, `{"embeddings":[[1.0]]}`)
 
-	embedder := NewCohereEmbedder(EmbedderConfig{
+	embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -225,7 +226,7 @@ func TestCohereEmbedderContract(t *testing.T) {
 	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
 		Model: "embed-v4.0",
 		New: func(cfg testutil.EmbedderConfig) *Embedder {
-			embedder := NewCohereEmbedder(EmbedderConfig{
+			embedder := NewCohereEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:            func() string { return cfg.APIKey },
 				GetBaseURL:           func() string { return cfg.BaseURL },
 				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,

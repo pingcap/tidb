@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,7 +60,7 @@ func TestNvidiaEmbedder_Success(t *testing.T) {
 	defer server.Close()
 
 	// Create embedder with mock server URL
-	embedder := NewNvidiaEmbedder(EmbedderConfig{
+	embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -107,7 +108,7 @@ func TestNvidiaEmbedder_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewNvidiaEmbedder(EmbedderConfig{
+	embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -129,7 +130,7 @@ func TestNvidiaEmbedder_WithOptions(t *testing.T) {
 
 func TestNvidiaEmbedderEmbeddingType(t *testing.T) {
 	for _, value := range []any{"int8", "uint8", "binary", 1} {
-		embedder := NewNvidiaEmbedder(EmbedderConfig{
+		embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 			GetAPIKey:  func() string { panic("request validation should happen before reading the API key") },
 			GetBaseURL: func() string { panic("invalid options must not issue a request") },
 		})
@@ -194,7 +195,7 @@ func TestNvidiaEmbedder_ResponseIndexValidation(t *testing.T) {
 			serverURL := testutil.NewJSONServer(t, http.StatusOK,
 				`{"object":"list","model":"baai/bge-m3","data":`+tt.responseData+`}`)
 
-			embedder := NewNvidiaEmbedder(EmbedderConfig{
+			embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:  func() string { return "test-api-key" },
 				GetBaseURL: func() string { return serverURL },
 			})
@@ -216,7 +217,7 @@ func TestNvidiaEmbedder_UnauthorizedAPIKey(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			serverURL := testutil.NewJSONServer(t, status, `{"detail":"Authorization failed"}`)
 
-			embedder := NewNvidiaEmbedder(EmbedderConfig{
+			embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:  func() string { return "invalid-api-key" },
 				GetBaseURL: func() string { return serverURL },
 			})
@@ -236,7 +237,7 @@ func TestNvidiaEmbedder_InvalidModel(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	embedder := NewNvidiaEmbedder(EmbedderConfig{
+	embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -256,7 +257,7 @@ func TestNvidiaEmbedder_BadRequest(t *testing.T) {
 
 	serverURL := testutil.NewJSONServer(t, http.StatusBadRequest, mockResponse)
 
-	embedder := NewNvidiaEmbedder(EmbedderConfig{
+	embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -269,7 +270,7 @@ func TestNvidiaEmbedder_BadRequest(t *testing.T) {
 
 func TestNvidiaEmbedder_MissingAPIKey(t *testing.T) {
 	customErr := fmt.Errorf("custom missing API key error")
-	embedder := NewNvidiaEmbedder(EmbedderConfig{
+	embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:        func() string { return "" },
 		GetBaseURL:       func() string { return "http://mock-url" },
 		ErrMissingAPIKey: customErr,
@@ -285,7 +286,7 @@ func TestNvidiaEmbedder_CustomUnauthorizedError(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			serverURL := testutil.NewJSONServer(t, status, `{"detail": "Authorization failed"}`)
 
-			embedder := NewNvidiaEmbedder(EmbedderConfig{
+			embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:       func() string { return "invalid-key" },
 				GetBaseURL:      func() string { return serverURL },
 				ErrUnauthorized: customErr,
@@ -313,7 +314,7 @@ func TestNvidiaEmbedderContract(t *testing.T) {
 	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
 		Model: "baai/bge-m3",
 		New: func(cfg testutil.EmbedderConfig) *Embedder {
-			embedder := NewNvidiaEmbedder(EmbedderConfig{
+			embedder := NewNvidiaEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:            func() string { return cfg.APIKey },
 				GetBaseURL:           func() string { return cfg.BaseURL },
 				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,

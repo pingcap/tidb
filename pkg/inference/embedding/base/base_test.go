@@ -17,6 +17,7 @@ package base
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestDecodeBase64EmbeddingF32(t *testing.T) {
@@ -326,6 +330,95 @@ func TestHTTPHelpers(t *testing.T) {
 			64,
 		)
 		require.ErrorContains(t, err, "unexpected marshal request error")
+	})
+
+	t.Run("execute JSON embedding call", func(t *testing.T) {
+		core, observedLogs := observer.New(zap.ErrorLevel)
+		restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+		t.Cleanup(restore)
+
+		decodeErrorMessage := func(body []byte) (string, error) {
+			var response struct {
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(body, &response); err != nil {
+				return "", err
+			}
+			return response.Message, nil
+		}
+		decodeEmbeddings := func(body []byte, expectedCount int) ([][]float32, error) {
+			require.JSONEq(t, `{"ok":true}`, string(body))
+			require.Equal(t, 2, expectedCount)
+			return [][]float32{{1}, {2}}, nil
+		}
+		execute := func(
+			statusCode int,
+			responseBody string,
+			configure func(*JSONEmbeddingCall),
+		) ([][]float32, error) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(statusCode)
+				_, _ = w.Write([]byte(responseBody))
+			}))
+			defer server.Close()
+
+			call := JSONEmbeddingCall{
+				Provider:             "test provider",
+				Client:               &http.Client{},
+				Endpoint:             server.URL,
+				Payload:              map[string]any{"input": []string{"hello"}},
+				MaxResponseBodyBytes: 64,
+				DecodeErrorMessage:   decodeErrorMessage,
+				DecodeEmbeddings:     decodeEmbeddings,
+			}
+			if configure != nil {
+				configure(&call)
+			}
+			return ExecuteJSONEmbeddingCall(context.Background(), 2, call)
+		}
+
+		embeddings, err := execute(http.StatusOK, `{"ok":true}`, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]float32{{1}, {2}}, embeddings)
+
+		_, err = execute(http.StatusBadRequest, `{"message":"invalid super-secret"}`, func(call *JSONEmbeddingCall) {
+			call.Secrets = []string{"super-secret"}
+		})
+		require.EqualError(t, err, "test provider: status code 400, message: invalid [REDACTED]")
+
+		customErr := errors.New("custom unauthorized error")
+		_, err = execute(http.StatusUnauthorized, `{"message":"unauthorized"}`, func(call *JSONEmbeddingCall) {
+			call.StatusErrors = map[int]error{http.StatusUnauthorized: customErr}
+		})
+		require.ErrorIs(t, err, customErr)
+
+		_, err = execute(http.StatusBadGateway, `{"message":`, nil)
+		require.EqualError(t, err, "test provider: status code 502, message: Bad Gateway")
+
+		decodeErr := errors.New("success decoder failed")
+		_, err = execute(http.StatusOK, `{"ok":true}`, func(call *JSONEmbeddingCall) {
+			call.DecodeEmbeddings = func([]byte, int) ([][]float32, error) {
+				return nil, decodeErr
+			}
+		})
+		require.ErrorIs(t, err, decodeErr)
+
+		entries := observedLogs.FilterMessage("test provider API request failed").All()
+		require.Len(t, entries, 3)
+		fields := entries[0].ContextMap()
+		require.Equal(t, int64(http.StatusBadRequest), fields["status"])
+		require.Equal(t, "invalid [REDACTED]", fields["message"])
+		fields = entries[2].ContextMap()
+		require.Equal(t, int64(http.StatusBadGateway), fields["status"])
+		require.NotEmpty(t, fields["parse_error"])
+
+		_, err = ExecuteJSONEmbeddingCall(context.Background(), 0, JSONEmbeddingCall{Provider: "test provider"})
+		require.EqualError(t, err, "test provider error response decoder is not configured")
+		_, err = ExecuteJSONEmbeddingCall(context.Background(), 0, JSONEmbeddingCall{
+			Provider:           "test provider",
+			DecodeErrorMessage: decodeErrorMessage,
+		})
+		require.EqualError(t, err, "test provider success response decoder is not configured")
 	})
 
 	t.Run("response error", func(t *testing.T) {

@@ -23,8 +23,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // DefaultAPIBaseURL is the default endpoint URL for the Cohere embeddings API.
@@ -38,16 +36,13 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// EmbedderConfig holds the configuration for CohereEmbedder.
-// GetBaseURL returns the complete Cohere embeddings endpoint. An empty value
-// uses DefaultAPIBaseURL.
-type EmbedderConfig base.APIKeyProviderConfig
-
 // NewCohereEmbedder creates a new CohereEmbedder instance with the provided configuration.
-func NewCohereEmbedder(cfg EmbedderConfig) *Embedder {
+// cfg.GetBaseURL returns the complete Cohere embeddings endpoint; an empty
+// value uses DefaultAPIBaseURL.
+func NewCohereEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    base.APIKeyProviderConfig(cfg).WithDefaults(),
+		cfg:    cfg.WithDefaults(),
 	}
 }
 
@@ -124,6 +119,36 @@ func decodeEmbeddings(raw json.RawMessage) ([][]float32, error) {
 	}
 }
 
+func decodeErrorMessage(body []byte) (string, error) {
+	var response ErrorResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+	return response.Message, nil
+}
+
+func decodeResponse(body []byte, expectedCount int) ([][]float32, error) {
+	var response Response
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
+	}
+	embeddings, err := decodeEmbeddings(response.Embeddings)
+	if err != nil {
+		return nil, err
+	}
+	if len(embeddings) != expectedCount {
+		return nil, fmt.Errorf("response embeddings length %d does not match input texts length %d", len(embeddings), expectedCount)
+	}
+	return embeddings, nil
+}
+
+func (e *Embedder) unauthorizedError() error {
+	if e.cfg.ErrUnauthorized != nil {
+		return e.cfg.ErrUnauthorized
+	}
+	return fmt.Errorf("cohere returns status unauthorized, check API key")
+}
+
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // Cohere v3 and newer models require opts to include an "input_type" appropriate
 // for the current call, such as "search_document" or "search_query".
@@ -149,53 +174,21 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, err
 	}
 
-	statusCode, body, err := base.PostJSON(ctx, &e.client, "Cohere", endpoint, base.JSONFieldsWithOptions(map[string]any{
-		"model": model,
-		"texts": texts,
-	}, opts), http.Header{
-		"Authorization": {"Bearer " + apiKey},
-	}, e.cfg.MaxResponseBodyBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	if statusCode != http.StatusOK {
-		var errResp ErrorResponse
-		message := ""
-		var parseErr error
-		if err := json.Unmarshal(body, &errResp); err != nil {
-			parseErr = err
-		} else if errResp.Message != "" {
-			message = base.SanitizeErrorText(errResp.Message, apiKey)
-		}
-		logFields := []zap.Field{zap.Int("status", statusCode)}
-		if message != "" {
-			logFields = append(logFields, zap.String("message", message))
-		}
-		if parseErr != nil {
-			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
-		}
-		logutil.BgLogger().Error("Cohere API request failed", logFields...)
-		if statusCode == http.StatusUnauthorized {
-			if e.cfg.ErrUnauthorized != nil {
-				return nil, e.cfg.ErrUnauthorized
-			}
-			return nil, fmt.Errorf("cohere returns status unauthorized, check API key")
-		}
-		return nil, base.NewProviderResponseError("Cohere", statusCode, message)
-	}
-
-	var respObj Response
-	if err := json.Unmarshal(body, &respObj); err != nil {
-		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
-	}
-	embeddings, err := decodeEmbeddings(respObj.Embeddings)
-	if err != nil {
-		return nil, err
-	}
-	if len(embeddings) != len(texts) {
-		return nil, fmt.Errorf("response embeddings length %d does not match input texts length %d", len(embeddings), len(texts))
-	}
-
-	return embeddings, nil
+	return base.ExecuteJSONEmbeddingCall(ctx, len(texts), base.JSONEmbeddingCall{
+		Provider: "Cohere",
+		Client:   &e.client,
+		Endpoint: endpoint,
+		Payload: base.JSONFieldsWithOptions(map[string]any{
+			"model": model,
+			"texts": texts,
+		}, opts),
+		Headers:              http.Header{"Authorization": {"Bearer " + apiKey}},
+		MaxResponseBodyBytes: e.cfg.MaxResponseBodyBytes,
+		Secrets:              []string{apiKey},
+		DecodeErrorMessage:   decodeErrorMessage,
+		StatusErrors: map[int]error{
+			http.StatusUnauthorized: e.unauthorizedError(),
+		},
+		DecodeEmbeddings: decodeResponse,
+	})
 }

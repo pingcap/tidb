@@ -23,8 +23,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // DefaultAPIBaseURL is the default base URL for HuggingFace inference API.
@@ -38,17 +36,14 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// EmbedderConfig holds the configuration for HuggingFaceEmbedder.
-// GetBaseURL returns the inference API base. The embedder appends
+// NewHuggingFaceEmbedder creates a new HuggingFaceEmbedder instance with the provided configuration.
+// cfg.GetBaseURL returns the inference API base; the embedder appends
 // /models/<model>/pipeline/feature-extraction. An empty value uses
 // DefaultAPIBaseURL.
-type EmbedderConfig base.APIKeyProviderConfig
-
-// NewHuggingFaceEmbedder creates a new HuggingFaceEmbedder instance with the provided configuration.
-func NewHuggingFaceEmbedder(cfg EmbedderConfig) *Embedder {
+func NewHuggingFaceEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    base.APIKeyProviderConfig(cfg).WithDefaults(),
+		cfg:    cfg.WithDefaults(),
 	}
 }
 
@@ -86,6 +81,32 @@ func escapePathSegment(segment string) string {
 	return escaped
 }
 
+func decodeErrorMessage(body []byte) (string, error) {
+	var response ErrorResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+	return response.Error, nil
+}
+
+func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
+	var embeddings Response
+	if err := json.Unmarshal(body, &embeddings); err != nil {
+		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
+	}
+	if len(embeddings) != expectedCount {
+		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(embeddings), expectedCount)
+	}
+	return embeddings, nil
+}
+
+func (e *Embedder) unauthorizedError() error {
+	if e.cfg.ErrUnauthorized != nil {
+		return e.cfg.ErrUnauthorized
+	}
+	return fmt.Errorf("HuggingFace returns status unauthorized, check API key")
+}
+
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
@@ -107,55 +128,21 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, err
 	}
 
-	statusCode, body, err := base.PostJSON(ctx, &e.client, "HuggingFace", endpoint, base.JSONFieldsWithOptions(map[string]any{
-		"inputs": texts,
-	}, opts), http.Header{
-		"Authorization": {"Bearer " + apiKey},
-	}, e.cfg.MaxResponseBodyBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	if statusCode != http.StatusOK {
-		var errResp ErrorResponse
-		message := ""
-		var parseErr error
-		if err := json.Unmarshal(body, &errResp); err != nil {
-			parseErr = err
-		} else if errResp.Error != "" {
-			message = base.SanitizeErrorText(errResp.Error, apiKey)
-		}
-		logFields := []zap.Field{zap.Int("status", statusCode)}
-		if message != "" {
-			logFields = append(logFields, zap.String("message", message))
-		}
-		if parseErr != nil {
-			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
-		}
-		logutil.BgLogger().Error("HuggingFace API request failed", logFields...)
-
-		if statusCode == http.StatusUnauthorized {
-			if e.cfg.ErrUnauthorized != nil {
-				return nil, e.cfg.ErrUnauthorized
-			}
-			return nil, fmt.Errorf("HuggingFace returns status unauthorized, check API key")
-		}
-
-		if statusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("HuggingFace model '%s' does not exist or is not available", model)
-		}
-
-		return nil, base.NewProviderResponseError("HuggingFace", statusCode, message)
-	}
-
-	var embeddings Response
-	if err := json.Unmarshal(body, &embeddings); err != nil {
-		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
-	}
-
-	if len(embeddings) != len(texts) {
-		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(embeddings), len(texts))
-	}
-
-	return embeddings, nil
+	return base.ExecuteJSONEmbeddingCall(ctx, len(texts), base.JSONEmbeddingCall{
+		Provider: "HuggingFace",
+		Client:   &e.client,
+		Endpoint: endpoint,
+		Payload: base.JSONFieldsWithOptions(map[string]any{
+			"inputs": texts,
+		}, opts),
+		Headers:              http.Header{"Authorization": {"Bearer " + apiKey}},
+		MaxResponseBodyBytes: e.cfg.MaxResponseBodyBytes,
+		Secrets:              []string{apiKey},
+		DecodeErrorMessage:   decodeErrorMessage,
+		StatusErrors: map[int]error{
+			http.StatusUnauthorized: e.unauthorizedError(),
+			http.StatusNotFound:     fmt.Errorf("HuggingFace model '%s' does not exist or is not available", model),
+		},
+		DecodeEmbeddings: decodeEmbeddings,
+	})
 }

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -80,7 +81,7 @@ func TestOpenAIEmbedder_Success(t *testing.T) {
 	defer server.Close()
 
 	// Create embedder with mock server URL
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -130,7 +131,7 @@ func TestOpenAIEmbedder_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -185,7 +186,7 @@ func TestOpenAIEmbedderBaseURL(t *testing.T) {
 		{suffix: "/v1/embeddings/?api-version=x#section", path: "/v1/embeddings", rawQuery: "api-version=x"},
 	}
 	for _, tt := range testCases {
-		embedder := NewOpenAIEmbedder(EmbedderConfig{
+		embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 			GetAPIKey:  func() string { return "test-api-key" },
 			GetBaseURL: func() string { return server.URL + tt.suffix },
 		})
@@ -197,7 +198,7 @@ func TestOpenAIEmbedderBaseURL(t *testing.T) {
 		require.Equal(t, [][]float32{{1}}, embeddings)
 	}
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return "://invalid" },
 	})
@@ -212,7 +213,7 @@ func TestOpenAIEmbedderHTTPClientTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -271,7 +272,7 @@ func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
 			serverURL := testutil.NewJSONServer(t, http.StatusOK,
 				`{"object":"list","model":"text-embedding-3-small","data":`+tt.responseData+`}`)
 
-			embedder := NewOpenAIEmbedder(EmbedderConfig{
+			embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:  func() string { return "test-api-key" },
 				GetBaseURL: func() string { return serverURL },
 			})
@@ -307,7 +308,7 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -328,7 +329,7 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	badRequestServerURL := testutil.NewJSONServer(t, http.StatusBadRequest,
 		`{"error":{"message":"invalid api key: dash\"secret"}}`)
 
-	embedder = NewOpenAIEmbedder(EmbedderConfig{
+	embedder = NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return providerKey },
 		GetBaseURL: func() string { return badRequestServerURL },
 	})
@@ -345,7 +346,7 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 
 	malformedResponseServerURL := testutil.NewJSONServer(t, http.StatusBadGateway, `{"error":`)
 
-	embedder = NewOpenAIEmbedder(EmbedderConfig{
+	embedder = NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return malformedResponseServerURL },
 	})
@@ -381,7 +382,7 @@ func TestOpenAIEmbedder_InvalidModel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -399,7 +400,7 @@ func TestOpenAIEmbedderContract(t *testing.T) {
 	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
 		Model: "text-embedding-3-small",
 		New: func(cfg testutil.EmbedderConfig) *Embedder {
-			embedder := NewOpenAIEmbedder(EmbedderConfig{
+			embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:            func() string { return cfg.APIKey },
 				GetBaseURL:           func() string { return cfg.BaseURL },
 				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,

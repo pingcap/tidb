@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,7 @@ func TestJinaEmbedder_Success(t *testing.T) {
 	defer server.Close()
 
 	// Create embedder with mock server URL
-	embedder := NewJinaEmbedder(EmbedderConfig{
+	embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -97,7 +98,7 @@ func TestJinaEmbedder_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewJinaEmbedder(EmbedderConfig{
+	embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -169,7 +170,7 @@ func TestJinaEmbedder_ResponseIndexValidation(t *testing.T) {
 			serverURL := testutil.NewJSONServer(t, http.StatusOK,
 				`{"object":"list","model":"jina-embeddings-v3","data":`+tt.responseData+`}`)
 
-			embedder := NewJinaEmbedder(EmbedderConfig{
+			embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:  func() string { return "test-api-key" },
 				GetBaseURL: func() string { return serverURL },
 			})
@@ -189,7 +190,7 @@ func TestJinaEmbedder_ResponseIndexValidation(t *testing.T) {
 func TestJinaEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusUnauthorized, `{"detail":"Unauthorized"}`)
 
-	embedder := NewJinaEmbedder(EmbedderConfig{
+	embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -203,7 +204,7 @@ func TestJinaEmbedder_UnauthorizedAPIKey(t *testing.T) {
 func TestJinaEmbedder_InvalidModel(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusNotFound, `{"detail":"Model jina-embeddings-v2-small-enx not found"}`)
 
-	embedder := NewJinaEmbedder(EmbedderConfig{
+	embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -229,7 +230,7 @@ func TestJinaEmbedderContract(t *testing.T) {
 	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
 		Model: "jina-embeddings-v3",
 		New: func(cfg testutil.EmbedderConfig) *Embedder {
-			embedder := NewJinaEmbedder(EmbedderConfig{
+			embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:            func() string { return cfg.APIKey },
 				GetBaseURL:           func() string { return cfg.BaseURL },
 				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,

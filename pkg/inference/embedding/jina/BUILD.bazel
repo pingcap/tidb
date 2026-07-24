@@ -8,11 +8,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/pkg/inference/embedding/jina",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/inference/embedding/base",
-        "//pkg/util/logutil",
-        "@org_uber_go_zap//:zap",
-    ],
+    deps = ["//pkg/inference/embedding/base"],
 )
 
 go_test(
@@ -23,6 +19,7 @@ go_test(
     flaky = True,
     shard_count = 7,
     deps = [
+        "//pkg/inference/embedding/base",
         "//pkg/inference/embedding/internal/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

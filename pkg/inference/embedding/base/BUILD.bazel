@@ -5,7 +5,11 @@ go_library(
     srcs = ["base.go"],
     importpath = "github.com/pingcap/tidb/pkg/inference/embedding/base",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_docker_go_units//:go-units"],
+    deps = [
+        "//pkg/util/logutil",
+        "@com_github_docker_go_units//:go-units",
+        "@org_uber_go_zap//:zap",
+    ],
 )
 
 go_test(
@@ -15,5 +19,10 @@ go_test(
     embed = [":base"],
     flaky = True,
     shard_count = 6,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
+    ],
 )

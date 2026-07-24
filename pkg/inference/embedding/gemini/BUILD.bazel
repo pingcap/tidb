@@ -8,11 +8,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/pkg/inference/embedding/gemini",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/inference/embedding/base",
-        "//pkg/util/logutil",
-        "@org_uber_go_zap//:zap",
-    ],
+    deps = ["//pkg/inference/embedding/base"],
 )
 
 go_test(

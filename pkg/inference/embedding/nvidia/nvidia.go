@@ -22,8 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // DefaultAPIBaseURL is the default endpoint URL for the NVIDIA NIM embeddings API.
@@ -37,16 +35,13 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// EmbedderConfig holds the configuration for NvidiaEmbedder.
-// GetBaseURL returns the complete NVIDIA NIM embeddings endpoint. An empty
-// value uses DefaultAPIBaseURL.
-type EmbedderConfig base.APIKeyProviderConfig
-
 // NewNvidiaEmbedder creates a new NvidiaEmbedder instance with the provided configuration.
-func NewNvidiaEmbedder(cfg EmbedderConfig) *Embedder {
+// cfg.GetBaseURL returns the complete NVIDIA NIM embeddings endpoint; an empty
+// value uses DefaultAPIBaseURL.
+func NewNvidiaEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    base.APIKeyProviderConfig(cfg).WithDefaults(),
+		cfg:    cfg.WithDefaults(),
 	}
 }
 
@@ -74,6 +69,37 @@ func validateEmbeddingType(opts map[string]any) error {
 	return nil
 }
 
+func decodeErrorMessage(body []byte) (string, error) {
+	// NVIDIA endpoints use different error schemas across hosted and
+	// self-hosted versions, so accept all known message fields.
+	var response ErrorResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+	if response.Detail != "" {
+		return response.Detail, nil
+	}
+	if response.Message != "" {
+		return response.Message, nil
+	}
+	return response.Error, nil
+}
+
+func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
+	var response Response
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
+	}
+	return base.DecodeIndexedBase64Embeddings(response.Data, expectedCount)
+}
+
+func (e *Embedder) unauthorizedError(statusCode int) error {
+	if e.cfg.ErrUnauthorized != nil {
+		return e.cfg.ErrUnauthorized
+	}
+	return fmt.Errorf("NVIDIA NIM returns status %s, check API key", strings.ToLower(http.StatusText(statusCode)))
+}
+
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
@@ -96,55 +122,24 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, err
 	}
 
-	statusCode, body, err := base.PostJSON(ctx, &e.client, "NVIDIA NIM", endpoint, base.JSONFieldsWithOptions(map[string]any{
-		"model":           model,
-		"input":           texts,
-		"encoding_format": "base64",
-	}, opts), http.Header{
-		"Authorization": {"Bearer " + apiKey},
-	}, e.cfg.MaxResponseBodyBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	if statusCode != http.StatusOK {
-		// NVIDIA endpoints use different error schemas across hosted and
-		// self-hosted versions, so accept all known message fields.
-		var errResp ErrorResponse
-		message := ""
-		var parseErr error
-		if err := json.Unmarshal(body, &errResp); err != nil {
-			parseErr = err
-		} else if errResp.Detail != "" {
-			message = base.SanitizeErrorText(errResp.Detail, apiKey)
-		} else if errResp.Message != "" {
-			message = base.SanitizeErrorText(errResp.Message, apiKey)
-		} else if errResp.Error != "" {
-			message = base.SanitizeErrorText(errResp.Error, apiKey)
-		}
-		logFields := []zap.Field{zap.Int("status", statusCode)}
-		if message != "" {
-			logFields = append(logFields, zap.String("message", message))
-		}
-		if parseErr != nil {
-			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
-		}
-		logutil.BgLogger().Error("NVIDIA NIM API request failed", logFields...)
-		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
-			if e.cfg.ErrUnauthorized != nil {
-				return nil, e.cfg.ErrUnauthorized
-			}
-			return nil, fmt.Errorf("NVIDIA NIM returns status %s, check API key", strings.ToLower(http.StatusText(statusCode)))
-		}
-		if statusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("NVIDIA NIM model '%s' does not exist or is not available", model)
-		}
-		return nil, base.NewProviderResponseError("NVIDIA NIM", statusCode, message)
-	}
-
-	var respObj Response
-	if err := json.Unmarshal(body, &respObj); err != nil {
-		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
-	}
-	return base.DecodeIndexedBase64Embeddings(respObj.Data, len(texts))
+	return base.ExecuteJSONEmbeddingCall(ctx, len(texts), base.JSONEmbeddingCall{
+		Provider: "NVIDIA NIM",
+		Client:   &e.client,
+		Endpoint: endpoint,
+		Payload: base.JSONFieldsWithOptions(map[string]any{
+			"model":           model,
+			"input":           texts,
+			"encoding_format": "base64",
+		}, opts),
+		Headers:              http.Header{"Authorization": {"Bearer " + apiKey}},
+		MaxResponseBodyBytes: e.cfg.MaxResponseBodyBytes,
+		Secrets:              []string{apiKey},
+		DecodeErrorMessage:   decodeErrorMessage,
+		StatusErrors: map[int]error{
+			http.StatusUnauthorized: e.unauthorizedError(http.StatusUnauthorized),
+			http.StatusForbidden:    e.unauthorizedError(http.StatusForbidden),
+			http.StatusNotFound:     fmt.Errorf("NVIDIA NIM model '%s' does not exist or is not available", model),
+		},
+		DecodeEmbeddings: decodeEmbeddings,
+	})
 }

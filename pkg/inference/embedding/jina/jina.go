@@ -22,8 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // DefaultAPIBaseURL is the default endpoint URL for the Jina AI embeddings API.
@@ -37,16 +35,13 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// EmbedderConfig holds the configuration for JinaEmbedder.
-// GetBaseURL returns the complete Jina AI embeddings endpoint. An empty value
-// uses DefaultAPIBaseURL.
-type EmbedderConfig base.APIKeyProviderConfig
-
 // NewJinaEmbedder creates a new JinaEmbedder instance with the provided configuration.
-func NewJinaEmbedder(cfg EmbedderConfig) *Embedder {
+// cfg.GetBaseURL returns the complete Jina AI embeddings endpoint; an empty
+// value uses DefaultAPIBaseURL.
+func NewJinaEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    base.APIKeyProviderConfig(cfg).WithDefaults(),
+		cfg:    cfg.WithDefaults(),
 	}
 }
 
@@ -60,6 +55,29 @@ func embeddingsEndpoint(configured string) (string, error) {
 		return "", err
 	}
 	return u.String(), nil
+}
+
+func decodeErrorMessage(body []byte) (string, error) {
+	var response ErrorResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+	return response.Detail, nil
+}
+
+func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
+	var response Response
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
+	}
+	return base.DecodeIndexedBase64Embeddings(response.Data, expectedCount)
+}
+
+func (e *Embedder) unauthorizedError() error {
+	if e.cfg.ErrUnauthorized != nil {
+		return e.cfg.ErrUnauthorized
+	}
+	return fmt.Errorf("JinaAI returns status unauthorized, check API key")
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
@@ -81,46 +99,22 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, err
 	}
 
-	statusCode, body, err := base.PostJSON(ctx, &e.client, "JinaAI", endpoint, base.JSONFieldsWithOptions(map[string]any{
-		"model":          model,
-		"input":          texts,
-		"embedding_type": "base64",
-	}, opts), http.Header{
-		"Authorization": {"Bearer " + apiKey},
-	}, e.cfg.MaxResponseBodyBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	if statusCode != http.StatusOK {
-		var errResp ErrorResponse
-		message := ""
-		var parseErr error
-		if err := json.Unmarshal(body, &errResp); err != nil {
-			parseErr = err
-		} else if errResp.Detail != "" {
-			message = base.SanitizeErrorText(errResp.Detail, apiKey)
-		}
-		logFields := []zap.Field{zap.Int("status", statusCode)}
-		if message != "" {
-			logFields = append(logFields, zap.String("message", message))
-		}
-		if parseErr != nil {
-			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
-		}
-		logutil.BgLogger().Error("JinaAI API request failed", logFields...)
-		if statusCode == http.StatusUnauthorized {
-			if e.cfg.ErrUnauthorized != nil {
-				return nil, e.cfg.ErrUnauthorized
-			}
-			return nil, fmt.Errorf("JinaAI returns status unauthorized, check API key")
-		}
-		return nil, base.NewProviderResponseError("JinaAI", statusCode, message)
-	}
-
-	var respObj Response
-	if err := json.Unmarshal(body, &respObj); err != nil {
-		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
-	}
-	return base.DecodeIndexedBase64Embeddings(respObj.Data, len(texts))
+	return base.ExecuteJSONEmbeddingCall(ctx, len(texts), base.JSONEmbeddingCall{
+		Provider: "JinaAI",
+		Client:   &e.client,
+		Endpoint: endpoint,
+		Payload: base.JSONFieldsWithOptions(map[string]any{
+			"model":          model,
+			"input":          texts,
+			"embedding_type": "base64",
+		}, opts),
+		Headers:              http.Header{"Authorization": {"Bearer " + apiKey}},
+		MaxResponseBodyBytes: e.cfg.MaxResponseBodyBytes,
+		Secrets:              []string{apiKey},
+		DecodeErrorMessage:   decodeErrorMessage,
+		StatusErrors: map[int]error{
+			http.StatusUnauthorized: e.unauthorizedError(),
+		},
+		DecodeEmbeddings: decodeEmbeddings,
+	})
 }
