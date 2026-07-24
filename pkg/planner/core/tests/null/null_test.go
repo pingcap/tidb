@@ -38,22 +38,24 @@ func TestIssue54803(t *testing.T) {
     WHERE ISNULL(t1db47fc1.col_68)
     GROUP BY t1db47fc1.col_68
     HAVING ISNULL(t1db47fc1.col_68) OR t1db47fc1.col_68 IN (62, 200, 196, 99);
-    `).Check(testkit.Rows("HashAgg root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
-		"└─TableReader root partition:p0 data:Selection",
-		"  └─Selection cop[tikv]  isnull(test.t1db47fc1.col_68)",
-		"    └─TableFullScan cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
+	`).Check(testkit.Rows("HashAgg root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
+		"└─TableReader root partition:p0 data:HashAgg",
+		"  └─HashAgg cop[tikv]  group by:test.t1db47fc1.col_68, ",
+		"    └─Selection cop[tikv]  isnull(test.t1db47fc1.col_68)",
+		"      └─TableFullScan cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
 	tk.MustQuery(`EXPLAIN format='plan_tree' SELECT TRIM(t1db47fc1.col_68) AS r0
     FROM t1db47fc1
     WHERE ISNULL(t1db47fc1.col_68)
     GROUP BY t1db47fc1.col_68
     HAVING ISNULL(t1db47fc1.col_68) OR t1db47fc1.col_68 IN (62, 200, 196, 99)
     LIMIT 106149535;
-    `).Check(testkit.Rows("Projection root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column",
+	`).Check(testkit.Rows("Projection root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column",
 		"└─Limit root  offset:0, count:106149535",
 		"  └─HashAgg root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
-		"    └─TableReader root partition:p0 data:Selection",
-		"      └─Selection cop[tikv]  isnull(test.t1db47fc1.col_68)",
-		"        └─TableFullScan cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
+		"    └─TableReader root partition:p0 data:HashAgg",
+		"      └─HashAgg cop[tikv]  group by:test.t1db47fc1.col_68, ",
+		"        └─Selection cop[tikv]  isnull(test.t1db47fc1.col_68)",
+		"          └─TableFullScan cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
 	// Issue55299
 	tk.MustExec(`
 CREATE TABLE tcd8c2aac (
