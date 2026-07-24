@@ -5714,7 +5714,14 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPl
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan base.LogicalPlan, condition []expression.Expression,
 	asScalar, not, considerRewrite, markNoDecorrelate bool) (base.LogicalPlan, error) {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate
+	// When asScalar, this builds a LeftOuterSemiJoin/AntiLeftOuterSemiJoin with a trailing
+	// boolean flag column (e.g. `x IN (subquery)` used as a scalar operand of AND/OR).
+	// FlagOuterJoinToSemiJoin lets the optimizer collapse it back to a plain
+	// SemiJoin/AntiSemiJoin when a Selection directly filters on that flag column. It is set
+	// unconditionally (not just when asScalar) because b.optFlag is cumulative across the
+	// whole statement: conditioning it on this call's asScalar could flip whether the flag
+	// is present for unrelated sibling subqueries optimized later via the same PlanBuilder.
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagOuterJoinToSemiJoin
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not, considerRewrite)
 	if err != nil {
