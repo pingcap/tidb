@@ -269,6 +269,7 @@ type StmtExecInfo struct {
 	execdetails.StmtExecDetails
 	ResultRows        int64
 	TiKVExecDetails   *util.ExecDetails
+	tikvExecDetails   util.ExecDetails
 	Prepared          bool
 	KeyspaceName      string
 	KeyspaceID        uint32
@@ -279,6 +280,16 @@ type StmtExecInfo struct {
 	PlanCacheUnqualified string
 
 	LazyInfo StmtExecLazyInfo
+}
+
+// SetTiKVExecDetails snapshots TiKV execution details into the reusable statement info.
+func (sei *StmtExecInfo) SetTiKVExecDetails(details *util.ExecDetails) {
+	if details == nil {
+		sei.tikvExecDetails = util.ExecDetails{}
+	} else {
+		sei.tikvExecDetails = *details
+	}
+	sei.TiKVExecDetails = &sei.tikvExecDetails
 }
 
 // StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.

@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -987,6 +989,58 @@ func BenchmarkNonPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
 
 func BenchmarkNonPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
 	runBenchmarkPrepared(b, "", batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func runPreparedPointSelectWithStmtSummary(b *testing.B, withTiKVDetails bool) {
+	requireNoError := func(err error) {
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	requireNoError(stmtsummaryv2.SetEnabled(true))
+	requireNoError(stmtsummaryv2.SetEnableInternalQuery(true))
+	preparePointGet(se, "")
+	mustExecute(se, "set tidb_enable_prepared_plan_cache = 1")
+	stmtID, _, _, err := se.PrepareStmt(pointQueryPrepared)
+	requireNoError(err)
+
+	ctx := context.Background()
+	if withTiKVDetails {
+		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{
+			WaitKVRespDuration: 1,
+		})
+	}
+	params := expression.Args2Expressions4Test(pointArgs)
+	alloc := chunk.NewAllocator()
+	execute := func() {
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
+		requireNoError(err)
+		_, err = drainRecordSet(ctx, rs, alloc)
+		requireNoError(err)
+		requireNoError(rs.Close())
+		alloc.Reset()
+	}
+	execute()
+
+	b.ResetTimer()
+	for range b.N {
+		execute()
+	}
+}
+
+func BenchmarkPreparedPointGetStmtSummary(b *testing.B) {
+	b.Run("without-tikv-details", func(b *testing.B) {
+		runPreparedPointSelectWithStmtSummary(b, false)
+	})
+	b.Run("with-tikv-details", func(b *testing.B) {
+		runPreparedPointSelectWithStmtSummary(b, true)
+	})
 }
 
 func BenchmarkNonPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {

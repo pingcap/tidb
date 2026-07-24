@@ -1985,10 +1985,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if stmtDetailRaw != nil {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 	}
-	var tikvExecDetail util.ExecDetails
-	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
-	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	var tikvExecDetail *util.ExecDetails
+	if tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey); tikvExecDetailRaw != nil {
+		tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
 	}
 	var ruDetail *util.RUDetails
 	if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
@@ -2044,7 +2043,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.ExecRetryCount = a.retryCount
 	stmtExecInfo.StmtExecDetails = stmtDetail
 	stmtExecInfo.ResultRows = resultRows
-	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
+	stmtExecInfo.SetTiKVExecDetails(tikvExecDetail)
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
