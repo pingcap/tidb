@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -145,6 +146,10 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
+	// coveredByIndex indicates whether the index covers all required columns,
+	// so we don't need to fetch row data from the table
+	coveredByIndex bool
+
 	stats *runtimeStatsWithSnapshot
 }
 
@@ -214,6 +219,7 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	e.rowDecoder = decoder
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
+	e.coveredByIndex = p.CoveredByIndex
 	e.buildVirtualColumnInfo()
 
 	sessVars := e.Ctx().GetSessionVars()
@@ -402,6 +408,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
+	sctx := e.BaseExecutor.Ctx()
+	schema := e.Schema()
+
+	// If the index covers all required columns, build result directly from index values.
+	// Skip this fast path under SELECT ... FOR UPDATE: the row-key lock is acquired only
+	// by getAndLock below, and MySQL/InnoDB semantics require locking the clustered row
+	// regardless of which columns are projected.
+	if e.idxInfo != nil && e.coveredByIndex && !e.lock && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+		return e.buildResultFromIndex(ctx, req, schema, sctx, tblID)
+	}
+
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {
@@ -431,8 +448,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	sctx := e.BaseExecutor.Ctx()
-	schema := e.Schema()
 	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
@@ -870,4 +885,144 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*runtimeStatsWithSnapshot) Tp() int {
 	return execdetails.TpRuntimeStatsWithSnapshot
+}
+
+// buildResultFromIndex builds the result directly from index values when the index covers
+// all required columns. It intentionally skips two things the legacy row-fetch path does:
+//
+//   - consistency.Reporter.ReportLookupInconsistent: we never read the row, so a dangling
+//     index entry (index exists but row is gone) is not surfaced as a consistency error.
+//     The trade-off is accepted because detecting dangling indexes is a diagnostic concern
+//     and reviving the row fetch would eliminate the entire performance benefit.
+//   - fillRowChecksum: only relevant when ExtraRowChecksumID is projected, but
+//     checkIndexCoveringColumns never marks that column as covered (it is not stored in
+//     the index), so if it is selected we never reach this fast path and fall back to
+//     buildResultFromRowData, which does call fillRowChecksum.
+func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context, tblID int64) error {
+	// First verify that index key exists
+	if len(e.handleVal) == 0 {
+		return nil
+	}
+
+	// For string columns, the search value in e.idxVals may legitimately differ from the
+	// stored value under two collation rules that both normalise before comparing:
+	//   - Case-insensitive collations ('foo' matches stored 'Foo'): IsCICollation.
+	//   - PAD SPACE collations ('foo' matches stored 'foo '), which covers every collation
+	//     except truly binary ones (binary, utf8mb4_0900_bin) and the NO-PAD
+	//     utf8mb4_0900_ai_ci — note that utf8mb4_bin is PAD SPACE but case-sensitive, so
+	//     the CI-only check used to miss it. IsPadSpaceCollation is the same helper used
+	//     by pkg/util/ranger for the trailing-space case.
+	// In either case returning e.idxVals[i] directly would return what the user searched
+	// for rather than what the table actually stores, diverging silently from MySQL
+	// behaviour. Fall back to the row-fetch path so the stored value is decoded.
+	for _, col := range schema.Columns {
+		for _, idxCol := range e.idxInfo.Columns {
+			if e.tblInfo.Columns[idxCol.Offset].ID != col.ID {
+				continue
+			}
+			if col.RetType.EvalType() == types.ETString {
+				collation := col.RetType.GetCollate()
+				if collate.IsCICollation(collation) || collate.IsPadSpaceCollation(collation) {
+					return e.buildResultFromRowData(ctx, req, schema, sctx, tblID)
+				}
+			}
+			break
+		}
+	}
+
+	// Map index columns to their positions in the schema
+	idxColMap := make(map[int64]types.Datum)
+	for i, idxCol := range e.idxInfo.Columns {
+		if i < len(e.idxVals) {
+			idxColMap[e.tblInfo.Columns[idxCol.Offset].ID] = e.idxVals[i]
+		}
+	}
+
+	// Add handle column if needed
+	if e.handle != nil {
+		// Find handle column in schema
+		for _, col := range schema.Columns {
+			if col.ID == model.ExtraHandleID ||
+				(e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag())) {
+				if !e.handle.IsInt() {
+					// For common handle, we need to decode the handle value
+					// This is more complex and for now we'll fall back to row fetch
+					return e.buildResultFromRowData(ctx, req, schema, sctx, tblID)
+				}
+				idxColMap[col.ID] = types.NewIntDatum(e.handle.IntValue())
+			}
+		}
+	}
+
+	// Build the row from index values
+	for i, col := range schema.Columns {
+		datum, ok := idxColMap[col.ID]
+		if !ok {
+			// If column is not in index map, this shouldn't happen with proper covering index detection
+			// Fall back to row data fetch for safety
+			return e.buildResultFromRowData(ctx, req, schema, sctx, tblID)
+		}
+		req.AppendDatum(i, &datum)
+	}
+
+	// Handle virtual columns
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
+		schema.Columns, e.columns, sctx.GetExprCtx(), req)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// buildResultFromRowData builds the result by fetching and decoding row data (fallback method).
+// Callers must pass the effective tblID computed in Next — for global indexes this includes
+// the partition ID decoded from the index value, which differs from GetPhysID output.
+func (e *PointGetExecutor) buildResultFromRowData(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context, tblID int64) error {
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
+	val, err := e.getAndLock(ctx, key)
+	if err != nil {
+		return err
+	}
+	if len(val) == 0 {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
+			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
+			return (&consistency.Reporter{
+				HandleEncode: func(kv.Handle) kv.Key {
+					return key
+				},
+				IndexEncode: func(*consistency.RecordData) kv.Key {
+					return e.idxKey
+				},
+				Tbl:             e.tblInfo,
+				Idx:             e.idxInfo,
+				EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+				Storage:         e.Ctx().GetStore(),
+			}).ReportLookupInconsistent(ctx,
+				1, 0,
+				[]kv.Handle{e.handle},
+				[]kv.Handle{e.handle},
+				[]consistency.RecordData{{}},
+			)
+		}
+		return nil
+	}
+
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	if err != nil {
+		return err
+	}
+
+	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val}, []kv.Handle{e.handle}, req, nil)
+	if err != nil {
+		return err
+	}
+
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
+		schema.Columns, e.columns, sctx.GetExprCtx(), req)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
