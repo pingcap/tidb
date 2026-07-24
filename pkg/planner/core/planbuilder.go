@@ -302,6 +302,8 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+	// executePlan is optional caller-provided storage for an EXECUTE plan.
+	executePlan *Execute
 }
 
 type handleColHelper struct {
@@ -495,6 +497,11 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	return b
 }
 
+// SetExecutePlan sets caller-provided storage for the next EXECUTE plan build.
+func (b *PlanBuilder) SetExecutePlan(executePlan *Execute) {
+	b.executePlan = executePlan
+}
+
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
 	// Build might be called recursively, right now they all share the same resolve
@@ -616,7 +623,11 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 	if err != nil {
 		return nil, err
 	}
-	exe := &Execute{Name: v.Name, Params: vars, PrepStmt: prepStmt}
+	exe := b.executePlan
+	if exe == nil {
+		exe = &Execute{}
+	}
+	*exe = Execute{Name: v.Name, Params: vars, PrepStmt: prepStmt}
 	if v.BinaryArgs != nil {
 		var ok bool
 		exe.Params, ok = getExecuteBinaryParams(v.BinaryArgs)

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -39,6 +40,11 @@ import (
 // Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
 	Ctx sessionctx.Context
+}
+
+type preparedExecStmt struct {
+	ExecStmt
+	executePlan plannercore.Execute
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.
@@ -99,7 +105,18 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	// Build the final physical plan.
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, nodeW, is)
+	var (
+		stmt      *ExecStmt
+		finalPlan base.Plan
+		names     types.NameSlice
+	)
+	if preparedObj != nil {
+		preparedStmt := &preparedExecStmt{}
+		stmt = &preparedStmt.ExecStmt
+		finalPlan, names, err = planner.OptimizeWithExecutePlan(ctx, c.Ctx, nodeW, is, &preparedStmt.executePlan)
+	} else {
+		finalPlan, names, err = planner.Optimize(ctx, c.Ctx, nodeW, is)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +135,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	stmtCtx.SetPlan(finalPlan)
-	stmt := &ExecStmt{
+	if stmt == nil {
+		stmt = &ExecStmt{}
+	}
+	*stmt = ExecStmt{
 		GoCtx:         ctx,
 		InfoSchema:    is,
 		Plan:          finalPlan,

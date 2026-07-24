@@ -138,6 +138,17 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	return optimizeWithExecutePlan(ctx, sctx, node, is, nil)
+}
+
+// OptimizeWithExecutePlan optimizes an EXECUTE statement into caller-provided plan storage.
+func OptimizeWithExecutePlan(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
+	is infoschema.InfoSchema, executePlan *core.Execute) (plan base.Plan, slice types.NameSlice, retErr error) {
+	return optimizeWithExecutePlan(ctx, sctx, node, is, executePlan)
+}
+
+func optimizeWithExecutePlan(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema,
+	executePlan *core.Execute) (plan base.Plan, slice types.NameSlice, retErr error) {
 	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
@@ -172,7 +183,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 
 	// handle the execute statement
 	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
-		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
+		p, names, err := optimizeExecStmt(ctx, sctx, node, is, executePlan)
 		return p, names, err
 	}
 
@@ -543,10 +554,16 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 // OptimizeExecStmt to handle the "execute" statement
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error) {
+	return optimizeExecStmt(ctx, sctx, execAst, is, nil)
+}
+
+func optimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
+	execAst *resolve.NodeW, is infoschema.InfoSchema, executePlan *core.Execute) (base.Plan, types.NameSlice, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	pctx := sctx.GetPlanCtx()
 	builder.Init(pctx, is, nil)
+	builder.SetExecutePlan(executePlan)
 
 	p, err := buildLogicalPlan(ctx, pctx, execAst, builder)
 	if err != nil {

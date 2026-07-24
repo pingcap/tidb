@@ -1803,8 +1803,11 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		stmt, err := parser.ParseOneStmt(exec, "", "")
 		require.NoError(t, err)
 		nodeW := resolve.NewNodeW(stmt)
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
+		executePlan := &plannercore.Execute{}
+		plan, _, err := planner.OptimizeWithExecutePlan(
+			context.Background(), tk.Session(), nodeW, dom.InfoSchema(), executePlan)
 		require.NoError(t, err)
+		require.Same(t, executePlan, plan)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
@@ -1821,8 +1824,11 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			PrepStmt:   prepStmt,
 		}
 		nodeW := resolve.NewNodeW(execStmt)
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
+		executePlan := &plannercore.Execute{}
+		plan, _, err := planner.OptimizeWithExecutePlan(
+			context.Background(), tk.Session(), nodeW, dom.InfoSchema(), executePlan)
 		require.NoError(t, err)
+		require.Same(t, executePlan, plan)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
