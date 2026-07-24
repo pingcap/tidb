@@ -2396,6 +2396,9 @@ func TestDateArithFuncs(t *testing.T) {
 		{"2001-02-28", -1, "2000-02-28"},
 		{"2004-02-29", 1, "2005-02-28"},
 		{"2005-02-28", -1, "2004-02-28"},
+		// A YEAR interval that drives the year down to 0 keeps the month and day,
+		// matching MySQL instead of zeroing them out. See issue #59789.
+		{"1000-01-01", -1000, "0000-01-01"},
 	}
 
 	for _, test := range testYears {
