@@ -2353,6 +2353,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		SessionVars:    make(map[string]string),
 	}
 	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBSkipTiFlashReplicaWait, variable.BoolToOnOff(ctx.GetSessionVars().SkipTiFlashReplicaWait))
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
