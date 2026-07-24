@@ -31,6 +31,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// This file implements best-effort etcd claims used to warn about duplicate advertised status endpoints.
+// Claims use the current server-info lease, and claim errors do not block server-info registration.
+
 // serverStatusAddressPath stores active advertised status endpoint claims.
 const serverStatusAddressPath = "/tidb/server/status_addr"
 
@@ -43,6 +46,7 @@ const (
 	statusEndpointClaimCheckFailed
 )
 
+// statusEndpointClaimResult carries the outcome and diagnostic details of one claim attempt.
 type statusEndpointClaimResult struct {
 	state         statusEndpointClaimState
 	endpoint      string
@@ -53,6 +57,8 @@ type statusEndpointClaimResult struct {
 	err           error
 }
 
+// observedStatusEndpointClaim records an existing claim and its revision so reattachment
+// does not overwrite a claim that changed after it was read.
 type observedStatusEndpointClaim struct {
 	id          string
 	lease       clientv3.LeaseID
