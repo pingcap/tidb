@@ -524,3 +524,44 @@ func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime")
 	tk.MustExec("batch on a limit 10 update t set b = b + 1 where b > 0")
 }
+
+// TestNonTransactionalDmlNonDefaultScanConcurrency is the regression test for
+// issue #67329: the shard-discovery SELECT inside a non-transactional DML used
+// to inherit the default tidb_distsql_scan_concurrency, which the request
+// builder caps to 2 for ordered scans on the assumption that the bottleneck is
+// the MySQL protocol returning rows to the client. That assumption does not
+// hold for the internal NT-DML SELECT, which feeds the shard planner. With the
+// fix, buildShardJobs nudges DistSQLScanConcurrency off the default for the
+// duration of the inner SELECT and restores it via defer.
+//
+// The CheckShardSelectScanConcurrency failpoint, enabled below, asserts the
+// invariant from inside buildShardJobs: while the inner SELECT runs, the
+// session's DistSQLScanConcurrency is NOT the default value. On the
+// pre-fix code this assertion would fail and surface as an execution error
+// from the BATCH ... DELETE statement.
+func TestNonTransactionalDmlNonDefaultScanConcurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=10")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := range 50 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+
+	// Confirm the session is at default scan concurrency before the test.
+	original := tk.MustQuery("select @@tidb_distsql_scan_concurrency").Rows()[0][0].(string)
+
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/session/CheckShardSelectScanConcurrency",
+		`return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/CheckShardSelectScanConcurrency")
+
+	tk.MustExec("batch on a limit 10 delete from t where b >= 0")
+
+	// The session-level value MUST be unchanged after the NT-DML completes;
+	// the defer in buildShardJobs is responsible for the restore.
+	after := tk.MustQuery("select @@tidb_distsql_scan_concurrency").Rows()[0][0].(string)
+	require.Equal(t, original, after,
+		"tidb_distsql_scan_concurrency was not restored after non-transactional DML")
+}
