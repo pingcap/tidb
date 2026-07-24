@@ -65,13 +65,13 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
 
 	// Do preprocess and validate.
-	ret := &plannercore.PreprocessorReturn{}
+	var ret plannercore.PreprocessorReturn
 	nodeW := resolve.NewNodeW(stmtNode)
-	err = plannercore.Preprocess(
+	err = plannercore.PreprocessWithReturn(
 		ctx,
 		c.Ctx,
 		nodeW,
-		plannercore.WithPreprocessorReturn(ret),
+		&ret,
 		plannercore.InitTxnContextProvider,
 	)
 	if err != nil {

@@ -151,6 +151,50 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	return errors.Trace(v.err)
 }
 
+// PreprocessWithReturn is Preprocess with result storage co-allocated with its visitor.
+// WithPreprocessorReturn must not be included in preprocessOpt.
+func PreprocessWithReturn(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	node *resolve.NodeW,
+	ret *PreprocessorReturn,
+	preprocessOpt ...PreprocessOpt,
+) error {
+	if ret == nil {
+		return Preprocess(ctx, sctx, node, preprocessOpt...)
+	}
+	defer tracing.StartRegion(ctx, "planner.Preprocess").End()
+	v := preprocessorWithReturn{
+		preprocessor: preprocessor{
+			ctx:                ctx,
+			sctx:               sctx,
+			tableAliasInJoin:   make([]map[string]any, 0),
+			preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
+			staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
+			resolveCtx:         node.GetResolveContext(),
+		},
+		ret: *ret,
+	}
+	v.PreprocessorReturn = &v.ret
+	for _, optFn := range preprocessOpt {
+		optFn(&v.preprocessor)
+	}
+	node.Node.Accept(&v.preprocessor)
+	// InfoSchema must be non-nil after preprocessing
+	v.ensureInfoSchema()
+	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
+	if len(v.varsReadonly) > 0 {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
+	}
+	*ret = v.ret
+	return errors.Trace(v.err)
+}
+
+type preprocessorWithReturn struct {
+	preprocessor
+	ret PreprocessorReturn
+}
+
 type preprocessorFlag uint64
 
 const (

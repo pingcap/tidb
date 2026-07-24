@@ -158,3 +158,24 @@ func TestPreprocessPreparedPointSelectRepeated(t *testing.T) {
 		require.Empty(t, tk.Session().GetPlanCtx().GetReadonlyUserVarMap())
 	}
 }
+
+func TestPreprocessWithReturnPreparedPointSelectRepeated(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("CREATE TABLE t (id BIGINT PRIMARY KEY, c INT)")
+
+	nodeW := resolve.NewNodeW(preparePointSelectExecuteStmt(t, tk))
+	for range 3 {
+		var ret core.PreprocessorReturn
+		require.NoError(t, core.PreprocessWithReturn(
+			context.Background(),
+			tk.Session(),
+			nodeW,
+			&ret,
+			core.InitTxnContextProvider,
+		))
+		require.NotNil(t, ret.InfoSchema)
+		require.Empty(t, tk.Session().GetPlanCtx().GetReadonlyUserVarMap())
+	}
+}
