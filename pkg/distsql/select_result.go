@@ -630,6 +630,20 @@ func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.Runti
 	FillDummySummariesForTiFlashTasks(runtimeStatsColl, storeType, allPlanIDs, recordedPlanIDs)
 }
 
+func (r *selectResult) getOrCreateRuntimeStats() *selectResultRuntimeStats {
+	if r.stats == nil {
+		r.stats = &selectResultRuntimeStats{
+			distSQLConcurrency: r.distSQLConcurrency,
+		}
+		if ci, ok := r.resp.(copr.CopInfo); ok {
+			conc, extraConc := ci.GetConcurrency()
+			r.stats.distSQLConcurrency = conc
+			r.stats.extraConcurrency = extraConc
+		}
+	}
+	return r.stats
+}
+
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration, forUnconsumedStats bool) (err error) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
@@ -646,16 +660,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
 
-	if r.stats == nil {
-		r.stats = &selectResultRuntimeStats{
-			distSQLConcurrency: r.distSQLConcurrency,
-		}
-		if ci, ok := r.resp.(copr.CopInfo); ok {
-			conc, extraConc := ci.GetConcurrency()
-			r.stats.distSQLConcurrency = conc
-			r.stats.extraConcurrency = extraConc
-		}
-	}
+	r.getOrCreateRuntimeStats()
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
@@ -763,32 +768,49 @@ func (r *selectResult) close() error {
 	if respSize > 0 {
 		r.memConsume(-respSize)
 	}
-	if r.ctx != nil {
-		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
-			for _, copStats := range unconsumedCopStats {
-				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
-				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
-			}
+
+	closeErr := r.resp.Close()
+	if r.ctx == nil {
+		return closeErr
+	}
+
+	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+		unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+		for _, copStats := range unconsumedCopStats {
+			_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
+			r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
 		}
 	}
-	if r.stats != nil && r.ctx != nil {
-		defer func() {
-			if ci, ok := r.resp.(copr.CopInfo); ok {
-				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
-				batched, fallback := ci.GetStoreBatchInfo()
-				if batched != 0 || fallback != 0 {
-					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
-					telemetryStoreBatchedCnt.Add(float64(r.stats.storeBatchedNum))
-					telemetryStoreBatchedFallbackCnt.Add(float64(r.stats.storeBatchedFallbackNum))
-					telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
-				}
-			}
-			r.stats.fetchRspDuration = r.fetchDuration
-			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
-		}()
+
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil {
+		return closeErr
 	}
-	return r.resp.Close()
+
+	if provider, ok := r.resp.(copr.HasLimiterWaitStats); ok && provider != nil {
+		if limiterWait := provider.GetLimiterWaitStats(); !limiterWait.IsZero() {
+			r.getOrCreateRuntimeStats().limiterWait.Merge(limiterWait)
+		}
+	}
+
+	if r.stats == nil {
+		return closeErr
+	}
+
+	if ci, ok := r.resp.(copr.CopInfo); ok {
+		r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
+		batched, fallback := ci.GetStoreBatchInfo()
+		if batched != 0 || fallback != 0 {
+			r.stats.storeBatchedNum = batched
+			r.stats.storeBatchedFallbackNum = fallback
+			telemetryStoreBatchedCnt.Add(float64(batched))
+			telemetryStoreBatchedFallbackCnt.Add(float64(fallback))
+			telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
+		}
+	}
+
+	r.stats.fetchRspDuration = r.fetchDuration
+	r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
+	return closeErr
 }
 
 type selRespChannelIter struct {
@@ -1004,6 +1026,7 @@ type selectResultRuntimeStats struct {
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
 	fetchRspDuration        time.Duration
+	limiterWait             copr.LimiterWaitStats
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -1048,6 +1071,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
 		fetchRspDuration:        s.fetchRspDuration,
+		limiterWait:             s.limiterWait,
 	}
 	newRs.copRespTime.MergePercentile(&s.copRespTime)
 	newRs.procKeys.MergePercentile(&s.procKeys)
@@ -1090,6 +1114,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
 	s.fetchRspDuration += other.fetchRspDuration
+	s.limiterWait.Merge(other.limiterWait)
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -1134,6 +1159,13 @@ func (s *selectResultRuntimeStats) String() string {
 		if s.buildTaskDuration > 0 {
 			buf.WriteString(", build_task_duration: ")
 			buf.WriteString(execdetails.FormatDuration(s.buildTaskDuration))
+		}
+		if !s.limiterWait.IsZero() {
+			buf.WriteString(", limiter_wait:{total:")
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.TotalTime))
+			buf.WriteString(", max:")
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.MaxTime))
+			buf.WriteString("}")
 		}
 		if s.distSQLConcurrency > 0 {
 			buf.WriteString(", max_distsql_concurrency: ")

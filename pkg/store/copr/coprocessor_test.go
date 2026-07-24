@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -29,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
@@ -58,6 +60,137 @@ func TestEnsureMonotonicKeyRanges(t *testing.T) {
 	})
 	reordered = ensureMonotonicKeyRanges(ctx, sortedRanges)
 	require.False(t, reordered)
+}
+
+func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
+	type admissionResult struct {
+		release func()
+		err     error
+	}
+
+	t.Run("QueryLimiterPrecedence", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			requestLimiter := kv.NewCoprRequestLimiter(1)
+			require.True(t, requestLimiter.TryAcquire())
+			queryLimiter := kv.NewQueryCopStoreLimiter(1)
+			worker := &copIteratorWorker{
+				req: &kv.Request{
+					CoprRequestLimiter:   requestLimiter,
+					QueryCopStoreLimiter: queryLimiter,
+				},
+				finishCh: make(chan struct{}),
+				stats:    &copIteratorRuntimeStats{},
+			}
+			rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+			worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+			require.NotNil(t, rpcReq.RequestAttemptAdmission)
+
+			release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+			require.NoError(t, err)
+			require.NotNil(t, release)
+			require.False(t, requestLimiter.TryAcquire(), "per-store admission must not consume or wait for the request-local limiter")
+			secondResult := make(chan admissionResult, 1)
+			go func() {
+				release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+				secondResult <- admissionResult{release: release, err: err}
+			}()
+			synctest.Wait()
+			time.Sleep(time.Millisecond)
+			release()
+			second := <-secondResult
+			require.NoError(t, second.err)
+			require.NotNil(t, second.release)
+			second.release()
+			require.Equal(t, LimiterWaitStats{
+				TotalTime: time.Millisecond,
+				MaxTime:   time.Millisecond,
+			}, worker.stats.getLimiterWait())
+			requestLimiter.Release()
+		})
+	})
+
+	requestLimiter := kv.NewCoprRequestLimiter(1)
+	worker := &copIteratorWorker{
+		req:      &kv.Request{CoprRequestLimiter: requestLimiter},
+		finishCh: make(chan struct{}),
+		stats:    &copIteratorRuntimeStats{},
+	}
+	rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+	worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+	require.NotNil(t, rpcReq.RequestAttemptAdmission)
+
+	release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.False(t, requestLimiter.TryAcquire(), "request-local limiter must remain the fallback")
+	release()
+
+	t.Run("CanceledContext", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			limiter := kv.NewCoprRequestLimiter(1)
+			require.True(t, limiter.TryAcquire())
+			worker := &copIteratorWorker{
+				req:      &kv.Request{CoprRequestLimiter: limiter},
+				finishCh: make(chan struct{}),
+				stats:    &copIteratorRuntimeStats{},
+			}
+			rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+			worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+
+			ctx, cancel := context.WithCancel(context.Background())
+			resultCh := make(chan admissionResult, 1)
+			go func() {
+				release, err := rpcReq.RequestAttemptAdmission(ctx, 42)
+				resultCh <- admissionResult{release: release, err: err}
+			}()
+			synctest.Wait()
+			time.Sleep(time.Millisecond)
+			cancel()
+			result := <-resultCh
+			require.ErrorIs(t, result.err, context.Canceled)
+			require.Nil(t, result.release)
+			require.True(t, worker.stats.getLimiterWait().IsZero())
+
+			limiter.Release()
+			require.True(t, limiter.TryAcquire(), "canceled admission must not leak a token")
+			limiter.Release()
+		})
+	})
+
+	t.Run("FinishedIterator", func(t *testing.T) {
+		limiter := kv.NewCoprRequestLimiter(1)
+		require.True(t, limiter.TryAcquire())
+		finishCh := make(chan struct{})
+		close(finishCh)
+		worker := &copIteratorWorker{
+			req:      &kv.Request{CoprRequestLimiter: limiter},
+			finishCh: finishCh,
+			stats:    &copIteratorRuntimeStats{},
+		}
+		rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+		worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+
+		release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+		require.ErrorIs(t, err, errCoprRequestLimiterFinished)
+		require.Nil(t, release)
+		require.True(t, worker.stats.getLimiterWait().IsZero())
+
+		limiter.Release()
+		require.True(t, limiter.TryAcquire(), "finished admission must not leak a token")
+		limiter.Release()
+	})
+
+	aggregateStats := &copIteratorRuntimeStats{}
+	aggregateStats.recordLimiterWait(time.Millisecond)
+	aggregateStats.recordLimiterWait(3 * time.Millisecond)
+	require.Equal(t, LimiterWaitStats{
+		TotalTime: 4 * time.Millisecond,
+		MaxTime:   3 * time.Millisecond,
+	}, aggregateStats.getLimiterWait())
+
+	rpcReq.RequestAttemptAdmission = nil
+	worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiFlash})
+	require.Nil(t, rpcReq.RequestAttemptAdmission)
 }
 
 func TestBuildTasksWithoutBuckets(t *testing.T) {

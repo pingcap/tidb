@@ -1049,11 +1049,8 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
-	// requestRateLimit controls the aggregate number of in-flight cop requests.
-	// The token lifecycle is tied to one send attempt instead of response consumption.
-	requestRateLimit *util.RateLimit
-	vars             *tikv.Variables
-	kvclient         *txnsnapshot.ClientHelper
+	vars     *tikv.Variables
+	kvclient *txnsnapshot.ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -1254,7 +1251,6 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		req:                     it.req,
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
-		requestRateLimit:        it.req.CoprRequestRateLimit,
 		vars:                    it.vars,
 		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 		memTracker:              it.memTracker,
@@ -1365,9 +1361,9 @@ func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
 }
 
-// GetRequestRateLimit returns the shared request rate-limit object.
-func (it *copIterator) GetRequestRateLimit() *util.RateLimit {
-	return it.req.CoprRequestRateLimit
+// GetRequestLimiter returns the shared request limiter.
+func (it *copIterator) GetRequestLimiter() *kv.CoprRequestLimiter {
+	return it.req.CoprRequestLimiter
 }
 
 // GetTasks returns the built tasks.
@@ -1621,6 +1617,13 @@ type HasUnconsumedCopRuntimeStats interface {
 	CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats
 }
 
+// HasLimiterWaitStats indicates whether a response exposes request admission
+// wait statistics.
+type HasLimiterWaitStats interface {
+	// GetLimiterWaitStats returns aggregated request admission wait statistics.
+	GetLimiterWaitStats() LimiterWaitStats
+}
+
 func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
 	if it == nil || it.stats == nil {
 		return nil
@@ -1630,6 +1633,14 @@ func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
 	stats = append(stats, it.stats.stats...)
 	it.stats.Unlock()
 	return stats
+}
+
+// GetLimiterWaitStats returns aggregated request admission wait statistics.
+func (it *copIterator) GetLimiterWaitStats() LimiterWaitStats {
+	if it == nil || it.stats == nil {
+		return LimiterWaitStats{}
+	}
+	return it.stats.getLimiterWait()
 }
 
 // Associate each region with an independent backoffer. In this way, when multiple regions are
@@ -1803,6 +1814,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	}
 	req.StoreTp = getEndPointType(task.storeType)
+	worker.setRequestAttemptAdmission(req, task)
 	startTime := time.Now()
 	if worker.stats != nil && worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = tikv.NewRegionRequestRuntimeStats()
@@ -1825,25 +1837,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 
-	if worker.requestRateLimit != nil {
-		exit := worker.requestRateLimit.GetToken(worker.finishCh)
-		if exit {
-			return nil, nil
-		}
-	}
-	// Keep the request-rate token and send attempt in a small scope so the
-	// token is released immediately after the send attempt returns, while
-	// still remaining panic-safe.
-	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
-		defer func() {
-			if worker.requestRateLimit != nil {
-				worker.requestRateLimit.PutToken()
-			}
-		}()
+	if req.RequestAttemptAdmission == nil {
 		failpoint.InjectCall("onBeforeSendReqCtx", req)
-		return worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-			timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
-	}()
+	}
+	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
+		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+	if errors.Cause(err) == errCoprRequestLimiterFinished {
+		return nil, nil
+	}
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
@@ -1886,6 +1887,52 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	}
 	return result, err
+}
+
+var errCoprRequestLimiterFinished = errors.New("cop request limiter finished")
+
+func (worker *copIteratorWorker) setRequestAttemptAdmission(req *tikvrpc.Request, task *copTask) {
+	if task.storeType != kv.TiKV {
+		return
+	}
+	queryLimiter := worker.req.QueryCopStoreLimiter
+	requestLimiter := worker.req.CoprRequestLimiter
+	if queryLimiter == nil && requestLimiter == nil {
+		return
+	}
+
+	req.RequestAttemptAdmission = func(ctx context.Context, storeID uint64) (func(), error) {
+		limiter := requestLimiter
+		failpoint.InjectCall("onBeforeAcquireCoprRequestLimiter", req, storeID)
+		if queryLimiter != nil {
+			limiter = queryLimiter.GetStoreLimiter(storeID)
+		}
+		if limiter == nil {
+			return nil, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-worker.finishCh:
+			return nil, errCoprRequestLimiterFinished
+		default:
+		}
+		if limiter.TryAcquire() {
+			failpoint.InjectCall("onBeforeSendReqCtx", req)
+			return limiter.Release, nil
+		}
+		waitStart := time.Now()
+		if limiter.AcquireWithContext(ctx, worker.finishCh) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return nil, errCoprRequestLimiterFinished
+		}
+		worker.stats.recordLimiterWait(time.Since(waitStart))
+		failpoint.InjectCall("onBeforeSendReqCtx", req)
+		return limiter.Release, nil
+	}
 }
 
 const (
@@ -2731,6 +2778,34 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 	}
 }
 
+// LimiterWaitStats contains aggregated blocking wait statistics for coprocessor
+// request admission.
+type LimiterWaitStats struct {
+	TotalTime time.Duration
+	MaxTime   time.Duration
+}
+
+// Record adds one blocking admission wait.
+func (s *LimiterWaitStats) Record(waitTime time.Duration) {
+	s.TotalTime += waitTime
+	if waitTime > s.MaxTime {
+		s.MaxTime = waitTime
+	}
+}
+
+// Merge aggregates another limiter wait statistics value.
+func (s *LimiterWaitStats) Merge(other LimiterWaitStats) {
+	s.TotalTime += other.TotalTime
+	if other.MaxTime > s.MaxTime {
+		s.MaxTime = other.MaxTime
+	}
+}
+
+// IsZero reports whether no blocking admission wait was recorded.
+func (s LimiterWaitStats) IsZero() bool {
+	return s.TotalTime == 0
+}
+
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
 	execdetails.CopExecDetails
@@ -2741,7 +2816,27 @@ type CopRuntimeStats struct {
 
 type copIteratorRuntimeStats struct {
 	sync.Mutex
-	stats []*CopRuntimeStats
+	stats       []*CopRuntimeStats
+	limiterWait LimiterWaitStats
+}
+
+func (s *copIteratorRuntimeStats) recordLimiterWait(waitTime time.Duration) {
+	if s == nil {
+		return
+	}
+	s.Lock()
+	s.limiterWait.Record(waitTime)
+	s.Unlock()
+}
+
+func (s *copIteratorRuntimeStats) getLimiterWait() LimiterWaitStats {
+	if s == nil {
+		return LimiterWaitStats{}
+	}
+	s.Lock()
+	stats := s.limiterWait
+	s.Unlock()
+	return stats
 }
 
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) (*copTaskResult, error) {
