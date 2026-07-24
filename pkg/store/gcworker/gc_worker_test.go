@@ -2186,16 +2186,19 @@ func TestGCWithPendingTxn(t *testing.T) {
 	err = txn.LockKeys(ctx, lockCtx, k1)
 	require.NoError(t, err)
 
-	// Prepare to run gc with txn's startTS as the safepoint ts.
-	spkv := s.tikvStore.GetSafePointKV()
-	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(txn.StartTS(), 10))
+	// Prepare to run GC with txn's startTS as the txn safe point.
+	gcStatesCli := s.pdClient.GetGCStatesClient(uint32(s.store.GetCodec().GetKeyspaceID()))
+	_, err = gcStatesCli.SetGCBarrier(ctx, "gcworker-test-pending-txn", txn.StartTS(), gc.TTLNeverExpire)
 	require.NoError(t, err)
-	//s.mustSetTiDBServiceSafePoint(t, txn.StartTS(), txn.StartTS())
+	t.Cleanup(func() {
+		_, err := gcStatesCli.DeleteGCBarrier(context.Background(), "gcworker-test-pending-txn")
+		require.NoError(t, err)
+	})
 	veryLong := gcDefaultLifeTime * 100
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
-	s.oracle.AddOffset(time.Minute * 10)
+	s.oracle.AddOffset(gcDefaultLifeTime + time.Minute)
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
 	require.NoError(t, err)
 
@@ -2211,12 +2214,10 @@ func TestGCWithPendingTxn(t *testing.T) {
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
 	require.NoError(t, err)
+	require.Equal(t, txn.StartTS(), s.loadTxnSafePoint(t))
 
 	err = txn.Commit(ctx)
-	// TODO: The mock implementation of PD doesn't put the data in the etcd or `SafePointKV`, making this test not
-	//   working for now. We need to fix this test after further refactor.
-	// require.NoError(t, err)
-	require.Error(t, err)
+	require.NoError(t, err)
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
