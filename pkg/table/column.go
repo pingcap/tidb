@@ -346,6 +346,40 @@ func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.Co
 	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, &col.FieldType, col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
 }
 
+// CastGeneratedColumnValue casts a generated-column evaluation result using the
+// same clipping and null-handling rules as FillVirtualColumnValue.
+// It keeps CastColumnValue on the non-returnErr path so read-side materialization
+// continues to follow statement-context warning/ignore behavior.
+func CastGeneratedColumnValue(ctx exprctx.BuildContext, val types.Datum, col *model.ColumnInfo, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	casted, err = CastColumnValue(ctx, val, col, false, forceIgnoreTruncate)
+	if err != nil {
+		return casted, err
+	}
+
+	tc := ctx.GetEvalCtx().TypeCtx()
+	if mysql.HasUnsignedFlag(col.FieldType.GetFlag()) && !casted.IsNull() && tc.Flags().AllowNegativeToUnsigned() {
+		switch val.Kind() {
+		case types.KindInt64:
+			if val.GetInt64() < 0 {
+				casted = GetZeroValue(col)
+			}
+		case types.KindFloat32, types.KindFloat64:
+			if types.RoundFloat(val.GetFloat64()) < 0 {
+				casted = GetZeroValue(col)
+			}
+		case types.KindMysqlDecimal:
+			if val.GetMysqlDecimal().IsNegative() {
+				casted = GetZeroValue(col)
+			}
+		}
+	}
+
+	if (mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) && casted.IsNull() {
+		casted = GetZeroValue(col)
+	}
+	return casted, nil
+}
+
 // castColumnValue casts a value based on column type.
 func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(tc, ft)
@@ -776,41 +810,15 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 	evalCtx := ectx.GetEvalCtx()
-	tc := evalCtx.TypeCtx()
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			datum, err := expCols[idx].EvalVirtualColumn(evalCtx, row)
 			if err != nil {
 				return err
 			}
-			// Because the expression might return different type from
-			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := CastColumnValue(ectx, datum, colInfos[idx], false, true)
+			castDatum, err := CastGeneratedColumnValue(ectx, datum, colInfos[idx], true)
 			if err != nil {
 				return err
-			}
-
-			// Clip to zero if get negative value after cast to unsigned.
-			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && tc.Flags().AllowNegativeToUnsigned() {
-				switch datum.Kind() {
-				case types.KindInt64:
-					if datum.GetInt64() < 0 {
-						castDatum = GetZeroValue(colInfos[idx])
-					}
-				case types.KindFloat32, types.KindFloat64:
-					if types.RoundFloat(datum.GetFloat64()) < 0 {
-						castDatum = GetZeroValue(colInfos[idx])
-					}
-				case types.KindMysqlDecimal:
-					if datum.GetMysqlDecimal().IsNegative() {
-						castDatum = GetZeroValue(colInfos[idx])
-					}
-				}
-			}
-
-			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(colInfos[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(colInfos[idx].GetFlag())) && castDatum.IsNull() {
-				castDatum = GetZeroValue(colInfos[idx])
 			}
 			virCols.AppendDatum(i, &castDatum)
 		}
