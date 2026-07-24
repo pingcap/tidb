@@ -779,6 +779,18 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	if len(cfg.AdvertiseAddress) == 0 {
 		cfg.AdvertiseAddress = cfg.Host
 	}
+
+	// Validate that advertise-address is bound to a local interface
+	if len(cfg.AdvertiseAddress) > 0 && cfg.AdvertiseAddress != "0.0.0.0" && cfg.AdvertiseAddress != "::" {
+		if !util.IsIPBoundLocally(cfg.AdvertiseAddress) {
+			terror.MustNil(errors.Errorf(
+				"advertise-address %s is not bound to any local network interface. "+
+					"TiDB will fail to register properly with etcd. "+
+					"Please ensure the IP address is configured on a local interface.",
+				cfg.AdvertiseAddress))
+		}
+	}
+
 	var err error
 	if actualFlags[nmPort] {
 		var p int
