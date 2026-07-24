@@ -5897,18 +5897,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			if err := b.checkCreateTableAsSelect(v); err != nil {
 				return nil, err
 			}
-			var selectPlan base.LogicalPlan
-			var err error
-			switch selectStmt := v.Select.(type) {
-			case *ast.SelectStmt:
-				// simple select statement
-				selectPlan, err = b.buildSelect(ctx, selectStmt)
-			case *ast.SetOprStmt:
-				// case select union select
-				selectPlan, err = b.buildSetOpr(ctx, selectStmt)
-			default:
-				return nil, errors.New("unsupported select stmt type: " + reflect.TypeOf(selectStmt).String())
-			}
+			selectPlan, err := b.buildCTASSelectPlan(ctx, v)
 			if err != nil {
 				return nil, err
 			}
@@ -6168,10 +6157,14 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
 		for i, name := range names {
 			tp := convertRetType(schema.Columns[i].RetType)
+			options, err := buildDefaultOptionsForCTAS(logicalPlan, i)
+			if err != nil {
+				return err
+			}
 			v.Cols[i] = &ast.ColumnDef{
 				Name:    &ast.ColumnName{Name: name.ColName},
 				Tp:      tp,
-				Options: []*ast.ColumnOption{},
+				Options: options,
 			}
 		}
 		return nil
@@ -6209,10 +6202,15 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		} else {
 			// Create new column definition for columns that only exist in SELECT
 			tp := convertRetType(schema.Columns[i].RetType)
+			options, err := buildDefaultOptionsForCTAS(logicalPlan, i)
+			if err != nil {
+				return err
+			}
+
 			newCols = append(newCols, &ast.ColumnDef{
 				Name:    &ast.ColumnName{Name: name.ColName},
 				Tp:      tp,
-				Options: []*ast.ColumnOption{},
+				Options: options,
 			})
 		}
 	}
@@ -6224,6 +6222,7 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 // convertRetType adjusts inferred SELECT output types for CTAS column definitions.
 func convertRetType(fieldType *types.FieldType) *types.FieldType {
 	tp := fieldType.Clone()
+	tp.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag)
 	switch tp.GetType() {
 	case mysql.TypeVarString:
 		tp.SetType(mysql.TypeVarchar)

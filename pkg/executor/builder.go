@@ -1129,7 +1129,7 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		children = append(children, selectExec)
 	}
 	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), children...)
-	executor, err := newImportIntoExec(base, selectExec, b.sctx, v, tbl)
+	executor, err := newImportIntoExec(base, selectExec, b.sctx, v, tbl, false)
 	if err != nil {
 		b.err = err
 		return nil

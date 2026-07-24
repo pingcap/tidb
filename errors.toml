@@ -2131,6 +2131,11 @@ error = '''
 Unknown background task name '%-.192s'
 '''
 
+["executor:8500"]
+error = '''
+CREATE TABLE ... SELECT dist task failed: %s
+'''
+
 ["executor:8800"]
 error = '''
 This row has a unaccessible label, row label [%s], user label [%s]
@@ -2754,6 +2759,11 @@ Duplicate condition information item '%s'
 ["planner:1706"]
 error = '''
 Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.
+'''
+
+["planner:1746"]
+error = '''
+Can't update table '%-.192s' while '%-.192s' is being created.
 '''
 
 ["planner:1747"]

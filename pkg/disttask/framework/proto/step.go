@@ -43,6 +43,8 @@ func Step2Str(t TaskType, s Step) string {
 		return backfillStep2Str(s)
 	case ImportInto:
 		return importIntoStep2Str(s)
+	case CTAS:
+		return ctasStep2Str(s)
 	case TaskTypeExample:
 		return exampleStep2Str(s)
 	}
@@ -64,6 +66,15 @@ func exampleStep2Str(s Step) string {
 		return "two"
 	case StepThree:
 		return "three"
+	default:
+		return fmt.Sprintf("unknown step %d", s)
+	}
+}
+
+func ctasStep2Str(s Step) string {
+	switch s {
+	case StepOne:
+		return "load"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}

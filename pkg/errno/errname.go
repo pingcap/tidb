@@ -1086,6 +1086,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrKeyTooLarge:                      mysql.Message("key is too large, the size of given key is %d", nil),
 	ErrProtectedTableMode:               mysql.Message("Table %s is in mode %s", nil),
 	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
+	ErrCTASDistTask:                     mysql.Message("CREATE TABLE ... SELECT dist task failed: %s", nil),
 
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
@@ -27,202 +28,220 @@ import (
 
 func TestCreateTableAsSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@session.tidb_create_from_select_using_import = false")
 	tk.MustExec("use test")
 
-	// Create source tables
-	tk.MustExec("set @@global.tidb_schema_cache_size= 0")
-	tk.MustExec("create table t1 (id int primary key, b int);")
-	tk.MustExec("create table t_ref (id int primary key, name varchar(20));")
-	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3);")
-	tk.MustExec("insert into t_ref values (1,'apple'),(2,'banana'),(3,'cherry');")
+	showCreateTable := func(table string) string {
+		return tk.MustQuery("show create table " + table).Rows()[0][1].(string)
+	}
 
-	// Case 1: Basic create table as select
-	tk.MustGetErrMsg("create table t2 as select * from t1;", "'CREATE TABLE ... SELECT' is not implemented yet")
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableCreateTableAsSelect = true
-	})
+	tk.MustExec("create table t1 (id int primary key, b int)")
+	tk.MustExec("create table t_ref (id int primary key, name varchar(20))")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,1),(5,2),(6,3)")
+	tk.MustExec("insert into t_ref values (1,'apple'),(2,'banana'),(3,'cherry')")
 
-	tk.MustExec("create table t2 as select * from t1;")
-	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1", "2 2", "3 3"))
+	// CREATE TABLE ... [AS] SELECT ...
+	tk.MustExec("create table t2 as select * from t1")
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Case 2: Create table with column definitions as select
-	tk.MustExec("create table t3 (id int, b int) as select * from t1;")
-	tk.MustQuery("select * from t3;").Check(testkit.Rows("1 1", "2 2", "3 3"))
-	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
-		"  `id` int(11) DEFAULT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Case 3: Create table as select with aggregation
-	tk.MustExec("create table t4 as select id, sum(b) from t1 group by id;")
-	tk.MustQuery("select * from t4;").Check(testkit.Rows("1 1", "2 2", "3 3"))
-	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1", "5 2", "6 3"))
+	tk.MustExec("drop table t2")
+	tk.MustExec("create table t2 select * from t1")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
-		"  `sum(b)` decimal(32,0) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Case 4: Create table with column definitions as select with aggregation
-	tk.MustExec("create table t5 (id int, b int) as select id, sum(b) from t1 group by id;")
-	tk.MustQuery("select * from t5;").Check(testkit.Rows("<nil> 1 1", "<nil> 2 2", "<nil> 3 3"))
-	tk.MustQuery("show create table t5;").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  `id` int(11) DEFAULT NULL,\n" +
-		"  `sum(b)` decimal(32,0) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Case 5: Create table with not null constraint as select with aggregation (should fail)
-	tk.MustGetErrCode("create table t6 (id int, b int not null) as select id, sum(b) from t1 group by id;", errno.ErrNoDefaultForField)
-	tk.MustGetErrCode("show create table t6;", errno.ErrNoSuchTable)
-
-	// Case5-1: Create table with not null constraint as select with aggregation and column alias
-	tk.MustExec("create table t61 (id int, b int not null) as select b,sum(b),id from t1 group by  id;")
-	tk.MustQuery("show create table t61;").Check(testkit.Rows("t61 CREATE TABLE `t61` (\n" +
-		"  `b` int(11) NOT NULL,\n" +
-		"  `sum(b)` decimal(32,0) DEFAULT NULL,\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Case 6: Create table with same column definitions as select with aggregation and column alias (sum(b) as b)
-	tk.MustExec("create table t7 (id int, b int) as select id, sum(b) as b from t1 group by id;")
-	tk.MustQuery("select * from t7;").Check(testkit.Rows("1 1", "2 2", "3 3"))
-	tk.MustQuery("show create table t7;").Check(testkit.Rows("t7 CREATE TABLE `t7` (\n" +
-		"  `id` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1", "5 2", "6 3"))
 
-	// Case 7: Create table with unique index as select with duplicate values (should fail)
-	tk.MustExec("update t1 set b=1;")
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 1", "2 1", "3 1"))
-	tk.MustGetErrCode("create table t8 (id int, b int, unique index(b)) as select * from t1;", errno.ErrDupEntry)
-	tk.MustGetErrCode("show create table t8;", errno.ErrNoSuchTable)
+	tk.MustExec("create table tdefs(c int) as select * from t1")
+	tk.MustQuery("show create table tdefs").Check(testkit.Rows("tdefs CREATE TABLE `tdefs` (\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select column_name, data_type from information_schema.columns where table_schema='test' and table_name='tdefs' order by ordinal_position").
+		Check(testkit.Rows("c int", "id int", "b int"))
+	tk.MustQuery("select c is null, id, b from tdefs order by id").Check(testkit.Rows("1 1 1", "1 2 2", "1 3 3", "1 4 1", "1 5 2", "1 6 3"))
 
-	// Restore t1 to its original state
-	tk.MustExec("update t1 set b=id;")
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustExec("create table t3 (id tinyint, b varchar(20)) as select * from t1")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `id` tinyint(4) DEFAULT NULL,\n" +
+		"  `b` varchar(20) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select column_name, data_type from information_schema.columns where table_schema='test' and table_name='t3' order by ordinal_position").
+		Check(testkit.Rows("id tinyint", "b varchar"))
+	tk.MustQuery("select * from t3 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1", "5 2", "6 3"))
 
-	// Case 8: Create table from simple join query
-	tk.MustExec("create table t8 as select t1.id, t1.b, t_ref.name from t1 join t_ref on t1.id = t_ref.id;")
-	tk.MustQuery("show create table t8;").Check(testkit.Rows("t8 CREATE TABLE `t8` (\n" +
+	tk.MustExec("create table t4 as select b, sum(id) as idsum from t1 group by b")
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `idsum` decimal(32,0) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t4 order by b").Check(testkit.Rows("1 5", "2 7", "3 9"))
+
+	tk.MustExec("create table t5 (idsum tinyint, b varchar(20)) as select b, sum(id) as idsum from t1 group by b")
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n" +
+		"  `b` varchar(20) DEFAULT NULL,\n" +
+		"  `idsum` tinyint(4) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select column_name, data_type from information_schema.columns where table_schema='test' and table_name='t5' order by ordinal_position").
+		Check(testkit.Rows("b varchar", "idsum tinyint"))
+	tk.MustQuery("select * from t5 order by b").Check(testkit.Rows("1 5", "2 7", "3 9"))
+
+	tk.MustExec("create table t6 (id int, sumb int not null) as select id, sum(b) as sumb from t1 group by id")
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `sumb` int(11) NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select column_name, is_nullable from information_schema.columns where table_schema='test' and table_name='t6' order by ordinal_position").
+		Check(testkit.Rows("id YES", "sumb NO"))
+	tk.MustQuery("select * from t6 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1", "5 2", "6 3"))
+
+	tk.MustExec("create table t8 as select t1.id, t1.b, t_ref.name from t1 join t_ref on t1.id = t_ref.id")
+	tk.MustQuery("show create table t8").Check(testkit.Rows("t8 CREATE TABLE `t8` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  `name` varchar(20) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t8;").Check(testkit.Rows("1 1 apple", "2 2 banana", "3 3 cherry"))
+	tk.MustQuery("select * from t8 order by id").Check(testkit.Rows("1 1 apple", "2 2 banana", "3 3 cherry"))
+	tk.MustExec("drop table t8")
 
-	// Case 9: Create table from subquery
-	tk.MustExec("create table t9 as select * from (select id, b from t1 where b > 1) as subq;")
-	tk.MustQuery("show create table t9;").Check(testkit.Rows("t9 CREATE TABLE `t9` (\n" +
+	tk.MustExec("create table t9 as select * from (select id, b from t1 where b > 1) as subq")
+	tk.MustQuery("show create table t9").Check(testkit.Rows("t9 CREATE TABLE `t9` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t9;").Check(testkit.Rows("2 2", "3 3"))
+	tk.MustQuery("select * from t9 order by id").Check(testkit.Rows("2 2", "3 3", "5 2", "6 3"))
 
-	// Case 10: Create table and add secondary index
-	tk.MustExec("create table t10 as select * from t1;")
-	tk.MustExec("alter table t10 add index idx_b(b);")
-	tk.MustQuery("show create table t10;").Check(testkit.Rows("t10 CREATE TABLE `t10` (\n" +
+	tk.MustGetErrCode(`create table t11 (
+		id int primary key,
+		constraint fk_name foreign key (id) references t_ref(id)
+	) as select * from t1`, errno.ErrForeignKeyWithCreateAsSelect)
+	tk.MustGetErrCode("show create table t11", errno.ErrNoSuchTable)
+
+	tk.MustExec("create table t14 as select id, b from t1 where id = 1 union select id, b from t1 where id = 2")
+	tk.MustQuery("show create table t14").Check(testkit.Rows("t14 CREATE TABLE `t14` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  KEY `idx_b` (`b`)\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t14 order by id").Check(testkit.Rows("1 1", "2 2"))
 
-	// Case 11: Create table with foreign key (should fail as CTAS doesn't support FK)
-	tk.MustGetErrCode("create table t11 (id int(11) primary key, b int, name varchar(20), "+
-		"constraint fk_name foreign key (id) references t_ref(id)) as "+
-		"select t1.id, t1.b, t.name from t1 join t_ref on t1.id = t_ref.id;",
-		errno.ErrForeignKeyWithCreateAsSelect)
-
-	// Case 12: Create table with generated columns
-	tk.MustExec("create table t12 as select id, b, concat('item-', id) as gen_col from t1;")
-	tk.MustQuery("show create table t12;").Check(testkit.Rows("t12 CREATE TABLE `t12` (\n" +
-		"  `id` int(11) NOT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  `gen_col` varchar(25) DEFAULT NULL\n" +
+	tk.MustExec("create table t200 (id INT NOT NULL DEFAULT 100, name VARCHAR(50) DEFAULT 'unknown', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+	tk.MustExec("create table t300 table t200")
+	tk.MustQuery("show create table t300").Check(testkit.Rows("t300 CREATE TABLE `t300` (\n" +
+		"  `id` int(11) NOT NULL DEFAULT '100',\n" +
+		"  `name` varchar(50) DEFAULT 'unknown',\n" +
+		"  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t12").Check(testkit.Rows("1 1 item-1", "2 2 item-2", "3 3 item-3"))
+	t300DDL := showCreateTable("t300")
+	require.Contains(t, t300DDL, "DEFAULT '100'")
+	require.Contains(t, t300DDL, "`name` varchar(50) DEFAULT 'unknown'")
+	require.Contains(t, t300DDL, "`created_at` timestamp DEFAULT CURRENT_TIMESTAMP")
+	tk.MustQuery("show index from t300").Check(testkit.Rows())
+	tk.MustExec("drop table t300, t200")
 
-	// Case 13: Create table with different column order than source
-	tk.MustExec("create table t13 (b int, id int) as select id, b from t1;")
-	tk.MustQuery("show create table t13;").Check(testkit.Rows("t13 CREATE TABLE `t13` (\n" +
+	// CREATE TABLE ... IGNORE/REPLACE [AS] SELECT ...
+	tk.MustGetErrCode("create table t8 (id int, b int, unique index(b)) as select * from t1", errno.ErrDupEntry)
+	tk.MustGetErrCode("show create table t8", errno.ErrNoSuchTable)
+
+	tk.MustExec("create table tignore (id int, b int, unique index(b)) ignore as select * from t1")
+	tk.MustQuery("show create table tignore").Check(testkit.Rows("tignore CREATE TABLE `tignore` (\n" +
 		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  UNIQUE KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from tignore order by id").Check(testkit.Rows("1 1", "2 2", "3 3"))
+
+	tk.MustExec("create table treplace (id int, b int, unique index(b)) replace as select * from t1")
+	tk.MustQuery("show create table treplace").Check(testkit.Rows("treplace CREATE TABLE `treplace` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  UNIQUE KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from treplace order by id").Check(testkit.Rows("4 1", "5 2", "6 3"))
+
+	// CREATE TABLE ... [AS] TABLE ...
+	tk.MustExec("create table tt1 table t1")
+	tk.MustQuery("show create table tt1").Check(testkit.Rows("tt1 CREATE TABLE `tt1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t13").Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery("select * from tt1 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1", "5 2", "6 3"))
+	tk.MustQuery("show index from tt1").Check(testkit.Rows())
+	tk.MustExec("drop table tt1")
 
-	// Case 14: Create table with complex union query  (TODO due to default value)
-	// tk.MustExec("create table t14 as select id, b from t1 where id = 1 union select id, b from t1 where id = 2;")
-	// tk.MustQuery("show create table t14").Check(testkit.Rows("t14 CREATE TABLE `t14` (\n" +
-	// 	"  `id` int(11) NOT NULL DEFAULT '0',\n" +
-	// 	"  `b` int(11) DEFAULT NULL\n" +
-	// 	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustQuery("select * from t14").Check(testkit.Rows("1 1", "2 2"))
-
-	// Case 15: Create table with window function  (TODO due to default value)
-	// tk.MustExec("create table t15 as select id, b, rank() over (order by b desc) as rnk from t1;")
-	// tk.MustQuery("show create table t15").Check(testkit.Rows("t15 CREATE TABLE `t15` (\n" +
-	// 	"  `id` int(11) NOT NULL,\n" +
-	// 	"  `b` int(11) DEFAULT NULL,\n" +
-	// 	"  `rnk` bigint(21) unsigned NOT NULL DEFAULT '0'\n" +
-	// 	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustQuery("select * from t15").Check(testkit.Rows("3 3 1", "2 2 2", "1 1 3"))
-
-	// Case 16: Create table with JSON data
-	tk.MustExec("create table t16 as select id, b, json_object('id', id, 'value', b) as jdata from t1;")
-	tk.MustQuery("show create table t16;").Check(testkit.Rows("t16 CREATE TABLE `t16` (\n" +
+	tk.MustExec("create table tt1 as table t1")
+	tk.MustQuery("show create table tt1").Check(testkit.Rows("tt1 CREATE TABLE `tt1` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  `jdata` json DEFAULT NULL\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustQuery("select id, b, json_extract(jdata, '$.id') from t16").Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+	tk.MustQuery("select * from tt1 order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1", "5 2", "6 3"))
+	tk.MustQuery("show index from tt1").Check(testkit.Rows())
 
-	// Case 17: Create table as select with GROUP_CONCAT oversized string metadata
-	tk.MustExec("create table t_gc_src (id varchar(32), name varchar(32));")
-	tk.MustExec("insert into t_gc_src values " +
-		"('1', 'abcdefghij')," +
-		"('1', 'mnopqrstu')," +
-		"('2', 'zzzzzzzzz')," +
-		"('2', 'yyyyyyyyy');")
-	tk.MustExec("create table t_gc as " +
-		"select id, group_concat(name order by name separator '') as name " +
-		"from (" +
-		"    select id, substring(name, 1, 7) as name " +
-		"    from t_gc_src " +
-		"    where length(name) > 8" +
-		") t " +
-		"group by id;")
-	tk.MustQuery("select * from t_gc order by id").Check(testkit.Rows("1 abcdefgmnopqrs", "2 yyyyyyyzzzzzzz"))
-	tk.MustQuery("show create table t_gc").Check(testkit.Rows("t_gc CREATE TABLE `t_gc` (\n" +
-		"  `id` varchar(32) DEFAULT NULL,\n" +
-		"  `name` longtext DEFAULT NULL\n" +
+	tk.MustExec("create table tt2 (x INT) table t1")
+	tk.MustQuery("show create table tt2").Check(testkit.Rows("tt2 CREATE TABLE `tt2` (\n" +
+		"  `x` int(11) DEFAULT NULL,\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select column_name, data_type from information_schema.columns where table_schema='test' and table_name='tt2' order by ordinal_position").
+		Check(testkit.Rows("x int", "id int", "b int"))
+	tk.MustQuery("select x is null, id, b from tt2 order by id").Check(testkit.Rows("1 1 1", "1 2 2", "1 3 3", "1 4 1", "1 5 2", "1 6 3"))
 
-	// Case 17: Create table with default value
+	// CREATE TABLE IF NOT EXISTS t ...
+	tk.MustExec("create table if not exists t_exist as select * from t1")
+	tk.MustQuery("show create table t_exist").Check(testkit.Rows("t_exist CREATE TABLE `t_exist` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t_exist order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1", "5 2", "6 3"))
+	tk.MustExec("create table if not exists t_exist as select * from t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.t_exist' already exists"))
 
-	// tk.MustExec("create table t200 (id INT NOT NULL DEFAULT 100, name VARCHAR(50) DEFAULT 'unknown', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
-	// tk.MustExec("CREATE TABLE t201 AS SELECT * FROM t200;")
-	// tk.MustQuery("show create table t201").Check(testkit.Rows("t201 CREATE TABLE `t201` (\n" +
-	// 	"  `id` int(11) NOT NULL DEFAULT '100',\n" +
-	// 	"  `name` varchar(50) DEFAULT 'unknown',\n" +
-	// 	"  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
-	// 	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// constraints
+	tk.MustExec("create table t200 (" +
+		"id INT NOT NULL AUTO_INCREMENT, " +
+		"name VARCHAR(50) DEFAULT 'unknown', " +
+		"created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+		"PRIMARY KEY (id))")
+	tk.MustExec("create table t300 as table t200")
+	tk.MustQuery("show create table t300").Check(testkit.Rows("t300 CREATE TABLE `t300` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(50) DEFAULT 'unknown',\n" +
+		"  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	t300DDL = showCreateTable("t300")
+	require.Contains(t, t300DDL, "`name` varchar(50) DEFAULT 'unknown'")
+	require.Contains(t, t300DDL, "`created_at` timestamp DEFAULT CURRENT_TIMESTAMP")
+	require.NotContains(t, t300DDL, "PRIMARY KEY")
+	require.NotContains(t, t300DDL, "AUTO_INCREMENT")
+	tk.MustQuery("show index from t300").Check(testkit.Rows())
+
+	// can't use for update
+	tk.MustGetErrCode("create table tupdate as select * from t1 for update", errno.ErrCantUpdateTableInCreateTableSelect)
+	tk.MustGetErrCode("show create table tupdate", errno.ErrNoSuchTable)
+
+	// test window function
+	tk.MustExec("create table twin as select id, row_number() over() as rn from t1;")
+	tk.MustQuery("select * from twin order by id").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6"))
+
+	// test column default value when union operator is used
+	tk.MustExec("create table tunion as select id, name from t200 where id = 1 union select id, name from t200 where id = 2;")
+	tk.MustQuery("select * from tunion order by id").Check(testkit.Rows())
+	tk.MustQuery("show create table tunion").Check(testkit.Rows("tunion CREATE TABLE `tunion` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(50) DEFAULT 'unknown'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestCreateTableAsSelectNoWarning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableCreateTableAsSelect = true
-	})
 
 	originValue := parsertypes.TiDBStrictIntegerDisplayWidth
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
@@ -250,15 +269,11 @@ func TestCreateTableAsSelectWithStoredFunction(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
 
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableCreateTableAsSelect = true
-	})
-
 	tk.MustExec("create database BG00DSCB00")
 	tk.MustExec("use BG00DSCB00")
 	tk.MustExec("create table src(id2 varchar(36), extend_1 varchar(400))")
 	tk.MustExec("insert into src values ('row1', 'ABCDEFGFXZZ')")
+	tk.MustExec("set global tidb_enable_procedure = ON")
 	tk.MustExec("set @@session.sql_mode = 'ANSI_QUOTES'")
 	tk.MustExec(`create function instr_n(str varchar(1000), sub varchar(255), start_pos int, occurrence int)
 returns int
@@ -303,9 +318,6 @@ func TestCreateTableAsSelectDoesNotCorruptInfoSchemaColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableCreateTableAsSelect = true
-	})
 
 	tk.MustExec("create database crash_test")
 	tk.MustExec("use crash_test")
@@ -333,11 +345,6 @@ func TestCreateTableAsSelectPrivilege(t *testing.T) {
 	tk.MustExec("drop database if exists otherdb")
 	tk.MustExec("create database otherdb")
 	tk.MustExec("create user 'u1'@'%' identified by '';")
-
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableCreateTableAsSelect = true
-	})
 
 	// Create source tables
 	tk.MustExec("create table t1 (id int primary key, b int);")
@@ -410,11 +417,6 @@ func TestCreateTableAsSelectUnionPrivilege(t *testing.T) {
 	tk.MustExec("drop database if exists otherdb")
 	tk.MustExec("create database otherdb")
 	tk.MustExec("create user 'u1'@'%' identified by '';")
-
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableCreateTableAsSelect = true
-	})
 
 	// Create source tables in test database
 	tk.MustExec("create table t1 (id int primary key, b int);")

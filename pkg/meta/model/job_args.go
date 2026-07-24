@@ -206,6 +206,13 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 	return getOrDecodeArgs[*ModifySchemaArgs](&ModifySchemaArgs{}, job)
 }
 
+// CreateTableCTASArgs is the arguments for create table as select
+type CreateTableCTASArgs struct {
+	CTASSnapshotTS  uint64                         `json:"ctas_snapshot_ts,omitempty"`
+	CTASSql         string                         `json:"ctas_sql,omitempty"`
+	CTASOnDuplicate ast.OnDuplicateKeyHandlingType `json:"on_duplicate,omitempty"`
+}
+
 // CreateTableArgs is the arguments for create table/view/sequence job.
 type CreateTableArgs struct {
 	TableInfo *TableInfo `json:"table_info,omitempty"`
@@ -214,12 +221,21 @@ type CreateTableArgs struct {
 	OldViewTblID   int64 `json:"old_view_tbl_id,omitempty"`
 	// used for create table.
 	FKCheck bool `json:"fk_check,omitempty"`
+
+	// used for CTAS operation
+	CreateTableCTASArgs
+
+	// DXF submitter locator for CTAS load phase.
+	// The owner uses ExecID to pin the subtask to the submitter node.
+	CTASSubmitterExecID string `json:"ctas_submitter_exec_id,omitempty"`
+	// Connection ID of the frontend session on that node.
+	CTASSubmitterConnID uint64 `json:"ctas_submitter_conn_id,omitempty"`
 }
 
 func (a *CreateTableArgs) getArgsV1(job *Job) []any {
 	switch job.Type {
 	case ActionCreateTable:
-		return []any{a.TableInfo, a.FKCheck}
+		return []any{a.TableInfo, a.FKCheck, a.CTASSnapshotTS, a.CTASSql, a.CTASOnDuplicate, a.CTASSubmitterExecID, a.CTASSubmitterConnID}
 	case ActionCreateView:
 		return []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
 	case ActionCreateSequence:
@@ -232,7 +248,7 @@ func (a *CreateTableArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
 	switch job.Type {
 	case ActionCreateTable:
-		return errors.Trace(job.decodeArgs(a.TableInfo, &a.FKCheck))
+		return errors.Trace(job.decodeArgs(a.TableInfo, &a.FKCheck, &a.CTASSnapshotTS, &a.CTASSql, &a.CTASOnDuplicate, &a.CTASSubmitterExecID, &a.CTASSubmitterConnID))
 	case ActionCreateView:
 		return errors.Trace(job.decodeArgs(a.TableInfo, &a.OnExistReplace, &a.OldViewTblID))
 	case ActionCreateSequence:

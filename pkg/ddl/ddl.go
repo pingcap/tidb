@@ -142,6 +142,7 @@ type CreateTableConfig struct {
 	// by BR now. By reusing IDs BR can save a lot of works such as rewriting table
 	// IDs in backed up KVs.
 	IDAllocated bool
+	CreateTableCTASConfig
 }
 
 // CreateTableOption is the option for creating table.

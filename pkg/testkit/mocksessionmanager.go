@@ -105,6 +105,14 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 	return &util.ProcessInfo{}, false
 }
 
+// GetSession returns the mocked frontend session for the connection ID.
+func (msm *MockSessionManager) GetSession(id uint64) (any, bool) {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	se, ok := msm.Conn[id]
+	return se, ok
+}
+
 // GetConAttrs returns the connection attributes of all connections
 func (msm *MockSessionManager) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string {
 	return msm.ConAttrs

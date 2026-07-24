@@ -101,6 +101,7 @@ var (
 	ErrInvalidRequiresSingleReference        = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidRequiresSingleReference)
 	ErrSQLInReadOnlyMode                     = dbterror.ClassOptimizer.NewStd(mysql.ErrReadOnlyMode)
 	ErrDeleteNotFoundColumn                  = dbterror.ClassOptimizer.NewStd(mysql.ErrDeleteNotFoundColumn)
+	ErrCantUpdateTableInCreateTableSelect    = dbterror.ClassOptimizer.NewStd(mysql.ErrCantUpdateTableInCreateTableSelect)
 	ErrForeignKeyWithCreateAsSelect          = dbterror.ClassOptimizer.NewStd(mysql.ErrForeignKeyWithCreateAsSelect)
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
 	ErrAccessDenied              = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])

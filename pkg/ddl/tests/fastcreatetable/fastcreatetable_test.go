@@ -168,3 +168,31 @@ func TestMergedJob(t *testing.T) {
 	tk.MustExec("insert into test.t1(c) values(1)")
 	tk.MustQuery("select * from test.t1").Check(testkit.Rows("100 1"))
 }
+
+func TestMergedCreateTableAsSelectKeepsRows(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
+	tk.MustExec("set @@session.tidb_create_from_select_using_import = false")
+	tk.MustExec("drop table if exists ctas_src, ctas_fast_1, ctas_fast_2")
+	tk.MustExec("create table ctas_src(id int primary key, v int)")
+	tk.MustExec("insert into ctas_src values (1, 10), (2, 20)")
+
+	for _, tableName := range []string{"ctas_fast_1", "ctas_fast_2"} {
+		tableName := tableName
+		wg.Run(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			tk1.MustExec("set @@session.tidb_create_from_select_using_import = false")
+			tk1.MustExec("create table " + tableName + " as select * from ctas_src")
+		})
+	}
+	wg.Wait()
+
+	tk.MustQuery("select * from ctas_fast_1 order by id").Check(testkit.Rows("1 10", "2 20"))
+	tk.MustQuery("select * from ctas_fast_2 order by id").Check(testkit.Rows("1 10", "2 20"))
+}
