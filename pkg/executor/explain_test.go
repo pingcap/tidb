@@ -917,16 +917,18 @@ func TestExplainAnalyzeFormatRUWriteDML(t *testing.T) {
 	require.Positive(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "key_bytes"), rows)
 	require.Positive(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "value_bytes"), rows)
 	requireExplainRUOperatorUnitAbsent(t, rows, "tidb/kv_mutation", "cpu_work")
-	requireExplainRUUnitAbsent(t, rows, "write_request_count")
-	require.Contains(t, fmt.Sprint(rows[0][16]), "partial_missing_write_rpc_count")
+	require.Zero(t, explainRUCountUnitValue(t, rows, "tikv/kv_write", "write_request_count"), rows)
 	tk.MustQuery("select * from explain_ru_write_v4").Check(testkit.Rows("1 one"))
 
 	tk.MustExec("begin pessimistic")
 	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write_v4 set b = 'two' where a = 1")
 	require.NoError(t, err)
+	requireExplainRUOperatorClass(t, rows, "tikv/kv_point_lookup")
+	require.GreaterOrEqual(t, explainRUCountUnitValue(t, rows, "tikv/kv_point_lookup", "read_request_count"), 0.0)
+	requireExplainRUUnitSource(t, rows, "tikv/kv_point_lookup", "read_request_count", "snapshot_runtime_stats")
 	require.Positive(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
 	requireExplainRUOperatorUnitAbsent(t, rows, "tidb/kv_mutation", "cpu_work")
-	requireExplainRUUnitAbsent(t, rows, "write_request_count")
+	require.Zero(t, explainRUCountUnitValue(t, rows, "tikv/kv_write", "write_request_count"), rows)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from explain_ru_write_v4").Check(testkit.Rows("1 two"))
 }
@@ -938,6 +940,17 @@ func requireExplainRUUnitAbsent(t *testing.T, rows [][]any, unit string) {
 			require.NotEqual(t, unit, row[11], rows)
 		}
 	}
+}
+
+func requireExplainRUUnitSource(t *testing.T, rows [][]any, operatorClass, unit, source string) {
+	t.Helper()
+	for _, row := range rows {
+		if len(row) == 17 && row[0] == "plan" && row[3] == operatorClass && row[11] == unit {
+			require.Equal(t, source, row[15], rows)
+			return
+		}
+	}
+	require.Failf(t, "missing RU unit", "operator_class=%s unit=%s rows=%v", operatorClass, unit, rows)
 }
 
 func requireExplainRUOperatorUnitAbsent(t *testing.T, rows [][]any, operatorClass, unit string) {

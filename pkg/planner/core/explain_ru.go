@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -175,6 +176,7 @@ const (
 	readBillingDemoInputSourceStmtMemDBMutation       = "stmt_memdb_mutation_calls"
 	readBillingDemoInputSourceCommitDetail            = "commit_detail"
 	readBillingDemoInputSourceRUV2Metrics             = "ruv2_metrics"
+	readBillingDemoInputSourceSnapshotRuntimeStats    = "snapshot_runtime_stats"
 	readBillingDemoInputSourcePhysicalPlan            = "physical_plan"
 	readBillingDemoInputSourceHashJoinRuntime         = "hash_join_runtime_stats"
 	readBillingDemoInputSideAll                       = "all"
@@ -445,7 +447,7 @@ func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.
 		}
 		result.operators = append(result.operators, op)
 	}
-	if op, present := readBillingDemoPointLookupTransport(flat, ruv2Metrics, false); present {
+	if op, present := readBillingDemoPointLookupTransport(flat, runtimeStats, ruv2Metrics, false); present {
 		if op.status != readBillingDemoStatusOperatorOK {
 			return readBillingDemoFailedOperator(readBillingDemoStatusUnknownInput, op)
 		}
@@ -535,7 +537,7 @@ func appendReadBillingDemoDMLPlan(result *readBillingDemoResult, sctx base.PlanC
 	if op, present := readBillingDemoReaderTransport(flat, runtimeStats, ruv2Metrics, true); present {
 		result.operators = append(result.operators, op)
 	}
-	if op, present := readBillingDemoPointLookupTransport(flat, ruv2Metrics, true); present {
+	if op, present := readBillingDemoPointLookupTransport(flat, runtimeStats, ruv2Metrics, true); present {
 		result.operators = append(result.operators, op)
 	}
 }
@@ -747,7 +749,16 @@ func readBillingDemoReaderTransport(flat *FlatPhysicalPlan, runtimeStats *execde
 	return op, true
 }
 
-func readBillingDemoPointLookupTransport(flat *FlatPhysicalPlan, ruv2Metrics *execdetails.RUV2Metrics, dml bool) (readBillingDemoOperatorResult, bool) {
+type readBillingDemoPointLookupRPCStats interface {
+	GetCmdRPCCount(tikvrpc.CmdType) int64
+}
+
+func readBillingDemoPointLookupTransport(
+	flat *FlatPhysicalPlan,
+	runtimeStats *execdetails.RuntimeStatsColl,
+	ruv2Metrics *execdetails.RUV2Metrics,
+	dml bool,
+) (readBillingDemoOperatorResult, bool) {
 	op := readBillingDemoOperatorResult{
 		id:            "point_lookup@statement",
 		site:          readBillingDemoSiteTiKV,
@@ -756,6 +767,7 @@ func readBillingDemoPointLookupTransport(flat *FlatPhysicalPlan, ruv2Metrics *ex
 		emitStatusRow: true,
 	}
 	kinds := make(map[string]struct{})
+	pointLookupPlans := make(map[int]tikvrpc.CmdType)
 	openProducerSet := dml
 	for _, tree := range readBillingDemoAllTrees(flat) {
 		for _, node := range tree {
@@ -765,9 +777,11 @@ func readBillingDemoPointLookupTransport(flat *FlatPhysicalPlan, ruv2Metrics *ex
 			switch plan := node.Origin.(type) {
 			case *physicalop.PointGetPlan:
 				kinds["point_get"] = struct{}{}
+				pointLookupPlans[plan.ID()] = tikvrpc.CmdGet
 				openProducerSet = openProducerSet || plan.Lock
 			case *physicalop.BatchPointGetPlan:
 				kinds["batch_point_get"] = struct{}{}
+				pointLookupPlans[plan.ID()] = tikvrpc.CmdBatchGet
 				openProducerSet = openProducerSet || plan.Lock
 			case *physicalop.PhysicalTableReader:
 				openProducerSet = true
@@ -785,6 +799,21 @@ func readBillingDemoPointLookupTransport(flat *FlatPhysicalPlan, ruv2Metrics *ex
 		for kind := range kinds {
 			op.operatorKind = kind
 		}
+	}
+	if dml {
+		requests, ok := readBillingDemoPointLookupRPCCount(runtimeStats, pointLookupPlans)
+		if !ok {
+			op.status = readBillingDemoStatusUnknownInput
+			op.reason = readBillingDemoReasonMissingReaderTransport
+			return op, true
+		}
+		op.status = readBillingDemoStatusOperatorOK
+		op.reason = readBillingDemoReasonNone
+		op.units = []readBillingDemoUnit{{
+			unit: readBillingDemoUnitReadRequestCount, source: readBillingDemoInputSourceSnapshotRuntimeStats,
+			side: readBillingDemoInputSideAll, value: float64(requests), widthSource: explainRUWidthSourceNotApplicable,
+		}}
+		return op, true
 	}
 	if openProducerSet {
 		op.status = readBillingDemoStatusUnknownInput
@@ -809,6 +838,36 @@ func readBillingDemoPointLookupTransport(flat *FlatPhysicalPlan, ruv2Metrics *ex
 		side: readBillingDemoInputSideAll, value: float64(requests), widthSource: explainRUWidthSourceNotApplicable,
 	}}
 	return op, true
+}
+
+func readBillingDemoPointLookupRPCCount(runtimeStats *execdetails.RuntimeStatsColl, plans map[int]tikvrpc.CmdType) (int64, bool) {
+	if runtimeStats == nil {
+		return 0, false
+	}
+	var total int64
+	for planID, cmd := range plans {
+		if !runtimeStats.ExistsRootStats(planID) {
+			return 0, false
+		}
+		_, groups := runtimeStats.GetRootStats(planID).MergeStats()
+		found := false
+		for _, group := range groups {
+			rpcStats, ok := group.(readBillingDemoPointLookupRPCStats)
+			if !ok {
+				continue
+			}
+			found = true
+			count := rpcStats.GetCmdRPCCount(cmd)
+			if count < 0 || count > math.MaxInt64-total {
+				return 0, false
+			}
+			total += count
+		}
+		if !found {
+			return 0, false
+		}
+	}
+	return total, true
 }
 
 func readBillingDemoWeightsValid(weights readBillingDemoWeights) bool {

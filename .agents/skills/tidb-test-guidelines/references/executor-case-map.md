@@ -30,7 +30,7 @@
 - `pkg/executor/executor_failpoint_test.go` - executor: Tests TiDB last txn info commit mode.
 - `pkg/executor/executor_pkg_test.go` - executor: Tests build KV ranges for index join without CWC.
 - `pkg/executor/executor_required_rows_test.go` - executor: Tests limit required rows.
-- `pkg/executor/explain_test.go` - executor: Tests EXPLAIN ANALYZE formats, including production-default uncalibrated v4 units and absent totals, distinct read/write request output units, six pushed TiKV operator classes (including an explicitly ordered StreamAgg) with native Unistore's incomplete scan-width fail-closed behavior, bounded scan/transport/point-lookup failures, all raw DML mutation diagnostics with gated mutation `cpu_work`, statement-summary/metrics output versions, restricted/feature-off isolation, and legacy v3 behavior retained as explicitly superseded coverage.
+- `pkg/executor/explain_test.go` - executor: Tests EXPLAIN ANALYZE formats, including production-default uncalibrated v4 units and absent totals, distinct read/write request output units, DML PointGet read-request publication, six pushed TiKV operator classes (including an explicitly ordered StreamAgg) with native Unistore's incomplete scan-width fail-closed behavior, bounded scan/transport/point-lookup failures, all raw DML mutation diagnostics with gated mutation `cpu_work`, statement-summary/metrics output versions, restricted/feature-off isolation, and legacy v3 behavior retained as explicitly superseded coverage.
 - `pkg/executor/explain_unit_test.go` - executor: Tests explain analyze invoke next and close.
 - `pkg/executor/explainfor_test.go` - executor: Tests explain for.
 - `pkg/executor/grant_test.go` - executor: Tests grant global.

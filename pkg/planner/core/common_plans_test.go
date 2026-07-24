@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -323,6 +324,42 @@ func readBillingDemoResolveWeights(site, opClass, version string) (legacyReadBil
 	return w, true
 }
 
+type readBillingDemoPointLookupRPCStatsForTest struct {
+	counts map[tikvrpc.CmdType]int64
+}
+
+func (*readBillingDemoPointLookupRPCStatsForTest) String() string {
+	return ""
+}
+
+func (s *readBillingDemoPointLookupRPCStatsForTest) Merge(other execdetails.RuntimeStats) {
+	otherStats, ok := other.(*readBillingDemoPointLookupRPCStatsForTest)
+	if !ok {
+		return
+	}
+	for cmd, count := range otherStats.counts {
+		s.counts[cmd] += count
+	}
+}
+
+func (s *readBillingDemoPointLookupRPCStatsForTest) Clone() execdetails.RuntimeStats {
+	cloned := &readBillingDemoPointLookupRPCStatsForTest{
+		counts: make(map[tikvrpc.CmdType]int64, len(s.counts)),
+	}
+	for cmd, count := range s.counts {
+		cloned.counts[cmd] = count
+	}
+	return cloned
+}
+
+func (*readBillingDemoPointLookupRPCStatsForTest) Tp() int {
+	return execdetails.TpRuntimeStatsWithSnapshot
+}
+
+func (s *readBillingDemoPointLookupRPCStatsForTest) GetCmdRPCCount(cmd tikvrpc.CmdType) int64 {
+	return s.counts[cmd]
+}
+
 func TestReadBillingDemoV4FormulaContract(t *testing.T) {
 	weights := readBillingDemoWeights{
 		Version:   "test-v4-calibrated",
@@ -465,7 +502,7 @@ func TestReadBillingDemoV4FormulaContract(t *testing.T) {
 		}
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				op, present := readBillingDemoPointLookupTransport(tc.flat, metrics, false)
+				op, present := readBillingDemoPointLookupTransport(tc.flat, nil, metrics, false)
 				require.True(t, present)
 				require.Equal(t, "point_lookup@statement", op.id)
 				require.Equal(t, readBillingDemoStatusOperatorOK, op.status)
@@ -478,31 +515,57 @@ func TestReadBillingDemoV4FormulaContract(t *testing.T) {
 			})
 		}
 
-		zeroOp, present := readBillingDemoPointLookupTransport(testCases[0].flat, execdetails.NewRUV2Metrics(), false)
+		zeroOp, present := readBillingDemoPointLookupTransport(testCases[0].flat, nil, execdetails.NewRUV2Metrics(), false)
 		require.True(t, present)
 		require.Equal(t, readBillingDemoStatusOperatorOK, zeroOp.status)
 		require.Zero(t, readBillingDemoUnitValue(zeroOp.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
 
-		missingOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, nil, false)
+		missingOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, nil, nil, false)
 		require.Equal(t, readBillingDemoReasonMissingReaderTransport, missingOp.reason)
 		bypassedMetrics := execdetails.NewRUV2Metrics()
 		bypassedMetrics.SetBypass(true)
-		bypassedOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, bypassedMetrics, false)
+		bypassedOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, nil, bypassedMetrics, false)
 		require.Equal(t, readBillingDemoReasonMissingReaderTransport, bypassedOp.reason)
-		dmlOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, metrics, true)
-		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, dmlOp.reason)
+
+		dmlRuntimeStats := execdetails.NewRuntimeStatsColl(nil)
+		dmlRuntimeStats.RegisterStats(point.ID(), &readBillingDemoPointLookupRPCStatsForTest{
+			counts: map[tikvrpc.CmdType]int64{tikvrpc.CmdGet: 3},
+		})
+		dmlRuntimeStats.RegisterStats(batch.ID(), &readBillingDemoPointLookupRPCStatsForTest{
+			counts: map[tikvrpc.CmdType]int64{tikvrpc.CmdBatchGet: 3},
+		})
+		for i, expectedRequests := range []int64{3, 3, 6} {
+			dmlOp, present := readBillingDemoPointLookupTransport(testCases[i].flat, dmlRuntimeStats, nil, true)
+			require.True(t, present)
+			require.Equal(t, readBillingDemoStatusOperatorOK, dmlOp.status)
+			require.Equal(t, float64(expectedRequests), readBillingDemoUnitValue(dmlOp.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
+			require.Equal(t, readBillingDemoInputSourceSnapshotRuntimeStats, dmlOp.units[0].source)
+		}
+		missingDMLStatsOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, nil, metrics, true)
+		require.Equal(t, readBillingDemoReasonMissingReaderTransport, missingDMLStatsOp.reason)
+		mismatchedDMLMetrics := execdetails.NewRUV2Metrics()
+		mismatchedDMLMetrics.AddResourceManagerReadCnt(4)
+		mismatchedDMLOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, dmlRuntimeStats, mismatchedDMLMetrics, true)
+		require.Equal(t, readBillingDemoStatusOperatorOK, mismatchedDMLOp.status)
+		require.Equal(t, 3.0, readBillingDemoUnitValue(mismatchedDMLOp.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
+		require.Equal(t, readBillingDemoInputSourceSnapshotRuntimeStats, mismatchedDMLOp.units[0].source)
 
 		point.Lock = true
-		lockOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, metrics, false)
+		lockOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, nil, metrics, false)
 		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, lockOp.reason)
+		dmlLockOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, dmlRuntimeStats, nil, true)
+		require.Equal(t, readBillingDemoStatusOperatorOK, dmlLockOp.status)
 		point.Lock = false
 		reader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
 		mixedReaderFlat := &FlatPhysicalPlan{
 			Main:             testCases[0].flat.Main,
 			ScalarSubQueries: []FlatPlanTree{{{Origin: reader, IsRoot: true, StoreType: kv.TiDB}}},
 		}
-		mixedReaderOp, _ := readBillingDemoPointLookupTransport(mixedReaderFlat, metrics, false)
+		mixedReaderOp, _ := readBillingDemoPointLookupTransport(mixedReaderFlat, nil, metrics, false)
 		require.Equal(t, readBillingDemoReasonAmbiguousReaderTransport, mixedReaderOp.reason)
+		mixedReaderDMLOp, _ := readBillingDemoPointLookupTransport(mixedReaderFlat, dmlRuntimeStats, nil, true)
+		require.Equal(t, readBillingDemoStatusOperatorOK, mixedReaderDMLOp.status)
+		require.Equal(t, 3.0, readBillingDemoUnitValue(mixedReaderDMLOp.units, readBillingDemoUnitReadRequestCount, readBillingDemoInputSideAll))
 
 		physicalOp, supported, reason := readBillingDemoClassifyOperator(testCases[0].flat.Main[0])
 		physicalOp.id = point.ExplainID().String()
