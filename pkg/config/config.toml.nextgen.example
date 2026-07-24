@@ -181,6 +181,8 @@ max-size = 300
 
 # Max log file keep days. No clean up by default.
 max-days = 0
+# Rotate log files daily in local time.
+rotate-by-day = false
 
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
