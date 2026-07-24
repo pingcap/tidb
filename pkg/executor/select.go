@@ -615,7 +615,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is, nil)
+		e := newExecutorBuilder(ctx, sctx, is, nil)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -1142,7 +1142,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// For single-row INSERT statements, ignore non-strict mode
 		// See https://dev.mysql.com/doc/refman/5.7/en/constraint-invalid-data.html
 		isSingleInsert := len(stmt.Lists) == 1
-		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, (!strictSQLMode && !isSingleInsert) || stmt.IgnoreErr)
+		enableStrictNotNullCheck := vars.EnableStrictNotNullCheck
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !((strictSQLMode || isSingleInsert) && enableStrictNotNullCheck) || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 			!vars.SQLMode.HasErrorForDivisionByZeroMode(),

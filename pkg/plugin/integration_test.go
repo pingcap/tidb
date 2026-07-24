@@ -50,6 +50,7 @@ func TestAuditLogNormal(t *testing.T) {
 		cmd      string
 		event    plugin.GeneralEvent
 		resCnt   int
+		retrying bool
 	}
 
 	tests := []normalTest{
@@ -672,6 +673,14 @@ func TestAuditLogNormal(t *testing.T) {
 	dbNames := make([]string, 0)
 	tableNames := make([]string, 0)
 	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		// Transaction retries can emit extra Completed events, so this test tracks retry events separately.
+		retrying := false
+		if v := ctx.Value(plugin.IsRetryingCtxKey); v != nil {
+			if b, ok := v.(bool); ok {
+				retrying = b
+			}
+		}
+
 		dbNames = dbNames[:0]
 		tableNames = tableNames[:0]
 		for _, value := range sctx.StmtCtx.Tables {
@@ -686,6 +695,7 @@ func TestAuditLogNormal(t *testing.T) {
 			tables:   strings.Join(tableNames, ","),
 			cmd:      cmd,
 			event:    event,
+			retrying: retrying,
 		}
 		testResults = append(testResults, audit)
 	}
@@ -704,13 +714,24 @@ func TestAuditLogNormal(t *testing.T) {
 		if resultCount == 0 {
 			resultCount = 2
 		}
-		require.Equal(t, resultCount, len(testResults), errMsg)
+		retryingCompletedCount := 0
+		effectiveResults := make([]normalTest, 0, len(testResults))
+		for _, result := range testResults {
+			if result.event == plugin.Completed && result.retrying {
+				retryingCompletedCount++
+				continue
+			}
+			effectiveResults = append(effectiveResults, result)
+		}
+		// Total includes extra retry completion events.
+		require.Equal(t, resultCount+retryingCompletedCount, len(testResults), errMsg)
+		require.Equal(t, resultCount, len(effectiveResults), errMsg)
 
-		result := testResults[0]
+		result := effectiveResults[0]
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Starting, result.event, errMsg)
 
-		result = testResults[resultCount-1]
+		result = effectiveResults[resultCount-1]
 		require.Equal(t, "Query", result.cmd, errMsg)
 		if test.text == "" {
 			require.Equal(t, test.sql, result.text, errMsg)
@@ -724,7 +745,7 @@ func TestAuditLogNormal(t *testing.T) {
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Completed, result.event, errMsg)
 		for i := 1; i < resultCount-1; i++ {
-			result = testResults[i]
+			result = effectiveResults[i]
 			require.Equal(t, "Query", result.cmd, errMsg)
 			require.Equal(t, plugin.Completed, result.event, errMsg)
 		}

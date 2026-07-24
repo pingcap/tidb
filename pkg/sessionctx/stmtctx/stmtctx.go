@@ -81,6 +81,7 @@ type LogicalPlanBuildState struct {
 	lockTableIDs         map[int64]struct{}
 	tblInfo2UnionScan    map[*model.TableInfo]bool
 	useDynamicPruneMode  bool
+	viewDepth            int32
 	colRefFromUpdatePlan intset.FastIntSet
 	optimizeTracer       *tracing.OptimizeTracer
 	optimizerCETrace     []*tracing.CETraceRecord
@@ -323,6 +324,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
+	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu *stmtCtxMu
 
@@ -495,6 +497,16 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
+	// optimization round decorrelated at least one Apply into Join.
+	AlternativeLogicalPlanDecorrelatedApply bool
+	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
+	// round already produced a same-order index join candidate for a decorrelated Apply.
+	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanPreferCorrelate indicates whether the current logical
+	// build round encountered a non-correlated IN subquery eligible for the
+	// correlate-to-Apply alternative.
+	AlternativeLogicalPlanPreferCorrelate bool
 	// alternativeLogicalPlanDecorrelatedApply indicates whether the first logical
 	// optimization round decorrelated at least one Apply into Join. This is a scheduling
 	// signal; it does not describe the selected final plan.
@@ -687,6 +699,7 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		lockTableIDs:         maps.Clone(sc.LockTableIDs),
 		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		viewDepth:            sc.ViewDepth,
 		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
 		optimizeTracer:       sc.OptimizeTracer,
 		optimizerCETrace:     slices.Clone(sc.OptimizerCETrace),
@@ -716,6 +729,7 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
 	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.ViewDepth = state.viewDepth
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
 	sc.OptimizeTracer = state.optimizeTracer
 	sc.OptimizerCETrace = slices.Clone(state.optimizerCETrace)
@@ -734,6 +748,9 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 // ResetAlternativeLogicalPlanSignals clears the first-round scheduling signals used
 // by the alternative logical plan feature.
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = false
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.alternativeLogicalPlanDecorrelatedApply = false
 	sc.alternativeLogicalPlanEvaluatedSubquery = false
 	sc.alternativeLogicalPlanDecorrelatedApplyCount = 0
@@ -743,6 +760,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
 // been decorrelated into a Join in the first round.
 func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() int {
+	sc.AlternativeLogicalPlanDecorrelatedApply = true
 	sc.alternativeLogicalPlanDecorrelatedApply = true
 	sc.alternativeLogicalPlanDecorrelatedApplyCount++
 	return sc.alternativeLogicalPlanDecorrelatedApplyCount
@@ -754,10 +772,18 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin(applyID
 	if applyID <= 0 {
 		return
 	}
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
 	if sc.alternativeLogicalPlanSameOrderIndexJoinIDs == nil {
 		sc.alternativeLogicalPlanSameOrderIndexJoinIDs = make(map[int]struct{})
 	}
 	sc.alternativeLogicalPlanSameOrderIndexJoinIDs[applyID] = struct{}{}
+}
+
+// MarkAlternativeLogicalPlanPreferCorrelate records that the current logical
+// build round encountered a non-correlated IN subquery that is eligible for
+// the correlate-to-Apply alternative.
+func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
+	sc.AlternativeLogicalPlanPreferCorrelate = true
 }
 
 // MarkAlternativeLogicalPlanEvaluatedSubquery records that the first logical plan

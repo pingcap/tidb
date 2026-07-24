@@ -2,14 +2,6 @@
 
 package server
 
-import (
-	"github.com/pingcap/tidb/pkg/privilege"
-	servererr "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
-)
-
 // incrementUserConnectionsCounter increases the count of connections when user login the database.
 func (cc *clientConn) incrementUserConnectionsCounter() {
 	user := cc.ctx.GetSessionVars().User
@@ -60,39 +52,4 @@ func (cc *clientConn) getUserConnectionsCounter(targetUser string) int {
 	}
 
 	return 0
-}
-
-// checkUserConnectionCount checks whether the count of connections exceeds the limits.
-func (s *Server) checkUserConnectionCount(cc *clientConn, host string) error {
-	authUser, err := cc.ctx.MatchIdentity(cc.user, host)
-	if err != nil {
-		return err
-	}
-
-	pm := privilege.GetPrivilegeManager(cc.ctx.Session)
-	connections, err := pm.GetUserResources(authUser.Username, authUser.Hostname)
-	if err != nil {
-		return err
-	}
-
-	if connections == 0 && variable.MaxUserConnectionsCount.Load() == 0 {
-		return nil
-	}
-
-	targetUser := authUser.Username + authUser.Hostname
-	conns := int64(cc.getUserConnectionsCounter(targetUser))
-
-	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(variable.MaxUserConnectionsCount.Load())) {
-		var count uint32
-		if connections > 0 {
-			count = uint32(connections)
-		} else {
-			count = variable.MaxUserConnectionsCount.Load()
-		}
-		logutil.BgLogger().Error("The current user has too many connections",
-			zap.Uint32("max user connections", count), zap.Error(servererr.ErrConCount))
-		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(authUser.Username)
-	}
-
-	return nil
 }

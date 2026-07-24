@@ -244,6 +244,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
 
+	require.Equal(t, DefTiDBOptIndexPruneThreshold, v.OptIndexPruneThreshold)
+	err = v.SetSystemVar(TiDBOptIndexPruneThreshold, "1")
+	require.NoError(t, err)
+	require.Equal(t, 1, v.OptIndexPruneThreshold)
+
 	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
 	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "OFF")
 	require.NoError(t, err)
@@ -271,6 +276,14 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
+
+	require.Equal(t, DefTiDBOptEnableAdvancedJoinReorder, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(TiDBOptEnableAdvancedJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(TiDBOptEnableAdvancedJoinReorder, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.TiDBOptEnableAdvancedJoinReorder)
 
 	err = v.SetSystemVar(TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)

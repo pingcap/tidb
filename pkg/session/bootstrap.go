@@ -116,7 +116,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
-		Max_user_connections 	SMALLINT UNSIGNED DEFAULT 0,
+		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -224,8 +224,8 @@ const (
 		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
-		INDEX idx_ver(version),
-		UNIQUE INDEX tbl(table_id)
+		PRIMARY KEY (table_id) CLUSTERED,
+		INDEX idx_ver(version)
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
@@ -243,7 +243,7 @@ const (
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
 		last_analyze_pos 	LONGBLOB DEFAULT NULL,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
@@ -257,7 +257,7 @@ const (
 		upper_bound LONGBLOB NOT NULL,
 		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
+		PRIMARY KEY (table_id, is_index, hist_id, bucket_id) CLUSTERED
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
@@ -343,7 +343,7 @@ const (
 		is_index 	TINYINT(2) NOT NULL,
 		hist_id 	BIGINT(64) NOT NULL,
 		value 		LONGBLOB,
-		INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
@@ -432,7 +432,7 @@ const (
 		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		PRIMARY KEY (table_id, version, seq_no) CLUSTERED,
 		KEY table_create_time (table_id, create_time, seq_no),
     	KEY idx_create_time (create_time)
 	);`
@@ -444,7 +444,7 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version (table_id, version),
+		PRIMARY KEY (table_id, version) CLUSTERED,
 		KEY table_create_time (table_id, create_time),
     	KEY idx_create_time (create_time)
 	);`
@@ -511,7 +511,7 @@ const (
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
-		PRIMARY KEY (table_id));`
+		PRIMARY KEY (table_id) CLUSTERED);`
 
 	// CreatePasswordHistory is a table save history passwd.
 	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
@@ -679,7 +679,8 @@ const (
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
-		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch",
+		INDEX idx_start_time(start_time) COMMENT "accelerate the speed when syncing new watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -695,7 +696,8 @@ const (
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
-		done_time TIMESTAMP(6) NOT NULL
+		done_time TIMESTAMP(6) NOT NULL,
+		INDEX idx_done_time(done_time) COMMENT "accelerate the speed when syncing done watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
@@ -1473,16 +1475,55 @@ const (
 	// repairs the table schema.
 	version227 = 227
 
+	// version 228
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version228 = 228
+
+	// version 229
+	// Backfill tidb_analyze_distsql_scan_concurrency for upgraded clusters where the
+	// row in mysql.global_variables was never materialized when the variable was
+	// introduced. Use tidb_distsql_scan_concurrency to preserve old analyze behavior.
+	version229 = 229
+
+	// version 230
+	// add idx_start_time index to tidb_runaway_watch and idx_done_time index to tidb_runaway_watch_done.
+	version230 = 230
+
+	// version 231
+	// Add Max_user_connections to mysql.user.
+	version231 = 231
+
+	// version 232
+	// Repair upgrades from the v8.5.5 hotfix family back to upstream
+	// `release-8.5`. Those branches reused version224/225 for other DDLs, so
+	// clusters reach >= 224 without the upstream version224/225 schema and
+	// bootstrap then skips it as "already applied":
+	//   - release-8.5-20260323-v8.5.5 (stops at 225): in this branch version224
+	//     adds runaway watch indexes and version225 adds `Max_user_connections`,
+	//     so upstream `max_node_count` (version224) and `i_user` indexes
+	//     (version225) are both missing.
+	//   - release-8.5-20260527-v8.5.5 (stops at 224, no version225): in this
+	//     branch version224 adds `i_user` indexes, so `max_node_count` is
+	//     missing; `i_user` already exists.
+	// version232 re-applies the version224/225 DDLs; `doReentrantDDL`
+	// ignores `ErrColumnExists`/`ErrDupKeyName`, so already-present schema is a
+	// no-op (e.g. `i_user` on release-8.5-20260527-v8.5.5).
+	version232 = 232
+
 	// ...
-	// [version228, version238] is the version range reserved for patches of 8.5.x
+	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
-	// next version should start with 239
+	// next version should start with 241
 	version239 = 239
+	// version 240 widens mysql.user.Max_user_connections from SMALLINT to INT.
+	version240 = 240
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version239
+var currentBootstrapVersion int64 = version240
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
@@ -1669,7 +1710,13 @@ var (
 		upgradeToVer225,
 		upgradeToVer226,
 		upgradeToVer227,
+		upgradeToVer228,
+		upgradeToVer229,
+		upgradeToVer230,
+		upgradeToVer231,
+		upgradeToVer232,
 		upgradeToVer239,
+		upgradeToVer240,
 	}
 )
 
@@ -3600,16 +3647,183 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+// addMaxNodeCountColumns adds the `max_node_count` column to both global task
+// tables. Shared by upgradeToVer224 and upgradeToVer232 (the latter re-applies it
+// for clusters that skipped upstream version224).
+func addMaxNodeCountColumns(s sessiontypes.Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+}
+
+// addIUserIndexes adds the `i_user` index to the seven privilege tables. Shared
+// by upgradeToVer225 and upgradeToVer232 (the latter re-applies it for clusters
+// that skipped upstream version225).
+func addIUserIndexes(s sessiontypes.Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	addMaxNodeCountColumns(s)
+}
+
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
+		return
+	}
+	addIUserIndexes(s)
+}
+
+// writeClusterID writes cluster id into mysql.tidb
+func writeClusterID(s sessiontypes.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	defer cancel()
+
+	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbClusterID,
+		clusterID,
+		clusterID,
+	)
+}
+
+func upgradeToVer226(s sessiontypes.Session, ver int64) {
+	if ver >= version226 {
+		return
+	}
+
+	writeClusterID(s)
+}
+
+func upgradeToVer227(s sessiontypes.Session, ver int64) {
+	if ver >= version227 {
+		return
+	}
+
+	// Make sure the table exists.
+	doReentrantDDL(s, CreatePITRIDMap)
+
+	// If the primary key columns are already as expected, the schema is already fixed.
+	expectedPKCols := []string{"restore_id", "restored_ts", "upstream_cluster_id", "segment_id"}
+	pkCols := getPrimaryKeyColsOrEmpty(s, mysql.SystemDB, "tidb_pitr_id_map")
+	if slices.Equal(pkCols, expectedPKCols) {
+		return
+	}
+
+	// Otherwise, execute the same DDLs as version221.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
+}
+
+func upgradeToVer228(s sessiontypes.Session, ver int64) {
+	if ver >= version228 {
+		return
+	}
+	initGlobalVariableIfNotExists(s, variable.TiDBIgnoreInlistPlanDigest, variable.Off)
+}
+
+func upgradeToVer229(s sessiontypes.Session, ver int64) {
+	if ver >= version229 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBDistSQLScanConcurrency)
+	terror.MustNil(err)
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return
+	}
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
+}
+
+func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, `
+		SELECT COLUMN_NAME
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA=%? AND TABLE_NAME=%? AND INDEX_NAME='PRIMARY'
+		ORDER BY SEQ_IN_INDEX`,
+		dbName, tableName,
+	)
+	if err != nil {
+		logutil.BgLogger().Fatal("get primary key columns failed", zap.Error(err), zap.String("db", dbName), zap.String("table", tableName))
+	}
+	cols := make([]string, 0, len(rows))
+	for _, row := range rows {
+		cols = append(cols, row.GetString(0))
+	}
+	return cols
+}
+
+func upgradeToVer230(s sessiontypes.Session, ver int64) {
+	if ver >= version230 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer231(s sessiontypes.Session, ver int64) {
+	if ver >= version231 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+}
+
+func upgradeToVer232(s sessiontypes.Session, ver int64) {
+	if ver >= version232 {
+		return
+	}
+
+	// Re-apply the upstream version224/225 DDLs that the v8.5.5 hotfix branches
+	// skipped. We call the shared helpers directly rather than upgradeToVer224/
+	// upgradeToVer225: those guard on `ver >= version224/225`, but `ver` here is
+	// the pre-upgrade version (e.g. 225 for release-8.5-20260323-v8.5.5, 224 for
+	// release-8.5-20260527-v8.5.5), so the guards would short-circuit and skip
+	// the repair — the exact bug this version fixes. The helpers have no such
+	// guard; doReentrantDDL ignores ErrColumnExists/ErrDupKeyName, so
+	// already-present schema (e.g. i_user on release-8.5-20260527-v8.5.5) is a
+	// no-op.
+	addMaxNodeCountColumns(s)
+	addIUserIndexes(s)
+}
+
 func upgradeToVer239(s sessiontypes.Session, ver int64) {
+	if ver >= version239 {
+		return
+	}
 	// Keep old behavior for upgraded clusters.
 	initGlobalVariableIfNotExists(s, variable.TiDBEnableNoBackslashEscapesInLike, variable.Off)
+}
+
+func upgradeToVer240(s sessiontypes.Session, ver int64) {
+	if ver >= version240 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Max_user_connections = 0 WHERE Max_user_connections IS NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY COLUMN `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
 func upgradeEEToVer2(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion2 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` SMALLINT UNSIGNED DEFAULT 0 AFTER `Password_lifetime`")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
 func upgradeEEToVer3(s sessiontypes.Session, ver int64) {
@@ -3724,92 +3938,6 @@ func upgradeToEEVer15(s sessiontypes.Session, ver int64) {
 	}
 	// Forbid updating lower_case_table_names for existing clusters.
 	writeLowerCaseTableNamesParameter(s, 2)
-}
-
-func upgradeToVer224(s sessiontypes.Session, ver int64) {
-	if ver >= version224 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
-}
-
-func upgradeToVer225(s sessiontypes.Session, ver int64) {
-	if ver >= version225 {
-		return
-	}
-
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
-}
-
-// writeClusterID writes cluster id into mysql.tidb
-func writeClusterID(s sessiontypes.Session) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
-	defer cancel()
-
-	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
-
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
-		mysql.SystemDB,
-		mysql.TiDBTable,
-		tidbClusterID,
-		clusterID,
-		clusterID,
-	)
-}
-
-func upgradeToVer226(s sessiontypes.Session, ver int64) {
-	if ver >= version226 {
-		return
-	}
-
-	writeClusterID(s)
-}
-
-func upgradeToVer227(s sessiontypes.Session, ver int64) {
-	if ver >= version227 {
-		return
-	}
-
-	// Make sure the table exists.
-	doReentrantDDL(s, CreatePITRIDMap)
-
-	// If the primary key columns are already as expected, the schema is already fixed.
-	expectedPKCols := []string{"restore_id", "restored_ts", "upstream_cluster_id", "segment_id"}
-	pkCols := getPrimaryKeyColsOrEmpty(s, mysql.SystemDB, "tidb_pitr_id_map")
-	if slices.Equal(pkCols, expectedPKCols) {
-		return
-	}
-
-	// Otherwise, execute the same DDLs as version221.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY", dbterror.ErrCantDropFieldOrKey)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
-}
-
-func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rows, err := sqlexec.ExecSQL(ctx, s, `
-		SELECT COLUMN_NAME
-		FROM information_schema.STATISTICS
-		WHERE TABLE_SCHEMA=%? AND TABLE_NAME=%? AND INDEX_NAME='PRIMARY'
-		ORDER BY SEQ_IN_INDEX`,
-		dbName, tableName,
-	)
-	if err != nil {
-		logutil.BgLogger().Fatal("get primary key columns failed", zap.Error(err), zap.String("db", dbName), zap.String("table", tableName))
-	}
-	cols := make([]string, 0, len(rows))
-	for _, row := range rows {
-		cols = append(cols, row.GetString(0))
-	}
-	return cols
 }
 
 func upgradeToEEVer16(s sessiontypes.Session, ver int64) {

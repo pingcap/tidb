@@ -460,7 +460,7 @@ func (e *ShowExec) fetchShowProcedureStatus(ctx context.Context, showType string
 
 // buildCallProcedure generate the execution plan of the call.
 func (b *executorBuilder) buildCallProcedure(v *plannercore.CallStmt) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
 	var securityType string
 	switch v.Plan.SecurityType {
@@ -494,9 +494,9 @@ func (b *executorBuilder) buildCallProcedure(v *plannercore.CallStmt) exec.Execu
 }
 
 func (b *executorBuilder) buildTriggerProcedure(v *plannercore.TriggerProcedure) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
-	sqlMode, ok := b.ctx.GetSessionVars().GetSystemVar(variable.SQLModeVar)
+	sqlMode, ok := b.sctx.GetSessionVars().GetSystemVar(variable.SQLModeVar)
 	if !ok {
 		b.err = errors.New("unknown system var " + variable.SQLModeVar)
 	}
@@ -512,7 +512,7 @@ func (b *executorBuilder) buildTriggerProcedure(v *plannercore.TriggerProcedure)
 		outTriggerParam:     make(map[string]int, 10),
 		procedurePlan:       v.Plan.ProcedureExecPlan,
 		cachedProcedurePlan: &plannercore.RoutineCacahe{},
-		IsStrict:            b.ctx.GetSessionVars().SQLMode.HasStrictMode(),
+		IsStrict:            b.sctx.GetSessionVars().SQLMode.HasStrictMode(),
 		definerHost:         v.Plan.DefinerHost,
 		definerUser:         v.Plan.DefinerUser,
 		securityType:        "INVOKER",
@@ -1157,7 +1157,7 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		return nil, nil, err
 	}
 
-	builder := newExecutorBuilder(e.Ctx(), e.is, nil)
+	builder := newExecutorBuilder(ctx, e.Ctx(), e.is, nil)
 	if triggerCtx := e.Ctx().GetSessionVars().StmtCtx.TriggerCtx; triggerCtx.InTrigger {
 		if trigExec, ok := triggerCtx.Exec.(*TriggerExec); ok {
 			// Preserve the caller's latest executor to avoid leaking the inner statement's executor

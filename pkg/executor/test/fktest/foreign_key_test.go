@@ -1003,6 +1003,15 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		tk.MustQuery("select * from t1").Check(testkit.Rows())
 		tk.MustQuery("select * from t2").Check(testkit.Rows())
 	}
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, pid int, index safe_pid(pid) where pid is not null, foreign key fk_pid(pid) references t1(id) on delete cascade);")
+	tk.MustExec("insert into t1 values (1),(2);")
+	tk.MustExec("insert into t2 values (1, 1),(2, 2),(3, null);")
+	tk.MustExec("delete from t1 where id = 1;")
+	tk.MustQuery("select id, pid from t2 order by id").Check(testkit.Rows("2 2", "3 <nil>"))
 }
 
 func TestForeignKeyOnDeleteCascade2(t *testing.T) {
@@ -1377,6 +1386,15 @@ func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 <nil> <nil> b"))
 		}
 	}
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, pid int, marker int, index unsafe_pid(pid) where marker is not null, foreign key fk_pid(pid) references t1(id) on delete set null);")
+	tk.MustExec("insert into t1 values (1),(2);")
+	tk.MustExec("insert into t2 values (1, 1, null),(2, 2, 1),(3, null, null);")
+	tk.MustExec("delete from t1 where id = 1;")
+	tk.MustQuery("select id, pid, marker from t2 order by id").Check(testkit.Rows("1 <nil> <nil>", "2 2 1", "3 <nil> <nil>"))
 }
 
 func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
@@ -1804,6 +1822,15 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 	tk.MustExec("update t1 set id = id + 100 where id in (1, 2, 3)")
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("4 14 24", "101 11 21", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 101 21 a", "12 102 22 b", "13 103 23 c", "14 4 24 d"))
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, pid int, marker int, index unsafe_pid(pid) where marker is not null, foreign key fk_pid(pid) references t1(id) on update cascade);")
+	tk.MustExec("insert into t1 values (1),(2);")
+	tk.MustExec("insert into t2 values (1, 1, null),(2, 2, 1),(3, null, null);")
+	tk.MustExec("update t1 set id = 10 where id = 1;")
+	tk.MustQuery("select id, pid, marker from t2 order by id").Check(testkit.Rows("1 10 <nil>", "2 2 1", "3 <nil> <nil>"))
 }
 
 func TestForeignKeyOnUpdateCascade2(t *testing.T) {

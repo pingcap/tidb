@@ -56,6 +56,8 @@ type AnalyzeColumnsExecV2 struct {
 }
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+	intest.Assert(e.samplingStatsConcurrency > 0,
+		"samplingStatsConcurrency must be resolved by AnalyzeExec.Next before workers fan out")
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -69,7 +71,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp 
 
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
 	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
-	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
+	// only the number of distinct values (NDV) is computed using TiKV. Other statistics
 	// are derived from sample data processed within TiDB.
 	// The reason is that we want to keep the same row sampling for all columns.
 	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
@@ -89,14 +91,9 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp 
 			specialIndexes = append(specialIndexes, idx)
 		}
 	}
-	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
-	if err != nil {
-		e.memTracker.Release(e.memTracker.BytesConsumed())
-		return &statistics.AnalyzeResults{Err: err, Job: e.job}
-	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
-	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ctx, gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, e.samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ctx, gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, e.samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -456,7 +453,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(ctx context.Context, i
 			}
 		}
 	}()
-	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
+	tasks := e.buildSubIndexJobForSpecialIndex(ctx, indexInfos)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	pendingJobs := make(map[uint64]*statistics.AnalyzeJob, len(tasks))
 	for _, task := range tasks {
@@ -558,11 +555,11 @@ func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(ctx context.Context, taskCh 
 
 // buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
-func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
+func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(ctx context.Context, indexInfos []*model.IndexInfo) []*analyzeTask {
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
-	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), e.ctx)
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(ctx, e.ctx)
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
@@ -636,7 +633,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(
 	defer func() {
 		if r := recover(); r != nil {
 			panicErr := getAnalyzePanicErr(r)
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			cancel(panicErr)
 			resultCh <- &samplingMergeResult{err: panicErr}
@@ -740,7 +737,7 @@ func drainPendingSamplingMergeTasks(taskCh <-chan []byte, memTracker *memory.Tra
 func (e *AnalyzeColumnsExecV2) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze subBuildWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze subBuildWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- getAnalyzePanicErr(r)
 		}
@@ -920,6 +917,7 @@ func (e *AnalyzeColumnsExecV2) releaseSamplingCollectorMemory(collector *statist
 	}
 	collectorMemSize := collector.MemSize
 	failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+	intest.Assert(collectorMemSize >= 0, "collector memory size should be non-negative")
 	e.memTracker.Release(collectorMemSize)
 	collector.Destroy()
 	failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())

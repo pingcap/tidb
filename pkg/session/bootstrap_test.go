@@ -1689,27 +1689,33 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(ver139), ver)
 	}
+	checkUpgraded := func() {
+		s := CreateSessionAndSetID(t, store)
+		defer s.Close()
+		ver, err := GetBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Less(t, int64(ver139), ver)
+	}
 
 	// drop column task_key and then upgrade
 	s := CreateSessionAndSetID(t, store)
 	MustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
+	s.Close()
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err := getBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
-	dom.Close()
+	checkUpgraded()
 
-	// upgrade with column task_key exists
+	// Create the reset session while the current domain is still alive; sessions
+	// bound to a closed domain can fail schema validation on commit.
 	s = CreateSessionAndSetID(t, store)
 	resetTo139(s)
+	s.Close()
+	dom.Close()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
+	checkUpgraded()
 	dom.Close()
 }
 
@@ -2817,6 +2823,70 @@ func TestUpgradeToVer227FixPITRIDMapSchemaWhenVer221Conflict(t *testing.T) {
 	requirePITRIDMapSchemaFixed(t, se2)
 }
 
+func TestUpgradeToVer228BackfillsIgnoreInlistPlanDigest(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver227 := version227
+	seV227 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver227))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV227, ver227)
+
+	// Simulate a cluster upgraded through the old path where the variable existed in code
+	// but its row was never backfilled into mysql.global_variables.
+	MustExec(t, seV227, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	res := MustExecToRecodeSet(t, seV227, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+	require.NoError(t, res.Close())
+
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, variable.Off, chk.GetRow(0).GetString(1))
+	require.NoError(t, res.Close())
+
+	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_ignore_inlist_plan_digest")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+	require.NoError(t, res.Close())
+}
+
 func requirePITRIDMapSchemaFixed(t *testing.T, se sessiontypes.Session) {
 	t.Helper()
 	ctx := context.Background()
@@ -2833,4 +2903,138 @@ func requirePITRIDMapSchemaFixed(t *testing.T, se sessiontypes.Session) {
 	require.NoError(t, rs.Next(ctx, req))
 	require.Equal(t, 1, req.NumRows())
 	require.Equal(t, "restore_id,restored_ts,upstream_cluster_id,segment_id", req.GetRow(0).GetString(0))
+}
+
+func TestTiDBUpgradeToVer230(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver229 := version229
+	seV229 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver229))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV229, ver229)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	getTableCreateSQLFn := func(se sessiontypes.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+
+	// Verify the indexes exist after bootstrap
+	createWatchSQL := getTableCreateSQLFn(seV229, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL := getTableCreateSQLFn(seV229, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Remove the indexes to simulate the old version
+	seV229.SetValue(sessionctx.Initing, true)
+	seV229.GetSessionVars().SQLMode = 0
+	mustExecute(seV229, "ALTER TABLE mysql.tidb_runaway_watch DROP INDEX idx_start_time")
+	mustExecute(seV229, "ALTER TABLE mysql.tidb_runaway_watch_done DROP INDEX idx_done_time")
+	createWatchSQL = getTableCreateSQLFn(seV229, "tidb_runaway_watch")
+	require.NotContains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seV229, "tidb_runaway_watch_done")
+	require.NotContains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify the indexes have been created after upgrade
+	createWatchSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+}
+
+// TestTiDBUpgradeToVer232 verifies version232 repairs the v8.5.5 hotfix family
+// upgrade (see the version232 comment in bootstrap.go). It exercises the
+// release-8.5-20260323-v8.5.5 case, where both `max_node_count` and `i_user`
+// indexes are missing; the release-8.5-20260527-v8.5.5 case (only
+// `max_node_count` missing, `i_user` already present) is covered by the same
+// re-apply plus `ErrDupKeyName`/`ErrColumnExists` tolerance.
+func TestTiDBUpgradeToVer232(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	getTableCreateSQLFn := func(se sessiontypes.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err := res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+
+	// Simulate the 0323 final state: version225 applied, but `max_node_count`
+	// and `i_user` indexes were never created (0323 reused version224/225 for
+	// other DDLs).
+	ver225 := version225
+	seV225 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver225))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV225, ver225)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// Drop `max_node_count` (upstream version224 DDL, skipped on both 0323 and 0527).
+	seV225.SetValue(sessionctx.Initing, true)
+	seV225.GetSessionVars().SQLMode = 0
+	mustExecute(seV225, "ALTER TABLE mysql.tidb_global_task DROP COLUMN max_node_count")
+	mustExecute(seV225, "ALTER TABLE mysql.tidb_global_task_history DROP COLUMN max_node_count")
+	createTaskSQL := getTableCreateSQLFn(seV225, "tidb_global_task")
+	require.NotContains(t, createTaskSQL, "max_node_count")
+
+	// Drop all `i_user` indexes (upstream version225 DDL, skipped on 0323).
+	privTables := []string{"user", "global_priv", "db", "tables_priv", "columns_priv", "global_grants", "default_roles"}
+	for _, tbl := range privTables {
+		mustExecute(seV225, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX i_user", tbl))
+		createSQL := getTableCreateSQLFn(seV225, tbl)
+		require.NotContains(t, createSQL, "i_user")
+	}
+
+	// Upgrade to current version; version232 should repair the missing column
+	// and indexes.
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify `max_node_count` has been re-added.
+	createTaskSQL = getTableCreateSQLFn(seCurVer, "tidb_global_task")
+	require.Contains(t, createTaskSQL, "max_node_count")
+	createTaskHistorySQL := getTableCreateSQLFn(seCurVer, "tidb_global_task_history")
+	require.Contains(t, createTaskHistorySQL, "max_node_count")
+
+	// Verify all `i_user` indexes have been re-added.
+	for _, tbl := range privTables {
+		createSQL := getTableCreateSQLFn(seCurVer, tbl)
+		require.Contains(t, createSQL, "i_user")
+	}
 }

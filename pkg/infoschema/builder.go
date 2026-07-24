@@ -61,11 +61,6 @@ type Builder struct {
 	crossKS  bool
 }
 
-// SetSchemaVersion sets the schema version of the InfoSchema.
-func (b *Builder) SetSchemaVersion(ver int64) {
-	b.schemaMetaVersion = ver
-}
-
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
@@ -963,6 +958,13 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 		}
 	}
 	dbInfo.Deprecated.Tables = tables
+}
+
+// SetSchemaVersion updates the schema version of the building infoschema.
+// It is useful when we intentionally skip applying some schema diffs but still
+// need to advance the schema version to reflect where the infoschema is synced to.
+func (b *Builder) SetSchemaVersion(version int64) {
+	b.infoSchema.schemaMetaVersion = version
 }
 
 // Build builds and returns the built infoschema.

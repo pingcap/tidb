@@ -84,6 +84,63 @@ func formatPublicURL(path, version string) string {
 	return fmt.Sprintf("https://storage.googleapis.com/pingcapmirror/%s", formatSubURL(path, version))
 }
 
+var goProxyFallbackModules = map[string]struct{}{
+	"github.com/Azure/go-ntlmssp@v0.1.1":                                    {},
+	"github.com/apache/thrift@v0.23.0":                                      {},
+	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8":          {},
+	"github.com/aws/aws-sdk-go-v2/internal/configsources@v1.4.21":           {},
+	"github.com/aws/aws-sdk-go-v2/internal/endpoints/v2@v2.7.21":            {},
+	"github.com/aws/aws-sdk-go-v2/internal/v4a@v1.4.22":                     {},
+	"github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding@v1.13.7": {},
+	"github.com/aws/aws-sdk-go-v2/service/internal/checksum@v1.9.13":        {},
+	"github.com/aws/aws-sdk-go-v2/service/internal/presigned-url@v1.13.21":  {},
+	"github.com/aws/aws-sdk-go-v2/service/internal/s3shared@v1.19.21":       {},
+	"github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3":                       {},
+	"github.com/aws/aws-sdk-go-v2@v1.41.5":                                  {},
+	"github.com/aws/smithy-go@v1.24.2":                                      {},
+	"filippo.io/edwards25519@v1.1.1":                                        {},
+	"go.opentelemetry.io/otel/metric@v1.43.0":                               {},
+	"go.opentelemetry.io/otel/sdk/metric@v1.43.0":                           {},
+	"go.opentelemetry.io/otel/sdk@v1.43.0":                                  {},
+	"go.opentelemetry.io/otel/trace@v1.43.0":                                {},
+	"go.opentelemetry.io/otel@v1.43.0":                                      {},
+	"golang.org/x/crypto@v0.52.0":                                           {},
+	"golang.org/x/mod@v0.35.0":                                              {},
+	"golang.org/x/net@v0.55.0":                                              {},
+	"golang.org/x/sync@v0.20.0":                                             {},
+	"golang.org/x/sys@v0.42.0":                                              {},
+	"golang.org/x/sys@v0.45.0":                                              {},
+	"golang.org/x/telemetry@v0.0.0-20260409153401-be6f6cb8b1fa":             {},
+	"golang.org/x/term@v0.43.0":                                             {},
+	"golang.org/x/text@v0.37.0":                                             {},
+	"golang.org/x/tools@v0.44.0":                                            {},
+}
+
+func modulePathToGoProxyPath(path string) string {
+	var b strings.Builder
+	for _, r := range path {
+		switch {
+		case r == '!':
+			b.WriteString("!!")
+		case 'A' <= r && r <= 'Z':
+			b.WriteByte('!')
+			b.WriteRune(r + ('a' - 'A'))
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func formatGoProxyURL(path, version string) string {
+	return fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.zip", modulePathToGoProxyPath(path), version)
+}
+
+func needGoProxyFallback(path, version string) bool {
+	_, ok := goProxyFallbackModules[fmt.Sprintf("%s@%s", path, version)]
+	return ok
+}
+
 func getSha256OfFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -369,6 +426,7 @@ def go_deps():
 		expectedCDNURL := formatCDNURL(replaced.Path, replaced.Version)
 		expectedPublicURL := formatPublicURL(replaced.Path, replaced.Version)
 		expectedVPCPublicURL := formatVPCPublicURL(replaced.Path, replaced.Version)
+		expectedGoProxyURL := formatGoProxyURL(replaced.Path, replaced.Version)
 		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
@@ -406,8 +464,12 @@ def go_deps():
             "%s",
             "%s",
             "%s",
-        ],
 `, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
+			if needGoProxyFallback(replaced.Path, replaced.Version) {
+				fmt.Printf("            \"%s\",\n", expectedGoProxyURL)
+			}
+			fmt.Printf(`        ],
+`)
 			g.Go(func() error {
 				return uploadFile(ctx, client, d.Zip, formatSubURL(replaced.Path, replaced.Version))
 			})

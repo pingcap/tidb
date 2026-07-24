@@ -497,6 +497,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = &qs.Endpoint
+			o.EndpointOptions.UseFIPSEndpoint = aws.FIPSEndpointStateDisabled
 		})
 
 		// Recreate client with endpoint resolver
@@ -624,9 +625,10 @@ func listObjectsCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
 
 // getObjectCheck checks the permission of getObject
 func getObjectCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
+	key := genPermCheckObjectKey()
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(qs.Bucket),
-		Key:    aws.String("not-exists"),
+		Key:    aws.String(qs.Prefix + key),
 	}
 	_, err := svc.GetObject(ctx, input)
 	var aerr smithy.APIError
@@ -640,6 +642,11 @@ func getObjectCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// genPermCheckObjectKey generates a unique object key for permission checking.
+func genPermCheckObjectKey() string {
+	return path.Join("perm-check", uuid.New().String())
 }
 
 // PutAndDeleteObjectCheck checks the permission of putObject

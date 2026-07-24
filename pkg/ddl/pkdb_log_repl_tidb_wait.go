@@ -27,6 +27,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -339,7 +340,7 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 }
 
 func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgressID string, maxTS uint64) (uint64, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return 0, err
 	}
@@ -385,7 +386,7 @@ func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgres
 }
 
 func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgressID string) ([]*logreplicationpb.LogReplicationState, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}

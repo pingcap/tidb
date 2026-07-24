@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "sqlkiller",
@@ -7,8 +7,15 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "sqlkiller_test",
+    srcs = ["sqlkiller_test.go"],
+    embed = [":sqlkiller"],
 )

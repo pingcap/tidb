@@ -2178,11 +2178,12 @@ func TestNilHandleInSkipWithGrant(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	// check ConnectionVerification
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
-	// check GetUserResources
-	pc := privilege.GetPrivilegeManager(tk.Session())
-	userLimit, err := pc.GetUserResources("root", "%")
+	pm := privilege.GetPrivilegeManager(tk.Session())
+	require.Empty(t, pm.(interface{ GetEncodedPassword(string, string) string }).GetEncodedPassword("root", `%`))
+	maxUserConnections, err := pm.GetUserResources("root", `%`)
 	require.NoError(t, err)
-	require.EqualValues(t, 0, userLimit)
+	require.Zero(t, maxUserConnections)
+	require.Nil(t, pm.GetSecurityLabelCache())
 }
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {

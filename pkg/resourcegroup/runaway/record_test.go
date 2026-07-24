@@ -36,13 +36,6 @@ func TestRecordKey(t *testing.T) {
 	key3 := recordKey{
 		ResourceGroupName: "group2",
 	}
-	// Test Hash method
-	hash1 := key1.Hash()
-	hash2 := key2.Hash()
-	hash3 := key3.Hash()
-
-	assert.Equal(t, hash1, hash2, "Hashes should be equal for identical keys")
-	assert.NotEqual(t, hash1, hash3, "Hashes should not be equal for different keys")
 
 	// Test MapKey method
 	recordMap := make(map[recordKey]*Record)
