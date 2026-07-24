@@ -816,6 +816,7 @@ func TestGlobalStats(t *testing.T) {
 		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
 
 	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
+	// The pseudo estimate is based on the default pseudo row count because no global-stats exists.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"IndexReader 3333.33 root partition:all index:IndexRangeScan",

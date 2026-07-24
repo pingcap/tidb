@@ -366,6 +366,112 @@ func TestParseHint(t *testing.T) {
 				},
 			},
 		},
+		{
+			input: "LEADING(a,(b,(c,d)))",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: model.NewCIStr("LEADING"),
+					HintData: &ast.LeadingList{
+						Items: []interface{}{
+							&ast.HintTable{TableName: model.NewCIStr("a")},
+							&ast.LeadingList{
+								Items: []interface{}{
+									&ast.HintTable{TableName: model.NewCIStr("b")},
+									&ast.LeadingList{
+										Items: []interface{}{
+											&ast.HintTable{TableName: model.NewCIStr("c")},
+											&ast.HintTable{TableName: model.NewCIStr("d")},
+										},
+									},
+								},
+							},
+						},
+					},
+					Tables: []ast.HintTable{
+						{TableName: model.NewCIStr("a")},
+						{TableName: model.NewCIStr("b")},
+						{TableName: model.NewCIStr("c")},
+						{TableName: model.NewCIStr("d")},
+					},
+				},
+			},
+		},
+		{
+			input: "LEADING(a,b,c)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: model.NewCIStr("LEADING"),
+					HintData: &ast.LeadingList{
+						Items: []interface{}{
+							&ast.HintTable{TableName: model.NewCIStr("a")},
+							&ast.HintTable{TableName: model.NewCIStr("b")},
+							&ast.HintTable{TableName: model.NewCIStr("c")},
+						},
+					},
+					Tables: []ast.HintTable{
+						{TableName: model.NewCIStr("a")},
+						{TableName: model.NewCIStr("b")},
+						{TableName: model.NewCIStr("c")},
+					},
+				},
+			},
+		},
+		{
+			input: "LEADING((a,b),(c,d))",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: model.NewCIStr("LEADING"),
+					HintData: &ast.LeadingList{
+						Items: []interface{}{
+							&ast.LeadingList{
+								Items: []interface{}{
+									&ast.HintTable{TableName: model.NewCIStr("a")},
+									&ast.HintTable{TableName: model.NewCIStr("b")},
+								},
+							},
+							&ast.LeadingList{
+								Items: []interface{}{
+									&ast.HintTable{TableName: model.NewCIStr("c")},
+									&ast.HintTable{TableName: model.NewCIStr("d")},
+								},
+							},
+						},
+					},
+					Tables: []ast.HintTable{
+						{TableName: model.NewCIStr("a")},
+						{TableName: model.NewCIStr("b")},
+						{TableName: model.NewCIStr("c")},
+						{TableName: model.NewCIStr("d")},
+					},
+				},
+			},
+		},
+		{
+			input: "LEADING(x,(y,z),w)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: model.NewCIStr("LEADING"),
+					HintData: &ast.LeadingList{
+						Items: []interface{}{
+							&ast.HintTable{TableName: model.NewCIStr("x")},
+							&ast.LeadingList{
+								Items: []interface{}{
+									&ast.HintTable{TableName: model.NewCIStr("y")},
+									&ast.HintTable{TableName: model.NewCIStr("z")},
+								},
+							},
+							&ast.HintTable{TableName: model.NewCIStr("w")},
+						},
+					},
+					Tables: []ast.HintTable{
+						{TableName: model.NewCIStr("x")},
+						{TableName: model.NewCIStr("y")},
+						{TableName: model.NewCIStr("z")},
+						{TableName: model.NewCIStr("w")},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {

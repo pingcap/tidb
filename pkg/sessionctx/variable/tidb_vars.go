@@ -168,6 +168,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptIndexPruneThreshold is used to control the threshold for index pruning optimization.
+	TiDBOptIndexPruneThreshold = "tidb_opt_index_prune_threshold"
+
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
@@ -387,6 +390,7 @@ const (
 	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
 	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
 	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+	TiDBOptIndexJoinMaxScanRowsRatio  = "tidb_opt_index_join_max_scan_rows_ratio"
 
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
@@ -605,6 +609,8 @@ const (
 
 	// TiDBEnableStrictDoubleTypeCheck is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
+	// TiDBEnableStrictNotNullCheck is used to control whether to enable strict not-null check for single-row insert in non-strict mode.
+	TiDBEnableStrictNotNullCheck = "tidb_enable_strict_not_null_check"
 
 	// TiDBOptProjectionPushDown is used to control whether to pushdown projection to coprocessor.
 	TiDBOptProjectionPushDown = "tidb_opt_projection_push_down"
@@ -615,6 +621,13 @@ const (
 	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
+
+	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
+	TiDBOptEnableAdvancedJoinReorder = "tidb_opt_enable_advanced_join_reorder"
+
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projection operators
+	// when extracting join groups.
+	TiDBOptJoinReorderThroughProj = "tidb_opt_join_reorder_through_proj"
 
 	// TiDBOptJoinReorderThroughSel indicates whether join reorder considers
 	// joins through selection, allowing more flexible join ordering.
@@ -792,7 +805,11 @@ const (
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// PDEnableFollowerHandleRegion indicates whether to enable the PD Follower handle region API.
+	// TODO: deprecated this variable to use a format like `tidb_enable_pd_follower_handle_region`.
 	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
+
+	// TiDBEnableBatchQueryRegion indicates whether to enable the batch query region feature.
+	TiDBEnableBatchQueryRegion = "tidb_enable_batch_query_region"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -946,6 +963,8 @@ const (
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
+	// TiDBOptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	TiDBOptPartialOrderedIndexForTopN = "tidb_opt_partial_ordered_index_for_topn"
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
@@ -1325,6 +1344,9 @@ const (
 
 	// MaxPreSplitRegions is the maximum number of regions that can be pre-split.
 	MaxPreSplitRegions = 15
+
+	// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
+	TiDBEnableCachePrepareStmt = "tidb_enable_cache_prepare_stmt"
 )
 
 // Default TiDB system variable values.
@@ -1386,6 +1408,7 @@ const (
 	DefOptMergeJoinCostFactor               = 1.0
 	DefOptHashJoinCostFactor                = 1.0
 	DefOptIndexJoinCostFactor               = 1.0
+	DefOptIndexJoinMaxScanRowsRatio         = 0.0
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
@@ -1413,6 +1436,7 @@ const (
 	DefBroadcastJoinThresholdCount          = 10 * 1024
 	DefPreferBCJByExchangeDataSize          = false
 	DefTiDBOptimizerSelectivityLevel        = 0
+	DefTiDBOptIndexPruneThreshold           = 20
 	DefTiDBOptimizerEnableNewOFGB           = false
 	DefTiDBEnableOuterJoinReorder           = true
 	DefTiDBEnableNAAJ                       = true
@@ -1452,8 +1476,11 @@ const (
 	DefEnableWindowFunction                 = true
 	DefEnablePipelinedWindowFunction        = true
 	DefEnableStrictDoubleTypeCheck          = true
+	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptEnableAdvancedJoinReorder     = true
+	DefTiDBOptJoinReorderThroughProj        = false
 	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
@@ -1502,6 +1529,7 @@ const (
 	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
 	DefPDEnableFollowerHandleRegion                   = false
+	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
 	DefTiDBOptEnableSelectedPartitionStats            = false
@@ -1553,7 +1581,7 @@ const (
 	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
-	DefTiDBAutoAnalyzeConcurrency                     = 1
+	DefTiDBAutoAnalyzeConcurrency                     = 3
 	DefTiDBEnablePrepPlanCache                        = true
 	DefTiDBPrepPlanCacheSize                          = 100
 	DefTiDBSessionPlanCacheSize                       = 100
@@ -1592,8 +1620,8 @@ const (
 	MinDDLReorgBatchSize                  int32  = 32
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
 	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency             = 1
-	DefTiDBSysProcScanConcurrency                = 1
+	DefTiDBAutoBuildStatsConcurrency             = DefBuildStatsConcurrency
+	DefTiDBSysProcScanConcurrency                = DefAnalyzeDistSQLScanConcurrency
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
 	DefTiDBForeignKeyCheckInSharedLock           = false
@@ -1610,6 +1638,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
 	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
@@ -1629,6 +1658,7 @@ const (
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
 	DefMaxUserConnections                             = 0
+	MaxUserConnectionsLimit                           = 100000
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false
@@ -1690,9 +1720,13 @@ const (
 	DefTiDBPlanCacheMaxDecimalParamNums               = -1
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBLoadBindingTimeout                         = 200
+	DefEnableCachePrepareStmt                         = false
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
+	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
+	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
+	DefConnectAttrsSize int64 = 4096
 )
 
 // Process global variables.
@@ -1736,6 +1770,7 @@ var (
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
+	EnableBatchQueryRegion               = atomic.NewBool(DefTiDBEnableBatchQueryRegion)
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
@@ -1799,6 +1834,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
 	MaxUserConnectionsCount         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
@@ -1823,6 +1859,13 @@ var (
 
 	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
+	// ConnectAttrsSize is the max aggregate byte size of connection attributes allowed per connection.
+	// Corresponds to performance_schema_session_connect_attrs_size. Default 4096.
+	ConnectAttrsSize = atomic.NewInt64(DefConnectAttrsSize)
+	// ConnectAttrsLongestSeen tracks the largest connection attribute aggregate size seen so far.
+	ConnectAttrsLongestSeen = atomic.NewInt64(0)
+	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
+	ConnectAttrsLost = atomic.NewInt64(0)
 )
 
 var (

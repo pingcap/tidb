@@ -54,14 +54,14 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		return nil
 	}
 
-	isTableDual, err := p.PrunePartitions(b.ctx)
+	isTableDual, err := p.PrunePartitions(b.sctx)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 	if isTableDual {
 		return &TableDualExec{
-			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), p.Schema(), p.ID()),
+			BaseExecutorV2: exec.NewBaseExecutorV2(b.sctx.GetSessionVars(), p.Schema(), p.ID()),
 			numDualRows:    0,
 			numReturned:    0,
 		}
@@ -74,10 +74,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		}()
 	}
 
-	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+	b.sctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &PointGetExecutor{
-		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		BaseExecutor:       exec.NewBaseExecutor(b.sctx, p.Schema(), p.ID()),
 		indexUsageReporter: b.buildIndexUsageReporter(p),
 		txnScope:           b.txnScope,
 		readReplicaScope:   b.readReplicaScope,
@@ -94,7 +94,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.err = err
 		return nil
 	}
-	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
+	if b.sctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
 	}
 	if e.RuntimeStats() != nil {
@@ -106,7 +106,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 
 	if p.IndexInfo != nil {
-		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx := b.sctx.GetSessionVars().StmtCtx
 		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
 	}
 

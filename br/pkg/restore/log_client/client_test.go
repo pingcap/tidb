@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -99,6 +102,72 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 		Sql:        "INSERT IGNORE INTO mysql.gc_delete_range VALUES ",
 		ParamsList: nil,
 	},
+}
+
+func requireLockMetaInStorage(
+	ctx context.Context,
+	t *testing.T,
+	stg storage.ExternalStorage,
+	pathPrefix string,
+	resource operation.LockResourceType,
+) storage.LockMeta {
+	t.Helper()
+
+	var metas []storage.LockMeta
+	err := stg.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		if !strings.HasPrefix(path, pathPrefix) {
+			return nil
+		}
+		content, err := stg.ReadFile(ctx, path)
+		if err != nil {
+			return err
+		}
+		var meta storage.LockMeta
+		if err := json.Unmarshal(content, &meta); err != nil {
+			if strings.Contains(path, ".INTENT.") {
+				return nil
+			}
+			return errors.Annotatef(err, "failed to parse lock metadata from %s", path)
+		}
+		if meta.LockType == string(resource) {
+			metas = append(metas, meta)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	return metas[0]
+}
+
+func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.ToSlash(t.TempDir())
+	backend, err := storage.ParseBackend("local://"+path, nil)
+	require.NoError(t, err)
+	stg, err := storage.New(ctx, backend, nil)
+	require.NoError(t, err)
+
+	appendOpCtx, err := operation.NewContext("test append migration")
+	require.NoError(t, err)
+	appendOpCtx.SetHintField("restore_id", "123")
+	_, err = stream.MigrationExtension(stg).WithOperationContext(appendOpCtx).AppendMigration(ctx, stream.NewMigration())
+	require.NoError(t, err)
+
+	opCtx, err := operation.NewContext("test log restore")
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+	require.NoError(t, client.SetStorage(ctx, backend, nil))
+	client.SetRestoreID(456)
+	client.SetOperationContext(opCtx)
+
+	migs, err := client.GetLockedMigrations(ctx)
+	require.NoError(t, err)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
+
+	meta := requireLockMetaInStorage(ctx, t, stg, "v1/LOCK", operation.LockResourceMigrationRead)
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=456")
 }
 
 func TestDeleteRangeQueryExec(t *testing.T) {
@@ -1434,6 +1503,22 @@ func getDBMap() map[int64]*stream.DBReplace {
 	return replaces
 }
 
+func mustMarshalPITRIDMapBackupMeta(t *testing.T, schemaVersion uint32) []byte {
+	t.Helper()
+
+	backupMeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: schemaVersion,
+		ClusterVersion:      "8.5.6",
+		BrVersion:           "v8.5.6",
+		DbMaps: (&stream.TableMappingManager{
+			DBReplaceMap: getDBMap(),
+		}).ToProto(),
+	}
+	data, err := proto.Marshal(backupMeta)
+	require.NoError(t, err)
+	return data
+}
+
 func TestPITRIDMap(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
@@ -1478,6 +1563,25 @@ func TestPITRIDMap(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		err = se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %?;",
+			uint64(0), uint64(2), uint64(3))
+		require.NoError(t, err)
+		for startIdx, segmentID := 0, 0; startIdx < len(data); segmentID += 1 {
+			endIdx := min(startIdx+logclient.PITRIdMapBlockSize, len(data))
+			err = se.ExecuteInternal(ctx,
+				"REPLACE INTO mysql.tidb_pitr_id_map (restore_id, restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?, %?);",
+				uint64(0), uint64(2), uint64(3), segmentID, data[startIdx:endIdx],
+			)
+			require.NoError(t, err)
+			startIdx = endIdx
+		}
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnStorage(t *testing.T) {
@@ -1532,6 +1636,21 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		stg, err := storage.New(ctx, backend, nil)
+		require.NoError(t, err)
+		err = client.SetStorage(ctx, backend, nil)
+		require.NoError(t, err)
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		require.NoError(t, stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
@@ -2510,4 +2629,30 @@ func (m *mockBatchProcessor) ProcessBatch(
 	cf string,
 ) ([]*logclient.KvEntryWithTS, error) {
 	return m.processFunc(ctx, files, entries, filterTS, cf)
+}
+
+func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
+	ctx := context.Background()
+	stg, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
+	// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
+	// is not parseable, so Load() returns an error and exercises the error path
+	// in GetLockedMigrations.
+	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+
+	client := logclient.TEST_NewLogClientWithStorage(stg)
+	_, err = client.GetLockedMigrations(ctx)
+	require.Error(t, err, "expected Load() to fail on malformed migration file")
+
+	var lingering []string
+	require.NoError(t, stg.WalkDir(ctx, &storage.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK",
+	}, func(p string, _ int64) error {
+		lingering = append(lingering, p)
+		return nil
+	}))
+	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }

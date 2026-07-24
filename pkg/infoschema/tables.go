@@ -904,6 +904,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
 	{name: "IS_GLOBAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "PREDICATE", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var slowQueryCols = []columnInfo{
@@ -989,6 +990,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: variable.SlowLogSessionConnectAttrs, tp: mysql.TypeJSON, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 

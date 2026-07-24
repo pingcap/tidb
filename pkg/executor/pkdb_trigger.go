@@ -216,7 +216,7 @@ func (e *TriggerExec) initTriggerExec(
 		return nil
 	}
 	e.latestExec = currentExec
-	e.b.ctx.GetSessionVars().StmtCtx.TriggerCtx.Exec = e
+	e.b.sctx.GetSessionVars().StmtCtx.TriggerCtx.Exec = e
 	e.p = parser.New()
 	return e
 }
@@ -231,7 +231,7 @@ func (e *TriggerExec) initTriggerExecWithOneTable(
 		return nil
 	}
 	e.latestExec = currentExec
-	e.b.ctx.GetSessionVars().StmtCtx.TriggerCtx.Exec = e
+	e.b.sctx.GetSessionVars().StmtCtx.TriggerCtx.Exec = e
 	e.p = parser.New()
 	return e
 }
@@ -337,7 +337,7 @@ func (e *TriggerExec) buildNextExecutor(ctx context.Context) (exec.Executor, err
 		return nil, exeerrors.ErrSpNoRetset.FastGenByArgs("TRIGGER")
 	}
 
-	sctx := e.b.ctx
+	sctx := e.b.sctx
 	nodeW := resolve.NewNodeW(stmtNode)
 
 	err := plannercore.Preprocess(ctx, sctx, nodeW)

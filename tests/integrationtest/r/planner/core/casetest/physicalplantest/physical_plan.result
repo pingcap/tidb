@@ -3565,32 +3565,35 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where a = 1 or b in (1, 2, 3) order by c limit 2;
 id	estRows	task	access object	operator info
-TopN	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	2.00	root		type: union
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TopN(Probe)	2.00	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	39.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	0.50	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	0.50	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.50	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where a in (1, 2, 3) or b = 1 order by c limit 2;
 id	estRows	task	access object	operator info
-TopN	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	2.00	root		type: union
-  ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:false, stats:pseudo
-  └─TopN(Probe)	2.00	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	39.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	1.50	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  ├─Limit(Build)	0.50	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	0.50	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2;
 id	estRows	task	access object	operator info
-TopN	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	2.00	root		type: union
-  ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TopN(Probe)	2.00	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	59.91	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2;
@@ -3606,12 +3609,13 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2;
 id	estRows	task	access object	operator info
-TopN	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	2.00	root		type: union
-  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(a, c)	range:[1 2,1 2], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TopN(Probe)	2.00	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	30.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	0.01	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	0.01	cop[tikv]	table:t, index:idx(a, c)	range:[1 2,1 2], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.99	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.99	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2;

@@ -382,6 +382,7 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 	tk.MustExec("use test;")
 
 	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
+	defer tk.MustExec("drop view if exists all_global_tasks;")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 1);")
 

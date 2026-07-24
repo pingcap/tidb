@@ -134,6 +134,9 @@ func TestLog(t *testing.T) {
 func TestTraceAndLocation(t *testing.T) {
 	err := example()
 	stack := errors.ErrorStack(err)
+	require.Contains(t, stack, "[executor:123]error message:abc")
+	require.Contains(t, stack, "github.com/pingcap/tidb/pkg/parser/terror.call")
+	require.Contains(t, stack, "github.com/pingcap/tidb/pkg/parser/terror.example")
 	lines := strings.Split(stack, "\n")
 	goroot := strings.ReplaceAll(runtime.GOROOT(), string(os.PathSeparator), "/")
 	var sysStack = 0

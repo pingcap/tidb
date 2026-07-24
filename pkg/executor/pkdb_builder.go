@@ -10,7 +10,7 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case *plannercore.CreateLogReplication:
 		return &CreateLogReplicationExec{
-			BaseExecutor:      exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor:      exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			Name:              v.Name,
 			Host:              v.Host,
 			Port:              v.Port,
@@ -22,7 +22,7 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 		}
 	case *plannercore.AlterLogReplication:
 		return &AlterLogReplicationExec{
-			BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor:       exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			Name:               v.Name,
 			NewSourceClusterID: v.NewSourceClusterID,
 			ProtectionMode:     v.ProtectionMode,
@@ -32,36 +32,36 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 
 	case *plannercore.PauseLogReplication:
 		return &PauseLogReplicationExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			Name:         v.Name,
 		}
 	case *plannercore.ResumeLogReplication:
 		return &ResumeLogReplicationExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			Name:         v.Name,
 		}
 	case *plannercore.DropLogReplication:
 		return &DropLogReplicationExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			Name:         v.Name,
 		}
 	case *plannercore.SwitchOverPrimary:
 		return &SwitchOverPrimaryExec{
-			BaseExecutor:        exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor:        exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			NewPrimaryClusterID: v.NewPrimaryClusterID,
 		}
 	case *plannercore.SwitchOverAsPrimary:
 		return &SwitchOverAsPrimaryExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		}
 	case *plannercore.ActivateStandby:
 		return &ActivateStandbyExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			Mode:         v.Mode,
 		}
 	case *plannercore.CancelLogReplicationWorkflow:
 		return &CancelLogReplicationWorkflowExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 			WorkflowID:   v.WorkflowID,
 		}
 	default:

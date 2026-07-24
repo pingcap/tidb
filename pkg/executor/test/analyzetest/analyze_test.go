@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
@@ -277,16 +278,28 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		select {
-		case err := <-done:
-			t.Fatalf("analyze finished before cancel, err=%v", err)
-		case <-time.After(50 * time.Millisecond):
+		tkWatcher := testkit.NewTestKit(t, store)
+		tkWatcher.MustExec("use test")
+		var earlyDone bool
+		var earlyErr error
+		require.Eventually(t, func() bool {
+			select {
+			case earlyErr = <-done:
+				earlyDone = true
+				return true
+			default:
+			}
+			rows := tkWatcher.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1
+		}, 5*time.Second, 20*time.Millisecond)
+		if earlyDone {
+			t.Fatalf("analyze finished before cancel, err=%v", earlyErr)
 		}
 		cancel()
 
 		select {
 		case <-done:
-			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			rows := tkWatcher.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
 			require.Len(t, rows, 1)
 			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
 			require.Contains(t, rows[0][1].(string), "context canceled")
@@ -300,15 +313,18 @@ func TestAnalyzeRestrict(t *testing.T) {
 		origSM := dom.InfoSyncer().GetSessionManager()
 		sm := &killQuerySessionManager{
 			MockSessionManager: &testkit.MockSessionManager{
-				Conn: make(map[uint64]sessiontypes.Session),
+				SerID: 1,
+				Conn:  make(map[uint64]sessiontypes.Session),
 			},
 		}
 		dom.InfoSyncer().SetSessionManager(sm)
 		defer dom.InfoSyncer().SetSessionManager(origSM)
 
 		tkAnalyze := testkit.NewTestKit(t, store)
+		connID := globalconn.NewGlobalAllocator(sm.ServerID, false).NextID()
+		tkAnalyze.Session().SetConnectionID(connID)
 		tkAnalyze.Session().SetSessionManager(sm)
-		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
+		sm.Conn[connID] = tkAnalyze.Session()
 		tkAnalyze.MustExec("use test")
 		tkAnalyze.MustExec("drop table if exists t")
 		tkAnalyze.MustExec("create table t(a int)")
@@ -331,13 +347,21 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		select {
-		case err := <-done:
-			t.Fatalf("analyze finished before kill query, err=%v", err)
-		case <-time.After(50 * time.Millisecond):
+		var earlyDone bool
+		var earlyErr error
+		require.Eventually(t, func() bool {
+			select {
+			case earlyErr = <-done:
+				earlyDone = true
+				return true
+			default:
+			}
+			rows := tkKiller.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1
+		}, 5*time.Second, 20*time.Millisecond)
+		if earlyDone {
+			t.Fatalf("analyze finished before kill query, err=%v", earlyErr)
 		}
-
-		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
 		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
 
 		select {
@@ -2543,7 +2567,6 @@ PARTITION BY RANGE ( a ) (
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
-
 	// analyze partition under static mode with options
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
@@ -2555,7 +2578,14 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 0, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 0, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// Static partition analyze may flush pending partition deltas into the
+	// logical/global stats_meta row, but it must not build a global column
+	// histogram. The global column may be absent or be a meta-only placeholder.
+	if globalCol := tbl.GetCol(tableInfo.Columns[0].ID); globalCol != nil {
+		require.False(t, globalCol.StatsAvailable())
+		require.Equal(t, 0, len(globalCol.Buckets))
+		require.Nil(t, globalCol.TopN)
+	}
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -3204,31 +3234,34 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	))
 	// 3.2. emulate the background async loading
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	// 3.3. now, stats on all indexes should be loaded
+	// 3.3. The chosen MV-index histograms loaded by LoadNeededHistograms now show up
+	// in the partial-stats list; non-MV indexes like ia that aren't used by the chosen
+	// plan are no longer queued for async loading (full-range scans short-circuit
+	// before IndexStatsIsInvalid), so ia stays allEvicted.
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_signed) */ * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
 		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_unsigned) */* from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
 		"IndexMerge 18.00 root  type: union",
-		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_double) */ * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
 		"TableReader 21.60 root  data:Selection",
 		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
-		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_binary) */ * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 14.83 root  type: union",
-		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_char) */ * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 13.50 root  type: union",
-		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 
 	// 3.4. clean up the stats and re-analyze the table
@@ -3514,6 +3547,30 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
 	// For stored columns, we can collect statistics because the values are stored in TiKV
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
+}
+
+func TestIssue66918(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		j JSON,
+		g VARCHAR(255) GENERATED ALWAYS AS ((j->'$.v')) STORED,
+		UNIQUE INDEX g_idx (g)
+	)`)
+	tk.MustExec(`INSERT INTO t(j) VALUES ('{"v":1}'), ('{"v":2}')`)
+
+	tk.MustExec("ANALYZE TABLE t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tk.MustQuery("select is_index, stats_ver from mysql.stats_histograms where table_id = ? order by is_index, hist_id", tblInfo.ID).Check(testkit.Rows(
+		"0 2",
+		"1 2",
+	))
+
+	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, tblStats.GetIdx(tblInfo.Indices[0].ID).IsAnalyzed())
 }
 
 func TestAnalyzeTableWithVarcharShardIndex(t *testing.T) {

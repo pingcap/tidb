@@ -1308,6 +1308,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		}
+		if idxInfo.ConditionExprString != "" {
+			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
+		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
@@ -1836,8 +1839,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days',
-		authentication_string, Max_user_connections
+        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string,
+		Max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {

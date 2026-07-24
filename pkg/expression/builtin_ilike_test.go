@@ -170,3 +170,71 @@ func TestVectorizedBuiltinIlikeFunc(t *testing.T) {
 	vecBuiltinIlikeCases[ast.Ilike][2].constants[2] = getIntConstant(int64(byte('\\')))
 	testVectorizedBuiltinFunc(t, vecBuiltinIlikeCases)
 }
+
+func TestVectorizedBuiltinIlikeForConstants(t *testing.T) {
+	testCases := []struct {
+		name       string
+		constArg   int
+		constValue string
+		exprs      []string
+		patterns   []string
+	}{
+		{
+			name:       "constant pattern",
+			constArg:   1,
+			constValue: "A",
+			exprs:      []string{"a", "A", "aa", "bb"},
+			patterns:   []string{"A", "A", "A", "A"},
+		},
+		{
+			name:       "constant expr",
+			constArg:   0,
+			constValue: "Aa",
+			exprs:      []string{"Aa", "Aa", "Aa", "Aa"},
+			patterns:   []string{"A", "AA", "B", "%a%"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := createContext(t)
+			fieldTypes := []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_general_ci").BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_general_ci").BuildP(),
+				types.NewFieldType(mysql.TypeLong),
+			}
+			input := chunk.New(fieldTypes, len(tc.exprs), len(tc.exprs))
+			for i := range tc.exprs {
+				input.AppendString(0, tc.exprs[i])
+				input.AppendString(1, tc.patterns[i])
+				input.AppendInt64(2, int64(byte('\\')))
+			}
+
+			args := []Expression{
+				&Column{Index: 0, RetType: fieldTypes[0]},
+				&Column{Index: 1, RetType: fieldTypes[1]},
+				getIntConstant(int64(byte('\\'))),
+			}
+			args[tc.constArg] = getStringConstant(tc.constValue, false)
+
+			f, err := funcs[ast.Ilike].getFunction(ctx, args)
+			require.NoError(t, err)
+			f.SetCharsetAndCollation(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
+			f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
+			require.True(t, f.vectorized() && f.isChildrenVectorized())
+
+			output := chunk.NewColumn(eType2FieldType(types.ETInt), len(tc.exprs))
+			output.AppendNull()
+			require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, output))
+
+			i64s := output.Int64s()
+			it := chunk.NewIterator4Chunk(input)
+			for rowIdx, row := 0, it.Begin(); row != it.End(); row, rowIdx = it.Next(), rowIdx+1 {
+				val, err := evalBuiltinFunc(f, ctx, row)
+				require.NoError(t, err)
+				require.False(t, val.IsNull())
+				require.Equal(t, i64s[rowIdx], val.GetInt64())
+			}
+		})
+	}
+}

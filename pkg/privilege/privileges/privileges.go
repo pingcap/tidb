@@ -426,11 +426,17 @@ func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
 
 // GetSecurityLabelCache exposes the LBAC metadata cache for access checks.
 func (p *UserPrivileges) GetSecurityLabelCache() *lbac.SecurityLabelCache {
+	if SkipWithGrant || p.Handle == nil {
+		return nil
+	}
 	return p.Handle.Get().GetSecurityLabelCache()
 }
 
 // GetEncodedPassword implements the Manager interface.
 func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
+	if SkipWithGrant {
+		return ""
+	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {

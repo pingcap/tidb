@@ -59,7 +59,7 @@ func (c *workflowHistoryPDClient) ListLogReplWorkflows(
 func TestSetDataForLogReplWorkflowHistoryGlobalPassesOptions(t *testing.T) {
 	pdCli := &workflowHistoryPDClient{}
 	store := &workflowHistoryStorage{pdClient: pdCli}
-	dom := domain.NewDomain(store, time.Second, time.Second, time.Second, nil)
+	dom := domain.NewDomain(store, time.Second, time.Second, time.Second, nil, nil)
 	t.Cleanup(dom.Close)
 	sctx := mock.NewContext()
 	sctx.BindDomain(dom)

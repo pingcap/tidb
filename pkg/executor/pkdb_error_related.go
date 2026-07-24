@@ -38,7 +38,7 @@ type SignalExec struct {
 }
 
 func (b *executorBuilder) buildSignalExec(v *plannercore.Signal) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
 	e := &SignalExec{
 		BaseExecutor: base,
@@ -234,7 +234,7 @@ type GetDiagnosticsExec struct {
 }
 
 func (b *executorBuilder) buildGetDiagnosticsExec(v *plannercore.GetDiagnostics) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
 	e := &GetDiagnosticsExec{
 		BaseExecutor: base,

@@ -161,21 +161,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 	}
 
-	// handle the execute statement
-	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
-		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
-		return p, names, err
-	}
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
-		setVarHintChecker, hypoIndexChecker(ctx, is),
-		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
-	sessVars.StmtCtx.StmtHints = originStmtHints
-	for _, warn := range warns {
-		sessVars.StmtCtx.AppendWarning(warn)
-	}
-
 	defer func() {
 		// Override the resource group if the hint is set.
 		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
@@ -206,7 +191,33 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				sessVars.StmtCtx.AppendWarning(err)
 			}
 		}
+
+		if retErr == nil {
+			// Handle SetVars hints for cached plans.
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+			}
+		}
 	}()
+
+	// Handle the execute statement. This calls into the prepared plan cache.
+	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
+		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
+		return p, names, err
+	}
+
+	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker(ctx, is),
+		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
+	sessVars.StmtCtx.StmtHints = originStmtHints
+	for _, warn := range warns {
+		sessVars.StmtCtx.AppendWarning(warn)
+	}
 
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -215,9 +226,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			sessVars.StmtCtx.AppendWarning(err)
 		}
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
-	}
-	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 	}
 
 	// This should be handled after `set_var`
@@ -686,9 +694,45 @@ func buildAndOptimizeLogicalPlanRound(
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
 
-func shouldTryAlternativeLogicalPlanRound(sessVars *variable.SessionVars) bool {
+func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
 	return sessVars.EnableAlternativeLogicalPlans &&
 		sessVars.StmtCtx.NeedAlternativeLogicalPlanRound()
+}
+
+func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
+}
+
+// alternativeRound describes one alternative logical-plan round.
+// adjustFlag adjusts the optimization flags for the round.
+// enabled returns true when the round should be attempted.
+// setup optionally modifies session state and returns the cleanup callback.
+type alternativeRound struct {
+	name       string
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars) func()
+}
+
+var alternativeRounds = [...]alternativeRound{
+	{
+		name:       "non-decorrelate",
+		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+		enabled:    shouldTryNonDecorrelationRound,
+	},
+	{
+		name:       "correlate",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup: func(sv *variable.SessionVars) func() {
+			original := sv.EnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = true
+			return func() {
+				sv.EnableCorrelateSubquery = original
+			}
+		},
+	},
 }
 
 func isAlternativeLogicalPlanFallbackBlockedError(err error) bool {
@@ -784,13 +828,27 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
-	if shouldTryAlternativeLogicalPlanRound(sessVars) {
+	// Pre-compute which rounds are enabled based on the signals from the first
+	// (default) build. This prevents signal leakage: alternative rounds rebuild
+	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
+	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
+	// upfront ensures each round's eligibility is determined solely by the
+	// original build's signals.
+	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
+	for _, round := range alternativeRounds {
+		if round.enabled(sessVars) {
+			enabledRounds = append(enabledRounds, round)
+		}
+	}
+	if len(enabledRounds) > 0 {
 		alternativeRoundTried = true
 		// The live state still belongs to the first-round winner. Capture it only
-		// after deciding to run the alternative round, so statements that do not
-		// need another round avoid an otherwise unused full state snapshot.
+		// after deciding to run alternative rounds, so statements that do not need
+		// another round avoid an otherwise unused full state snapshot.
 		roundState.best.logicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
 		roundState.captureBestLogicalPlanCtx = true
+	}
+	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			switch value := val.(type) {
@@ -805,18 +863,28 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			}
 		})
 
-		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
-			ctx,
-			sctx,
-			node,
-			is,
-			hintProcessor,
-			&roundState,
-			func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
-		)
+		// Use a closure so that defer-based cleanup runs at the end of each
+		// iteration, not at function exit. This ensures session state (e.g.
+		// EnableCorrelateSubquery) is restored even if the round panics.
+		func() {
+			if round.setup != nil {
+				if cleanup := round.setup(sessVars); cleanup != nil {
+					defer cleanup()
+				}
+			}
+			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+				ctx,
+				sctx,
+				node,
+				is,
+				hintProcessor,
+				&roundState,
+				round.adjustFlag,
+			)
+		}()
 		if err != nil {
-			if p, names, cost, ok := fallbackToBestPlanAfterAlternativeLogicalPlanError(ctx, sessVars, err, roundState.best); ok {
-				return p, names, cost, nil
+			if _, _, _, ok := fallbackToBestPlanAfterAlternativeLogicalPlanError(ctx, sessVars, err, roundState.best); ok {
+				continue
 			}
 			return nil, nil, 0, err
 		}

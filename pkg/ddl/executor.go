@@ -3617,6 +3617,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t.Meta(), col.ColumnInfo.Name)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	return true, nil
 }
 
@@ -4633,13 +4638,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				logutil.DDLLogger().Warn("admin check table before drop",
-					zap.String("database", fullti.Schema.O),
-					zap.String("table", fullti.Name.O),
-				)
-				exec := ctx.GetRestrictedSQLExecutor()
-				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				err := adminCheckTableBeforeDrop(e.sessPool, fullti)
 				if err != nil {
 					return err
 				}
@@ -4711,6 +4710,33 @@ func (e *executor) dropTableObject(
 		}
 	}
 	return nil
+}
+
+// adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
+// Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
+// using it in other places by mistake, it's named like this.
+func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
+	logutil.DDLLogger().Warn("admin check table before drop",
+		zap.String("database", fullti.Schema.O),
+		zap.String("table", fullti.Name.O),
+	)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer sessPool.Put(sctx)
+	s := sess.NewSession(sctx)
+
+	sessVars := sctx.GetSessionVars()
+	originalFastTableCheck := sessVars.FastCheckTable
+	sessVars.FastCheckTable = true
+	defer func() {
+		sessVars.FastCheckTable = originalFastTableCheck
+	}()
+	_, err = s.Execute(internalCtx, "admin check table %n.%n", "admin_check_table_before_drop", fullti.Schema.O, fullti.Name.O)
+	return err
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -5401,6 +5427,16 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
+	var conditionString string
+	if indexOption != nil {
+		conditionString, err = CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(conditionString) > 0 && !job.ReorgMeta.IsFastReorg {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+		}
+	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,
@@ -5409,6 +5445,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			ConditionString:         conditionString,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -5682,7 +5719,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
+	if model.FindIndexByColumnsForForeignKey(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -7592,4 +7629,16 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)
 	return errors.Trace(err)
+}
+
+// checkColumnReferencedByPartialCondition checks whether alter column is referenced by a partial index condition
+func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName pmodel.CIStr) error {
+	for _, idx := range t.Indices {
+		_, ic := model.FindIndexColumnByName(idx.AffectColumn, colName.L)
+		if ic != nil {
+			return dbterror.ErrModifyColumnReferencedByPartialCondition.GenWithStackByArgs(colName.O, idx.Name.O)
+		}
+	}
+
+	return nil
 }

@@ -52,6 +52,7 @@ go_test(
         "pkdb_misc_test.go",
         "pkdb_trigger_test.go",
         "procedure_test.go",
+        "stats_test.go",
         "util_test.go",
     ],
     embed = [":ast"],

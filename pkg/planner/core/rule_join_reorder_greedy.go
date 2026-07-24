@@ -29,6 +29,11 @@ type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
 }
 
+type greedyJoinResult struct {
+	plan    base.LogicalPlan
+	cumCost float64
+}
+
 // solve reorders the join nodes in the group based on a greedy algorithm.
 //
 // For each node having a join equal condition with the current join tree in
@@ -73,11 +78,43 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
 		s.curJoinGroup = leadingJoinNodes
 	}
+	if leadingJoinNodes == nil && len(s.curJoinGroup) >= 2 {
+		initialJoinGroup := cloneJrNodes(s.curJoinGroup)
+		initialOtherConds := slices.Clone(s.otherConds)
+		bestResult, _, err := chooseBestGreedyStart(2, func(startIdx int) (*greedyJoinResult, error) {
+			return s.solveWithStart(initialJoinGroup, initialOtherConds, startIdx, joinNodeNum, tracer)
+		})
+		if err != nil {
+			return nil, err
+		}
+		if bestResult != nil {
+			return bestResult.plan, nil
+		}
+	}
+	plan, _, err := s.solveWithStartInPlace(joinNodeNum, tracer)
+	return plan, err
+}
+
+func (s *joinReorderGreedySolver) solveWithStart(joinGroup []*jrNode, otherConds []expression.Expression, startIdx, joinNodeNum int, tracer *joinReorderTrace) (*greedyJoinResult, error) {
+	s.curJoinGroup = moveGreedyStartToFront(cloneJrNodes(joinGroup), startIdx)
+	s.otherConds = slices.Clone(otherConds)
+	plan, cumCost, err := s.solveWithStartInPlace(joinNodeNum, tracer)
+	if err != nil {
+		return nil, err
+	}
+	return &greedyJoinResult{
+		plan:    plan,
+		cumCost: cumCost,
+	}, nil
+}
+
+func (s *joinReorderGreedySolver) solveWithStartInPlace(joinNodeNum int, tracer *joinReorderTrace) (base.LogicalPlan, float64, error) {
 	var cartesianGroup []base.LogicalPlan
+	var cumCost float64
 	for len(s.curJoinGroup) > 0 {
 		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if joinNodeNum > 0 && len(s.curJoinGroup) == joinNodeNum {
 			// Getting here means that there is no join condition between the table used in the leading hint and other tables
@@ -89,9 +126,10 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table has join conditions with other tables")
 		}
 		cartesianGroup = append(cartesianGroup, newNode.p)
+		cumCost += newNode.cumCost
 	}
 
-	return s.makeBushyJoin(cartesianGroup), nil
+	return s.makeBushyJoin(cartesianGroup), cumCost, nil
 }
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
@@ -152,4 +190,50 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 		return nil, nil
 	}
 	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
+}
+
+func cloneJrNodes(nodes []*jrNode) []*jrNode {
+	cloned := make([]*jrNode, len(nodes))
+	for i, node := range nodes {
+		cloned[i] = &jrNode{
+			p:       node.p,
+			cumCost: node.cumCost,
+		}
+	}
+	return cloned
+}
+
+func chooseBestGreedyStart(startCount int, runner func(startIdx int) (*greedyJoinResult, error)) (*greedyJoinResult, int, error) {
+	var best *greedyJoinResult
+	bestStartIdx := -1
+	for startIdx := 0; startIdx < startCount; startIdx++ {
+		candidate, err := runner(startIdx)
+		if err != nil {
+			return nil, -1, err
+		}
+		if candidate != nil && (best == nil || cumCostSignificantlyLess(candidate.cumCost, best.cumCost)) {
+			best = candidate
+			bestStartIdx = startIdx
+		}
+	}
+	return best, bestStartIdx, nil
+}
+
+func cumCostSignificantlyLess(cost, bestCost float64) bool {
+	if cost >= bestCost {
+		return false
+	}
+	scale := math.Max(1, math.Max(math.Abs(cost), math.Abs(bestCost)))
+	return bestCost-cost > scale*1e-12
+}
+
+func moveGreedyStartToFront(nodes []*jrNode, startIdx int) []*jrNode {
+	if startIdx <= 0 || startIdx >= len(nodes) {
+		return nodes
+	}
+	reordered := make([]*jrNode, 0, len(nodes))
+	reordered = append(reordered, nodes[startIdx])
+	reordered = append(reordered, nodes[:startIdx]...)
+	reordered = append(reordered, nodes[startIdx+1:]...)
+	return reordered
 }

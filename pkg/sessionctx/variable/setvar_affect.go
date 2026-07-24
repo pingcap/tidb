@@ -54,6 +54,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_concurrency_factor":                     {},
 	"tidb_opt_force_inline_cte":                       {},
 	"tidb_opt_use_invisible_indexes":                  {},
+	"tidb_opt_index_prune_threshold":                  {},
 	"tidb_opt_hash_agg_cost_factor":                   {},
 	"tidb_opt_hash_join_cost_factor":                  {},
 	"tidb_opt_index_join_cost_factor":                 {},
@@ -129,7 +130,9 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tiflash_fastscan":                                {},
 	"tiflash_fine_grained_shuffle_batch_size":         {},
 	"tiflash_fine_grained_shuffle_stream_count":       {},
+	"tidb_opt_enable_advanced_join_reorder":           {},
 	"tidb_hash_join_version":                          {},
+	"tidb_enable_cache_prepare_stmt":                  {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},

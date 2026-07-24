@@ -16,6 +16,7 @@ package privilege
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -135,10 +136,10 @@ type Manager interface {
 	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 	GetAuthPlugin(user, host string) (string, error)
 
-	//GetUserResources gets the max user connections for the account identified by the user and host
-	GetUserResources(user, host string) (int64, error)
-
 	GetSecurityLabelCache() *lbac.SecurityLabelCache
+
+	// GetUserResources gets the max user connections for the account identified by the user and host
+	GetUserResources(user, host string) (int64, error)
 }
 
 const key keyType = 0

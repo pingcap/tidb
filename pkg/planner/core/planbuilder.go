@@ -331,6 +331,15 @@ type PlanBuilder struct {
 	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
 	noDecorrelate bool
 
+	// buildingLateralSubquery indicates we're currently building a LATERAL derived table
+	// This allows resolving column references against the left side of the join
+	buildingLateralSubquery bool
+
+	// lateralOuterCount tracks how many of the last entries in outerSchemas
+	// were pushed by buildJoin for LATERAL purposes. Non-LATERAL derived tables
+	// must not see these entries, so buildResultSetNode temporarily hides them.
+	lateralOuterCount int
+
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
@@ -529,6 +538,11 @@ func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 		}
 	}
 	return tables
+}
+
+// GetHintState gets the HintState from the PlanBuilder.
+func (b *PlanBuilder) GetHintState() *hint.QBHintBuildState {
+	return b.hintState
 }
 
 // GetOptFlag gets the OptFlag of the PlanBuilder.
@@ -1712,15 +1726,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
+	// it's possible that all these path are inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
+			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
 
@@ -2839,9 +2855,14 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	for _, colInfo := range result {
 		shouldSkip := false
 		if colInfo.IsGenerated() {
-			// Check if any dependency is in the skip list
+			_, keep := mustAnalyze[colInfo.ID]
+			// Stored generated columns that must be analyzed are materialized in storage.
+			// They can be decoded directly without reading skipped base columns, while the
+			// skipped dependencies remain skipped.
+			decodableFromStorage := colInfo.GeneratedStored && keep
+			// Check if any dependency is in the skip list.
 			for depName := range colInfo.Dependences {
-				if _, exists := skipColNameMap[depName]; exists {
+				if _, exists := skipColNameMap[depName]; exists && !decodableFromStorage {
 					skipCol = append(skipCol, colInfo)
 					shouldSkip = true
 					break
@@ -4095,6 +4116,14 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 
 	switch raw := node.(type) {
 	case *ast.FlushStmt:
+		if raw.Tp == ast.FlushStatsDelta {
+			if err := fillDefaultDBForStatsObjects(b.ctx, raw.FlushObjects); err != nil {
+				return nil, err
+			}
+			raw.DedupFlushObjects()
+			b.requireSelectPrivForStatsObjects(raw.FlushObjects)
+			break
+		}
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
 	case *ast.AlterInstanceStmt:
@@ -4471,21 +4500,28 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
-		originalVal := b.allowBuildCastArray
-		b.allowBuildCastArray = true
-		expr, _, err := b.rewriteWithPreprocessAndBuildCtx(
-			ctx,
-			column.GeneratedExpr.Clone(),
-			mockPlan,
-			nil,
-			nil,
-			true,
-			nil,
-			expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), column.GeneratedExpr.Internal(), column.ToInfo()),
-		)
-		b.allowBuildCastArray = originalVal
-		if err != nil {
-			return igc, err
+		var expr expression.Expression
+		// Fast path: pure value literals (e.g. GENERATED ALWAYS AS (NULL) VIRTUAL) contain no
+		// column references and need no rewriting. Skip the expensive Clone()+rewrite() for them.
+		if valExpr, ok := column.GeneratedExpr.Internal().(*driver.ValueExpr); ok {
+			expr = &expression.Constant{Value: valExpr.Datum, RetType: column.FieldType.Clone()}
+		} else {
+			originalVal := b.allowBuildCastArray
+			b.allowBuildCastArray = true
+			expr, _, err = b.rewriteWithPreprocessAndBuildCtx(
+				ctx,
+				column.GeneratedExpr.Clone(),
+				mockPlan,
+				nil,
+				nil,
+				true,
+				nil,
+				expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), column.GeneratedExpr.Internal(), column.ToInfo()),
+			)
+			b.allowBuildCastArray = originalVal
+			if err != nil {
+				return igc, err
+			}
 		}
 
 		igc.Exprs = append(igc.Exprs, expr)
@@ -5334,6 +5370,61 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 	p := &LoadStats{Path: ld.Path}
 	return p
+}
+
+func fillDefaultDBForStatsObjects(ctx base.PlanContext, objects []*ast.StatsObject) error {
+	if len(objects) == 0 {
+		return nil
+	}
+
+	currentDB := ctx.GetSessionVars().CurrentDB
+	for _, obj := range objects {
+		if obj.StatsObjectScope != ast.StatsObjectScopeTable {
+			continue
+		}
+		if obj.DBName.L != "" {
+			continue
+		}
+		if currentDB == "" {
+			return plannererrors.ErrNoDB
+		}
+		obj.DBName = pmodel.NewCIStr(currentDB)
+	}
+	return nil
+}
+
+func (b *PlanBuilder) requireSelectPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
+		return
+	}
+
+	user := b.ctx.GetSessionVars().User
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
+		case ast.StatsObjectScopeGlobal:
+			var err error
+			if user != nil {
+				err = plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs("SELECT")
+			} else {
+				err = plannererrors.ErrPrivilegeCheckFail
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, "", "", "", err)
+			return
+		case ast.StatsObjectScopeDatabase:
+			var err error
+			if user != nil {
+				err = plannererrors.ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, obj.DBName.O)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, "", "", err)
+		case ast.StatsObjectScopeTable:
+			var err error
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, obj.TableName.O)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, obj.TableName.L, "", err)
+		}
+	}
 }
 
 // buildLockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.

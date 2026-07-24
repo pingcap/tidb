@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 func TestValidateTiKVConfigEnabledForLogReplication(t *testing.T) {
@@ -221,7 +222,7 @@ type mockStoreLister struct {
 	err    error
 }
 
-func (m mockStoreLister) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (m mockStoreLister) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return m.stores, m.err
 }
 

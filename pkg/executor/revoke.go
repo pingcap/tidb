@@ -153,6 +153,7 @@ func (e *RevokeExec) revokeOneUser(ctx context.Context, internalSession sessionc
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
+	requestedDBName := dbName
 
 	// If there is no privilege entry in corresponding table, insert a new one.
 	// DB scope:		mysql.DB
@@ -160,24 +161,36 @@ func (e *RevokeExec) revokeOneUser(ctx context.Context, internalSession sessionc
 	// Column scope:	mysql.Columns_priv
 	switch e.Level.Level {
 	case ast.GrantLevelDB:
+		dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
 		ok, err := dbUserExists(internalSession, user, host, dbName)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on database %s", user, host, dbName)
+			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on database %s", user, host, requestedDBName)
 		}
 	case ast.GrantLevelTable:
 		switch e.ObjectType {
 		case ast.ObjectTypeNone, ast.ObjectTypeTable:
-			ok, err := tableUserExists(internalSession, user, host, dbName, e.Level.TableName)
+			requestedTblName := e.Level.TableName
+			dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), dbName, e.Level.TableName, e.is)
+			if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				return err
+			}
+			tblName := requestedTblName
+			if tbl != nil {
+				tblName = tbl.Meta().Name.O
+				e.Level.TableName = tblName
+			}
+			ok, err := tableUserExists(internalSession, user, host, dbName, tblName)
 			if err != nil {
 				return err
 			}
 			if !ok {
-				return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on table %s.%s", user, host, dbName, e.Level.TableName)
+				return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on table %s.%s", user, host, requestedDBName, requestedTblName)
 			}
 		case ast.ObjectTypeFunction, ast.ObjectTypeProcedure:
+			dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
 			var routineType string
 			if e.ObjectType == ast.ObjectTypeFunction {
 				routineType = "FUNCTION"
@@ -260,6 +273,7 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
+	dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
 
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.DBTable)

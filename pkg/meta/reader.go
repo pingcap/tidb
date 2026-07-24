@@ -29,6 +29,7 @@ type Reader interface {
 	GetTable(dbID int64, tableID int64) (*model.TableInfo, error)
 	ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error)
 	ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error)
+	IterDatabases(func(info *model.DBInfo) error) error
 	IterTables(dbID int64, fn func(info *model.TableInfo) error) error
 	GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors
 	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error)

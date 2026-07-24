@@ -782,12 +782,10 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		conn.decrementUserConnectionsCounter()
+		conn.decreaseUserConnectionCount()
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
-
-	conn.incrementUserConnectionsCounter()
 
 	if !s.registerConn(conn) {
 		return
@@ -1041,13 +1039,7 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	conn.cancelDispatch()
 	sessVars.SQLKiller.FinishResultSet()
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -536,7 +537,7 @@ func splitAndTrimPDAddrs(raw string) ([]string, error) {
 }
 
 type logReplStoreLister interface {
-	GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error)
+	GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error)
 }
 
 func fetchTiKVConfigFromPD(
@@ -545,7 +546,7 @@ func fetchTiKVConfigFromPD(
 	storeLister logReplStoreLister,
 	tlsCfg *tls.Config,
 ) ([]string, map[string]map[string]bool, error) {
-	stores, err := storeLister.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := storeLister.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, nil, errors.Annotate(err, "query TiKV stores from PD")
 	}

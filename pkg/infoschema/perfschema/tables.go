@@ -224,7 +224,10 @@ func initTableIndices(t *perfSchemaTable) error {
 		if idxInfo.State == model.StateNone {
 			return table.ErrIndexStateCantNone.GenWithStackByArgs(idxInfo.Name)
 		}
-		idx := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
+		idx, err := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
+		if err != nil {
+			return err
+		}
 		t.indices = append(t.indices, idx)
 	}
 	return nil

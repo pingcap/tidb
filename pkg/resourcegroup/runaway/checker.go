@@ -99,9 +99,7 @@ func (rm *Manager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, plan
 	if len(planDigest) == 0 {
 		return nil
 	}
-	rm.ActiveLock.RLock()
-	defer rm.ActiveLock.RUnlock()
-	if group.RunawaySettings == nil && rm.ActiveGroup[resourceGroupName] == 0 {
+	if group.RunawaySettings == nil && rm.getActiveWatchCount(resourceGroupName) == 0 {
 		return nil
 	}
 	counter, ok := rm.MetricsMap.Load(resourceGroupName)
