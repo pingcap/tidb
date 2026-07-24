@@ -17,6 +17,7 @@ package exec
 import (
 	"context"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -77,6 +78,18 @@ type Executor interface {
 }
 
 var _ Executor = &BaseExecutor{}
+
+var executorNextTraceNames sync.Map
+
+func nextTraceName(e Executor) string {
+	typ := reflect.TypeOf(e)
+	if name, ok := executorNextTraceNames.Load(typ); ok {
+		return name.(string)
+	}
+	name := typ.String() + ".Next"
+	actual, _ := executorNextTraceNames.LoadOrStore(typ, name)
+	return actual.(string)
+}
 
 // executorChunkAllocator is a helper to implement `Chunk` related methods in `Executor` interface
 type executorChunkAllocator struct {
@@ -453,7 +466,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
+	r, ctx := tracing.StartRegionEx(ctx, nextTraceName(e))
 	defer r.End()
 
 	e.RegisterSQLAndPlanInExecForTopSQL()
