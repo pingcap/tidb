@@ -54,23 +54,14 @@ func TestColumnAdd(t *testing.T) {
 		dropCol         *table.Column
 		jobID           atomic.Int64
 	)
-<<<<<<< HEAD
-	first := true
-	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		jobID = job.ID
-		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
-		require.True(t, exist)
-=======
 
 	// Add column with default value.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.State == model.JobStateSynced {
 			return
 		}
 		jobID.Store(job.ID)
 		tbl := external.GetTableByName(t, tk, "test", "t")
->>>>>>> d395c3e5151 (ddl: fix flaky test TestColumnAdd (#64397))
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			deleteOnlyTable = tbl
@@ -83,13 +74,7 @@ func TestColumnAdd(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add column c3 int default 3")
-<<<<<<< HEAD
-	tb := publicTable
-	v := getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
-=======
 	checkJobWithHistory(t, se, jobID.Load(), nil, publicTable.Meta())
->>>>>>> d395c3e5151 (ddl: fix flaky test TestColumnAdd (#64397))
 
 	// Drop column.
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
@@ -102,13 +87,8 @@ func TestColumnAdd(t *testing.T) {
 		if job.NotStarted() {
 			return
 		}
-<<<<<<< HEAD
-		jobID = job.ID
-		tbl := external.GetTableByName(t, internal, "test", "t")
-=======
 		jobID.Store(job.ID)
 		tbl := external.GetTableByName(t, tk, "test", "t")
->>>>>>> d395c3e5151 (ddl: fix flaky test TestColumnAdd (#64397))
 		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
 				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
@@ -116,29 +96,16 @@ func TestColumnAdd(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t drop column c3")
-<<<<<<< HEAD
-	v = getSchemaVer(t, tk.Session())
-	// Don't check column, so it's ok to use tb.
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
-
-	// Add column not default.
-	first = true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		jobID = job.ID
-		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
-		require.True(t, exist)
-=======
 	// checkJobWithHistory doesn't check column, so it's ok to use previous one.
 	checkJobWithHistory(t, se, jobID.Load(), nil, publicTable.Meta())
 
 	// Add column with no default value set.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.State == model.JobStateSynced {
 			return
 		}
 		jobID.Store(job.ID)
 		tbl := external.GetTableByName(t, tk, "test", "t")
->>>>>>> d395c3e5151 (ddl: fix flaky test TestColumnAdd (#64397))
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
@@ -150,7 +117,7 @@ func TestColumnAdd(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add column c3 int")
-	testCheckJobDone(t, store, jobID, true)
+	testCheckJobDone(t, store, jobID.Load(), true)
 }
 
 func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
@@ -413,11 +380,12 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 }
 
 // checkJobWithHistory checks the history job info with the expected one.
-func checkJobWithHistory(t *testing.T, ctx sessionctx.Context, id int64, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+func checkJobWithHistory(t *testing.T, ctx sessionctx.Context, id int64, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	ver := getSchemaVer(t, ctx)
 
 	historyJob, err := ddl.GetHistoryJobByID(ctx, id)
 	require.NoError(t, err)
+	require.NotNil(t, historyJob)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 	require.Equal(t, historyJob.BinlogInfo.SchemaVersion, ver)
 
@@ -428,6 +396,7 @@ func checkJobWithHistory(t *testing.T, ctx sessionctx.Context, id int64, dbInfo 
 	if dbInfo != nil {
 		require.Equal(t, historyJob.BinlogInfo.DBInfo, dbInfo)
 	}
+	return historyJob
 }
 
 func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {

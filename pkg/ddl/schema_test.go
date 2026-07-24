@@ -262,10 +262,10 @@ func TestSchema(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	job = testDropSchema(t, tk3.Session(), de, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
-	ids := make(map[int64]struct{})
-	ids[tblInfo1.ID] = struct{}{}
-	ids[tblInfo2.ID] = struct{}{}
-	checkJobWithHistory(t, tk3.Session(), job.ID, dbInfo, nil)
+	historyJob := checkJobWithHistory(t, tk3.Session(), job.ID, dbInfo, nil)
+	dropSchemaArgs, err := model.GetFinishedDropSchemaArgs(historyJob)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{tblInfo1.ID, tblInfo2.ID}, dropSchemaArgs.AllDroppedTableIDs)
 
 	// Drop a non-existent database.
 	job = &model.Job{
