@@ -1,0 +1,22 @@
+## GET_FORMAT and WEEKOFYEAR, transcreated from
+## pkg/expression/builtin_time.go (builtinGetFormatSig.getFormat and
+## builtinWeekOfYearSig). GET_FORMAT's type keyword is an AST selector
+## (TIMESTAMP collapses into DATETIME); location matching is case-insensitive.
+weekofyear('2024-03-15')
+weekofyear('2024-01-01')
+weekofyear('2020-12-31')
+weekofyear('2016-02-29')
+weekofyear('0000-00-00')
+weekofyear(NULL)
+get_format(DATE, 'USA')
+get_format(DATE, 'JIS')
+get_format(DATE, 'ISO')
+get_format(DATE, 'EUR')
+get_format(DATE, 'INTERNAL')
+get_format(DATETIME, 'USA')
+get_format(DATETIME, 'JIS')
+get_format(TIMESTAMP, 'ISO')
+get_format(TIME, 'EUR')
+get_format(TIME, 'usa')
+get_format(DATE, 'unknown')
+get_format(DATE, NULL)

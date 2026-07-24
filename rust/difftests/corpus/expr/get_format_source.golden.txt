@@ -1,0 +1,18 @@
+INT:11
+INT:1
+INT:53
+INT:9
+NULL
+NULL
+STR:%m.%d.%Y
+STR:%Y-%m-%d
+STR:%Y-%m-%d
+STR:%d.%m.%Y
+STR:%Y%m%d
+STR:%Y-%m-%d %H.%i.%s
+STR:%Y-%m-%d %H:%i:%s
+STR:%Y-%m-%d %H:%i:%s
+STR:%H.%i.%s
+STR:%h:%i:%s %p
+STR:
+NULL

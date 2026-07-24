@@ -44,6 +44,7 @@ pub(crate) fn dispatch(
         "WEEKDAY" => weekday(vals),
         "QUARTER" => quarter(vals),
         "WEEK" => week(vals, cols.default_week_format()),
+        "WEEKOFYEAR" => week_of_year_builtin(vals),
         "YEARWEEK" => yearweek(vals),
         "MONTHNAME" => monthname(vals),
         "DAYNAME" => dayname(vals),
@@ -328,6 +329,47 @@ fn quarter(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `pkg/expression/builtin_time.go`. Only the no-mode branch uses the
 /// supplied session `default_week_format`; a caller with no session passes
 /// TiDB's default zero.
+/// `WEEKOFYEAR(date)`. Port of `builtinWeekOfYearSig.evalInt`, which is
+/// `date.Week(3)` — the ISO-like mode-3 week number. Zero and invalid dates are
+/// NULL, matching `week`.
+fn week_of_year_builtin(vals: &[Datum]) -> Result<Datum, EvalError> {
+    if vals.len() != 1 {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
+    let Some(date) = coerce_str(&vals[0])?.and_then(|s| parse_date_ymd(&s)) else {
+        return Ok(Datum::Null);
+    };
+    Ok(Datum::Int(week_of_year(date.0, date.1, date.2, 3, false).1))
+}
+
+/// The `GET_FORMAT` lookup table. `format_type` is one of `DATE`/`DATETIME`/
+/// `TIME` (the AST selector; `TIMESTAMP` collapses into `DATETIME` upstream, so
+/// it shares the datetime row). Location matching is case-insensitive; an
+/// unknown combination returns an empty string. Port of
+/// `builtinGetFormatSig.getFormat`.
+pub(crate) fn get_format(format_type: &str, location: &str) -> String {
+    let location = location.to_uppercase();
+    let res = match (format_type, location.as_str()) {
+        ("DATE", "USA") => "%m.%d.%Y",
+        ("DATE", "JIS") => "%Y-%m-%d",
+        ("DATE", "ISO") => "%Y-%m-%d",
+        ("DATE", "EUR") => "%d.%m.%Y",
+        ("DATE", "INTERNAL") => "%Y%m%d",
+        ("DATETIME", "USA") => "%Y-%m-%d %H.%i.%s",
+        ("DATETIME", "JIS") => "%Y-%m-%d %H:%i:%s",
+        ("DATETIME", "ISO") => "%Y-%m-%d %H:%i:%s",
+        ("DATETIME", "EUR") => "%Y-%m-%d %H.%i.%s",
+        ("DATETIME", "INTERNAL") => "%Y%m%d%H%i%s",
+        ("TIME", "USA") => "%h:%i:%s %p",
+        ("TIME", "JIS") => "%H:%i:%s",
+        ("TIME", "ISO") => "%H:%i:%s",
+        ("TIME", "EUR") => "%H.%i.%s",
+        ("TIME", "INTERNAL") => "%H%i%s",
+        _ => "",
+    };
+    res.to_string()
+}
+
 pub(crate) fn week(vals: &[Datum], default_week_format: i64) -> Result<Datum, EvalError> {
     if !(1..=2).contains(&vals.len()) {
         return Err(EvalError::Unsupported("bad function arity"));
@@ -942,6 +984,54 @@ mod tests {
 
     fn string_datum(value: &str) -> Datum {
         Datum::new_string(value.to_string())
+    }
+
+    /// `builtinGetFormatSig.getFormat` table: every (type, location) pair,
+    /// case-insensitive location, empty for unknown, TIMESTAMP shares DATETIME.
+    #[test]
+    fn get_format_table() {
+        assert_eq!(get_format("DATE", "USA"), "%m.%d.%Y");
+        assert_eq!(get_format("DATE", "JIS"), "%Y-%m-%d");
+        assert_eq!(get_format("DATE", "ISO"), "%Y-%m-%d");
+        assert_eq!(get_format("DATE", "EUR"), "%d.%m.%Y");
+        assert_eq!(get_format("DATE", "INTERNAL"), "%Y%m%d");
+        assert_eq!(get_format("DATETIME", "USA"), "%Y-%m-%d %H.%i.%s");
+        assert_eq!(get_format("DATETIME", "JIS"), "%Y-%m-%d %H:%i:%s");
+        assert_eq!(get_format("DATETIME", "ISO"), "%Y-%m-%d %H:%i:%s");
+        assert_eq!(get_format("DATETIME", "EUR"), "%Y-%m-%d %H.%i.%s");
+        assert_eq!(get_format("DATETIME", "INTERNAL"), "%Y%m%d%H%i%s");
+        assert_eq!(get_format("TIME", "USA"), "%h:%i:%s %p");
+        assert_eq!(get_format("TIME", "JIS"), "%H:%i:%s");
+        assert_eq!(get_format("TIME", "ISO"), "%H:%i:%s");
+        assert_eq!(get_format("TIME", "EUR"), "%H.%i.%s");
+        assert_eq!(get_format("TIME", "INTERNAL"), "%H%i%s");
+        // Location is case-insensitive.
+        assert_eq!(get_format("TIME", "usa"), "%h:%i:%s %p");
+        // Unknown location / type -> empty.
+        assert_eq!(get_format("DATE", "unknown"), "");
+        assert_eq!(get_format("YEAR", "USA"), "");
+    }
+
+    /// `builtinWeekOfYearSig` = `date.Week(3)`; zero/invalid dates are NULL.
+    #[test]
+    fn week_of_year_source_vectors() {
+        assert_eq!(
+            week_of_year_builtin(&[string_datum("2024-03-15")]).unwrap(),
+            Datum::Int(11)
+        );
+        assert_eq!(
+            week_of_year_builtin(&[string_datum("2024-01-01")]).unwrap(),
+            Datum::Int(1)
+        );
+        assert_eq!(
+            week_of_year_builtin(&[string_datum("2020-12-31")]).unwrap(),
+            Datum::Int(53)
+        );
+        assert_eq!(
+            week_of_year_builtin(&[string_datum("0000-00-00")]).unwrap(),
+            Datum::Null
+        );
+        assert_eq!(week_of_year_builtin(&[Datum::Null]).unwrap(), Datum::Null);
     }
 
     #[test]
