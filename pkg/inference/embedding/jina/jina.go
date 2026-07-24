@@ -32,32 +32,21 @@ const DefaultAPIBaseURL = "https://api.jina.ai/v1/embeddings"
 // Embedder is for JinaAI embeddings.
 type Embedder struct {
 	client http.Client
-	cfg    EmbedderConfig
+	cfg    base.APIKeyProviderConfig
 }
 
 var _ base.Embedder = (*Embedder)(nil)
 
 // EmbedderConfig holds the configuration for JinaEmbedder.
-type EmbedderConfig struct {
-	GetAPIKey func() string
-	// GetBaseURL returns the complete Jina AI embeddings endpoint. An empty
-	// value uses DefaultAPIBaseURL.
-	GetBaseURL       func() string
-	ErrMissingAPIKey error // The error to return when API key is missing
-	ErrUnauthorized  error // The error to return when API key is invalid
-	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use base.DefaultMaxResponseBodyBytes.
-	MaxResponseBodyBytes int64
-}
+// GetBaseURL returns the complete Jina AI embeddings endpoint. An empty value
+// uses DefaultAPIBaseURL.
+type EmbedderConfig base.APIKeyProviderConfig
 
 // NewJinaEmbedder creates a new JinaEmbedder instance with the provided configuration.
 func NewJinaEmbedder(cfg EmbedderConfig) *Embedder {
-	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
-	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    cfg,
+		cfg:    base.APIKeyProviderConfig(cfg).WithDefaults(),
 	}
 }
 
@@ -83,41 +72,22 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if model == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
-	var apiKey string
-	if e.cfg.GetAPIKey != nil {
-		apiKey = e.cfg.GetAPIKey()
+	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for JinaAI"))
+	if err != nil {
+		return nil, err
 	}
-	if apiKey == "" {
-		if e.cfg.ErrMissingAPIKey != nil {
-			return nil, e.cfg.ErrMissingAPIKey
-		}
-		return nil, fmt.Errorf("API key is not configured for JinaAI")
-	}
-	var configuredBaseURL string
-	if e.cfg.GetBaseURL != nil {
-		configuredBaseURL = e.cfg.GetBaseURL()
-	}
-	endpoint, err := embeddingsEndpoint(configuredBaseURL)
+	endpoint, err := embeddingsEndpoint(e.cfg.ConfiguredBaseURL())
 	if err != nil {
 		return nil, err
 	}
 
-	jsonData, err := json.Marshal(base.JSONFieldsWithOptions(map[string]any{
+	statusCode, body, err := base.PostJSON(ctx, &e.client, "JinaAI", endpoint, base.JSONFieldsWithOptions(map[string]any{
 		"model":          model,
 		"input":          texts,
 		"embedding_type": "base64",
-	}, opts))
-	if err != nil {
-		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
-	}
-	httpReq, err := base.NewJSONRequest(ctx, "JinaAI", endpoint, jsonData)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	statusCode, body, err := base.DoRequest(ctx, &e.client, "JinaAI", httpReq, e.cfg.MaxResponseBodyBytes)
+	}, opts), http.Header{
+		"Authorization": {"Bearer " + apiKey},
+	}, e.cfg.MaxResponseBodyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -152,24 +122,5 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if err := json.Unmarshal(body, &respObj); err != nil {
 		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
 	}
-	if len(respObj.Data) != len(texts) {
-		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(respObj.Data), len(texts))
-	}
-	embeddings := make([][]float32, len(respObj.Data))
-	for _, item := range respObj.Data {
-		if item.Index < 0 || item.Index >= len(texts) {
-			return nil, fmt.Errorf("response data index %d is out of range [0, %d)", item.Index, len(texts))
-		}
-		if embeddings[item.Index] != nil {
-			return nil, fmt.Errorf("response data contains duplicate index %d", item.Index)
-		}
-		// item.Embedding is []byte. During JSON unmarshal,
-		// it is already base64 decoded by Golang from base64.
-		embedding, err := base.DecodeFloat32ArrayBytes(item.Embedding)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode embedding for index %d: %w", item.Index, err)
-		}
-		embeddings[item.Index] = embedding
-	}
-	return embeddings, nil
+	return base.DecodeIndexedBase64Embeddings(respObj.Data, len(texts))
 }

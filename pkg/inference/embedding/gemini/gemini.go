@@ -121,19 +121,11 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, err
 	}
 
-	jsonData, err := json.Marshal(map[string]any{"requests": requests})
-	if err != nil {
-		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
-	}
-
-	httpReq, err := base.NewJSONRequest(ctx, "Gemini", fullURL, jsonData)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq.Header.Set("x-goog-api-key", apiKey)
-
-	statusCode, body, err := base.DoRequest(ctx, &e.client, "Gemini", httpReq, e.cfg.MaxResponseBodyBytes)
+	statusCode, body, err := base.PostJSON(ctx, &e.client, "Gemini", fullURL, map[string]any{
+		"requests": requests,
+	}, http.Header{
+		"x-goog-api-key": {apiKey},
+	}, e.cfg.MaxResponseBodyBytes)
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,8 @@
 
 package nvidia
 
+import "github.com/pingcap/tidb/pkg/inference/embedding/base"
+
 // Request is the model for Nvidia NIM embeddings API request.
 type Request struct {
 	Input          []string `json:"input"`
@@ -23,14 +25,10 @@ type Request struct {
 
 // Response is the model for Nvidia NIM embeddings API response.
 type Response struct {
-	Object string `json:"object"`
-	Model  string `json:"model"`
-	Data   []struct {
-		Object    string `json:"object"`
-		Index     int    `json:"index"`
-		Embedding []byte `json:"embedding"` // We always use base64 encoding_format
-	} `json:"data"`
-	Usage struct {
+	Object string                        `json:"object"`
+	Model  string                        `json:"model"`
+	Data   []base.IndexedBase64Embedding `json:"data"`
+	Usage  struct {
 		PromptTokens int `json:"prompt_tokens"`
 		TotalTokens  int `json:"total_tokens"`
 	} `json:"usage"`

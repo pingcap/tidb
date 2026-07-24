@@ -33,32 +33,21 @@ const DefaultAPIBaseURL = "https://api.cohere.com/v1/embed"
 // Embedder is for Cohere embeddings.
 type Embedder struct {
 	client http.Client
-	cfg    EmbedderConfig
+	cfg    base.APIKeyProviderConfig
 }
 
 var _ base.Embedder = (*Embedder)(nil)
 
 // EmbedderConfig holds the configuration for CohereEmbedder.
-type EmbedderConfig struct {
-	GetAPIKey func() string
-	// GetBaseURL returns the complete Cohere embeddings endpoint. An empty
-	// value uses DefaultAPIBaseURL.
-	GetBaseURL       func() string
-	ErrMissingAPIKey error // The error to return when API key is missing
-	ErrUnauthorized  error // The error to return when API key is invalid
-	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use base.DefaultMaxResponseBodyBytes.
-	MaxResponseBodyBytes int64
-}
+// GetBaseURL returns the complete Cohere embeddings endpoint. An empty value
+// uses DefaultAPIBaseURL.
+type EmbedderConfig base.APIKeyProviderConfig
 
 // NewCohereEmbedder creates a new CohereEmbedder instance with the provided configuration.
 func NewCohereEmbedder(cfg EmbedderConfig) *Embedder {
-	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
-	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    cfg,
+		cfg:    base.APIKeyProviderConfig(cfg).WithDefaults(),
 	}
 }
 
@@ -151,41 +140,21 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, err
 	}
 
-	var apiKey string
-	if e.cfg.GetAPIKey != nil {
-		apiKey = e.cfg.GetAPIKey()
+	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for cohere"))
+	if err != nil {
+		return nil, err
 	}
-	if apiKey == "" {
-		if e.cfg.ErrMissingAPIKey != nil {
-			return nil, e.cfg.ErrMissingAPIKey
-		}
-		return nil, fmt.Errorf("API key is not configured for cohere")
-	}
-	var configuredBaseURL string
-	if e.cfg.GetBaseURL != nil {
-		configuredBaseURL = e.cfg.GetBaseURL()
-	}
-	endpoint, err := embeddingsEndpoint(configuredBaseURL)
+	endpoint, err := embeddingsEndpoint(e.cfg.ConfiguredBaseURL())
 	if err != nil {
 		return nil, err
 	}
 
-	jsonData, err := json.Marshal(base.JSONFieldsWithOptions(map[string]any{
+	statusCode, body, err := base.PostJSON(ctx, &e.client, "Cohere", endpoint, base.JSONFieldsWithOptions(map[string]any{
 		"model": model,
 		"texts": texts,
-	}, opts))
-	if err != nil {
-		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
-	}
-
-	httpReq, err := base.NewJSONRequest(ctx, "Cohere", endpoint, jsonData)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	statusCode, body, err := base.DoRequest(ctx, &e.client, "Cohere", httpReq, e.cfg.MaxResponseBodyBytes)
+	}, opts), http.Header{
+		"Authorization": {"Bearer " + apiKey},
+	}, e.cfg.MaxResponseBodyBytes)
 	if err != nil {
 		return nil, err
 	}

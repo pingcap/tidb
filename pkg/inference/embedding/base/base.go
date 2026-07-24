@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -74,6 +75,64 @@ type Embedder interface {
 	// CreateEmbeddings generates embeddings for the given texts using the specified model and options.
 	// Different implementations requires different options types. Options can be nil if not needed.
 	CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error)
+}
+
+// IndexedBase64Embedding is an embedding response item whose position is
+// identified by Index and whose Embedding is base64-decoded by encoding/json.
+type IndexedBase64Embedding struct {
+	Object    string `json:"object"`
+	Index     int    `json:"index"`
+	Embedding []byte `json:"embedding"`
+}
+
+// APIKeyProviderConfig contains configuration shared by embedding providers
+// that authenticate with an API key and support custom missing-key and
+// unauthorized errors. Each provider defines the exact meaning of GetBaseURL.
+type APIKeyProviderConfig struct {
+	// GetAPIKey returns the current API key.
+	GetAPIKey func() string
+	// GetBaseURL returns the provider-specific configured base URL or endpoint.
+	GetBaseURL func() string
+	// ErrMissingAPIKey overrides the provider's default missing-key error.
+	ErrMissingAPIKey error
+	// ErrUnauthorized overrides the provider's default unauthorized error.
+	ErrUnauthorized error
+	// MaxResponseBodyBytes limits both successful and error response bodies.
+	// Non-positive values use DefaultMaxResponseBodyBytes.
+	MaxResponseBodyBytes int64
+}
+
+// WithDefaults returns a copy with default values applied.
+func (c APIKeyProviderConfig) WithDefaults() APIKeyProviderConfig {
+	if c.MaxResponseBodyBytes <= 0 {
+		c.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+	}
+	return c
+}
+
+// ResolveAPIKey returns the configured API key. If it is empty, the custom
+// missing-key error is preferred over fallbackErr.
+func (c APIKeyProviderConfig) ResolveAPIKey(fallbackErr error) (string, error) {
+	if c.GetAPIKey != nil {
+		if apiKey := c.GetAPIKey(); apiKey != "" {
+			return apiKey, nil
+		}
+	}
+	if c.ErrMissingAPIKey != nil {
+		return "", c.ErrMissingAPIKey
+	}
+	if fallbackErr != nil {
+		return "", fallbackErr
+	}
+	return "", fmt.Errorf("API key is not configured")
+}
+
+// ConfiguredBaseURL returns the configured provider URL or an empty string.
+func (c APIKeyProviderConfig) ConfiguredBaseURL() string {
+	if c.GetBaseURL == nil {
+		return ""
+	}
+	return c.GetBaseURL()
 }
 
 type redactedError struct {
@@ -167,6 +226,38 @@ func DoRequest(
 	return resp.StatusCode, body, nil
 }
 
+// PostJSON marshals payload, creates a JSON POST request, applies headers, and
+// executes it with a bounded response body.
+func PostJSON(
+	ctx context.Context,
+	client *http.Client,
+	provider string,
+	endpoint string,
+	payload any,
+	headers http.Header,
+	maxResponseBodyBytes int64,
+) (int, []byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, nil, fmt.Errorf("unexpected marshal request error: %w", err)
+	}
+
+	req, err := NewJSONRequest(ctx, provider, endpoint, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	for name, values := range headers {
+		req.Header.Del(name)
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+	// The payload is always JSON even if callers supplied a conflicting header.
+	req.Header.Set("Content-Type", "application/json")
+
+	return DoRequest(ctx, client, provider, req, maxResponseBodyBytes)
+}
+
 // NewProviderResponseError returns a consistent generic provider error. The
 // message must already be sanitized when it originated from a remote service.
 func NewProviderResponseError(provider string, statusCode int, message string) error {
@@ -187,6 +278,30 @@ func DecodeFloat32ArrayBytes(item []byte) ([]float32, error) {
 		bytes := item[i*4 : (i+1)*4]
 		bits := binary.LittleEndian.Uint32(bytes)
 		embeddings[i] = math.Float32frombits(bits)
+	}
+	return embeddings, nil
+}
+
+// DecodeIndexedBase64Embeddings validates and decodes indexed embedding
+// response items, restoring the order of the original input texts.
+func DecodeIndexedBase64Embeddings(items []IndexedBase64Embedding, expectedCount int) ([][]float32, error) {
+	if len(items) != expectedCount {
+		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(items), expectedCount)
+	}
+
+	embeddings := make([][]float32, expectedCount)
+	for _, item := range items {
+		if item.Index < 0 || item.Index >= expectedCount {
+			return nil, fmt.Errorf("response data index %d is out of range [0, %d)", item.Index, expectedCount)
+		}
+		if embeddings[item.Index] != nil {
+			return nil, fmt.Errorf("response data contains duplicate index %d", item.Index)
+		}
+		embedding, err := DecodeFloat32ArrayBytes(item.Embedding)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode embedding for index %d: %w", item.Index, err)
+		}
+		embeddings[item.Index] = embedding
 	}
 	return embeddings, nil
 }

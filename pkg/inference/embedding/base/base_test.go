@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -70,6 +71,39 @@ func TestDecodeBase64EmbeddingF32(t *testing.T) {
 	_, err = DecodeFloat32ArrayBytes([]byte{0x00, 0x01, 0x02, 0x03, 0x04})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid embedding data")
+
+	t.Run("indexed response", func(t *testing.T) {
+		items := []IndexedBase64Embedding{
+			{Index: 1, Embedding: []byte{0x00, 0x00, 0x00, 0x40}},
+			{Index: 0, Embedding: []byte{0x00, 0x00, 0x80, 0x3f}},
+		}
+		embeddings, err := DecodeIndexedBase64Embeddings(items, 2)
+		require.NoError(t, err)
+		require.Equal(t, [][]float32{{1}, {2}}, embeddings)
+
+		_, err = DecodeIndexedBase64Embeddings(items[:1], 2)
+		require.EqualError(t, err, "response data length 1 does not match input texts length 2")
+
+		for _, index := range []int{-1, 2} {
+			invalid := []IndexedBase64Embedding{
+				{Index: index, Embedding: []byte{0x00, 0x00, 0x80, 0x3f}},
+				{Index: 0, Embedding: []byte{0x00, 0x00, 0x00, 0x40}},
+			}
+			_, err = DecodeIndexedBase64Embeddings(invalid, 2)
+			require.EqualError(t, err, fmt.Sprintf("response data index %d is out of range [0, 2)", index))
+		}
+
+		duplicate := []IndexedBase64Embedding{
+			{Index: 0, Embedding: []byte{0x00, 0x00, 0x80, 0x3f}},
+			{Index: 0, Embedding: []byte{0x00, 0x00, 0x00, 0x40}},
+		}
+		_, err = DecodeIndexedBase64Embeddings(duplicate, 2)
+		require.EqualError(t, err, "response data contains duplicate index 0")
+
+		malformed := []IndexedBase64Embedding{{Index: 0, Embedding: []byte{0x00}}}
+		_, err = DecodeIndexedBase64Embeddings(malformed, 1)
+		require.EqualError(t, err, "failed to decode embedding for index 0: invalid embedding data")
+	})
 }
 
 func TestReadResponseBody(t *testing.T) {
@@ -159,6 +193,39 @@ func TestRedactedErrors(t *testing.T) {
 }
 
 func TestHTTPHelpers(t *testing.T) {
+	t.Run("API key provider config", func(t *testing.T) {
+		fallbackErr := errors.New("default missing API key error")
+		customErr := errors.New("custom missing API key error")
+		cfg := APIKeyProviderConfig{
+			GetAPIKey:        func() string { return "test-api-key" },
+			GetBaseURL:       func() string { return "https://example.com/embed" },
+			ErrMissingAPIKey: customErr,
+		}
+
+		normalized := cfg.WithDefaults()
+		require.Zero(t, cfg.MaxResponseBodyBytes)
+		require.Equal(t, DefaultMaxResponseBodyBytes, normalized.MaxResponseBodyBytes)
+		require.Equal(t, "https://example.com/embed", normalized.ConfiguredBaseURL())
+		apiKey, err := normalized.ResolveAPIKey(fallbackErr)
+		require.NoError(t, err)
+		require.Equal(t, "test-api-key", apiKey)
+
+		customLimit := APIKeyProviderConfig{MaxResponseBodyBytes: 64}.WithDefaults()
+		require.Equal(t, int64(64), customLimit.MaxResponseBodyBytes)
+		require.Empty(t, customLimit.ConfiguredBaseURL())
+
+		normalized.GetAPIKey = func() string { return "" }
+		_, err = normalized.ResolveAPIKey(fallbackErr)
+		require.ErrorIs(t, err, customErr)
+
+		normalized.ErrMissingAPIKey = nil
+		_, err = normalized.ResolveAPIKey(fallbackErr)
+		require.ErrorIs(t, err, fallbackErr)
+
+		_, err = APIKeyProviderConfig{}.ResolveAPIKey(nil)
+		require.EqualError(t, err, "API key is not configured")
+	})
+
 	t.Run("parse HTTP URL", func(t *testing.T) {
 		u, err := ParseHTTPURL("  https://example.com/root?tenant=x  ", "test provider URL")
 		require.NoError(t, err)
@@ -211,6 +278,54 @@ func TestHTTPHelpers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusAccepted, statusCode)
 		require.JSONEq(t, `{"ok":true}`, string(body))
+	})
+
+	t.Run("post JSON", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("unexpected method %q", r.Method)
+			}
+			if contentType := r.Header.Get("Content-Type"); contentType != "application/json" {
+				t.Errorf("unexpected content type %q", contentType)
+			}
+			if authorization := r.Header.Get("Authorization"); authorization != "Bearer test-key" {
+				t.Errorf("unexpected authorization header %q", authorization)
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("failed to read request body: %v", err)
+			}
+			if string(body) != `{"input":["hello"]}` {
+				t.Errorf("unexpected request body %q", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+		defer server.Close()
+
+		statusCode, body, err := PostJSON(
+			context.Background(),
+			&http.Client{},
+			"test provider",
+			server.URL,
+			map[string]any{"input": []string{"hello"}},
+			http.Header{"Authorization": []string{"Bearer test-key"}},
+			64,
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, statusCode)
+		require.JSONEq(t, `{"ok":true}`, string(body))
+
+		_, _, err = PostJSON(
+			context.Background(),
+			&http.Client{},
+			"test provider",
+			server.URL,
+			map[string]any{"unsupported": make(chan struct{})},
+			nil,
+			64,
+		)
+		require.ErrorContains(t, err, "unexpected marshal request error")
 	})
 
 	t.Run("response error", func(t *testing.T) {

@@ -33,33 +33,22 @@ const DefaultAPIBaseURL = "https://router.huggingface.co/hf-inference"
 // Embedder is for HuggingFace embeddings.
 type Embedder struct {
 	client http.Client
-	cfg    EmbedderConfig
+	cfg    base.APIKeyProviderConfig
 }
 
 var _ base.Embedder = (*Embedder)(nil)
 
 // EmbedderConfig holds the configuration for HuggingFaceEmbedder.
-type EmbedderConfig struct {
-	GetAPIKey func() string
-	// GetBaseURL returns the inference API base. The embedder appends
-	// /models/<model>/pipeline/feature-extraction. An empty value uses
-	// DefaultAPIBaseURL.
-	GetBaseURL       func() string
-	ErrMissingAPIKey error // The error to return when API key is missing
-	ErrUnauthorized  error // The error to return when API key is invalid
-	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use base.DefaultMaxResponseBodyBytes.
-	MaxResponseBodyBytes int64
-}
+// GetBaseURL returns the inference API base. The embedder appends
+// /models/<model>/pipeline/feature-extraction. An empty value uses
+// DefaultAPIBaseURL.
+type EmbedderConfig base.APIKeyProviderConfig
 
 // NewHuggingFaceEmbedder creates a new HuggingFaceEmbedder instance with the provided configuration.
 func NewHuggingFaceEmbedder(cfg EmbedderConfig) *Embedder {
-	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
-	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    cfg,
+		cfg:    base.APIKeyProviderConfig(cfg).WithDefaults(),
 	}
 }
 
@@ -108,41 +97,21 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, fmt.Errorf("model name is required")
 	}
 
-	var apiKey string
-	if e.cfg.GetAPIKey != nil {
-		apiKey = e.cfg.GetAPIKey()
-	}
-	if apiKey == "" {
-		if e.cfg.ErrMissingAPIKey != nil {
-			return nil, e.cfg.ErrMissingAPIKey
-		}
-		return nil, fmt.Errorf("API key is not configured for HuggingFace")
-	}
-
-	var configuredBaseURL string
-	if e.cfg.GetBaseURL != nil {
-		configuredBaseURL = e.cfg.GetBaseURL()
-	}
-	endpoint, err := featureExtractionEndpoint(configuredBaseURL, model)
+	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for HuggingFace"))
 	if err != nil {
 		return nil, err
 	}
 
-	jsonData, err := json.Marshal(base.JSONFieldsWithOptions(map[string]any{
+	endpoint, err := featureExtractionEndpoint(e.cfg.ConfiguredBaseURL(), model)
+	if err != nil {
+		return nil, err
+	}
+
+	statusCode, body, err := base.PostJSON(ctx, &e.client, "HuggingFace", endpoint, base.JSONFieldsWithOptions(map[string]any{
 		"inputs": texts,
-	}, opts))
-	if err != nil {
-		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
-	}
-
-	httpReq, err := base.NewJSONRequest(ctx, "HuggingFace", endpoint, jsonData)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	statusCode, body, err := base.DoRequest(ctx, &e.client, "HuggingFace", httpReq, e.cfg.MaxResponseBodyBytes)
+	}, opts), http.Header{
+		"Authorization": {"Bearer " + apiKey},
+	}, e.cfg.MaxResponseBodyBytes)
 	if err != nil {
 		return nil, err
 	}

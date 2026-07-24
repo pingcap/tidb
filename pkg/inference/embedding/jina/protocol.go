@@ -14,6 +14,8 @@
 
 package jina
 
+import "github.com/pingcap/tidb/pkg/inference/embedding/base"
+
 // Request is the model for JinaAI embeddings API request.
 type Request struct {
 	Input         []string `json:"input"`
@@ -24,12 +26,8 @@ type Request struct {
 // Response is the model for JinaAI embeddings API response.
 // See https://jina.ai/embeddings/.
 type Response struct {
-	Model string `json:"model"`
-	Data  []struct {
-		Object    string `json:"object"`
-		Index     int    `json:"index"`
-		Embedding []byte `json:"embedding"` // We always use base64 embedding_type
-	} `json:"data"`
+	Model string                        `json:"model"`
+	Data  []base.IndexedBase64Embedding `json:"data"`
 }
 
 // ErrorResponse is the model for JinaAI embeddings API response when an error occurs.
