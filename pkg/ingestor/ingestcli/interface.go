@@ -31,6 +31,26 @@ type WriteResponse struct {
 	nextGenSSTMeta *nextGenSSTMeta
 }
 
+// NewWriteResponseWithSSTMeta creates a write response carrying next-gen SST
+// metadata. It is intended for mocks that need to emulate a TiKV worker response.
+func NewWriteResponseWithSSTMeta(id int64, size uint64) *WriteResponse {
+	return &WriteResponse{
+		nextGenSSTMeta: &nextGenSSTMeta{
+			ID:   id,
+			Size: size,
+		},
+	}
+}
+
+// GetSSTMeta returns the generated SST ID and size when the next-gen worker
+// reports SST metadata.
+func (r *WriteResponse) GetSSTMeta() (id int64, size uint64, ok bool) {
+	if r == nil || r.nextGenSSTMeta == nil {
+		return 0, 0, false
+	}
+	return r.nextGenSSTMeta.ID, r.nextGenSSTMeta.Size, true
+}
+
 // IngestRequest is the request to ingest SST to storage layer.
 type IngestRequest struct {
 	Region    *split.RegionInfo

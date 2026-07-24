@@ -57,6 +57,7 @@ func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 type mockPDHTTPClient struct {
 	pdhttp.Client
 	regionInfos []*pdhttp.RegionsInfo
+	storesInfo  *pdhttp.StoresInfo
 	callCount   int
 	firstRange  *pdhttp.KeyRange
 	firstLimit  int
@@ -77,6 +78,10 @@ func (c *mockPDHTTPClient) GetRegionsByKeyRange(_ context.Context, keyRange *pdh
 	info := c.regionInfos[c.callCount]
 	c.callCount++
 	return info, nil
+}
+
+func (c *mockPDHTTPClient) GetStores(context.Context) (*pdhttp.StoresInfo, error) {
+	return c.storesInfo, nil
 }
 
 func expectedRegionRange(tableID int64) ([]byte, []byte) {
@@ -179,4 +184,73 @@ func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestCollectTiKVStoreCapacityFromPDHTTP(t *testing.T) {
+	pdCli := &mockPDHTTPClient{
+		storesInfo: &pdhttp.StoresInfo{
+			Stores: []pdhttp.StoreInfo{
+				{
+					Store:  pdhttp.MetaStore{ID: 1, State: 0},
+					Status: pdhttp.StoreStatus{Capacity: "10 GiB", Available: "4 GiB"},
+				},
+				{
+					Store: pdhttp.MetaStore{
+						ID:     2,
+						State:  0,
+						Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tiflash"}},
+					},
+					Status: pdhttp.StoreStatus{Capacity: "20 GiB", Available: "8 GiB"},
+				},
+				{
+					Store:  pdhttp.MetaStore{ID: 3, State: 2},
+					Status: pdhttp.StoreStatus{Capacity: "30 GiB", Available: "12 GiB"},
+				},
+			},
+		},
+	}
+
+	capacity, err := collectTiKVStoreCapacity(context.Background(), mockHelperStorage{pdCli: pdCli})
+	require.NoError(t, err)
+	require.EqualValues(t, 10*units.GiB, capacity.TotalBytes)
+	require.EqualValues(t, 4*units.GiB, capacity.AvailableBytes)
+	require.Equal(t, 1, capacity.StoreCount)
+}
+
+func TestIngestedSSTRecorder(t *testing.T) {
+	recorder := newIngestedSSTRecorder()
+	recorder.RecordIngestedSST("classic/uuid/default", 100)
+	recorder.RecordIngestedSST("classic/uuid/default", 100)
+	recorder.RecordIngestedSST("classic/uuid/write", 40)
+	recorder.RecordIngestedSST("classic/zero/default", 0)
+	recorder.RecordIngestedSST("", 10)
+	observation := recorder.Snapshot()
+	require.EqualValues(t, 140, observation.bytes)
+	require.EqualValues(t, 3, observation.count)
+	require.EqualValues(t, 1, observation.zeroSizeCount)
+	require.EqualValues(t, 1, observation.invalidIdentityCount)
+	require.False(t, observation.reliable)
+	require.Equal(t, "ingested_sst_identity_unavailable", observation.reason)
+
+	recorder.Reset()
+	observation = recorder.Snapshot()
+	require.Zero(t, observation.bytes)
+	require.Zero(t, observation.count)
+	require.Zero(t, observation.zeroSizeCount)
+	require.Zero(t, observation.invalidIdentityCount)
+	require.True(t, observation.reliable)
+	require.Equal(t, "ok", observation.reason)
+
+	recorder.RecordIngestedSST("classic/uuid/default", 100)
+	observation = recorder.Snapshot()
+	require.EqualValues(t, 100, observation.bytes)
+	require.EqualValues(t, 1, observation.count)
+	require.True(t, observation.reliable)
+	require.Equal(t, "ok", observation.reason)
+
+	recorder.Reset()
+	recorder.RecordIngestedSST("classic/zero/default", 0)
+	observation = recorder.Snapshot()
+	require.False(t, observation.reliable)
+	require.Equal(t, "ingested_sst_size_unavailable", observation.reason)
 }

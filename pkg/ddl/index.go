@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -104,6 +105,17 @@ const (
 )
 
 var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+
+const (
+	addIndexTiKVCapacityObserveTimeout = 2 * time.Second
+)
+
+// TiKVClusterCapacity is the aggregated TiKV capacity snapshot collected from PD.
+type TiKVClusterCapacity struct {
+	TotalBytes     uint64
+	AvailableBytes uint64
+	StoreCount     int
+}
 
 // DefaultCumulativeTimeout is the default cumulative timeout for analyze operation.
 // exported for testing.
@@ -3251,6 +3263,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
+		if !reorgInfo.mergingTmpIdx {
+			w.logTiKVCapacityForAddIndexObservation(ctx, job.ID, taskKey)
+		}
 		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
 			EleIDs:          extractElemIDs(reorgInfo),
@@ -3527,6 +3542,82 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, fmt.Errorf("zero approximate size")
 	}
 	return int(uint64(sizeInMiB)*size.MB) / int(sample.ApproximateKeys), nil
+}
+
+func (w *worker) logTiKVCapacityForAddIndexObservation(
+	ctx context.Context,
+	jobID int64,
+	taskKey string,
+) {
+	observeCtx, cancel := context.WithTimeout(ctx, addIndexTiKVCapacityObserveTimeout)
+	defer cancel()
+	capacity, err := collectTiKVStoreCapacity(observeCtx, w.store)
+	if err != nil {
+		logutil.DDLLogger().Warn("skip TiKV capacity observation for add-index task because TiKV capacity snapshot failed",
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey),
+			zap.Error(err))
+		return
+	}
+	if capacity == nil || capacity.StoreCount == 0 {
+		logutil.DDLLogger().Warn("skip TiKV capacity observation for add-index task because TiKV capacity snapshot is empty",
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey))
+		return
+	}
+	logutil.DDLLogger().Info("collected TiKV capacity snapshot for add-index task",
+		zap.Int64("jobID", jobID),
+		zap.String("task-key", taskKey),
+		zap.Uint64("tikv_total_bytes", capacity.TotalBytes),
+		zap.Uint64("tikv_available_bytes", capacity.AvailableBytes),
+		zap.Int("tikv_store_count", capacity.StoreCount))
+}
+
+func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, errors.Errorf("store %T does not implement helper.Storage", store)
+	}
+	h := helper.NewHelper(hStore)
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	stores, err := pdCli.GetStores(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if stores == nil {
+		return nil, errors.New("pd stores response is nil")
+	}
+
+	capacity := &TiKVClusterCapacity{}
+	for _, storeInfo := range stores.Stores {
+		if storeInfo.Store.State == int64(metapb.StoreState_Tombstone) || engine.IsTiFlashHTTPResp(&storeInfo.Store) {
+			continue
+		}
+		totalBytes, err := units.RAMInBytes(storeInfo.Status.Capacity)
+		if err != nil {
+			return nil, errors.Annotatef(err, "parse store %d capacity %q", storeInfo.Store.ID, storeInfo.Status.Capacity)
+		}
+		availableBytes, err := units.RAMInBytes(storeInfo.Status.Available)
+		if err != nil {
+			return nil, errors.Annotatef(err, "parse store %d available %q", storeInfo.Store.ID, storeInfo.Status.Available)
+		}
+		capacity.StoreCount++
+		capacity.TotalBytes += uint64(totalBytes)
+		capacity.AvailableBytes += uint64(availableBytes)
+	}
+	return capacity, nil
+}
+
+type ingestedSSTBytesObservation struct {
+	bytes                uint64
+	count                uint64
+	zeroSizeCount        uint64
+	invalidIdentityCount uint64
+	reliable             bool
+	reason               string
 }
 
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
