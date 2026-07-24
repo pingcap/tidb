@@ -1986,6 +1986,15 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBEnableMaxExecutionTimeForDML,
+		Value: BoolToOnOff(vardef.DefTiDBEnableMaxExecutionTimeForDML),
+		Type:  vardef.TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableMaxExecutionTimeForDML = TiDBOptOn(val)
+			return nil
+		}},
+	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.TiDBMaxKeysRead,
 		Value:                   "0",
