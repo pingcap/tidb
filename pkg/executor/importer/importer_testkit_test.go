@@ -316,7 +316,11 @@ func TestProcessChunkWith(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	tidbCfg := tidb.GetGlobalConfig()
+	originTempDir := tidbCfg.TempDir
 	tidbCfg.TempDir = t.TempDir()
+	t.Cleanup(func() {
+		tidbCfg.TempDir = originTempDir
+	})
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
