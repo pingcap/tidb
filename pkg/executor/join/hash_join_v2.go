@@ -93,6 +93,7 @@ func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 	return totalMemoryUsage
 }
 
+// hashStateRows returns the total number of valid rows in the hash table.
 func (htc *hashTableContext) hashStateRows() uint64 {
 	var rows uint64
 	if htc == nil || htc.hashTable == nil {
