@@ -795,7 +795,6 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"modify column c_6 int, " +
 		"alter index idx_visible invisible, " +
 		"modify column c_3 decimal(10, 2);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, checkErr)
 }
 
