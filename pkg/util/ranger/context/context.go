@@ -21,13 +21,15 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
 // RangerContext is the context used to build range.
 type RangerContext struct {
-	TypeCtx types.Context
-	ErrCtx  errctx.Context
-	ExprCtx exprctx.BuildContext
+	TypeCtx    types.Context
+	ErrCtx     errctx.Context
+	ExprCtx    exprctx.BuildContext
+	MemTracker *memory.Tracker
 	*contextutil.RangeFallbackHandler
 	*contextutil.PlanCacheTracker
 	OptimizerFixControl      map[uint64]string

@@ -32,7 +32,9 @@ go_library(
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hack",
         "//pkg/util/intest",
+        "//pkg/util/memory",
         "//pkg/util/ranger/context",
+        "//pkg/util/size",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -43,13 +45,14 @@ go_test(
     srcs = [
         "bench_test.go",
         "main_test.go",
+        "memory_test.go",
         "ranger_test.go",
         "types_test.go",
     ],
+    embed = [":ranger"],
     flaky = True,
     shard_count = 26,
     deps = [
-        ":ranger",
         "//pkg/config",
         "//pkg/domain",
         "//pkg/expression",
@@ -72,6 +75,7 @@ go_test(
         "//pkg/util/benchdaily",
         "//pkg/util/collate",
         "//pkg/util/context",
+        "//pkg/util/size",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

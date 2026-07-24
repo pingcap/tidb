@@ -3593,9 +3593,10 @@ func (s *session) GetRangerCtx() *rangerctx.RangerContext {
 
 	rctx := sc.GetOrInitRangerCtxFromCache(func() any {
 		return &rangerctx.RangerContext{
-			ExprCtx: s.GetExprCtx(),
-			TypeCtx: s.GetSessionVars().StmtCtx.TypeCtx(),
-			ErrCtx:  s.GetSessionVars().StmtCtx.ErrCtx(),
+			ExprCtx:    s.GetExprCtx(),
+			TypeCtx:    s.GetSessionVars().StmtCtx.TypeCtx(),
+			ErrCtx:     s.GetSessionVars().StmtCtx.ErrCtx(),
+			MemTracker: s.GetSessionVars().StmtCtx.MemTracker,
 
 			RegardNULLAsPoint:        s.GetSessionVars().RegardNULLAsPoint,
 			OptPrefixIndexSingleScan: s.GetSessionVars().OptPrefixIndexSingleScan,
