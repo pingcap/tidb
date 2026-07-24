@@ -1285,6 +1285,7 @@ version = "0.0.0"
 dependencies = [
  "aes",
  "des",
+ "flate2",
  "md-5",
  "regex",
  "serde_json",

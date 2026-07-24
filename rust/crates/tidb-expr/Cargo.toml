@@ -17,6 +17,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-proto = { path = "../tidb-proto" }
 aes = { workspace = true }
+flate2 = { workspace = true }
 regex = { workspace = true }
 md-5 = { workspace = true }
 sha1 = { workspace = true }

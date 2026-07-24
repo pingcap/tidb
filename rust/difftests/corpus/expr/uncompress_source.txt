@@ -1,0 +1,15 @@
+## Scalar source rows for UNCOMPRESS/UNCOMPRESSED_LENGTH, transcreated from
+## pkg/expression/builtin_encryption_test.go TestUncompress/TestUncompressLength.
+## The compressed literals are Go compress/zlib output (from goeval `compress`);
+## COMPRESS itself is deferred because Go's DEFLATE-encoder bytes are not
+## byte-reproducible by a different encoder. Corruption warnings are statement
+## context and out of scope for this value diff.
+uncompress(0x05000000789CCA48CDC9C907040000FFFF062C0215)
+uncompress(0x2C000000789C04C0510A80400804D0AB8CFF5D2ACA50B0261C61AFBF2FBC8A58ECBA0F4CA490C289710DF8E0E2FBB74BC9CF6C070000FFFF66D80FC7)
+uncompress('')
+uncompress(0x00)
+uncompress(0xAABBCCDDEEFF)
+uncompressed_length(0x05000000789CCA48CDC9C907040000FFFF062C0215)
+uncompressed_length('')
+uncompressed_length(0xAABB)
+uncompressed_length(0xAABBCCDDEEFF)

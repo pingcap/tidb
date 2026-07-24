@@ -1,0 +1,9 @@
+STR:hello
+STR:hello world, this is a test of compression!!
+STR:
+NULL
+NULL
+INT:5
+INT:0
+INT:0
+INT:3721182122

@@ -24,10 +24,18 @@
 //!   IV argument) are selected by the `block_encryption_mode` session variable
 //!   and remain a session boundary, as does the ignored-IV warning for a third
 //!   argument in a no-IV mode.
-//! - `COMPRESS`/`UNCOMPRESS`/`UNCOMPRESSED_LENGTH` (`builtinCompressSig`
-//!   etc.): zlib DEFLATE framing with a 4-byte little-endian length prefix;
-//!   the compressed payload now fits `Datum::Bytes`, but this bounded source
-//!   family and its framing/error tests have not yet been ported.
+//! - `UNCOMPRESS`/`UNCOMPRESSED_LENGTH` (`builtinUncompressSig`/
+//!   `builtinUncompressedLengthSig`): ported below. Both decode the zlib
+//!   framing (a 4-byte little-endian original-length prefix + a zlib stream),
+//!   and DEFLATE *decoders* are interoperable, so they faithfully consume Go
+//!   `compress/zlib` output. Their corruption warnings belong to the statement
+//!   context and are not fabricated here.
+//! - `COMPRESS` (`builtinCompressSig`): deferred. Its output bytes are produced
+//!   by Go's `compress/flate` *encoder*, whose exact framing (note the
+//!   `00 00 FF FF` sync-flush artifact Go emits) is not byte-reproducible by a
+//!   different DEFLATE encoder such as the `flate2`/miniz_oxide backend. TiDB's
+//!   own test pins those exact bytes, so a non-identical encoder would not be a
+//!   faithful transcreation; only the interoperable decoders are ported.
 //! - `RANDOM_BYTES` (`builtinRandomBytesSig`): non-deterministic
 //!   (`crypto/rand`) — unverifiable against a static golden file.
 //! - `PASSWORD` (`builtinPasswordSig`): the value contract is ported below;
@@ -46,8 +54,11 @@
 //!   `pkg/parser/auth`; the complete expression package must route it through
 //!   the existing Rust parser-auth implementation.
 
+use std::io::Read;
+
 use aes::cipher::{Block, BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
 use aes::Aes128;
+use flate2::read::ZlibDecoder;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
@@ -67,8 +78,66 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("DECODE", 2) => Some(sql_decode(&vals[0], &vals[1])),
         ("AES_ENCRYPT", 2) => Some(aes_encrypt(&vals[0], &vals[1])),
         ("AES_DECRYPT", 2) => Some(aes_decrypt(&vals[0], &vals[1])),
+        ("UNCOMPRESS", 1) => Some(uncompress(&vals[0])),
+        ("UNCOMPRESSED_LENGTH", 1) => Some(uncompressed_length(&vals[0])),
         _ => None,
     }
+}
+
+/// Inflates a zlib stream, returning `None` on any decode error. Port of the
+/// decode half of `pkg/expression/builtin_encryption.go`'s `inflate`
+/// (`compress/zlib`), which reads the whole stream and verifies its Adler-32
+/// checksum; trailing bytes past the stream end are ignored.
+fn inflate(data: &[u8]) -> Option<Vec<u8>> {
+    let mut decoder = ZlibDecoder::new(data);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok().map(|_| out)
+}
+
+/// `UNCOMPRESS(payload)`. Port of `builtinUncompressSig.evalString`. The 4-byte
+/// little-endian prefix records the original length and the remainder is a zlib
+/// stream. Empty input yields an empty string; NULL, a too-short/corrupted
+/// payload, an undecodable stream, or a stored length below the decompressed
+/// length all yield NULL. Go additionally raises a warning, which belongs to the
+/// statement context and is not fabricated in this value-only dispatch.
+fn uncompress(arg: &Datum) -> Result<Datum, EvalError> {
+    let Some(payload) = sql_string_bytes(arg)? else {
+        return Ok(Datum::Null);
+    };
+    if payload.is_empty() {
+        return Ok(Datum::new_string(Vec::new()));
+    }
+    if payload.len() <= 4 {
+        // corrupted
+        return Ok(Datum::Null);
+    }
+    let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+    let Some(bytes) = inflate(&payload[4..]) else {
+        return Ok(Datum::Null);
+    };
+    if length < bytes.len() as u32 {
+        return Ok(Datum::Null);
+    }
+    Ok(Datum::new_string(bytes))
+}
+
+/// `UNCOMPRESSED_LENGTH(payload)`. Port of
+/// `builtinUncompressedLengthSig.evalInt`: returns the 4-byte little-endian
+/// prefix as the original length. NULL yields NULL; empty or too-short/corrupted
+/// input yields 0.
+fn uncompressed_length(arg: &Datum) -> Result<Datum, EvalError> {
+    let Some(payload) = sql_string_bytes(arg)? else {
+        return Ok(Datum::Null);
+    };
+    if payload.is_empty() {
+        return Ok(Datum::Int(0));
+    }
+    if payload.len() <= 4 {
+        // corrupted
+        return Ok(Datum::Int(0));
+    }
+    let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+    Ok(Datum::Int(i64::from(length)))
 }
 
 /// AES block size (bytes) and, for the default `aes-128-ecb`, the derived key
@@ -596,6 +665,61 @@ mod tests {
         );
     }
 
+    fn hex_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// UNCOMPRESS / UNCOMPRESSED_LENGTH decoding Go `compress/zlib` output. The
+    /// compressed literals come from goeval (`compress('hello')`), since Go's
+    /// DEFLATE-encoder bytes are not reproducible here and `COMPRESS` is
+    /// deferred; the decoders faithfully consume that output.
+    #[test]
+    fn uncompress_go_vectors() {
+        // compress('hello') = LE(5) + zlib stream.
+        let hello = hex_bytes("05000000789CCA48CDC9C907040000FFFF062C0215");
+        assert_eq!(
+            call("UNCOMPRESS", &[Datum::new_string(hello.clone())]),
+            s("hello")
+        );
+        assert_eq!(
+            call("UNCOMPRESSED_LENGTH", &[Datum::new_string(hello)]),
+            Datum::Int(5)
+        );
+
+        // Empty input -> empty string / 0.
+        assert_eq!(call("UNCOMPRESS", &[s("")]), s(""));
+        assert_eq!(call("UNCOMPRESSED_LENGTH", &[s("")]), Datum::Int(0));
+
+        // Too-short (<= 4 bytes) payload is corrupted: NULL / 0.
+        assert_eq!(
+            call("UNCOMPRESS", &[Datum::new_string(vec![0u8])]),
+            Datum::Null
+        );
+        assert_eq!(
+            call(
+                "UNCOMPRESSED_LENGTH",
+                &[Datum::new_string(vec![0xAA, 0xBB])]
+            ),
+            Datum::Int(0)
+        );
+
+        // A valid-length prefix but an undecodable zlib stream -> NULL.
+        assert_eq!(
+            call(
+                "UNCOMPRESS",
+                &[Datum::new_string(vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])]
+            ),
+            Datum::Null
+        );
+
+        // NULL propagation.
+        assert_eq!(call("UNCOMPRESS", &[Datum::Null]), Datum::Null);
+        assert_eq!(call("UNCOMPRESSED_LENGTH", &[Datum::Null]), Datum::Null);
+    }
+
     /// Vectors from `TestMD5Hash` (default charset cases only — GBK cases
     /// need session charset conversion, out of this domain).
     #[test]
@@ -966,5 +1090,9 @@ mod tests {
         assert!(dispatch("AES_ENCRYPT", &[s("a")]).is_none());
         assert!(dispatch("AES_ENCRYPT", &[s("a"), s("k"), s("iv")]).is_none());
         assert!(dispatch("AES_DECRYPT", &[s("a"), s("k"), s("iv")]).is_none());
+        // COMPRESS is deferred (Go DEFLATE-encoder bytes are not reproducible).
+        assert!(dispatch("COMPRESS", &[s("a")]).is_none());
+        assert!(dispatch("UNCOMPRESS", &[]).is_none());
+        assert!(dispatch("UNCOMPRESSED_LENGTH", &[s("a"), s("b")]).is_none());
     }
 }
