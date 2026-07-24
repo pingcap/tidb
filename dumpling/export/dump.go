@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -54,6 +55,9 @@ var errEmptyHandleVals = errors.New("empty handleVals for TiDB table")
 // see https://docs.pingcap.com/zh/tidb/dev/system-variables#tidb_enable_paging-%E4%BB%8E-v540-%E7%89%88%E6%9C%AC%E5%BC%80%E5%A7%8B%E5%BC%95%E5%85%A5
 var enablePagingVersion = semver.New("6.2.0")
 
+// Maximum number of chunks to prevent infinite loops during boundary sampling
+const maxChunkLimit = 1000000
+
 // Dumper is the dump progress structure
 type Dumper struct {
 	tctx      *tcontext.Context
@@ -73,6 +77,8 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
+
+	chunkedTables sync.Map
 }
 
 // NewDumper returns a new Dumper
@@ -355,14 +361,8 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics)
 		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
+			// this is called when a file is finished.
 			if _, ok := task.(*TaskTableData); ok {
-				IncCounter(d.metrics.finishedTablesCounter)
-				// FIXME: actually finishing the last chunk doesn't means this table is 'finished'.
-				//  We can call this table is 'finished' if all its chunks are finished.
-				//  Comment this log now to avoid ambiguity.
-				// tctx.L().Debug("finished dumping table data",
-				//	zap.String("database", td.Meta.DatabaseName()),
-				//	zap.String("table", td.Meta.TableName()))
 				failpoint.Inject("EnableLogProgress", func() {
 					time.Sleep(1 * time.Second)
 					tctx.L().Debug("EnableLogProgress, sleep 1s")
@@ -373,6 +373,22 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 			IncGauge(d.metrics.taskChannelCapacity)
 			if td, ok := task.(*TaskTableData); ok {
 				d.metrics.completedChunks.Add(1)
+				if val, ok := d.chunkedTables.Load(td.Meta.ChunkKey()); ok {
+					chunkStats := val.(*tableChunkStat)
+					finishedChunks := chunkStats.finished.Add(1)
+					if chunkStats.finalized.Load() && finishedChunks == chunkStats.sent.Load() {
+						// LoadAndDelete is the atomic claim: only the winner
+						// sees `loaded==true`. The producer defer uses the
+						// same pattern, so the counter increments exactly
+						// once regardless of which side reaches the
+						// termination condition first.
+						if _, loaded := d.chunkedTables.LoadAndDelete(td.Meta.ChunkKey()); loaded {
+							IncCounter(d.metrics.finishedTablesCounter)
+						}
+					}
+				} else {
+					IncCounter(d.metrics.finishedTablesCounter)
+				}
 				tctx.L().Debug("finish dumping table data task",
 					zap.String("database", td.Meta.DatabaseName()),
 					zap.String("table", td.Meta.TableName()),
@@ -661,9 +677,25 @@ func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *BaseConn, meta Tabl
 		return nil
 	}
 
-	// Update total rows
-	fieldName, _ := pickupPossibleField(tctx, meta, conn)
-	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, fieldName, conf)
+	// Update total rows. Use "*" as the estimation column for string-leading
+	// composite keys; EXPLAIN on a single varchar column under-estimates and
+	// would otherwise make estimateTotalRowsCounter lag behind the chunked
+	// path's estimate (see concurrentDumpTable).
+	fields, isStringField, err := pickupPossibleField(tctx, meta, conn)
+	if err != nil {
+		tctx.L().Debug("pickupPossibleField failed for row estimate",
+			zap.String("database", meta.DatabaseName()),
+			zap.String("table", meta.TableName()),
+			log.ShortError(err))
+	}
+	estimateField := ""
+	if len(fields) > 0 {
+		estimateField = fields[0]
+		if isStringField {
+			estimateField = "*"
+		}
+	}
+	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, estimateField, conf)
 	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 
 	if conf.Rows == UnspecifiedSize {
@@ -710,6 +742,13 @@ func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta Ta
 					task := <-tableChan
 					handleSubTask(task)
 				}
+				// concurrentDumpTable may have registered a chunkedTables entry
+				// for this meta, but handleSubTask intercepts every sub-task
+				// without bumping `finished`, so the inner defer leaves the
+				// entry behind with finished < sent. Drop it now so the concat
+				// (or fallback) task is counted exactly once via the
+				// no-tracking branch in startWriters.
+				d.chunkedTables.Delete(meta.ChunkKey())
 				if len(tableDataArr) <= 1 {
 					return nil, nil
 				}
@@ -781,9 +820,10 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 }
 
 // concurrentDumpTable tries to split table into several chunks to dump
-func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
+func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) (err error) {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
+
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB &&
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
@@ -811,19 +851,50 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return err
 	}
 
-	field, err := pickupPossibleField(tctx, meta, conn)
-	if err != nil || field == "" {
-		// skip split chunk logic if not found proper field
+	fields, isStringField, err := pickupPossibleField(tctx, meta, conn)
+	if err != nil || len(fields) == 0 {
 		tctx.L().Info("fallback to sequential dump due to no proper field. This won't influence the whole dump process",
 			zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
+	field := fields[0]
 
-	count := estimateCount(d.tctx, db, tbl, conn, field, conf)
-	tctx.L().Info("get estimated rows count",
+	// For composite string keys EXPLAIN on a single column under-estimates;
+	// use * so the row estimation covers the whole row.
+	estimateField := field
+	if isStringField {
+		estimateField = "*"
+	}
+
+	count := estimateCount(d.tctx, db, tbl, conn, estimateField, conf)
+	tctx.L().Debug("get estimated rows count",
 		zap.String("database", db),
 		zap.String("table", tbl),
-		zap.Uint64("estimateCount", count))
+		zap.Uint64("estimateCount", count),
+		zap.Strings("fields", fields),
+		zap.Bool("isStringField", isStringField))
+
+	// EXPLAIN can under-estimate (0, or a small value like 1) on freshly
+	// populated tables whose InnoDB rows statistic hasn't refreshed yet.
+	// For string chunking a pessimistic estimate silently drops us into
+	// the sequential path, so when the EXPLAIN result is below the chunk
+	// threshold we verify with a direct COUNT(*) before giving up on
+	// parallelism. COUNT is authoritative so it's safe to replace count.
+	if isStringField && count < conf.Rows {
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` %s",
+			escapeString(db), escapeString(tbl), buildWhereCondition(conf, ""))
+		var directCount sql.NullInt64
+		// simpleQueryWithArgs already iterates rows.Next(); the handler
+		// must not call Next() itself or it will skip past the (single)
+		// COUNT row.
+		err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
+			return rows.Scan(&directCount)
+		}, func() { directCount = sql.NullInt64{} }, countQuery)
+		if err == nil && directCount.Valid && directCount.Int64 > 0 {
+			count = uint64(directCount.Int64)
+		}
+	}
+
 	if count < conf.Rows {
 		// skip chunk logic if estimates are low
 		tctx.L().Info("fallback to sequential dump due to estimate count < rows. This won't influence the whole dump process",
@@ -832,6 +903,10 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 			zap.String("database", db),
 			zap.String("table", tbl))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
+	}
+
+	if isStringField {
+		return d.concurrentDumpStringFields(tctx, conn, meta, taskChan, fields, orderByClause, count)
 	}
 
 	minv, maxv, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
@@ -858,6 +933,16 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 
 	chunkIndex := 0
 	nullValueCondition := ""
+	chunkStats := newTableChunkStat()
+	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
+	defer func() {
+		chunkStats.finalized.Store(true)
+		if chunkStats.finished.Load() == chunkStats.sent.Load() {
+			if _, loaded := d.chunkedTables.LoadAndDelete(meta.ChunkKey()); loaded {
+				IncCounter(d.metrics.finishedTablesCounter)
+			}
+		}
+	}()
 	if conf.Where == "" {
 		nullValueCondition = fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
 	}
@@ -880,6 +965,11 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 }
 
 func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan<- Task) (ctxDone bool) {
+	if td, ok := task.(*TaskTableData); ok {
+		if val, ok := d.chunkedTables.Load(td.Meta.ChunkKey()); ok {
+			val.(*tableChunkStat).sent.Add(1)
+		}
+	}
 	select {
 	case <-tctx.Done():
 		return true
@@ -888,6 +978,54 @@ func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan
 			zap.String("task", task.Brief()))
 		DecGauge(d.metrics.taskChannelCapacity)
 		return false
+	}
+}
+
+// tableChunkStat tracks per-table chunk progress so finishedTablesCounter
+// is incremented exactly once, when the last chunk of a table is written
+// (rather than when the first chunk finishes, which was the old behavior
+// noted by the FIXME in startWriters).
+//
+// Termination handshake: the producer defer (after it has finished every
+// sendTaskToChan call) sets finalized=true and then checks
+// `finished == sent`. The consumer callback (startWriters) increments
+// finished and then checks `finalized && finished == sent`. Both sides
+// can observe the same termination condition concurrently, so the
+// IncCounter + Delete pair must be atomic w.r.t. the other side.
+// Both sites call chunkedTables.LoadAndDelete and only the side that
+// gets `loaded==true` performs the increment. sent.Add happens
+// synchronously inside sendTaskToChan before the blocking send, so
+// once finalized flips true no new sent.Add can race in.
+type tableChunkStat struct {
+	sent      *gatomic.Int32
+	finished  *gatomic.Int32
+	finalized *gatomic.Bool
+}
+
+func newTableChunkStat() *tableChunkStat {
+	return &tableChunkStat{
+		sent:      gatomic.NewInt32(0),
+		finished:  gatomic.NewInt32(0),
+		finalized: gatomic.NewBool(false),
+	}
+}
+
+// beginChunkTracking registers a chunk-stat entry for meta and returns a
+// finalizer that closes the producer side of the termination handshake. Use
+// this in producers that emit multiple TaskTableData tasks per table; without
+// it, every task hits the no-tracking branch in startWriters and
+// finishedTablesCounter is incremented once per chunk instead of once per
+// table.
+func (d *Dumper) beginChunkTracking(meta TableMeta) func() {
+	chunkStats := newTableChunkStat()
+	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
+	return func() {
+		chunkStats.finalized.Store(true)
+		if chunkStats.finished.Load() == chunkStats.sent.Load() {
+			if _, loaded := d.chunkedTables.LoadAndDelete(meta.ChunkKey()); loaded {
+				IncCounter(d.metrics.finishedTablesCounter)
+			}
+		}
 	}
 }
 
@@ -958,6 +1096,7 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 	if err != nil {
 		return err
 	}
+	defer d.beginChunkTracking(meta)()
 	return d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, handleVals, "", 0, len(handleVals)+1)
 }
 
@@ -982,6 +1121,7 @@ func (d *Dumper) concurrentDumpTiDBPartitionTablesWithTableSample(tctx *tcontext
 		totalChunk += len(handleVals) + 1
 	}
 	startChunk := 0
+	defer d.beginChunkTracking(meta)()
 	for i, partition := range d.conf.Partitions {
 		err = d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, pkFields, cachedHandleVals[i], partition, startChunk, totalChunk)
 		if err != nil {
@@ -1014,6 +1154,8 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 		totalChunk += len(handleVals) + 1
 		cachedHandleVals[i] = handleVals
 	}
+
+	defer d.beginChunkTracking(meta)()
 	for i, partition := range partitions {
 		err := d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, cachedHandleVals[i], partition, startChunkIdx, totalChunk)
 		if err != nil {
@@ -2037,5 +2179,53 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 
 func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	d.metrics.totalChunks.Add(1)
-	return NewTaskTableData(meta, data, currentChunk, totalChunks)
+	// Chunking mode is already set at table level in concurrentDumpTable
+	task := NewTaskTableData(meta, data, currentChunk, totalChunks)
+	return task
+}
+
+// extractOrderByColumns extracts column names from ORDER BY clause
+// Input: "ORDER BY `item_id`,`photo_index`"
+// Output: ["`item_id`", "`photo_index`"]
+// Handles column names that contain commas by respecting backtick quoting
+func extractOrderByColumns(orderByClause string) []string {
+	// Remove "ORDER BY " prefix
+	columnsStr := strings.TrimPrefix(orderByClause, "ORDER BY ")
+
+	// Handle empty clause: returning nil (rather than []string{""}) signals
+	// "no chunking columns" so callers can bail out instead of synthesizing
+	// SELECT lists or WHERE predicates from an empty column name. The prefix
+	// "ORDER BY " is matched case-sensitively with a single space; callers
+	// should normalize before passing in.
+	if columnsStr == "" {
+		return nil
+	}
+
+	var columns []string
+	var currentColumn strings.Builder
+	inBackticks := false
+
+	for i := range len(columnsStr) {
+		ch := columnsStr[i]
+
+		if ch == '`' {
+			inBackticks = !inBackticks
+			currentColumn.WriteByte(ch)
+		} else if ch == ',' && !inBackticks {
+			// Found a column separator outside of backticks
+			if col := strings.TrimSpace(currentColumn.String()); col != "" {
+				columns = append(columns, col)
+			}
+			currentColumn.Reset()
+		} else {
+			currentColumn.WriteByte(ch)
+		}
+	}
+
+	// Add the last column
+	if col := strings.TrimSpace(currentColumn.String()); col != "" {
+		columns = append(columns, col)
+	}
+
+	return columns
 }

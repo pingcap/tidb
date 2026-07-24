@@ -128,3 +128,41 @@ func TestChunkRowIter(t *testing.T) {
 	require.Error(t, sqlRowIter.Decode(res))
 	sqlRowIter.Next()
 }
+
+func TestRowIterWithStringKeyProgress(t *testing.T) {
+	// Test row iteration with progress tracking for string key chunking
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	// Simulate a chunk from streaming string key chunking
+	expectedRows := mock.NewRows([]string{"id", "data"}).
+		AddRow("key_001", "data1").
+		AddRow("key_002", "data2").
+		AddRow("key_003", "data3")
+
+	mock.ExpectQuery("SELECT id, data FROM table WHERE.*").WillReturnRows(expectedRows)
+	rows, err := db.Query("SELECT id, data FROM table WHERE id >= 'key_001' AND id < 'key_100'")
+	require.NoError(t, err)
+
+	iter := newRowIter(rows, 2)
+
+	// Test that iteration works with string-based chunking results
+	rowCount := 0
+	res := newSimpleRowReceiver(2)
+
+	for iter.HasNext() {
+		require.NoError(t, iter.Decode(res))
+		require.True(t, strings.HasPrefix(res.data[0], "key_"), "Should have key prefix")
+		require.True(t, strings.HasPrefix(res.data[1], "data"), "Should have data prefix")
+		iter.Next()
+		rowCount++
+	}
+
+	require.Equal(t, 3, rowCount, "Should process all rows in the chunk")
+	require.False(t, iter.HasNext(), "Should reach end of iteration")
+	require.NoError(t, iter.Close(), "Should close iterator cleanly")
+}

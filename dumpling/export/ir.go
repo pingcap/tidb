@@ -36,6 +36,7 @@ type TableMeta interface {
 	ShowCreateView() string
 	AvgRowLength() uint64
 	HasImplicitRowID() bool
+	ChunkKey() string
 	ColumnInfos() []*ColumnInfo
 }
 
