@@ -339,6 +339,17 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	if parent.mu.children == nil {
 		parent.mu.children = make(map[int][]*Tracker)
 	}
+	if _, ok := parent.mu.children[t.label]; !ok {
+		// Keep at most one empty child slice so recurring attach/detach
+		// relationships can reuse its backing array.
+		for cachedLabel, children := range parent.mu.children {
+			if len(children) == 0 {
+				parent.mu.children[t.label] = children
+				delete(parent.mu.children, cachedLabel)
+				break
+			}
+		}
+	}
 	parent.mu.children[t.label] = append(parent.mu.children[t.label], t)
 	parent.mu.Unlock()
 
@@ -386,8 +397,21 @@ func (t *Tracker) remove(oldChild *Tracker) {
 				children = slices.Delete(children, i, i+1)
 				if len(children) > 0 {
 					t.mu.children[label] = children
+				} else if len(t.mu.children) == 1 {
+					t.mu.children[label] = children
 				} else {
-					delete(t.mu.children, label)
+					cacheSlot := true
+					for otherLabel, otherChildren := range t.mu.children {
+						if otherLabel != label && len(otherChildren) == 0 {
+							cacheSlot = false
+							break
+						}
+					}
+					if cacheSlot {
+						t.mu.children[label] = children
+					} else {
+						delete(t.mu.children, label)
+					}
 				}
 				found = true
 				break

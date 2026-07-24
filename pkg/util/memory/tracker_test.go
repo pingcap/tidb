@@ -281,7 +281,7 @@ func TestAttachTo(t *testing.T) {
 	require.Equal(t, newParent, child.getParent())
 	require.Equal(t, 1, len(newParent.mu.children))
 	require.Equal(t, child, newParent.mu.children[child.label][0])
-	require.Equal(t, 0, len(oldParent.mu.children))
+	require.Empty(t, oldParent.GetChildrenForTest())
 }
 
 func TestDetach(t *testing.T) {
@@ -297,8 +297,53 @@ func TestDetach(t *testing.T) {
 	child.Detach()
 	require.Equal(t, int64(100), child.BytesConsumed())
 	require.Equal(t, int64(0), parent.BytesConsumed())
-	require.Equal(t, 0, len(parent.mu.children))
+	require.Empty(t, parent.GetChildrenForTest())
+	require.Nil(t, parent.SearchTrackerWithoutLock(child.label))
+	require.NotContains(t, parent.String(), `"2"`)
 	require.Nil(t, child.getParent())
+}
+
+func TestDetachRetainsAtMostOneEmptyChildSlot(t *testing.T) {
+	parent := NewTracker(1, -1)
+	first := NewTracker(2, -1)
+	second := NewTracker(3, -1)
+
+	first.AttachTo(parent)
+	first.Detach()
+	require.Len(t, parent.mu.children, 1)
+	cached := parent.mu.children[first.label]
+	require.Empty(t, cached)
+	require.Equal(t, 1, cap(cached))
+	require.Nil(t, cached[:1][0])
+
+	second.AttachTo(parent)
+	require.Len(t, parent.mu.children, 1)
+	require.NotContains(t, parent.mu.children, first.label)
+	require.Equal(t, second, parent.mu.children[second.label][0])
+	second.Detach()
+	require.Len(t, parent.mu.children, 1)
+	require.Empty(t, parent.mu.children[second.label])
+
+	first.AttachTo(parent)
+	second.AttachTo(parent)
+	first.Detach()
+	second.Detach()
+	require.Len(t, parent.mu.children, 1)
+	require.Empty(t, parent.GetChildrenForTest())
+}
+
+func BenchmarkTrackerAttachDetach(b *testing.B) {
+	parent := NewTracker(1, -1)
+	child := NewTracker(LabelForSQLText, -1)
+	child.AttachTo(parent)
+	child.Detach()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		child.AttachTo(parent)
+		child.Detach()
+	}
 }
 
 func TestReplaceChild(t *testing.T) {
@@ -327,7 +372,7 @@ func TestReplaceChild(t *testing.T) {
 
 	parent.ReplaceChild(newChild, nil)
 	require.Equal(t, int64(0), parent.BytesConsumed())
-	require.Equal(t, 0, len(parent.mu.children))
+	require.Empty(t, parent.GetChildrenForTest())
 	require.Nil(t, newChild.getParent())
 	require.Nil(t, oldChild.getParent())
 
@@ -442,7 +487,7 @@ func TestGlobalTracker(t *testing.T) {
 
 	c1.AttachToGlobalTracker(r)
 	require.Equal(t, int64(0), commonTracker.BytesConsumed())
-	require.Equal(t, 0, len(commonTracker.mu.children))
+	require.Empty(t, commonTracker.GetChildrenForTest())
 	require.Equal(t, int64(100), r.BytesConsumed())
 	require.Equal(t, r, c1.getParent())
 	require.Equal(t, 0, len(r.mu.children))
