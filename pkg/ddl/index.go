@@ -82,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -4248,7 +4249,7 @@ func buildAffectColumn(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]*m
 
 	// Build affect column for partial index.
 	if idxInfo.HasCondition() {
-		cols, err := tables.ExtractColumnsFromCondition(ectx, idxInfo, tblInfo, true)
+		cols, err := tables.ExtractColumnsFromCondition(ectx, idxInfo, tblInfo, true, collate.NewCollationEnabled())
 		if err != nil {
 			return nil, err
 		}

@@ -49,6 +49,8 @@ var indexConditionECtx exprctx.BuildContext
 // indexPartialCondition is a data structure to help implement the partial index.
 type indexPartialCondition struct {
 	conditionExpr expression.Expression
+	conditionInit sync.Once
+	conditionErr  error
 	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk
 	// for evaluating partial index condition for each time.
 	// It's only initialized if the `partialConditionExpr` is not nil.
@@ -82,45 +84,63 @@ func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	return NewIndexWithCollate(collate.NewCollationEnabled(), physicalID, tblInfo, indexInfo)
-}
-
-// NewIndexWithCollate builds a new Index object with the specified collation setting.
-func NewIndexWithCollate(
-	useNewCollate bool,
-	physicalID int64,
-	tblInfo *model.TableInfo,
-	indexInfo *model.IndexInfo,
-) (table.Index, error) {
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-		encoder:  codec.NewEncoder(useNewCollate),
 	}
+	index.setUseNewCollate(collate.NewCollationEnabled())
+	return index, nil
+}
 
-	conditionString := indexInfo.ConditionExprString
-	if len(conditionString) > 0 {
+// SetIndexUseNewCollate sets the new-collation mode for an Index built by NewIndex.
+// It also rebuilds the partial-index condition with the same mode.
+func SetIndexUseNewCollate(idx table.Index, useNewCollate bool) error {
+	index, ok := idx.(*index)
+	if !ok {
+		return errors.Errorf("unexpected index type %T", idx)
+	}
+	index.setUseNewCollate(useNewCollate)
+	return index.initPartialCondition()
+}
+
+func (c *index) setUseNewCollate(useNewCollate bool) {
+	c.encoder = codec.NewEncoder(useNewCollate)
+	c.initNeedRestoreData = sync.Once{}
+	c.needRestoredData = false
+	c.conditionExpr = nil
+	c.conditionInit = sync.Once{}
+	c.conditionErr = nil
+	c.conditionEvalBufferPool = sync.Pool{}
+}
+
+func (c *index) initPartialCondition() error {
+	conditionString := c.idxInfo.ConditionExprString
+	if len(conditionString) == 0 {
+		return nil
+	}
+	c.conditionInit.Do(func() {
 		var err error
-		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
-			expression.WithTableInfo("", tblInfo),
-			expression.WithUseNewCollate(useNewCollate))
+		c.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
+			expression.WithTableInfo("", c.tblInfo),
+			expression.WithUseNewCollate(c.encoder.UseNewCollate()))
 		if err != nil {
-			return nil, errors.Trace(err)
+			c.conditionErr = errors.Trace(err)
+			return
 		}
-		index.conditionEvalBufferPool = sync.Pool{
+		c.conditionEvalBufferPool = sync.Pool{
 			New: func() any {
 				// For INSERT path, it'll only pass all writable columns.
 				// For UPDATE/DELETE path, it'll contain all columns.
 				// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
 				// the offsets of related columns in the expression. Therefore, it's fine to always record all
 				// columns here.
-				evalBufferTypes := make([]*types.FieldType, 0, len(tblInfo.Columns)+1)
-				for _, col := range tblInfo.Columns {
+				evalBufferTypes := make([]*types.FieldType, 0, len(c.tblInfo.Columns)+1)
+				for _, col := range c.tblInfo.Columns {
 					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
 				}
 
-				if !tblInfo.HasClusteredIndex() {
+				if !c.tblInfo.HasClusteredIndex() {
 					// If the table doesn't have clustered index, we need to append an extra handle column.
 					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
 				}
@@ -129,8 +149,8 @@ func NewIndexWithCollate(
 				return &evalBuffer
 			},
 		}
-	}
-	return index, nil
+	})
+	return c.conditionErr
 }
 
 // Meta returns index info.
@@ -260,6 +280,9 @@ out:
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
 func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
+	if err := c.initPartialCondition(); err != nil {
+		return false, err
+	}
 	if c.conditionExpr == nil {
 		return true, nil
 	}
@@ -272,6 +295,12 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 }
 
 func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
+	if err := c.initPartialCondition(); err != nil {
+		return false, err
+	}
+	if c.conditionExpr == nil {
+		return true, nil
+	}
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -972,12 +1001,14 @@ func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, 
 // ExtractColumnsFromCondition returns the columns that are referenced in the index condition expression.
 // If `includeColumnsReferencedByVirtualGeneratedColumns` is true, it will recursively extract the columns from the virtual generated columns.
 // The returned columns might be duplicated.
-func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool) ([]*model.IndexColumn, error) {
+func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool, useNewCollate bool) ([]*model.IndexColumn, error) {
 	if len(idxInfo.ConditionExprString) == 0 {
 		return nil, nil
 	}
 
-	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString, expression.WithTableInfo("", tblInfo))
+	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString,
+		expression.WithTableInfo("", tblInfo),
+		expression.WithUseNewCollate(useNewCollate))
 	if err != nil {
 		return nil, err
 	}

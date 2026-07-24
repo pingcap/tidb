@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -128,6 +129,67 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		for i, col := range base.ColumnInfos {
 			require.Equal(t, tt.expectedCols[i], col.Name.L)
 		}
+	}
+}
+
+func TestCopContextConditionUsesFixedCollation(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
+	originBuildSimpleExpr := expression.BuildSimpleExpr
+	var seenUseNewCollates []bool
+	expression.BuildSimpleExpr = func(ctx expression.BuildContext, expr ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+		options := expression.BuildOptions{
+			UseNewCollate: collate.NewCollationEnabled(),
+		}
+		for _, opt := range opts {
+			opt(&options)
+		}
+		seenUseNewCollates = append(seenUseNewCollates, options.UseNewCollate)
+		return expression.NewOne(), nil
+	}
+	defer func() {
+		expression.BuildSimpleExpr = originBuildSimpleExpr
+	}()
+
+	colTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+	colInfo := &model.ColumnInfo{
+		ID:        1,
+		Offset:    0,
+		Name:      ast.NewCIStr("c0"),
+		FieldType: *colTp,
+		State:     model.StatePublic,
+	}
+	idxInfo := &model.IndexInfo{
+		ID:                  1,
+		Name:                ast.NewCIStr("idx"),
+		Columns:             []*model.IndexColumn{{Name: colInfo.Name, Offset: colInfo.Offset}},
+		State:               model.StatePublic,
+		ConditionExprString: "1",
+	}
+	tblInfo := &model.TableInfo{
+		Name:    ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{colInfo},
+		Indices: []*model.IndexInfo{idxInfo},
+	}
+
+	sctx := mock.NewContext()
+	copCtx, err := NewCopContextSingleIndex(
+		sctx.GetExprCtx(),
+		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		idxInfo,
+		"",
+		false,
+	)
+	require.NoError(t, err)
+	condition, err := copCtx.GetCondition()
+	require.NoError(t, err)
+	require.NotNil(t, condition)
+	require.NotEmpty(t, seenUseNewCollates)
+	for _, useNewCollate := range seenUseNewCollates {
+		require.False(t, useNewCollate)
 	}
 }
 
