@@ -40,6 +40,7 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("BIN_TO_UUID", [value]) => Some(bin_to_uuid(value, None)),
         ("BIN_TO_UUID", [value, flag]) => Some(bin_to_uuid(value, Some(flag))),
         ("TIDB_SHARD", [value]) => Some(tidb_shard(value)),
+        ("VITESS_HASH", [value]) => Some(vitess_hash(value)),
         _ => None,
     }
 }
@@ -171,16 +172,26 @@ fn format_uuid_swapped(uuid: &[u8; 16]) -> String {
     )
 }
 
+/// Vitess' shard-key hash: DES-ECB of the big-endian key under an all-zero
+/// 64-bit key. Port of `vitess.HashUint64` (`pkg/util/vitess/vitess_hash.go`),
+/// shared by `TIDB_SHARD` (which takes it mod 256) and `VITESS_HASH` (which
+/// returns it whole). RustCrypto's audited DES is used directly; replacing this
+/// with a lookup or output-derived hash would silently change shard placement.
+fn vitess_hash_u64(shard_key: u64) -> u64 {
+    let mut block = Block::<Des>::default();
+    block.copy_from_slice(&shard_key.to_be_bytes());
+    let cipher =
+        Des::new_from_slice(&[0_u8; 8]).expect("DES accepts its fixed-width all-zero Vitess key");
+    cipher.encrypt_block(&mut block);
+    u64::from_be_bytes(block.into())
+}
+
 /// `TIDB_SHARD(value)`, ported from `builtinTidbShardSig.evalInt` in
-/// `pkg/expression/builtin_miscellaneous.go` and Vitess' `HashUint64` in
-/// `pkg/util/vitess/vitess_hash.go`.
+/// `pkg/expression/builtin_miscellaneous.go`.
 ///
-/// TiDB first casts the one argument to signed `ETInt`, then encrypts its
-/// two's-complement `uint64` bits with DES-ECB using an all-zero 64-bit key
-/// and takes the big-endian ciphertext's low byte. The bucket count is 256,
-/// so the low byte is exactly the modulo operation in Go. RustCrypto's
-/// audited DES implementation is used directly; replacing this with a
-/// lookup or output-derived hash would silently change shard placement.
+/// TiDB first casts the one argument to signed `ETInt`, then Vitess-hashes its
+/// two's-complement `uint64` bits and takes the big-endian ciphertext's low
+/// byte. The bucket count is 256, so the low byte is exactly the modulo.
 fn tidb_shard(value: &Datum) -> Result<Datum, EvalError> {
     if matches!(value, Datum::Null) {
         return Ok(Datum::Null);
@@ -189,13 +200,19 @@ fn tidb_shard(value: &Datum) -> Result<Datum, EvalError> {
     // `builtinTidbShardSig.evalInt` runs. Reuse the same integer-prefix
     // conversion used by this evaluator's SIGNED cast for scalar values.
     let shard_key = crate::cast::to_i64_signed(value) as u64;
-    let mut block = Block::<Des>::default();
-    block.copy_from_slice(&shard_key.to_be_bytes());
-    let cipher =
-        Des::new_from_slice(&[0_u8; 8]).expect("DES accepts its fixed-width all-zero Vitess key");
-    cipher.encrypt_block(&mut block);
-    let hashed = u64::from_be_bytes(block.into());
-    Ok(Datum::UInt(hashed % 256))
+    Ok(Datum::UInt(vitess_hash_u64(shard_key) % 256))
+}
+
+/// `VITESS_HASH(shard_key)`, ported from `builtinVitessHashSig.evalInt`. Like
+/// `TIDB_SHARD`, the ETInt-coerced argument is Vitess-hashed, but the whole
+/// 64-bit digest is returned. The result column is UNSIGNED, so it is a
+/// `Datum::UInt`.
+fn vitess_hash(value: &Datum) -> Result<Datum, EvalError> {
+    if matches!(value, Datum::Null) {
+        return Ok(Datum::Null);
+    }
+    let shard_key = crate::cast::to_i64_signed(value) as u64;
+    Ok(Datum::UInt(vitess_hash_u64(shard_key)))
 }
 
 /// `IS_UUID(value)`, ported from `builtinIsUUIDSig.evalInt` in
@@ -794,5 +811,38 @@ mod tests {
         assert!(dispatch("TIDB_SHARD", &[]).is_none());
         assert!(dispatch("TIDB_SHARD", &[Datum::Int(1), Datum::Int(2)]).is_none());
         assert!(dispatch("UNKNOWN", &[Datum::Int(1)]).is_none());
+    }
+
+    /// `VITESS_HASH` returns the whole Vitess DES digest as an UNSIGNED value.
+    /// Vectors from `pkg/util/vitess/vitess_hash_test.go` TestVitessHash plus
+    /// the two's-complement `u64::MAX` case.
+    #[test]
+    fn vitess_hash_full_digest() {
+        let cases = [
+            (Datum::Int(30_375_298_039), 221_350_820_965_191_987_u64),
+            (Datum::Int(1123), 223_867_565_019_887_818),
+            (Datum::Int(30_573_721_600), 2_233_051_190_281_965_565),
+            (Datum::Int(116), 2_168_352_374_666_430_780),
+            (Datum::Int(1), 1_615_456_034_434_468_822),
+            (Datum::Int(0), 10_134_873_677_816_210_343),
+            // An unsigned source is cast to ETInt and keeps its two's-complement
+            // bits before the hash receives the uint64.
+            (Datum::UInt(u64::MAX), 3_843_066_582_818_235_473),
+        ];
+        for (value, want) in cases {
+            assert_eq!(
+                dispatch("VITESS_HASH", &[value])
+                    .expect("VITESS_HASH must dispatch")
+                    .expect("VITESS_HASH must evaluate"),
+                Datum::UInt(want),
+            );
+        }
+        assert_eq!(
+            dispatch("VITESS_HASH", &[Datum::Null])
+                .expect("VITESS_HASH must dispatch")
+                .expect("NULL VITESS_HASH must evaluate"),
+            Datum::Null,
+        );
+        assert!(dispatch("VITESS_HASH", &[]).is_none());
     }
 }

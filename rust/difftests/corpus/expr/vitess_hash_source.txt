@@ -1,0 +1,13 @@
+## VITESS_HASH, transcreated from pkg/expression/builtin_miscellaneous.go
+## (builtinVitessHashSig) + pkg/util/vitess/vitess_hash.go. The ETInt-coerced
+## argument is DES-ECB hashed under an all-zero key; the UNSIGNED 64-bit digest
+## is returned. Vectors mirror TestVitessHash.
+vitess_hash(30375298039)
+vitess_hash(1123)
+vitess_hash(30573721600)
+vitess_hash(116)
+vitess_hash(1)
+vitess_hash(0)
+vitess_hash(123)
+vitess_hash(18446744073709551615)
+vitess_hash(NULL)
