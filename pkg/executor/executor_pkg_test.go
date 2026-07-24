@@ -132,6 +132,51 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	require.Equal(t, int64(23640), bytesConsumed1)
 }
 
+// TestBuildKvRangesForIndexJoinCommonHandle verifies that buildKvRangesForIndexJoin
+// correctly handles tables with a non-integer clustered (common handle) primary key.
+// This is the code path exercised when tidb_store_batch_size is applied to index joins
+// on VARCHAR / composite PK tables (see https://github.com/pingcap/tidb/issues/67150).
+func TestBuildKvRangesForIndexJoinCommonHandle(t *testing.T) {
+	// Create lookup contents with distinct string keys simulating a VARCHAR PK.
+	keys := []string{"aaa", "bbb", "ccc"}
+	lookUpContents := make([]*join.IndexJoinLookUpContent, 0, len(keys))
+	for _, k := range keys {
+		lookUpContents = append(lookUpContents, &join.IndexJoinLookUpContent{
+			Keys: []types.Datum{types.NewStringDatum(k)},
+		})
+	}
+
+	// Single-element base range; its LowVal/HighVal will be overwritten per content.
+	baseRange := &ranger.Range{
+		LowVal:     []types.Datum{types.NewStringDatum("")},
+		HighVal:    []types.Datum{types.NewStringDatum("")},
+		Collators:  collate.GetBinaryCollatorSlice(1),
+		LowExclude: false, HighExclude: false,
+	}
+	keyOff2IdxOff := []int{0} // the single key column maps to index position 0
+
+	ctx := mock.NewContext()
+	// indexID == -1 selects the common handle code path.
+	kvRanges, err := buildKvRangesForIndexJoin(
+		ctx.GetDistSQLCtx(), ctx.GetRangerCtx(),
+		1, -1,
+		lookUpContents, []*ranger.Range{baseRange}, keyOff2IdxOff,
+		nil, nil, nil,
+	)
+	require.NoError(t, err)
+
+	// Each lookup content must produce exactly one KV range.
+	require.Len(t, kvRanges, len(keys))
+
+	// Ranges must be non-empty and in ascending start-key order.
+	for i, kvRange := range kvRanges {
+		require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0, "range %d: StartKey must be less than EndKey", i)
+		if i > 0 {
+			require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0, "range %d: must not overlap with previous range", i)
+		}
+	}
+}
+
 func generateIndexRange(vals ...int64) *ranger.Range {
 	lowDatums := generateDatumSlice(vals...)
 	highDatums := slices.Clone(lowDatums)
