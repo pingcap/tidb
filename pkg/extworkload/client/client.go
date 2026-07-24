@@ -137,13 +137,17 @@ func (c *grpcClient) Close() error { return c.conn.Close() }
 
 func (c *grpcClient) header() *pb.RequestHeader {
 	header := &pb.RequestHeader{
-		KeyspaceId:   c.opt.KeyspaceID,
 		KeyspaceName: c.opt.KeyspaceName,
 		TidbPool:     c.opt.TiDBPool,
 	}
 	if c.opt.KeyspaceIdentity != nil {
-		header.KeyspaceId = 0
-		header.KeyspaceIdentity = c.opt.KeyspaceIdentity
+		header.Keyspace = &pb.RequestHeader_KeyspaceIdentity{
+			KeyspaceIdentity: c.opt.KeyspaceIdentity,
+		}
+	} else {
+		header.Keyspace = &pb.RequestHeader_KeyspaceId{
+			KeyspaceId: c.opt.KeyspaceID,
+		}
 	}
 	return header
 }
