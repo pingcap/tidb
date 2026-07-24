@@ -93,7 +93,6 @@ import (
 	clientkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -5443,11 +5442,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), plan.GetAvgRowSize()))
 	}
 	if e.RuntimeStats() != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.stats = &runtimeStatsWithSnapshot{}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, &e.stats.SnapshotRuntimeStats)
 	}
 
 	if plan.IndexInfo != nil {
