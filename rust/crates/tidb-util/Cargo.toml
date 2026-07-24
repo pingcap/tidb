@@ -20,6 +20,7 @@ race = []
 aes.workspace = true
 chrono.workspace = true
 crc32fast.workspace = true
+des.workspace = true
 getrandom.workspace = true
 num-traits.workspace = true
 regex.workspace = true

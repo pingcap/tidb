@@ -43,4 +43,5 @@ pub mod table_filter;
 pub mod table_rule_selector;
 pub mod texttree;
 pub mod tikvutil;
+pub mod vitess;
 pub mod zeropool;

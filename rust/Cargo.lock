@@ -1441,6 +1441,7 @@ dependencies = [
  "aes",
  "chrono",
  "crc32fast",
+ "des",
  "fastrand",
  "getrandom",
  "num-traits",
