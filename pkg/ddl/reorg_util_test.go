@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -82,6 +83,23 @@ func (c *mockPDHTTPClient) GetRegionsByKeyRange(_ context.Context, keyRange *pdh
 func expectedRegionRange(tableID int64) ([]byte, []byte) {
 	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(tableID)
 	return mockCodec{}.EncodeRegionRange(tableStart, tableEnd)
+}
+
+func TestIndexKVHandleForPhysicalTableRewrapsGlobalIndexHandle(t *testing.T) {
+	idx, err := tables.NewIndex(10, &model.TableInfo{ID: 1}, &model.IndexInfo{
+		ID:                 2,
+		Global:             true,
+		GlobalIndexVersion: model.GlobalIndexVersionV1,
+	})
+	require.NoError(t, err)
+
+	handle := indexKVHandleForPhysicalTable(idx, 20, kv.NewPartitionHandle(10, kv.IntHandle(42)))
+	partitionHandle, ok := handle.(kv.PartitionHandle)
+	require.True(t, ok)
+	require.Equal(t, int64(20), partitionHandle.PartitionID)
+	require.True(t, partitionHandle.Handle.Equal(kv.IntHandle(42)))
+	_, nested := partitionHandle.Handle.(kv.PartitionHandle)
+	require.False(t, nested)
 }
 
 func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
