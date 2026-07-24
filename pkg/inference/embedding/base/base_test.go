@@ -59,9 +59,8 @@ func TestDecodeBase64EmbeddingF32(t *testing.T) {
 
 	decodedBytes, err = base64.StdEncoding.DecodeString("")
 	require.NoError(t, err)
-	result, err = DecodeFloat32ArrayBytes(decodedBytes)
-	require.NoError(t, err)
-	require.Empty(t, result)
+	_, err = DecodeFloat32ArrayBytes(decodedBytes)
+	require.EqualError(t, err, "embedding data is empty")
 
 	decodedBytes, err = base64.StdEncoding.DecodeString("AAAY")
 	require.NoError(t, err)
@@ -107,6 +106,10 @@ func TestDecodeBase64EmbeddingF32(t *testing.T) {
 		malformed := []IndexedBase64Embedding{{Index: 0, Embedding: []byte{0x00}}}
 		_, err = DecodeIndexedBase64Embeddings(malformed, 1)
 		require.EqualError(t, err, "failed to decode embedding for index 0: invalid embedding data")
+
+		empty := []IndexedBase64Embedding{{Index: 0}}
+		_, err = DecodeIndexedBase64Embeddings(empty, 1)
+		require.EqualError(t, err, "failed to decode embedding for index 0: embedding data is empty")
 	})
 }
 
@@ -186,7 +189,9 @@ func TestRedactedErrors(t *testing.T) {
 	err = NewProviderRequestError(context.Background(), "test provider", cause)
 	require.EqualError(t, err, "test provider request failed")
 	require.NotContains(t, err.Error(), secretURL)
-	require.ErrorIs(t, err, cause)
+	require.ErrorIs(t, err, cause.Err)
+	var exposedURL *url.Error
+	require.False(t, errors.As(err, &exposedURL))
 
 	customCause := errors.New("caller stopped request")
 	ctx, cancel := context.WithCancelCause(context.Background())
@@ -239,6 +244,8 @@ func TestHTTPHelpers(t *testing.T) {
 		_, err = ParseHTTPURL("https://example.com/%zz?token="+secret, "test provider URL")
 		require.EqualError(t, err, "invalid test provider URL")
 		require.NotContains(t, err.Error(), secret)
+		var exposedURL *url.Error
+		require.False(t, errors.As(err, &exposedURL))
 
 		for _, rawURL := range []string{"/relative", "ftp://example.com/path"} {
 			_, err = ParseHTTPURL(rawURL, "test provider URL")

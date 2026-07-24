@@ -73,6 +73,13 @@ func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
 	return base.DecodeIndexedBase64Embeddings(response.Data, expectedCount)
 }
 
+func validateOptions(opts map[string]any) error {
+	if enabled, ok := opts["return_multivector"].(bool); ok && enabled {
+		return fmt.Errorf("JinaAI option return_multivector=true is not supported")
+	}
+	return nil
+}
+
 func (e *Embedder) unauthorizedError() error {
 	if e.cfg.ErrUnauthorized != nil {
 		return e.cfg.ErrUnauthorized
@@ -89,6 +96,9 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 	if model == "" {
 		return nil, fmt.Errorf("model name is required")
+	}
+	if err := validateOptions(opts); err != nil {
+		return nil, err
 	}
 	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for JinaAI"))
 	if err != nil {

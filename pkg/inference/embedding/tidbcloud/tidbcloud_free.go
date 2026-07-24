@@ -40,7 +40,9 @@ type EmbedderConfig struct {
 	// GetBillingID returns the billing identifier appended to the request
 	// path. An empty value uses the service's default billing identifier.
 	GetBillingID func() string
-	GetAPIKey    func() string
+	// GetAPIKey returns an optional API key. An empty key sends the request
+	// without an Authorization header.
+	GetAPIKey func() string
 	// GetBaseURL returns the TiDB Cloud Inference service base. The embedder
 	// appends /api/v1/inference/embeddings/<billing-id>.
 	GetBaseURL func() string
@@ -141,7 +143,10 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		return nil, fmt.Errorf("failed to request TiDB Cloud Inference Service")
 	}
 
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	// TiDB Cloud Free may allow anonymous requests when no API key is configured.
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {

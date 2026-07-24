@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -180,6 +181,16 @@ func NewRedactedError(message string, cause error) error {
 	return &redactedError{message: message, cause: cause}
 }
 
+// stripURLError removes the URL-bearing wrapper while preserving its
+// underlying transport error for errors.Is and errors.As.
+func stripURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
+}
+
 // NewProviderRequestError redacts endpoint details from request and transport
 // errors. If the caller's context has completed, its cause is returned so
 // cancellation and deadline errors remain recognizable to callers.
@@ -187,7 +198,7 @@ func NewProviderRequestError(ctx context.Context, provider string, cause error) 
 	if contextCause := context.Cause(ctx); contextCause != nil {
 		return contextCause
 	}
-	return NewRedactedError(provider+" request failed", cause)
+	return NewRedactedError(provider+" request failed", stripURLError(cause))
 }
 
 // ParseHTTPURL parses and validates an absolute HTTP(S) URL. description must
@@ -195,7 +206,7 @@ func NewProviderRequestError(ctx context.Context, provider string, cause error) 
 func ParseHTTPURL(rawURL, description string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return nil, NewRedactedError("invalid "+description, err)
+		return nil, NewRedactedError("invalid "+description, stripURLError(err))
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf("invalid %s: absolute HTTP(S) URL is required", description)
@@ -342,6 +353,9 @@ func NewProviderResponseError(provider string, statusCode int, message string) e
 
 // DecodeFloat32ArrayBytes decodes bytes of an float32 array in little endian into a float32 slice.
 func DecodeFloat32ArrayBytes(item []byte) ([]float32, error) {
+	if len(item) == 0 {
+		return nil, fmt.Errorf("embedding data is empty")
+	}
 	if len(item)%4 != 0 {
 		return nil, fmt.Errorf("invalid embedding data")
 	}

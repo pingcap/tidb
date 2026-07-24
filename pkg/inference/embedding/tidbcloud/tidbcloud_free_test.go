@@ -19,7 +19,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,11 +47,14 @@ func TestTiDBCloudFreeEmbedder_Success(t *testing.T) {
 		]
 	}`
 
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
+		GetBaseURL: func() string { return "http://unused.example" },
+	})
+	embedder.client.Transport = testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		// Verify request method and headers
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		assert.Empty(t, r.Header.Values("Authorization"))
 		assert.Equal(t, "/api/v1/inference/embeddings/default_billing_id", r.URL.Path)
 
 		// Verify request body
@@ -62,15 +65,12 @@ func TestTiDBCloudFreeEmbedder_Success(t *testing.T) {
 			"texts": ["abc", "def"]
 		}`, string(body))
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
-
-	// Create embedder with mock server URL
-	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-		GetBaseURL: func() string { return server.URL },
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(mockResponse)),
+			Request:    r,
+		}, nil
 	})
 
 	texts := []string{"abc", "def"}
@@ -81,7 +81,15 @@ func TestTiDBCloudFreeEmbedder_Success(t *testing.T) {
 }
 
 func TestTiDBCloudFreeEmbedder_WithOptions(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	const mockResponse = `{
+		"embeddings": ["AAAAAAAAAAA="]
+	}`
+	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "http://unused.example" },
+	})
+	embedder.client.Transport = testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 		// Verify request body includes additional options
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
@@ -91,18 +99,12 @@ func TestTiDBCloudFreeEmbedder_WithOptions(t *testing.T) {
 			"input_type": "search_document"
 		}`, string(body))
 
-		mockResponse := `{
-			"embeddings": ["AAAAAAAAAAA="]
-		}`
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
-
-	embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-		GetBaseURL: func() string { return server.URL },
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(mockResponse)),
+			Request:    r,
+		}, nil
 	})
 
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "cohere/embed-english-v3", []string{"test"}, map[string]any{

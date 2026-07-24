@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
@@ -71,7 +72,20 @@ func TestJinaEmbedder_Success(t *testing.T) {
 }
 
 func TestJinaEmbedder_WithOptions(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	const mockResponse = `{
+		"model": "jina-embeddings-v3",
+		"object": "list",
+		"data": [{
+			"object": "embedding",
+			"index": 0,
+			"embedding": "39MmPZun+j7S4Gw+ZEDbvkeeKj5cVwa/96yDPjPxED6S+VW+3JGYPg=="
+		}]
+	}`
+	embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "http://unused.example" },
+	})
+	embedder.client.Transport = testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		// Verify request body
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
@@ -82,25 +96,12 @@ func TestJinaEmbedder_WithOptions(t *testing.T) {
 			"task": "retrieval.passage"
 		}`, string(body))
 
-		mockResponse := `{
-			"model": "jina-embeddings-v3",
-			"object": "list",
-			"data": [{
-				"object": "embedding",
-				"index": 0,
-				"embedding": "39MmPZun+j7S4Gw+ZEDbvkeeKj5cVwa/96yDPjPxED6S+VW+3JGYPg=="
-			}]
-		}`
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(mockResponse))
-	}))
-	defer server.Close()
-
-	embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return server.URL },
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(mockResponse)),
+			Request:    r,
+		}, nil
 	})
 
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "jina-embeddings-v3", []string{"test"}, map[string]any{
@@ -115,6 +116,26 @@ func TestJinaEmbedder_WithOptions(t *testing.T) {
 	require.Equal(t, embeddings[0], []float32{
 		0.0407294, 0.48955998, 0.23132637, -0.42822564, 0.1666194, -0.5247705, 0.257179, 0.1415451, -0.20895985, 0.29798782,
 	})
+
+	t.Run("reject multi-vector response option", func(t *testing.T) {
+		embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
+			GetAPIKey:  func() string { return "test-api-key" },
+			GetBaseURL: func() string { return "http://unused.example" },
+		})
+		embedder.client.Transport = testutil.RoundTripFunc(func(*http.Request) (*http.Response, error) {
+			require.FailNow(t, "unsupported option reached the provider")
+			return nil, nil
+		})
+
+		embeddings, err := embedder.CreateEmbeddings(
+			context.Background(),
+			"jina-colbert-v2",
+			[]string{"test"},
+			map[string]any{"return_multivector": true},
+		)
+		require.Nil(t, embeddings)
+		require.EqualError(t, err, "JinaAI option return_multivector=true is not supported")
+	})
 }
 
 func TestJinaEmbedder_ResponseIndexValidation(t *testing.T) {
@@ -123,6 +144,7 @@ func TestJinaEmbedder_ResponseIndexValidation(t *testing.T) {
 	tests := []struct {
 		name         string
 		responseData string
+		texts        []string
 		errContains  string
 	}{
 		{
@@ -163,19 +185,50 @@ func TestJinaEmbedder_ResponseIndexValidation(t *testing.T) {
 			]`,
 			errContains: "invalid embedding data",
 		},
+		{
+			name: "multi-vector response",
+			responseData: `[
+				{"object":"embedding","index":0,"embeddings":["AACAPw=="]}
+			]`,
+			texts:       []string{"a"},
+			errContains: "embedding data is empty",
+		},
+		{
+			name: "missing dense embedding",
+			responseData: `[
+				{"object":"embedding","index":0}
+			]`,
+			texts:       []string{"a"},
+			errContains: "embedding data is empty",
+		},
+		{
+			name: "null dense embedding",
+			responseData: `[
+				{"object":"embedding","index":0,"embedding":null}
+			]`,
+			texts:       []string{"a"},
+			errContains: "embedding data is empty",
+		},
+		{
+			name: "empty dense embedding",
+			responseData: `[
+				{"object":"embedding","index":0,"embedding":""}
+			]`,
+			texts:       []string{"a"},
+			errContains: "embedding data is empty",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			serverURL := testutil.NewJSONServer(t, http.StatusOK,
-				`{"object":"list","model":"jina-embeddings-v3","data":`+tt.responseData+`}`)
-
-			embedder := NewJinaEmbedder(base.APIKeyProviderConfig{
-				GetAPIKey:  func() string { return "test-api-key" },
-				GetBaseURL: func() string { return serverURL },
-			})
-
-			embeddings, err := embedder.CreateEmbeddings(context.Background(), "jina-embeddings-v3", []string{"a", "b"}, nil)
+			texts := tt.texts
+			if texts == nil {
+				texts = []string{"a", "b"}
+			}
+			embeddings, err := decodeEmbeddings(
+				[]byte(`{"object":"list","model":"jina-embeddings-v3","data":`+tt.responseData+`}`),
+				len(texts),
+			)
 			if tt.errContains != "" {
 				require.Nil(t, embeddings)
 				require.ErrorContains(t, err, tt.errContains)
