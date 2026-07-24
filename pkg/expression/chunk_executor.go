@@ -38,6 +38,11 @@ func Vectorizable(exprs []Expression) bool {
 	if slices.ContainsFunc(exprs, HasStoredFunc) {
 		return false
 	}
+	// Loadable functions keep mutable C runtime state in the expression and the
+	// same expression is shared by parallel projection workers.
+	if slices.ContainsFunc(exprs, HasLoadableFunc) {
+		return false
+	}
 	return checkSequenceFunction(exprs)
 }
 
@@ -107,6 +112,18 @@ func HasStoredFunc(expr Expression) bool {
 		return true
 	}
 	return slices.ContainsFunc(scalaFunc.GetArgs(), HasStoredFunc)
+}
+
+// HasLoadableFunc checks whether an expression contains a loadable function.
+func HasLoadableFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if _, ok := scalaFunc.Function.(*loadableFuncSig); ok {
+		return true
+	}
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasLoadableFunc)
 }
 
 // HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value

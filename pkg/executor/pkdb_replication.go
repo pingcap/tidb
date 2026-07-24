@@ -203,6 +203,9 @@ func (e *ResumeLogReplicationExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
 
+	pkdbrepl.HoldRestart()
+	defer pkdbrepl.ReleaseRestart()
+
 	workflowID, err := pdCli.ResumeLogReplication(ctx, e.Name.L)
 	if err != nil {
 		return err

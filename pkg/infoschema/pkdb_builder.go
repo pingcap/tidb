@@ -7,11 +7,14 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	parserast "github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -23,6 +26,107 @@ import (
 // BootstrapFinishGlobalVars will be set after bootstrapSessionImpl finish
 // setting global variables.
 var BootstrapFinishGlobalVars atomic.Bool
+
+// ReloadLoadableFunctions reconciles the process-local loadable UDF registry
+// with mysql.func. It returns true only after mysql.func has been successfully
+// read and the registry has been reconciled.
+func ReloadLoadableFunctions(factory func() (pools.Resource, error)) (bool, error) {
+	// The sys session factory is optional. Leave loadable functions unchanged in such cases.
+	if factory == nil {
+		return false, nil
+	}
+
+	res, err := factory()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer res.Close()
+	sctx, ok := res.(sessionctx.Context)
+	if !ok {
+		return false, errors.Errorf("unexpected sys session type %T", res)
+	}
+	sessIS := sctx.GetDomainInfoSchema()
+	if sessIS == nil {
+		// During bootstrap/domain initialization the session may not have any usable infoschema yet.
+		// Skip loadable function loading in such cases; it will be retried on later infoschema reloads.
+		return false, nil
+	}
+	if ext, ok := sessIS.(*SessionExtendedInfoSchema); ok && ext.InfoSchema == nil {
+		// During bootstrap/domain initialization the session may not have any usable infoschema yet.
+		// Skip loadable function loading in such cases; it will be retried on later infoschema reloads.
+		return false, nil
+	}
+	if _, err := sessIS.TableInfoByName(pmodel.NewCIStr(mysql.SystemDB), pmodel.NewCIStr("func")); err != nil {
+		// During first bootstrap mysql.func may not have been created yet.
+		// Skip loadable function loading in such cases; it will be retried on later infoschema reloads.
+		return false, nil
+	}
+
+	exec := sctx.GetSQLExecutor()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnProcedure)
+	rs, err := exec.ExecuteInternal(ctx, "SELECT name, ret, dl FROM mysql.func WHERE type = 'function'")
+	if err != nil {
+		logutil.BgLogger().Error("failed to execute query for loadable functions", zap.Error(err))
+		return false, nil
+	}
+	if rs == nil {
+		return true, nil
+	}
+	chunkRows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
+	closeErr := rs.Close()
+	if err != nil {
+		logutil.BgLogger().Error("failed to drain record set for loadable functions", zap.Error(err))
+		return false, nil
+	}
+	if closeErr != nil {
+		logutil.BgLogger().Error("failed to close record set for loadable functions", zap.Error(closeErr))
+		return false, nil
+	}
+
+	dbFuncs := make(map[string]struct{}, len(chunkRows))
+	for _, row := range chunkRows {
+		name := row.GetString(0)
+		lowerName := strings.ToLower(name)
+		dbFuncs[lowerName] = struct{}{}
+		if expression.HasLoadableFunction(lowerName) {
+			continue
+		}
+
+		ret := row.GetInt64(1)
+		dl := row.GetString(2)
+		funcDef, err := expression.LoadUDF(dl, lowerName, expression.CastUDFArgTypeIntToEvalType(int(ret)))
+		if err != nil {
+			logutil.BgLogger().Error("failed to load UDF expression",
+				zap.String("soName", dl),
+				zap.String("name", lowerName),
+				zap.Error(err))
+			continue
+		}
+
+		exist, err := expression.CreateLoadableFunction(funcDef)
+		if err != nil || exist {
+			logutil.BgLogger().Error(
+				"failed to create loadable function",
+				zap.String("name", lowerName),
+				zap.Bool("exist", exist),
+				zap.Error(err))
+			funcDef.Drop()
+			continue
+		}
+	}
+
+	for _, name := range expression.LoadableFunctionNames() {
+		if _, ok := dbFuncs[name]; ok {
+			continue
+		}
+		if def, ok := expression.RemoveLoadableFunction(name); ok {
+			if def != nil {
+				def.Drop()
+			}
+		}
+	}
+	return true, nil
+}
 
 func (b *Builder) reloadRoutines() error {
 	if b.infoSchema.routineMap == nil {

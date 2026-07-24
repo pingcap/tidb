@@ -15,6 +15,8 @@
 package correlated
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -71,6 +73,23 @@ WHERE NOT (tlc07c2a51.col_1>=
               HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows("1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
 }
 
+func TestNaturalJoinWithCorrelatedSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	// Keep duplicate and NULL rows so the regression also pins multiplicity
+	// and NULL-handling for the correlated EXISTS predicate.
+	tk.MustExec("insert into t values (1), (1), (2), (null)")
+
+	sql := `select t1.a
+		from t t1 natural join t t2
+		where exists (select 1 from t t3 where t3.a = t1.a)
+		order by t1.a`
+	tk.MustQuery(sql).Check(testkit.Rows("1", "1", "1", "1", "2"))
+}
+
 func TestWrongDecorrelate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -83,4 +102,27 @@ func TestWrongDecorrelate(t *testing.T) {
 		"<nil> 0.00000000000000000000 60021022342",
 		" 30025.20000000000000000000 60121022342",
 		"X 6.23000000000000000000 60021022342"))
+}
+
+func rowsContainText(rows [][]any, needle string) bool {
+	for _, row := range rows {
+		for _, col := range row {
+			if strings.Contains(fmt.Sprint(col), needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func rowsText(rows [][]any) string {
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		vals := make([]string, 0, len(row))
+		for _, col := range row {
+			vals = append(vals, fmt.Sprint(col))
+		}
+		lines = append(lines, strings.Join(vals, " "))
+	}
+	return strings.Join(lines, "\n")
 }

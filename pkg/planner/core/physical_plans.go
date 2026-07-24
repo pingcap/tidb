@@ -1725,6 +1725,11 @@ type PhysicalIndexJoin struct {
 	// InnerHashKeys indicates the inner keys used to build hash table during
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
+	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
+	// Apply outer/inner order after decorrelation.
+	FromDecorrelatedApply bool
+	// DecorrelatedApplyID identifies the Apply that produced this IndexJoin.
+	DecorrelatedApplyID int
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1748,6 +1753,8 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFilters = p.CompareFilters.Copy()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
+	cloned.DecorrelatedApplyID = p.DecorrelatedApplyID
 	return cloned, nil
 }
 
@@ -1758,7 +1765,8 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer +
+		size.SizeOfBool + size.SizeOfInt
 	if p.innerPlan != nil {
 		sum += p.innerPlan.MemoryUsage()
 	}

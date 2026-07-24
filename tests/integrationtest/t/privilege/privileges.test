@@ -883,9 +883,9 @@ admin checksum table privilege__privileges.admin;
 admin check table privilege__privileges.admin;
 -- error 8121
 admin check index privilege__privileges.admin idx_a;
--- error 8121
+-- error 1227
 admin show ddl jobs;
--- error 8121
+-- error 1227
 admin show ddl job queries 10;
 -- error 8121
 ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;

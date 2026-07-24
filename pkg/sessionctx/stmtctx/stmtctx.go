@@ -71,6 +71,53 @@ type jsonSQLWarn struct {
 	Msg    string        `json:"msg,omitempty"`
 }
 
+// LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
+// building a logical plan from AST.
+type LogicalPlanBuildState struct {
+	warnings             []SQLWarn
+	extraWarnings        []SQLWarn
+	tables               []TableEntry
+	tableStats           map[int64]any
+	lockTableIDs         map[int64]struct{}
+	tblInfo2UnionScan    map[*model.TableInfo]bool
+	useDynamicPruneMode  bool
+	colRefFromUpdatePlan intset.FastIntSet
+	optimizeTracer       *tracing.OptimizeTracer
+	optimizerCETrace     []*tracing.CETraceRecord
+	optimizerDebugTrace  any
+	statsLoadTimeout     time.Duration
+	statsLoadNeededItems []model.StatsLoadItem
+	statsLoadResultCh    []<-chan singleflight.Result
+	statsLoadStartTime   time.Time
+	isSyncStatsFailed    bool
+	// usedStatsInfo records the stats used per table during logical/physical
+	// optimization. It is captured by pointer: buildLogicalPlan starts each round
+	// with a nil usedStatsInfo, so every round allocates a fresh map. Restoring the
+	// winning round's pointer at the end keeps the used-stats consistent with the
+	// chosen plan (the losing round's map is simply discarded).
+	usedStatsInfo *UsedStatsInfo
+	indexForce    bool
+	// plan cache related stuff
+	planCacheUseCache    bool
+	planCacheType        contextutil.PlanCacheType
+	planCacheUnqualified string
+	planCacheForce       bool
+	planCacheAlwaysWarn  bool
+}
+
+// logicalPlanBuildStateCloner lets pointer-backed state provide its own clone
+// without coupling stmtctx to the concrete planner trace implementation.
+type logicalPlanBuildStateCloner interface {
+	CloneForLogicalPlanBuild() any
+}
+
+func cloneLogicalPlanBuildStateValue(value any) any {
+	if cloner, ok := value.(logicalPlanBuildStateCloner); ok {
+		return cloner.CloneForLogicalPlanBuild()
+	}
+	return value
+}
+
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
 
@@ -448,6 +495,17 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// alternativeLogicalPlanDecorrelatedApply indicates whether the first logical
+	// optimization round decorrelated at least one Apply into Join. This is a scheduling
+	// signal; it does not describe the selected final plan.
+	alternativeLogicalPlanDecorrelatedApply bool
+	// alternativeLogicalPlanEvaluatedSubquery indicates whether the first logical plan
+	// build evaluated a non-correlated subquery. Rebuilding the plan after that can repeat
+	// SQL-visible side effects, so the alternative round is skipped. This signal does not
+	// describe the selected final plan.
+	alternativeLogicalPlanEvaluatedSubquery      bool
+	alternativeLogicalPlanDecorrelatedApplyCount int
+	alternativeLogicalPlanSameOrderIndexJoinIDs  map[int]struct{}
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -615,6 +673,105 @@ func (sc *StatementContext) UDFCleanup() {
 		f()
 	}
 	sc.UserFuncCtx.loadableFuncCleanups = nil
+}
+
+// SaveLogicalPlanBuildState captures the statement-scoped planner state before building
+// another logical plan candidate from the same AST.
+func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
+	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
+	return LogicalPlanBuildState{
+		warnings:             slices.Clone(sc.GetWarnings()),
+		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
+		tables:               slices.Clone(sc.Tables),
+		tableStats:           maps.Clone(sc.TableStats),
+		lockTableIDs:         maps.Clone(sc.LockTableIDs),
+		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
+		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
+		optimizeTracer:       sc.OptimizeTracer,
+		optimizerCETrace:     slices.Clone(sc.OptimizerCETrace),
+		optimizerDebugTrace:  cloneLogicalPlanBuildStateValue(sc.OptimizerDebugTrace),
+		statsLoadTimeout:     sc.StatsLoad.Timeout,
+		statsLoadNeededItems: slices.Clone(sc.StatsLoad.NeededItems),
+		statsLoadResultCh:    slices.Clone(sc.StatsLoad.ResultCh),
+		statsLoadStartTime:   sc.StatsLoad.LoadStartTime,
+		isSyncStatsFailed:    sc.IsSyncStatsFailed,
+		usedStatsInfo:        sc.usedStatsInfo.Load(),
+		indexForce:           sc.indexForce,
+		planCacheUseCache:    planCacheUseCache,
+		planCacheType:        planCacheType,
+		planCacheUnqualified: planCacheUnqualified,
+		planCacheForce:       planCacheForce,
+		planCacheAlwaysWarn:  planCacheAlwaysWarn,
+	}
+}
+
+// RestoreLogicalPlanBuildState restores the statement-scoped planner state after a
+// discarded logical plan build attempt.
+func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildState) {
+	sc.SetWarnings(slices.Clone(state.warnings))
+	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
+	sc.Tables = slices.Clone(state.tables)
+	sc.TableStats = maps.Clone(state.tableStats)
+	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
+	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
+	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
+	sc.OptimizeTracer = state.optimizeTracer
+	sc.OptimizerCETrace = slices.Clone(state.optimizerCETrace)
+	sc.OptimizerDebugTrace = cloneLogicalPlanBuildStateValue(state.optimizerDebugTrace)
+	sc.StatsLoad.Timeout = state.statsLoadTimeout
+	sc.StatsLoad.NeededItems = slices.Clone(state.statsLoadNeededItems)
+	sc.StatsLoad.ResultCh = slices.Clone(state.statsLoadResultCh)
+	sc.StatsLoad.LoadStartTime = state.statsLoadStartTime
+	sc.IsSyncStatsFailed = state.isSyncStatsFailed
+	sc.usedStatsInfo.Store(state.usedStatsInfo)
+	sc.indexForce = state.indexForce
+	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+}
+
+// ResetAlternativeLogicalPlanSignals clears the first-round scheduling signals used
+// by the alternative logical plan feature.
+func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
+	sc.alternativeLogicalPlanDecorrelatedApply = false
+	sc.alternativeLogicalPlanEvaluatedSubquery = false
+	sc.alternativeLogicalPlanDecorrelatedApplyCount = 0
+	sc.alternativeLogicalPlanSameOrderIndexJoinIDs = nil
+}
+
+// MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
+// been decorrelated into a Join in the first round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() int {
+	sc.alternativeLogicalPlanDecorrelatedApply = true
+	sc.alternativeLogicalPlanDecorrelatedApplyCount++
+	return sc.alternativeLogicalPlanDecorrelatedApplyCount
+}
+
+// MarkAlternativeLogicalPlanSameOrderIndexJoin records that the current first round
+// has already produced a same-order index join candidate for a decorrelated Apply.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin(applyID int) {
+	if applyID <= 0 {
+		return
+	}
+	if sc.alternativeLogicalPlanSameOrderIndexJoinIDs == nil {
+		sc.alternativeLogicalPlanSameOrderIndexJoinIDs = make(map[int]struct{})
+	}
+	sc.alternativeLogicalPlanSameOrderIndexJoinIDs[applyID] = struct{}{}
+}
+
+// MarkAlternativeLogicalPlanEvaluatedSubquery records that the first logical plan
+// build has evaluated a non-correlated subquery.
+func (sc *StatementContext) MarkAlternativeLogicalPlanEvaluatedSubquery() {
+	sc.alternativeLogicalPlanEvaluatedSubquery = true
+}
+
+// NeedAlternativeLogicalPlanRound reports whether the first-round scheduling signals
+// show that it is useful and safe to run the no-decorrelate alternative round.
+func (sc *StatementContext) NeedAlternativeLogicalPlanRound() bool {
+	return sc.alternativeLogicalPlanDecorrelatedApply &&
+		!sc.alternativeLogicalPlanEvaluatedSubquery &&
+		sc.alternativeLogicalPlanDecorrelatedApplyCount > len(sc.alternativeLogicalPlanSameOrderIndexJoinIDs)
 }
 
 // CtxID returns the context id of the statement
@@ -886,6 +1043,12 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 // SetIndexForce sets the hint for the plan.
 func (sc *StatementContext) SetIndexForce() {
 	sc.indexForce = true
+}
+
+// ResetIndexForce clears the statement-wide forced-index marker before building
+// another logical-plan candidate from the same AST.
+func (sc *StatementContext) ResetIndexForce() {
+	sc.indexForce = false
 }
 
 // PlanCacheType is the flag of plan cache
@@ -1317,6 +1480,13 @@ func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) *UsedStatsInfo {
 		sc.usedStatsInfo.CompareAndSwap(nil, &UsedStatsInfo{})
 	}
 	return sc.usedStatsInfo.Load()
+}
+
+// ResetUsedStatsInfo clears the stats recorded by a previous logical-plan build
+// round. Each round must record into a fresh UsedStatsInfo so a discarded round
+// cannot change the stats metadata restored for the winning plan.
+func (sc *StatementContext) ResetUsedStatsInfo() {
+	sc.usedStatsInfo.Store(nil)
 }
 
 // RecordedStatsLoadStatusCnt returns the total number of recorded column/index stats status, which is not full loaded.

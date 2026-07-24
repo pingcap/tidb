@@ -666,9 +666,9 @@ Error 8121 (HY000): privilege check for 'Super' fail
 admin check index privilege__privileges.admin idx_a;
 Error 8121 (HY000): privilege check for 'Super' fail
 admin show ddl jobs;
-Error 8121 (HY000): privilege check for 'Super' fail
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ADMIN_VIEW privilege(s) for this operation
 admin show ddl job queries 10;
-Error 8121 (HY000): privilege check for 'Super' fail
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ADMIN_VIEW privilege(s) for this operation
 ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
 Error 8121 (HY000): privilege check for 'Super' fail
 ADMIN SHOW SLOW RECENT 3;

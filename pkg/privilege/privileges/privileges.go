@@ -61,7 +61,9 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
+	"ADMIN_VIEW",
 	"CONFIG_VIEW",
+	"IMPORT_JOB_VIEW",
 	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
 	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
 	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
