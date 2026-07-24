@@ -16,6 +16,7 @@ package conflictedkv_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -169,6 +170,7 @@ func TestHandler(t *testing.T) {
 			require.NoError(t, err)
 			var sharedSize atomic.Int64
 			alreadyProcessedRowKeys := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+			locallyProcessedRowKeys := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
 			alreadyProcessedRowKeys.Add(tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(1)))
 			alreadyProcessedRowKeys.Add(tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(3)))
 
@@ -193,7 +195,7 @@ func TestHandler(t *testing.T) {
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
 				conflictedkv.NewLazyRefreshedSnapshot(store, trafficRec),
-				conflictedkv.NewKeyFilter(alreadyProcessedRowKeys),
+				conflictedkv.NewKeyFilter(alreadyProcessedRowKeys, locallyProcessedRowKeys),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
 			var ch = make(chan *simplesst.KVPair, 10)
@@ -239,6 +241,14 @@ func TestHandler(t *testing.T) {
 			require.EqualValues(t, 3, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
 			require.EqualValues(t, map[string]struct{}{"2": {}, "4": {}, "5": {}}, handledHandles)
+			for _, handle := range []int64{2, 4, 5} {
+				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(handle))
+				require.True(t, locallyProcessedRowKeys.Contains(rowKey))
+			}
+			for _, handle := range []int64{6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16} {
+				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(handle))
+				require.False(t, locallyProcessedRowKeys.Contains(rowKey))
+			}
 			require.EqualValues(t, 16, progressCollector.ProcessedCnt.Load())
 		}
 
@@ -248,5 +258,176 @@ func TestHandler(t *testing.T) {
 		t.Run("non-clustered pk table", func(t *testing.T) {
 			doTestFn(t, "tn", 12)
 		})
+	})
+
+	t.Run("multi-valued index deduplicates a row across batches", func(t *testing.T) {
+		// Regression test for https://github.com/pingcap/tidb/issues/69799.
+		tk.MustExec("drop table if exists tmv")
+		tk.MustExec(`create table tmv(
+			pk bigint primary key clustered,
+			a json not null,
+			unique key uk_a ((cast(a->'$' as unsigned array)))
+		)`)
+		tk.MustExec(`insert into tmv values (1, '[1000, 2000]')`)
+		tbl, err := do.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("tmv"))
+		require.NoError(t, err)
+
+		bak := conflictedkv.BufferedHandleLimit
+		conflictedkv.BufferedHandleLimit = 2
+		t.Cleanup(func() {
+			conflictedkv.BufferedHandleLimit = bak
+		})
+
+		var sharedSize atomic.Int64
+		globalSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+		localSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+		var handledRowKeys []tidbkv.Key
+		mockEncodedKVHdl := mockHandleEncodedRowFn(func(_ context.Context, rowKey tidbkv.Key, _ []types.Datum, _ *kv.Pairs) error {
+			handledRowKeys = append(handledRowKeys, rowKey.Clone())
+			return nil
+		})
+
+		targetIdx := tbl.Meta().Indices[0]
+		progressCollector := &execute.TestCollector{}
+		indexKVHdl := conflictedkv.NewIndexKVHandler(
+			conflictedkv.NewBaseHandler(
+				tbl,
+				globalsort.IndexID2KVGroup(targetIdx.ID),
+				getEncoder(t, tbl),
+				mockEncodedKVHdl,
+				progressCollector,
+				logger,
+			),
+			conflictedkv.NewLazyRefreshedSnapshot(store, nil),
+			conflictedkv.NewKeyFilter(globalSet, localSet),
+		)
+		require.NoError(t, indexKVHdl.PreRun())
+
+		fixtureEncoder := getEncoder(t, tbl)
+		t.Cleanup(func() {
+			require.NoError(t, fixtureEncoder.Close())
+		})
+		indexKVsForRow := func(handle int64, jsonText string) []*simplesst.KVPair {
+			jsonValue, err := types.ParseBinaryJSONFromString(jsonText)
+			require.NoError(t, err)
+			pairs, err := fixtureEncoder.Encode(
+				[]types.Datum{types.NewIntDatum(handle), types.NewJSONDatum(jsonValue)},
+				handle,
+			)
+			require.NoError(t, err)
+			indexKVs := make([]*simplesst.KVPair, 0, 2)
+			for _, pair := range pairs.Pairs {
+				if tablecodec.IsRecordKey(pair.Key) {
+					continue
+				}
+				indexID, err := tablecodec.DecodeIndexID(pair.Key)
+				require.NoError(t, err)
+				if indexID == targetIdx.ID {
+					indexKVs = append(indexKVs, &simplesst.KVPair{
+						Key:   store.GetCodec().EncodeKey(pair.Key),
+						Value: pair.Val,
+					})
+				}
+			}
+			return indexKVs
+		}
+
+		row1KVs := indexKVsForRow(1, "[1000, 2000]")
+		row2KVs := indexKVsForRow(2, "[1000]")
+		row3KVs := indexKVsForRow(3, "[2000]")
+		require.Len(t, row1KVs, 2)
+		require.Len(t, row2KVs, 1)
+		require.Len(t, row3KVs, 1)
+
+		ch := make(chan *simplesst.KVPair, 4)
+		// Handle 1 appears in two different flushes:
+		// [handle 1, handle 2], then [handle 3, handle 1].
+		ch <- row1KVs[0]
+		ch <- row2KVs[0]
+		ch <- row3KVs[0]
+		ch <- row1KVs[1]
+		close(ch)
+
+		require.NoError(t, indexKVHdl.Run(ctx, ch))
+		require.NoError(t, indexKVHdl.Close(ctx))
+		expectedRowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(1))
+		require.Equal(t, []tidbkv.Key{expectedRowKey}, handledRowKeys)
+		require.True(t, localSet.Contains(expectedRowKey))
+		require.EqualValues(t, 4, progressCollector.ProcessedCnt.Load())
+	})
+
+	t.Run("index row is marked local only after successful handling", func(t *testing.T) {
+		tbl := cleanupEnvFn(t, "tc")
+		tk.MustExec("insert into tc values (1,1,1)")
+
+		bak := conflictedkv.BufferedHandleLimit
+		conflictedkv.BufferedHandleLimit = 1
+		t.Cleanup(func() {
+			conflictedkv.BufferedHandleLimit = bak
+		})
+
+		var sharedSize atomic.Int64
+		globalSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+		localSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+		handleErr := errors.New("handle row")
+		handleAttempts := 0
+		mockEncodedKVHdl := mockHandleEncodedRowFn(func(_ context.Context, _ tidbkv.Key, _ []types.Datum, _ *kv.Pairs) error {
+			handleAttempts++
+			if handleAttempts == 1 {
+				return handleErr
+			}
+			return nil
+		})
+
+		targetIdx := tbl.Meta().Indices[1]
+		indexKVHdl := conflictedkv.NewIndexKVHandler(
+			conflictedkv.NewBaseHandler(
+				tbl,
+				globalsort.IndexID2KVGroup(targetIdx.ID),
+				getEncoder(t, tbl),
+				mockEncodedKVHdl,
+				nil,
+				logger,
+			),
+			conflictedkv.NewLazyRefreshedSnapshot(store, nil),
+			conflictedkv.NewKeyFilter(globalSet, localSet),
+		)
+		require.NoError(t, indexKVHdl.PreRun())
+
+		fixtureEncoder := getEncoder(t, tbl)
+		t.Cleanup(func() {
+			require.NoError(t, fixtureEncoder.Close())
+		})
+		pairs, err := fixtureEncoder.Encode(
+			[]types.Datum{types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(1)},
+			1,
+		)
+		require.NoError(t, err)
+		var indexKV *simplesst.KVPair
+		for _, pair := range pairs.Pairs {
+			if tablecodec.IsRecordKey(pair.Key) {
+				continue
+			}
+			indexID, err := tablecodec.DecodeIndexID(pair.Key)
+			require.NoError(t, err)
+			if indexID == targetIdx.ID {
+				indexKV = &simplesst.KVPair{
+					Key:   store.GetCodec().EncodeKey(pair.Key),
+					Value: pair.Val,
+				}
+				break
+			}
+		}
+		require.NotNil(t, indexKV)
+
+		expectedRowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(1))
+		err = indexKVHdl.Handle(ctx, indexKV)
+		require.ErrorIs(t, err, handleErr)
+		require.False(t, localSet.Contains(expectedRowKey))
+
+		// The failed row remains buffered and Close retries it.
+		require.NoError(t, indexKVHdl.Close(ctx))
+		require.Equal(t, 2, handleAttempts)
+		require.True(t, localSet.Contains(expectedRowKey))
 	})
 }

@@ -24,20 +24,27 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestHandleFilter(t *testing.T) {
+func TestKeyFilter(t *testing.T) {
 	var hf *KeyFilter
 	// we allow nil KeyFilter
 	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-1")))
+	require.False(t, hf.isHandledLocally("row-key-1"))
+	hf.addLocal("row-key-1")
 
-	sharedSize := atomic.Int64{}
-	set := NewBoundedHandleSet(nil, &sharedSize, 1024)
-	set.Add(tidbkv.Key("row-key-1"))
-	hf = NewKeyFilter(set)
+	var sharedSize atomic.Int64
+	globalSet := NewBoundedHandleSet(nil, &sharedSize, 1024)
+	localSet := NewBoundedHandleSet(nil, &sharedSize, 1024)
+	globalSet.Add(tidbkv.Key("row-key-1"))
+	hf = NewKeyFilter(globalSet, localSet)
 	require.True(t, hf.isHandledGlobally(tidbkv.Key("row-key-1")))
+	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-2")))
+	require.False(t, hf.isHandledLocally("row-key-2"))
+	hf.addLocal("row-key-2")
+	require.True(t, hf.isHandledLocally("row-key-2"))
 	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-2")))
 }
 
-func TestBoundedHandleSet(t *testing.T) {
+func TestBoundedKeySet(t *testing.T) {
 	t.Run("partition handle uses physical row key", func(t *testing.T) {
 		const logicalTableID int64 = 100
 		rowKey1 := encodeDataRowKey(logicalTableID, tidbkv.NewPartitionHandle(101, tidbkv.IntHandle(1)))
@@ -46,6 +53,22 @@ func TestBoundedHandleSet(t *testing.T) {
 		require.Equal(t, tablecodec.EncodeRowKeyWithHandle(101, tidbkv.IntHandle(1)), rowKey1)
 		require.Equal(t, tablecodec.EncodeRowKeyWithHandle(102, tidbkv.IntHandle(1)), rowKey2)
 		require.NotEqual(t, rowKey1, rowKey2)
+	})
+
+	t.Run("string keys honor size limit", func(t *testing.T) {
+		var sharedSize atomic.Int64
+		set := NewBoundedHandleSet(zap.NewNop(), &sharedSize, 1024)
+		require.False(t, set.containsStrKey("row-key"))
+		set.addStr("row-key")
+		require.True(t, set.containsStrKey("row-key"))
+		require.EqualValues(t, int64(len("row-key"))+rowKeyMapEntryShallowSize, sharedSize.Load())
+
+		var exceededSize atomic.Int64
+		exceededSet := NewBoundedHandleSet(zap.NewNop(), &exceededSize, 0)
+		exceededSet.addStr("row-key")
+		require.True(t, exceededSet.BoundExceeded())
+		require.False(t, exceededSet.containsStrKey("row-key"))
+		require.Zero(t, exceededSize.Load())
 	})
 
 	logger, err := zap.NewDevelopment()

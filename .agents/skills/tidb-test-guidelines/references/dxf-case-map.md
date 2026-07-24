@@ -103,6 +103,7 @@
 
 ### Tests
 - `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batched file cleanup, storage credential handling, metadata redaction, and cleanup metering success, cancellation, and panic recovery.
+- `pkg/dxf/importinto/collect_conflicts_internal_test.go` - dxf/importinto: Tests conflict KV-group lookup and MV-index handle-based dispatch.
 - `pkg/dxf/importinto/collect_conflicts_test.go` - dxf/importinto: Tests collect conflicts step executor.
 - `pkg/dxf/importinto/conflict_resolution_test.go` - dxf/importinto: Tests conflict resolution step executor.
 - `pkg/dxf/importinto/encode_and_sort_operator_test.go` - dxf/importinto: Tests encode and sort operator.
@@ -124,11 +125,11 @@
 ## pkg/dxf/importinto/conflictedkv
 
 ### Tests
-- `pkg/dxf/importinto/conflictedkv/collector_test.go` - dxf/importinto/conflictedkv: Tests collect result merge.
+- `pkg/dxf/importinto/conflictedkv/collector_test.go` - dxf/importinto/conflictedkv: Tests collect result merge and conflict-row recording.
 - `pkg/dxf/importinto/conflictedkv/deleter_internal_test.go` - dxf/importinto/conflictedkv: Tests commit error propagation when deleting buffered keys.
 - `pkg/dxf/importinto/conflictedkv/deleter_test.go` - dxf/importinto/conflictedkv: Tests deleter.
-- `pkg/dxf/importinto/conflictedkv/handler_test.go` - dxf/importinto/conflictedkv: Tests handler.
-- `pkg/dxf/importinto/conflictedkv/row_handle_test.go` - dxf/importinto/conflictedkv: Tests row-key-based handle filter and bounded set.
+- `pkg/dxf/importinto/conflictedkv/handler_test.go` - dxf/importinto/conflictedkv: Tests data/index handlers, including cross-buffer MV-index row deduplication.
+- `pkg/dxf/importinto/conflictedkv/row_handle_test.go` - dxf/importinto/conflictedkv: Tests global/local row-key filters and bounded key sets.
 
 ## pkg/dxf/operator
 

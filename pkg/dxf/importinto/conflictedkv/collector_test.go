@@ -132,9 +132,10 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		store := &mockKVStore{}
 		var sharedSize atomic.Int64
 		var sharedTotalFileSize atomic.Int64
+		localSet := NewBoundedHandleSet(logger, &sharedSize, units.MiB)
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+			kvGroup, nil, nil, localSet, &sharedTotalFileSize, nil, nil,
 		)
 		rowCount := 48
 		for i := range rowCount {
@@ -144,11 +145,9 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 		}
 		require.NoError(t, coll.Close(ctx))
-		if kvGroup == globalsort.DataKVGroup {
-			require.Empty(t, coll.hdlSet.rowKeys)
-		} else {
-			require.Equal(t, rowCount, len(coll.hdlSet.rowKeys))
-		}
+		// Local row-key tracking is owned by IndexKVHandler after it loads and
+		// handles a row, not by Collector.HandleEncodedRow.
+		require.Empty(t, localSet.rowKeys)
 		kvBytes := 184 + rowCount*len(store.GetCodec().GetKeyspace())
 		// for nextgen, the crc sum of keyspace is 0 since the row number is even.
 		crcSum := uint64(14672641476652606594)
