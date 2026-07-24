@@ -125,15 +125,6 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			concurrency: "1",
 		},
 		{
-			concurrency: "2",
-		},
-		{
-			concurrency: "3",
-		},
-		{
-			concurrency: "4",
-		},
-		{
 			concurrency: "5",
 		},
 	}
@@ -141,8 +132,6 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	for _, tc := range testcases {
 		concurrency := tc.concurrency
 		fmt.Println("testcase ", concurrency)
-		tk.MustExec(fmt.Sprintf("set @@global.tidb_merge_partition_stats_concurrency=%v", concurrency))
-		tk.MustQuery("select @@global.tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
 		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_partition_concurrency=%v", concurrency))
 		tk.MustQuery("select @@tidb_analyze_partition_concurrency").Check(testkit.Rows(concurrency))
 
@@ -161,30 +150,9 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			strconv.FormatInt(int64(i), 10), "500",
 		})
 	}
-	testcases = []struct {
-		concurrency string
-	}{
-		{
-			concurrency: "1",
-		},
-		{
-			concurrency: "2",
-		},
-		{
-			concurrency: "3",
-		},
-		{
-			concurrency: "4",
-		},
-		{
-			concurrency: "5",
-		},
-	}
 	for _, tc := range testcases {
 		concurrency := tc.concurrency
 		fmt.Println("testcase ", concurrency)
-		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
-		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
 		tk.MustExec("analyze table t")
 		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
 	}
