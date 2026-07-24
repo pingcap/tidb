@@ -34,16 +34,31 @@ var emptyOptimisticTxnContextProvider = OptimisticTxnContextProvider{}
 type OptimisticTxnContextProvider struct {
 	baseTxnContextProvider
 	optimizeWithMaxTS bool
+	callbackOwner     *OptimisticTxnContextProvider
 }
 
 // ResetForNewTxn resets OptimisticTxnContextProvider to an initial state for a new txn
 func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, causalConsistencyOnly bool) {
+	reuseCallbacks := p.callbackOwner == p
+	onTxnActiveFunc := p.onTxnActiveFunc
+	getStmtReadTSFunc := p.getStmtReadTSFunc
+	getStmtForUpdateTSFunc := p.getStmtForUpdateTSFunc
 	*p = emptyOptimisticTxnContextProvider
 	p.sctx = sctx
 	p.causalConsistencyOnly = causalConsistencyOnly
-	p.onTxnActiveFunc = p.onTxnActive
-	p.getStmtReadTSFunc = p.getTxnStartTS
-	p.getStmtForUpdateTSFunc = p.getTxnStartTS
+	if !reuseCallbacks || onTxnActiveFunc == nil {
+		onTxnActiveFunc = p.onTxnActive
+	}
+	if !reuseCallbacks || getStmtReadTSFunc == nil {
+		getStmtReadTSFunc = p.getTxnStartTS
+	}
+	if !reuseCallbacks || getStmtForUpdateTSFunc == nil {
+		getStmtForUpdateTSFunc = p.getTxnStartTS
+	}
+	p.onTxnActiveFunc = onTxnActiveFunc
+	p.getStmtReadTSFunc = getStmtReadTSFunc
+	p.getStmtForUpdateTSFunc = getStmtForUpdateTSFunc
+	p.callbackOwner = p
 }
 
 func (p *OptimisticTxnContextProvider) onTxnActive(

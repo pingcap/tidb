@@ -34,9 +34,27 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
+
+var benchmarkOptimisticTxnContextProvider *isolation.OptimisticTxnContextProvider
+
+func BenchmarkOptimisticTxnContextProviderResetForNewTxn(b *testing.B) {
+	sctx := mock.NewContext()
+	var providers [2]isolation.OptimisticTxnContextProvider
+	for i := range providers {
+		providers[i].ResetForNewTxn(sctx, false)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		providers[i&1].ResetForNewTxn(sctx, i&2 != 0)
+	}
+	benchmarkOptimisticTxnContextProvider = &providers[b.N&1]
+}
 
 func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	store := testkit.CreateMockStore(t)
