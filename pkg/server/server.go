@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/internal/advertisedstatus"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
@@ -525,6 +526,16 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
+	if s.cfg.Status.ReportStatus {
+		advertisedStatusEndpointCheckCtx, cancelAdvertisedStatusEndpointCheck := context.WithCancel(context.Background())
+		defer cancelAdvertisedStatusEndpointCheck()
+		advertisedstatus.Start(advertisedStatusEndpointCheckCtx, advertisedstatus.Options{
+			ReportStatus:     s.cfg.Status.ReportStatus,
+			StatusListener:   s.statusListener,
+			AdvertiseAddress: s.cfg.AdvertiseAddress,
+			LocalID:          s.dom.DDL().GetID(),
+		})
+	}
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}

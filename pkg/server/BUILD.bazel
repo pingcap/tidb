@@ -63,6 +63,7 @@ go_library(
         "//pkg/server/handler/tikvhandler",
         "//pkg/server/handler/ttlhandler",
         "//pkg/server/internal",
+        "//pkg/server/internal/advertisedstatus",
         "//pkg/server/internal/column",
         "//pkg/server/internal/dump",
         "//pkg/server/internal/handshake",
