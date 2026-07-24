@@ -36,13 +36,6 @@ type ResourceTracker interface {
 	GetDiskUsage() uint64
 }
 
-// LocalSortJobDiskRequirement describes the remaining local-sort disk estimate
-// inputs for one running job.
-type LocalSortJobDiskRequirement struct {
-	RequiredSlots int
-	UsedBytes     uint64
-}
-
 // DiskRoot is used to track the disk usage for the lightning backfill process.
 type DiskRoot interface {
 	Add(id int64, tracker ResourceTracker)
@@ -58,9 +51,8 @@ type DiskRoot interface {
 }
 
 const (
-	capacityThreshold = 0.9
-	// LocalSortBytesPerSlot is the fixed disk reservation per slot for local sort.
-	LocalSortBytesPerSlot = 2048 * size.MB
+	capacityThreshold     = 0.9
+	localSortBytesPerSlot = 2 * size.GB
 )
 
 // diskRootImpl implements DiskRoot interface.
@@ -225,7 +217,12 @@ func RiskOfDiskFull(available, capacity uint64) bool {
 
 // CheckLocalSortFreeDisk ensures the local ingest temp directory has enough free
 // disk space for the incoming local-sort job.
-func CheckLocalSortFreeDisk(runningJobs []LocalSortJobDiskRequirement, newJobRequiredSlots int) error {
+func CheckLocalSortFreeDisk(
+	runningJobCount int,
+	runningJobRequiredSlots int,
+	runningJobUsedBytes uint64,
+	newJobRequiredSlots int,
+) error {
 	sortPath, err := GenIngestTempDataDir()
 	if err != nil {
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
@@ -235,37 +232,34 @@ func CheckLocalSortFreeDisk(runningJobs []LocalSortJobDiskRequirement, newJobReq
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
 	}
 
-	return checkLocalSortFreeDisk(sortPath, sz.Available, sz.Capacity, runningJobs, newJobRequiredSlots)
-}
-
-// GetTrackedJobDiskUsage returns current tracked local-sort disk usage for a job.
-func GetTrackedJobDiskUsage(jobID int64) uint64 {
-	if LitDiskRoot == nil {
-		return 0
-	}
-	return LitDiskRoot.GetUsage(jobID)
+	return checkLocalSortFreeDisk(
+		sortPath,
+		sz.Available,
+		sz.Capacity,
+		runningJobCount,
+		runningJobRequiredSlots,
+		runningJobUsedBytes,
+		newJobRequiredSlots,
+	)
 }
 
 func checkLocalSortFreeDisk(
 	sortPath string,
 	availableBytes uint64,
 	totalCapacityBytes uint64,
-	runningJobs []LocalSortJobDiskRequirement,
+	runningJobCount int,
+	runningJobRequiredSlots int,
+	runningJobUsedBytes uint64,
 	newJobRequiredSlots int,
 ) error {
-	allJobsRequiredBytes := uint64(newJobRequiredSlots) * LocalSortBytesPerSlot
-	allJobsUsedBytes := uint64(0)
-	for _, runningJob := range runningJobs {
-		allJobsRequiredBytes += uint64(runningJob.RequiredSlots) * LocalSortBytesPerSlot
-		allJobsUsedBytes += runningJob.UsedBytes
-	}
+	allJobsRequiredBytes := uint64(runningJobRequiredSlots+newJobRequiredSlots) * localSortBytesPerSlot
 	// Slot-based reservations and the ingest quota are shared soft budgets.
 	// Exceeding the quota triggers an import that releases disk, so check the
 	// aggregate growth until the smaller target is reached.
 	allJobsTargetBytes := min(allJobsRequiredBytes, vardef.DDLDiskQuota.Load())
 	allJobsGapBytes := uint64(0)
-	if allJobsTargetBytes > allJobsUsedBytes {
-		allJobsGapBytes = allJobsTargetBytes - allJobsUsedBytes
+	if allJobsTargetBytes > runningJobUsedBytes {
+		allJobsGapBytes = allJobsTargetBytes - runningJobUsedBytes
 	}
 	totalRequiredBytes := totalCapacityBytes/10 + allJobsGapBytes
 	if availableBytes > totalRequiredBytes {
@@ -274,9 +268,9 @@ func checkLocalSortFreeDisk(
 			zap.Uint64("availableBytes", availableBytes),
 			zap.String("sortPath", sortPath),
 			zap.Uint64("totalCapacityBytes", totalCapacityBytes),
-			zap.Int("runningLocalSortJobCount", len(runningJobs)),
+			zap.Int("runningLocalSortJobCount", runningJobCount),
 			zap.Int("newJobRequiredSlots", newJobRequiredSlots),
-			zap.Uint64("localSortBytesPerSlot", LocalSortBytesPerSlot))
+			zap.Uint64("localSortBytesPerSlot", localSortBytesPerSlot))
 		return nil
 	}
 
@@ -287,9 +281,9 @@ func checkLocalSortFreeDisk(
 			availableBytes,
 			sortPath,
 			totalCapacityBytes,
-			len(runningJobs),
+			runningJobCount,
 			newJobRequiredSlots,
-			LocalSortBytesPerSlot,
+			localSortBytesPerSlot,
 		),
 	)
 }
