@@ -1240,3 +1240,41 @@ func TestModifyColumnsArgs(t *testing.T) {
 	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
 	require.Len(t, rawArgs, 5)
 }
+
+func TestMergedModifyColumnsArgs(t *testing.T) {
+	inArgs := &ModifyColumnsArgs{
+		ModifyColumns: []*ModifyColumnSubArgs{
+			{
+				ModifyColumnArgs: &ModifyColumnArgs{
+					Column:        &ColumnInfo{ID: 11, Name: ast.NewCIStr("c1")},
+					OldColumnName: ast.NewCIStr("a"),
+				},
+				ChildSchemaState: StateWriteOnly,
+			},
+			{
+				ModifyColumnArgs: &ModifyColumnArgs{
+					Column:        &ColumnInfo{ID: 12, Name: ast.NewCIStr("c2")},
+					OldColumnName: ast.NewCIStr("b"),
+				},
+				ChildSchemaState: StateWriteReorganization,
+			},
+		},
+		MergedState:   1,
+		MergedCurrent: 1,
+	}
+
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion2, ActionModifyColumn)))
+
+	args, err := GetModifyColumnsArgs(j2)
+	require.NoError(t, err)
+	require.Equal(t, inArgs.MergedState, args.MergedState)
+	require.Equal(t, inArgs.MergedCurrent, args.MergedCurrent)
+	require.Len(t, args.ModifyColumns, 2)
+	require.Equal(t, "a", args.ModifyColumns[0].ModifyColumnArgs.OldColumnName.L)
+	require.Equal(t, "b", args.ModifyColumns[1].ModifyColumnArgs.OldColumnName.L)
+
+	singleArg, err := GetModifyColumnArgs(j2)
+	require.NoError(t, err)
+	require.Equal(t, "b", singleArg.OldColumnName.L)
+}

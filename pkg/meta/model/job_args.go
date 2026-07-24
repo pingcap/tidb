@@ -15,6 +15,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"github.com/pingcap/errors"
@@ -1788,6 +1789,38 @@ type ModifyColumnArgs struct {
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
+// ModifyColumnSubArgs stores one modify-column argument and its execution state in merged mode.
+type ModifyColumnSubArgs struct {
+	ModifyColumnArgs *ModifyColumnArgs `json:"modify_column_args,omitempty"`
+
+	ChildSchemaState  SchemaState `json:"child_schema_state,omitempty"`
+	ChildSnapshotVer  uint64      `json:"child_snapshot_ver,omitempty"`
+	ChildAnalyzeState int8        `json:"child_analyze_state,omitempty"`
+	ChildReorgStage   ReorgStage  `json:"child_reorg_stage,omitempty"`
+	ChildDone         bool        `json:"child_done,omitempty"`
+}
+
+// ModifyColumnsArgs is used by multi-schema change to merge several modify-column sub-jobs.
+type ModifyColumnsArgs struct {
+	ModifyColumns []*ModifyColumnSubArgs `json:"modify_columns,omitempty"`
+	MergedState   byte                   `json:"merged_state,omitempty"`
+	MergedCurrent int                    `json:"merged_current,omitempty"`
+
+	// Finished args, merged from each child modify-column.
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	NewIndexIDs  []int64 `json:"new_index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+}
+
+func (*ModifyColumnsArgs) getArgsV1(*Job) []any {
+	// Merged modify-column is only encoded as v2 args.
+	return nil
+}
+
+func (*ModifyColumnsArgs) decodeV1(*Job) error {
+	return errors.New("modify columns args doesn't support v1")
+}
+
 func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
 	// during upgrade, if https://github.com/pingcap/tidb/issues/54689 triggered,
 	// older node might run the job submitted by new version, but it expects 5
@@ -1814,7 +1847,31 @@ func (a *ModifyColumnArgs) getFinishedArgsV1(*Job) []any {
 
 // GetModifyColumnArgs get the modify column argument from job.
 func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
+	if job.Version == JobVersion2 {
+		if len(job.args) > 0 {
+			switch args := job.args[0].(type) {
+			case *ModifyColumnArgs:
+				return args, nil
+			case *ModifyColumnsArgs:
+				return args.getCurrentModifyColumnArg()
+			default:
+				return nil, errors.Errorf("unexpected modify-column args type %T", args)
+			}
+		}
+		if bytes.Contains(job.RawArgs, []byte(`"modify_columns"`)) {
+			args, err := getOrDecodeArgsV2[*ModifyColumnsArgs](job)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return args.getCurrentModifyColumnArg()
+		}
+	}
 	return getOrDecodeArgs(&ModifyColumnArgs{}, job)
+}
+
+// GetModifyColumnsArgs gets merged modify-columns args from job.
+func GetModifyColumnsArgs(job *Job) (*ModifyColumnsArgs, error) {
+	return getOrDecodeArgs(&ModifyColumnsArgs{}, job)
 }
 
 // GetFinishedModifyColumnArgs get the finished modify column argument from job.
@@ -1835,6 +1892,21 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
+}
+
+func (a *ModifyColumnsArgs) getCurrentModifyColumnArg() (*ModifyColumnArgs, error) {
+	if len(a.ModifyColumns) == 0 {
+		return nil, errors.New("merged modify-column has no child args")
+	}
+	offset := a.MergedCurrent
+	if offset < 0 || offset >= len(a.ModifyColumns) {
+		offset = 0
+	}
+	child := a.ModifyColumns[offset]
+	if child == nil || child.ModifyColumnArgs == nil {
+		return nil, errors.New("merged modify-column child args is empty")
+	}
+	return child.ModifyColumnArgs, nil
 }
 
 // RefreshMetaArgs is the argument for RefreshMeta.

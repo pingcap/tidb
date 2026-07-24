@@ -227,16 +227,225 @@ func initializeChangingIndexes(
 	return nil
 }
 
+const (
+	mergedModifyColumnStatePrepare byte = iota
+	mergedModifyColumnStateFinalize
+)
+
+func isMergedModifyColumnsArgsJob(job *model.Job) bool {
+	return job.Version == model.JobVersion2 && bytes.Contains(job.RawArgs, []byte(`"modify_columns"`))
+}
+
+func decodeModifyColumnRunningArgs(job *model.Job) (
+	singleArgs *model.ModifyColumnArgs,
+	mergedArgs *model.ModifyColumnsArgs,
+	err error,
+) {
+	if isMergedModifyColumnsArgsJob(job) {
+		mergedArgs, err = model.GetModifyColumnsArgs(job)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if len(mergedArgs.ModifyColumns) == 0 {
+			return nil, nil, errors.New("merged modify-column has no child args")
+		}
+		return nil, mergedArgs, nil
+	}
+	singleArgs, err = model.GetModifyColumnArgs(job)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return singleArgs, nil, nil
+}
+
+func isMergedChildPrepared(arg *model.ModifyColumnSubArgs) bool {
+	if arg == nil || arg.ModifyColumnArgs == nil {
+		return false
+	}
+	if arg.ChildDone {
+		return true
+	}
+	// For reorg-related modify-column, "prepared" means the child reaches
+	// write-reorg and reorg/analyze is skipped for parent orchestration.
+	return arg.ChildAnalyzeState == model.AnalyzeStateSkipped
+}
+
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	args, err := model.GetModifyColumnArgs(job)
+	args, mergedArgs, err := decodeModifyColumnRunningArgs(job)
 	defer func() {
-		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
+		modifyType := byte(model.ModifyTypeNone)
+		if args != nil {
+			modifyType = args.ModifyColumnType
+		} else if mergedArgs != nil && mergedArgs.MergedCurrent >= 0 && mergedArgs.MergedCurrent < len(mergedArgs.ModifyColumns) {
+			child := mergedArgs.ModifyColumns[mergedArgs.MergedCurrent]
+			if child != nil && child.ModifyColumnArgs != nil {
+				modifyType = child.ModifyColumnArgs.ModifyColumnType
+			}
+		}
+		failpoint.InjectCall("getModifyColumnType", modifyType)
 	}()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if mergedArgs != nil {
+		return w.onModifyColumnsMerged(jobCtx, job, mergedArgs)
+	}
+	return w.onModifyColumnWithArgs(jobCtx, job, args, true)
+}
 
+func (w *worker) runModifyColumnChildStep(
+	jobCtx *jobContext,
+	job *model.Job,
+	arg *model.ModifyColumnSubArgs,
+) (ver int64, err error) {
+	intest.Assert(arg != nil && arg.ModifyColumnArgs != nil, "child modify-column args should not be empty")
+	childJob := *job
+	if childJob.ReorgMeta != nil {
+		childJob.ReorgMeta = childJob.ReorgMeta.ShallowCopy()
+		childJob.ReorgMeta.AnalyzeState = arg.ChildAnalyzeState
+		childJob.ReorgMeta.Stage = arg.ChildReorgStage
+	}
+	childJob.SchemaState = arg.ChildSchemaState
+	childJob.SnapshotVer = arg.ChildSnapshotVer
+	ver, err = w.onModifyColumnWithArgs(jobCtx, &childJob, arg.ModifyColumnArgs, false)
+	if childJob.ReorgMeta != nil {
+		arg.ChildAnalyzeState = childJob.ReorgMeta.AnalyzeState
+		arg.ChildReorgStage = childJob.ReorgMeta.Stage
+	}
+	arg.ChildSchemaState = childJob.SchemaState
+	arg.ChildSnapshotVer = childJob.SnapshotVer
+	if childJob.IsFinished() {
+		arg.ChildDone = true
+	}
+	if childJob.IsRollingback() || childJob.IsRollbackDone() || childJob.IsCancelled() {
+		job.State = childJob.State
+		job.Error = childJob.Error
+	}
+	job.SchemaState = childJob.SchemaState
+	job.SnapshotVer = childJob.SnapshotVer
+	if job.ReorgMeta != nil && childJob.ReorgMeta != nil {
+		job.ReorgMeta.Stage = childJob.ReorgMeta.Stage
+		job.ReorgMeta.AnalyzeState = childJob.ReorgMeta.AnalyzeState
+	}
+	return ver, err
+}
+
+func appendInt64NoDup(dst []int64, src ...int64) []int64 {
+	if len(src) == 0 {
+		return dst
+	}
+	exists := make(map[int64]struct{}, len(dst)+len(src))
+	for _, v := range dst {
+		exists[v] = struct{}{}
+	}
+	for _, v := range src {
+		if _, ok := exists[v]; ok {
+			continue
+		}
+		exists[v] = struct{}{}
+		dst = append(dst, v)
+	}
+	return dst
+}
+
+func (w *worker) onModifyColumnsMerged(
+	jobCtx *jobContext,
+	job *model.Job,
+	args *model.ModifyColumnsArgs,
+) (ver int64, _ error) {
+	intest.Assert(len(args.ModifyColumns) > 0, "merged modify-column has no children")
+	switch args.MergedState {
+	case mergedModifyColumnStatePrepare:
+		if args.MergedCurrent >= len(args.ModifyColumns) {
+			args.MergedState = mergedModifyColumnStateFinalize
+			args.MergedCurrent = 0
+			checkAndMarkNonRevertible(job)
+			job.FillArgs(args)
+			return ver, nil
+		}
+		arg := args.ModifyColumns[args.MergedCurrent]
+		if arg == nil || arg.ModifyColumnArgs == nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.New("merged modify-column child args is empty")
+		}
+		if isMergedChildPrepared(arg) {
+			args.MergedCurrent++
+			if args.MergedCurrent >= len(args.ModifyColumns) {
+				args.MergedState = mergedModifyColumnStateFinalize
+				args.MergedCurrent = 0
+				checkAndMarkNonRevertible(job)
+			}
+			job.FillArgs(args)
+			return ver, nil
+		}
+		ver, err := w.runModifyColumnChildStep(jobCtx, job, arg)
+		if err != nil {
+			return ver, err
+		}
+		if isMergedChildPrepared(arg) {
+			args.MergedCurrent++
+			if args.MergedCurrent >= len(args.ModifyColumns) {
+				args.MergedState = mergedModifyColumnStateFinalize
+				args.MergedCurrent = 0
+				checkAndMarkNonRevertible(job)
+			}
+		}
+		job.FillArgs(args)
+		return ver, nil
+	case mergedModifyColumnStateFinalize:
+		for args.MergedCurrent < len(args.ModifyColumns) && args.ModifyColumns[args.MergedCurrent].ChildDone {
+			args.MergedCurrent++
+		}
+		if args.MergedCurrent >= len(args.ModifyColumns) {
+			job.State = model.JobStateDone
+			job.SchemaState = model.StatePublic
+			job.FillFinishedArgs(&model.ModifyColumnArgs{
+				IndexIDs:     args.IndexIDs,
+				NewIndexIDs:  args.NewIndexIDs,
+				PartitionIDs: args.PartitionIDs,
+			})
+			return ver, nil
+		}
+		arg := args.ModifyColumns[args.MergedCurrent]
+		if arg == nil || arg.ModifyColumnArgs == nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.New("merged modify-column child args is empty")
+		}
+		ver, err := w.runModifyColumnChildStep(jobCtx, job, arg)
+		if err != nil {
+			return ver, err
+		}
+		if arg.ChildDone {
+			args.IndexIDs = appendInt64NoDup(args.IndexIDs, arg.ModifyColumnArgs.IndexIDs...)
+			args.NewIndexIDs = appendInt64NoDup(args.NewIndexIDs, arg.ModifyColumnArgs.NewIndexIDs...)
+			args.PartitionIDs = appendInt64NoDup(args.PartitionIDs, arg.ModifyColumnArgs.PartitionIDs...)
+			args.MergedCurrent++
+		}
+		if args.MergedCurrent >= len(args.ModifyColumns) {
+			job.State = model.JobStateDone
+			job.SchemaState = model.StatePublic
+			job.FillFinishedArgs(&model.ModifyColumnArgs{
+				IndexIDs:     args.IndexIDs,
+				NewIndexIDs:  args.NewIndexIDs,
+				PartitionIDs: args.PartitionIDs,
+			})
+			return ver, nil
+		}
+		job.FillArgs(args)
+		return ver, nil
+	default:
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("invalid merged modify-column state %d", args.MergedState)
+	}
+}
+
+func (w *worker) onModifyColumnWithArgs(
+	jobCtx *jobContext,
+	job *model.Job,
+	args *model.ModifyColumnArgs,
+	markNonRevertible bool,
+) (ver int64, _ error) {
 	dbInfo, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -328,9 +537,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	case model.ModifyTypePrecheck:
 		return w.precheckForVarcharToChar(jobCtx, job, args, dbInfo, tblInfo, oldCol)
 	case model.ModifyTypeNoReorgWithCheck:
-		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
+		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position, markNonRevertible)
 	case model.ModifyTypeNoReorg:
-		return w.doModifyColumnNoCheck(jobCtx, job, tblInfo, args.Column, oldCol, args.Position)
+		return w.doModifyColumnNoCheck(jobCtx, job, tblInfo, args.Column, oldCol, args.Position, markNonRevertible)
 	}
 
 	// Checks for ModifyTypeReorg and ModifyTypeIndexReorg.
@@ -362,7 +571,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			return ver, errors.Trace(err)
 		}
 		return w.doModifyColumnIndexReorg(
-			jobCtx, job, dbInfo, tblInfo, oldCol, args)
+			jobCtx, job, dbInfo, tblInfo, oldCol, args, markNonRevertible)
 	}
 
 	changingCol, err := getChangingCol(args, tblInfo, oldCol)
@@ -371,7 +580,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 	return w.doModifyColumnTypeWithData(
-		jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, args)
+		jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, args, markNonRevertible)
 }
 
 func checkColumnAlreadyExists(tblInfo *model.TableInfo, args *model.ModifyColumnArgs) error {
@@ -557,13 +766,14 @@ func (w *worker) doModifyColumnNoCheck(
 	tblInfo *model.TableInfo,
 	newCol, oldCol *model.ColumnInfo,
 	pos *ast.ColumnPosition,
+	markNonRevertible bool,
 ) (ver int64, _ error) {
 	if oldCol.ID != newCol.ID {
 		job.State = model.JobStateRollingback
 		return ver, dbterror.ErrColumnInChange.GenWithStackByArgs(oldCol.Name, newCol.ID)
 	}
 
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+	if markNonRevertible && job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 		// Store the mark and enter the next DDL handling loop.
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
@@ -647,6 +857,7 @@ func (w *worker) doModifyColumnWithCheck(
 	tblInfo *model.TableInfo,
 	newCol, oldCol *model.ColumnInfo,
 	pos *ast.ColumnPosition,
+	markNonRevertible bool,
 ) (ver int64, _ error) {
 	if oldCol.ID != newCol.ID {
 		job.State = model.JobStateRollingback
@@ -683,7 +894,7 @@ func (w *worker) doModifyColumnWithCheck(
 
 	failpoint.InjectCall("afterDoModifyColumnSkipReorgCheck")
 
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+	if markNonRevertible && job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 		// Store the mark and enter the next DDL handling loop.
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
@@ -906,7 +1117,11 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 }
 
 // reorderChangingIdx reorders the changing index infos to match the order of old index infos.
-func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*model.IndexInfo) {
+// It drops unmatched pairs when old indexes are already handled by another merged modify-column.
+func reorderChangingIdx(
+	oldIdxInfos []*model.IndexInfo,
+	changingIdxInfos []*model.IndexInfo,
+) ([]*model.IndexInfo, []*model.IndexInfo) {
 	nameToChanging := make(map[string]*model.IndexInfo, len(changingIdxInfos))
 	for _, cIdx := range changingIdxInfos {
 		origName := cIdx.Name.O
@@ -916,9 +1131,17 @@ func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*mode
 		nameToChanging[origName] = cIdx
 	}
 
-	for i, oldIdx := range oldIdxInfos {
-		changingIdxInfos[i] = nameToChanging[oldIdx.GetRemovingOriginName()]
+	orderedOld := make([]*model.IndexInfo, 0, len(oldIdxInfos))
+	orderedChanging := make([]*model.IndexInfo, 0, len(oldIdxInfos))
+	for _, oldIdx := range oldIdxInfos {
+		changingIdx, ok := nameToChanging[oldIdx.GetRemovingOriginName()]
+		if !ok || changingIdx == nil {
+			continue
+		}
+		orderedOld = append(orderedOld, oldIdx)
+		orderedChanging = append(orderedChanging, changingIdx)
 	}
+	return orderedOld, orderedChanging
 }
 
 func (w *worker) doModifyColumnTypeWithData(
@@ -928,6 +1151,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	tblInfo *model.TableInfo,
 	changingCol, oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
+	markNonRevertible bool,
 ) (ver int64, _ error) {
 	colName, pos := args.Column.Name, args.Position
 
@@ -1026,12 +1250,23 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.AnalyzeStateNone:
 			switch job.ReorgMeta.Stage {
 			case model.ReorgStageModifyColumnUpdateColumn:
+				if job.MultiSchemaInfo != nil {
+					return skipReorgAndAnalyzeForSubJobWithMark(
+						jobCtx,
+						tbl.Meta(),
+						job,
+						model.ReorgStageModifyColumnUpdateColumn,
+						markNonRevertible,
+					)
+				}
+
 				var done bool
 				reorgElements := BuildElements(changingCol, changingIdxs)
 				done, ver, err = doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, reorgElements)
 				if !done {
 					return ver, err
 				}
+
 				if len(changingIdxs) > 0 {
 					job.SnapshotVer = 0
 					job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
@@ -1046,13 +1281,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				} else {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-					checkAndMarkNonRevertible(job)
-				}
+				checkAndUpdateNeedAnalyze(job, tblInfo)
 			}
 		case model.AnalyzeStateRunning:
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
@@ -1068,7 +1297,7 @@ func (w *worker) doModifyColumnTypeWithData(
 
 			// In multi-schema change, the order of changingIdxInfos may not be the same as oldIdxInfos,
 			// because we will allocate new indexID for previous temp index.
-			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
+			oldIdxInfos, changingIdxInfos = reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 
 			updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
 			updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
@@ -1141,6 +1370,7 @@ func (w *worker) doModifyColumnIndexReorg(
 	tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
+	markNonRevertible bool,
 ) (ver int64, err error) {
 	colName, pos := args.Column.Name, args.Position
 
@@ -1246,10 +1476,18 @@ func (w *worker) doModifyColumnIndexReorg(
 		case model.AnalyzeStateNone:
 			switch job.ReorgMeta.Stage {
 			case model.ReorgStageModifyColumnUpdateColumn:
-				// Now row reorg
 				job.SnapshotVer = 0
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
 			case model.ReorgStageModifyColumnRecreateIndex:
+				if job.MultiSchemaInfo != nil {
+					return skipReorgAndAnalyzeForSubJobWithMark(
+						jobCtx,
+						tbl.Meta(),
+						job,
+						model.ReorgStageModifyColumnRecreateIndex,
+						markNonRevertible,
+					)
+				}
 				var done bool
 				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxInfos)
 				if !done {
@@ -1257,20 +1495,15 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				} else {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-					checkAndMarkNonRevertible(job)
-				}
+				intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
+				checkAndUpdateNeedAnalyze(job, tblInfo)
 			}
 		case model.AnalyzeStateRunning:
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
-			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
+			oldIdxInfos, changingIdxInfos = reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
 			oldName := oldCol.Name
 			oldID := oldCol.ID
