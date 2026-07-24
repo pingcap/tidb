@@ -23,11 +23,14 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestTimeEncoding(t *testing.T) {
@@ -1986,6 +1989,74 @@ func TestTimeSub(t *testing.T) {
 		rec := v1.Sub(typeCtx, &v2)
 		require.Equal(t, dur, rec)
 	}
+}
+
+func TestTimeSubTimestampGoTimeErrorLogRespectsContextFlags(t *testing.T) {
+	zeroTimestamp := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	minTimestamp := types.MinTimestamp
+
+	testCases := []struct {
+		name              string
+		ctx               types.Context
+		expectedErrorLogs int
+	}{
+		{
+			name:              "strict context logs GoTime error",
+			ctx:               types.StrictContext,
+			expectedErrorLogs: 1,
+		},
+		{
+			name: "ignore invalid date error suppresses GoTime error log",
+			ctx: types.NewContext(
+				types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr,
+				time.UTC,
+				contextutil.IgnoreWarn,
+			),
+			expectedErrorLogs: 0,
+		},
+		{
+			name: "ignore zero in date suppresses GoTime error log",
+			ctx: types.NewContext(
+				types.DefaultStmtFlags|types.FlagIgnoreZeroInDateErr,
+				time.UTC,
+				contextutil.IgnoreWarn,
+			),
+			expectedErrorLogs: 0,
+		},
+		{
+			name: "ignore invalid date error and zero in date suppress GoTime error log",
+			ctx: types.NewContext(
+				types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr|types.FlagIgnoreZeroInDateErr,
+				time.UTC,
+				contextutil.IgnoreWarn,
+			),
+			expectedErrorLogs: 0,
+		},
+	}
+
+	var strictDuration types.Duration
+	for i, tc := range testCases {
+		duration, logs := timeSubWithObservedErrorLogs(t, tc.ctx, &zeroTimestamp, &minTimestamp)
+		require.Lenf(t, logs.FilterMessage("encountered error").All(), tc.expectedErrorLogs, "%s", tc.name)
+		if i == 0 {
+			strictDuration = duration
+			continue
+		}
+		require.Equalf(t, strictDuration, duration, "%s", tc.name)
+	}
+}
+
+func timeSubWithObservedErrorLogs(t *testing.T, ctx types.Context, left, right *types.Time) (types.Duration, *observer.ObservedLogs) {
+	t.Helper()
+
+	core, recorded := observer.New(zap.ErrorLevel)
+	restore := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
+	)
+	defer restore()
+
+	return left.Sub(ctx, right), recorded
 }
 
 func TestCheckMonthDay(t *testing.T) {
