@@ -2506,23 +2506,6 @@ func (e *executor) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model
 	return schema, t, nil
 }
 
-func getTrackedTable(t table.Table, tbTracker *TableTracker) table.Table {
-	if tbTracker == nil {
-		// Single ALTER paths, including single ADD FOREIGN KEY auto-index creation, do not use a tracker.
-		return t
-	}
-	return tables.MockTableFromMeta(tbTracker.TableInfo())
-}
-
-func handleTrackerMissingDropObject(ctx sessionctx.Context, ifExists bool, name any, errFmt string) error {
-	err := dbterror.ErrCantDropFieldOrKey.GenWithStack(errFmt, name)
-	if ifExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-	return err
-}
-
 // AddColumn will add a new column to the table.
 func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	specNewColumn := spec.NewColumns[0]
