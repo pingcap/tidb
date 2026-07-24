@@ -126,6 +126,9 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 		ctx.AppendWarning(warnErr)
 		return false
 	}
+	if shouldBlockTiKVJSONExtractPushDown(ctx.EvalCtx(), scalarFunc, storeType) {
+		return false
+	}
 	canEnumPush := canEnumPushdownPreliminarily(scalarFunc)
 	// Check whether all of its parameters can be pushed.
 	for _, arg := range scalarFunc.GetArgs() {
@@ -143,6 +146,23 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 		}
 	}
 	return true
+}
+
+func shouldBlockTiKVJSONExtractPushDown(ctx EvalContext, scalarFunc *ScalarFunction, storeType kv.StoreType) bool {
+	if storeType != kv.TiKV || scalarFunc.FuncName.L != ast.JSONExtract {
+		return false
+	}
+	if len(scalarFunc.GetArgs()) == 0 {
+		return false
+	}
+	castArg, ok := scalarFunc.GetArgs()[0].(*ScalarFunction)
+	if !ok || castArg.FuncName.L != ast.Cast {
+		return false
+	}
+	if castArg.RetType.GetType() != mysql.TypeJSON || len(castArg.GetArgs()) == 0 {
+		return false
+	}
+	return castArg.GetArgs()[0].GetType(ctx).GetType() != mysql.TypeJSON
 }
 
 func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
