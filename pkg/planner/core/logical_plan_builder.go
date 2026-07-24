@@ -741,6 +741,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
+	if joinNode.Tp == ast.FullJoin {
+		// Reject FULL OUTER JOIN before LATERAL handling. Otherwise the
+		// LogicalApply path can consume the join type and treat it as an inner join.
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+	}
+
 	// Detect whether the right subtree contains any LATERAL table source.
 	// This is used only to decide whether to push outerSchemas before building
 	// the right side, so that nested LATERAL sources can resolve outer columns.
