@@ -688,16 +688,14 @@ func NewReaderOpener(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,
 	store storeapi.Storage,
+	decompressCfg compressedio.DecompressConfig,
 ) (
 	openFunc func(context.Context) (storeapi.ReadSeekCloser, error),
 	reader storeapi.ReadSeekCloser,
 	err error,
 ) {
 	openFunc = func(ctx context.Context) (storeapi.ReadSeekCloser, error) {
-		return OpenReader(ctx, fileMeta, store, compressedio.DecompressConfig{
-			// Concurrent Zstd decoding can corrupt the decoded stream. See #53587.
-			ZStdDecodeConcurrency: 1,
-		})
+		return OpenReader(ctx, fileMeta, store, decompressCfg)
 	}
 	if fileMeta.Type == SourceTypeParquet {
 		return openFunc, nil, nil

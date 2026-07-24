@@ -56,6 +56,7 @@ go_library(
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/objstore",
+        "//pkg/objstore/compressedio",
         "//pkg/objstore/storeapi",
         "//pkg/parser",
         "//pkg/parser/ast",

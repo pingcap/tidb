@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -467,7 +468,9 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	openReader, reader, err := mydump.NewReaderOpener(ctx, &dataFileMeta, p.srcStorage)
+	openReader, reader, err := mydump.NewReaderOpener(ctx, &dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -622,7 +625,9 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	openReader, reader, err := mydump.NewReaderOpener(ctx, &sampleFile, p.srcStorage)
+	openReader, reader, err := mydump.NewReaderOpener(ctx, &sampleFile, p.srcStorage, compressedio.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
