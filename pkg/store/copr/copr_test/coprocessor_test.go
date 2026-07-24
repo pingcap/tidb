@@ -290,6 +290,24 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	require.Zero(t, req.Paging.PagingSizeBytes)
 
+	// Analyze requests are internal and do not carry row-count hints, but they
+	// intentionally use store-batched coprocessor requests.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeAnalyze,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.RequestSource.RequestSourceInternal = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 1)
+	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
+	require.Equal(t, -1, tasks[0].RowCountHint)
+
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
 	req = &kv.Request{

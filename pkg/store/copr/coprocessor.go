@@ -654,7 +654,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 && hints != nil {
+	if canUseStoreBatchBuilder(req, hints) {
 		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
@@ -828,8 +828,11 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 			b.tasks = append(b.tasks, task)
 		}
 	}()
-	// only batch small tasks for memory control.
-	if b.limit <= 0 || !isSmallTask(task) {
+	// Only batch small tasks for memory control. Analyze responses are
+	// bounded by the sampling configuration (a fixed reservoir size, or an
+	// adaptive rate targeting a fixed total sample count) rather than by the
+	// scanned row count, so the row-count-hint gate does not apply to them.
+	if b.limit <= 0 || !canStoreBatchTask(b.req, task) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, b.req, task, b.replicaRead)
@@ -930,6 +933,28 @@ func isSmallTask(task *copTask) bool {
 	return task.RowCountHint > 0 &&
 		(len(task.batchTaskList) == 0 && task.RowCountHint <= CopSmallTaskRow) ||
 		(len(task.batchTaskList) > 0 && task.RowCountHint <= 2*CopSmallTaskRow)
+}
+
+// Analyze requests can be batched without row-count hints because their
+// response size is bounded by the sampling configuration, not by the scanned
+// row count. Other requests must pass the small-task check.
+func canStoreBatchTask(req *kv.Request, task *copTask) bool {
+	if req.Tp == kv.ReqTypeAnalyze {
+		return true
+	}
+	return isSmallTask(task)
+}
+
+// Without row-count hints, non-analyze tasks cannot be safely classified as
+// small. Analyze requests are exempt because they do not use the small-task gate.
+func canUseStoreBatchBuilder(req *kv.Request, hints []int) bool {
+	if req.StoreBatchSize <= 0 {
+		return false
+	}
+	if req.Tp == kv.ReqTypeAnalyze {
+		return true
+	}
+	return hints != nil
 }
 
 // smallTaskConcurrency counts the small tasks of tasks,
@@ -1754,6 +1779,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
+		// The analyze result handling accepts responses whose batched
+		// tasks' results are merged into the main response, see
+		// handleBatchCopResponse.
+		AllowBatchTaskDataMerge: worker.req.Tp == kv.ReqTypeAnalyze,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
@@ -2381,6 +2410,16 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				ExecDetailsV2: batchResp.ExecDetailsV2,
 			},
 		}
+		if batchResp.GetDataMergedIntoResponse() {
+			// The task's result is already carried by the main response's data,
+			// so retain its execution details as unconsumed stats instead of
+			// handing an empty response to the result consumer.
+			if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
+				return batchRespList, nil, err
+			}
+			worker.stats.append(resp.detail)
+			continue
+		}
 		task := batchedTask.task
 		failpoint.Inject("batchCopRegionError", func() {
 			batchResp.RegionError = &errorpb.Error{}
@@ -2725,9 +2764,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 	if worker.kvclient.Stats != nil && worker.stats != nil {
 		copStats := &CopRuntimeStats{}
 		worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
-		worker.stats.Lock()
-		worker.stats.stats = append(worker.stats.stats, copStats)
-		worker.stats.Unlock()
+		worker.stats.append(copStats)
 	}
 }
 
@@ -2742,6 +2779,15 @@ type CopRuntimeStats struct {
 type copIteratorRuntimeStats struct {
 	sync.Mutex
 	stats []*CopRuntimeStats
+}
+
+func (s *copIteratorRuntimeStats) append(copStats *CopRuntimeStats) {
+	if s == nil || copStats == nil {
+		return
+	}
+	s.Lock()
+	s.stats = append(s.stats, copStats)
+	s.Unlock()
 }
 
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) (*copTaskResult, error) {
@@ -3041,7 +3087,7 @@ func optRowHint(req *kv.Request) bool {
 }
 
 func checkStoreBatchCopr(req *kv.Request) bool {
-	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
+	if (req.Tp != kv.ReqTypeDAG && req.Tp != kv.ReqTypeAnalyze) || req.StoreType != kv.TiKV {
 		return false
 	}
 	// TODO: support keep-order batch
@@ -3053,8 +3099,9 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		return false
 	}
-	// Disable it for internal requests to avoid regression.
-	if req.RequestSource.RequestSourceInternal {
+	// Disable store-batched coprocessor for internal requests to avoid regressions.
+	// Analyze requests are exempt because they intentionally use store batching.
+	if req.RequestSource.RequestSourceInternal && req.Tp != kv.ReqTypeAnalyze {
 		return false
 	}
 	return true

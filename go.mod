@@ -370,3 +370,6 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+// TODO: revert to pingcap/kvproto once https://github.com/pingcap/kvproto/pull/1497 merges.
+replace github.com/pingcap/kvproto => github.com/0xPoe/kvproto v0.0.0-20260714121305-a15dd9ca8aa8
