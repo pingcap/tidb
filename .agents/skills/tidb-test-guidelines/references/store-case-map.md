@@ -19,7 +19,7 @@
 ### Tests
 - `pkg/store/copr/batch_coprocessor_test.go` - store/copr: Tests balance batch cop task with continuity.
 - `pkg/store/copr/coprocessor_cache_test.go` - store/copr: Tests build cache key.
-- `pkg/store/copr/coprocessor_test.go` - store/copr: Tests ensure monotonic key ranges.
+- `pkg/store/copr/coprocessor_test.go` - store/copr: Tests key-range ordering and batch response handling.
 - `pkg/store/copr/key_ranges_test.go` - store/copr: Tests cop ranges.
 - `pkg/store/copr/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/store/copr/mpp_probe_test.go` - store/copr: Tests MPP failed store probe.
@@ -28,7 +28,7 @@
 ## pkg/store/copr/copr_test
 
 ### Tests
-- `pkg/store/copr/copr_test/coprocessor_test.go` - store/copr: Tests build cop iterator with row count hint.
+- `pkg/store/copr/copr_test/coprocessor_test.go` - store/copr: Tests cop iterator batching, hints, and Analyze merge negotiation.
 - `pkg/store/copr/copr_test/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/store/driver

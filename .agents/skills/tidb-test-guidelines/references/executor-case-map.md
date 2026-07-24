@@ -11,7 +11,7 @@
 ### Tests
 - `pkg/executor/adapter_test.go` - executor: Tests format SQL.
 - `pkg/executor/analyze_test.go` - executor: Tests analyze index extract top n.
-- `pkg/executor/analyze_utils_test.go` - executor: Tests get analyze panic err.
+- `pkg/executor/analyze_utils_test.go` - executor: Tests Analyze panic handling and batched scan budgeting.
 - `pkg/executor/batch_point_get_test.go` - executor: Tests batch point get lock exist key.
 - `pkg/executor/benchmark_test.go` - executor: Tests shuffle stream agg rows.
 - `pkg/executor/brie_test.go` - executor: Tests glue get version.

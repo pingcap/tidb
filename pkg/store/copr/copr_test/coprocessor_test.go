@@ -290,6 +290,102 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	require.Zero(t, req.Paging.PagingSizeBytes)
 
+	// An Analyze request without the explicit full-sampling merge capability
+	// does not bypass the row-count-hint gate.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeAnalyze,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.RequestSource.RequestSourceInternal = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Len(t, tasks, 4)
+	for _, task := range tasks {
+		require.Empty(t, task.ToPBBatchTasks())
+		require.Equal(t, -1, task.RowCountHint)
+	}
+
+	// The V2 full-sampling caller sets this capability explicitly, allowing
+	// internal Analyze tasks without row-count hints to use store batching.
+	req.StoreBatchSize = 3
+	req.AllowBatchTaskDataMerge = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks[0].ToPBBatchTasks(), 3)
+	require.Equal(t, -1, tasks[0].RowCountHint)
+
+	// The merge capability reaches the actual TiDB-to-TiKV request, not only
+	// the task builder. Canceling in the send hook keeps this wire check
+	// independent of response decoding.
+	unmarkedCtx, cancelUnmarked := context.WithTimeout(ctx, 5*time.Second)
+	markedCtx, cancelMarked := context.WithTimeout(ctx, 5*time.Second)
+	sendContexts := map[string]context.Context{
+		"unmarked": unmarkedCtx,
+		"marked":   markedCtx,
+	}
+	cancelSend := map[string]context.CancelFunc{
+		"unmarked": cancelUnmarked,
+		"marked":   cancelMarked,
+	}
+	var sawUnmarkedRequest atomic.Bool
+	var sawMarkedRequest atomic.Bool
+	var unmarkedWireFlag atomic.Bool
+	var markedWireFlag atomic.Bool
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx",
+		func(rpcReq *tikvrpc.Request) {
+			copReq, ok := rpcReq.Req.(*coprocessor.Request)
+			if !ok || copReq.Tp != kv.ReqTypeAnalyze {
+				return
+			}
+			switch copReq.ConnectionAlias {
+			case "unmarked":
+				sawUnmarkedRequest.Store(true)
+				unmarkedWireFlag.Store(copReq.AllowBatchTaskDataMerge)
+			case "marked":
+				sawMarkedRequest.Store(true)
+				markedWireFlag.Store(copReq.AllowBatchTaskDataMerge)
+			default:
+				return
+			}
+			cancelSend[copReq.ConnectionAlias]()
+		},
+	)
+	for _, tc := range []struct {
+		alias      string
+		allowMerge bool
+	}{
+		{"unmarked", false},
+		{"marked", true},
+	} {
+		req = &kv.Request{
+			Tp:                      kv.ReqTypeAnalyze,
+			StoreType:               kv.TiKV,
+			KeyRanges:               kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+			Concurrency:             15,
+			StoreBatchSize:          3,
+			AllowBatchTaskDataMerge: tc.allowMerge,
+			ConnAlias:               tc.alias,
+		}
+		req.RequestSource.RequestSourceInternal = true
+		resp := copClient.Send(sendContexts[tc.alias], req, vars, opt)
+		_, err = resp.Next(sendContexts[tc.alias])
+		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, resp.Close())
+	}
+	require.True(t, sawUnmarkedRequest.Load())
+	require.False(t, unmarkedWireFlag.Load())
+	require.True(t, sawMarkedRequest.Load())
+	require.True(t, markedWireFlag.Load())
+
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
 	req = &kv.Request{
