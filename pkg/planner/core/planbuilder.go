@@ -2829,7 +2829,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	tbl *resolve.TableNameW,
 	isAnalyzeTable bool,
 	physicalIDs []int64,
-	astOpts map[ast.AnalyzeOptionType]uint64,
+	astOpts map[ast.AnalyzeOptionType]*uint64,
 	astColChoice ast.ColumnChoice,
 	astColList []*model.ColumnInfo,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
@@ -2847,7 +2847,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	// In dynamic mode, there is no partitioning, and a global plan is generated for the whole table, so a global statistic is needed;
 	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	if !isAnalyzeTable && dynamicPrune && (len(astOpts) > 0 || astColChoice != ast.DefaultChoice) {
-		astOpts = make(map[ast.AnalyzeOptionType]uint64, 0)
+		astOpts = make(map[ast.AnalyzeOptionType]*uint64, 0)
 		astColChoice = ast.DefaultChoice
 		astColList = make([]*model.ColumnInfo, 0)
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Ignore columns and options when analyze partition in dynamic mode"))
@@ -2906,11 +2906,28 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			if err != nil {
 				return nil, nil, err
 			}
+			stmtOpts := astOpts
+			if !isAnalyzeTable {
+				// A partition-targeted DEFAULT resets only the partition's own
+				// persisted value; the partition then follows the table-level
+				// saved value again if one exists, otherwise the system default.
+				// So drop the reset from the partition's saved options and do not
+				// let it reach the merge below, which would also drop the
+				// table-level value.
+				stmtOpts = make(map[ast.AnalyzeOptionType]*uint64, len(astOpts))
+				for optType, val := range astOpts {
+					if val == nil {
+						delete(parSavedOpts, optType)
+						continue
+					}
+					stmtOpts[optType] = val
+				}
+			}
 			// merge partition level options with table level options firstly
-			savedOpts := mergeAnalyzeOptions(parSavedOpts, tblSavedOpts)
+			savedOpts := overrideAnalyzeOptions(parSavedOpts, tblSavedOpts)
 			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
-			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
+			mergedOpts := mergeAnalyzeOptions(stmtOpts, savedOpts)
 			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
@@ -2986,15 +3003,32 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	}
 }
 
-func mergeAnalyzeOptions(stmtOpts map[ast.AnalyzeOptionType]uint64, savedOpts map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+// mergeAnalyzeOptions applies statement-level options on top of saved options:
+// an explicit statement option wins, and an option given as DEFAULT (a nil
+// value) drops the saved value so the option is unset again and the system
+// default applies.
+func mergeAnalyzeOptions(stmtOpts map[ast.AnalyzeOptionType]*uint64, savedOpts map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
 	merged := map[ast.AnalyzeOptionType]uint64{}
 	for optType := range ast.AnalyzeOptionString {
 		if stmtOpt, ok := stmtOpts[optType]; ok {
-			merged[optType] = stmtOpt
-		} else if savedOpt, ok := savedOpts[optType]; ok {
+			if stmtOpt != nil {
+				merged[optType] = *stmtOpt
+			}
+			continue
+		}
+		if savedOpt, ok := savedOpts[optType]; ok {
 			merged[optType] = savedOpt
 		}
 	}
+	return merged
+}
+
+// overrideAnalyzeOptions returns savedOpts with overrideOpts applied on top,
+// used to layer partition-level saved options over table-level ones.
+func overrideAnalyzeOptions(overrideOpts, savedOpts map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+	merged := make(map[ast.AnalyzeOptionType]uint64, len(savedOpts)+len(overrideOpts))
+	maps.Copy(merged, savedOpts)
+	maps.Copy(merged, overrideOpts)
 	return merged
 }
 
@@ -3138,12 +3172,30 @@ func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
 	}
 }
 
-// handleAnalyzeOptions validates analyze options and returns only the options
-// explicitly specified in the statement.
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionLimit))
+// handleAnalyzeOptions validates the analyze options explicitly specified in the
+// statement and returns them keyed by option type. A nil value marks an option
+// given as DEFAULT, which clears the value persisted in mysql.analyze_options
+// for the analyzed target so that it behaves as if the option had never been
+// persisted for it (genV2AnalyzeOptions decides the fallback: table-level saved
+// value for a partition, otherwise the system default). See ast.AnalyzeOpt for
+// why DEFAULT is the only way to express such a reset.
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]*uint64, error) {
+	optMap := make(map[ast.AnalyzeOptionType]*uint64, len(analyzeOptionLimit))
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
+		// Options are processed in statement order, so for repeated mentions of
+		// the same option the last one wins, matching the behavior for
+		// duplicated literal options.
+		if opt.Value == nil {
+			optMap[opt.Type] = nil
+			switch opt.Type {
+			case ast.AnalyzeOptNumSamples:
+				sampleNum = 0
+			case ast.AnalyzeOptSampleRate:
+				sampleRate = 0
+			}
+			continue
+		}
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
 		switch opt.Type {
 		case ast.AnalyzeOptNumTopN:
@@ -3151,7 +3203,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 			if v > analyzeOptionLimit[opt.Type] {
 				return nil, errors.Errorf("Value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
-			optMap[opt.Type] = v
+			optMap[opt.Type] = &v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
@@ -3163,7 +3215,8 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 				return nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", ast.AnalyzeOptionString[opt.Type], limit)
 			}
 			sampleRate = fVal
-			optMap[opt.Type] = math.Float64bits(fVal)
+			bits := math.Float64bits(fVal)
+			optMap[opt.Type] = &bits
 		default:
 			v := datumValue.GetUint64()
 			if opt.Type == ast.AnalyzeOptNumSamples {
@@ -3172,7 +3225,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 			if v == 0 || v > analyzeOptionLimit[opt.Type] {
 				return nil, errors.Errorf("Value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
-			optMap[opt.Type] = v
+			optMap[opt.Type] = &v
 		}
 	}
 	if sampleNum > 0 && sampleRate > 0 {
@@ -3206,11 +3259,17 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	// Require INSERT and SELECT privilege for tables.
 	b.requireInsertAndSelectPriv(as.TableNames)
 
-	opts, err := handleAnalyzeOptions(as.AnalyzeOpts)
+	stmtOpts, err := handleAnalyzeOptions(as.AnalyzeOpts)
 	if err != nil {
 		return nil, err
 	}
-	filledOpts := fillAnalyzeOptions(opts)
+	// These options are the fallback used when tidb_persist_analyze_options is
+	// off, so there is no saved value for an option given as DEFAULT to reset and
+	// it just means "use the system default for this run": merging against no
+	// saved options drops it and fillAnalyzeOptions supplies the default. When
+	// persistence is on, the per-table options built by
+	// buildAnalyzeFullSamplingTask take precedence over these in the executor.
+	filledOpts := fillAnalyzeOptions(mergeAnalyzeOptions(stmtOpts, nil))
 
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
