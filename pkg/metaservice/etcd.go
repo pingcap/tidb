@@ -141,17 +141,20 @@ func DialEtcdClient(
 	pdClientOpts []opt.ClientOption,
 	etcdCfg clientv3.Config,
 ) (*clientv3.Client, error) {
-	apiCtx := keyspace.BuildAPIContext(keyspaceName)
 	if pdClientFactory == nil {
-		// DialEtcdClient only needs member discovery plus one explicit keyspace
-		// metadata lookup. Using a V2 PD client here would issue another
-		// LoadKeyspace RPC during client initialization.
 		pdClientFactory = defaultPDClientFactory
-		apiCtx = pd.NewAPIContextV1()
 	}
 
+	// DialEtcdClient only needs PD member discovery plus one explicit keyspace
+	// metadata lookup. Use a V1 discovery client here so the direct-etcd path
+	// performs exactly one LoadKeyspace RPC below instead of letting a V2 PD
+	// client load keyspace metadata during initialization and then loading it
+	// again here.
+	// TODO: switch back to reusing keyspace-scoped PD client initialization once
+	// pd.Client exposes the keyspace metadata it already resolved.
+	v1DiscoveryAPICtx := pd.NewAPIContextV1()
 	pdCli, err := pdClientFactory(
-		ctx, apiCtx, callerComponent, pdAddrs, security, pdClientOpts...,
+		ctx, v1DiscoveryAPICtx, callerComponent, pdAddrs, security, pdClientOpts...,
 	)
 	if err != nil {
 		return nil, err

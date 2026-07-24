@@ -177,8 +177,8 @@ func TestDialEtcdClientMissingKeyspaceMetaIncludesKeyspaceName(t *testing.T) {
 				_ pd.SecurityOption,
 				_ ...opt.ClientOption,
 			) (pd.Client, error) {
-				require.Equal(t, pd.V2, apiCtx.GetAPIVersion())
-				require.Equal(t, "missing-ks", apiCtx.GetKeyspaceName())
+				require.Equal(t, pd.V1, apiCtx.GetAPIVersion())
+				require.Empty(t, apiCtx.GetKeyspaceName())
 				return pdCli, nil
 			},
 			caller.Component("test"),
