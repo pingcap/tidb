@@ -18,9 +18,31 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/format/textrow"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
+
+var benchmarkResultEncoderSink *textrow.ResultEncoder
+
+func BenchmarkNewResultEncoder(b *testing.B) {
+	for _, testCase := range []struct {
+		name string
+		chs  string
+	}{
+		{name: "utf8mb4", chs: charset.CharsetUTF8MB4},
+		{name: "binary", chs: charset.CharsetBin},
+		{name: "gbk", chs: "gbk"},
+		{name: "null", chs: ""},
+	} {
+		b.Run(testCase.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				benchmarkResultEncoderSink = textrow.NewResultEncoder(testCase.chs)
+			}
+		})
+	}
+}
 
 func TestResultEncoder(t *testing.T) {
 	// Encode bytes to utf-8.
