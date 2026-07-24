@@ -219,7 +219,29 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		// For example, the schema is `[a, b, physTblID, c]`, `value` is `[v_a, v_b, v_c]`, `outputOffset` is `[0, 1, 2, 3]`
 		// when we want the value of `c`, we should recalculate the offset of `c` by `offset - 1`.
 		if m.physTblIDIdx == i {
-			tid, _, _, _ := tablecodec.DecodeKeyHead(key)
+			// For global indexes, extract the partition ID from the index key/value,
+			// not the table ID from the key head. DecodeKeyHead returns the global
+			// index table ID, not the partition ID.
+			var tid int64
+			if m.index.Global {
+				pidBytes := tablecodec.SplitIndexValue(value).PartitionID
+				if pidBytes == nil && m.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+					// V2+ global index with partition ID in key only (non-unique entries,
+					// or unique index entries with NULL values where distinct=false).
+					tid, err = tablecodec.DecodePartitionIDFromGlobalIndexKey(key, len(m.index.Columns))
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					// V0/V1, or V2+ unique entries with partition ID in the value.
+					_, tid, err = codec.DecodeInt(pidBytes)
+					if err != nil {
+						return nil, err
+					}
+				}
+			} else {
+				tid, _, _, _ = tablecodec.DecodeKeyHead(key)
+			}
 			ds = append(ds, types.NewIntDatum(tid))
 			continue
 		}
@@ -997,9 +1019,19 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			continue
 		}
 
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if iter.index.Global {
-			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+			var pid int64
+			var err error
+			pidBytes := tablecodec.SplitIndexValue(value).PartitionID
+			if pidBytes == nil && iter.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+				// V2+ global index with partition ID in key only (non-unique entries,
+				// or unique index entries with NULL values where distinct=false).
+				pid, err = tablecodec.DecodePartitionIDFromGlobalIndexKey(key, len(iter.index.Columns))
+			} else {
+				// V0/V1, or V2+ unique entries with partition ID in the value.
+				_, pid, err = codec.DecodeInt(pidBytes)
+			}
 			if err != nil {
 				return nil, err
 			}
