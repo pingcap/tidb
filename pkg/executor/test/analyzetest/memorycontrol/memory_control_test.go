@@ -46,18 +46,49 @@ func newLiveSessionManager(dom *domain.Domain, sessions ...sessionapi.Session) *
 	}
 }
 
+type liveProcessInfoSession struct {
+	sessionapi.Session
+	connID      uint64
+	processInfo *sessmgr.ProcessInfo
+}
+
+func (s *liveProcessInfoSession) ShowProcess() *sessmgr.ProcessInfo {
+	return s.processInfo
+}
+
+func (s *liveProcessInfoSession) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	s.processInfo = &sessmgr.ProcessInfo{
+		ID:               s.connID,
+		Time:             t,
+		Info:             sql,
+		Command:          command,
+		MaxExecutionTime: maxExecutionTime,
+	}
+}
+
 func TestLiveSessionManagerTracksLatestProcessInfo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	connID := tk.Session().GetSessionVars().ConnectionID
+	connID := uint64(1)
+	initialTime := time.Unix(1, 0)
+	liveSession := &liveProcessInfoSession{
+		connID: connID,
+		processInfo: &sessmgr.ProcessInfo{
+			ID:   connID,
+			Time: initialTime,
+			Info: "select 1",
+		},
+	}
 
 	staleSM := &testkit.MockSessionManager{
-		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{liveSession.ShowProcess()},
 	}
-	liveSM := newLiveSessionManager(nil, tk.Session())
+	liveSM := &testkit.MockSessionManager{
+		Conn: map[uint64]sessionapi.Session{
+			connID: liveSession,
+		},
+	}
 
-	nextTime := time.Now().Add(time.Second)
-	tk.Session().SetProcessInfo("analyze table t with 1.0 samplerate", nextTime, mysql.ComQuery, 0)
+	nextTime := initialTime.Add(time.Second)
+	liveSession.SetProcessInfo("analyze table t with 1.0 samplerate", nextTime, mysql.ComQuery, 0)
 
 	staleInfo, ok := staleSM.GetProcessInfo(connID)
 	require.True(t, ok)
