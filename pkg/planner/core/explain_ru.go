@@ -1848,7 +1848,7 @@ func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree F
 	if !hasOutputRows || outputRows < 0 {
 		return nil, readBillingDemoReasonMissingRuntimeRows, false
 	}
-	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceRuntimeChunkBytes)}
+	var units []readBillingDemoUnit
 	appendExpressionCPU := func(rows int64) (string, bool) {
 		exprCount, ok := readBillingDemoExpressionCount(op.Origin)
 		if !ok || exprCount < 0 {
@@ -1870,7 +1870,7 @@ func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree F
 			return nil, readBillingDemoReasonMissingExpressionCount, false
 		}
 		var inputRows int64
-		for childOrder, childIdx := range tree[idx].ChildrenIdx {
+		for _, childIdx := range tree[idx].ChildrenIdx {
 			if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil || !tree[childIdx].IsRoot {
 				return nil, readBillingDemoReasonMissingRuntimeRows, false
 			}
@@ -1879,18 +1879,6 @@ func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree F
 				return nil, readBillingDemoReasonMissingRuntimeRows, false
 			}
 			inputRows += rows
-			side := readBillingDemoInputSideLeft
-			if childOrder == 1 {
-				side = readBillingDemoInputSideRight
-			}
-			if operator.opClass == readBillingDemoOpClassHashJoin {
-				if tree[childIdx].Label == BuildSide {
-					side = readBillingDemoInputSideBuild
-				} else if tree[childIdx].Label == ProbeSide {
-					side = readBillingDemoInputSideProbe
-				}
-			}
-			units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChildActRows, side: side, value: float64(rows), widthSource: explainRUWidthSourceNotApplicable})
 		}
 		if reason, ok := appendExpressionCPU(inputRows); !ok {
 			return nil, reason, false
@@ -1918,7 +1906,6 @@ func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree F
 		if !ok || inputRows < 0 {
 			return nil, readBillingDemoReasonMissingRuntimeRows, false
 		}
-		units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: float64(inputRows), widthSource: explainRUWidthSourceNotApplicable})
 		orderWork, ok := readBillingDemoOrderingWorkUnit(op, operator.opClass, inputRows)
 		if !ok {
 			return nil, readBillingDemoOrderingFailureReason(op, operator.opClass), false
@@ -1942,16 +1929,6 @@ func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree F
 		units = append(units, readBillingDemoRuntimeChunkOutputUnits(outputRows, outputBytes)...)
 	}
 	return units, "", true
-}
-
-func readBillingDemoFixedEventUnit(inputSource string) readBillingDemoUnit {
-	return readBillingDemoUnit{
-		unit:        readBillingDemoUnitFixedEvents,
-		source:      inputSource,
-		side:        readBillingDemoInputSideAll,
-		value:       1,
-		widthSource: explainRUWidthSourceNotApplicable,
-	}
 }
 
 func readBillingDemoRuntimeChunkOutputUnits(rows, bytes int64) []readBillingDemoUnit {
@@ -2140,12 +2117,9 @@ func readBillingDemoCopUnits(estimator *readBillingDemoCopEstimator, idx int, op
 			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
 		}
 		rowWidth := readBillingDemoAverageRowWidth(scanInputRows, scanInputBytes)
-		units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceScanDetail)}
-		units = append(units,
-			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: float64(scanInputRows), rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
-			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+		units := []readBillingDemoUnit{
 			readBillingDemoUnit{unit: readBillingDemoUnitScanBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedEstimate},
-		)
+		}
 		return readBillingDemoCopUnitOutcome{success: true, units: units}
 	}
 	childIdx, failure, ok := estimator.directCopChild(idx)
@@ -2163,10 +2137,7 @@ func readBillingDemoCopUnits(estimator *readBillingDemoCopEstimator, idx int, op
 	if component.maxSummaryTasks > 0 && rowsEvidence.tasks < component.maxSummaryTasks {
 		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonIncompleteCopRuntimeRows)}
 	}
-	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceRuntimeChildActRows)}
-	units = append(units,
-		readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChildActRows, side: readBillingDemoInputSideAll, value: float64(rowsEvidence.rows), widthSource: explainRUWidthSourceNotApplicable},
-	)
+	var units []readBillingDemoUnit
 	orderWork, ok := readBillingDemoOrderingWorkUnit(estimator.tree[idx], operator.opClass, rowsEvidence.rows)
 	if !ok {
 		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoOrderingFailureReason(estimator.tree[idx], operator.opClass))}
