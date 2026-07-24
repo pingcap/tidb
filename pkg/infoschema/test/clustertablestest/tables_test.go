@@ -1117,32 +1117,48 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	now := time.Now().Unix()
 	interval := int64(1800)
 	beginTimeForCurInterval := now - now%interval
+	fpPath := "github.com/pingcap/tidb/pkg/util/stmtsummary/mockTimeForStatementsSummary"
+	enableMockTime := func(unixTime int64) {
+		require.NoError(t, failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, unixTime)))
+	}
+	disableMockTime := func() {
+		require.NoError(t, failpoint.Disable(fpPath))
+	}
 	tk := newTestKitWithPlanCache(t, store)
+
+	// clean up side effects
+	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 
 	// no evict happens now, evicted count should be empty
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("0"))
 
-	// clean up side effects
-	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
-	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
-
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	// statements summary evicted is also disabled when set tidb_enable_stmt_summary to off
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	// first sql
-	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
-	// second sql
-	tk.MustQuery("show databases;")
-	// query `evicted table` is also a SQL, passing it leads to the eviction of the previous SQLs.
-	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
-		Check(testkit.Rows(
-			fmt.Sprintf("%s %s %v",
-				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime),
-				time.Unix(beginTimeForCurInterval+interval, 0).Format(time.DateTime),
-				int64(2)),
-		))
+	func() {
+		enableMockTime(beginTimeForCurInterval)
+		defer disableMockTime()
+		tk.MustExec("set global tidb_enable_stmt_summary = 1")
+		// first sql
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+		// second sql
+		tk.MustQuery("show databases;")
+		// query `evicted table` is also a SQL, passing it leads to the eviction of the previous SQLs.
+		tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
+			Check(testkit.Rows(
+				fmt.Sprintf("%s %s %v",
+					time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime),
+					time.Unix(beginTimeForCurInterval+interval, 0).Format(time.DateTime),
+					int64(2)),
+			))
+	}()
 
 	// test too much intervals
 	tk.MustExec("use test;")
@@ -1150,18 +1166,11 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 	historySize := 24
-	fpPath := "github.com/pingcap/tidb/pkg/util/stmtsummary/mockTimeForStatementsSummary"
 	for i := int64(0); i < 100; i++ {
-		err := failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, time.Now().Unix()+interval*i))
-		if err != nil {
-			panic(err.Error())
-		}
+		enableMockTime(beginTimeForCurInterval + interval*i)
 		tk.MustExec(fmt.Sprintf("create table if not exists th%v (p bigint key, q int);", i))
 	}
-	err := failpoint.Disable(fpPath)
-	if err != nil {
-		panic(err.Error())
-	}
+	disableMockTime()
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
 		Check(testkit.Rows(fmt.Sprintf("%v", historySize)))
 
@@ -1169,13 +1178,11 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
 	tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=1;")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	enableMockTime(beginTimeForCurInterval)
 	for i := int64(0); i < 3; i++ {
 		tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
 	}
-	err = failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, time.Now().Unix()+2*interval))
-	if err != nil {
-		panic(err.Error())
-	}
+	enableMockTime(beginTimeForCurInterval + 2*interval)
 	for i := int64(0); i < 3; i++ {
 		tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
 	}
@@ -1184,7 +1191,7 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 		Check(testkit.
 			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format(time.DateTime),
 				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime)))
-	require.NoError(t, failpoint.Disable(fpPath))
+	disableMockTime()
 	// TODO: Add more tests.
 }
 
