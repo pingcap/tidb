@@ -329,16 +329,17 @@ func TestPushDownNot(t *testing.T) {
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, leFunc))
 
-	// Regression: NOT NOT NOT (a=1) should simplify to a!=1
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	// Regression for planner: NOT NOT (a=1) on the WHERE side of a LEFT JOIN
+	// must simplify to (a=1) so the join-left-side pruning can see the
+	// constraint. Odd-count NOTs around (a=1) should simplify to (a!=1).
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, eqFunc)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc) // 7 NOTs
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
+	require.True(t, ret.Equal(ctx, eqFunc))
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	neFunc := newFunctionWithMockCtx(ast.NE, col, NewOne())
+	require.True(t, ret.Equal(ctx, neFunc))
 }
 
 func TestFilter(t *testing.T) {
