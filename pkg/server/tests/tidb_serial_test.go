@@ -97,12 +97,30 @@ func TestDBStmtCount(t *testing.T) {
 }
 
 func TestLoadDataListPartition(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuite(t)
-
-	ts.RunTestLoadDataForListPartition(t)
-	ts.RunTestLoadDataForListPartition2(t)
-	ts.RunTestLoadDataForListColumnPartition(t)
-	ts.RunTestLoadDataForListColumnPartition2(t)
+	cases := []struct {
+		name string
+		run  func(*testing.T, *servertestkit.TidbTestSuite)
+	}{
+		{"list", func(t *testing.T, ts *servertestkit.TidbTestSuite) {
+			ts.RunTestLoadDataForListPartition(t)
+		}},
+		{"listGeneratedColumn", func(t *testing.T, ts *servertestkit.TidbTestSuite) {
+			ts.RunTestLoadDataForListPartition2(t)
+		}},
+		{"listColumns", func(t *testing.T, ts *servertestkit.TidbTestSuite) {
+			ts.RunTestLoadDataForListColumnPartition(t)
+		}},
+		{"listColumnsMultiColumn", func(t *testing.T, ts *servertestkit.TidbTestSuite) {
+			ts.RunTestLoadDataForListColumnPartition2(t)
+		}},
+	}
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			ts := servertestkit.CreateTidbTestSuite(t)
+			tt.run(t, ts)
+		})
+	}
 }
 
 func TestPrepareExecute(t *testing.T) {
