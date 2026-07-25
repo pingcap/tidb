@@ -5833,7 +5833,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 		return err
 	}
 	indexCheckTblInfo := currentTblInfo
-	if model.FindIndexByColumns(indexCheckTblInfo, indexCheckTblInfo.Indices, fkInfo.Cols...) == nil {
+	if model.FindIndexByColumnsForForeignKey(indexCheckTblInfo, indexCheckTblInfo.Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
