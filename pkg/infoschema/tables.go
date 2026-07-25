@@ -934,6 +934,13 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.RocksdbBlockCacheHitCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadByteStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+<<<<<<< HEAD
+=======
+	{name: execdetails.IARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentWaitTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: execdetails.ReadPoolTaskDetailsStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+>>>>>>> 05b396fb663 (executor: expose read pool task details in diagnostics (#69971))
 	{name: variable.SlowLogDBStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogIndexNamesStr, tp: mysql.TypeVarchar, size: 100},
 	{name: variable.SlowLogIsInternalStr, tp: mysql.TypeTiny, size: 1},

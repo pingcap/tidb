@@ -445,6 +445,13 @@ func TestSlowQuery(t *testing.T) {
 			"10",
 			"10",
 			"100",
+<<<<<<< HEAD
+=======
+			"0",
+			"0",
+			"0",
+			"",
+>>>>>>> 05b396fb663 (executor: expose read pool task details in diagnostics (#69971))
 			"test",
 			"",
 			"0",
@@ -541,6 +548,13 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+<<<<<<< HEAD
+=======
+			"0",
+			"0",
+			"0",
+			"",
+>>>>>>> 05b396fb663 (executor: expose read pool task details in diagnostics (#69971))
 			"rtdb",
 			"",
 			"0",

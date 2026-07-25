@@ -3519,8 +3519,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
+<<<<<<< HEAD
         sum = "h1:PJIfTrhcVitRq5nJmzTDCV75YpaDJc+YKMtqgyBfH84=",
         version = "v0.0.0-20260716111302-363178052f57",
+=======
+        sum = "h1:qW0gHsqY3X3qmyiEfESqpYSF3Vu7agUiAyBnPWQXtm8=",
+        version = "v0.0.0-20260721064811-683dad8fa368",
+>>>>>>> 05b396fb663 (executor: expose read pool task details in diagnostics (#69971))
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4206,8 +4211,13 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:RSzuwb/YdgiMPQO7dRZ8ilE71YL4n03nGU9qrCXDZEg=",
         version = "v2.0.8-0.20260716132210-520a5635e5e3",
+=======
+        sum = "h1:zku+59sqBs1v9Fvl39FFjDUivvRkKvfhXnYgePdotr8=",
+        version = "v2.0.8-0.20260724023932-61ecd7c11416",
+>>>>>>> 05b396fb663 (executor: expose read pool task details in diagnostics (#69971))
     )
     go_repository(
         name = "com_github_tikv_pd_client",
