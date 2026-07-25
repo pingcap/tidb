@@ -35,6 +35,7 @@ pub mod mvmap;
 pub mod naming;
 pub mod nocopy;
 pub mod paging;
+pub mod partialjson;
 pub mod prefetch;
 pub mod queue;
 pub mod selection;

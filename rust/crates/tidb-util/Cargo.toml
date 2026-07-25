@@ -24,7 +24,8 @@ des.workspace = true
 getrandom.workspace = true
 num-traits.workspace = true
 regex.workspace = true
-serde_json.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 tidb-hack = { path = "../tidb-hack" }
 
 [dev-dependencies]
