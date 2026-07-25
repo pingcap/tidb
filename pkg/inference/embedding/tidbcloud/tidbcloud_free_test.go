@@ -178,7 +178,6 @@ func TestTiDBCloudFreeEmbedderPreservesContextCause(t *testing.T) {
 		_, err := embedder.CreateEmbeddings(ctx, "test-model", []string{"test"}, nil)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
-
 }
 
 func TestTiDBCloudFreeEmbedderContract(t *testing.T) {
