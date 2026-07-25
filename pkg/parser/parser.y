@@ -10638,7 +10638,6 @@ TableFactor:
 				Expr:    $3.(ast.ExprNode),
 				Path:    $5.(ast.ValueExpr).GetString(),
 				Columns: $8.([]*ast.JSONTableColumn),
-				Alias:   $11.(ast.CIStr),
 			},
 			AsName: $11.(ast.CIStr),
 		}
@@ -10662,7 +10661,7 @@ JSONTableColumnDef:
 			Kind: ast.JSONTableColumnOrdinality,
 		}
 	}
-|	Identifier CastType "PATH" StringLiteral JSONTableHandlersOpt
+|	Identifier Type "PATH" StringLiteral JSONTableHandlersOpt
 	{
 		col := $5.(*ast.JSONTableHandlers)
 		$$ = &ast.JSONTableColumn{
@@ -10674,7 +10673,7 @@ JSONTableColumnDef:
 			OnError:   col.OnError,
 		}
 	}
-|	Identifier CastType "EXISTS" "PATH" StringLiteral
+|	Identifier Type "EXISTS" "PATH" StringLiteral
 	{
 		$$ = &ast.JSONTableColumn{
 			Name:      $1,

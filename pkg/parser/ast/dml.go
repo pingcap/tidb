@@ -623,10 +623,6 @@ func (n *JSONTableExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(")")
 	ctx.WritePlain(")")
-	if n.Alias.L != "" {
-		ctx.WriteKeyWord(" AS ")
-		ctx.WriteName(n.Alias.O)
-	}
 	return nil
 }
 
