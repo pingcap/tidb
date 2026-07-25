@@ -2,6 +2,7 @@
 
 # FOR ORDINALITY
 
+--error 1235
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id FOR ORDINALITY)) jt;
 
 # # PATH column 

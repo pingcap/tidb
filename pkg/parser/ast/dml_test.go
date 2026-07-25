@@ -681,21 +681,21 @@ func TestJSONTableRestore(t *testing.T) {
 	tests := []struct {
 		input  string
 		expect string
-	} {
+	}{
 		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id FOR ORDINALITY)) jt`,
-		"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` FOR ORDINALITY)) AS `jt`"},
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` FOR ORDINALITY)) AS `jt`"},
 		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a')) jt`,
-		"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a')) AS `jt`"},
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a')) AS `jt`"},
 		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT EXISTS PATH '$.a')) jt`,
-		"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT EXISTS PATH '$.a')) AS `jt`"},
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT EXISTS PATH '$.a')) AS `jt`"},
 		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (c INT PATH '$.c'))) jt`,
-		"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (`c` INT PATH '$.c'))) AS `jt`"},
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (`c` INT PATH '$.c'))) AS `jt`"},
 		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY)) jt`,
-		"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY)) AS `jt`"},
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY)) AS `jt`"},
 		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' ERROR ON ERROR)) jt`,
-		"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' ERROR ON ERROR)) AS `jt`"},
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' ERROR ON ERROR)) AS `jt`"},
 		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) jt`,
-		"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) AS `jt`"},
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) AS `jt`"},
 	}
 	for _, tt := range tests {
 		stmts, _, err := p.Parse(tt.input, "", "")

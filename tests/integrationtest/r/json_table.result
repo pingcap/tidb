@@ -1,13 +1,13 @@
 # Test JSON_TABLE syntax acceptance
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id FOR ORDINALITY)) jt;
-ERROR 8123 (HY000): JSON_TABLE function is not supported yet
+Error 1235 (42000): This version of TiDB doesn't yet support 'JSON_TABLE function'
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a')) jt;
-ERROR 8123 (HY000): JSON_TABLE function is not supported yet
+Error 1235 (42000): This version of TiDB doesn't yet support 'JSON_TABLE function'
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT EXISTS PATH '$.a')) jt;
-ERROR 8123 (HY000): JSON_TABLE function is not supported yet
+Error 1235 (42000): This version of TiDB doesn't yet support 'JSON_TABLE function'
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (c INT PATH '$.c'))) jt;
-ERROR 8123 (HY000): JSON_TABLE function is not supported yet
+Error 1235 (42000): This version of TiDB doesn't yet support 'JSON_TABLE function'
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY)) jt;
-ERROR 8123 (HY000): JSON_TABLE function is not supported yet
+Error 1235 (42000): This version of TiDB doesn't yet support 'JSON_TABLE function'
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) jt;
-ERROR 8123 (HY000): JSON_TABLE function is not supported yet
+Error 1235 (42000): This version of TiDB doesn't yet support 'JSON_TABLE function'
