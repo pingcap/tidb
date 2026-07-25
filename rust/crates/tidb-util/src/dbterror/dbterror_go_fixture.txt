@@ -1,0 +1,228 @@
+ErrInvalidWorker8203ddl:8203Invalid DDL worker
+ErrNotOwner8201ddl:8201TiDB server is not a DDL owner
+ErrCantDecodeRecord8202ddl:8202Cannot decode %s value, because %v
+ErrInvalidDDLJob8204ddl:8204Invalid DDL job
+ErrCancelledDDLJob8214ddl:8214Cancelled DDL job
+ErrPausedDDLJob8262ddl:8262Job [%v] has already been paused
+ErrBDRRestrictedDDL8263ddl:8263The operation is not allowed while the bdr role of this cluster is set to %s.
+ErrDDLAutoPausedByKVDiskFull8276ddl:8276Job [%v] has been paused by TiDB because a storage node does not have enough disk space: %s
+ErrRunMultiSchemaChanges8200ddl:8200Unsupported multi schema change for %s
+ErrOperateSameColumn8200ddl:8200Unsupported operate same column '%s'
+ErrOperateSameIndex8200ddl:8200Unsupported operate same index '%s'
+ErrWaitReorgTimeout1205ddl:1205Timeout waiting for data reorganization
+ErrInvalidStoreVer8207ddl:8207Invalid storage current version: %d
+ErrRepairTableFail8215ddl:8215Failed to repair table: %s
+ErrUnsupportedAddColumnarIndex8200ddl:8200Unsupported add columnar index: %s
+ErrUnsupportedAddVectorIndex8200ddl:8200Unsupported add vector index: %s
+ErrCantDropColWithIndex8200ddl:8200Unsupported drop column with index
+ErrCantDropColWithAutoInc8200ddl:8200Unsupported can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled
+ErrCantDropColWithCheckConstraint3959ddl:3959Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.
+ErrUnsupportedEngineAttribute3981ddl:3981Storage engine does not support ENGINE_ATTRIBUTE.
+ErrUnsupportedAddColumn8200ddl:8200Unsupported add column
+ErrUnsupportedModifyColumn8200ddl:8200Unsupported modify column: %s
+ErrUnsupportedModifyCharset8200ddl:8200Unsupported modify %s
+ErrUnsupportedModifyCollation8200ddl:8200Unsupported modifying collation from %s to %s
+ErrUnsupportedPKHandle8200ddl:8200Unsupported drop integer primary key
+ErrUnsupportedCharset8200ddl:8200Unsupported charset %s and collate %s
+ErrUnsupportedShardRowIDBits8200ddl:8200Unsupported shard_row_id_bits for table with primary key as row id
+ErrUnsupportedAlterTableWithValidation8200ddl:8200ALTER TABLE WITH VALIDATION is currently unsupported
+ErrUnsupportedAlterTableWithoutValidation8200ddl:8200ALTER TABLE WITHOUT VALIDATION is currently unsupported
+ErrUnsupportedAlterTableOption8200ddl:8200This type of ALTER TABLE is currently unsupported
+ErrUnsupportedAlterCacheForSysTable8200ddl:8200ALTER table cache for tables in system database is currently unsupported
+ErrUnsupportedAddPartialIndex8200ddl:8200Unsupported add partial index: %s
+ErrModifyColumnReferencedByPartialCondition8272ddl:8272Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
+ErrBlobKeyWithoutLength1170ddl:1170BLOB/TEXT column '%-.192s' used in key specification without a key length
+ErrKeyPart01391ddl:1391Key part '%-.192s' length cannot be 0
+ErrIncorrectPrefixKey1089ddl:1089Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+ErrTooLongKey1071ddl:1071Specified key was too long (%d bytes); max key length is %d bytes
+ErrKeyColumnDoesNotExits1072ddl:1072Key column '%-.192s' doesn't exist in table
+ErrInvalidDDLJobVersion8213ddl:8213Version %d of DDL job is greater than current one: %d
+ErrInvalidUseOfNull1138ddl:1138Invalid use of NULL value
+ErrTooManyFields1117ddl:1117Too many columns
+ErrTooManyKeys1069ddl:1069Too many keys specified; max %d keys allowed
+ErrInvalidSplitRegionRanges8212ddl:8212Failed to split region ranges: %s
+ErrReorgPanic8211ddl:8211Reorg worker panic
+ErrFkColumnCannotDrop1828ddl:1828Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+ErrFkColumnCannotDropChild1829ddl:1829Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s' of table '%-.192s'
+ErrFKIncompatibleColumns3780ddl:3780Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.
+ErrOnlyOnRangeListPartition1512ddl:1512%-.64s PARTITION can only be used on RANGE/LIST partitions
+ErrWrongKeyColumn1167ddl:1167The used storage engine can't index column '%-.192s'
+ErrWrongKeyColumnFunctionalIndex3761ddl:3761The used storage engine cannot index the expression '%s'
+ErrWrongFKOptionForGeneratedColumn3104ddl:3104Cannot define foreign key with %s clause on a generated column.
+ErrUnsupportedOnGeneratedColumn3106ddl:3106'%s' is not supported for generated columns.
+ErrGeneratedColumnNonPrior3107ddl:3107Generated column can refer only to generated columns defined prior to it.
+ErrDependentByGeneratedColumn3108ddl:3108Column '%s' has a generated column dependency.
+ErrJSONUsedAsKey3152ddl:3152JSON column '%-.192s' cannot be used in key specification.
+ErrBlobCantHaveDefault1101ddl:1101BLOB/TEXT/JSON column '%-.192s' can't have a default value
+ErrTooLongIndexComment1688ddl:1688Comment for index '%-.64s' is too long (max = %d)
+ErrTooLongTableComment1628ddl:1628Comment for table '%-.64s' is too long (max = %d)
+ErrTooLongFieldComment1629ddl:1629Comment for field '%-.64s' is too long (max = %d)
+ErrTooLongTablePartitionComment1793ddl:1793Comment for table partition '%-.64s' is too long (max = %d)
+ErrInvalidDefaultValue1067ddl:1067Invalid default value for '%-.192s'
+ErrDefValGeneratedNamedFunctionIsNotAllowed3770ddl:3770Default value expression of column '%s' contains a disallowed function: `%s`.
+ErrGeneratedColumnRefAutoInc3109ddl:3109Generated column '%s' cannot refer to auto-increment column.
+ErrExpressionIndexCanNotRefer3754ddl:3754Expression index '%s' cannot refer to an auto-increment column
+ErrUnsupportedAddPartition8200ddl:8200Unsupported add partitions
+ErrUnsupportedCoalescePartition8200ddl:8200Unsupported coalesce partitions
+ErrUnsupportedReorganizePartition8200ddl:8200Unsupported reorganize partition
+ErrUnsupportedCheckPartition8200ddl:8200Unsupported check partition
+ErrUnsupportedOptimizePartition8200ddl:8200Unsupported optimize partition
+ErrUnsupportedRebuildPartition8200ddl:8200Unsupported rebuild partition
+ErrUnsupportedRemovePartition8200ddl:8200Unsupported remove partitioning
+ErrUnsupportedRepairPartition8200ddl:8200Unsupported repair partition
+ErrGeneratedColumnFunctionIsNotAllowed3102ddl:3102Expression of generated column '%s' contains a disallowed function.
+ErrGeneratedColumnRowValueIsNotAllowed3764ddl:3764Expression of generated column '%s' cannot refer to a row value
+ErrUnsupportedPartitionByRangeColumns8200ddl:8200Unsupported partition by range columns
+ErrFunctionalIndexFunctionIsNotAllowed3758ddl:3758Expression of expression index '%s' contains a disallowed function
+ErrFunctionalIndexRowValueIsNotAllowed3800ddl:3800Expression of expression index '%s' cannot refer to a row value
+ErrUnsupportedCreatePartition8200ddl:8200Unsupported partition type, treat as normal table
+ErrUnsupportedIndexType8200ddl:8200Unsupported index type
+ErrWindowInvalidWindowFuncUse3593ddl:3593You cannot use the window function '%s' in this context.'
+ErrDupKeyName1061ddl:1061Duplicate key name '%-.192s'
+ErrFkDupName1826ddl:1826Duplicate foreign key constraint name '%s'
+ErrInvalidDDLState8210ddl:8210Invalid %s state: %v
+ErrUnsupportedModifyPrimaryKey8200ddl:8200Unsupported %s primary key
+ErrPKIndexCantBeInvisible3522ddl:3522A primary key index cannot be invisible
+ErrColumnBadNull1048ddl:1048Column '%-.192s' cannot be null
+ErrBadField1054ddl:1054Unknown column '%-.192s' in '%-.192s'
+ErrCantRemoveAllFields1090ddl:1090You can't delete all columns with ALTER TABLE; use DROP TABLE instead
+ErrCantDropFieldOrKey1091ddl:1091Can't DROP '%-.192s'; check that column/key exists
+ErrInvalidOnUpdate1294ddl:1294Invalid ON UPDATE clause for '%-.192s' column
+ErrTooLongIdent1059ddl:1059Identifier name '%-.100s' is too long
+ErrWrongDBName1102ddl:1102Incorrect database name '%-.100s'
+ErrWrongTableName1103ddl:1103Incorrect table name '%-.100s'
+ErrWrongColumnName1166ddl:1166Incorrect column name '%-.100s'
+ErrWrongPartitionName1567ddl:1567Incorrect partition name
+ErrWrongUsage1221ddl:1221Incorrect usage of %s and %s
+ErrInvalidGroupFuncUse1111ddl:1111Invalid use of group function
+ErrTableMustHaveColumns1113ddl:1113A table must have at least 1 column
+ErrWrongNameForIndex1280ddl:1280Incorrect index name '%-.100s'
+ErrUnknownCharacterSet1115ddl:1115Unknown character set: '%-.64s'
+ErrUnknownCollation1273ddl:1273Unknown collation: '%-.64s'
+ErrCollationCharsetMismatch1253ddl:1253COLLATION '%s' is not valid for CHARACTER SET '%s'
+ErrConflictingDeclarations1302ddl:1302Conflicting declarations: 'CHARACTER SET %s' and 'CHARACTER SET %s'
+ErrPrimaryCantHaveNull1171ddl:1171All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead
+ErrErrorOnRename1025ddl:1025Error on rename of '%-.210s' to '%-.210s' (errno: %d - %s)
+ErrViewSelectClause1350ddl:1350View's SELECT contains a '%s' clause
+ErrViewSelectVariable1351ddl:1351View's SELECT contains a variable or parameter
+ErrNotAllowedTypeInPartition1659ddl:1659Field '%-.192s' is of a not allowed type for this type of partitioning
+ErrPartitionMgmtOnNonpartitioned1505ddl:1505Partition management on a not partitioned table is not possible
+ErrDropPartitionNonExistent1507ddl:1507Error in list of partitions to %-.64s
+ErrSameNamePartition1517ddl:1517Duplicate partition name %-.192s
+ErrSameNamePartitionField1652ddl:1652Duplicate partition field name '%-.192s'
+ErrRangeNotIncreasing1493ddl:1493VALUES LESS THAN value must be strictly increasing for each partition
+ErrPartitionMaxvalue1481ddl:1481MAXVALUE can only be used in last partition definition
+ErrMaxvalueInValuesIn1656ddl:1656Cannot use MAXVALUE as value in VALUES IN
+ErrDropLastPartition1508ddl:1508Cannot remove all partitions, use DROP TABLE instead
+ErrTooManyPartitions1499ddl:1499Too many partitions (including subpartitions) were defined
+ErrPartitionConstDomain1563ddl:1563Partition constant is out of partition function domain
+ErrPartitionFunctionIsNotAllowed1564ddl:1564This partition function is not allowed
+ErrPartitionFuncNotAllowed1491ddl:1491The %-.192s function returns the wrong type
+ErrUniqueKeyNeedAllFieldsInPf1503ddl:1503A %-.192s must include all columns in the table's partitioning function
+ErrWrongExprInPartitionFunc1486ddl:1486Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed
+ErrWarnDataTruncated1265ddl:1265Data truncated for column '%s' at row %d
+ErrCoalesceOnlyOnHashPartition1509ddl:1509COALESCE PARTITION can only be used on HASH/KEY partitions
+ErrViewWrongList1353ddl:1353In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+ErrAlterOperationNotSupported1846ddl:1846%s is not supported. Reason: %s. Try %s.
+ErrWrongObject1347ddl:1347'%-.192s.%-.192s' is not %s
+ErrTableCantHandleFt1214ddl:1214The used table type doesn't support FULLTEXT indexes
+ErrFieldNotFoundPart1488ddl:1488Field in list of fields for partition function not found in table
+ErrWrongTypeColumnValue1654ddl:1654Partition column values of incorrect type
+ErrValuesIsNotIntType1697ddl:1697VALUES value for partition '%-.64s' must have type INT
+ErrFunctionalIndexPrimaryKey3756ddl:3756The primary key cannot be an expression index
+ErrFunctionalIndexOnField3762ddl:3762Expression index on a column is not supported. Consider using a regular index instead
+ErrInvalidAutoRandom8216ddl:8216Invalid auto random: %s
+ErrUnsupportedConstraintCheck8231ddl:8231%s is not supported
+ErrDerivedMustHaveAlias1248ddl:1248Every derived table must have its own alias
+ErrNullInValuesLessThan1566ddl:1566Not allowed to use NULL value in VALUES LESS THAN
+ErrSequenceRunOut4135ddl:4135Sequence '%-.64s.%-.64s' has run out
+ErrSequenceInvalidData4136ddl:4136Sequence '%-.64s.%-.64s' values are conflicting
+ErrSequenceAccessFail4137ddl:4137Sequence '%-.64s.%-.64s' access error
+ErrNotSequence4138ddl:4138'%-.64s.%-.64s' is not a SEQUENCE
+ErrUnknownSequence4139ddl:4139Unknown SEQUENCE: '%-.300s'
+ErrSequenceUnsupportedTableOption8227ddl:8227Unsupported sequence table-option %s
+ErrColumnTypeUnsupportedNextValue8228ddl:8228Unsupported sequence default value for column type '%s'
+ErrAddColumnWithSequenceAsDefault8230ddl:8230Unsupported using sequence as default value in add column '%s'
+ErrUnsupportedExpressionIndex8200ddl:8200Unsupported creating expression index containing unsafe functions without allow-expression-index in config
+ErrPartitionExchangePartTable1732ddl:1732Table to exchange with partition is partitioned: '%-.64s'
+ErrPartitionExchangeTempTable1733ddl:1733Table to exchange with partition is temporary: '%-.64s'
+ErrTablesDifferentMetadata1736ddl:1736Tables have different definitions
+ErrRowDoesNotMatchPartition1737ddl:1737Found a row that does not match the partition
+ErrPartitionExchangeForeignKey1740ddl:1740Table to exchange with partition has foreign key references: '%-.64s'
+ErrCheckNoSuchTable1177ddl:1177Can't open table
+ErrUnsupportedPartitionType8200ddl:8200Unsupported partition type of table %s when exchanging partition
+ErrPartitionExchangeDifferentOption1731ddl:1731Non matching attribute '%-.64s' between partition and table
+ErrTableOptionUnionUnsupported8232ddl:8232CREATE/ALTER table with union option is not supported
+ErrTableOptionInsertMethodUnsupported8233ddl:8233CREATE/ALTER table with insert method option is not supported
+ErrInvalidPlacementPolicyCheck8236ddl:8236Placement policy didn't meet the constraint, reason: %s
+ErrPlacementPolicyWithDirectOption8240ddl:8240Placement policy '%s' can't co-exist with direct placement options
+ErrPlacementPolicyInUse8241ddl:8241Placement policy '%-.192s' is still in use
+ErrMultipleDefConstInListPart1495ddl:1495Multiple definition of same constant in list partitioning
+ErrTruncatedWrongValue1292ddl:1292Truncated incorrect %-.64s value: '%-.128s'
+ErrWarnDataOutOfRange1264ddl:1264Out of range value for column '%s' at row %d
+ErrTooLongValueForType3505ddl:3505Too long enumeration/set value for column %s.
+ErrUnknownEngine1286ddl:1286Unknown storage engine '%s'
+ErrExchangePartitionDisabled8200ddl:8200Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it
+ErrPartitionNoTemporary1562ddl:1562Cannot create temporary table with partitions
+ErrOptOnTemporaryTable8006ddl:8006`%s` is unsupported on temporary tables.
+ErrOptOnCacheTable8242ddl:8242'%s' is unsupported on cache tables.
+ErrUnsupportedOnCommitPreserve8200ddl:8200TiDB doesn't support ON COMMIT PRESERVE ROWS for now
+ErrUnsupportedClusteredSecondaryKey8200ddl:8200CLUSTERED/NONCLUSTERED keyword is only supported for primary key
+ErrUnsupportedLocalTempTableDDL8200ddl:8200TiDB doesn't support %s for local temporary table
+ErrInvalidAttributesSpec8237ddl:8237Invalid attributes: %s
+ErrFunctionalIndexOnJSONOrGeometryFunction3753ddl:3753Cannot create an expression index on a function that returns a JSON or GEOMETRY value
+ErrDependentByFunctionalIndex3837ddl:3837Column '%s' has an expression index dependency and cannot be dropped or renamed
+ErrFunctionalIndexOnBlob3757ddl:3757Cannot create an expression index on an expression that returns a BLOB or TEXT. Please consider using CAST
+ErrDependentByPartitionFunctional3855ddl:3855Column '%s' has a partitioning function dependency and cannot be dropped or renamed
+ErrUnsupportedAlterTableSpec8200ddl:8200Unsupported Unsupported/unknown ALTER TABLE specification
+ErrGeneralUnsupportedDDL8200ddl:8200Unsupported %s
+ErrAutoConvert1246ddl:1246Converting column '%s' from %s to %s
+ErrWrongStringLength1470ddl:1470String '%-.70s' is too long for %s (should be no longer than %d)
+ErrBinlogUnsafeSystemFunction1674ddl:1674Statement is unsafe because it uses a system function that may return a different value on the slave
+ErrDDLJobNotFound8224ddl:8224DDL Job:%v not found
+ErrCancelFinishedDDLJob8225ddl:8225This job:%v is finished, so can't be cancelled
+ErrCannotCancelDDLJob8226ddl:8226This job:%v is almost finished, can't be cancelled now
+ErrCannotPauseDDLJob8260ddl:8260Job [%v] can't be paused: %s
+ErrCannotResumeDDLJob8261ddl:8261Job [%v] can't be resumed: %s
+ErrDDLSetting8246ddl:8246Error happened when %s DDL: %s
+ErrIngestFailed8247ddl:8247Ingest failed: %s
+ErrIngestCheckEnvFailed8256ddl:8256Check ingest environment failed: %s
+ErrColumnInChange8245ddl:8245column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
+ErrAlterTiFlashModeForTableWithoutTiFlashReplica0ddl:0TiFlash mode will take effect after at least one TiFlash replica is set for the table
+ErrUnsupportedTiFlashOperationForSysOrMemTable8200ddl:8200Unsupported `set TiFlash replica` settings for system table and memory table
+ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable8200ddl:8200Unsupported `set TiFlash replica` settings for table contains %s charset
+ErrTiFlashBackfillIndex9014ddl:9014TiFlash backfill index failed: %s
+ErrDropIndexNeededInForeignKey1553ddl:1553Cannot drop index '%-.192s': needed in a foreign key constraint
+ErrForeignKeyCannotDropParent3730ddl:3730Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.
+ErrTruncateIllegalForeignKey1701ddl:1701Cannot truncate a table referenced in a foreign key constraint (%.192s)
+ErrForeignKeyColumnCannotChange1832ddl:1832Cannot change column '%-.192s': used in a foreign key constraint '%-.192s'
+ErrForeignKeyColumnCannotChangeChild1833ddl:1833Cannot change column '%-.192s': used in a foreign key constraint '%-.192s' of table '%-.192s'
+ErrNoReferencedRow21452ddl:1452Cannot add or update a child row: a foreign key constraint fails (%.192s)
+ErrUnsupportedColumnInTTLConfig8148ddl:8148Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
+ErrTTLColumnCannotDrop8149ddl:8149Cannot drop column '%-.192s': needed in TTL config
+ErrSetTTLOptionForNonTTLTable8150ddl:8150Cannot set %s on a table without TTL config
+ErrTempTableNotAllowedWithTTL8151ddl:8151Set TTL for temporary table is not allowed
+ErrUnsupportedTTLReferencedByFK8152ddl:8152Set TTL for a table referenced by foreign key is not allowed
+ErrUnsupportedPrimaryKeyTypeWithTTL8153ddl:8153Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+ErrNotSupportedYet1235ddl:1235This version of TiDB doesn't yet support '%s'
+ErrColumnCheckConstraintReferOther3813ddl:3813Column check constraint '%s' references other column.
+ErrTableCheckConstraintReferUnknown3820ddl:3820Check constraint '%s' refers to non-existing column '%s'.
+ErrConstraintNotFound3940ddl:3940Constraint '%s' does not exist.
+ErrCheckConstraintIsViolated3819ddl:3819Check constraint '%s' is violated.
+ErrCheckConstraintNamedFuncIsNotAllowed3814ddl:3814An expression of a check constraint '%s' contains disallowed function: %s.
+ErrCheckConstraintFuncIsNotAllowed3815ddl:3815An expression of a check constraint '%s' contains disallowed function.
+ErrCheckConstraintVariables3816ddl:3816An expression of a check constraint '%s' cannot refer to a user or system variable.
+ErrCheckConstraintRefersAutoIncrementColumn3818ddl:3818Check constraint '%s' cannot refer to an auto-increment column.
+ErrCheckConstraintUsingFKReferActionColumn3823ddl:3823Column '%s' cannot be used in a check constraint '%s': needed in a foreign key constraint referential action.
+ErrNonBooleanExprForCheckConstraint3812ddl:3812An expression of non-boolean type specified to a check constraint '%s'.
+ErrWarnDeprecatedIntegerDisplayWidth1681ddl:1681Integer display width is deprecated and will be removed in a future release.
+ErrWarnDeprecatedZerofill1681ddl:1681The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.
+ErrCheckConstraintDupName3822ddl:3822Duplicate check constraint name '%s'.
+ErrUnsupportedDistTask8200ddl:8200Unsupported tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first.
+ErrGlobalIndexNotExplicitlySet8264ddl:8264Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+ErrWarnGlobalIndexNeedManuallyAnalyze8265ddl:8265Auto analyze is not effective for index '%-.192s', need analyze manually
+ErrEngineAttributeInvalidFormat8270ddl:8270Invalid engine attribute format: %s
+ErrStorageClassInvalidSpec8271ddl:8271Invalid storage class: %s
+ErrCannotSetAffinityOnTable8266ddl:8266Can not set %s on a %s.
+ErrInvalidTableAffinity8266ddl:8266Invalid AFFINITY %s
+ErrForbiddenDDL8267ddl:8267%s is forbidden

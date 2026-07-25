@@ -26,6 +26,7 @@ num-traits.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 
 [dev-dependencies]

@@ -1450,6 +1450,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "tidb-error",
  "tidb-hack",
 ]
 
