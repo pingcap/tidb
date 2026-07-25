@@ -386,6 +386,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/statistics",
+        "//pkg/statistics/handle",
         "//pkg/store/gcworker",
         "//pkg/store/helper",
         "//pkg/store/mockstore",

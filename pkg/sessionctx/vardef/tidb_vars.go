@@ -619,6 +619,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// TiDBDDLAutoPresplitInterval controls the cumulative distribution interval used by PRE_SPLIT_REGIONS AUTO.
+	TiDBDDLAutoPresplitInterval = "tidb_ddl_auto_presplit_interval"
+
 	// TiDBDDLReorgMaxWriteSpeed defines the max write limitation for the lightning local backend
 	TiDBDDLReorgMaxWriteSpeed = "tidb_ddl_reorg_max_write_speed"
 
@@ -1578,6 +1581,7 @@ const (
 	DefTiDBDDLFlashbackConcurrency          = 64
 	DefTiDBDDLErrorCountLimit               = 512
 	DefTiDBDDLReorgMaxWriteSpeed            = 0
+	DefTiDBDDLAutoPresplitInterval          = 0.01
 	DefTiDBMaxDeltaSchemaCount              = 1024
 	DefTiDBPlacementMode                    = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated   = false

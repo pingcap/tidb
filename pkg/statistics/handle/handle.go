@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/syssession"
@@ -196,15 +195,19 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 	return tblStats
 }
 
-// LoadColumnTopN loads at most limit TopN values for one column.
-func (*Handle) LoadColumnTopN(
+// AutoPresplitColumnStats is the storage result used by DDL auto pre-split.
+type AutoPresplitColumnStats = storage.AutoPresplitColumnStats
+
+// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram from one MVCC snapshot.
+func (*Handle) LoadColumnStatsForAutoPresplit(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID, columnID int64,
+	colInfo *model.ColumnInfo,
 	limit int,
-) (*statistics.TopN, error) {
-	return storage.TopNFromStorageWithPriorityAndLimit(
-		ctx, sctx, physicalTableID, 0, columnID, kv.PriorityNormal, limit)
+) (*AutoPresplitColumnStats, error) {
+	return storage.LoadColumnStatsForAutoPresplit(
+		ctx, sctx, physicalTableID, columnID, colInfo, limit)
 }
 
 // GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.

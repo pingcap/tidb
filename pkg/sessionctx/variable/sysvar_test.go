@@ -2059,6 +2059,22 @@ func TestScope(t *testing.T) {
 
 	sv = SysVar{Scope: vardef.ScopeSession, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.Error(t, sv.validateScope(vardef.ScopeGlobal))
+
+	t.Run("DDL auto presplit interval", func(t *testing.T) {
+		sv := GetSysVar(vardef.TiDBDDLAutoPresplitInterval)
+		require.NotNil(t, sv)
+		require.True(t, sv.HasSessionScope())
+		require.False(t, sv.HasGlobalScope())
+		require.Equal(t, "0.01", sv.Value)
+
+		vars := NewSessionVars(nil)
+		for _, value := range []string{"0", "0.0001", "0.01", "1"} {
+			normalized, err := sv.Validate(vars, value, vardef.ScopeSession)
+			require.NoError(t, err)
+			require.Equal(t, value, normalized)
+		}
+		require.Error(t, sv.validateScope(vardef.ScopeGlobal))
+	})
 }
 
 // TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.
