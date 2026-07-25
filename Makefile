@@ -227,7 +227,7 @@ endif
 
 .PHONY: server_failpoint
 server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
-	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(MAKE) server || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 .PHONY: init-submodule

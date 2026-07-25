@@ -53,6 +53,9 @@ func TestStandbyBlockingCh(t *testing.T) {
 		resetStandbyStateForTest()
 		defer resetStandbyStateForTest()
 
+		enableStandbyMode()
+		mustPutStandbyEtcdValue(t, etcdCli, "0")
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		InitStandby(ctx, etcdCli)
@@ -104,6 +107,20 @@ func TestStandbyBlockingCh(t *testing.T) {
 	})
 }
 
+func TestInitStandbyClearsModeWhenEtcdKeyIsMissing(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	etcdCli := cluster.RandClient()
+	resetStandbyStateForTest()
+	defer resetStandbyStateForTest()
+
+	enableStandbyMode()
+	InitStandby(context.Background(), etcdCli)
+
+	require.False(t, IsStandbyMode())
+}
+
 func TestStandbyBlockingContextCanceled(t *testing.T) {
 	t.Cleanup(resetStandbyStateForTest)
 	resetStandbyStateForTest()
@@ -120,6 +137,32 @@ func TestStandbyBlockingContextCanceled(t *testing.T) {
 	checkChanNotClosed(t, doneCh)
 	cancel()
 	checkChanClosed(t, doneCh)
+}
+
+func TestWatchStandbyExitKeepsStandbyMode(t *testing.T) {
+	// because if standby is not changed but a restart is triggered, if we turn off
+	// standby mode when context canceled, some query may still come and use latest
+	// TS rather than external TS to read.
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	etcdCli := cluster.RandClient()
+	resetStandbyStateForTest()
+	defer resetStandbyStateForTest()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	mustPutStandbyEtcdValue(t, etcdCli, "1")
+	InitStandby(ctx, etcdCli)
+	require.True(t, IsStandbyMode())
+
+	doneCh := make(chan struct{})
+	go func() {
+		WatchStandby(ctx, etcdCli)
+		close(doneCh)
+	}()
+	cancel()
+	<-doneCh
+	require.True(t, IsStandbyMode())
 }
 
 func TestWatchStandbyCompactedBeforeStart(t *testing.T) {
