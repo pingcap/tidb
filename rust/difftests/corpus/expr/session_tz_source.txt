@@ -1,0 +1,33 @@
+## FROM_UNIXTIME / UNIX_TIMESTAMP / TIDB_PARSE_TSO, transcreated from
+## evalFromUnixTime, builtinUnixTimestamp*Sig/goTimeToMysqlUnixTimestamp, and
+## builtinTidbParseTsoSig in pkg/expression/builtin_time.go. All three render
+## or interpret wall time in the SESSION time zone; goeval's mock session pins
+## FixedZone("UTC+11"), which the Rust evaluator's Columns::time_zone default
+## mirrors, so these goldens are deterministic. The zero-argument
+## UNIX_TIMESTAMP() is the wall clock and is excluded.
+from_unixtime(0)
+from_unixtime(1)
+from_unixtime(1447430881)
+from_unixtime(1447430881.123456)
+from_unixtime(1447430881.999999)
+from_unixtime(1447430881.1234567)
+from_unixtime(1447430881.12)
+from_unixtime(-1)
+from_unixtime(32536771199)
+from_unixtime(32536771200)
+from_unixtime('1447430881.5')
+from_unixtime(NULL)
+from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')
+from_unixtime(1447430881.123, '%H')
+unix_timestamp('2015-11-13 10:20:19')
+unix_timestamp('2015-11-13 10:20:19.012')
+unix_timestamp('1970-01-01 00:00:00')
+unix_timestamp('1969-12-31 23:59:59')
+unix_timestamp('3001-01-18 23:59:59')
+unix_timestamp('2038-01-19 03:14:07')
+unix_timestamp('0000-00-00 00:00:00')
+unix_timestamp('not-a-date')
+unix_timestamp(NULL)
+tidb_parse_tso(424930234047906595)
+tidb_parse_tso(0)
+tidb_parse_tso(NULL)

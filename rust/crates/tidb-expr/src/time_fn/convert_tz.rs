@@ -138,7 +138,7 @@ fn gap_transition_instant(tz: Tz, naive: NaiveDateTime) -> Option<DateTime<Utc>>
 
 /// Parses `YYYY-MM-DD[ HH:MM[:SS[.frac]]]` into calendar fields plus the
 /// verbatim fraction text; the crate's canonical datetime-string forms.
-fn parse_datetime(s: &str) -> Option<(NaiveDateTime, String)> {
+pub(super) fn parse_datetime(s: &str) -> Option<(NaiveDateTime, String)> {
     let input = s.trim();
     let (year, month, day) = parse_date_ymd(input)?;
     let date = NaiveDate::from_ymd_opt(i32::try_from(year).ok()?, month, day)?;

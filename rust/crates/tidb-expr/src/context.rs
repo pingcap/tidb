@@ -35,6 +35,21 @@ pub enum EvalError {
     Sequence(&'static str),
 }
 
+/// The session `time_zone` surfaced through [`Columns::time_zone`]: a fixed
+/// offset (`time.FixedZone`) or a named IANA zone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionTimeZone {
+    /// A fixed offset east of UTC with its display name.
+    Fixed {
+        /// The zone's display name.
+        name: String,
+        /// Seconds east of UTC.
+        offset_secs: i32,
+    },
+    /// A named IANA zone.
+    Named(chrono_tz::Tz),
+}
+
 /// Resolves column and session state during evaluation.
 pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
@@ -77,6 +92,16 @@ pub trait Columns {
         let _ = value;
     }
 
+    /// TiDB's session `time_zone`. The default is the exact fixed zone the
+    /// goeval oracle's mock session pins (`UTC+11`), so constant folding
+    /// stays byte-comparable with the golden corpus; a real session
+    /// overrides this.
+    fn time_zone(&self) -> SessionTimeZone {
+        SessionTimeZone::Fixed {
+            name: "UTC+11".to_string(),
+            offset_secs: 11 * 3600,
+        }
+    }
     /// TiDB's session `default_week_format`.
     fn default_week_format(&self) -> i64 {
         0
