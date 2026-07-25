@@ -1284,6 +1284,8 @@ name = "tidb-expr"
 version = "0.0.0"
 dependencies = [
  "aes",
+ "chrono",
+ "chrono-tz",
  "des",
  "flate2",
  "md-5",

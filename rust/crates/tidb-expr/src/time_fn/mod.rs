@@ -19,6 +19,7 @@
 //! generic builtin dispatcher or splitting helpers across unrelated modules.
 
 pub(crate) mod calendar;
+mod convert_tz;
 
 use self::calendar::{civil_from_days, days_from_civil, parse_date_ymd, week_of_year};
 use crate::coerce::coerce_str;
@@ -59,6 +60,7 @@ pub(crate) fn dispatch(
         "TIME_FORMAT" => time_format(vals),
         "STR_TO_DATE" => calendar::str_to_date(vals),
         "TIMEDIFF" => time_diff(vals),
+        "CONVERT_TZ" => convert_tz::convert_tz(vals),
         "TIMESTAMPDIFF" => calendar::timestamp_diff(vals),
         "TO_DAYS" => calendar::to_days(vals),
         "TO_SECONDS" => calendar::to_seconds(vals),

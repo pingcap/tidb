@@ -1,0 +1,24 @@
+## CONVERT_TZ, transcreated from builtinConvertTzSig in
+## pkg/expression/builtin_time.go + timeZone2int + CoreTime.GoTime/
+## AdjustedGoTime. Named zones are chrono-tz IANA data. DST gap resolves to
+## the transition instant; ambiguity to the earliest instant (both pinned
+## here). SYSTEM needs the process-local zone (machine-dependent) and is
+## deliberately excluded from this deterministic corpus.
+convert_tz('2004-01-01 12:00:00','+00:00','+10:00')
+convert_tz('2004-01-01 12:00:00','-01:00','-10:32')
+convert_tz('2004-01-01 12:00:00.25','+00:00','+10:00')
+convert_tz('2004-01-01 12:00:00.123456','+00:00','+00:30')
+convert_tz('2007-03-11 02:30:00','US/Eastern','UTC')
+convert_tz('2007-11-04 01:30:00','US/Eastern','UTC')
+convert_tz('2004-07-01 12:00:00','Europe/Berlin','Asia/Shanghai')
+convert_tz('2004-01-01 12:00:00','+14:00','+00:00')
+convert_tz('2004-01-01','+00:00','+10:00')
+convert_tz('2004-01-01 12:00:00','MET','UTC')
+convert_tz('2004-01-01 12:00:00','+0:9','+00:00')
+convert_tz('2004-01-01 12:00:00','+14:01','+00:00')
+convert_tz('2004-01-01 12:00:00','+13:60','+00:00')
+convert_tz('2004-01-01 12:00:00','','UTC')
+convert_tz('2004-01-01 12:00:00','bogus/zone','UTC')
+convert_tz(NULL,'+00:00','+10:00')
+convert_tz('0000-00-00','+00:00','+10:00')
+convert_tz('not-a-date','+00:00','+10:00')
