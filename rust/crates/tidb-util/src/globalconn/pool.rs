@@ -29,7 +29,9 @@ use std::sync::Mutex;
 /// Invalid value from an [`IdPool`] (Go `IDPoolInvalidValue`).
 pub const ID_POOL_INVALID_VALUE: u64 = u64::MAX;
 
-/// The pool allocating & deallocating IDs (Go `IDPool`).
+/// The pool allocating & deallocating IDs (Go `IDPool`, which has no
+/// IsEmpty; `len` keeps its -1-for-unsupported contract).
+#[allow(clippy::len_without_is_empty)]
 pub trait IdPool: fmt::Display {
     /// Initiates the pool.
     fn init(&mut self, size: u64);
