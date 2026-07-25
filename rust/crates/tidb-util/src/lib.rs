@@ -22,6 +22,7 @@ pub mod arena;
 pub mod backoff;
 pub mod bitmap;
 pub mod checksum;
+pub mod column_mapping;
 pub mod disjointset;
 pub mod encrypt;
 pub mod fastrand;
