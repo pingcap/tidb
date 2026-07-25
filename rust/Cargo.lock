@@ -1452,6 +1452,7 @@ dependencies = [
  "serde_json",
  "tidb-error",
  "tidb-hack",
+ "tracing",
 ]
 
 [[package]]

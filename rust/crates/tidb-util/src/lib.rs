@@ -29,6 +29,7 @@ pub mod disjointset;
 pub mod encrypt;
 pub mod fastrand;
 pub mod generic;
+pub mod globalconn;
 pub mod intest;
 pub mod israce;
 pub mod layered_io;
