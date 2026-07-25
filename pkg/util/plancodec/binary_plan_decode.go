@@ -104,18 +104,33 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	return b.String(), nil
 }
 
-// DecodeBinaryPlan4Connection decodes a binary execution plan for the `EXPLAIN FOR CONNECTION` statement.
-// This function is also used by TopSQL for plan analysis.
-func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql bool) ([][]string, error) {
+// ParseBinaryPlan decodes the binary plan into ExplainData so callers can reuse
+// the parsed payload across schema inspection and row rendering.
+func ParseBinaryPlan(binaryPlan string) (*tipb.ExplainData, error) {
 	protoBytes, err := decompress(binaryPlan)
 	if err != nil {
 		return nil, err
 	}
 	pb := &tipb.ExplainData{}
-	err = pb.Unmarshal(protoBytes)
+	if err := pb.Unmarshal(protoBytes); err != nil {
+		return nil, err
+	}
+	return pb, nil
+}
+
+// DecodeBinaryPlan4Connection decodes a binary execution plan for the `EXPLAIN FOR CONNECTION` statement.
+// This function is also used by TopSQL for plan analysis.
+func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql bool) ([][]string, error) {
+	pb, err := ParseBinaryPlan(binaryPlan)
 	if err != nil {
 		return nil, err
 	}
+	return DecodeBinaryPlan4ConnectionFromData(pb, format, forTopsql)
+}
+
+// DecodeBinaryPlan4ConnectionFromData renders a parsed ExplainData payload for
+// EXPLAIN FOR CONNECTION callers that already decoded the binary plan.
+func DecodeBinaryPlan4ConnectionFromData(pb *tipb.ExplainData, format string, forTopsql bool) ([][]string, error) {
 	if pb.DiscardedDueToTooLong {
 		return nil, nil
 	}

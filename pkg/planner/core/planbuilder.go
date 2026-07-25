@@ -698,7 +698,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.ExplainRoutineStmt:
 		return b.buildExplainRoutine(ctx, x)
 	case *ast.ExplainForStmt:
-		return b.buildExplainFor(x)
+		return b.buildExplainFor(ctx, x)
 	case *ast.TraceStmt:
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
@@ -6380,10 +6380,29 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
 // See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
-func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan, error) {
-	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
-	if !ok {
-		return nil, plannererrors.ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+func (b *PlanBuilder) buildExplainFor(ctx context.Context, explainFor *ast.ExplainForStmt) (base.Plan, error) {
+	sm := b.ctx.GetSessionManager()
+	var processInfo *util2.ProcessInfo
+	if fetcher, ok := sm.(util2.ExplainProcessInfoFetcher); ok {
+		execCtx, ok := b.ctx.(util2.ExplainProcessInfoContext)
+		if !ok {
+			return nil, errors.New("session context does not support remote explain fetch")
+		}
+		var err error
+		processInfo, err = fetcher.GetProcessInfoForExplain(ctx, execCtx, explainFor.ConnectionID)
+		if err != nil {
+			return nil, err
+		}
+		if processInfo == nil {
+			return nil, plannererrors.ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+		}
+	} else {
+		// Keep the original instance-local behavior for session managers without cluster explain support.
+		var ok bool
+		processInfo, ok = sm.GetProcessInfo(explainFor.ConnectionID)
+		if !ok {
+			return nil, plannererrors.ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+		}
 	}
 	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
 		if b.ctx.GetSessionVars().User.Username != processInfo.User {
@@ -6399,7 +6418,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 
 	targetPlan, ok := processInfo.Plan.(base.Plan)
 	explainForFormat := strings.ToLower(explainFor.Format)
-	if !ok || targetPlan == nil {
+	if processInfo.BriefBinaryPlan == "" && (!ok || targetPlan == nil) {
 		return &Explain{Format: explainForFormat}, nil
 	}
 	// TODO: support other explain formats for connection

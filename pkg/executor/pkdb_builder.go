@@ -8,6 +8,8 @@ import (
 
 func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 	switch v := p.(type) {
+	case *plannercore.ExplainForConnection:
+		return b.buildExplainForConnection(v)
 	case *plannercore.CreateLogReplication:
 		return &CreateLogReplicationExec{
 			BaseExecutor:      exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
