@@ -1,0 +1,82 @@
+ErrGetStartTS8120executor:8120Can not get start ts
+ErrUnknownPlan8114executor:8114Unknown plan
+ErrPrepareMulti8115executor:8115Can not prepare multiple statements
+ErrPrepareDDL8116executor:8116Can not prepare DDL statements with parameters
+ErrResultIsEmpty8117executor:8117Result is empty
+ErrBuildExecutor8118executor:8118Failed to build executor
+ErrBatchInsertFail8119executor:8119Batch insert failed, please clean the table and try again.
+ErrUnsupportedPs1295executor:1295This command is not supported in the prepared statement protocol yet
+ErrSubqueryMoreThan1Row1242executor:1242Subquery returns more than 1 row
+ErrIllegalGrantForTable1144executor:1144Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used
+ErrColumnsNotMatched8068executor:8068Load data: unmatched columns
+ErrCantCreateUserWithGrant1410executor:1410You are not allowed to create a user with GRANT
+ErrPasswordNoMatch1133executor:1133Can't find any matching row in the user table
+ErrCannotUser1396executor:1396Operation %s failed for %.256s
+ErrGrantRole3523executor:3523Unknown authorization ID %.256s
+ErrPasswordFormat1827executor:1827The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
+ErrCantChangeTxCharacteristics1568executor:1568Transaction characteristics can't be changed while a transaction is in progress
+ErrPsManyParam1390executor:1390Prepared statement contains too many placeholders
+ErrAdminCheckTable8003executor:8003TiDB admin check table failed.
+ErrDBaccessDenied1044executor:1044Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
+ErrTableaccessDenied1142executor:1142%-.128s command denied to user '%-.48s'@'%-.255s' for table '%-.64s'
+ErrBadDB1049executor:1049Unknown database '%-.192s'
+ErrWrongObject1347executor:1347'%-.192s.%-.192s' is not %s
+ErrWrongUsage1221executor:1221Incorrect usage of %s and %s
+ErrRoleNotGranted3530privilege:3530%s is not granted to %s
+ErrDeadlock1213executor:1213Deadlock found when trying to get lock; try restarting transaction
+ErrQueryInterrupted1317executor:1317Query execution was interrupted
+ErrMaxExecTimeExceeded3024executor:3024Query execution was interrupted, maximum statement execution time exceeded
+ErrResourceGroupQueryRunawayInterrupted8253executor:8253Query execution was interrupted, identified as runaway query [%s]
+ErrQueryExecStopped8180executor:8180Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
+ErrResourceGroupQueryRunawayQuarantine8254executor:8254Quarantined and interrupted because of being in runaway watch list
+ErrDynamicPrivilegeNotRegistered3929executor:3929Dynamic privilege '%s' is not registered with the server.
+ErrIllegalPrivilegeLevel3619executor:3619Illegal privilege level specified for %s
+ErrInvalidSplitRegionRanges8212executor:8212Failed to split region ranges: %s
+ErrViewInvalid1356executor:1356View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+ErrInstanceScope8142executor:8142modifying %s will require SET GLOBAL in a future version of TiDB
+ErrSettingNoopVariable8144executor:8144setting %s has no effect in TiDB
+ErrLazyUniquenessCheckFailure8147executor:8147transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+ErrMemoryExceedForQuery8175executor:8175Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]
+ErrMemoryExceedForInstance8176executor:8176Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
+ErrDeleteNotFoundColumn8177executor:8177Delete can not find column %s for table %s
+ErrBRIEBackupFailed8124executor:8124Backup failed: %s
+ErrBRIERestoreFailed8125executor:8125Restore failed: %s
+ErrBRIEImportFailed8126executor:8126Import failed: %s
+ErrBRIEExportFailed8127executor:8127Export failed: %s
+ErrBRJobNotFound8174executor:8174BRIE Job %d not found
+ErrCTEMaxRecursionDepth3636executor:3636Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value
+ErrPluginIsNotLoaded1524executor:1524Plugin '%-.192s' is not loaded
+ErrSetPasswordAuthPlugin1699executor:1699SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.
+ErrFuncNotEnabled1235executor:1235%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.
+ErrSavepointNotExists1305executor:1305%s %s does not exist
+ErrForeignKeyCascadeDepthExceeded3008executor:3008Foreign key cascade delete/update exceeds max depth of %v.
+ErrPasswordExpireAnonymousUser3016executor:3016The password for anonymous user cannot be expired.
+ErrMustChangePassword1820executor:1820You must reset your password using ALTER USER statement before executing this statement
+ErrSecondPasswordCannotBeEmpty3878executor:3878Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.
+ErrPasswordCannotBeRetainedOnPluginChange3894executor:3894Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.
+ErrCurrentPasswordCannotBeRetained3895executor:3895Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.
+ErrWrongStringLength1470ddl:1470String '%-.70s' is too long for %s (should be no longer than %d)
+ErrUnsupportedFlashbackTmpTable8200ddl:8200Recover/flashback table is not supported on temporary tables
+ErrTruncateWrongInsertValue1292table:1292Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d
+ErrExistsInHistoryPassword3638executor:3638Cannot use these credentials for '%s@%s' because they contradict the password history policy.
+ErrUserNameNeedPrefix1468ddl:1468User name must start with `%s.` (use `%s.%s` instead)
+ErrWarnTooFewRecords1261executor:1261Row %d doesn't contain data for all columns
+ErrWarnTooManyRecords1262executor:1262Row %d was truncated; it contained more data than there were input columns
+ErrLoadDataFromServerDisk8154executor:8154Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '%s' needs to specify the clause of LOCAL first
+ErrLoadParquetFromLocal8155executor:8155Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage
+ErrLoadDataEmptyPath8156executor:8156The value of INFILE must not be empty when LOAD DATA from LOCAL
+ErrLoadDataUnsupportedFormat8157executor:8157The FORMAT '%s' is not supported
+ErrLoadDataInvalidURI8158executor:8158The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'
+ErrLoadDataCantAccess8159executor:8159Access to the %s has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
+ErrLoadDataCantRead8160executor:8160Failed to read source files. Reason: %s. %s
+ErrLoadDataWrongFormatConfig8162executor:8162
+ErrUnknownOption8163executor:8163Unknown option %s
+ErrInvalidOptionVal8164executor:8164Invalid option value for %s
+ErrDuplicateOption8165executor:8165Option %s specified more than once
+ErrLoadDataUnsupportedOption8166executor:8166Unsupported option %s for %s
+ErrLoadDataDuplicateKeyConflict8167executor:8167Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'capture'
+ErrLoadDataJobNotFound8170executor:8170Job ID %d doesn't exist
+ErrLoadDataInvalidOperation8171executor:8171The current job status cannot perform the operation. %s
+ErrLoadDataLocalUnsupportedOption8172executor:8172Unsupported option for LOAD DATA LOCAL INFILE: %s
+ErrLoadDataPreCheckFailed8173executor:8173PreCheck failed: %s
+ErrMaxKeysReadExceeded8274executor:8274tidb_max_keys_read limit exceeded

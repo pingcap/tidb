@@ -31,6 +31,7 @@
 //! byte-for-byte rather than re-derived by hand.
 
 mod ddl_errors;
+pub mod exeerrors;
 
 pub use ddl_errors::*;
 
@@ -143,6 +144,34 @@ mod tests {
             expected.len(),
             "every Go dbterror variable must have a Rust counterpart"
         );
+        for (go_name, err) in entries {
+            let (code, rfc, msg) = expected
+                .remove(go_name)
+                .unwrap_or_else(|| panic!("{go_name} missing from fixture"));
+            assert_eq!(err.code().value(), code, "{go_name} code");
+            assert_eq!(err.rfc_code(), rfc, "{go_name} rfc");
+            assert_eq!(err.message(), msg, "{go_name} message");
+        }
+        assert!(expected.is_empty(), "unported entries: {expected:?}");
+    }
+
+    /// Every generated executor error must match the real Go package dump,
+    /// exactly like the DDL table's test.
+    #[test]
+    fn exeerrors_match_go_fixture() {
+        let fixture = include_str!("exeerrors_go_fixture.txt");
+        let mut expected = std::collections::HashMap::new();
+        for line in fixture.lines() {
+            let mut parts = line.splitn(4, '\u{1f}');
+            let name = parts.next().unwrap();
+            let code: isize = parts.next().unwrap().parse().unwrap();
+            let rfc = parts.next().unwrap();
+            let msg = parts.next().unwrap();
+            expected.insert(name, (code, rfc, msg));
+        }
+
+        let entries = exeerrors::fixture_entries();
+        assert_eq!(entries.len(), expected.len());
         for (go_name, err) in entries {
             let (code, rfc, msg) = expected
                 .remove(go_name)
