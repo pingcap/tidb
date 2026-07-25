@@ -19,6 +19,7 @@ race = []
 [dependencies]
 aes.workspace = true
 chrono.workspace = true
+chrono-tz.workspace = true
 crc32fast.workspace = true
 des.workspace = true
 getrandom.workspace = true
