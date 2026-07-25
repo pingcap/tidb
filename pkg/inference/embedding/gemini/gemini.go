@@ -31,35 +31,19 @@ const DefaultAPIBaseURL = "https://generativelanguage.googleapis.com/v1beta/mode
 // Embedder is for Gemini embeddings.
 type Embedder struct {
 	client http.Client
-	cfg    EmbedderConfig
+	cfg    base.APIKeyProviderConfig
 }
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// EmbedderConfig holds the configuration for GeminiEmbedder.
-// It remains provider-specific because Gemini handles non-200 responses
-// through its regular error schema and does not expose the configurable
-// unauthorized-error mapping provided by base.APIKeyProviderConfig.
-type EmbedderConfig struct {
-	GetAPIKey func() string
-	// GetBaseURL returns the API base ending before the model name. The
-	// embedder appends /<model>:batchEmbedContents. An empty value uses
-	// DefaultAPIBaseURL.
-	GetBaseURL       func() string
-	ErrMissingAPIKey error // The error to return when API key is missing
-	// MaxResponseBodyBytes limits both successful and error response bodies.
-	// Non-positive values use base.DefaultMaxResponseBodyBytes.
-	MaxResponseBodyBytes int64
-}
-
 // NewGeminiEmbedder creates a new GeminiEmbedder instance with the provided configuration.
-func NewGeminiEmbedder(cfg EmbedderConfig) *Embedder {
-	if cfg.MaxResponseBodyBytes <= 0 {
-		cfg.MaxResponseBodyBytes = base.DefaultMaxResponseBodyBytes
-	}
+// cfg.GetBaseURL returns the API base ending before the model name. The
+// embedder appends /<model>:batchEmbedContents; an empty value uses
+// DefaultAPIBaseURL.
+func NewGeminiEmbedder(cfg base.APIKeyProviderConfig) *Embedder {
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
-		cfg:    cfg,
+		cfg:    cfg.WithDefaults(),
 	}
 }
 
@@ -125,22 +109,11 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		}, opts)
 	}
 
-	var apiKey string
-	if e.cfg.GetAPIKey != nil {
-		apiKey = e.cfg.GetAPIKey()
+	apiKey, err := e.cfg.ResolveAPIKey(fmt.Errorf("API key is not configured for Gemini"))
+	if err != nil {
+		return nil, err
 	}
-	if apiKey == "" {
-		if e.cfg.ErrMissingAPIKey != nil {
-			return nil, e.cfg.ErrMissingAPIKey
-		}
-		return nil, fmt.Errorf("API key is not configured for Gemini")
-	}
-
-	var configuredBaseURL string
-	if e.cfg.GetBaseURL != nil {
-		configuredBaseURL = e.cfg.GetBaseURL()
-	}
-	fullURL, err := batchEmbeddingsEndpoint(configuredBaseURL, model)
+	fullURL, err := batchEmbeddingsEndpoint(e.cfg.ConfiguredBaseURL(), model)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +129,9 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		MaxResponseBodyBytes: e.cfg.MaxResponseBodyBytes,
 		Secrets:              []string{apiKey},
 		DecodeErrorMessage:   decodeErrorMessage,
-		DecodeEmbeddings:     decodeEmbeddings,
+		StatusErrors: map[int]error{
+			http.StatusUnauthorized: e.cfg.UnauthorizedError("Gemini", http.StatusUnauthorized),
+		},
+		DecodeEmbeddings: decodeEmbeddings,
 	})
 }

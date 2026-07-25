@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
@@ -58,27 +57,13 @@ func featureExtractionEndpoint(configured, model string) (string, error) {
 	}
 	modelParts := strings.Split(model, "/")
 	for i := range modelParts {
-		modelParts[i] = escapePathSegment(modelParts[i])
+		modelParts[i] = base.EscapeURLPathSegment(modelParts[i])
 	}
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/models/" + strings.Join(modelParts, "/") + "/pipeline/feature-extraction"
 	if err := base.SetEscapedURLPath(u, escapedPath, "HuggingFace API base URL path"); err != nil {
 		return "", err
 	}
 	return u.String(), nil
-}
-
-func escapePathSegment(segment string) string {
-	escaped := url.PathEscape(segment)
-	// url.PathEscape intentionally leaves the complete dot segments "." and
-	// ".." unchanged. Escape them explicitly so intermediaries cannot remove
-	// or normalize model path segments according to RFC 3986 section 5.2.4.
-	if escaped == "." {
-		return "%2E"
-	}
-	if escaped == ".." {
-		return "%2E%2E"
-	}
-	return escaped
 }
 
 func decodeErrorMessage(body []byte) (string, error) {
@@ -98,13 +83,6 @@ func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
 		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(embeddings), expectedCount)
 	}
 	return embeddings, nil
-}
-
-func (e *Embedder) unauthorizedError() error {
-	if e.cfg.ErrUnauthorized != nil {
-		return e.cfg.ErrUnauthorized
-	}
-	return fmt.Errorf("HuggingFace returns status unauthorized, check API key")
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
@@ -140,7 +118,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		Secrets:              []string{apiKey},
 		DecodeErrorMessage:   decodeErrorMessage,
 		StatusErrors: map[int]error{
-			http.StatusUnauthorized: e.unauthorizedError(),
+			http.StatusUnauthorized: e.cfg.UnauthorizedError("HuggingFace", http.StatusUnauthorized),
 			http.StatusNotFound:     fmt.Errorf("HuggingFace model '%s' does not exist or is not available", model),
 		},
 		DecodeEmbeddings: decodeEmbeddings,

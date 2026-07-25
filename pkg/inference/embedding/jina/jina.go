@@ -80,13 +80,6 @@ func validateOptions(opts map[string]any) error {
 	return nil
 }
 
-func (e *Embedder) unauthorizedError() error {
-	if e.cfg.ErrUnauthorized != nil {
-		return e.cfg.ErrUnauthorized
-	}
-	return fmt.Errorf("JinaAI returns status unauthorized, check API key")
-}
-
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
@@ -123,7 +116,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		Secrets:              []string{apiKey},
 		DecodeErrorMessage:   decodeErrorMessage,
 		StatusErrors: map[int]error{
-			http.StatusUnauthorized: e.unauthorizedError(),
+			http.StatusUnauthorized: e.cfg.UnauthorizedError("JinaAI", http.StatusUnauthorized),
 		},
 		DecodeEmbeddings: decodeEmbeddings,
 	})

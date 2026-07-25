@@ -153,6 +153,15 @@ func (c APIKeyProviderConfig) ResolveAPIKey(fallbackErr error) (string, error) {
 	return "", fmt.Errorf("API key is not configured")
 }
 
+// UnauthorizedError returns the configured unauthorized error, or a generic
+// provider-specific error for the given HTTP status.
+func (c APIKeyProviderConfig) UnauthorizedError(provider string, statusCode int) error {
+	if c.ErrUnauthorized != nil {
+		return c.ErrUnauthorized
+	}
+	return fmt.Errorf("%s returns status %s, check API key", provider, strings.ToLower(http.StatusText(statusCode)))
+}
+
 // ConfiguredBaseURL returns the configured provider URL or an empty string.
 func (c APIKeyProviderConfig) ConfiguredBaseURL() string {
 	if c.GetBaseURL == nil {
@@ -214,6 +223,20 @@ func ParseHTTPURL(rawURL, description string) (*url.URL, error) {
 	return u, nil
 }
 
+// EscapeURLPathSegment escapes one URL path segment. Complete dot segments
+// are encoded explicitly so intermediaries cannot remove or normalize them
+// according to RFC 3986 section 5.2.4.
+func EscapeURLPathSegment(segment string) string {
+	escaped := url.PathEscape(segment)
+	if escaped == "." {
+		return "%2E"
+	}
+	if escaped == ".." {
+		return "%2E%2E"
+	}
+	return escaped
+}
+
 // SetEscapedURLPath assigns an escaped URL path without exposing the original
 // path in an error. description must be a fixed, non-sensitive name.
 func SetEscapedURLPath(u *url.URL, escapedPath, description string) error {
@@ -254,9 +277,6 @@ func DoRequest(
 
 	body, err := ReadResponseBody(resp.Body, maxResponseBodyBytes)
 	if err != nil {
-		if contextCause := context.Cause(ctx); contextCause != nil {
-			return 0, nil, contextCause
-		}
 		return 0, nil, err
 	}
 	return resp.StatusCode, body, nil

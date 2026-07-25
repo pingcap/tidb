@@ -93,13 +93,6 @@ func decodeEmbeddings(body []byte, expectedCount int) ([][]float32, error) {
 	return base.DecodeIndexedBase64Embeddings(response.Data, expectedCount)
 }
 
-func (e *Embedder) unauthorizedError(statusCode int) error {
-	if e.cfg.ErrUnauthorized != nil {
-		return e.cfg.ErrUnauthorized
-	}
-	return fmt.Errorf("NVIDIA NIM returns status %s, check API key", strings.ToLower(http.StatusText(statusCode)))
-}
-
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
@@ -136,8 +129,8 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		Secrets:              []string{apiKey},
 		DecodeErrorMessage:   decodeErrorMessage,
 		StatusErrors: map[int]error{
-			http.StatusUnauthorized: e.unauthorizedError(http.StatusUnauthorized),
-			http.StatusForbidden:    e.unauthorizedError(http.StatusForbidden),
+			http.StatusUnauthorized: e.cfg.UnauthorizedError("NVIDIA NIM", http.StatusUnauthorized),
+			http.StatusForbidden:    e.cfg.UnauthorizedError("NVIDIA NIM", http.StatusForbidden),
 			http.StatusNotFound:     fmt.Errorf("NVIDIA NIM model '%s' does not exist or is not available", model),
 		},
 		DecodeEmbeddings: decodeEmbeddings,

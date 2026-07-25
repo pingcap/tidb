@@ -16,7 +16,6 @@ package tidbcloud
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -27,17 +26,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type contextBlockingReader struct {
-	ctx         context.Context
-	readStarted chan<- struct{}
-}
-
-func (r *contextBlockingReader) Read([]byte) (int, error) {
-	close(r.readStarted)
-	<-r.ctx.Done()
-	return 0, r.ctx.Err()
-}
 
 func TestTiDBCloudFreeEmbedder_Success(t *testing.T) {
 	mockResponse := `{
@@ -191,46 +179,6 @@ func TestTiDBCloudFreeEmbedderPreservesContextCause(t *testing.T) {
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
-	t.Run("response body", func(t *testing.T) {
-		cause := errors.New("response read canceled by caller")
-		ctx, cancel := context.WithCancelCause(context.Background())
-		defer cancel(nil)
-		readStarted := make(chan struct{})
-		embedder := NewTiDBCloudFreeEmbedder(EmbedderConfig{
-			GetBaseURL: func() string { return "http://127.0.0.1" },
-		})
-		embedder.client.Transport = testutil.RoundTripFunc(func(req *http.Request) (*http.Response, error) {
-			return &http.Response{
-				Status:     "200 OK",
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body: io.NopCloser(&contextBlockingReader{
-					ctx:         req.Context(),
-					readStarted: readStarted,
-				}),
-				Request: req,
-			}, nil
-		})
-		errCh := make(chan error, 1)
-		go func() {
-			_, err := embedder.CreateEmbeddings(ctx, "test-model", []string{"test"}, nil)
-			errCh <- err
-		}()
-
-		select {
-		case <-readStarted:
-		case <-time.After(5 * time.Second):
-			require.FailNow(t, "provider did not start reading the response body")
-		}
-		cancel(cause)
-
-		select {
-		case err := <-errCh:
-			require.ErrorIs(t, err, cause)
-		case <-time.After(5 * time.Second):
-			require.FailNow(t, "provider did not return after context cancellation")
-		}
-	})
 }
 
 func TestTiDBCloudFreeEmbedderContract(t *testing.T) {
@@ -245,9 +193,9 @@ func TestTiDBCloudFreeEmbedderContract(t *testing.T) {
 			embedder.client.Transport = cfg.Transport
 			return embedder
 		},
-		RequestError:              "failed to request TiDB Cloud Inference Service",
-		ResponseBodyLimitError:    "failed to read from TiDB Cloud Inference Service",
-		TransportCauseIsPreserved: false,
+		RequestError:              "TiDB Cloud Inference request failed",
+		ResponseBodyLimitError:    "response body exceeds maximum size of 64 bytes",
+		TransportCauseIsPreserved: true,
 		RedactionResponse:         `{"error":"invalid api key: provider-secret"}`,
 		RedactionError:            "TiDB Cloud Inference: status code 400, message: invalid api key: [REDACTED]",
 	})

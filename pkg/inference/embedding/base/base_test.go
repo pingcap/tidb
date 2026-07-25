@@ -205,10 +205,12 @@ func TestHTTPHelpers(t *testing.T) {
 	t.Run("API key provider config", func(t *testing.T) {
 		fallbackErr := errors.New("default missing API key error")
 		customErr := errors.New("custom missing API key error")
+		customUnauthorizedErr := errors.New("custom unauthorized error")
 		cfg := APIKeyProviderConfig{
 			GetAPIKey:        func() string { return "test-api-key" },
 			GetBaseURL:       func() string { return "https://example.com/embed" },
 			ErrMissingAPIKey: customErr,
+			ErrUnauthorized:  customUnauthorizedErr,
 		}
 
 		normalized := cfg.WithDefaults()
@@ -233,6 +235,11 @@ func TestHTTPHelpers(t *testing.T) {
 
 		_, err = APIKeyProviderConfig{}.ResolveAPIKey(nil)
 		require.EqualError(t, err, "API key is not configured")
+
+		require.ErrorIs(t, normalized.UnauthorizedError("test provider", http.StatusUnauthorized), customUnauthorizedErr)
+		normalized.ErrUnauthorized = nil
+		require.EqualError(t, normalized.UnauthorizedError("test provider", http.StatusUnauthorized), "test provider returns status unauthorized, check API key")
+		require.EqualError(t, normalized.UnauthorizedError("test provider", http.StatusForbidden), "test provider returns status forbidden, check API key")
 	})
 
 	t.Run("parse HTTP URL", func(t *testing.T) {
@@ -254,6 +261,10 @@ func TestHTTPHelpers(t *testing.T) {
 	})
 
 	t.Run("escaped path", func(t *testing.T) {
+		require.Equal(t, "model%2Fname", EscapeURLPathSegment("model/name"))
+		require.Equal(t, "%2E", EscapeURLPathSegment("."))
+		require.Equal(t, "%2E%2E", EscapeURLPathSegment(".."))
+
 		u, err := ParseHTTPURL("https://example.com?tenant=x", "test provider URL")
 		require.NoError(t, err)
 		require.NoError(t, SetEscapedURLPath(u, "/models/org%2Fmodel", "test provider URL path"))

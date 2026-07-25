@@ -142,13 +142,6 @@ func decodeResponse(body []byte, expectedCount int) ([][]float32, error) {
 	return embeddings, nil
 }
 
-func (e *Embedder) unauthorizedError() error {
-	if e.cfg.ErrUnauthorized != nil {
-		return e.cfg.ErrUnauthorized
-	}
-	return fmt.Errorf("cohere returns status unauthorized, check API key")
-}
-
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // Cohere v3 and newer models require opts to include an "input_type" appropriate
 // for the current call, such as "search_document" or "search_query".
@@ -187,7 +180,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		Secrets:              []string{apiKey},
 		DecodeErrorMessage:   decodeErrorMessage,
 		StatusErrors: map[int]error{
-			http.StatusUnauthorized: e.unauthorizedError(),
+			http.StatusUnauthorized: e.cfg.UnauthorizedError("cohere", http.StatusUnauthorized),
 		},
 		DecodeEmbeddings: decodeResponse,
 	})

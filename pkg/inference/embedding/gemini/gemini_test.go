@@ -16,12 +16,14 @@ package gemini
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,7 +106,7 @@ func TestGeminiEmbedder_Success(t *testing.T) {
 	defer server.Close()
 
 	// Create embedder with mock server URL
-	embedder := NewGeminiEmbedder(EmbedderConfig{
+	embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -167,7 +169,7 @@ func TestGeminiEmbedder_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewGeminiEmbedder(EmbedderConfig{
+	embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -211,7 +213,7 @@ func TestGeminiEmbedder_EscapeModelInURL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewGeminiEmbedder(EmbedderConfig{
+	embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL + "/" },
 	})
@@ -232,7 +234,7 @@ func TestGeminiEmbedder_InvalidAPIKey(t *testing.T) {
 
 	serverURL := testutil.NewJSONServer(t, http.StatusBadRequest, mockResponse)
 
-	embedder := NewGeminiEmbedder(EmbedderConfig{
+	embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -241,6 +243,17 @@ func TestGeminiEmbedder_InvalidAPIKey(t *testing.T) {
 	require.Nil(t, embeddings)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "API key not valid")
+
+	customErr := errors.New("custom unauthorized error")
+	serverURL = testutil.NewJSONServer(t, http.StatusUnauthorized, mockResponse)
+	embedder = NewGeminiEmbedder(base.APIKeyProviderConfig{
+		GetAPIKey:       func() string { return "invalid-api-key" },
+		GetBaseURL:      func() string { return serverURL },
+		ErrUnauthorized: customErr,
+	})
+	embeddings, err = embedder.CreateEmbeddings(context.Background(), "text-embedding-004", []string{"hello world"}, nil)
+	require.Nil(t, embeddings)
+	require.ErrorIs(t, err, customErr)
 }
 
 func TestGeminiEmbedder_InvalidModel(t *testing.T) {
@@ -254,7 +267,7 @@ func TestGeminiEmbedder_InvalidModel(t *testing.T) {
 
 	serverURL := testutil.NewJSONServer(t, http.StatusNotFound, mockResponse)
 
-	embedder := NewGeminiEmbedder(EmbedderConfig{
+	embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -266,7 +279,7 @@ func TestGeminiEmbedder_InvalidModel(t *testing.T) {
 }
 
 func TestGeminiEmbedder_MissingAPIKey(t *testing.T) {
-	embedder := NewGeminiEmbedder(EmbedderConfig{
+	embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:        func() string { return "" },
 		GetBaseURL:       func() string { return "http://mock-url" },
 		ErrMissingAPIKey: fmt.Errorf("custom missing API key error"),
@@ -294,7 +307,7 @@ func TestGeminiEmbedderEndpoint(t *testing.T) {
 func TestGeminiEmbedderMismatchedResponseLength(t *testing.T) {
 	serverURL := testutil.NewJSONServer(t, http.StatusOK, `{"embeddings":[{"values":[1.0]}]}`)
 
-	embedder := NewGeminiEmbedder(EmbedderConfig{
+	embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return serverURL },
 	})
@@ -307,7 +320,7 @@ func TestGeminiEmbedderContract(t *testing.T) {
 	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
 		Model: "text-embedding-004",
 		New: func(cfg testutil.EmbedderConfig) *Embedder {
-			embedder := NewGeminiEmbedder(EmbedderConfig{
+			embedder := NewGeminiEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:            func() string { return cfg.APIKey },
 				GetBaseURL:           func() string { return cfg.BaseURL },
 				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,

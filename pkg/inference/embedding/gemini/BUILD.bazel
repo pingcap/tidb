@@ -19,6 +19,7 @@ go_test(
     flaky = True,
     shard_count = 9,
     deps = [
+        "//pkg/inference/embedding/base",
         "//pkg/inference/embedding/internal/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
