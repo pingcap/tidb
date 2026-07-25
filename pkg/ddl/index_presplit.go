@@ -81,27 +81,13 @@ func preSplitIndexRegions(
 			}
 			convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
 			failpoint.InjectCall("beforePresplitIndex", splitKeys)
-			splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
-			if ctxErr := context.Cause(ctx); ctxErr != nil {
-				return ctxErr
-			}
+			_, err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys, true)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if splitResult.unsupported {
-				logutil.DDLLogger().Info("skip split table index region, unsupported storage",
-					zap.String("table", tblInfo.Name.L),
-					zap.String("index", idxInfo.Name.L))
-			} else {
-				logutil.DDLLogger().Info("split table index region finished",
-					zap.String("table", tblInfo.Name.L),
-					zap.String("index", idxInfo.Name.L),
-					zap.Int("splitRegions", splitResult.splitRegions),
-					zap.Int("scatterRegions", splitResult.scatterRegions))
-			}
 		}
 	}
-	return context.Cause(ctx)
+	return nil
 }
 
 func autoPresplitIndexRegion(
@@ -135,7 +121,7 @@ func autoPresplitIndexRegion(
 
 	convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
 	failpoint.InjectCall("beforePresplitIndex", splitKeys)
-	splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
+	splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys, false)
 	if ctxErr := context.Cause(ctx); ctxErr != nil {
 		return ctxErr
 	}
@@ -151,8 +137,6 @@ func autoPresplitIndexRegion(
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
 			zap.Int("splitKeys", len(splitKeys)),
-			zap.Int("splitRegions", splitResult.splitRegions),
-			zap.Int("scatterRegions", splitResult.scatterRegions),
 			zap.Error(err))
 		return nil
 	}
@@ -160,9 +144,7 @@ func autoPresplitIndexRegion(
 	logutil.DDLLogger().Info("auto presplit index region finished",
 		zap.String("table", tblInfo.Name.L),
 		zap.String("index", idxInfo.Name.L),
-		zap.Int("splitKeys", len(splitKeys)),
-		zap.Int("splitRegions", splitResult.splitRegions),
-		zap.Int("scatterRegions", splitResult.scatterRegions))
+		zap.Int("splitKeys", len(splitKeys)))
 	return nil
 }
 
@@ -358,6 +340,7 @@ func splitIndexRegionAndWait(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	splitIdxKeys [][]byte,
+	logResult bool,
 ) (splitIndexRegionResult, error) {
 	s, ok := store.(kv.SplittableStore)
 	if !ok {
@@ -369,6 +352,12 @@ func splitIndexRegionAndWait(
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)
 	result := splitIndexRegionResult{splitRegions: len(regionIDs)}
 	if err != nil {
+		if logResult {
+			logutil.DDLLogger().Error("split table index region failed",
+				zap.String("table", tblInfo.Name.L),
+				zap.String("index", tblInfo.Name.L),
+				zap.Error(err))
+		}
 		return result, err
 	}
 	failpoint.Inject("mockSplitIndexRegionAndWaitErr", func(_ failpoint.Value) {
@@ -376,6 +365,14 @@ func splitIndexRegionAndWait(
 	})
 	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
 	result.scatterRegions = finishScatterRegions
+	if logResult {
+		logutil.DDLLogger().Info("split table index region finished",
+			zap.String("table", tblInfo.Name.L),
+			zap.String("index", idxInfo.Name.L),
+			zap.Int("splitRegions", len(regionIDs)),
+			zap.Int("scatterRegions", finishScatterRegions),
+		)
+	}
 	return result, nil
 }
 
