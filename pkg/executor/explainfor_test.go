@@ -16,18 +16,19 @@ package executor_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,11 +78,28 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.*num_rpc:1, total_time:.*} data:TableFullScan_4 N/A N/A\n"+
-			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
+		require.Regexp(t, `TableReader_5 10000\.00 0 root  time:[^ ]+.* data:TableFullScan_4 N/A N/A\n`+
+			`└─TableFullScan_4 10000\.00 0 cop\[tikv\] table:t1 .* keep order:false, stats:pseudo N/A N/A`,
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")
+	tkRootProcess = tkRoot.Session().ShowProcess()
+	require.NotEmpty(t, tkRootProcess.BriefBinaryPlan)
+	targetPlan, ok := tkRootProcess.Plan.(base.Plan)
+	require.True(t, ok)
+	statsColl := execdetails.NewRuntimeStatsColl(nil)
+	statsColl.GetBasicRuntimeStats(targetPlan.ID()).Record(time.Millisecond, 7)
+	// Keep the binary snapshot stale while replacing RuntimeStatsColl to verify live stats rendering.
+	processWithLiveStats := *tkRootProcess
+	processWithLiveStats.RuntimeStatsColl = statsColl
+	ps = []*util.ProcessInfo{&processWithLiveStats}
+	tkStatsExplain := testkit.NewTestKit(t, store)
+	tkStatsExplain.MustExec("use test")
+	tkStatsExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tkStatsExplain.MustQuery(fmt.Sprintf("explain for connection %d", processWithLiveStats.ID)).Rows()
+	require.Len(t, rows, 2)
+	require.Len(t, rows[0], 9)
+	require.Equal(t, "7", rows[0][2])
 	check()
 	tkRoot.MustQuery("explain analyze select * from t1;")
 	check()
@@ -263,7 +281,9 @@ func TestExplainDotForExplainPlan(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
+	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "explain format 'dot' for connection is not supported now")
 }
 
 func TestExplainDotForQuery(t *testing.T) {
@@ -279,11 +299,12 @@ func TestExplainDotForQuery(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	expected := tk2.MustQuery("explain format=\"dot\" select 1").Rows()
-	got := tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Rows()
-	for i := range got {
-		require.Equal(t, expected[i], got[i])
-	}
+	tk2.MustQuery("explain format=\"dot\" select 1").Check(testkit.Rows(
+		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_4\"\n}\n}\n",
+	))
+	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "explain format 'dot' for connection is not supported now")
 }
 
 func TestPointGetUserVarPlanCache(t *testing.T) {
@@ -311,12 +332,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_10 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin_12 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_13(Build) 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_15(Probe) 10.00 root  data:TableRangeScan_14`,
-		`    └─TableRangeScan_14 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get(Build) 1.00 root table:t2, index:idx_a(a) `, // use idx_a
+		`  └─TableReader(Probe) 10.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -325,12 +346,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_10 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin_12 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_13(Build) 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_15(Probe) 10.00 root  data:TableRangeScan_14`,
-		`    └─TableRangeScan_14 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get(Build) 1.00 root table:t2, index:idx_a(a) `,
+		`  └─TableReader(Probe) 10.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -811,24 +832,9 @@ func TestExplainForJSON(t *testing.T) {
 	ps := []*util.ProcessInfo{tk1RootProcess}
 	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
-	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
-
-	j := new([]*core.ExplainInfoForEncode)
-	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-	flatJSONRows := make([]*core.ExplainInfoForEncode, 0)
-	for _, row := range *j {
-		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
-	}
-	require.Equal(t, len(flatJSONRows), len(resRow))
-
-	for i, row := range resRow {
-		require.Contains(t, row[0], flatJSONRows[i].ID)
-		require.Equal(t, flatJSONRows[i].EstRows, row[1])
-		require.Equal(t, flatJSONRows[i].TaskType, row[2])
-		require.Equal(t, flatJSONRows[i].AccessObject, row[3])
-		require.Equal(t, flatJSONRows[i].OperatorInfo, row[4])
-	}
+	err := tk2.ExecToErr(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not supported now")
 
 	tk1.MustExec("set @@tidb_enable_collect_execution_info=1;")
 	tk1.MustExec("drop table if exists t2")
@@ -838,34 +844,19 @@ func TestExplainForJSON(t *testing.T) {
 	ps = []*util.ProcessInfo{tk1RootProcess}
 	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
-	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
+	err = tk2.ExecToErr(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not supported now")
 
-	j = new([]*core.ExplainInfoForEncode)
-	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
-	flatJSONRows = []*core.ExplainInfoForEncode{}
-	for _, row := range *j {
-		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
-	}
-	require.Equal(t, len(flatJSONRows), len(resRow))
-
-	for i, row := range resRow {
-		require.Contains(t, row[0], flatJSONRows[i].ID)
-		require.Equal(t, flatJSONRows[i].EstRows, row[1])
-		require.Equal(t, flatJSONRows[i].ActRows, row[2])
-		require.Equal(t, flatJSONRows[i].TaskType, row[3])
-		require.Equal(t, flatJSONRows[i].AccessObject, row[4])
-		require.Equal(t, flatJSONRows[i].OperatorInfo, row[6])
-		// executeInfo, memory, disk maybe vary in multi execution
-		require.NotEqual(t, flatJSONRows[i].ExecuteInfo, "")
-		require.NotEqual(t, flatJSONRows[i].MemoryInfo, "")
-		require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
-	}
-	// test syntax
-	tk2.MustExec(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
-	tk2.MustExec(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
-	tk2.MustExec(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
-	tk2.MustExec(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
+	// test syntax - these should also fail
+	err = tk2.ExecToErr(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
+	require.Error(t, err)
+	err = tk2.ExecToErr(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
+	require.Error(t, err)
+	err = tk2.ExecToErr(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
+	require.Error(t, err)
+	err = tk2.ExecToErr(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
+	require.Error(t, err)
 }
 
 func TestIssue55669(t *testing.T) {

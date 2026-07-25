@@ -393,15 +393,15 @@ func TestIssue38205(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexJoin_12"},
-			{"├─TableReader_21(Build)"},
-			{"│ └─Selection_20"},
-			{"│   └─TableFullScan_19"},
-			{"└─IndexReader_11(Probe)"},
-			{"  └─Selection_10"},
-			{"    └─IndexRangeScan_9"},
+			{"IndexJoin"},
+			{"├─TableReader(Build)"},
+			{"│ └─Selection"},
+			{"│   └─TableFullScan"}, // RangeScan instead of FullScan
+			{"└─IndexReader(Probe)"},
+			{"  └─Selection"},
+			{"    └─IndexRangeScan"},
 		})
 
 	tk.MustExec("execute stmt using @a, @b, @c")
@@ -442,10 +442,10 @@ func TestIssue40224(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexReader_6"},
-			{"└─IndexRangeScan_5"}, // range scan not full scan
+			{"IndexReader"},
+			{"└─IndexRangeScan"}, // range scan not full scan
 		})
 
 	tk.MustExec("set @a=1, @b=2")
@@ -454,10 +454,10 @@ func TestIssue40224(t *testing.T) {
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
 	tk.MustExec("execute st using @a, @b")
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexReader_6"},
-			{"└─IndexRangeScan_5"}, // range scan not full scan
+			{"IndexReader"},
+			{"└─IndexRangeScan"}, // range scan not full scan
 		})
 }
 
