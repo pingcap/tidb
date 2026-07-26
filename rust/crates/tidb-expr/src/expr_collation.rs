@@ -82,7 +82,8 @@ impl Coercibility {
 }
 
 /// Go `Repertoire` (an `int`): the character repertoire of a string value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The `Default` is `Repertoire(0)`, matching Go's zero value (not `ASCII`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Repertoire(pub i32);
 
 impl Repertoire {
@@ -105,13 +106,6 @@ pub struct ExprCollation {
     pub charset: String,
     /// The collation name.
     pub collation: String,
-}
-
-impl Default for Repertoire {
-    fn default() -> Self {
-        // Go's zero value for `Repertoire` is 0; keep that rather than ASCII.
-        Repertoire(0)
-    }
 }
 
 /// Go `collationInfo`: the collation state embedded in every expression node.

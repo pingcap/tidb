@@ -331,8 +331,10 @@ mod build;
 mod builtin_ext;
 mod cast;
 mod coerce;
+pub mod column;
 mod context;
 pub mod expr_collation;
+pub mod expression;
 mod field_name;
 mod func;
 mod grouping;
@@ -343,6 +345,7 @@ pub mod pb_comparison;
 mod regexp;
 mod rng;
 mod row;
+pub mod schema;
 mod string_fn;
 mod time_fn;
 
