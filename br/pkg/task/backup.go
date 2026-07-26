@@ -58,6 +58,7 @@ const (
 	flagKeyspaceName     = "keyspace-name"
 	flagReplicaReadLabel = "replica-read-label"
 	flagTableConcurrency = "table-concurrency"
+	flagStaleRead        = "stale-read"
 	flagPackageFileSize  = "package-file-size"
 
 	flagGCTTL = "gcttl"
@@ -95,6 +96,7 @@ type BackupConfig struct {
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
+	StaleRead        bool              `json:"stale-read" toml:"stale-read"`
 	PackageFileSize  uint64            `json:"package-file-size" toml:"package-file-size"`
 	CompressionConfig
 
@@ -162,6 +164,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 
 	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
 
+	flags.Bool(flagStaleRead, false, "allow stale read in backup")
 	flags.Uint64(flagPackageFileSize, 0,
 		"When this value is greater than 0, BR packs small SST files into larger .pack files. "+
 			"The value specifies the target size of each .pack file in bytes.")
@@ -278,6 +281,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 			return errors.Trace(err)
 		}
 		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.StaleRead, err = flags.GetBool(flagStaleRead)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -572,6 +579,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		PackageFileSize:  cfg.PackageFileSize,
 		CipherInfo:       &cfg.CipherInfo,
 		ReplicaRead:      len(cfg.ReplicaReadLabel) != 0,
+		StaleRead:        cfg.StaleRead,
 		Context: &kvrpcpb.Context{
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: "", // TODO,
