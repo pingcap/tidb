@@ -171,19 +171,61 @@ impl Column {
         self.finish_append_fixed();
     }
 
-    /// Go `AppendNull`: append the scratch element bytes (for a fixed column,
-    /// so element offsets stay uniform) but leave the null bit unset.
-    ///
-    /// Only the fixed-length path is ported; the var-length null path lands with
-    /// var-length storage.
+    /// Go `AppendNull`: leave the null bit unset, then keep element positions
+    /// consistent -- a fixed column appends the (zeroed) scratch element; a
+    /// var-length column repeats the last offset (a zero-width element).
     pub fn append_null(&mut self) {
-        assert!(
-            self.is_fixed(),
-            "append_null: variable-length columns are not yet supported"
-        );
         self.append_null_bitmap(false);
-        self.data.extend_from_slice(&self.elem_buf);
+        if self.is_fixed() {
+            self.data.extend_from_slice(&self.elem_buf);
+        } else {
+            self.offsets.push(self.offsets[self.length]);
+        }
         self.length += 1;
+    }
+
+    /// Go `finishAppendVar`: commit the bytes appended to `data` as one not-null
+    /// variable-length row (records the new end offset).
+    fn finish_append_var(&mut self) {
+        self.append_null_bitmap(true);
+        self.offsets.push(self.data.len() as i64);
+        self.length += 1;
+    }
+
+    /// Go `AppendString`: append a string's bytes as one row.
+    pub fn append_string(&mut self, str: &str) {
+        debug_assert!(!self.is_fixed(), "append_string on a fixed-length column");
+        self.data.extend_from_slice(str.as_bytes());
+        self.finish_append_var();
+    }
+
+    /// Go `AppendBytes`: append raw bytes as one row.
+    pub fn append_bytes(&mut self, bytes: &[u8]) {
+        debug_assert!(!self.is_fixed(), "append_bytes on a fixed-length column");
+        self.data.extend_from_slice(bytes);
+        self.finish_append_var();
+    }
+
+    /// Go `GetBytes`: the raw bytes of a variable-length row.
+    ///
+    /// TiDB strings are arbitrary byte sequences, so this returns `&[u8]`; a
+    /// `str`-typed `GetString` waits on the crate-wide bytes-vs-str policy.
+    #[must_use]
+    pub fn get_bytes(&self, row_id: usize) -> &[u8] {
+        let start = self.offsets[row_id] as usize;
+        let end = self.offsets[row_id + 1] as usize;
+        &self.data[start..end]
+    }
+
+    /// Go `GetRaw`: the raw element bytes of a row, for either column kind.
+    #[must_use]
+    pub fn get_raw(&self, row_id: usize) -> &[u8] {
+        if self.is_fixed() {
+            let elem_len = self.elem_buf.len();
+            &self.data[row_id * elem_len..row_id * elem_len + elem_len]
+        } else {
+            self.get_bytes(row_id)
+        }
     }
 
     /// Go `GetInt64`.
@@ -294,6 +336,36 @@ mod tests {
         let c = Column::new_var_len(4);
         assert!(!c.is_fixed());
         assert_eq!(c.type_size(), VAR_ELEM_LEN);
+    }
+
+    #[test]
+    fn var_len_append_get_string_bytes_null() {
+        let mut c = Column::new_var_len(4);
+        c.append_string("hello");
+        c.append_null();
+        c.append_bytes(&[0x00, 0xff, 0x10]); // non-UTF8 binary
+        c.append_string("");
+        assert_eq!(c.rows(), 4);
+        assert_eq!(c.get_bytes(0), b"hello");
+        assert!(!c.is_null(0));
+        // Null row has zero width and is flagged null.
+        assert!(c.is_null(1));
+        assert_eq!(c.get_bytes(1), b"");
+        assert_eq!(c.get_bytes(2), &[0x00, 0xff, 0x10]);
+        assert_eq!(c.get_raw(2), &[0x00, 0xff, 0x10]);
+        assert_eq!(c.get_bytes(3), b"");
+        assert!(!c.is_null(3)); // empty string is NOT null
+    }
+
+    #[test]
+    fn get_raw_fixed_and_var() {
+        let mut f = Column::new_fixed_len(8, 1);
+        f.append_int64(0x0102_0304_0506_0708);
+        assert_eq!(f.get_raw(0), &0x0102_0304_0506_0708i64.to_ne_bytes());
+
+        let mut v = Column::new_var_len(1);
+        v.append_bytes(b"abc");
+        assert_eq!(v.get_raw(0), b"abc");
     }
 
     #[test]
