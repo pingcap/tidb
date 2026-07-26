@@ -22,6 +22,7 @@
 //! terror-class markers.
 
 pub mod mysql;
+pub mod plannererrors;
 pub mod terror;
 pub mod tidb;
 
