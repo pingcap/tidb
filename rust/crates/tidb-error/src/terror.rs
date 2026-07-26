@@ -421,6 +421,26 @@ impl TerrorError {
         Self::registered_standard(class, code, message)
     }
 
+    /// Source `NewStd` resolving from the full error registry: the MySQL
+    /// catalog first, then the TiDB catalog.
+    ///
+    /// Go's global `MySQLErrName` map is populated from both catalogs, so
+    /// `Class.NewStd` works for MySQL and TiDB-specific codes alike;
+    /// [`registered_from_catalog`](Self::registered_from_catalog) covers only
+    /// the MySQL half and panics on a TiDB code. This is the faithful `NewStd`
+    /// for the many error-catalog packages (plannererrors, ...) whose codes
+    /// span both halves.
+    #[must_use]
+    pub fn registered_std(class: TerrorClass, code: TerrorCode) -> Self {
+        let protocol_code = u16::try_from(code.value())
+            .expect("NewStd error code must fit the uint16 catalog domain");
+        let message = crate::mysql::message_by_code(protocol_code)
+            .or_else(|| crate::tidb::message_by_code(protocol_code))
+            .copied()
+            .expect("NewStd error code must exist in the MySQL or TiDB catalog");
+        Self::registered_standard(class, code, message)
+    }
+
     /// Source `Synthesize`: creates an identity without registering its code
     /// for protocol conversion.
     #[must_use]
@@ -752,4 +772,22 @@ fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn Error + 'sta
         error = source;
     }
     error
+}
+
+#[cfg(test)]
+mod registered_std_tests {
+    use super::{TerrorClass, TerrorCode, TerrorError};
+
+    // registered_std resolves codes from both the MySQL and TiDB catalogs,
+    // unlike registered_from_catalog (MySQL only) -- Go's NewStd behavior.
+    #[test]
+    fn resolves_both_catalogs() {
+        // A MySQL-catalog code (ErrUnknown = 1105).
+        let e = TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(1105));
+        assert_eq!(e.code().value(), 1105);
+        // A TiDB-only optimizer code (ErrCartesianProductUnsupported = 8110);
+        // registered_from_catalog would panic on this, registered_std resolves it.
+        let e = TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(8110));
+        assert_eq!(e.code().value(), 8110);
+    }
 }
