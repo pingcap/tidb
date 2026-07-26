@@ -23,7 +23,11 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tidb_ast::CiString;
+use tidb_ast::{CiString, IndexType};
+
+use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
+use crate::reorg::BackfillState;
+use crate::schema_state::SchemaState;
 
 /// Distance-metric values for a vector index (Go `DistanceMetric`, a string).
 pub mod distance_metric {
@@ -141,6 +145,152 @@ pub struct IndexColumn {
     pub use_changing_type: bool,
 }
 
+/// Go `VectorIndexInfo`: a vector index's parameters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VectorIndexInfo {
+    /// The vector dimension.
+    pub dimension: u64,
+    /// The distance metric (see [`distance_metric`]).
+    pub distance_metric: String,
+}
+
+/// Go `InvertedIndexInfo`: an inverted index's parameters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InvertedIndexInfo {
+    /// The indexed column ID.
+    pub column_id: i64,
+    /// Whether the column is signed.
+    pub is_signed: bool,
+    /// The column's byte size.
+    pub type_size: u8,
+}
+
+/// Go `FullTextIndexInfo`: a full-text index's parameters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FullTextIndexInfo {
+    /// The parser type (see [`full_text_parser_type`]).
+    pub parser_type: String,
+}
+
+/// Go `IndexInfo`: metadata describing a table index.
+#[derive(Clone, Debug, Default)]
+pub struct IndexInfo {
+    /// The index ID.
+    pub id: i64,
+    /// The index name.
+    pub name: CiString,
+    /// The table name.
+    pub table: CiString,
+    /// The index columns.
+    pub columns: Vec<IndexColumn>,
+    /// The online-DDL state.
+    pub state: SchemaState,
+    /// The backfill-merge state.
+    pub backfill_state: BackfillState,
+    /// The index comment.
+    pub comment: String,
+    /// The index type (Btree/Hash/...).
+    pub tp: IndexType,
+    /// Whether the index is unique.
+    pub unique: bool,
+    /// Whether the index is the primary key.
+    pub primary: bool,
+    /// Whether the index is invisible.
+    pub invisible: bool,
+    /// Whether the index is global.
+    pub global: bool,
+    /// Whether the index is multi-valued.
+    pub mv_index: bool,
+    /// Vector-index parameters, if any.
+    pub vector_info: Option<VectorIndexInfo>,
+    /// Inverted-index parameters, if any.
+    pub inverted_info: Option<InvertedIndexInfo>,
+    /// Full-text-index parameters, if any.
+    pub full_text_info: Option<FullTextIndexInfo>,
+    /// The partial-index condition expression string.
+    pub condition_expr_string: String,
+    /// The columns the index affects.
+    pub affect_column: Vec<IndexColumn>,
+    /// The global-index version.
+    pub global_index_version: u8,
+    /// The persistent region-split policy.
+    pub region_split_policy: Option<RegionSplitPolicy>,
+}
+
+impl IndexInfo {
+    /// Go `IsChanging`: whether this is a modify-index temporary index.
+    #[must_use]
+    pub fn is_changing(&self) -> bool {
+        self.name.original().starts_with(CHANGING_INDEX_PREFIX)
+    }
+
+    /// Go `IsRemoving`: whether this is a removing (tombstone) index.
+    #[must_use]
+    pub fn is_removing(&self) -> bool {
+        self.name.original().starts_with(REMOVING_OBJ_PREFIX)
+    }
+
+    /// Go `GetRemovingOriginName`: the original name of a removing index.
+    #[must_use]
+    pub fn get_removing_origin_name(&self) -> String {
+        removing_origin_name(self.name.original())
+    }
+
+    /// Go `GetChangingOriginName`: the original name of a changing index
+    /// (strips the index changing prefix and the trailing `_<n>`).
+    #[must_use]
+    pub fn get_changing_origin_name(&self) -> String {
+        let idx_name = self
+            .name
+            .original()
+            .strip_prefix(CHANGING_INDEX_PREFIX)
+            .unwrap_or(self.name.original());
+        match idx_name.rfind('_') {
+            None => idx_name.to_owned(),
+            Some(pos) => idx_name[..pos].to_owned(),
+        }
+    }
+
+    /// Go `HasPrefixIndex`: whether any column uses a prefix length.
+    #[must_use]
+    pub fn has_prefix_index(&self) -> bool {
+        // Go compares against types.UnspecifiedLength (-1).
+        self.columns.iter().any(|ic| ic.length != -1)
+    }
+
+    /// Go `FindColumnByName`: the index column named `name_l` (lower-cased).
+    #[must_use]
+    pub fn find_column_by_name(&self, name_l: &str) -> Option<&IndexColumn> {
+        find_index_column_by_name(&self.columns, name_l).map(|(_, ic)| ic)
+    }
+
+    /// Go `IsPublic`: whether the index is in the public state.
+    #[must_use]
+    pub fn is_public(&self) -> bool {
+        self.state == SchemaState::PUBLIC
+    }
+
+    /// Go `IsColumnarIndex`: whether this is a vector/inverted/full-text index.
+    #[must_use]
+    pub fn is_columnar_index(&self) -> bool {
+        self.vector_info.is_some() || self.inverted_info.is_some() || self.full_text_info.is_some()
+    }
+
+    /// Go `GetColumnarIndexType`: the columnar-index kind (or `NA`).
+    #[must_use]
+    pub fn get_columnar_index_type(&self) -> ColumnarIndexType {
+        if self.vector_info.is_some() {
+            ColumnarIndexType::VECTOR
+        } else if self.inverted_info.is_some() {
+            ColumnarIndexType::INVERTED
+        } else if self.full_text_info.is_some() {
+            ColumnarIndexType::FULLTEXT
+        } else {
+            ColumnarIndexType::NA
+        }
+    }
+}
+
 /// Go `FindIndexColumnByName`: the position and column matching `name_l`
 /// (already lower-cased), or `None`.
 #[must_use]
@@ -202,6 +352,48 @@ mod tests {
         assert_eq!(ColumnarIndexType::FULLTEXT.sql_name(), "fulltext index");
         assert_eq!(ColumnarIndexType::NA.sql_name(), "columnar index");
         assert_eq!(ColumnarIndexType::default(), ColumnarIndexType::NA);
+    }
+
+    #[test]
+    fn index_info_methods() {
+        let mut idx = IndexInfo {
+            name: CiString::new("_Idx$_myidx_0"),
+            columns: vec![
+                IndexColumn {
+                    name: CiString::new("a"),
+                    length: -1,
+                    ..Default::default()
+                },
+                IndexColumn {
+                    name: CiString::new("B"),
+                    length: 10,
+                    ..Default::default()
+                },
+            ],
+            state: SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        assert!(idx.is_changing());
+        assert_eq!(idx.get_changing_origin_name(), "myidx");
+        assert!(idx.has_prefix_index()); // column B has length 10
+        assert!(idx.is_public());
+        assert!(idx.find_column_by_name("b").is_some());
+        assert!(idx.find_column_by_name("z").is_none());
+
+        // Removing name.
+        idx.name = CiString::new("_Tombstone$_orig");
+        assert!(idx.is_removing());
+        assert_eq!(idx.get_removing_origin_name(), "orig");
+
+        // Columnar-index type detection.
+        assert!(!idx.is_columnar_index());
+        assert_eq!(idx.get_columnar_index_type(), ColumnarIndexType::NA);
+        idx.vector_info = Some(VectorIndexInfo {
+            dimension: 128,
+            distance_metric: distance_metric::COSINE.to_owned(),
+        });
+        assert!(idx.is_columnar_index());
+        assert_eq!(idx.get_columnar_index_type(), ColumnarIndexType::VECTOR);
     }
 
     #[test]
