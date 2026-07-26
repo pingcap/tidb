@@ -325,6 +325,25 @@ impl Column {
     pub fn copy_construct(&self) -> Column {
         self.clone()
     }
+
+    /// Go `appendCellByCell`: append `src`'s cell at `row_idx` (value and
+    /// nullity) as a new row of this column. `self` and `src` must be the same
+    /// element kind.
+    pub(crate) fn append_cell_from(&mut self, src: &Column, row_idx: usize) {
+        self.append_null_bitmap(!src.is_null(row_idx));
+        if src.is_fixed() {
+            let elem_len = src.elem_buf.len();
+            let offset = row_idx * elem_len;
+            self.data
+                .extend_from_slice(&src.data[offset..offset + elem_len]);
+        } else {
+            let start = src.offsets[row_idx] as usize;
+            let end = src.offsets[row_idx + 1] as usize;
+            self.data.extend_from_slice(&src.data[start..end]);
+            self.offsets.push(self.data.len() as i64);
+        }
+        self.length += 1;
+    }
 }
 
 #[cfg(test)]

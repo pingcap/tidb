@@ -15,12 +15,14 @@
 //! `pkg/util/chunk`: the columnar row container that every executor produces
 //! and every expression `Eval*` consumes.
 //!
-//! SEED SCOPE (grown incrementally): [`column`] ports the fixed-length core of
-//! the columnar `Column` -- the null bitmap plus the `int64`/`uint64`/`float32`/
-//! `float64` append/get path, which is what simple integer/real queries need.
-//! DEFERRED (documented in `column.rs`): variable-length storage (string/bytes
-//! via `offsets`), the typed appends/resizes for Time/Duration/Decimal/JSON/
-//! Enum/Set/VectorFloat32, `NewColumn(FieldType)`/`getFixedLen` type dispatch,
-//! and the `Chunk`/`Row` containers built on top of `Column`.
+//! SEED SCOPE (grown incrementally): [`column`] ports the `Column` columnar
+//! storage (fixed-length int/real + variable-length string/bytes + the
+//! `getFixedLen`/`NewColumn` type dispatch); [`chunk`] the `Chunk` batch; and
+//! [`row`] the `Row` cursor that expression evaluation reads. DEFERRED
+//! (documented per module): the typed appends/getters for Time/Duration/Decimal/
+//! JSON/Enum/Set/VectorFloat32, `Reset(EvalType)`, the growth/pool/disk paths,
+//! and a `str`-typed `GetString`.
 
+pub mod chunk;
 pub mod column;
+pub mod row;
