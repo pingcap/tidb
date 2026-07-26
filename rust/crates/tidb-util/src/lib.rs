@@ -58,4 +58,5 @@ pub mod tikvutil;
 pub mod timeutil;
 pub mod versioninfo;
 pub mod vitess;
+pub mod watcher;
 pub mod zeropool;
