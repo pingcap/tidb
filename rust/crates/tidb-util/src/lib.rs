@@ -28,6 +28,7 @@ pub mod dbterror;
 pub mod disjointset;
 pub mod encrypt;
 pub mod fastrand;
+pub mod filter;
 pub mod generic;
 pub mod globalconn;
 pub mod intest;

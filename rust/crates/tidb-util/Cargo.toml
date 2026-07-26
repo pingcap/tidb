@@ -20,6 +20,7 @@ race = []
 crossbeam-channel = "0.5"
 flate2.workspace = true
 tidb-log = { path = "../tidb-log" }
+tidb-metadef = { path = "../tidb-metadef" }
 aes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true

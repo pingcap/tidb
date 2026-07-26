@@ -1520,6 +1520,7 @@ dependencies = [
  "tidb-error",
  "tidb-hack",
  "tidb-log",
+ "tidb-metadef",
  "tracing",
 ]
 
