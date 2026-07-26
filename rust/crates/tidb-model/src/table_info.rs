@@ -13,11 +13,16 @@
 // limitations under the License.
 
 //! `TableInfo` from `pkg/meta/model/table.go`: the central table-metadata
-//! struct. All of its field types are ported (see the other modules).
+//! struct. All of its field types and nearly all of its methods are ported.
 //!
-//! The struct and its simple, self-contained methods are ported here. Its
-//! many remaining methods (public-column projection `Cols`, index/handle
-//! helpers, DDL-oriented logic, etc.) are a following tranche.
+//! Clone: the derived `Clone` is a full deep copy. Go's `TableInfo.Clone`
+//! deep-copies only Columns/Indices/ForeignKeys/Partition/TTLInfo/
+//! TableSplitPolicy/Affinity and shares the other pointer fields (View,
+//! Sequence, Constraints, Lock, StatsOptions, ...) with the original; the
+//! full deep copy here is the stricter, independent-copy semantics clone
+//! callers expect (Rust's owned model has no pointer aliasing to reproduce).
+//!
+//! DEFERRED: `Equals`/`Hash`, which use the planner's `base.Hasher` framework.
 
 use chrono::{DateTime, Utc};
 use tidb_ast::CiString;
