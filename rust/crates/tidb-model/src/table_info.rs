@@ -428,6 +428,58 @@ impl TableInfo {
         build_storage_class_string(&self.storage_class_tier, &self.storage_class_transitions)
     }
 
+    /// Go `MoveColumnInfo`: move the column at `from` to `to`, re-numbering
+    /// column offsets and fixing up the offsets referenced by index columns,
+    /// affected columns, and change-state dependencies. Go assumes each
+    /// column's offset equals its position.
+    pub fn move_column_info(&mut self, from: usize, to: usize) {
+        use std::collections::BTreeMap;
+        if from == to {
+            return;
+        }
+        // old-offset -> new-offset for every moved element.
+        let mut updated: BTreeMap<i32, i32> = BTreeMap::new();
+        if from < to {
+            for i in from..to {
+                updated.insert((i + 1) as i32, i as i32);
+            }
+        } else {
+            let mut i = from;
+            while i > to {
+                updated.insert((i - 1) as i32, i as i32);
+                i -= 1;
+            }
+        }
+        updated.insert(from as i32, to as i32);
+
+        let src = self.columns.remove(from);
+        self.columns.insert(to, src);
+        let (lo, hi) = (from.min(to), from.max(to));
+        for (i, col) in self.columns.iter_mut().enumerate().take(hi + 1).skip(lo) {
+            col.offset = i as i32;
+        }
+
+        for idx in &mut self.indices {
+            for ic in &mut idx.columns {
+                if let Some(&n) = updated.get(&ic.offset) {
+                    ic.offset = n;
+                }
+            }
+            for ac in &mut idx.affect_column {
+                if let Some(&n) = updated.get(&ac.offset) {
+                    ac.offset = n;
+                }
+            }
+        }
+        for col in &mut self.columns {
+            if let Some(cs) = &mut col.change_state_info {
+                if let Some(&n) = updated.get(&cs.dependency_column_offset) {
+                    cs.dependency_column_offset = n;
+                }
+            }
+        }
+    }
+
     /// Go `IsView`.
     #[must_use]
     pub fn is_view(&self) -> bool {
@@ -667,6 +719,47 @@ mod tests {
         assert!(t2.partition.unwrap().definitions[0]
             .placement_policy_ref
             .is_none());
+    }
+
+    #[test]
+    fn move_column() {
+        use crate::index::{IndexColumn, IndexInfo};
+
+        let mut t = TableInfo {
+            columns: vec![
+                column("a", 0, true, false),
+                column("b", 1, true, false),
+                column("c", 2, true, false),
+            ],
+            indices: vec![IndexInfo {
+                // an index referencing column "a" at offset 0
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    offset: 0,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        // Move "a" (offset 0) to the end (position 2).
+        t.move_column_info(0, 2);
+        assert_eq!(
+            t.columns
+                .iter()
+                .map(|c| c.name.original())
+                .collect::<Vec<_>>(),
+            vec!["b", "c", "a"]
+        );
+        assert_eq!(t.columns[0].offset, 0); // b
+        assert_eq!(t.columns[2].offset, 2); // a
+                                            // The index column's offset was remapped 0 -> 2.
+        assert_eq!(t.indices[0].columns[0].offset, 2);
+
+        // A no-op move leaves everything unchanged.
+        let before = t.columns[0].name.original().to_owned();
+        t.move_column_info(1, 1);
+        assert_eq!(t.columns[0].name.original(), before);
     }
 
     #[test]
