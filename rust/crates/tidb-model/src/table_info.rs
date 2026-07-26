@@ -285,6 +285,65 @@ impl TableInfo {
         implicit_pk
     }
 
+    /// Go `FindColumnByID`: the column with `id` (any state).
+    #[must_use]
+    pub fn find_column_by_id(&self, id: i64) -> Option<&ColumnInfo> {
+        self.columns.iter().find(|c| c.id == id)
+    }
+
+    /// Go `GetColumnByID`: the public column with `id`.
+    #[must_use]
+    pub fn get_column_by_id(&self, id: i64) -> Option<&ColumnInfo> {
+        self.columns
+            .iter()
+            .find(|c| c.state == SchemaState::PUBLIC && c.id == id)
+    }
+
+    /// Go `FindIndexByName`: the index named `idx_name` (already lower-cased).
+    #[must_use]
+    pub fn find_index_by_name(&self, idx_name: &str) -> Option<&IndexInfo> {
+        self.indices.iter().find(|i| i.name.lowercase() == idx_name)
+    }
+
+    /// Go `FindIndexByID`: the index with `id`.
+    #[must_use]
+    pub fn find_index_by_id(&self, id: i64) -> Option<&IndexInfo> {
+        self.indices.iter().find(|i| i.id == id)
+    }
+
+    /// Go `FindConstraintInfoByName`: the CHECK constraint named `constr_name`
+    /// (case-insensitive).
+    #[must_use]
+    pub fn find_constraint_info_by_name(&self, constr_name: &str) -> Option<&ConstraintInfo> {
+        let low = constr_name.to_lowercase();
+        self.constraints.iter().find(|c| c.name.lowercase() == low)
+    }
+
+    /// Go `GetAutoIncrementColInfo`: the auto-increment column, if any.
+    #[must_use]
+    pub fn get_auto_increment_col_info(&self) -> Option<&ColumnInfo> {
+        self.columns
+            .iter()
+            .find(|c| c.get_flag() & FieldTypeFlags::AUTO_INCREMENT != 0)
+    }
+
+    /// Go `ColumnIsInIndex`: whether column `c` participates in any index.
+    #[must_use]
+    pub fn column_is_in_index(&self, c: &ColumnInfo) -> bool {
+        self.indices.iter().any(|index| {
+            index
+                .columns
+                .iter()
+                .any(|ic| ic.name.lowercase() == c.name.lowercase())
+        })
+    }
+
+    /// Go `HasClusteredIndex`: whether the table has a clustered index.
+    #[must_use]
+    pub fn has_clustered_index(&self) -> bool {
+        self.pk_is_handle || self.is_common_handle
+    }
+
     /// Go `IsView`.
     #[must_use]
     pub fn is_view(&self) -> bool {
@@ -439,6 +498,51 @@ mod tests {
             },
         );
         assert_eq!(t2.get_primary_key().unwrap().name.original(), "pk");
+    }
+
+    #[test]
+    fn finders() {
+        use crate::index::{IndexColumn, IndexInfo};
+
+        let mut c_pub = column("a", 0, true, false);
+        c_pub.id = 100;
+        let mut c_hidden = column("b", 1, false, false);
+        c_hidden.id = 101;
+        c_hidden.set_flag(FieldTypeFlags::AUTO_INCREMENT);
+
+        let t = TableInfo {
+            columns: vec![c_pub, c_hidden],
+            indices: vec![IndexInfo {
+                id: 5,
+                name: CiString::new("idx_a"),
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            constraints: vec![ConstraintInfo {
+                name: CiString::new("chk1"),
+                ..Default::default()
+            }],
+            pk_is_handle: true,
+            ..Default::default()
+        };
+
+        assert_eq!(t.find_column_by_id(101).unwrap().name.original(), "b");
+        // get_column_by_id only returns public columns.
+        assert!(t.get_column_by_id(101).is_none());
+        assert_eq!(t.get_column_by_id(100).unwrap().name.original(), "a");
+        assert!(t.find_index_by_name("idx_a").is_some());
+        assert!(t.find_index_by_id(5).is_some());
+        assert!(t.find_constraint_info_by_name("CHK1").is_some()); // case-insensitive
+        assert_eq!(
+            t.get_auto_increment_col_info().unwrap().name.original(),
+            "b"
+        );
+        assert!(t.column_is_in_index(&t.columns[0])); // "a" is in idx_a
+        assert!(!t.column_is_in_index(&t.columns[1])); // "b" is not
+        assert!(t.has_clustered_index()); // pk_is_handle
     }
 
     #[test]
