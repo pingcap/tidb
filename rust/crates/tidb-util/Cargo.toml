@@ -17,6 +17,7 @@ intest = []
 race = []
 
 [dependencies]
+crossbeam-channel = "0.5"
 aes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
