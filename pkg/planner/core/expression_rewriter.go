@@ -674,7 +674,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.tryFoldCounter++
 		}
 	case *ast.BinaryOperationExpr:
-		er.asScalar = true
+		if !(v.Op == opcode.LogicOr && (isFalseConstant(v.L) || isFalseConstant(v.R))) {
+			er.asScalar = true
+		}
 		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
 		}
@@ -710,6 +712,26 @@ func (er *expressionRewriter) canTreatInSubqueryAsExistsForFilter(planCtx *exprR
 		}
 	}
 	return true
+}
+
+// isFalseConstant checks whether an AST expression node is the constant FALSE
+// (or integer 0). NULL is explicitly excluded — it is NOT treated as FALSE.
+func isFalseConstant(expr ast.ExprNode) bool {
+	ve, ok := expr.(ast.ValueExpr)
+	if !ok {
+		return false
+	}
+	v := ve.GetValue()
+	if v == nil {
+		return false // NULL is not FALSE
+	}
+	switch val := v.(type) {
+	case int64:
+		return val == 0
+	case uint64:
+		return val == 0
+	}
+	return false
 }
 
 // inDirectMatchBooleanContext reports whether the MATCH...AGAINST currently
@@ -1747,7 +1769,32 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter--
 		}
-		er.binaryOpToExpression(v)
+		// Simplify `expr OR FALSE` (and `FALSE OR expr`) to just `expr`.
+		// This is always semantically valid (OR with FALSE/0 is the identity).
+		// When the non-FALSE operand was an IN subquery rewritten to InnerJoin+Distinct,
+		// it won't have a ctxStack entry, and only the FALSE constant is on the stack;
+		// in that case we just pop the FALSE to leave the ctxStack empty (the plan
+		// already encodes the filter).
+		if v.Op == opcode.LogicOr && (isFalseConstant(v.L) || isFalseConstant(v.R)) {
+			stkLen := len(er.ctxStack)
+			if stkLen <= 1 {
+				// The non-FALSE operand was consumed by the plan (e.g., IN subquery
+				// rewritten to InnerJoin+Distinct). Pop the FALSE constant if present.
+				if stkLen == 1 {
+					er.ctxStackPop(1)
+				}
+			} else {
+				// Both operands on the stack: keep the non-FALSE one.
+				if isFalseConstant(v.R) {
+					er.ctxStackPop(1)
+				} else {
+					er.ctxStack[stkLen-2] = er.ctxStack[stkLen-1]
+					er.ctxStackPop(1)
+				}
+			}
+		} else {
+			er.binaryOpToExpression(v)
+		}
 	case *ast.BetweenExpr:
 		er.betweenToExpression(v)
 	case *ast.CaseExpr:
