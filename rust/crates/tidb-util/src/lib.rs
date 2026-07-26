@@ -47,6 +47,7 @@ pub mod prefetch;
 pub mod queue;
 pub mod redact;
 pub mod selection;
+pub mod sem;
 pub mod size;
 pub mod slice;
 pub mod sqlescape;
