@@ -346,6 +346,7 @@ pub mod pb_comparison;
 mod regexp;
 mod rng;
 mod row;
+pub mod scalar_function;
 pub mod schema;
 mod string_fn;
 mod time_fn;

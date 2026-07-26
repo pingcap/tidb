@@ -31,13 +31,14 @@
 
 pub use crate::column::{Column, CorrelatedColumn};
 pub use crate::constant::{Constant, ParamMarker};
+pub use crate::scalar_function::ScalarFunction;
 pub use crate::schema::{KeyInfo, Schema};
 
 // Type tags written as the first byte of an expression `HashCode`
-// (`pkg/expression/expression.go`). `scalarFunctionFlag = 3` lands with that
-// variant.
+// (`pkg/expression/expression.go`).
 pub(crate) const CONSTANT_FLAG: u8 = 0;
 pub(crate) const COLUMN_FLAG: u8 = 1;
+pub(crate) const SCALAR_FUNCTION_FLAG: u8 = 3;
 pub(crate) const PARAMETER_FLAG: u8 = 4;
 
 /// Go `ConstLevel` (a `uint`): how constant an expression is.
@@ -56,11 +57,10 @@ impl ConstLevel {
 
 /// Go `Expression`: a scalar expression node.
 ///
-/// A closed enum over the concrete node types.
-/// [`Column`](Expression::Column), [`Constant`](Expression::Constant), and
-/// [`CorrelatedColumn`](Expression::CorrelatedColumn) are populated so far; the
-/// remaining variant (`ScalarFunction`) is added as that node is ported (see the
-/// module docs).
+/// A closed enum over the concrete node types: [`Column`](Expression::Column),
+/// [`Constant`](Expression::Constant),
+/// [`CorrelatedColumn`](Expression::CorrelatedColumn), and
+/// [`ScalarFunction`](Expression::ScalarFunction) -- the full Go variant set.
 #[derive(Clone, Debug)]
 pub enum Expression {
     /// A column reference (Go `*Column`).
@@ -69,6 +69,8 @@ pub enum Expression {
     Constant(Constant),
     /// A column bound to an outer query's value (Go `*CorrelatedColumn`).
     CorrelatedColumn(CorrelatedColumn),
+    /// A built-in function applied to arguments (Go `*ScalarFunction`).
+    ScalarFunction(ScalarFunction),
 }
 
 impl Expression {
@@ -79,6 +81,7 @@ impl Expression {
             Expression::Column(c) => c.hash_code(),
             Expression::Constant(c) => c.hash_code(),
             Expression::CorrelatedColumn(c) => c.hash_code(),
+            Expression::ScalarFunction(c) => c.hash_code(),
         }
     }
 
@@ -89,6 +92,7 @@ impl Expression {
             Expression::Column(c) => c.is_correlated(),
             Expression::Constant(c) => c.is_correlated(),
             Expression::CorrelatedColumn(c) => c.is_correlated(),
+            Expression::ScalarFunction(c) => c.is_correlated(),
         }
     }
 
@@ -99,23 +103,25 @@ impl Expression {
             Expression::Column(c) => c.const_level(),
             Expression::Constant(c) => c.const_level(),
             Expression::CorrelatedColumn(c) => c.const_level(),
+            Expression::ScalarFunction(c) => c.const_level(),
         }
     }
 
     /// Context-free identity equality.
     ///
     /// This is only the part of Go's `Expression.Equal(ctx, e)` that needs no
-    /// `EvalContext`: two columns are equal by `UniqueID`. `Constant.Equal`
-    /// evaluates both operands and compares the values through a collator, so it
-    /// cannot be answered without a context; it conservatively reports `false`
-    /// here and gains a faithful context-aware form when `Eval*` is ported. No
-    /// wired consumer relies on constant equality yet.
+    /// `EvalContext`: columns are equal by `UniqueID`. `Constant.Equal` compares
+    /// evaluated values through a collator and `ScalarFunction.Equal` compares
+    /// through the function's `equal(ctx, ...)`, so neither can be answered
+    /// without a context; both conservatively report `false` here and gain a
+    /// faithful context-aware form when `Eval*` is ported. No wired consumer
+    /// relies on constant/function equality yet.
     #[must_use]
     pub fn equal(&self, other: &Expression) -> bool {
         match self {
             Expression::Column(c) => c.equal_column(other),
             Expression::CorrelatedColumn(c) => c.equal_column(other),
-            Expression::Constant(_) => false,
+            Expression::Constant(_) | Expression::ScalarFunction(_) => false,
         }
     }
 
