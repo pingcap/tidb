@@ -1,0 +1,13 @@
+[package]
+name = "tidb-vardef"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB sessionctx/vardef: system-variable name constants (Rust rewrite)."
+
+[dependencies]
+
+[lints]
+workspace = true

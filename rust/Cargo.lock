@@ -1387,6 +1387,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ast",
+ "tidb-datatype",
+ "tidb-parser",
 ]
 
 [[package]]
@@ -1533,6 +1535,10 @@ dependencies = [
  "tidb-metadef",
  "tracing",
 ]
+
+[[package]]
+name = "tidb-vardef"
+version = "0.0.0"
 
 [[package]]
 name = "tokio"
