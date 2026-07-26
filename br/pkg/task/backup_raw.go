@@ -35,9 +35,10 @@ const (
 type RawKvConfig struct {
 	Config
 
-	StartKey []byte `json:"start-key" toml:"start-key"`
-	EndKey   []byte `json:"end-key" toml:"end-key"`
-	CF       string `json:"cf" toml:"cf"`
+	StartKey        []byte `json:"start-key" toml:"start-key"`
+	EndKey          []byte `json:"end-key" toml:"end-key"`
+	CF              string `json:"cf" toml:"cf"`
+	PackageFileSize uint64 `json:"package-file-size" toml:"package-file-size"`
 	CompressionConfig
 	RemoveSchedulers bool `json:"remove-schedulers" toml:"remove-schedulers"`
 }
@@ -115,6 +116,11 @@ func (cfg *RawKvConfig) ParseBackupConfigFromFlags(flags *pflag.FlagSet) error {
 	}
 	cfg.CompressionLevel = level
 
+	cfg.PackageFileSize, err = flags.GetUint64(flagPackageFileSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -145,6 +151,8 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	defer mgr.Close()
 
 	client := backup.NewBackupClient(ctx, mgr)
+	client.SetExpectPackedFiles(cfg.PackageFileSize > 0)
+
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
@@ -211,6 +219,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		Cf:               cfg.CF,
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
+		PackageFileSize:  cfg.PackageFileSize,
 		CipherInfo:       &cfg.CipherInfo,
 	}
 	rg := rtree.KeyRange{
