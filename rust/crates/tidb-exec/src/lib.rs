@@ -617,6 +617,7 @@ pub mod option_values;
 pub mod order;
 pub mod ordered_apply_buffer;
 mod partition;
+pub mod password_validation;
 pub mod pd_approximate_count;
 pub mod percentile;
 pub mod placement_labels;
