@@ -198,6 +198,93 @@ impl TableInfo {
             .is_some_and(|c| c.get_flag() & FieldTypeFlags::UNSIGNED != 0)
     }
 
+    /// Go `Cols`: the public columns, in offset order.
+    ///
+    /// Go builds an offset-indexed slice of the public columns and returns it
+    /// up to the max offset; a gap (a non-public column at a lower offset than
+    /// a public one, a transient DDL state) would leave a `nil` in Go's result
+    /// and panic any consumer. Here the present columns are collected in
+    /// offset order, matching Go for the normal contiguous case.
+    #[must_use]
+    pub fn cols(&self) -> Vec<&ColumnInfo> {
+        let mut slots: Vec<Option<&ColumnInfo>> = vec![None; self.columns.len()];
+        let mut max_offset: i64 = -1;
+        for col in &self.columns {
+            if col.state != SchemaState::PUBLIC {
+                continue;
+            }
+            let off = col.offset as usize;
+            if off < slots.len() {
+                slots[off] = Some(col);
+            }
+            if i64::from(col.offset) > max_offset {
+                max_offset = i64::from(col.offset);
+            }
+        }
+        slots
+            .into_iter()
+            .take((max_offset + 1) as usize)
+            .flatten()
+            .collect()
+    }
+
+    /// Go `FindPublicColumnByName`: the public column named `col_name_l`
+    /// (already lower-cased).
+    #[must_use]
+    pub fn find_public_column_by_name(&self, col_name_l: &str) -> Option<&ColumnInfo> {
+        self.cols()
+            .into_iter()
+            .find(|c| c.name.lowercase() == col_name_l)
+    }
+
+    /// Go `GetPrimaryKey`: the explicit primary index, else an implicit one
+    /// (a unique index over only non-null, non-hidden public columns).
+    #[must_use]
+    pub fn get_primary_key(&self) -> Option<&IndexInfo> {
+        let cols = self.cols();
+        let mut implicit_pk: Option<&IndexInfo> = None;
+        for key in &self.indices {
+            if key.primary {
+                return Some(key);
+            }
+            if key.columns.is_empty() {
+                continue;
+            }
+            if implicit_pk.is_none() && key.unique {
+                let mut all_col_not_null = true;
+                let mut skip = false;
+                for idx_col in &key.columns {
+                    let col = cols
+                        .iter()
+                        .find(|c| c.name.lowercase() == idx_col.name.lowercase());
+                    match col {
+                        None => {
+                            skip = true;
+                            break;
+                        }
+                        Some(c) if c.hidden => {
+                            skip = true;
+                            break;
+                        }
+                        Some(c) => {
+                            if c.get_flag() & FieldTypeFlags::NOT_NULL == 0 {
+                                all_col_not_null = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if skip {
+                    continue;
+                }
+                if all_col_not_null {
+                    implicit_pk = Some(key);
+                }
+            }
+        }
+        implicit_pk
+    }
+
     /// Go `IsView`.
     #[must_use]
     pub fn is_view(&self) -> bool {
@@ -283,6 +370,75 @@ mod tests {
         assert!(!t.is_auto_random_bit_col_unsigned());
         t.pk_is_handle = true;
         assert!(t.is_auto_random_bit_col_unsigned()); // id is unsigned
+    }
+
+    fn column(name: &str, offset: i32, public: bool, not_null: bool) -> ColumnInfo {
+        let mut c = ColumnInfo::new_extra_handle_col_info();
+        c.name = CiString::new(name);
+        c.offset = offset;
+        c.field_type = FieldType::new(FieldTypeCode::LongLong);
+        c.set_flag(if not_null {
+            FieldTypeFlags::NOT_NULL
+        } else {
+            0
+        });
+        c.state = if public {
+            SchemaState::PUBLIC
+        } else {
+            SchemaState::WRITE_ONLY
+        };
+        c
+    }
+
+    #[test]
+    fn cols_and_primary_key() {
+        use crate::index::{IndexColumn, IndexInfo};
+
+        let t = TableInfo {
+            columns: vec![
+                column("a", 0, true, false),
+                column("b", 1, true, true),
+                column("c", 2, false, false), // non-public -> excluded
+            ],
+            indices: vec![IndexInfo {
+                name: CiString::new("uk_b"),
+                unique: true,
+                columns: vec![IndexColumn {
+                    name: CiString::new("b"),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        // Public columns only, in offset order.
+        let cols = t.cols();
+        assert_eq!(cols.len(), 2);
+        assert_eq!(cols[0].name.original(), "a");
+        assert_eq!(cols[1].name.original(), "b");
+        assert!(t.find_public_column_by_name("b").is_some());
+        assert!(t.find_public_column_by_name("c").is_none()); // not public
+
+        // Implicit PK: the unique index over non-null public column b.
+        let pk = t.get_primary_key().unwrap();
+        assert_eq!(pk.name.original(), "uk_b");
+
+        // An explicit primary index wins.
+        let mut t2 = t.clone();
+        t2.indices.insert(
+            0,
+            IndexInfo {
+                name: CiString::new("pk"),
+                primary: true,
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        assert_eq!(t2.get_primary_key().unwrap().name.original(), "pk");
     }
 
     #[test]
