@@ -27,9 +27,12 @@
 //!   loaded into a fresh `NewConfig`.
 //!
 //! The instance-section migration (`sectionMovedToInstance` ->
-//! `ErrConfigInstanceSection`) is a following tranche.
+//! `ErrConfigInstanceSection`) reports options that were relocated into the
+//! `[instance]` section: an old option that collides with its new
+//! `[instance]` name is a *conflict*; one present only under its old name is
+//! *deprecated*. Either produces `LoadError::InstanceSection`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::config::Config;
 use crate::deploymode::Mode;
@@ -46,8 +49,28 @@ pub enum LoadError {
         /// The unrecognized item paths.
         undecoded_items: Vec<String>,
     },
+    /// Options were relocated into the `[instance]` section (Go
+    /// `ErrConfigInstanceSection`). Callers downgrade this to a warning.
+    InstanceSection {
+        /// The config file path.
+        conf_file: String,
+        /// Old options that also appear under their new `[instance]` name.
+        conflict: Vec<InstanceConfigSection>,
+        /// Old options present only under their old name.
+        deprecated: Vec<InstanceConfigSection>,
+    },
     /// Any other load error (parse failure, a deploy-mode gate, ...).
     Other(String),
+}
+
+/// A group of relocated options from one source section (Go
+/// `InstanceConfigSection`). `section_name` is empty for top-level options.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InstanceConfigSection {
+    /// The originating section name (empty = top level).
+    pub section_name: String,
+    /// old-option-name -> new `[instance]` option name.
+    pub name_mappings: BTreeMap<String, String>,
 }
 
 impl std::fmt::Display for LoadError {
@@ -63,6 +86,30 @@ impl std::fmt::Display for LoadError {
                  your TiDB version if the option does not appear to be a typo",
                 undecoded_items.join(", ")
             ),
+            LoadError::InstanceSection {
+                conflict,
+                deprecated,
+                ..
+            } => {
+                if !conflict.is_empty() {
+                    f.write_str(
+                        "Conflict configuration options exists on both [instance] section and \
+                         some other sections. ",
+                    )?;
+                }
+                if !deprecated.is_empty() {
+                    f.write_str(
+                        "Some configuration options should be moved to [instance] section. ",
+                    )?;
+                }
+                f.write_str("Please use the latter config options in [instance] instead: ")?;
+                for section in conflict.iter().chain(deprecated.iter()) {
+                    for (old_name, new_name) in &section.name_mappings {
+                        write!(f, " ({old_name}, {new_name})")?;
+                    }
+                }
+                f.write_str(".")
+            }
             LoadError::Other(s) => f.write_str(s),
         }
     }
@@ -153,6 +200,81 @@ pub fn is_all_removed_config_items(items: &[String]) -> bool {
 
 const MAX_TOKEN_LIMIT: u32 = 1024 * 1024;
 
+/// Options relocated into the `[instance]` section (Go
+/// `sectionMovedToInstance`): `(source_section, &[(old_name, new_name)])`;
+/// an empty source section means the option lived at the top level.
+const SECTION_MOVED_TO_INSTANCE: &[(&str, &[(&str, &str)])] = &[
+    (
+        "",
+        &[
+            ("check-mb4-value-in-utf8", "tidb_check_mb4_value_in_utf8"),
+            (
+                "enable-collect-execution-info",
+                "tidb_enable_collect_execution_info",
+            ),
+            ("max-server-connections", "max_connections"),
+            ("run-ddl", "tidb_enable_ddl"),
+        ],
+    ),
+    (
+        "log",
+        &[
+            ("enable-slow-log", "tidb_enable_slow_log"),
+            ("slow-threshold", "tidb_slow_log_threshold"),
+            ("record-plan-in-slow-log", "tidb_record_plan_in_slow_log"),
+        ],
+    ),
+    (
+        "performance",
+        &[
+            ("force-priority", "tidb_force_priority"),
+            ("memory-usage-alarm-ratio", "tidb_memory_usage_alarm_ratio"),
+        ],
+    ),
+    ("plugin", &[("load", "plugin_load"), ("dir", "plugin_dir")]),
+];
+
+/// Go's instance-section migration scan: classify each relocated option that
+/// is present in the file as either a conflict (its new `[instance]` name is
+/// also set) or deprecated (only the old name is set).
+fn instance_section_migration(
+    table: &toml::Table,
+) -> (Vec<InstanceConfigSection>, Vec<InstanceConfigSection>) {
+    let mut conflict = Vec::new();
+    let mut deprecated = Vec::new();
+    for (section, mappings) in SECTION_MOVED_TO_INSTANCE {
+        let mut conflict_map = BTreeMap::new();
+        let mut deprecated_map = BTreeMap::new();
+        for (old_name, new_name) in *mappings {
+            let old_defined = if section.is_empty() {
+                is_defined(table, &[old_name])
+            } else {
+                is_defined(table, &[section, old_name])
+            };
+            if old_defined {
+                if is_defined(table, &["instance", new_name]) {
+                    conflict_map.insert((*old_name).to_string(), (*new_name).to_string());
+                } else {
+                    deprecated_map.insert((*old_name).to_string(), (*new_name).to_string());
+                }
+            }
+        }
+        if !conflict_map.is_empty() {
+            conflict.push(InstanceConfigSection {
+                section_name: (*section).to_string(),
+                name_mappings: conflict_map,
+            });
+        }
+        if !deprecated_map.is_empty() {
+            deprecated.push(InstanceConfigSection {
+                section_name: (*section).to_string(),
+                name_mappings: deprecated_map,
+            });
+        }
+    }
+    (conflict, deprecated)
+}
+
 impl Config {
     /// Go `Config.Load` (from an already-read config-file string; file I/O
     /// is the caller's, matching how the rewrite reads config text).
@@ -205,15 +327,30 @@ impl Config {
             self.token_limit = MAX_TOKEN_LIMIT;
         }
 
-        // Undecoded items -> ErrConfigValidationFailed (the instance-section
-        // migration is a following tranche).
-        if !undecoded.is_empty() {
-            return Err(LoadError::ValidationFailed {
+        // Undecoded items -> ErrConfigValidationFailed. The instance-section
+        // migration below takes precedence (Go overwrites `err`).
+        let mut err: Option<LoadError> = if undecoded.is_empty() {
+            None
+        } else {
+            Some(LoadError::ValidationFailed {
                 conf_file: conf_file.to_string(),
                 undecoded_items: undecoded,
+            })
+        };
+
+        let (conflict, deprecated) = instance_section_migration(&table);
+        if !conflict.is_empty() || !deprecated.is_empty() {
+            err = Some(LoadError::InstanceSection {
+                conf_file: conf_file.to_string(),
+                conflict,
+                deprecated,
             });
         }
-        Ok(())
+
+        match err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Go `RemovedVariableCheck`: errors listing any removed items present.
@@ -336,6 +473,90 @@ mod tests {
         assert!(!is_all_removed_config_items(&[
             "totally-unknown-key".to_string()
         ]));
+    }
+
+    // Helper: pull the (conflict, deprecated) sections out of the error,
+    // keyed by section name, for order-independent assertions.
+    fn sections_by_name(
+        v: &[InstanceConfigSection],
+    ) -> std::collections::BTreeMap<&str, &BTreeMap<String, String>> {
+        v.iter()
+            .map(|s| (s.section_name.as_str(), &s.name_mappings))
+            .collect()
+    }
+
+    // Go TestConflictInstanceConfig: an old option and its new [instance]
+    // name both set -> a conflict; the option keeps both values.
+    #[test]
+    fn conflict_instance_config() {
+        let mut c = new_config();
+        let text = "check-mb4-value-in-utf8 = true \nrun-ddl = true \n\
+             [log] \nenable-slow-log = true \n\
+             [performance] \nforce-priority = \"NO_PRIORITY\"\n\
+             [instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \n\
+             tidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false\n\
+             tidb_enable_stats_owner = false";
+        let err = c.load_str("c.toml", text).unwrap_err();
+        assert!(err.to_string().contains(
+            "Conflict configuration options exists on both [instance] section and some other \
+             sections."
+        ));
+        match err {
+            LoadError::InstanceSection {
+                conflict,
+                deprecated,
+                ..
+            } => {
+                assert!(deprecated.is_empty(), "no deprecated: {deprecated:?}");
+                let by = sections_by_name(&conflict);
+                assert_eq!(
+                    by[""]["check-mb4-value-in-utf8"],
+                    "tidb_check_mb4_value_in_utf8"
+                );
+                assert_eq!(by[""]["run-ddl"], "tidb_enable_ddl");
+                assert_eq!(by["log"]["enable-slow-log"], "tidb_enable_slow_log");
+                assert_eq!(by["performance"]["force-priority"], "tidb_force_priority");
+            }
+            other => panic!("expected InstanceSection, got {other:?}"),
+        }
+    }
+
+    // Go TestDeprecatedConfig: old options present without their new
+    // [instance] name -> deprecated (should be moved to [instance]).
+    #[test]
+    fn deprecated_config() {
+        let mut c = new_config();
+        let text = "enable-collect-execution-info = false \nrun-ddl = false \n\
+             [plugin] \ndir=\"/plugin-path\" \nload=\"audit-1,whitelist-1\" \n\
+             [log] \nslow-threshold = 100 \n\
+             [performance] \nmemory-usage-alarm-ratio = 0.5";
+        let err = c.load_str("c.toml", text).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Some configuration options should be moved to [instance] section."));
+        match err {
+            LoadError::InstanceSection {
+                conflict,
+                deprecated,
+                ..
+            } => {
+                assert!(conflict.is_empty(), "no conflict: {conflict:?}");
+                let by = sections_by_name(&deprecated);
+                assert_eq!(
+                    by[""]["enable-collect-execution-info"],
+                    "tidb_enable_collect_execution_info"
+                );
+                assert_eq!(by[""]["run-ddl"], "tidb_enable_ddl");
+                assert_eq!(by["log"]["slow-threshold"], "tidb_slow_log_threshold");
+                assert_eq!(
+                    by["performance"]["memory-usage-alarm-ratio"],
+                    "tidb_memory_usage_alarm_ratio"
+                );
+                assert_eq!(by["plugin"]["load"], "plugin_load");
+                assert_eq!(by["plugin"]["dir"], "plugin_dir");
+            }
+            other => panic!("expected InstanceSection, got {other:?}"),
+        }
     }
 
     // A valid partial config loads and keeps defaults.

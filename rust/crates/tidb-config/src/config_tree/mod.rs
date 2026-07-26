@@ -38,7 +38,7 @@ pub use helpers::{
     flatten_config_items, prepare_error_message_extensions, valid_max_allowed_packet, Cse,
     ErrorMessageExtension, TrxSummary, DEF_MAX_ALLOWED_PACKET,
 };
-pub use load::{is_all_removed_config_items, is_defined, LoadError};
+pub use load::{is_all_removed_config_items, is_defined, InstanceConfigSection, LoadError};
 pub use log_instance::{FileLogConfig, Instance, Log};
 pub use marshal::{AtomicBool, NullableBool, NB_FALSE, NB_TRUE, NB_UNSET};
 pub use sections::{
