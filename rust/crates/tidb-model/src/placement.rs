@@ -14,14 +14,13 @@
 
 //! `pkg/meta/model/placement.go`: placement-policy metadata.
 //!
-//! Go's package-private `writeSettingDurationToBuilder` (which formats a
-//! `time.Duration` via `Duration.String()`) is not ported here: it is used
-//! only by `resource_group.go`, not by anything in this file, and will land
-//! with that file so it can share a faithful `Duration.String()`.
+//! The `writeSetting*ToBuilder` helpers live in [`crate::setting_builder`],
+//! shared with the resource-group renderer.
 
 use tidb_ast::CiString;
 
 use crate::schema_state::SchemaState;
+use crate::setting_builder::{write_setting_integer, write_setting_string};
 
 /// Go `PolicyRefInfo`: a reference to a placement policy by ID and name.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -66,62 +65,63 @@ impl std::fmt::Display for PlacementSettings {
         // Reproduces Go's PlacementSettings.String() field order and format.
         let mut sb = String::new();
         if !self.primary_region.is_empty() {
-            write_setting_string(&mut sb, "PRIMARY_REGION", &self.primary_region);
+            write_setting_string(&mut sb, "PRIMARY_REGION", &self.primary_region, None);
         }
         if !self.regions.is_empty() {
-            write_setting_string(&mut sb, "REGIONS", &self.regions);
+            write_setting_string(&mut sb, "REGIONS", &self.regions, None);
         }
         if !self.schedule.is_empty() {
-            write_setting_string(&mut sb, "SCHEDULE", &self.schedule);
+            write_setting_string(&mut sb, "SCHEDULE", &self.schedule, None);
         }
         if !self.constraints.is_empty() {
-            write_setting_string(&mut sb, "CONSTRAINTS", &self.constraints);
+            write_setting_string(&mut sb, "CONSTRAINTS", &self.constraints, None);
         }
         if !self.leader_constraints.is_empty() {
-            write_setting_string(&mut sb, "LEADER_CONSTRAINTS", &self.leader_constraints);
+            write_setting_string(
+                &mut sb,
+                "LEADER_CONSTRAINTS",
+                &self.leader_constraints,
+                None,
+            );
         }
         if self.voters > 0 {
-            write_setting_integer(&mut sb, "VOTERS", self.voters);
+            write_setting_integer(&mut sb, "VOTERS", self.voters, None);
         }
         if !self.voter_constraints.is_empty() {
-            write_setting_string(&mut sb, "VOTER_CONSTRAINTS", &self.voter_constraints);
+            write_setting_string(&mut sb, "VOTER_CONSTRAINTS", &self.voter_constraints, None);
         }
         if self.followers > 0 {
-            write_setting_integer(&mut sb, "FOLLOWERS", self.followers);
+            write_setting_integer(&mut sb, "FOLLOWERS", self.followers, None);
         }
         if !self.follower_constraints.is_empty() {
-            write_setting_string(&mut sb, "FOLLOWER_CONSTRAINTS", &self.follower_constraints);
+            write_setting_string(
+                &mut sb,
+                "FOLLOWER_CONSTRAINTS",
+                &self.follower_constraints,
+                None,
+            );
         }
         if self.learners > 0 {
-            write_setting_integer(&mut sb, "LEARNERS", self.learners);
+            write_setting_integer(&mut sb, "LEARNERS", self.learners, None);
         }
         if !self.learner_constraints.is_empty() {
-            write_setting_string(&mut sb, "LEARNER_CONSTRAINTS", &self.learner_constraints);
+            write_setting_string(
+                &mut sb,
+                "LEARNER_CONSTRAINTS",
+                &self.learner_constraints,
+                None,
+            );
         }
         if !self.survival_preferences.is_empty() {
-            write_setting_string(&mut sb, "SURVIVAL_PREFERENCES", &self.survival_preferences);
+            write_setting_string(
+                &mut sb,
+                "SURVIVAL_PREFERENCES",
+                &self.survival_preferences,
+                None,
+            );
         }
         f.write_str(&sb)
     }
-}
-
-// Go `writeSettingStringToBuilder`: `ITEM="value"` with `"` escaped to `\"`.
-fn write_setting_string(sb: &mut String, item: &str, value: &str) {
-    write_setting_item(sb, &format!("{item}=\"{}\"", value.replace('"', "\\\"")));
-}
-
-// Go `writeSettingIntegerToBuilder`: `ITEM=value`.
-fn write_setting_integer(sb: &mut String, item: &str, value: u64) {
-    write_setting_item(sb, &format!("{item}={value}"));
-}
-
-// Go `writeSettingItemToBuilder` with no separator functions: items after the
-// first are separated by a single space.
-fn write_setting_item(sb: &mut String, item: &str) {
-    if !sb.is_empty() {
-        sb.push(' ');
-    }
-    sb.push_str(item);
 }
 
 /// Go `PolicyInfo`: a placement policy (its settings plus identity/state).

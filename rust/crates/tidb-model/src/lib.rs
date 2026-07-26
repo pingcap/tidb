@@ -24,11 +24,14 @@ pub mod action_type;
 pub mod bdr;
 pub mod engine_attribute;
 pub mod flags;
+pub mod go_duration;
 pub mod job_enums;
 pub mod masking_policy;
 pub mod placement;
 pub mod reorg;
+pub mod resource_group;
 pub mod schema_state;
+mod setting_builder;
 pub mod table_mode;
 
 pub use action_type::{ActionType, ACTION_MAP};
@@ -39,5 +42,9 @@ pub use job_enums::{
 pub use masking_policy::{MaskingPolicyInfo, MaskingPolicyStatus};
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
 pub use reorg::{BackfillState, ReorgStage, ReorgType};
+pub use resource_group::{
+    ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawaySettings,
+    ResourceGroupSettings,
+};
 pub use schema_state::SchemaState;
 pub use table_mode::{AlterTableModeTarget, TableMode};
