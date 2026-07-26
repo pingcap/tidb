@@ -795,6 +795,32 @@ func TestScanLimitConcurrency(t *testing.T) {
 	}
 }
 
+func TestKeepOrderScanConcurrencyDowngrade(t *testing.T) {
+	for _, tt := range []struct {
+		skipDowngrade bool
+		expected      int
+		src           string
+	}{
+		{false, 2, "downgraded"},
+		{true, vardef.DefDistSQLScanConcurrency, "skipped"},
+	} {
+		t.Run(tt.src, func(t *testing.T) {
+			dctx := NewDistSQLContextForTest()
+			dctx.SkipKeepOrderScanConcurrencyDowngrade = tt.skipDowngrade
+			dag := &tipb.DAGRequest{Executors: []*tipb.Executor{
+				{Tp: tipb.ExecType_TypeTableScan, TblScan: &tipb.TableScan{}},
+			}}
+			actual, err := (&RequestBuilder{}).
+				SetDAGRequest(dag).
+				SetKeepOrder(true).
+				SetFromSessionVars(dctx).
+				Build()
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, actual.Concurrency)
+		})
+	}
+}
+
 func TestIndexLookUpPushDownScanConcurrency(t *testing.T) {
 	dctx := NewDistSQLContextForTest()
 	for _, tt := range []struct {

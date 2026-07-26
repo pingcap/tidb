@@ -55,6 +55,10 @@ type RequestBuilder struct {
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest
+
+	// skipKeepOrderScanConcurrencyDowngrade, when true, keeps a keep-order simple-scan
+	// request at its configured concurrency instead of downgrading it to 2 in Build.
+	skipKeepOrderScanConcurrencyDowngrade bool
 }
 
 // Build builds a "kv.Request".
@@ -91,7 +95,8 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
 			// select * from t order by id
-			if builder.Request.KeepOrder && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency {
+			if builder.Request.KeepOrder && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency &&
+				!builder.skipKeepOrderScanConcurrencyDowngrade {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
 				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
 				// If very few data are returned to client, the speed is not optimal but good enough.
@@ -345,6 +350,7 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 		// Concurrency is set in SetDAGRequest, check the upper limit.
 		builder.Request.Concurrency = distsqlConcurrency
 	}
+	builder.skipKeepOrderScanConcurrencyDowngrade = dctx.SkipKeepOrderScanConcurrencyDowngrade
 	replicaReadType := dctx.ReplicaReadType
 	if dctx.WeakConsistency {
 		builder.Request.IsolationLevel = kv.RC

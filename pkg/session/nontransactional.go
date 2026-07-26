@@ -464,6 +464,14 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	defer func() {
 		se.GetSessionVars().MaxExecutionTime = originalMaxExecutionTime
 	}()
+	// The shard-boundary SELECT feeds the batching logic rather than the client, so it should not
+	// be capped to concurrency 2 by the keep-order simple-scan heuristic in RequestBuilder.Build.
+	// Keep the flag set with defer so it stays effective while the record set is consumed below.
+	originalSkipDowngrade := se.GetSessionVars().SkipKeepOrderScanConcurrencyDowngrade
+	se.GetSessionVars().SkipKeepOrderScanConcurrencyDowngrade = true
+	defer func() {
+		se.GetSessionVars().SkipKeepOrderScanConcurrencyDowngrade = originalSkipDowngrade
+	}()
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
