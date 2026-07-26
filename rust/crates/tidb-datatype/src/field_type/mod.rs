@@ -933,6 +933,58 @@ impl FieldType {
         };
     }
 
+    /// Mirrors Go `FieldType.SetFlag`: replaces the flag word.
+    pub fn set_flags(&mut self, flags: u32) {
+        self.flags = flags;
+    }
+
+    /// Mirrors Go `FieldType.AddFlag`: `flags |= f`.
+    pub fn add_flags(&mut self, flags: u32) {
+        self.flags |= flags;
+    }
+
+    /// Mirrors Go `FieldType.AndFlag`: `flags &= f`.
+    pub fn and_flags(&mut self, flags: u32) {
+        self.flags &= flags;
+    }
+
+    /// Mirrors Go `FieldType.ToggleFlag`: `flags ^= f`.
+    pub fn toggle_flags(&mut self, flags: u32) {
+        self.flags ^= flags;
+    }
+
+    /// Mirrors Go `FieldType.DelFlag`: `flags &= ^f`.
+    pub fn del_flags(&mut self, flags: u32) {
+        self.flags &= !flags;
+    }
+
+    /// Mirrors Go `FieldType.SetFlen`: sets the length unconditionally
+    /// (unlike [`set_flen_under_limit`](Self::set_flen_under_limit)).
+    pub fn set_flen(&mut self, flen: i64) {
+        self.flen = flen;
+    }
+
+    /// Mirrors Go `FieldType.SetDecimal`: sets the scale unconditionally.
+    pub fn set_decimal(&mut self, decimal: i64) {
+        self.decimal = decimal;
+    }
+
+    /// Mirrors Go `FieldType.SetCharset`: sets the charset name.
+    pub fn set_charset_name(&mut self, charset: impl Into<String>) {
+        self.charset_name = charset.into();
+    }
+
+    /// Mirrors Go `FieldType.SetCollate`: sets the collation name.
+    pub fn set_collation_name(&mut self, collation: impl Into<String>) {
+        self.collation_name = collation.into();
+    }
+
+    /// Mirrors Go `FieldType.SetElems`: replaces the ENUM/SET elements.
+    pub fn set_elems(&mut self, elems: Vec<String>) {
+        self.elems = elems;
+        self.elems_present = true;
+    }
+
     /// Mirrors `FieldType.UpdateFlenAndDecimalUnderLimit`.
     pub fn update_flen_and_decimal_under_limit(
         &mut self,
@@ -1417,6 +1469,41 @@ mod tests {
         FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH,
         UNSPECIFIED_LENGTH,
     };
+
+    // The Go-compatible mutators (SetFlag/AddFlag/AndFlag/ToggleFlag/DelFlag,
+    // SetFlen/SetDecimal, SetCharset/SetCollate, SetElems).
+    #[test]
+    fn go_style_setters() {
+        let mut ft = FieldType::new(FieldTypeCode::Long);
+        ft.set_flags(FieldTypeFlags::NOT_NULL);
+        assert_eq!(ft.flags(), FieldTypeFlags::NOT_NULL);
+        ft.add_flags(FieldTypeFlags::UNSIGNED);
+        assert_eq!(
+            ft.flags(),
+            FieldTypeFlags::NOT_NULL | FieldTypeFlags::UNSIGNED
+        );
+        ft.del_flags(FieldTypeFlags::NOT_NULL);
+        assert_eq!(ft.flags(), FieldTypeFlags::UNSIGNED);
+        ft.toggle_flags(FieldTypeFlags::UNSIGNED);
+        assert_eq!(ft.flags(), 0);
+        ft.set_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::UNSIGNED);
+        ft.and_flags(FieldTypeFlags::UNSIGNED);
+        assert_eq!(ft.flags(), FieldTypeFlags::UNSIGNED);
+
+        // Unconditional set (unlike the _under_limit variants).
+        ft.set_flen(1234);
+        assert_eq!(ft.flen(), 1234);
+        ft.set_decimal(5);
+        assert_eq!(ft.decimal(), 5);
+
+        ft.set_charset_name("utf8mb4");
+        assert_eq!(ft.charset_name(), "utf8mb4");
+        ft.set_collation_name("utf8mb4_bin");
+        assert_eq!(ft.collation_name(), "utf8mb4_bin");
+
+        ft.set_elems(vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(ft.elems(), &["a".to_string(), "b".to_string()]);
+    }
     use crate::{Charset, Collation};
 
     /// Source: `pkg/types/field_type.go::DefaultCharsetForType` and
