@@ -21,9 +21,27 @@
 //! `TableInfo` gates DBInfo and much of meta/model; it is being approached
 //! bottom-up from these leaves.
 
-use tidb_ast::{CiString, TableLockType};
+use tidb_ast::{CiString, TableLockType, ViewAlgorithm, ViewCheckOption, ViewSecurity};
+use tidb_parser::auth::UserIdentity;
 
 use crate::schema_state::SchemaState;
+
+/// Go `ViewInfo`: metadata describing a view.
+#[derive(Clone, Debug, Default)]
+pub struct ViewInfo {
+    /// The view algorithm.
+    pub algorithm: ViewAlgorithm,
+    /// The view definer (Go's `*auth.UserIdentity`).
+    pub definer: Option<Box<UserIdentity>>,
+    /// The view security context.
+    pub security: ViewSecurity,
+    /// The view's SELECT statement text.
+    pub select_stmt: String,
+    /// The check option.
+    pub check_option: ViewCheckOption,
+    /// The view column names.
+    pub cols: Vec<CiString>,
+}
 
 /// Go `ConstraintInfo`: a table CHECK constraint.
 #[derive(Clone, Debug, Default)]
@@ -434,6 +452,24 @@ mod tests {
             "`db1`.`child`, CONSTRAINT `fk2` FOREIGN KEY (`pid`) REFERENCES \
              `parent` (`id`) ON UPDATE RESTRICT"
         );
+    }
+
+    #[test]
+    fn view_info_basic() {
+        let v = ViewInfo {
+            select_stmt: "SELECT 1".to_owned(),
+            cols: vec![CiString::new("a")],
+            definer: Some(Box::new(UserIdentity {
+                username: "root".to_owned(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        assert_eq!(v.select_stmt, "SELECT 1");
+        assert_eq!(v.definer.as_ref().unwrap().username, "root");
+        // Clone is a deep copy.
+        let c = v.clone();
+        assert_eq!(c.cols[0].original(), "a");
     }
 
     #[test]
