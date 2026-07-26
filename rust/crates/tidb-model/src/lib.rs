@@ -29,6 +29,7 @@ pub mod go_duration;
 pub mod index;
 pub mod job_enums;
 pub mod masking_policy;
+pub mod partition;
 pub mod placement;
 pub mod reorg;
 pub mod resource_group;
@@ -45,6 +46,7 @@ pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, JobState, JobVersion,
 };
 pub use masking_policy::{MaskingPolicyInfo, MaskingPolicyStatus};
+pub use partition::{PartitionDefinition, PartitionInfo, PartitionState, UpdateIndexInfo};
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
 pub use reorg::{BackfillState, ReorgStage, ReorgType};
 pub use resource_group::{

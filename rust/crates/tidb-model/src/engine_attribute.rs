@@ -109,10 +109,7 @@ impl StorageClassTransitRule {
 /// Go `buildStorageClassString`: the JSON string describing a tier and its
 /// transitions (just the tier name when there are none).
 ///
-/// Package-private in Go and called from other `meta/model` files (e.g.
-/// table storage-class handling) that are not ported yet; allowed dead code
-/// until those land. Exercised by this module's tests.
-#[allow(dead_code)]
+/// Package-private in Go; used by `PartitionDefinition::storage_class_string`.
 pub(crate) fn build_storage_class_string(
     tier: &str,
     transitions: &[StorageClassTransitRule],
