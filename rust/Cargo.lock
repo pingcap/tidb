@@ -1492,6 +1492,7 @@ dependencies = [
  "crossbeam-channel",
  "des",
  "fastrand",
+ "flate2",
  "getrandom",
  "num-traits",
  "regex",
@@ -1499,6 +1500,7 @@ dependencies = [
  "serde_json",
  "tidb-error",
  "tidb-hack",
+ "tidb-log",
  "tracing",
 ]
 

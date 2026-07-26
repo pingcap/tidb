@@ -33,6 +33,7 @@ pub mod globalconn;
 pub mod intest;
 pub mod israce;
 pub mod layered_io;
+pub mod logutil;
 pub mod mathutil;
 pub mod memory;
 pub mod mvmap;
