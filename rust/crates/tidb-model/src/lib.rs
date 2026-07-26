@@ -21,8 +21,10 @@
 //! far. It is seed evidence, not yet the complete package.
 
 pub mod flags;
+pub mod masking_policy;
 pub mod schema_state;
 pub mod table_mode;
 
+pub use masking_policy::{MaskingPolicyInfo, MaskingPolicyStatus};
 pub use schema_state::SchemaState;
 pub use table_mode::{AlterTableModeTarget, TableMode};

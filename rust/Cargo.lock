@@ -1383,6 +1383,7 @@ dependencies = [
 name = "tidb-model"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "tidb-ast",
 ]
 
