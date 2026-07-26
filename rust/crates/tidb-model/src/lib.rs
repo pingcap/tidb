@@ -27,6 +27,7 @@ pub mod flags;
 pub mod job_enums;
 pub mod masking_policy;
 pub mod placement;
+pub mod reorg;
 pub mod schema_state;
 pub mod table_mode;
 
@@ -37,5 +38,6 @@ pub use job_enums::{
 };
 pub use masking_policy::{MaskingPolicyInfo, MaskingPolicyStatus};
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
+pub use reorg::{BackfillState, ReorgStage, ReorgType};
 pub use schema_state::SchemaState;
 pub use table_mode::{AlterTableModeTarget, TableMode};
