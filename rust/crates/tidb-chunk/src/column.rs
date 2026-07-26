@@ -26,15 +26,49 @@
 //! `to_ne_bytes`/`from_ne_bytes`, which is the same in-memory layout on a given
 //! target.
 //!
-//! DEFERRED (documented, later tranches): variable-length append/get (string,
-//! bytes via `offsets`); the typed appends and `Resize*` for Time, Duration,
-//! `MyDecimal`, JSON, Enum, Set, and `VectorFloat32`; `NewColumn(FieldType)` /
-//! `getFixedLen` type dispatch and `Reset(EvalType)`; the `Reserve`/`resize`
-//! capacity helpers; `SetNull(s)`/`nullCount`; and everything in `Chunk`/`Row`.
+//! Also ported: variable-length append/get (string/bytes via `offsets`) and the
+//! `getFixedLen`/`NewColumn(FieldType)` type dispatch.
+//!
+//! DEFERRED (documented, later tranches): the typed appends and `Resize*` for
+//! Time, Duration, `MyDecimal`, JSON, Enum, Set, and `VectorFloat32`;
+//! `Reset(EvalType)`; the `Reserve`/`resize` capacity helpers;
+//! `SetNull(s)`/`nullCount`; a `str`-typed `GetString`; and the `Chunk`/`Row`
+//! containers built on `Column`.
+
+use tidb_datatype::{FieldType, FieldTypeCode};
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
 /// column.
 pub const VAR_ELEM_LEN: i64 = -1;
+
+/// Go `sizeTime` = `sizeof(types.Time)`. A `types.Time` is a single `CoreTime`
+/// (`uint64`), so it is 8 bytes. (For chunk-codec cross-language fidelity this
+/// must equal Go's `sizeTime`; it does.)
+pub const SIZE_TIME: i64 = 8;
+
+/// Go `types.MyDecimalStructSize` (`= 40`): the fixed element width of a
+/// `NewDecimal` column.
+pub const MY_DECIMAL_STRUCT_SIZE: i64 = 40;
+
+/// Go `getFixedLen`: the fixed element width for a column of `field_type`, or
+/// [`VAR_ELEM_LEN`] when the type is variable-length.
+#[must_use]
+pub fn get_fixed_len(field_type: &FieldType) -> i64 {
+    match field_type.code() {
+        FieldTypeCode::Float => 4,
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong
+        | FieldTypeCode::Double
+        | FieldTypeCode::Year
+        | FieldTypeCode::Duration => 8,
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => SIZE_TIME,
+        FieldTypeCode::NewDecimal => MY_DECIMAL_STRUCT_SIZE,
+        _ => VAR_ELEM_LEN,
+    }
+}
 
 /// Go `chunk.Column`: a single columnar column of values.
 #[derive(Clone, Debug, Default)]
@@ -66,6 +100,32 @@ impl Column {
             offsets: Vec::new(),
             length: 0,
             avoid_reusing: false,
+        }
+    }
+
+    /// Go `NewColumn`: a column sized for `field_type`, with initial capacity
+    /// for `capacity` rows.
+    #[must_use]
+    pub fn new_column(field_type: &FieldType, capacity: usize) -> Self {
+        match get_fixed_len(field_type) {
+            VAR_ELEM_LEN => Column::new_var_len(capacity),
+            elem_len => Column::new_fixed_len(elem_len as usize, capacity),
+        }
+    }
+
+    /// Go `NewEmptyColumn`: a column typed for `field_type` but with no
+    /// preallocated data/bitmap capacity.
+    #[must_use]
+    pub fn new_empty_column(field_type: &FieldType) -> Self {
+        match get_fixed_len(field_type) {
+            VAR_ELEM_LEN => Column {
+                offsets: vec![0],
+                ..Column::default()
+            },
+            elem_len => Column {
+                elem_buf: vec![0; elem_len as usize],
+                ..Column::default()
+            },
         }
     }
 
@@ -375,5 +435,44 @@ mod tests {
         let d = c.copy_construct();
         assert_eq!(d.rows(), 1);
         assert_eq!(d.get_int64(0), 42);
+    }
+
+    #[test]
+    fn fixed_len_type_dispatch() {
+        use tidb_datatype::FieldTypeCode;
+        let ft = |c| FieldType::new(c);
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Float)), 4);
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Long)), 8);
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::LongLong)), 8);
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Double)), 8);
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Duration)), 8);
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Datetime)), SIZE_TIME);
+        assert_eq!(
+            get_fixed_len(&ft(FieldTypeCode::NewDecimal)),
+            MY_DECIMAL_STRUCT_SIZE
+        );
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::VarString)), VAR_ELEM_LEN);
+        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Blob)), VAR_ELEM_LEN);
+    }
+
+    #[test]
+    fn new_column_from_field_type() {
+        use tidb_datatype::FieldTypeCode;
+        let mut int_col = Column::new_column(&FieldType::new(FieldTypeCode::Long), 4);
+        assert!(int_col.is_fixed());
+        assert_eq!(int_col.type_size(), 8);
+        int_col.append_int64(5);
+        assert_eq!(int_col.get_int64(0), 5);
+
+        let mut str_col = Column::new_column(&FieldType::new(FieldTypeCode::VarString), 4);
+        assert!(!str_col.is_fixed());
+        str_col.append_string("x");
+        assert_eq!(str_col.get_bytes(0), b"x");
+
+        let empty_fixed = Column::new_empty_column(&FieldType::new(FieldTypeCode::Float));
+        assert!(empty_fixed.is_fixed());
+        assert_eq!(empty_fixed.type_size(), 4);
+        let empty_var = Column::new_empty_column(&FieldType::new(FieldTypeCode::Blob));
+        assert!(!empty_var.is_fixed());
     }
 }
