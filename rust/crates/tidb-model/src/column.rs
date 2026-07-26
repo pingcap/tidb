@@ -24,13 +24,11 @@
 //! models a Go string as `Vec<u8>`, so the BIT-type byte default (Go's
 //! invalid-UTF-8 case in `TestDefaultValue`) is a normal case.
 //!
-//! The `NewExtra*ColInfo` constructors are ported too.
+//! The `NewExtra*ColInfo` constructors and `GetTypeDesc` are ported too.
 //!
-//! DEFERRED to a focused follow-up: `GetTypeDesc` (its `FieldType.CompactStr`
-//! has a Rust bool argument whose Go-matching value still needs pinning down);
-//! `GenUniqueChangingColumnName` (needs the unported `TableInfo`); and Go's
-//! `interface{}` JSON round-trip of a `ColumnInfo` (the marshal/unmarshal-
-//! consistency half of `TestDefaultValue`).
+//! DEFERRED to a focused follow-up: `GenUniqueChangingColumnName` (needs the
+//! unported `TableInfo`); and Go's `interface{}` JSON round-trip of a
+//! `ColumnInfo` (the marshal/unmarshal-consistency half of `TestDefaultValue`).
 
 use std::collections::BTreeSet;
 
@@ -347,6 +345,30 @@ impl ColumnInfo {
         }
     }
 
+    /// Go `GetTypeDesc`: the column type description.
+    ///
+    /// Go reads the process-wide `TiDBStrictIntegerDisplayWidth` inside
+    /// `FieldType.CompactStr()`; this port takes it as `strict_integer_
+    /// display_width` instead of threading that global. The `unsigned`/
+    /// `zerofill` suffix rules (excluding BIT/YEAR for unsigned, YEAR for
+    /// zerofill) match Go exactly.
+    #[must_use]
+    pub fn get_type_desc(&self, strict_integer_display_width: bool) -> String {
+        let mut desc = self.field_type.compact_str(strict_integer_display_width);
+        let flag = self.get_flag();
+        let code = self.get_type();
+        if flag & FieldTypeFlags::UNSIGNED != 0
+            && code != FieldTypeCode::Bit
+            && code != FieldTypeCode::Year
+        {
+            desc.push_str(" unsigned");
+        }
+        if flag & FieldTypeFlags::ZEROFILL != 0 && code != FieldTypeCode::Year {
+            desc.push_str(" zerofill");
+        }
+        desc
+    }
+
     /// Go `IsGenerated`: whether the column is a generated column.
     #[must_use]
     pub fn is_generated(&self) -> bool {
@@ -606,6 +628,28 @@ mod tests {
     }
 
     // Go TestDefaultValue's constructor assertions + the other extra columns.
+    #[test]
+    fn type_desc_suffixes() {
+        // Unsigned int -> " unsigned"; zerofill adds " zerofill".
+        let mut c = col("n", FieldTypeCode::Long);
+        c.set_flag(FieldTypeFlags::UNSIGNED);
+        assert!(c.get_type_desc(true).ends_with(" unsigned"));
+        c.add_flag(FieldTypeFlags::ZEROFILL);
+        let d = c.get_type_desc(true);
+        assert!(d.contains(" unsigned"));
+        assert!(d.ends_with(" zerofill"));
+
+        // BIT excludes the unsigned suffix; YEAR excludes both.
+        let mut bit = col("b", FieldTypeCode::Bit);
+        bit.set_flag(FieldTypeFlags::UNSIGNED);
+        assert!(!bit.get_type_desc(true).contains("unsigned"));
+        let mut year = col("y", FieldTypeCode::Year);
+        year.set_flag(FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL);
+        let d = year.get_type_desc(true);
+        assert!(!d.contains("unsigned"));
+        assert!(!d.contains("zerofill"));
+    }
+
     #[test]
     fn extra_column_constructors() {
         let phys = ColumnInfo::new_extra_phys_tbl_id_col_info();
