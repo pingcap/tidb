@@ -1,0 +1,14 @@
+[package]
+name = "tidb-model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB meta/model: schema/table metadata types (Rust rewrite, in progress)."
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+
+[lints]
+workspace = true

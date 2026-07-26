@@ -1380,6 +1380,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-model"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+]
+
+[[package]]
 name = "tidb-mysql"
 version = "0.0.0"
 dependencies = [

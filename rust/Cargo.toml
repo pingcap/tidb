@@ -16,6 +16,7 @@ members = [
     "crates/tidb-mysql",
     "crates/tidb-metadef",
     "crates/tidb-ast",
+    "crates/tidb-model",
     "crates/tidb-parser",
     "crates/tidb-proto",
     "crates/tidb-pd-client",
