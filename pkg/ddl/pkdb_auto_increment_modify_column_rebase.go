@@ -146,6 +146,9 @@ func scanMaxColumnUint64(ctx *ReorgContext, store kv.Storage, priority int, tbl 
 		return iterateSnapshotKeys(ctx, store, priority, physTbl.RecordPrefix(), kv.MaxVersion.Ver, nil, nil,
 			func(handle kv.Handle, _ kv.Key, rawRow []byte) (bool, error) {
 				rowMap, err := tablecodec.DecodeRowToDatumMap(rawRow, colTps, time.UTC)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
 				rowMap, err = tablecodec.DecodeHandleToDatumMap(handle, []int64{colID}, colTps, time.UTC, rowMap)
 				if err != nil {
 					return false, errors.Trace(err)
@@ -179,6 +182,9 @@ func scanMaxColumnInt64(ctx *ReorgContext, store kv.Storage, priority int, tbl t
 		return iterateSnapshotKeys(ctx, store, priority, physTbl.RecordPrefix(), kv.MaxVersion.Ver, nil, nil,
 			func(handle kv.Handle, _ kv.Key, rawRow []byte) (bool, error) {
 				rowMap, err := tablecodec.DecodeRowToDatumMap(rawRow, colTps, time.UTC)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
 				rowMap, err = tablecodec.DecodeHandleToDatumMap(handle, []int64{colID}, colTps, time.UTC, rowMap)
 				if err != nil {
 					return false, errors.Trace(err)
