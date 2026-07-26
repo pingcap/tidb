@@ -24,8 +24,8 @@ use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 
 use crate::bdr::ts_convert_2_time;
-use crate::column::ColumnInfo;
-use crate::engine_attribute::StorageClassTransitRule;
+use crate::column::{find_column_info_by_id, ColumnInfo};
+use crate::engine_attribute::{build_storage_class_string, StorageClassTransitRule};
 use crate::index::{IndexInfo, RegionSplitPolicy};
 use crate::partition::PartitionInfo;
 use crate::placement::PolicyRefInfo;
@@ -36,6 +36,19 @@ use crate::table::{
     TiFlashReplicaInfo, ViewInfo,
 };
 use crate::table_mode::TableMode;
+
+/// Go `TableInfoVersion0`.
+pub const TABLE_INFO_VERSION0: u16 = 0;
+/// Go `TableInfoVersion1`.
+pub const TABLE_INFO_VERSION1: u16 = 1;
+/// Go `TableInfoVersion2`.
+pub const TABLE_INFO_VERSION2: u16 = 2;
+/// Go `TableInfoVersion3`.
+pub const TABLE_INFO_VERSION3: u16 = 3;
+/// Go `TableInfoVersion4`.
+pub const TABLE_INFO_VERSION4: u16 = 4;
+/// Go `TableInfoVersion5`: separate auto-increment allocator support.
+pub const TABLE_INFO_VERSION5: u16 = 5;
 
 /// Go `TableInfo`: metadata describing a table.
 ///
@@ -344,6 +357,77 @@ impl TableInfo {
         self.pk_is_handle || self.is_common_handle
     }
 
+    /// Go `IsAutoIncColUnsigned`: whether the auto-increment column is unsigned.
+    #[must_use]
+    pub fn is_auto_inc_col_unsigned(&self) -> bool {
+        self.get_auto_increment_col_info()
+            .is_some_and(|c| c.get_flag() & FieldTypeFlags::UNSIGNED != 0)
+    }
+
+    /// Go `FindColumnNameByID`: the (lower-cased) name of column `id`, or "".
+    #[must_use]
+    pub fn find_column_name_by_id(&self, id: i64) -> String {
+        find_column_info_by_id(&self.columns, id)
+            .map_or_else(String::new, |c| c.name.lowercase().to_owned())
+    }
+
+    /// Go `FindIndexNameByID`: the (lower-cased) name of index `id`, or "".
+    #[must_use]
+    pub fn find_index_name_by_id(&self, id: i64) -> String {
+        self.indices
+            .iter()
+            .find(|i| i.id == id)
+            .map_or_else(String::new, |i| i.name.lowercase().to_owned())
+    }
+
+    /// Go `GetNonTempColumns`: the non-removing columns, with a changing
+    /// column's origin column excluded. Keyed by lower-cased name; the remove
+    /// key is the changing column's origin name (Go's original-case
+    /// `GetChangingOriginName`), matching Go's map behavior.
+    #[must_use]
+    pub fn get_non_temp_columns(&self) -> Vec<&ColumnInfo> {
+        use std::collections::BTreeMap;
+        let mut col_map: BTreeMap<String, &ColumnInfo> = BTreeMap::new();
+        for col in &self.columns {
+            if col.is_removing() {
+                continue;
+            }
+            col_map.insert(col.name.lowercase().to_owned(), col);
+        }
+        for col in &self.columns {
+            if col.is_removing() {
+                continue;
+            }
+            if col.is_changing() {
+                col_map.remove(&col.get_changing_origin_name());
+            }
+        }
+        col_map.into_values().collect()
+    }
+
+    /// Go `ClearPlacement`: drop the table's and partitions' placement refs.
+    pub fn clear_placement(&mut self) {
+        self.placement_policy_ref = None;
+        if let Some(p) = &mut self.partition {
+            for def in &mut p.definitions {
+                def.placement_policy_ref = None;
+            }
+        }
+    }
+
+    /// Go `SepAutoInc`: whether the table uses a separate auto-increment
+    /// allocator (version >= 5 and an auto-ID cache of 1).
+    #[must_use]
+    pub fn sep_auto_inc(&self) -> bool {
+        self.version >= TABLE_INFO_VERSION5 && self.auto_id_cache == 1
+    }
+
+    /// Go `StorageClassString`: the JSON string describing the storage class.
+    #[must_use]
+    pub fn storage_class_string(&self) -> String {
+        build_storage_class_string(&self.storage_class_tier, &self.storage_class_transitions)
+    }
+
     /// Go `IsView`.
     #[must_use]
     pub fn is_view(&self) -> bool {
@@ -543,6 +627,46 @@ mod tests {
         assert!(t.column_is_in_index(&t.columns[0])); // "a" is in idx_a
         assert!(!t.column_is_in_index(&t.columns[1])); // "b" is not
         assert!(t.has_clustered_index()); // pk_is_handle
+    }
+
+    #[test]
+    fn misc_methods() {
+        use crate::partition::{PartitionDefinition, PartitionInfo};
+        use crate::placement::PolicyRefInfo;
+
+        let mut c = column("a", 0, true, false);
+        c.id = 100;
+        let t = TableInfo {
+            columns: vec![c],
+            version: TABLE_INFO_VERSION5,
+            auto_id_cache: 1,
+            storage_class_tier: "STANDARD".into(),
+            ..Default::default()
+        };
+        assert_eq!(t.find_column_name_by_id(100), "a");
+        assert_eq!(t.find_column_name_by_id(999), "");
+        assert!(t.sep_auto_inc()); // version 5 + cache 1
+        assert_eq!(t.storage_class_string(), "STANDARD");
+        // Non-temp columns exclude removing ones.
+        assert_eq!(t.get_non_temp_columns().len(), 1);
+
+        // clear_placement drops table + partition refs.
+        let mut t2 = TableInfo {
+            placement_policy_ref: Some(PolicyRefInfo::default()),
+            partition: Some(Box::new(PartitionInfo {
+                definitions: vec![PartitionDefinition {
+                    placement_policy_ref: Some(PolicyRefInfo::default()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        t2.clear_placement();
+        assert!(t2.placement_policy_ref.is_none());
+        assert!(t2.partition.unwrap().definitions[0]
+            .placement_policy_ref
+            .is_none());
     }
 
     #[test]

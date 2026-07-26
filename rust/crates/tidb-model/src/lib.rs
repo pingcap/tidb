@@ -63,5 +63,5 @@ pub use schema_state::SchemaState;
 pub use table::{
     SessionInfo, TableCacheStatusType, TableLockState, TempTableType, TiFlashReplicaInfo,
 };
-pub use table_info::TableInfo;
+pub use table_info::{TableInfo, TABLE_INFO_VERSION5};
 pub use table_mode::{AlterTableModeTarget, TableMode};
