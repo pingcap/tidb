@@ -26,6 +26,7 @@
 
 pub mod big_sections;
 pub mod helpers;
+pub mod log_instance;
 pub mod marshal;
 pub mod sections;
 
@@ -34,6 +35,7 @@ pub use helpers::{
     flatten_config_items, prepare_error_message_extensions, valid_max_allowed_packet, Cse,
     ErrorMessageExtension, TrxSummary, DEF_MAX_ALLOWED_PACKET,
 };
+pub use log_instance::{FileLogConfig, Instance, Log};
 pub use marshal::{AtomicBool, NullableBool, NB_FALSE, NB_TRUE, NB_UNSET};
 pub use sections::{
     Experimental, IsolationRead, OpenTracing, OpenTracingReporter, OpenTracingSampler,

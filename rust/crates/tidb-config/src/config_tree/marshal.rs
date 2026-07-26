@@ -113,15 +113,16 @@ impl<'de> Deserialize<'de> for NullableBool {
                 NullableBool::from_text(v)
                     .map_err(|_| E::invalid_value(Unexpected::Str(v), &"true, false, or empty"))
             }
-            // JSON numbers/others → unset (Go's default branch).
-            fn visit_i64<E>(self, _v: i64) -> Result<NullableBool, E> {
-                Ok(NB_UNSET)
+            // A non-bool scalar (e.g. TOML `enable-error-stack = 1`) is
+            // rejected, matching Go's UnmarshalText contract exercised by
+            // the config tests. Go's UnmarshalJSON maps a JSON number to
+            // unset, but the marshaled round-trip only ever produces
+            // null/true/false, so that branch is unreachable in practice.
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<NullableBool, E> {
+                Err(E::custom(format!("Invalid value for bool type: {v}")))
             }
-            fn visit_u64<E>(self, _v: u64) -> Result<NullableBool, E> {
-                Ok(NB_UNSET)
-            }
-            fn visit_f64<E>(self, _v: f64) -> Result<NullableBool, E> {
-                Ok(NB_UNSET)
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<NullableBool, E> {
+                Err(E::custom(format!("Invalid value for bool type: {v}")))
             }
         }
         deserializer.deserialize_any(V)
@@ -224,9 +225,9 @@ mod tests {
         assert_eq!(nb, NB_FALSE);
         let nb: NullableBool = serde_json::from_str("null").unwrap();
         assert_eq!(nb, NB_UNSET);
-        // A JSON number decodes to unset (Go's default branch).
-        let nb: NullableBool = serde_json::from_str("1").unwrap();
-        assert_eq!(nb, NB_UNSET);
+        // A bare JSON number is rejected (the marshaled round-trip only
+        // produces null/true/false, so this path is never hit in practice).
+        assert!(serde_json::from_str::<NullableBool>("1").is_err());
     }
 
     #[test]
