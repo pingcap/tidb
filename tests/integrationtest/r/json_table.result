@@ -1,4 +1,3 @@
-# Test JSON_TABLE syntax acceptance
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id FOR ORDINALITY)) jt;
 Error 1235 (42000): This version of TiDB doesn't yet support 'JSON_TABLE function'
 SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a')) jt;
