@@ -219,15 +219,31 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
+	info, err := os.Stat(filepath.Join(dir, fileName))
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name     string
+		fileSize int64
+	}{
+		{name: "row-group-preload"},
+		{name: "whole-file-preload", fileSize: info.Size()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, FileMeta{})
+			require.Greater(t, parser.fileMeta.NumRowGroups(), 1)
+			if tc.fileSize > 0 {
+				require.NotNil(t, parser.preloadBase)
+			}
 
-	for i := range 50 {
-		require.NoError(t, parser.ReadRow())
-		require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
-		last := parser.LastRow()
-		parser.RecycleRow(last)
+			for i := range 50 {
+				require.NoError(t, parser.ReadRow())
+				require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
+				last := parser.LastRow()
+				parser.RecycleRow(last)
+			}
+			require.ErrorIs(t, parser.ReadRow(), io.EOF)
+		})
 	}
-	require.ErrorIs(t, parser.ReadRow(), io.EOF)
 }
 
 func TestParquetVariousTypes(t *testing.T) {
