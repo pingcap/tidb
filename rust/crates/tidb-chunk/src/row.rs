@@ -25,6 +25,7 @@
 //! a `str`-typed `GetString` (pending the crate-wide bytes-vs-str policy).
 
 use crate::chunk::Chunk;
+use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 
 /// Go `chunk.Row`: a cursor to one row of a [`Chunk`].
 #[derive(Clone, Copy, Debug)]
@@ -104,5 +105,55 @@ impl<'a> Row<'a> {
     #[must_use]
     pub fn is_null(&self, col_idx: usize) -> bool {
         self.chunk.columns()[col_idx].is_null(self.idx)
+    }
+
+    /// Go `GetDatum` (`DatumWithBuffer`): read the cell at `col_idx` as a
+    /// [`Datum`], interpreted by `field_type`.
+    ///
+    /// Ported for the column kinds whose storage exists: NULL, the signed/
+    /// unsigned integer family and `Year`, `Float`/`Double`, and the string/blob
+    /// family (as a collation-tagged string). The remaining types
+    /// (Time/Duration/Decimal/Enum/Set/Bit/JSON/VectorFloat32) land with their
+    /// column getters; reaching one here panics rather than returning a wrong or
+    /// silently-null datum.
+    #[must_use]
+    pub fn get_datum(&self, col_idx: usize, field_type: &FieldType) -> Datum {
+        if self.is_null(col_idx) {
+            return Datum::Null;
+        }
+        match field_type.code() {
+            FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong => {
+                if field_type.is_unsigned() {
+                    Datum::UInt(self.get_uint64(col_idx))
+                } else {
+                    Datum::Int(self.get_int64(col_idx))
+                }
+            }
+            // Year is always read as a signed int64 regardless of the unsigned
+            // flag (matches Go's DatumWithBuffer note).
+            FieldTypeCode::Year => Datum::Int(self.get_int64(col_idx)),
+            FieldTypeCode::Float => Datum::Float32(f64::from(self.get_float32(col_idx))),
+            FieldTypeCode::Double => Datum::Real(self.get_float64(col_idx)),
+            FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::Blob
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob => {
+                let collation =
+                    Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary);
+                let mut d = Datum::Null;
+                d.set_string(self.get_bytes(col_idx).to_vec(), collation);
+                d
+            }
+            other => panic!(
+                "chunk Row::get_datum: column type {other:?} not yet supported (deferred with its column getter)"
+            ),
+        }
     }
 }

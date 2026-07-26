@@ -1346,6 +1346,7 @@ dependencies = [
  "sha1",
  "sha2",
  "tidb-ast",
+ "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",

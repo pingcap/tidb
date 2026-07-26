@@ -21,8 +21,10 @@
 //! `Decorrelate`, and `MemoryUsage`. `CorrelatedColumn` is deferred with the
 //! other node variants.
 
+use crate::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, COLUMN_FLAG};
+use tidb_chunk::row::Row;
 use tidb_codec::encode_int;
 use tidb_datatype::{Datum, FieldType};
 
@@ -120,6 +122,16 @@ impl Column {
     pub fn const_level(&self) -> ConstLevel {
         ConstLevel::NONE
     }
+
+    /// Go `Column.Eval`: read this column's cell (`row.GetDatum(Index, RetType)`).
+    /// The `EvalContext` is unused, as in Go.
+    pub fn eval(&self, row: Row<'_>) -> Result<Datum, EvalError> {
+        let ret_type = self
+            .ret_type
+            .as_ref()
+            .ok_or(EvalError::Unsupported("column has no result type"))?;
+        Ok(row.get_datum(self.index as usize, ret_type))
+    }
 }
 
 /// Go `CorrelatedColumn`: a column reference bound to a value supplied by an
@@ -162,6 +174,13 @@ impl CorrelatedColumn {
     #[must_use]
     pub fn get_static_type(&self) -> Option<&FieldType> {
         self.column.get_static_type()
+    }
+
+    /// Go `CorrelatedColumn.Eval`: returns the bound outer value (`*Data`).
+    /// Go dereferences the `Data` pointer; a not-yet-bound column yields NULL.
+    #[must_use]
+    pub fn eval(&self) -> Datum {
+        self.data.clone().unwrap_or(Datum::Null)
     }
 }
 

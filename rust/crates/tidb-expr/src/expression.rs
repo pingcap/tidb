@@ -125,6 +125,28 @@ impl Expression {
         }
     }
 
+    /// Go `Expression.Eval(ctx, row)`: evaluate this expression against one row.
+    ///
+    /// The [`Columns`](crate::context::Columns) context stands in for Go's
+    /// richer `EvalContext`; the currently ported variants (`Column`,
+    /// `Constant`, `CorrelatedColumn`) do not read it. `ScalarFunction`
+    /// evaluation (routing arguments through the builtin dispatch) is the next
+    /// unit and is reported as unsupported until then.
+    pub fn eval(
+        &self,
+        _ctx: &impl crate::context::Columns,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
+        match self {
+            Expression::Column(c) => c.eval(row),
+            Expression::Constant(c) => c.eval(),
+            Expression::CorrelatedColumn(c) => Ok(c.eval()),
+            Expression::ScalarFunction(_) => Err(crate::context::EvalError::Unsupported(
+                "scalar function evaluation is not yet ported",
+            )),
+        }
+    }
+
     /// Borrows the inner [`Column`] when this expression is a column reference.
     #[must_use]
     pub fn as_column(&self) -> Option<&Column> {
@@ -132,5 +154,40 @@ impl Expression {
             Expression::Column(c) => Some(c),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constant::Constant;
+    use crate::context::NoColumns;
+    use tidb_chunk::chunk::Chunk;
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+    #[test]
+    fn eval_constant_column_and_unsupported() {
+        let ft = FieldType::new(FieldTypeCode::Long);
+        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&ft), 1);
+        chk.append_int64(0, 99);
+        let row = chk.get_row(0);
+
+        // A literal constant evaluates to its value, ignoring the row.
+        let konst = Expression::Constant(Constant::new(Datum::Int(7), ft.clone()));
+        assert_eq!(konst.eval(&NoColumns, row).unwrap(), Datum::Int(7));
+
+        // A column reads its cell from the row at its Index.
+        let mut col = Column::new(1, ft.clone());
+        col.index = 0;
+        let col_expr = Expression::Column(col);
+        assert_eq!(col_expr.eval(&NoColumns, row).unwrap(), Datum::Int(99));
+
+        // A scalar function is not yet evaluable.
+        let sf = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            ft,
+            vec![],
+        ));
+        assert!(sf.eval(&NoColumns, row).is_err());
     }
 }

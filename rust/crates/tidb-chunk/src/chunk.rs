@@ -290,6 +290,34 @@ mod tests {
     }
 
     #[test]
+    fn get_datum_by_type() {
+        use tidb_datatype::Datum;
+        let fields = vec![
+            FieldType::new(FieldTypeCode::Long),
+            FieldType::new(FieldTypeCode::VarString),
+            FieldType::new(FieldTypeCode::Double),
+        ];
+        let mut chk = Chunk::new_with_capacity(&fields, 4);
+        chk.append_int64(0, 42);
+        chk.append_string(1, "hi");
+        chk.append_float64(2, 2.5);
+        // second row: null int
+        chk.append_null(0);
+        chk.append_string(1, "");
+        chk.append_float64(2, 0.0);
+
+        let r0 = chk.get_row(0);
+        assert_eq!(r0.get_datum(0, &fields[0]), Datum::Int(42));
+        assert_eq!(r0.get_datum(2, &fields[2]), Datum::Real(2.5));
+        match r0.get_datum(1, &fields[1]) {
+            Datum::String(_) => {}
+            other => panic!("expected string datum, got {other:?}"),
+        }
+        // null cell -> Datum::Null regardless of type
+        assert_eq!(chk.get_row(1).get_datum(0, &fields[0]), Datum::Null);
+    }
+
+    #[test]
     fn empty_chunk_virtual_rows() {
         let mut chk = Chunk::new_empty(&[]);
         assert_eq!(chk.num_cols(), 0);

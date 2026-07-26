@@ -22,6 +22,7 @@
 //! values through a collator), `StringWithCtx`/`ExplainInfo`, `CanonicalHashCode`,
 //! and `MemoryUsage`.
 
+use crate::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, CONSTANT_FLAG, PARAMETER_FLAG};
 use tidb_codec::{encode_int, hash_code};
@@ -95,6 +96,21 @@ impl Constant {
         } else {
             ConstLevel::STRICT
         }
+    }
+
+    /// Go `Constant.Eval`: a plain literal evaluates to its value.
+    ///
+    /// The deferred-expression and parameter-marker branches (Go's
+    /// `getLazyDatum`) need an `EvalContext` and are not yet ported; a constant
+    /// carrying either is reported as unsupported rather than silently returning
+    /// the stale `Value`.
+    pub fn eval(&self) -> Result<Datum, EvalError> {
+        if self.deferred_expr.is_some() || self.param_marker.is_some() {
+            return Err(EvalError::Unsupported(
+                "deferred/parameter constant evaluation is not yet ported",
+            ));
+        }
+        Ok(self.value.clone())
     }
 
     /// Go `HashCode` (= `getHashCode(false)`), cached on first call:
