@@ -21,7 +21,125 @@
 //! `TableInfo` gates DBInfo and much of meta/model; it is being approached
 //! bottom-up from these leaves.
 
-use tidb_ast::TableLockType;
+use tidb_ast::{CiString, TableLockType};
+
+use crate::schema_state::SchemaState;
+
+/// Go `ConstraintInfo`: a table CHECK constraint.
+#[derive(Clone, Debug, Default)]
+pub struct ConstraintInfo {
+    /// The constraint ID.
+    pub id: i64,
+    /// The constraint name.
+    pub name: CiString,
+    /// The table name.
+    pub table: CiString,
+    /// The columns the constraint depends on.
+    pub constraint_cols: Vec<CiString>,
+    /// Whether the constraint is enforced.
+    pub enforced: bool,
+    /// Whether it is a column-level check.
+    pub in_column: bool,
+    /// The constraint expression.
+    pub expr_string: String,
+    /// The online-DDL state of the constraint.
+    pub state: SchemaState,
+}
+
+/// Go `FKVersion0`: foreign-key syntax accepted but not enforced.
+pub const FK_VERSION0: i64 = 0;
+/// Go `FKVersion1`: foreign-key constraint enforced.
+pub const FK_VERSION1: i64 = 1;
+
+/// Go `FKInfo`: a foreign-key constraint.
+#[derive(Clone, Debug, Default)]
+pub struct FKInfo {
+    /// The foreign-key ID.
+    pub id: i64,
+    /// The foreign-key name.
+    pub name: CiString,
+    /// The referenced schema.
+    pub ref_schema: CiString,
+    /// The referenced table.
+    pub ref_table: CiString,
+    /// The referenced columns.
+    pub ref_cols: Vec<CiString>,
+    /// The referencing columns.
+    pub cols: Vec<CiString>,
+    /// The `ON DELETE` action (an `ast.ReferOptionType` value).
+    pub on_delete: i64,
+    /// The `ON UPDATE` action (an `ast.ReferOptionType` value).
+    pub on_update: i64,
+    /// The online-DDL state.
+    pub state: SchemaState,
+    /// The FK version (see `FK_VERSION*`).
+    pub version: i64,
+}
+
+// Mirrors `ast.ReferOptionType.String` for the int-valued FKInfo.On{Delete,
+// Update} (ReferOptionType is not yet in tidb-ast). NoOption(0)/unknown -> "".
+fn refer_option_string(opt: i64) -> &'static str {
+    match opt {
+        1 => "RESTRICT",
+        2 => "CASCADE",
+        3 => "SET NULL",
+        4 => "NO ACTION",
+        5 => "SET DEFAULT",
+        _ => "",
+    }
+}
+
+impl FKInfo {
+    /// Go `FKInfo.String`: the `db`.`tb`, CONSTRAINT ... FOREIGN KEY clause.
+    /// The referencing columns use their original case; the referenced
+    /// schema/table use their lower-case form, and the schema is omitted when
+    /// it equals `db` (all matching Go).
+    #[must_use]
+    pub fn string(&self, db: &str, tb: &str) -> String {
+        let mut buf = String::new();
+        buf.push('`');
+        buf.push_str(db);
+        buf.push_str("`.`");
+        buf.push_str(tb);
+        buf.push_str("`, CONSTRAINT `");
+        buf.push_str(self.name.original());
+        buf.push_str("` FOREIGN KEY (");
+        for (i, col) in self.cols.iter().enumerate() {
+            if i > 0 {
+                buf.push_str(", ");
+            }
+            buf.push('`');
+            buf.push_str(col.original());
+            buf.push('`');
+        }
+        buf.push_str(") REFERENCES `");
+        if self.ref_schema.lowercase() != db {
+            buf.push_str(self.ref_schema.lowercase());
+            buf.push_str("`.`");
+        }
+        buf.push_str(self.ref_table.lowercase());
+        buf.push_str("` (");
+        for (i, col) in self.ref_cols.iter().enumerate() {
+            if i > 0 {
+                buf.push_str(", ");
+            }
+            buf.push('`');
+            buf.push_str(col.original());
+            buf.push('`');
+        }
+        buf.push(')');
+        // Go tests the numeric value against ReferOptionNoOption (0).
+        if self.on_delete != 0 {
+            buf.push_str(" ON DELETE ");
+            buf.push_str(refer_option_string(self.on_delete));
+        }
+        if self.on_update != 0 {
+            buf.push_str(" ON UPDATE ");
+            buf.push_str(refer_option_string(self.on_update));
+        }
+        buf
+    }
+}
 
 /// Go `TableCacheStatusType` (an `int`): the caching state of a table.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -197,6 +315,42 @@ mod tests {
         assert_eq!(TableLockState::PRE_LOCK.to_string(), "pre-lock");
         assert_eq!(TableLockState::PUBLIC.to_string(), "public");
         assert_eq!(TableLockState(9).to_string(), "none");
+    }
+
+    #[test]
+    fn fk_string() {
+        let fk = FKInfo {
+            name: CiString::new("fk1"),
+            ref_schema: CiString::new("db2"),
+            ref_table: CiString::new("parent"),
+            ref_cols: vec![CiString::new("id"), CiString::new("x")],
+            cols: vec![CiString::new("a"), CiString::new("b")],
+            on_delete: 2, // CASCADE
+            on_update: 0, // NoOption
+            ..Default::default()
+        };
+        assert_eq!(
+            fk.string("db1", "child"),
+            "`db1`.`child`, CONSTRAINT `fk1` FOREIGN KEY (`a`, `b`) REFERENCES \
+             `db2`.`parent` (`id`, `x`) ON DELETE CASCADE"
+        );
+
+        // Same-schema reference omits the schema; ON UPDATE included.
+        let fk = FKInfo {
+            name: CiString::new("fk2"),
+            ref_schema: CiString::new("db1"),
+            ref_table: CiString::new("parent"),
+            ref_cols: vec![CiString::new("id")],
+            cols: vec![CiString::new("pid")],
+            on_delete: 0,
+            on_update: 1, // RESTRICT
+            ..Default::default()
+        };
+        assert_eq!(
+            fk.string("db1", "child"),
+            "`db1`.`child`, CONSTRAINT `fk2` FOREIGN KEY (`pid`) REFERENCES \
+             `parent` (`id`) ON UPDATE RESTRICT"
+        );
     }
 
     #[test]
