@@ -134,16 +134,14 @@ impl Expression {
     /// unit and is reported as unsupported until then.
     pub fn eval(
         &self,
-        _ctx: &impl crate::context::Columns,
+        ctx: &impl crate::context::Columns,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
         match self {
             Expression::Column(c) => c.eval(row),
             Expression::Constant(c) => c.eval(),
             Expression::CorrelatedColumn(c) => Ok(c.eval()),
-            Expression::ScalarFunction(_) => Err(crate::context::EvalError::Unsupported(
-                "scalar function evaluation is not yet ported",
-            )),
+            Expression::ScalarFunction(c) => c.eval(ctx, row),
         }
     }
 
@@ -182,12 +180,29 @@ mod tests {
         let col_expr = Expression::Column(col);
         assert_eq!(col_expr.eval(&NoColumns, row).unwrap(), Datum::Int(99));
 
-        // A scalar function is not yet evaluable.
-        let sf = Expression::ScalarFunction(ScalarFunction::new(
+        // A binary-operator scalar function evaluates its arguments: 1 + 1 = 2.
+        let one = || Expression::Constant(Constant::new(Datum::Int(1), ft.clone()));
+        let plus = Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("plus"),
-            ft,
-            vec![],
+            ft.clone(),
+            vec![one(), one()],
         ));
-        assert!(sf.eval(&NoColumns, row).is_err());
+        assert_eq!(plus.eval(&NoColumns, row).unwrap(), Datum::Int(2));
+
+        // Nested: (1 + 1) + 1 = 3.
+        let nested = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            ft.clone(),
+            vec![plus, one()],
+        ));
+        assert_eq!(nested.eval(&NoColumns, row).unwrap(), Datum::Int(3));
+
+        // A non-operator function is still unsupported.
+        let unknown = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("some_udf"),
+            ft.clone(),
+            vec![one()],
+        ));
+        assert!(unknown.eval(&NoColumns, row).is_err());
     }
 }

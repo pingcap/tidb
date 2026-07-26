@@ -22,18 +22,51 @@
 //! is a separate, larger unit built on `EvalContext`/`chunk.Row`.
 //!
 //! Ported: the struct and its argument-structural, context-free methods
-//! (static type, args, correlation, and the common `ReHashCode` path).
-//! DEFERRED (documented): the whole `builtinFunc` eval machinery; `Equal` (Go's
+//! (static type, args, correlation, the common `ReHashCode` path), and `Eval`
+//! for the binary-operator functions (reusing the shared Datum operator
+//! semantics). DEFERRED (documented): `Eval` for the non-operator builtins;
+//! `Equal` (Go's
 //! compares through the function's `equal(ctx, ...)`); `ConstLevel` (needs the
 //! `unFoldableFunctions` catalog and extension-func detection); the `Grouping`
 //! branch of `ReHashCode` (needs `BuiltinGroupingImplSig`); `CanonicalHashCode`;
 //! per-signature collation; and `MemoryUsage`.
 
+use crate::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
-use tidb_ast::CiString;
+use tidb_ast::{BinaryOp, CiString};
+use tidb_chunk::row::Row;
 use tidb_codec::encode_compact_bytes;
-use tidb_datatype::FieldType;
+use tidb_datatype::{Datum, FieldType};
+
+/// Maps a Go binary-operator scalar-function name (`pkg/parser/ast`) to a
+/// [`BinaryOp`]. Returns `None` for any function that is not a binary operator.
+fn binary_op_for_name(name: &str) -> Option<BinaryOp> {
+    Some(match name {
+        "plus" => BinaryOp::Plus,
+        "minus" => BinaryOp::Minus,
+        "mul" => BinaryOp::Mul,
+        "div" => BinaryOp::Div,
+        "intdiv" => BinaryOp::IntDiv,
+        "mod" => BinaryOp::Mod,
+        "bitand" => BinaryOp::BitAnd,
+        "bitor" => BinaryOp::BitOr,
+        "bitxor" => BinaryOp::BitXor,
+        "leftshift" => BinaryOp::LeftShift,
+        "rightshift" => BinaryOp::RightShift,
+        "eq" => BinaryOp::Eq,
+        "nulleq" => BinaryOp::NullEq,
+        "ne" => BinaryOp::Ne,
+        "lt" => BinaryOp::Lt,
+        "le" => BinaryOp::Le,
+        "gt" => BinaryOp::Gt,
+        "ge" => BinaryOp::Ge,
+        "and" => BinaryOp::LogicAnd,
+        "or" => BinaryOp::LogicOr,
+        "xor" => BinaryOp::LogicXor,
+        _ => return None,
+    })
+}
 
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
 #[derive(Clone, Debug, Default)]
@@ -127,6 +160,26 @@ impl ScalarFunction {
     #[must_use]
     pub fn const_level(&self) -> ConstLevel {
         ConstLevel::NONE
+    }
+
+    /// Go `ScalarFunction.Eval`: evaluate the function against one row.
+    ///
+    /// The binary-operator functions (`plus`/`minus`/.../comparisons/logic) are
+    /// supported by evaluating both arguments and reusing the shared Datum-level
+    /// operator semantics ([`crate::apply_binary`]), which dispatch on the
+    /// operand kinds exactly as Go's per-signature builtins do. Every other
+    /// function is reported as unsupported until its builtin is ported.
+    pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+        if let Some(op) = binary_op_for_name(self.func_name.lowercase()) {
+            if self.args.len() == 2 {
+                let lhs = self.args[0].eval(ctx, row)?;
+                let rhs = self.args[1].eval(ctx, row)?;
+                return crate::apply_binary(op, lhs, rhs);
+            }
+        }
+        Err(EvalError::Unsupported(
+            "this scalar function is not yet ported",
+        ))
     }
 }
 
