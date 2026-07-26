@@ -21,10 +21,100 @@
 //! `TableInfo` gates DBInfo and much of meta/model; it is being approached
 //! bottom-up from these leaves.
 
-use tidb_ast::{CiString, TableLockType, ViewAlgorithm, ViewCheckOption, ViewSecurity};
+use chrono::{DateTime, Utc};
+use tidb_ast::{
+    CiString, ColumnChoice, TableLockType, ViewAlgorithm, ViewCheckOption, ViewSecurity,
+};
 use tidb_parser::auth::UserIdentity;
 
 use crate::schema_state::SchemaState;
+
+/// Go `WindowRepeatType` (a `byte`): how a statistics window repeats.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WindowRepeatType(pub u8);
+
+impl WindowRepeatType {
+    /// The window does not repeat (Go `Never`, the zero value).
+    pub const NEVER: WindowRepeatType = WindowRepeatType(0);
+    /// Repeats daily (Go `Day`).
+    pub const DAY: WindowRepeatType = WindowRepeatType(1);
+    /// Repeats weekly (Go `Week`).
+    pub const WEEK: WindowRepeatType = WindowRepeatType(2);
+    /// Repeats monthly (Go `Month`).
+    pub const MONTH: WindowRepeatType = WindowRepeatType(3);
+}
+
+impl std::fmt::Display for WindowRepeatType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match *self {
+            WindowRepeatType::NEVER => "Never",
+            WindowRepeatType::DAY => "Day",
+            WindowRepeatType::WEEK => "Week",
+            WindowRepeatType::MONTH => "Month",
+            _ => "",
+        })
+    }
+}
+
+/// Go `StatsWindowSettings`: the analyze-window schedule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatsWindowSettings {
+    /// The window start time.
+    pub window_start: DateTime<Utc>,
+    /// The window end time.
+    pub window_end: DateTime<Utc>,
+    /// How the window repeats.
+    pub repeat_type: WindowRepeatType,
+    /// The repeat interval.
+    pub repeat_interval: u64,
+}
+
+impl Default for StatsWindowSettings {
+    fn default() -> Self {
+        StatsWindowSettings {
+            window_start: DateTime::<Utc>::UNIX_EPOCH,
+            window_end: DateTime::<Utc>::UNIX_EPOCH,
+            repeat_type: WindowRepeatType::NEVER,
+            repeat_interval: 0,
+        }
+    }
+}
+
+/// Go `StatsOptions`: a table's persisted ANALYZE options.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StatsOptions {
+    /// The analyze-window schedule (Go's embedded `*StatsWindowSettings`).
+    pub stats_window_settings: Option<Box<StatsWindowSettings>>,
+    /// Whether stats are auto-recalculated.
+    pub auto_recalc: bool,
+    /// Which columns to analyze.
+    pub column_choice: ColumnChoice,
+    /// The explicit column list.
+    pub column_list: Vec<CiString>,
+    /// The sample count.
+    pub sample_num: u64,
+    /// The sample rate.
+    pub sample_rate: f64,
+    /// The histogram bucket count.
+    pub buckets: u64,
+    /// The top-N count.
+    pub top_n: u64,
+    /// The analyze concurrency.
+    pub concurrency: u64,
+}
+
+impl StatsOptions {
+    /// Go `NewStatsOptions`: the defaults (`auto_recalc = true`, default
+    /// column choice, everything else zero).
+    #[must_use]
+    pub fn new() -> Self {
+        StatsOptions {
+            auto_recalc: true,
+            column_choice: ColumnChoice::Default,
+            ..Default::default()
+        }
+    }
+}
 
 /// Go `ViewInfo`: metadata describing a view.
 #[derive(Clone, Debug, Default)]
@@ -452,6 +542,22 @@ mod tests {
             "`db1`.`child`, CONSTRAINT `fk2` FOREIGN KEY (`pid`) REFERENCES \
              `parent` (`id`) ON UPDATE RESTRICT"
         );
+    }
+
+    #[test]
+    fn stats_options_and_window() {
+        assert_eq!(WindowRepeatType::NEVER.to_string(), "Never");
+        assert_eq!(WindowRepeatType::DAY.to_string(), "Day");
+        assert_eq!(WindowRepeatType::WEEK.to_string(), "Week");
+        assert_eq!(WindowRepeatType::MONTH.to_string(), "Month");
+        assert_eq!(WindowRepeatType(9).to_string(), "");
+
+        let opts = StatsOptions::new();
+        assert!(opts.auto_recalc);
+        assert_eq!(opts.column_choice, ColumnChoice::Default);
+        assert!(opts.stats_window_settings.is_none());
+        // Default (not the constructor) has auto_recalc false.
+        assert!(!StatsOptions::default().auto_recalc);
     }
 
     #[test]
