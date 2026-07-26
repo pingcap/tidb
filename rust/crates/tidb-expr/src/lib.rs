@@ -332,6 +332,7 @@ mod builtin_ext;
 mod cast;
 mod coerce;
 mod context;
+pub mod expr_collation;
 mod field_name;
 mod func;
 mod grouping;
