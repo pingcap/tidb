@@ -13,6 +13,7 @@ nextgen = []
 [dependencies]
 serde = { workspace = true }
 regex = { workspace = true }
+serde_ignored = "0.1"
 serde_json = { workspace = true }
 toml = "0.8"
 
