@@ -1251,6 +1251,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-chunk"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+]
+
+[[package]]
 name = "tidb-codec"
 version = "0.0.0"
 dependencies = [
