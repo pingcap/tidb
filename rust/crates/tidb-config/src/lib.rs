@@ -28,6 +28,7 @@ pub mod kerneltype;
 pub mod keyspace_observability;
 pub mod store;
 pub mod tiflash;
+pub mod tikvcfg;
 
 /// Default sample-rate row count (Go `pkg/config/const.go`
 /// `DefRowsForSampleRate`).
