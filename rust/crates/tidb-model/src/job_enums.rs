@@ -48,6 +48,77 @@ impl JobState {
     pub const PAUSED: JobState = JobState(9);
     /// The job is being paused (Go `JobStatePausing`).
     pub const PAUSING: JobState = JobState(10);
+
+    // The state predicates from Go's `Job.Is*` methods that depend only on the
+    // job state. `Job.IsRunning()` etc. are `self.state.is_running()`; the
+    // Type/SchemaState-dependent predicates (IsPausable/IsRollbackable/...)
+    // live on the Job struct.
+
+    /// Go `Job.IsRunning`.
+    #[must_use]
+    pub fn is_running(self) -> bool {
+        self == JobState::RUNNING
+    }
+    /// Go `Job.IsCancelling`.
+    #[must_use]
+    pub fn is_cancelling(self) -> bool {
+        self == JobState::CANCELLING
+    }
+    /// Go `Job.IsDone`.
+    #[must_use]
+    pub fn is_done(self) -> bool {
+        self == JobState::DONE
+    }
+    /// Go `Job.IsCancelled`.
+    #[must_use]
+    pub fn is_cancelled(self) -> bool {
+        self == JobState::CANCELLED
+    }
+    /// Go `Job.IsSynced`.
+    #[must_use]
+    pub fn is_synced(self) -> bool {
+        self == JobState::SYNCED
+    }
+    /// Go `Job.IsPaused`.
+    #[must_use]
+    pub fn is_paused(self) -> bool {
+        self == JobState::PAUSED
+    }
+    /// Go `Job.IsPausing`.
+    #[must_use]
+    pub fn is_pausing(self) -> bool {
+        self == JobState::PAUSING
+    }
+    /// Go `Job.IsQueueing`.
+    #[must_use]
+    pub fn is_queueing(self) -> bool {
+        self == JobState::QUEUEING
+    }
+    /// Go `Job.IsRollingback`.
+    #[must_use]
+    pub fn is_rollingback(self) -> bool {
+        self == JobState::ROLLINGBACK
+    }
+    /// Go `Job.IsRollbackDone`.
+    #[must_use]
+    pub fn is_rollback_done(self) -> bool {
+        self == JobState::ROLLBACK_DONE
+    }
+    /// Go `Job.NotStarted`: the job is absent or queued.
+    #[must_use]
+    pub fn not_started(self) -> bool {
+        self == JobState::NONE || self == JobState::QUEUEING
+    }
+    /// Go `Job.IsFinished`: done, rolled back, or cancelled.
+    #[must_use]
+    pub fn is_finished(self) -> bool {
+        self == JobState::DONE || self == JobState::ROLLBACK_DONE || self == JobState::CANCELLED
+    }
+    /// Go `Job.InFinalState`: synced, cancelled, or paused.
+    #[must_use]
+    pub fn in_final_state(self) -> bool {
+        self == JobState::SYNCED || self == JobState::CANCELLED || self == JobState::PAUSED
+    }
 }
 
 impl std::fmt::Display for JobState {
@@ -166,6 +237,37 @@ mod tests {
         assert_eq!(JobState::QUEUEING.to_string(), "queueing");
         assert_eq!(JobState(123).to_string(), "none");
         assert_eq!(JobState::default(), JobState::NONE);
+    }
+
+    #[test]
+    fn job_state_predicates() {
+        assert!(JobState::RUNNING.is_running());
+        assert!(JobState::DONE.is_done());
+        assert!(JobState::CANCELLED.is_cancelled());
+        assert!(JobState::SYNCED.is_synced());
+        assert!(JobState::PAUSED.is_paused());
+        assert!(JobState::PAUSING.is_pausing());
+        assert!(JobState::QUEUEING.is_queueing());
+        assert!(JobState::ROLLINGBACK.is_rollingback());
+        assert!(JobState::ROLLBACK_DONE.is_rollback_done());
+        assert!(JobState::CANCELLING.is_cancelling());
+
+        // not_started: None or Queueing.
+        assert!(JobState::NONE.not_started());
+        assert!(JobState::QUEUEING.not_started());
+        assert!(!JobState::RUNNING.not_started());
+
+        // is_finished: Done, RollbackDone, or Cancelled.
+        assert!(JobState::DONE.is_finished());
+        assert!(JobState::ROLLBACK_DONE.is_finished());
+        assert!(JobState::CANCELLED.is_finished());
+        assert!(!JobState::SYNCED.is_finished());
+
+        // in_final_state: Synced, Cancelled, or Paused.
+        assert!(JobState::SYNCED.in_final_state());
+        assert!(JobState::CANCELLED.in_final_state());
+        assert!(JobState::PAUSED.in_final_state());
+        assert!(!JobState::DONE.in_final_state());
     }
 
     #[test]
