@@ -19,12 +19,15 @@
 //! The `ColumnInfo` struct and its FieldType-delegating accessors, generated-
 //! /changing-column predicates, and `FindColumnInfo` helpers are ported below.
 //!
-//! DEFERRED to a focused follow-up (documented at the methods): the `any`
-//! default-value logic with bit-type byte encoding (`SetDefaultValue`/
-//! `GetDefaultValue`), which relies on Go `interface{}` JSON round-trip
-//! semantics and invalid-UTF-8 bit strings (Go's `TestDefaultValue`);
-//! `GetTypeDesc`; the `NewExtra*ColInfo` constructors; and
-//! `GenUniqueChangingColumnName` (needs the unported `TableInfo`).
+//! The default-value accessors (`Set`/`GetDefaultValue` and the origin
+//! variants) are ported too, over a [`ColumnDefaultValue`] value type that
+//! models a Go string as `Vec<u8>`, so the BIT-type byte default (Go's
+//! invalid-UTF-8 case in `TestDefaultValue`) is a normal case.
+//!
+//! DEFERRED to a focused follow-up: `GetTypeDesc`; the `NewExtra*ColInfo`
+//! constructors; `GenUniqueChangingColumnName` (needs the unported
+//! `TableInfo`); and Go's `interface{}` JSON round-trip of a `ColumnInfo`
+//! (the marshal/unmarshal-consistency half of `TestDefaultValue`).
 
 use std::collections::BTreeSet;
 
@@ -99,12 +102,51 @@ pub fn changing_origin_name(name: &str) -> String {
     }
 }
 
+/// A column default value (Go's `any`). Go strings are byte sequences that
+/// need not be valid UTF-8, so the string variant holds `Vec<u8>`; this makes
+/// the BIT-type default (which can be arbitrary bytes) a normal case rather
+/// than a special one. Go `nil` is represented by `Option::None` at the field.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ColumnDefaultValue {
+    /// A signed integer default.
+    Int(i64),
+    /// An unsigned integer default.
+    Uint(u64),
+    /// A floating-point default.
+    Float(f64),
+    /// A boolean default.
+    Bool(bool),
+    /// A string default (Go string = arbitrary byte sequence).
+    Str(Vec<u8>),
+}
+
+impl ColumnDefaultValue {
+    /// A string default from a UTF-8 `str`.
+    #[must_use]
+    pub fn str(s: &str) -> Self {
+        ColumnDefaultValue::Str(s.as_bytes().to_vec())
+    }
+}
+
+/// The error Go raises as `types.ErrInvalidDefault` from a BIT column's
+/// default-value setter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidDefaultError(pub String);
+
+impl std::fmt::Display for InvalidDefaultError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Invalid default value for '{}'", self.0)
+    }
+}
+
+impl std::error::Error for InvalidDefaultError {}
+
 /// Go `ColumnInfo`: metadata describing a table column.
 ///
 /// The `any`-typed `OriginDefaultValue`/`DefaultValue` are modelled as
-/// [`serde_json::Value`]; the accompanying `*_bit` byte fields hold the
-/// BIT-type default. The default-value accessors are a deferred follow-up
-/// (see the module note).
+/// `Option<ColumnDefaultValue>` (`None` = Go `nil`); the accompanying `*_bit`
+/// byte fields (`Option<Vec<u8>>`, `None` = Go `nil` slice) hold the BIT-type
+/// default.
 #[derive(Clone, Debug)]
 pub struct ColumnInfo {
     /// The column ID.
@@ -113,14 +155,14 @@ pub struct ColumnInfo {
     pub name: CiString,
     /// The column's position in the table.
     pub offset: i32,
-    /// The original default value (`any`).
-    pub origin_default_value: Option<serde_json::Value>,
-    /// The BIT-type original default value bytes.
-    pub origin_default_value_bit: Vec<u8>,
-    /// The default value (`any`).
-    pub default_value: Option<serde_json::Value>,
-    /// The BIT-type default value bytes.
-    pub default_value_bit: Vec<u8>,
+    /// The original default value (`any`); `None` = Go `nil`.
+    pub origin_default_value: Option<ColumnDefaultValue>,
+    /// The BIT-type original default value bytes; `None` = Go `nil` slice.
+    pub origin_default_value_bit: Option<Vec<u8>>,
+    /// The default value (`any`); `None` = Go `nil`.
+    pub default_value: Option<ColumnDefaultValue>,
+    /// The BIT-type default value bytes; `None` = Go `nil` slice.
+    pub default_value_bit: Option<Vec<u8>>,
     /// Whether the default value string is an expression.
     pub default_is_expr: bool,
     /// The generated-column expression, if any.
@@ -231,6 +273,77 @@ impl ColumnInfo {
         self.field_type.set_elems(elems);
     }
 
+    /// Go `SetOriginDefaultValue`. The value is always stored; for a BIT
+    /// column, a string value is additionally kept as raw bytes, a `nil` is
+    /// accepted, and any other type is rejected (Go `ErrInvalidDefault`).
+    pub fn set_origin_default_value(
+        &mut self,
+        value: Option<ColumnDefaultValue>,
+    ) -> Result<(), InvalidDefaultError> {
+        self.origin_default_value = value.clone();
+        if self.get_type() == FieldTypeCode::Bit {
+            return self.store_bit_default(value, /* origin */ true);
+        }
+        Ok(())
+    }
+
+    /// Go `GetOriginDefaultValue`: for a BIT column with the bit bytes set,
+    /// returns them as a string; otherwise the stored value.
+    #[must_use]
+    pub fn get_origin_default_value(&self) -> Option<ColumnDefaultValue> {
+        if self.get_type() == FieldTypeCode::Bit {
+            if let Some(bytes) = &self.origin_default_value_bit {
+                return Some(ColumnDefaultValue::Str(bytes.clone()));
+            }
+        }
+        self.origin_default_value.clone()
+    }
+
+    /// Go `SetDefaultValue` (see [`set_origin_default_value`](Self::set_origin_default_value)).
+    pub fn set_default_value(
+        &mut self,
+        value: Option<ColumnDefaultValue>,
+    ) -> Result<(), InvalidDefaultError> {
+        self.default_value = value.clone();
+        if self.get_type() == FieldTypeCode::Bit {
+            return self.store_bit_default(value, /* origin */ false);
+        }
+        Ok(())
+    }
+
+    /// Go `GetDefaultValue`: the BIT bytes as a string when set, else the
+    /// stored value.
+    #[must_use]
+    pub fn get_default_value(&self) -> Option<ColumnDefaultValue> {
+        if self.get_type() == FieldTypeCode::Bit {
+            if let Some(bytes) = &self.default_value_bit {
+                return Some(ColumnDefaultValue::Str(bytes.clone()));
+            }
+        }
+        self.default_value.clone()
+    }
+
+    // The shared BIT default-value rule: nil is accepted (no bytes), a string
+    // is stored as raw bytes, anything else is invalid.
+    fn store_bit_default(
+        &mut self,
+        value: Option<ColumnDefaultValue>,
+        origin: bool,
+    ) -> Result<(), InvalidDefaultError> {
+        match value {
+            None => Ok(()),
+            Some(ColumnDefaultValue::Str(bytes)) => {
+                if origin {
+                    self.origin_default_value_bit = Some(bytes);
+                } else {
+                    self.default_value_bit = Some(bytes);
+                }
+                Ok(())
+            }
+            Some(_) => Err(InvalidDefaultError(self.name.original().to_owned())),
+        }
+    }
+
     /// Go `IsGenerated`: whether the column is a generated column.
     #[must_use]
     pub fn is_generated(&self) -> bool {
@@ -304,9 +417,9 @@ mod tests {
             name: CiString::new(name),
             offset: 0,
             origin_default_value: None,
-            origin_default_value_bit: Vec::new(),
+            origin_default_value_bit: None,
             default_value: None,
-            default_value_bit: Vec::new(),
+            default_value_bit: None,
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
@@ -375,6 +488,40 @@ mod tests {
             "bar"
         );
         assert!(find_column_info_by_id(&cols, 99).is_none());
+    }
+
+    // Go TestDefaultValue (the non-JSON assertions): plain and BIT columns,
+    // including the invalid-UTF-8 bit string.
+    #[test]
+    fn default_value() {
+        let rand_plain = ColumnDefaultValue::str("random_plain_string");
+        // A BIT default of raw, non-UTF-8 bytes (Go string([]byte{25, 185})).
+        let rand_bit = ColumnDefaultValue::Str(vec![25, 185]);
+
+        // Plain column: any value round-trips as-is.
+        let mut plain = col("plain", FieldTypeCode::Long);
+        plain
+            .set_default_value(Some(ColumnDefaultValue::Int(1)))
+            .unwrap();
+        assert_eq!(plain.get_default_value(), Some(ColumnDefaultValue::Int(1)));
+        plain.set_default_value(Some(rand_plain.clone())).unwrap();
+        assert_eq!(plain.get_default_value(), Some(rand_plain));
+
+        // BIT column: only strings (and nil) are allowed.
+        let mut bit = col("bit", FieldTypeCode::Bit);
+        let err = bit
+            .set_default_value(Some(ColumnDefaultValue::Int(1)))
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid default value"));
+        // The value was still stored before the error (as in Go).
+        assert_eq!(bit.get_default_value(), Some(ColumnDefaultValue::Int(1)));
+        bit.set_default_value(Some(rand_bit.clone())).unwrap();
+        assert_eq!(bit.get_default_value(), Some(rand_bit));
+
+        // BIT column with a nil origin default.
+        let mut null_bit = col("nullBit", FieldTypeCode::Bit);
+        null_bit.set_origin_default_value(None).unwrap();
+        assert_eq!(null_bit.get_origin_default_value(), None);
     }
 
     #[test]
