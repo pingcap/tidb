@@ -45,6 +45,7 @@ pub mod partialjson;
 pub mod ppcpuusage;
 pub mod prefetch;
 pub mod queue;
+pub mod redact;
 pub mod selection;
 pub mod size;
 pub mod slice;
