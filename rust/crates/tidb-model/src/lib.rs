@@ -23,6 +23,7 @@
 pub mod action_type;
 pub mod bdr;
 pub mod column;
+pub mod db;
 pub mod engine_attribute;
 pub mod flags;
 pub mod go_duration;
@@ -42,6 +43,7 @@ pub mod table_mode;
 pub use action_type::{ActionType, ACTION_MAP};
 pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
 pub use column::{gen_removing_obj_name, ChangeStateInfo};
+pub use db::{less_db_info, DBInfo};
 pub use index::{
     ColumnarIndexType, FullTextIndexInfo, IndexColumn, IndexInfo, InvertedIndexInfo,
     RegionSplitPolicy, VectorIndexInfo,
