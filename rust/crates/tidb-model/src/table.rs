@@ -141,6 +141,71 @@ impl FKInfo {
     }
 }
 
+/// Go `ReferredFKInfo`: a foreign key in a child table that cites this table.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReferredFKInfo {
+    /// The referenced columns.
+    pub cols: Vec<CiString>,
+    /// The child schema.
+    pub child_schema: CiString,
+    /// The child table.
+    pub child_table: CiString,
+    /// The child foreign-key name.
+    pub child_fk_name: CiString,
+}
+
+/// Go `TTLInfo`: a table's TTL (time-to-live) configuration.
+///
+/// `get_job_interval` (Go, which parses `job_interval` via
+/// `time.ParseDuration`) is deferred until a Go duration parser is available
+/// at this layer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TTLInfo {
+    /// The TTL column name.
+    pub column_name: CiString,
+    /// The TTL interval expression.
+    pub interval_expr_str: String,
+    /// The interval time unit (an `ast.TimeUnitType` value).
+    pub interval_time_unit: i64,
+    /// Whether TTL is enabled.
+    pub enable: bool,
+    /// The background-job interval.
+    pub job_interval: String,
+}
+
+/// Go `SequenceInfo`: a sequence object's configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SequenceInfo {
+    /// The start value.
+    pub start: i64,
+    /// Whether values are cached.
+    pub cache: bool,
+    /// Whether the sequence cycles.
+    pub cycle: bool,
+    /// The minimum value.
+    pub min_value: i64,
+    /// The maximum value.
+    pub max_value: i64,
+    /// The increment.
+    pub increment: i64,
+    /// The cache size.
+    pub cache_value: i64,
+    /// The sequence comment.
+    pub comment: String,
+}
+
+/// Go `ExchangePartitionInfo`: the partition-exchange metadata of a table.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExchangePartitionInfo {
+    /// The other table's ID (the non-partitioned table's ID when this info is
+    /// on a partitioned table, else the partitioned table's ID).
+    pub exchange_partition_table_id: i64,
+    /// The exchanged partition definition ID.
+    pub exchange_partition_def_id: i64,
+    /// Deprecated, unused.
+    pub xxx_exchange_partition_flag: bool,
+}
+
 /// Go `TableCacheStatusType` (an `int`): the caching state of a table.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TableCacheStatusType(pub i64);
@@ -360,6 +425,35 @@ mod tests {
             session_id: 42,
         };
         assert_eq!(s.to_string(), "server: s1_session: 42");
+    }
+
+    #[test]
+    fn data_structs_clone() {
+        let ttl = TTLInfo {
+            column_name: CiString::new("t"),
+            enable: true,
+            ..Default::default()
+        };
+        assert_eq!(ttl.clone(), ttl);
+
+        let seq = SequenceInfo {
+            start: 1,
+            max_value: 100,
+            ..Default::default()
+        };
+        assert_eq!(seq.clone().max_value, 100);
+
+        let ep = ExchangePartitionInfo {
+            exchange_partition_table_id: 5,
+            ..Default::default()
+        };
+        assert_eq!(ep, ep.clone());
+
+        let rfk = ReferredFKInfo {
+            child_table: CiString::new("child"),
+            ..Default::default()
+        };
+        assert_eq!(rfk.child_table.original(), "child");
     }
 
     #[test]
