@@ -41,7 +41,7 @@ pub mod table_mode;
 pub use action_type::{ActionType, ACTION_MAP};
 pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
 pub use column::{gen_removing_obj_name, ChangeStateInfo};
-pub use index::{ColumnarIndexType, IndexColumn};
+pub use index::{ColumnarIndexType, IndexColumn, RegionSplitPolicy};
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, JobState, JobVersion,
 };

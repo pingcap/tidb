@@ -116,6 +116,18 @@ impl ColumnarIndexType {
     }
 }
 
+/// Go `RegionSplitPolicy`: a table's region-split policy (defined in
+/// `index.go`, referenced by `TableInfo.TableSplitPolicy`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RegionSplitPolicy {
+    /// The lower-bound split points.
+    pub lower: Vec<String>,
+    /// The upper-bound split points.
+    pub upper: Vec<String>,
+    /// The number of regions.
+    pub regions: i64,
+}
+
 /// Go `IndexColumn`: one column referenced by an index.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IndexColumn {

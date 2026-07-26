@@ -206,6 +206,24 @@ pub struct ExchangePartitionInfo {
     pub xxx_exchange_partition_flag: bool,
 }
 
+/// Go `SoftdeleteInfo`: a table's soft-delete configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SoftdeleteInfo {
+    /// The retention period.
+    pub retention: String,
+    /// Whether the purge job is enabled.
+    pub job_enable: bool,
+    /// The purge-job interval.
+    pub job_interval: String,
+}
+
+/// Go `TableAffinityInfo`: a table's affinity configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TableAffinityInfo {
+    /// The affinity level.
+    pub level: String,
+}
+
 /// Go `TableCacheStatusType` (an `int`): the caching state of a table.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TableCacheStatusType(pub i64);
