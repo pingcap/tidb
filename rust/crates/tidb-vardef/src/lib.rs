@@ -12,22 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Constants from `pkg/sessionctx/vardef/tidb_vars.go`.
+//! Constants and mode enums from `pkg/sessionctx/vardef/tidb_vars.go`.
 //!
-//! - [`tidb_vars`]: the system-variable **name** constants -- the string
-//!   identifiers used to reference session/global system variables throughout
-//!   parse -> plan -> execute.
-//!
-//! - [`defaults`]: the `Def*` **default-value** constants for those variables.
+//! [`tidb_vars`] holds the system-variable **name** constants -- the string
+//! identifiers used to reference session/global system variables throughout
+//! parse -> plan -> execute. [`defaults`] holds the `Def*` **default-value**
+//! constants for those variables. [`modes`] holds the small
+//! `ClusteredIndexDefMode` / `ExchangeCompressionMode` enums and their helpers.
 //!
 //! SCOPE (documented, not yet the whole `vardef` package): the name constants
-//! (508) and the `Def*` defaults (389) are ported, both script-extracted and
-//! byte-verified against the Go source. Still DEFERRED from the full package:
-//! the mutable `var (...)` block of runtime-tunable globals (atomics), the
-//! small `ExchangeCompressionMode` / iota helper enums and their `Name`/`To*`
-//! methods, `sysvar.go`'s `SysVar` struct + the `GetSysVar`/`SetSysVar` global
-//! registry (the mutable singleton the rewrite deliberately replaces with
-//! explicit wiring), and `runtime.go`. Those land in follow-up units.
+//! (508), the `Def*` defaults (389), and the mode enums are ported; constants
+//! are script-extracted and byte-verified against the Go source. `ScopeFlag`
+//! and the sysvar `TypeFlag` already live in `tidb-exec`
+//! (`sysvar_scope`/`sysvar_type`). Still DEFERRED from the full package: the
+//! mutable `var (...)` block of runtime-tunable global sysvar backing stores
+//! (many need config/system-memory-derived initializers, `rate.Limiter`, or
+//! typed pointers, and are runtime state better wired when the session layer
+//! consumes them, not on the simple-query path), `sysvar.go`'s `SysVar` struct
+//! together with the `GetSysVar`/`SetSysVar` global registry (the singleton the
+//! rewrite deliberately replaces with explicit wiring), and `runtime.go`.
 
 pub mod defaults;
+pub mod modes;
 pub mod tidb_vars;
