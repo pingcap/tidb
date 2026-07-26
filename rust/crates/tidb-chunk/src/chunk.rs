@@ -30,7 +30,7 @@
 
 use crate::column::Column;
 use crate::row::Row;
-use tidb_datatype::FieldType;
+use tidb_datatype::{Datum, FieldType};
 
 /// Go `chunk.Chunk`: a columnar batch of rows.
 #[derive(Clone, Debug, Default)]
@@ -189,6 +189,29 @@ impl Chunk {
     pub fn append_bytes(&mut self, col_idx: usize, value: &[u8]) {
         self.append_sel(col_idx);
         self.columns[col_idx].append_bytes(value);
+    }
+
+    /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
+    /// dispatching on its kind (the inverse of [`Row::get_datum`]).
+    ///
+    /// Supports the kinds whose column storage exists (NULL, int/uint, real/
+    /// float32, string/bytes). Other kinds panic, pending their column support.
+    pub fn append_datum(&mut self, col_idx: usize, datum: &Datum) {
+        match datum {
+            Datum::Null => self.append_null(col_idx),
+            Datum::Int(i) => self.append_int64(col_idx, *i),
+            Datum::UInt(u) => self.append_uint64(col_idx, *u),
+            Datum::Real(f) => self.append_float64(col_idx, *f),
+            Datum::Float32(f) => {
+                self.append_sel(col_idx);
+                self.columns[col_idx].append_float32(*f as f32);
+            }
+            Datum::String(s) => self.append_bytes(col_idx, s.bytes()),
+            Datum::Bytes(b) => self.append_bytes(col_idx, b),
+            other => panic!(
+                "Chunk::append_datum: datum {other:?} not yet supported (pending its column storage)"
+            ),
+        }
     }
 
     /// Go `AppendPartialRow`: append `row`'s cells into this chunk's columns

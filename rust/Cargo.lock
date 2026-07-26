@@ -1332,6 +1332,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-executor"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-expr",
+]
+
+[[package]]
 name = "tidb-expr"
 version = "0.0.0"
 dependencies = [

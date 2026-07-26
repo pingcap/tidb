@@ -1,0 +1,38 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! The wired execution engine from `pkg/executor`: the [`Executor`] trait, the
+//! shared [`ExecutorMeta`] base state, and concrete operators.
+//!
+//! This crate is the execution *spine* -- the pull-based `Open`/`Next(chunk)`/
+//! `Close` driver that ties parsed plans to results. It is a native-boundary
+//! split of `pkg/executor` (kept separate from the large `tidb-exec` crate of
+//! individual operator fragments so the wired engine builds fast). It depends
+//! only on `tidb-chunk` (the row batches), `tidb-expr` (expression evaluation),
+//! and `tidb-datatype`.
+//!
+//! SEED SCOPE: the `Executor` trait core (open/next/close/schema/ret_field_types/
+//! init_cap/max_chunk_size/new_chunk) plus [`TableDualExec`] (the FROM-less
+//! source) and [`ProjectionExec`] (evaluates expressions per row). Together they
+//! run `SELECT <expr>` end-to-end. DEFERRED (documented): the Go
+//! `context.Context`/`sessionctx` propagation, runtime stats, the SQL killer,
+//! `Detach`, parallel projection, and the many other operators.
+
+pub mod executor;
+pub mod projection;
+pub mod table_dual;
+
+pub use executor::{ExecError, Executor, ExecutorMeta};
+pub use projection::ProjectionExec;
+pub use table_dual::TableDualExec;

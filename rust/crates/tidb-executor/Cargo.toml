@@ -1,0 +1,19 @@
+[package]
+name = "tidb-executor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB executor: the wired execution engine spine (Executor trait + operators) (Rust rewrite)."
+
+[dependencies]
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+
+[lints]
+workspace = true
