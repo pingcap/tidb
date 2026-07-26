@@ -425,7 +425,7 @@ func (pp *Parser) buildRowGroupParser() (err error) {
 
 // getBuilder picks a column-reader strategy for the current row group:
 //   - whole-file preload, when prepareReader has already loaded the file;
-//   - per-row-group preload, when the row group fits inMemoryThreshold;
+//   - per-row-group preload, when the row group fits rowGroupInMemoryThreshold;
 //   - per-column streaming, otherwise.
 func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
@@ -434,7 +434,7 @@ func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) 
 	}
 
 	base := pp.preloadBase
-	if base == nil && ranges.end-ranges.start <= int64(inMemoryThreshold) {
+	if base == nil && ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
 		base, err = newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -625,7 +625,8 @@ func ReadRowCount(
 	return reader.MetaData().NumRows, nil
 }
 
-// NewParser generates a parquet parser.
+// NewParser creates a Parquet parser. A positive fileSize must be exact and may
+// enable whole-file preloading without calling openReader; pass 0 to disable it.
 func NewParser(
 	ctx context.Context,
 	store storeapi.Storage,
@@ -911,7 +912,7 @@ func (pp *Parser) preloadBufferBytes() (int64, error) {
 		return 0, err
 	}
 	preloadBytes := rgRange.end - rgRange.start
-	if preloadBytes <= 0 || preloadBytes > int64(inMemoryThreshold) {
+	if preloadBytes <= 0 || preloadBytes > int64(rowGroupInMemoryThreshold) {
 		return 0, nil
 	}
 	return preloadBytes, nil

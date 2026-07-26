@@ -494,7 +494,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeParquet:
 		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, openReader,
-			dataFileMeta.Path, dataFileMeta.FileSize, parquetfile.FileMeta{},
+			dataFileMeta.Path, 0, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -670,7 +670,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeParquet:
 		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, openReader,
-			sampleFile.Path, sampleFile.FileSize, parquetfile.FileMeta{},
+			sampleFile.Path, 0, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)

@@ -682,8 +682,8 @@ func OpenReader(
 	return
 }
 
-// NewReaderOpener creates a function that opens a reader for fileMeta.
-// It opens the reader immediately for non-Parquet files and leaves Parquet files unopened.
+// NewReaderOpener returns an opener and eagerly opens non-Parquet files.
+// Parquet parsers may preload the file without opening a reader.
 func NewReaderOpener(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,

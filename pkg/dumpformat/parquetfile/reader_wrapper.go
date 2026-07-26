@@ -35,11 +35,13 @@ import (
 const maxDictHeaderSize int64 = 100
 
 var (
-	// inMemoryThreshold caps the buffer prepareReader / getBuilder is willing
-	// to hold per parser. Files at or below this size are preloaded in one read;
-	// otherwise individual row groups are preloaded when they fit, and larger
-	// row groups fall back to per-column streaming. 128 MiB is a heuristic.
-	inMemoryThreshold = 128 * units.MiB
+	// wholeFileInMemoryThreshold caps whole-file preloading. The lower limit
+	// keeps the per-parser memory cost bounded while retaining the object-store
+	// request reduction for small files.
+	wholeFileInMemoryThreshold = 32 * units.MiB
+	// rowGroupInMemoryThreshold caps per-row-group preloading. Larger row groups
+	// fall back to per-column streaming.
+	rowGroupInMemoryThreshold = 128 * units.MiB
 )
 
 type readerAtSeekerCloser interface {
@@ -251,7 +253,7 @@ func prepareReader(
 	path string,
 	fileSize int64,
 ) (parquet.ReaderAtSeeker, *inMemoryReaderBase, io.ReadSeekCloser, error) {
-	if fileSize > 0 && fileSize <= int64(inMemoryThreshold) {
+	if fileSize > 0 && fileSize <= int64(wholeFileInMemoryThreshold) {
 		base, err := newInMemoryReaderBase(ctx, store, path, rowGroupRange{start: 0, end: fileSize})
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
