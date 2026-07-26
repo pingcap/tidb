@@ -220,6 +220,7 @@ func Init(cmd *cobra.Command) (err error) {
 		if len(conf.File.Filename) != 0 {
 			atomic.StoreUint64(&hasLogFile, 1)
 			summary.InitCollector(true)
+			summary.InitMonitor()
 			// cmd.PrintErr prints to stderr, but PrintErrf prints to stdout.
 			cmd.PrintErr(fmt.Sprintf("Detail BR log in %s \n", conf.File.Filename))
 		}

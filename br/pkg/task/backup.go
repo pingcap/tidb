@@ -411,6 +411,17 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
 
+	statusCommand := taskStatusCommand(cmdName)
+	summary.StartTaskStatus(summary.TaskStatusConfig{
+		TaskType:          summary.BackupUnit,
+		Command:           statusCommand,
+		Scope:             taskStatusScope(statusCommand, cfg.ExplicitFilter, cfg.FilterStr),
+		PDAddrs:           cfg.PD,
+		Storage:           cfg.Storage,
+		TaskTS:            cfg.BackupTS,
+		StatusTextfileDir: cfg.StatusTextfileDir,
+	})
+	summary.SetTaskStatusPhase("prepare")
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -593,6 +604,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
+	summary.SetTaskStatusPhase("build_ranges")
 	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
@@ -721,6 +733,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	summary.SetTaskStatusPhase("backup_ranges")
 	checksumMap, err := client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.RangeLimit, cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
@@ -748,6 +761,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Info("Skip fast checksum")
 		}
 	}
+	summary.SetTaskStatusPhase("checksum")
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
 
 	if schemas != nil && schemas.Len() > 0 {
@@ -759,6 +773,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 
+	summary.SetTaskStatusPhase("flush_meta")
 	err = metawriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)

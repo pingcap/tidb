@@ -1035,6 +1035,15 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if IsStreamRestore(cmdName) {
 		restoreErr = RunStreamRestore(c, mgr, g, cfg)
 	} else {
+		statusCommand := taskStatusCommand(cmdName)
+		summary.StartTaskStatus(summary.TaskStatusConfig{
+			TaskType:          summary.RestoreUnit,
+			Command:           statusCommand,
+			Scope:             taskStatusScope(statusCommand, cfg.ExplicitFilter, cfg.FilterStr),
+			PDAddrs:           cfg.PD,
+			Storage:           cfg.Storage,
+			StatusTextfileDir: cfg.StatusTextfileDir,
+		})
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig: cfg,
 		}
@@ -1184,6 +1193,7 @@ func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
 	cfg.Adjust()
+	summary.SetTaskStatusPhase("prepare")
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -1205,6 +1215,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// reads out information from backup meta file and do requirement checking if needed
+	summary.SetTaskStatusPhase("read_backup_meta")
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
@@ -1354,6 +1365,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// filters out db/table/files using filter
+	summary.SetTaskStatusPhase("filter_files")
 	tableMap, dbMap, err := filterRestoreFiles(client, cfg.RestoreConfig, loadStatsPhysical)
 	if err != nil {
 		return errors.Trace(err)
@@ -1768,6 +1780,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 		Glue: g,
 	}
+	summary.SetTaskStatusPhase("restore_tables")
 	if err := client.RestoreTables(ctx, rtCtx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1791,6 +1804,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		Glue:       g,
 	}
 	// Do some work in pipeline, such as checkum, load stats and wait tiflash ready.
+	summary.SetTaskStatusPhase("restore_pipeline")
 	if err := client.RestorePipeline(ctx, plCtx, createdTables); err != nil {
 		return errors.Trace(err)
 	}
@@ -1799,6 +1813,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// So leave it out of the pipeline for easier implementation.
 	log.Info("restoring system schemas", zap.Bool("withSys", cfg.WithSysTable),
 		zap.Strings("filter", cfg.FilterStr))
+	summary.SetTaskStatusPhase("restore_system_schemas")
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter, loadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
