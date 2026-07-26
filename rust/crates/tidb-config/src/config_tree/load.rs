@@ -191,6 +191,10 @@ const REMOVED_CONFIG: &[&str] = &[
     "enable-global-index",
 ];
 
+/// Config items hidden from the JSON dump though still accepted (Go
+/// `hideConfig`).
+const HIDE_CONFIG: &[&str] = &["performance.index-usage-sync-lease"];
+
 /// Whether all undecoded items belong to the removed-config set (Go
 /// `isAllRemovedConfigItems`).
 pub fn is_all_removed_config_items(items: &[String]) -> bool {
@@ -378,6 +382,46 @@ impl Config {
         }
         Ok(())
     }
+
+    /// Go `GetJSONConfig`: the config as tab-indented JSON with the removed
+    /// and hidden items stripped (used by `SHOW CONFIG` / the status API).
+    pub fn get_json_config(&self) -> Result<String, String> {
+        let mut value = serde_json::to_value(self).map_err(|e| e.to_string())?;
+        let root = value
+            .as_object_mut()
+            .ok_or_else(|| "config did not serialize to a JSON object".to_string())?;
+
+        // Go strips removedConfig then hideConfig; deletes on absent paths
+        // are no-ops, matching Go's walk that breaks on a missing key.
+        for path in REMOVED_CONFIG.iter().chain(HIDE_CONFIG.iter()) {
+            delete_json_path(root, path);
+        }
+
+        // Go re-marshals with json.Indent(..., "", "\t"): tab indentation.
+        let mut buf = Vec::new();
+        let fmt = serde_json::ser::PrettyFormatter::with_indent(b"\t");
+        let mut ser = serde_json::Serializer::with_formatter(&mut buf, fmt);
+        serde::Serialize::serialize(&value, &mut ser).map_err(|e| e.to_string())?;
+        String::from_utf8(buf).map_err(|e| e.to_string())
+    }
+}
+
+/// Delete a dotted path from a JSON object, mirroring Go's walk in
+/// `GetJSONConfig`: descend through object keys, remove the final key, and
+/// stop early if any intermediate key is missing or not an object.
+fn delete_json_path(root: &mut serde_json::Map<String, serde_json::Value>, path: &str) {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut cur = root;
+    for (i, key) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            cur.remove(*key);
+            return;
+        }
+        match cur.get_mut(*key) {
+            Some(serde_json::Value::Object(m)) => cur = m,
+            _ => return,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -557,6 +601,31 @@ mod tests {
             }
             other => panic!("expected InstanceSection, got {other:?}"),
         }
+    }
+
+    // Go TestGetJSONConfig: hidden/removed items are stripped, live ones stay.
+    #[test]
+    fn get_json_config() {
+        let c = new_config();
+        let json = c.get_json_config().unwrap();
+        // Hidden and removed items must not appear.
+        for absent in [
+            "index-usage-sync-lease",
+            "enable-batch-dml",
+            "mem-quota-query",
+            "query-log-max-len",
+            "oom-action",
+        ] {
+            assert!(!json.contains(absent), "should not contain {absent}");
+        }
+        // Live items remain.
+        assert!(
+            json.contains("stmt-count-limit"),
+            "missing stmt-count-limit"
+        );
+        assert!(json.contains("rpc-metrics"), "missing rpc-metrics");
+        // Tab-indented (Go json.Indent with "\t").
+        assert!(json.contains("\n\t"), "expected tab indentation");
     }
 
     // A valid partial config loads and keeps defaults.
