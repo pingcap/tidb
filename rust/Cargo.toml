@@ -11,6 +11,7 @@ members = [
     "crates/tidb-hash",
     "crates/tidb-util",
     "crates/tidb-config",
+    "crates/tidb-log",
     "crates/tidb-lexer",
     "crates/tidb-mysql",
     "crates/tidb-ast",

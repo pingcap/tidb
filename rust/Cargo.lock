@@ -1351,6 +1351,16 @@ name = "tidb-lexer"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-log"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tidb-config",
+]
+
+[[package]]
 name = "tidb-mysql"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,16 @@
+[package]
+name = "tidb-log"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Transcreation of the pinned pingcap/log module (unified log format)"
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tidb-config = { path = "../tidb-config" }
+
+[lints]
+workspace = true
