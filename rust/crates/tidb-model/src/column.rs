@@ -24,15 +24,18 @@
 //! models a Go string as `Vec<u8>`, so the BIT-type byte default (Go's
 //! invalid-UTF-8 case in `TestDefaultValue`) is a normal case.
 //!
-//! DEFERRED to a focused follow-up: `GetTypeDesc`; the `NewExtra*ColInfo`
-//! constructors; `GenUniqueChangingColumnName` (needs the unported
-//! `TableInfo`); and Go's `interface{}` JSON round-trip of a `ColumnInfo`
-//! (the marshal/unmarshal-consistency half of `TestDefaultValue`).
+//! The `NewExtra*ColInfo` constructors are ported too.
+//!
+//! DEFERRED to a focused follow-up: `GetTypeDesc` (its `FieldType.CompactStr`
+//! has a Rust bool argument whose Go-matching value still needs pinning down);
+//! `GenUniqueChangingColumnName` (needs the unported `TableInfo`); and Go's
+//! `interface{}` JSON round-trip of a `ColumnInfo` (the marshal/unmarshal-
+//! consistency half of `TestDefaultValue`).
 
 use std::collections::BTreeSet;
 
 use tidb_ast::CiString;
-use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
 use crate::schema_state::SchemaState;
 
@@ -376,6 +379,84 @@ impl ColumnInfo {
     }
 }
 
+// The extra hidden-column identifiers (Go defines these in table.go; kept
+// here with the constructors that use them, to be consolidated when table.go
+// is ported). CharsetBin/CollationBin are "binary".
+/// Go `ExtraHandleID` (the `_tidb_rowid` handle column).
+pub const EXTRA_HANDLE_ID: i64 = -1;
+/// Go `ExtraPhysTblID` (the `_tidb_tid` physical-table-id column).
+pub const EXTRA_PHYS_TBL_ID: i64 = -3;
+/// Go `ExtraRowChecksumID`.
+pub const EXTRA_ROW_CHECKSUM_ID: i64 = -4;
+/// Go `ExtraCommitTSID` (the `_tidb_commit_ts` column).
+pub const EXTRA_COMMIT_TS_ID: i64 = -5;
+/// Go `ExtraHandleName`.
+pub const EXTRA_HANDLE_NAME: &str = "_tidb_rowid";
+/// Go `ExtraPhysTblIDName`.
+pub const EXTRA_PHYS_TBL_ID_NAME: &str = "_tidb_tid";
+/// Go `ExtraCommitTSName`.
+pub const EXTRA_COMMIT_TS_NAME: &str = "_tidb_commit_ts";
+
+const CHARSET_BIN: &str = "binary";
+const COLLATION_BIN: &str = "binary";
+
+impl ColumnInfo {
+    // A base BIGINT/binary extra column: id + name, type LongLong, default
+    // flen/decimal, binary charset/collation. Callers then set the flags.
+    fn extra_long_long_bin(id: i64, name: &str) -> ColumnInfo {
+        let mut c = ColumnInfo {
+            id,
+            name: CiString::new(name),
+            offset: 0,
+            origin_default_value: None,
+            origin_default_value_bit: None,
+            default_value: None,
+            default_value_bit: None,
+            default_is_expr: false,
+            generated_expr_string: String::new(),
+            generated_stored: false,
+            dependences: BTreeSet::new(),
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            changing_field_type: None,
+            state: SchemaState::NONE,
+            comment: String::new(),
+            hidden: false,
+            change_state_info: None,
+            version: 0,
+        };
+        let (flen, decimal) = FieldTypeCode::LongLong.default_length_and_decimal();
+        c.set_flen(flen);
+        c.set_decimal(decimal);
+        c.set_charset(CHARSET_BIN);
+        c.set_collate(COLLATION_BIN);
+        c
+    }
+
+    /// Go `NewExtraHandleColInfo`: the `_tidb_rowid` handle column.
+    #[must_use]
+    pub fn new_extra_handle_col_info() -> ColumnInfo {
+        let mut c = Self::extra_long_long_bin(EXTRA_HANDLE_ID, EXTRA_HANDLE_NAME);
+        c.set_flag(FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
+        c
+    }
+
+    /// Go `NewExtraPhysTblIDColInfo`: the extra physical-table-id column.
+    #[must_use]
+    pub fn new_extra_phys_tbl_id_col_info() -> ColumnInfo {
+        let mut c = Self::extra_long_long_bin(EXTRA_PHYS_TBL_ID, EXTRA_PHYS_TBL_ID_NAME);
+        c.set_flag(FieldTypeFlags::NOT_NULL);
+        c
+    }
+
+    /// Go `NewExtraCommitTSColInfo`: the extra commit-timestamp column.
+    #[must_use]
+    pub fn new_extra_commit_ts_col_info() -> ColumnInfo {
+        let mut c = Self::extra_long_long_bin(EXTRA_COMMIT_TS_ID, EXTRA_COMMIT_TS_NAME);
+        c.set_flag(c.get_flag() | FieldTypeFlags::UNSIGNED);
+        c
+    }
+}
+
 /// Go `FindColumnInfo`: finds a column by (case-insensitive) name.
 #[must_use]
 pub fn find_column_info<'a>(cols: &'a [ColumnInfo], name: &str) -> Option<&'a ColumnInfo> {
@@ -522,6 +603,28 @@ mod tests {
         let mut null_bit = col("nullBit", FieldTypeCode::Bit);
         null_bit.set_origin_default_value(None).unwrap();
         assert_eq!(null_bit.get_origin_default_value(), None);
+    }
+
+    // Go TestDefaultValue's constructor assertions + the other extra columns.
+    #[test]
+    fn extra_column_constructors() {
+        let phys = ColumnInfo::new_extra_phys_tbl_id_col_info();
+        assert_eq!(phys.get_flag(), FieldTypeFlags::NOT_NULL);
+        assert_eq!(phys.get_type(), FieldTypeCode::LongLong);
+        assert_eq!(phys.id, EXTRA_PHYS_TBL_ID);
+        assert_eq!(phys.name.original(), "_tidb_tid");
+        assert_eq!(phys.get_charset(), "binary");
+
+        let handle = ColumnInfo::new_extra_handle_col_info();
+        assert_eq!(
+            handle.get_flag(),
+            FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL
+        );
+        assert_eq!(handle.id, EXTRA_HANDLE_ID);
+
+        let commit_ts = ColumnInfo::new_extra_commit_ts_col_info();
+        assert_eq!(commit_ts.get_flag(), FieldTypeFlags::UNSIGNED);
+        assert_eq!(commit_ts.name.original(), "_tidb_commit_ts");
     }
 
     #[test]
