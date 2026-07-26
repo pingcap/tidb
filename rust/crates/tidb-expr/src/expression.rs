@@ -197,6 +197,19 @@ mod tests {
         ));
         assert_eq!(nested.eval(&NoColumns, row).unwrap(), Datum::Int(3));
 
+        // A unary operator: -(1 + 1) = -2.
+        let plus2 = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            ft.clone(),
+            vec![one(), one()],
+        ));
+        let neg = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("unaryminus"),
+            ft.clone(),
+            vec![plus2],
+        ));
+        assert_eq!(neg.eval(&NoColumns, row).unwrap(), Datum::Int(-2));
+
         // A non-operator function is still unsupported.
         let unknown = Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("some_udf"),

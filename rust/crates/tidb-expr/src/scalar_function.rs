@@ -23,8 +23,9 @@
 //!
 //! Ported: the struct and its argument-structural, context-free methods
 //! (static type, args, correlation, the common `ReHashCode` path), and `Eval`
-//! for the binary-operator functions (reusing the shared Datum operator
-//! semantics). DEFERRED (documented): `Eval` for the non-operator builtins;
+//! for the binary- and unary-operator functions (reusing the shared Datum
+//! operator semantics). DEFERRED (documented): `Eval` for the non-operator
+//! builtins (cast, if/case, string/date functions, ...);
 //! `Equal` (Go's
 //! compares through the function's `equal(ctx, ...)`); `ConstLevel` (needs the
 //! `unFoldableFunctions` catalog and extension-func detection); the `Grouping`
@@ -34,7 +35,7 @@
 use crate::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
-use tidb_ast::{BinaryOp, CiString};
+use tidb_ast::{BinaryOp, CiString, UnaryOp};
 use tidb_chunk::row::Row;
 use tidb_codec::encode_compact_bytes;
 use tidb_datatype::{Datum, FieldType};
@@ -64,6 +65,18 @@ fn binary_op_for_name(name: &str) -> Option<BinaryOp> {
         "and" => BinaryOp::LogicAnd,
         "or" => BinaryOp::LogicOr,
         "xor" => BinaryOp::LogicXor,
+        _ => return None,
+    })
+}
+
+/// Maps a Go unary-operator scalar-function name (`pkg/parser/ast`) to a
+/// [`UnaryOp`]. Returns `None` for any function that is not a unary operator.
+fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
+    Some(match name {
+        "unaryplus" => UnaryOp::Plus,
+        "unaryminus" => UnaryOp::Minus,
+        "bitneg" => UnaryOp::BitNeg,
+        "not" => UnaryOp::Not,
         _ => return None,
     })
 }
@@ -170,11 +183,18 @@ impl ScalarFunction {
     /// operand kinds exactly as Go's per-signature builtins do. Every other
     /// function is reported as unsupported until its builtin is ported.
     pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
-        if let Some(op) = binary_op_for_name(self.func_name.lowercase()) {
+        let name = self.func_name.lowercase();
+        if let Some(op) = binary_op_for_name(name) {
             if self.args.len() == 2 {
                 let lhs = self.args[0].eval(ctx, row)?;
                 let rhs = self.args[1].eval(ctx, row)?;
                 return crate::apply_binary(op, lhs, rhs);
+            }
+        }
+        if let Some(op) = unary_op_for_name(name) {
+            if self.args.len() == 1 {
+                let v = self.args[0].eval(ctx, row)?;
+                return crate::apply_unary(op, v);
             }
         }
         Err(EvalError::Unsupported(
