@@ -29,7 +29,7 @@
 //! `chunk.Row`, and the `builtinFunc` dispatch). Structural, context-free
 //! methods (identity, hash code, const-level) are ported now.
 
-pub use crate::column::Column;
+pub use crate::column::{Column, CorrelatedColumn};
 pub use crate::constant::{Constant, ParamMarker};
 pub use crate::schema::{KeyInfo, Schema};
 
@@ -56,16 +56,19 @@ impl ConstLevel {
 
 /// Go `Expression`: a scalar expression node.
 ///
-/// A closed enum over the concrete node types. [`Column`](Expression::Column)
-/// and [`Constant`](Expression::Constant) are populated so far; the remaining
-/// variants (`ScalarFunction`, `CorrelatedColumn`) are added as the
-/// corresponding nodes are ported (see the module docs).
+/// A closed enum over the concrete node types.
+/// [`Column`](Expression::Column), [`Constant`](Expression::Constant), and
+/// [`CorrelatedColumn`](Expression::CorrelatedColumn) are populated so far; the
+/// remaining variant (`ScalarFunction`) is added as that node is ported (see the
+/// module docs).
 #[derive(Clone, Debug)]
 pub enum Expression {
     /// A column reference (Go `*Column`).
     Column(Column),
     /// A literal / deferred / parameter constant (Go `*Constant`).
     Constant(Constant),
+    /// A column bound to an outer query's value (Go `*CorrelatedColumn`).
+    CorrelatedColumn(CorrelatedColumn),
 }
 
 impl Expression {
@@ -75,6 +78,7 @@ impl Expression {
         match self {
             Expression::Column(c) => c.hash_code(),
             Expression::Constant(c) => c.hash_code(),
+            Expression::CorrelatedColumn(c) => c.hash_code(),
         }
     }
 
@@ -84,6 +88,7 @@ impl Expression {
         match self {
             Expression::Column(c) => c.is_correlated(),
             Expression::Constant(c) => c.is_correlated(),
+            Expression::CorrelatedColumn(c) => c.is_correlated(),
         }
     }
 
@@ -93,6 +98,7 @@ impl Expression {
         match self {
             Expression::Column(c) => c.const_level(),
             Expression::Constant(c) => c.const_level(),
+            Expression::CorrelatedColumn(c) => c.const_level(),
         }
     }
 
@@ -108,6 +114,7 @@ impl Expression {
     pub fn equal(&self, other: &Expression) -> bool {
         match self {
             Expression::Column(c) => c.equal_column(other),
+            Expression::CorrelatedColumn(c) => c.equal_column(other),
             Expression::Constant(_) => false,
         }
     }

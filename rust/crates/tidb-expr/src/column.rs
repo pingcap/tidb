@@ -24,7 +24,7 @@
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, COLUMN_FLAG};
 use tidb_codec::encode_int;
-use tidb_datatype::FieldType;
+use tidb_datatype::{Datum, FieldType};
 
 /// Go `Column`: a reference to a column, by unique id, within a plan.
 #[derive(Clone, Debug, Default)]
@@ -122,6 +122,49 @@ impl Column {
     }
 }
 
+/// Go `CorrelatedColumn`: a column reference bound to a value supplied by an
+/// outer query (the correlated value lives in `Data`).
+#[derive(Clone, Debug, Default)]
+pub struct CorrelatedColumn {
+    /// Go embedded `Column`.
+    pub column: Column,
+    /// Go `Data` (a `*types.Datum`): the current bound value, if any.
+    pub data: Option<Datum>,
+}
+
+impl CorrelatedColumn {
+    /// Go `IsCorrelated`: always true.
+    #[must_use]
+    pub fn is_correlated(&self) -> bool {
+        true
+    }
+
+    /// Go `ConstLevel`: a correlated column is not constant.
+    #[must_use]
+    pub fn const_level(&self) -> ConstLevel {
+        ConstLevel::NONE
+    }
+
+    /// Go `Equal` -> promoted `Column.EqualColumn`: equal to a plain [`Column`]
+    /// with the same `UniqueID`; any other expression (including another
+    /// correlated column) is unequal, matching Go's `expr.(*Column)` type assert.
+    #[must_use]
+    pub fn equal_column(&self, expr: &Expression) -> bool {
+        self.column.equal_column(expr)
+    }
+
+    /// Go promoted `Column.HashCode`: hashes as the embedded column.
+    pub fn hash_code(&mut self) -> &[u8] {
+        self.column.hash_code()
+    }
+
+    /// Go promoted `Column.GetStaticType`.
+    #[must_use]
+    pub fn get_static_type(&self) -> Option<&FieldType> {
+        self.column.get_static_type()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +210,27 @@ mod tests {
         let c = col(1);
         assert!(!c.is_correlated());
         assert_eq!(c.const_level(), ConstLevel::NONE);
+    }
+
+    #[test]
+    fn correlated_column_delegates_and_is_correlated() {
+        let mut cc = CorrelatedColumn {
+            column: col(5),
+            data: Some(Datum::Int(3)),
+        };
+        assert!(cc.is_correlated());
+        assert_eq!(cc.const_level(), ConstLevel::NONE);
+        // Equal to a plain column with the same UniqueID...
+        assert!(cc.equal_column(&Expression::Column(col(5))));
+        assert!(!cc.equal_column(&Expression::Column(col(6))));
+        // ...but not to another correlated column (Go's expr.(*Column) fails).
+        let other = Expression::CorrelatedColumn(CorrelatedColumn {
+            column: col(5),
+            data: None,
+        });
+        assert!(!cc.equal_column(&other));
+        // HashCode matches the embedded column's.
+        let mut plain = col(5);
+        assert_eq!(cc.hash_code(), plain.hash_code());
     }
 }
