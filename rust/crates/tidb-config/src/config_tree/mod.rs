@@ -25,12 +25,14 @@
 //! [`crate::tikvcfg`]; the actual TiKV client is `tikv/client-rust`.
 
 pub mod big_sections;
+pub mod config;
 pub mod helpers;
 pub mod log_instance;
 pub mod marshal;
 pub mod sections;
 
 pub use big_sections::{Performance, Security, Status};
+pub use config::{new_config, Config};
 pub use helpers::{
     flatten_config_items, prepare_error_message_extensions, valid_max_allowed_packet, Cse,
     ErrorMessageExtension, TrxSummary, DEF_MAX_ALLOWED_PACKET,
@@ -42,3 +44,14 @@ pub use sections::{
     PessimisticTxn, PlanCache, Plugin, PreparedPlanCache, ProxyProtocol, RuV2Config, Standby,
     StarterParams, TopSql,
 };
+
+/// Validates a zap log level string (Go's final `Config.Valid` check via
+/// `zap.AtomicLevel.UnmarshalText`).
+pub fn parse_log_level(level: &str) -> Result<(), String> {
+    match level.to_lowercase().as_str() {
+        "debug" | "info" | "warn" | "warning" | "error" | "dpanic" | "panic" | "fatal" | "" => {
+            Ok(())
+        }
+        other => Err(format!("unrecognized level: {other:?}")),
+    }
+}
