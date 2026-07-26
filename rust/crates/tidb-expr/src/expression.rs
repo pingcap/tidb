@@ -30,12 +30,15 @@
 //! methods (identity, hash code, const-level) are ported now.
 
 pub use crate::column::Column;
+pub use crate::constant::{Constant, ParamMarker};
 pub use crate::schema::{KeyInfo, Schema};
 
-/// Type tag written as the first byte of a column's `HashCode`
-/// (`pkg/expression/expression.go`, `columnFlag`). The other tags land with
-/// their variants: `constantFlag = 0`, `scalarFunctionFlag = 3`.
+// Type tags written as the first byte of an expression `HashCode`
+// (`pkg/expression/expression.go`). `scalarFunctionFlag = 3` lands with that
+// variant.
+pub(crate) const CONSTANT_FLAG: u8 = 0;
 pub(crate) const COLUMN_FLAG: u8 = 1;
+pub(crate) const PARAMETER_FLAG: u8 = 4;
 
 /// Go `ConstLevel` (a `uint`): how constant an expression is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -53,13 +56,16 @@ impl ConstLevel {
 
 /// Go `Expression`: a scalar expression node.
 ///
-/// A closed enum over the concrete node types. Only [`Column`](Expression::Column)
-/// is populated so far; the remaining variants are added as the corresponding
-/// nodes are ported (see the module docs).
+/// A closed enum over the concrete node types. [`Column`](Expression::Column)
+/// and [`Constant`](Expression::Constant) are populated so far; the remaining
+/// variants (`ScalarFunction`, `CorrelatedColumn`) are added as the
+/// corresponding nodes are ported (see the module docs).
 #[derive(Clone, Debug)]
 pub enum Expression {
     /// A column reference (Go `*Column`).
     Column(Column),
+    /// A literal / deferred / parameter constant (Go `*Constant`).
+    Constant(Constant),
 }
 
 impl Expression {
@@ -68,6 +74,7 @@ impl Expression {
     pub fn hash_code(&mut self) -> &[u8] {
         match self {
             Expression::Column(c) => c.hash_code(),
+            Expression::Constant(c) => c.hash_code(),
         }
     }
 
@@ -76,6 +83,7 @@ impl Expression {
     pub fn is_correlated(&self) -> bool {
         match self {
             Expression::Column(c) => c.is_correlated(),
+            Expression::Constant(c) => c.is_correlated(),
         }
     }
 
@@ -84,15 +92,23 @@ impl Expression {
     pub fn const_level(&self) -> ConstLevel {
         match self {
             Expression::Column(c) => c.const_level(),
+            Expression::Constant(c) => c.const_level(),
         }
     }
 
-    /// Go `Expression.Equal` (without the `EvalContext`, which the ported
-    /// variants do not need): structural/identity equality.
+    /// Context-free identity equality.
+    ///
+    /// This is only the part of Go's `Expression.Equal(ctx, e)` that needs no
+    /// `EvalContext`: two columns are equal by `UniqueID`. `Constant.Equal`
+    /// evaluates both operands and compares the values through a collator, so it
+    /// cannot be answered without a context; it conservatively reports `false`
+    /// here and gains a faithful context-aware form when `Eval*` is ported. No
+    /// wired consumer relies on constant equality yet.
     #[must_use]
     pub fn equal(&self, other: &Expression) -> bool {
         match self {
             Expression::Column(c) => c.equal_column(other),
+            Expression::Constant(_) => false,
         }
     }
 
@@ -101,6 +117,7 @@ impl Expression {
     pub fn as_column(&self) -> Option<&Column> {
         match self {
             Expression::Column(c) => Some(c),
+            _ => None,
         }
     }
 }

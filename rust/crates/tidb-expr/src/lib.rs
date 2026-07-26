@@ -332,6 +332,7 @@ mod builtin_ext;
 mod cast;
 mod coerce;
 pub mod column;
+pub mod constant;
 mod context;
 pub mod expr_collation;
 pub mod expression;
