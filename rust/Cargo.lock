@@ -1384,6 +1384,8 @@ name = "tidb-model"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "serde",
+ "serde_json",
  "tidb-ast",
 ]
 

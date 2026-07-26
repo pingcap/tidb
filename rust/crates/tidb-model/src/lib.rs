@@ -20,6 +20,7 @@
 //! self-contained leaf types; only the modules declared below are ported so
 //! far. It is seed evidence, not yet the complete package.
 
+pub mod engine_attribute;
 pub mod flags;
 pub mod masking_policy;
 pub mod schema_state;

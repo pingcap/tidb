@@ -10,6 +10,8 @@ description = "TiDB meta/model: schema/table metadata types (Rust rewrite, in pr
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
 chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
