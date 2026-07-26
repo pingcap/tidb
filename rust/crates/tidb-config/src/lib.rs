@@ -21,6 +21,7 @@
 
 #![warn(missing_docs)]
 
+pub mod config_tree;
 pub mod configtypes;
 pub mod deploymode;
 pub mod external_workload;
