@@ -23,4 +23,12 @@
 
 pub mod configtypes;
 pub mod deploymode;
+pub mod external_workload;
 pub mod kerneltype;
+pub mod keyspace_observability;
+pub mod store;
+pub mod tiflash;
+
+/// Default sample-rate row count (Go `pkg/config/const.go`
+/// `DefRowsForSampleRate`).
+pub const DEF_ROWS_FOR_SAMPLE_RATE: i64 = 110000;
