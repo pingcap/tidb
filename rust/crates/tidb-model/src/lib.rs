@@ -28,6 +28,7 @@ pub mod engine_attribute;
 pub mod flags;
 pub mod go_duration;
 pub mod index;
+pub mod job;
 pub mod job_enums;
 pub mod masking_policy;
 pub mod partition;
@@ -47,6 +48,10 @@ pub use db::{less_db_info, DBInfo};
 pub use index::{
     ColumnarIndexType, FullTextIndexInfo, IndexColumn, IndexInfo, InvertedIndexInfo,
     RegionSplitPolicy, VectorIndexInfo,
+};
+pub use job::{
+    AdminCommandOperator, HistoryInfo, InvolvingSchemaInfo, InvolvingSchemaInfoMode,
+    JobPauseReason, JobResumeReason,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, JobState, JobVersion,
