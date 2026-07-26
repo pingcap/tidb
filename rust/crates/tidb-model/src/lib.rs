@@ -34,6 +34,7 @@ pub mod reorg;
 pub mod resource_group;
 pub mod schema_state;
 mod setting_builder;
+pub mod table;
 pub mod table_mode;
 
 pub use action_type::{ActionType, ACTION_MAP};
@@ -51,4 +52,7 @@ pub use resource_group::{
     ResourceGroupSettings,
 };
 pub use schema_state::SchemaState;
+pub use table::{
+    SessionInfo, TableCacheStatusType, TableLockState, TempTableType, TiFlashReplicaInfo,
+};
 pub use table_mode::{AlterTableModeTarget, TableMode};
