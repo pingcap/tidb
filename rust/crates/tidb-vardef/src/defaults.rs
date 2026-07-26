@@ -1,0 +1,874 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Default VALUES for system variables, from the `Def*` constants of
+//! `pkg/sessionctx/vardef/tidb_vars.go`.
+//!
+//! Go's `Def*` are untyped constants that take their concrete type at each use
+//! site. Rust must commit, so each is typed by its Go literal form: string ->
+//! `&str`, boolean -> `bool`, decimal -> `f64`, integer -> `i64` (Go `int` is
+//! 64-bit), with `u64` where Go casts `uint64(...)` explicitly. `time.Duration`
+//! defaults are emitted as `i64` **nanoseconds**, matching Go's underlying
+//! `Duration` (int64 ns). Values that reference another constant or a constant
+//! expression are resolved to their literal here, with the Go source form shown
+//! in each doc comment for traceability. All string literals are byte-verified
+//! verbatim against the Go source.
+
+/// DefaultFlushConcurrency is the default flush concurrency
+/// Go `DefaultFlushConcurrency` (= `128`).
+pub const DEFAULT_FLUSH_CONCURRENCY: i64 = 128;
+/// DefaultResolveConcurrency is the default resolve_lock concurrency
+/// Go `DefaultResolveConcurrency` (= `8`).
+pub const DEFAULT_RESOLVE_CONCURRENCY: i64 = 8;
+/// Go `DefHostname` (= `"localhost"`).
+pub const DEF_HOSTNAME: &str = "localhost";
+/// Go `DefIndexLookupConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_INDEX_LOOKUP_CONCURRENCY: i64 = -1;
+/// Go `DefIndexLookupJoinConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_INDEX_LOOKUP_JOIN_CONCURRENCY: i64 = -1;
+/// Go `DefIndexSerialScanConcurrency` (= `1`).
+pub const DEF_INDEX_SERIAL_SCAN_CONCURRENCY: i64 = 1;
+/// Go `DefIndexJoinBatchSize` (= `25000`).
+pub const DEF_INDEX_JOIN_BATCH_SIZE: i64 = 25000;
+/// Go `DefIndexLookupSize` (= `20000`).
+pub const DEF_INDEX_LOOKUP_SIZE: i64 = 20000;
+/// Go `DefDistSQLScanConcurrency` (= `15`).
+pub const DEF_DIST_SQL_SCAN_CONCURRENCY: i64 = 15;
+/// Go `DefAnalyzeDistSQLScanConcurrency` (= `4`).
+pub const DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY: i64 = 4;
+/// Go `DefBuildStatsConcurrency` (= `2`).
+pub const DEF_BUILD_STATS_CONCURRENCY: i64 = 2;
+/// Go `DefBuildSamplingStatsConcurrency` (= `2`).
+pub const DEF_BUILD_SAMPLING_STATS_CONCURRENCY: i64 = 2;
+/// Go `DefAutoAnalyzeRatio` (= `0.5`).
+pub const DEF_AUTO_ANALYZE_RATIO: f64 = 0.5;
+/// Go `DefAutoAnalyzeStartTime` (= `"00:00 +0000"`).
+pub const DEF_AUTO_ANALYZE_START_TIME: &str = "00:00 +0000";
+/// Go `DefAutoAnalyzeEndTime` (= `"23:59 +0000"`).
+pub const DEF_AUTO_ANALYZE_END_TIME: &str = "23:59 +0000";
+/// Go `DefAutoIncrementIncrement` (= `1`).
+pub const DEF_AUTO_INCREMENT_INCREMENT: i64 = 1;
+/// Go `DefAutoIncrementOffset` (= `1`).
+pub const DEF_AUTO_INCREMENT_OFFSET: i64 = 1;
+/// Go `DefChecksumTableConcurrency` (= `4`).
+pub const DEF_CHECKSUM_TABLE_CONCURRENCY: i64 = 4;
+/// Go `DefSkipUTF8Check` (= `false`).
+pub const DEF_SKIP_UTF8_CHECK: bool = false;
+/// Go `DefSkipASCIICheck` (= `false`).
+pub const DEF_SKIP_ASCII_CHECK: bool = false;
+/// Go `DefOptAggPushDown` (= `false`).
+pub const DEF_OPT_AGG_PUSH_DOWN: bool = false;
+/// Go `DefOptDeriveTopN` (= `false`).
+pub const DEF_OPT_DERIVE_TOP_N: bool = false;
+/// Go `DefOptCartesianBCJ` (= `1`).
+pub const DEF_OPT_CARTESIAN_BCJ: i64 = 1;
+/// Go `DefOptMPPOuterJoinFixedBuildSide` (= `false`).
+pub const DEF_OPT_MPP_OUTER_JOIN_FIXED_BUILD_SIDE: bool = false;
+/// Go `DefOptWriteRowID` (= `false`).
+pub const DEF_OPT_WRITE_ROW_ID: bool = false;
+/// Go `DefOptEnableCorrelationAdjustment` (= `true`).
+pub const DEF_OPT_ENABLE_CORRELATION_ADJUSTMENT: bool = true;
+/// Go `DefOptLimitPushDownThreshold` (= `5000`).
+pub const DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD: i64 = 5000;
+/// Go `DefOptCorrelationThreshold` (= `0.9`).
+pub const DEF_OPT_CORRELATION_THRESHOLD: f64 = 0.9;
+/// Go `DefOptCorrelationExpFactor` (= `1`).
+pub const DEF_OPT_CORRELATION_EXP_FACTOR: i64 = 1;
+/// Go `DefOptRiskEqSkewRatio` (= `0.0`).
+pub const DEF_OPT_RISK_EQ_SKEW_RATIO: f64 = 0.0;
+/// Go `DefOptRiskRangeSkewRatio` (= `0.0`).
+pub const DEF_OPT_RISK_RANGE_SKEW_RATIO: f64 = 0.0;
+/// Go `DefOptRiskScaleNDVSkewRatio` (= `1.0`).
+pub const DEF_OPT_RISK_SCALE_NDV_SKEW_RATIO: f64 = 1.0;
+/// Go `DefOptRiskGroupNDVSkewRatio` (= `0.0`).
+pub const DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO: f64 = 0.0;
+/// Go `DefOptAlwaysKeepJoinKey` (= `true`).
+pub const DEF_OPT_ALWAYS_KEEP_JOIN_KEY: bool = true;
+/// Go `DefOptCartesianJoinOrderThreshold` (= `0.0`).
+pub const DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD: f64 = 0.0;
+/// Go `DefOptCPUFactor` (= `3.0`).
+pub const DEF_OPT_CPU_FACTOR: f64 = 3.0;
+/// Go `DefOptCopCPUFactor` (= `3.0`).
+pub const DEF_OPT_COP_CPU_FACTOR: f64 = 3.0;
+/// Go `DefOptTiFlashConcurrencyFactor` (= `24.0`).
+pub const DEF_OPT_TIFLASH_CONCURRENCY_FACTOR: f64 = 24.0;
+/// Go `DefOptNetworkFactor` (= `1.0`).
+pub const DEF_OPT_NETWORK_FACTOR: f64 = 1.0;
+/// Go `DefOptScanFactor` (= `1.5`).
+pub const DEF_OPT_SCAN_FACTOR: f64 = 1.5;
+/// Go `DefOptDescScanFactor` (= `3.0`).
+pub const DEF_OPT_DESC_SCAN_FACTOR: f64 = 3.0;
+/// Go `DefOptSeekFactor` (= `20.0`).
+pub const DEF_OPT_SEEK_FACTOR: f64 = 20.0;
+/// Go `DefOptMemoryFactor` (= `0.001`).
+pub const DEF_OPT_MEMORY_FACTOR: f64 = 0.001;
+/// Go `DefOptDiskFactor` (= `1.5`).
+pub const DEF_OPT_DISK_FACTOR: f64 = 1.5;
+/// Go `DefOptConcurrencyFactor` (= `3.0`).
+pub const DEF_OPT_CONCURRENCY_FACTOR: f64 = 3.0;
+/// Go `DefOptIndexScanCostFactor` (= `1.0`).
+pub const DEF_OPT_INDEX_SCAN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptIndexReaderCostFactor` (= `1.0`).
+pub const DEF_OPT_INDEX_READER_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptTableReaderCostFactor` (= `1.0`).
+pub const DEF_OPT_TABLE_READER_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptTableFullScanCostFactor` (= `1.0`).
+pub const DEF_OPT_TABLE_FULL_SCAN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptTableRangeScanCostFactor` (= `1.0`).
+pub const DEF_OPT_TABLE_RANGE_SCAN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptTableRowIDScanCostFactor` (= `1.0`).
+pub const DEF_OPT_TABLE_ROW_ID_SCAN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptTableTiFlashScanCostFactor` (= `1.0`).
+pub const DEF_OPT_TABLE_TIFLASH_SCAN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptIndexLookupCostFactor` (= `1.0`).
+pub const DEF_OPT_INDEX_LOOKUP_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptIndexMergeCostFactor` (= `1.0`).
+pub const DEF_OPT_INDEX_MERGE_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptSortCostFactor` (= `1.0`).
+pub const DEF_OPT_SORT_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptTopNCostFactor` (= `1.0`).
+pub const DEF_OPT_TOP_N_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptLimitCostFactor` (= `1.0`).
+pub const DEF_OPT_LIMIT_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptStreamAggCostFactor` (= `1.0`).
+pub const DEF_OPT_STREAM_AGG_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptHashAggCostFactor` (= `1.0`).
+pub const DEF_OPT_HASH_AGG_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptMergeJoinCostFactor` (= `1.0`).
+pub const DEF_OPT_MERGE_JOIN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptHashJoinCostFactor` (= `1.0`).
+pub const DEF_OPT_HASH_JOIN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptIndexJoinCostFactor` (= `1.0`).
+pub const DEF_OPT_INDEX_JOIN_COST_FACTOR: f64 = 1.0;
+/// Go `DefOptIndexJoinMaxScanRowsRatio` (= `0.0`).
+pub const DEF_OPT_INDEX_JOIN_MAX_SCAN_ROWS_RATIO: f64 = 0.0;
+/// Go `DefOptSelectivityFactor` (= `0.8`).
+pub const DEF_OPT_SELECTIVITY_FACTOR: f64 = 0.8;
+/// Go `DefOptForceInlineCTE` (= `false`).
+pub const DEF_OPT_FORCE_INLINE_CTE: bool = false;
+/// Go `DefOptInSubqToJoinAndAgg` (= `true`).
+pub const DEF_OPT_IN_SUBQ_TO_JOIN_AND_AGG: bool = true;
+/// Go `DefOptPreferRangeScan` (= `true`).
+pub const DEF_OPT_PREFER_RANGE_SCAN: bool = true;
+/// Go `DefOptEnableNoDecorrelateInSelect` (= `false`).
+pub const DEF_OPT_ENABLE_NO_DECORRELATE_IN_SELECT: bool = false;
+/// Go `DefOptEnableAlternativeLogicalPlans` (= `false`).
+pub const DEF_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS: bool = false;
+/// Go `DefOptEnableSemiJoinRewrite` (= `false`).
+pub const DEF_OPT_ENABLE_SEMI_JOIN_REWRITE: bool = false;
+/// Go `DefBatchInsert` (= `false`).
+pub const DEF_BATCH_INSERT: bool = false;
+/// Go `DefBatchDelete` (= `false`).
+pub const DEF_BATCH_DELETE: bool = false;
+/// Go `DefBatchCommit` (= `false`).
+pub const DEF_BATCH_COMMIT: bool = false;
+/// Go `DefCurretTS` (= `0`).
+pub const DEF_CURRET_TS: i64 = 0;
+/// Go `DefInitChunkSize` (= `32`).
+pub const DEF_INIT_CHUNK_SIZE: i64 = 32;
+/// Go `DefMinPagingSize` (= `int(paging.MinPagingSize)`).
+/// Resolved from paging.MinPagingSize.
+pub const DEF_MIN_PAGING_SIZE: i64 = 128;
+/// Go `DefMaxPagingSize` (= `int(paging.MinAllowedMaxPagingSize)`).
+/// Resolved from paging.MinAllowedMaxPagingSize.
+pub const DEF_MAX_PAGING_SIZE: i64 = 50000;
+/// Go `DefPagingSizeBytes` (= `0`).
+pub const DEF_PAGING_SIZE_BYTES: i64 = 0;
+/// Go `DefMaxChunkSize` (= `1024`).
+pub const DEF_MAX_CHUNK_SIZE: i64 = 1024;
+/// Go `DefDMLBatchSize` (= `0`).
+pub const DEF_DML_BATCH_SIZE: i64 = 0;
+/// Go `DefMaxPreparedStmtCount` (= `-1`).
+pub const DEF_MAX_PREPARED_STMT_COUNT: i64 = -1;
+/// Go `DefWaitTimeout` (= `28800`).
+pub const DEF_WAIT_TIMEOUT: i64 = 28800;
+/// Go `DefTiDBMemQuotaApplyCache` (= `32 << 20`).
+/// Resolved from 32 << 20.
+pub const DEF_TIDB_MEM_QUOTA_APPLY_CACHE: i64 = 33554432;
+/// Go `DefTiDBMemQuotaBindingCache` (= `64 << 20`).
+/// Resolved from 64 << 20.
+pub const DEF_TIDB_MEM_QUOTA_BINDING_CACHE: i64 = 67108864;
+/// Go `DefTiDBGeneralLog` (= `false`).
+pub const DEF_TIDB_GENERAL_LOG: bool = false;
+/// Go `DefTiDBTraceEvent` (= `""`).
+pub const DEF_TIDB_TRACE_EVENT: &str = "";
+/// Go `DefTiDBPProfSQLCPU` (= `0`).
+pub const DEF_TIDB_P_PROF_SQLCPU: i64 = 0;
+/// Go `DefTiDBRetryLimit` (= `10`).
+pub const DEF_TIDB_RETRY_LIMIT: i64 = 10;
+/// Go `DefTiDBDisableTxnAutoRetry` (= `true`).
+pub const DEF_TIDB_DISABLE_TXN_AUTO_RETRY: bool = true;
+/// Go `DefTiDBConstraintCheckInPlace` (= `false`).
+pub const DEF_TIDB_CONSTRAINT_CHECK_IN_PLACE: bool = false;
+/// Go `DefTiDBHashJoinConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_TIDB_HASH_JOIN_CONCURRENCY: i64 = -1;
+/// Go `DefTiDBProjectionConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_TIDB_PROJECTION_CONCURRENCY: i64 = -1;
+/// Go `DefBroadcastJoinThresholdSize` (= `100 * 1024 * 1024`).
+/// Resolved from 100 * 1024 * 1024.
+pub const DEF_BROADCAST_JOIN_THRESHOLD_SIZE: i64 = 104857600;
+/// Go `DefBroadcastJoinThresholdCount` (= `10 * 1024`).
+/// Resolved from 10 * 1024.
+pub const DEF_BROADCAST_JOIN_THRESHOLD_COUNT: i64 = 10240;
+/// Go `DefPreferBCJByExchangeDataSize` (= `false`).
+pub const DEF_PREFER_BCJ_BY_EXCHANGE_DATA_SIZE: bool = false;
+/// Go `DefTiDBOptimizerSelectivityLevel` (= `0`).
+pub const DEF_TIDB_OPTIMIZER_SELECTIVITY_LEVEL: i64 = 0;
+/// Go `DefTiDBOptIndexPruneThreshold` (= `20`).
+pub const DEF_TIDB_OPT_INDEX_PRUNE_THRESHOLD: i64 = 20;
+/// Go `DefTiDBOptimizerEnableNewOFGB` (= `false`).
+pub const DEF_TIDB_OPTIMIZER_ENABLE_NEW_OFGB: bool = false;
+/// Go `DefTiDBEnableOuterJoinReorder` (= `true`).
+pub const DEF_TIDB_ENABLE_OUTER_JOIN_REORDER: bool = true;
+/// Go `DefTiDBEnableNAAJ` (= `true`).
+pub const DEF_TIDB_ENABLE_NAAJ: bool = true;
+/// Go `DefTiDBAllowBatchCop` (= `1`).
+pub const DEF_TIDB_ALLOW_BATCH_COP: i64 = 1;
+/// Go `DefShardRowIDBits` (= `0`).
+pub const DEF_SHARD_ROW_ID_BITS: i64 = 0;
+/// Go `DefPreSplitRegions` (= `0`).
+pub const DEF_PRE_SPLIT_REGIONS: i64 = 0;
+/// Go `DefBlockEncryptionMode` (= `"aes-128-ecb"`).
+pub const DEF_BLOCK_ENCRYPTION_MODE: &str = "aes-128-ecb";
+/// Go `DefTiDBAllowMPPExecution` (= `true`).
+pub const DEF_TIDB_ALLOW_MPP_EXECUTION: bool = true;
+/// Go `DefTiDBAllowTiFlashCop` (= `false`).
+pub const DEF_TIDB_ALLOW_TIFLASH_COP: bool = false;
+/// Go `DefTiDBHashExchangeWithNewCollation` (= `true`).
+pub const DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION: bool = true;
+/// Go `DefTiDBEnforceMPPExecution` (= `false`).
+pub const DEF_TIDB_ENFORCE_MPP_EXECUTION: bool = false;
+/// Go `DefTiFlashMaxThreads` (= `-1`).
+pub const DEF_TIFLASH_MAX_THREADS: i64 = -1;
+/// Go `DefTiFlashMaxBytesBeforeExternalJoin` (= `-1`).
+pub const DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN: i64 = -1;
+/// Go `DefTiFlashMaxBytesBeforeExternalGroupBy` (= `-1`).
+pub const DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY: i64 = -1;
+/// Go `DefTiFlashMaxBytesBeforeExternalSort` (= `-1`).
+pub const DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT: i64 = -1;
+/// Go `DefTiFlashMemQuotaQueryPerNode` (= `0`).
+pub const DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE: i64 = 0;
+/// Go `DefTiFlashQuerySpillRatio` (= `0.7`).
+pub const DEF_TIFLASH_QUERY_SPILL_RATIO: f64 = 0.7;
+/// Go `DefTiFlashHashJoinVersion` (= `joinversion.TiFlashHashJoinVersionDefVal`).
+/// Resolved from joinversion.TiFlashHashJoinVersionDefVal.
+pub const DEF_TIFLASH_HASH_JOIN_VERSION: &str = "legacy";
+/// Go `DefTiDBEnableTiFlashPipelineMode` (= `true`).
+pub const DEF_TIDB_ENABLE_TIFLASH_PIPELINE_MODE: bool = true;
+/// Go `DefTiDBMPPStoreFailTTL` (= `"0s"`).
+pub const DEF_TIDB_MPP_STORE_FAIL_TTL: &str = "0s";
+/// Go `DefTiDBTxnMode` (= `PessimisticTxnMode`).
+pub const DEF_TIDB_TXN_MODE: &str = "pessimistic";
+/// Go `DefTiDBRowFormatV1` (= `1`).
+pub const DEF_TIDB_ROW_FORMAT_V1: i64 = 1;
+/// Go `DefTiDBRowFormatV2` (= `2`).
+pub const DEF_TIDB_ROW_FORMAT_V2: i64 = 2;
+/// Go `DefTiDBDDLReorgWorkerCount` (= `4`).
+pub const DEF_TIDB_DDL_REORG_WORKER_COUNT: i64 = 4;
+/// Go `DefTiDBDDLReorgBatchSize` (= `256`).
+pub const DEF_TIDB_DDL_REORG_BATCH_SIZE: i64 = 256;
+/// Go `DefTiDBDDLFlashbackConcurrency` (= `64`).
+pub const DEF_TIDB_DDL_FLASHBACK_CONCURRENCY: i64 = 64;
+/// Go `DefTiDBDDLErrorCountLimit` (= `512`).
+pub const DEF_TIDB_DDL_ERROR_COUNT_LIMIT: i64 = 512;
+/// Go `DefTiDBDDLReorgMaxWriteSpeed` (= `0`).
+pub const DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED: i64 = 0;
+/// Go `DefTiDBMaxDeltaSchemaCount` (= `1024`).
+pub const DEF_TIDB_MAX_DELTA_SCHEMA_COUNT: i64 = 1024;
+/// Go `DefTiDBPlacementMode` (= `PlacementModeStrict`).
+pub const DEF_TIDB_PLACEMENT_MODE: &str = "STRICT";
+/// Go `DefTiDBEnableAutoIncrementInGenerated` (= `false`).
+pub const DEF_TIDB_ENABLE_AUTO_INCREMENT_IN_GENERATED: bool = false;
+/// Go `DefTiDBHashAggPartialConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_TIDB_HASH_AGG_PARTIAL_CONCURRENCY: i64 = -1;
+/// Go `DefTiDBHashAggFinalConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_TIDB_HASH_AGG_FINAL_CONCURRENCY: i64 = -1;
+/// Go `DefTiDBWindowConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_TIDB_WINDOW_CONCURRENCY: i64 = -1;
+/// Go `DefTiDBMergeJoinConcurrency` (= `1`).
+pub const DEF_TIDB_MERGE_JOIN_CONCURRENCY: i64 = 1;
+/// Go `DefTiDBStreamAggConcurrency` (= `1`).
+pub const DEF_TIDB_STREAM_AGG_CONCURRENCY: i64 = 1;
+/// Go `DefTiDBForcePriority` (= `mysql.NoPriority`).
+/// Resolved from mysql.NoPriority (iota).
+pub const DEF_TIDB_FORCE_PRIORITY: i64 = 0;
+/// Go `DefEnableWindowFunction` (= `true`).
+pub const DEF_ENABLE_WINDOW_FUNCTION: bool = true;
+/// Go `DefEnablePipelinedWindowFunction` (= `true`).
+pub const DEF_ENABLE_PIPELINED_WINDOW_FUNCTION: bool = true;
+/// Go `DefTiDBEnableStrictNotNullCheck` (= `true`).
+pub const DEF_TIDB_ENABLE_STRICT_NOT_NULL_CHECK: bool = true;
+/// Go `DefEnableStrictDoubleTypeCheck` (= `true`).
+pub const DEF_ENABLE_STRICT_DOUBLE_TYPE_CHECK: bool = true;
+/// Go `DefEnableVectorizedExpression` (= `true`).
+pub const DEF_ENABLE_VECTORIZED_EXPRESSION: bool = true;
+/// Go `DefTiDBOptJoinReorderThreshold` (= `0`).
+pub const DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD: i64 = 0;
+/// Go `DefTiDBOptEnableAdvancedJoinReorder` (= `true`).
+pub const DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER: bool = true;
+/// Go `DefTiDBOptJoinReorderThroughProj` (= `false`).
+pub const DEF_TIDB_OPT_JOIN_REORDER_THROUGH_PROJ: bool = false;
+/// Go `DefTiDBOptJoinReorderThroughSel` (= `false`).
+pub const DEF_TIDB_OPT_JOIN_REORDER_THROUGH_SEL: bool = false;
+/// Go `DefTiDBDDLSlowOprThreshold` (= `300`).
+pub const DEF_TIDB_DDL_SLOW_OPR_THRESHOLD: i64 = 300;
+/// Go `DefTiDBUseFastAnalyze` (= `false`).
+pub const DEF_TIDB_USE_FAST_ANALYZE: bool = false;
+/// Go `DefTiDBSkipIsolationLevelCheck` (= `false`).
+pub const DEF_TIDB_SKIP_ISOLATION_LEVEL_CHECK: bool = false;
+/// Go `DefTiDBExpensiveQueryTimeThreshold` (= `60`).
+pub const DEF_TIDB_EXPENSIVE_QUERY_TIME_THRESHOLD: i64 = 60;
+/// Go `DefTiDBExpensiveTxnTimeThreshold` (= `60 * 10`).
+/// Resolved from 60 * 10.
+pub const DEF_TIDB_EXPENSIVE_TXN_TIME_THRESHOLD: i64 = 600;
+/// Go `DefTiDBScatterRegion` (= `ScatterOff`).
+pub const DEF_TIDB_SCATTER_REGION: &str = "";
+/// Go `DefTiDBWaitSplitRegionFinish` (= `true`).
+pub const DEF_TIDB_WAIT_SPLIT_REGION_FINISH: bool = true;
+/// Go `DefWaitSplitRegionTimeout` (= `300`).
+pub const DEF_WAIT_SPLIT_REGION_TIMEOUT: i64 = 300;
+/// Go `DefTiDBEnableNoopFuncs` (= `Off`).
+pub const DEF_TIDB_ENABLE_NOOP_FUNCS: &str = "OFF";
+/// Go `DefTiDBEnableNoopVariables` (= `true`).
+pub const DEF_TIDB_ENABLE_NOOP_VARIABLES: bool = true;
+/// Go `DefTiDBAllowRemoveAutoInc` (= `false`).
+pub const DEF_TIDB_ALLOW_REMOVE_AUTO_INC: bool = false;
+/// Go `DefTiDBUsePlanBaselines` (= `true`).
+pub const DEF_TIDB_USE_PLAN_BASELINES: bool = true;
+/// Go `DefTiDBEvolvePlanBaselines` (= `false`).
+pub const DEF_TIDB_EVOLVE_PLAN_BASELINES: bool = false;
+/// Go `DefTiDBEvolvePlanTaskMaxTime` (= `600`).
+pub const DEF_TIDB_EVOLVE_PLAN_TASK_MAX_TIME: i64 = 600;
+/// Go `DefTiDBEvolvePlanTaskStartTime` (= `"00:00 +0000"`).
+pub const DEF_TIDB_EVOLVE_PLAN_TASK_START_TIME: &str = "00:00 +0000";
+/// Go `DefTiDBEvolvePlanTaskEndTime` (= `"23:59 +0000"`).
+pub const DEF_TIDB_EVOLVE_PLAN_TASK_END_TIME: &str = "23:59 +0000";
+/// Go `DefInnodbLockWaitTimeout` (= `50`).
+pub const DEF_INNODB_LOCK_WAIT_TIMEOUT: i64 = 50;
+/// Go `DefTiDBStoreLimit` (= `0`).
+pub const DEF_TIDB_STORE_LIMIT: i64 = 0;
+/// Go `DefTiDBMetricSchemaStep` (= `60`).
+pub const DEF_TIDB_METRIC_SCHEMA_STEP: i64 = 60;
+/// Go `DefTiDBMetricSchemaRangeDuration` (= `60`).
+pub const DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION: i64 = 60;
+/// Go `DefTiDBFoundInPlanCache` (= `false`).
+pub const DEF_TIDB_FOUND_IN_PLAN_CACHE: bool = false;
+/// Go `DefTiDBFoundInBinding` (= `false`).
+pub const DEF_TIDB_FOUND_IN_BINDING: bool = false;
+/// Go `DefTiDBEnableCollectExecutionInfo` (= `true`).
+pub const DEF_TIDB_ENABLE_COLLECT_EXECUTION_INFO: bool = true;
+/// Go `DefTiDBAllowAutoRandExplicitInsert` (= `false`).
+pub const DEF_TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT: bool = false;
+/// Go `DefTiDBEnableClusteredIndex` (= `ClusteredIndexDefModeOn`).
+/// Resolved from Go ClusteredIndexDefModeOn = 1.
+pub const DEF_TIDB_ENABLE_CLUSTERED_INDEX: i64 = 1;
+/// Go `DefTiDBRedactLog` (= `Off`).
+pub const DEF_TIDB_REDACT_LOG: &str = "OFF";
+/// Go `DefTiDBRestrictedReadOnly` (= `false`).
+pub const DEF_TIDB_RESTRICTED_READ_ONLY: bool = false;
+/// Go `DefTiDBSuperReadOnly` (= `false`).
+pub const DEF_TIDB_SUPER_READ_ONLY: bool = false;
+/// Go `DefTiDBShardAllocateStep` (= `math.MaxInt64`).
+/// Resolved from math.MaxInt64.
+pub const DEF_TIDB_SHARD_ALLOCATE_STEP: i64 = 9223372036854775807;
+/// Go `DefTiDBPointGetCache` (= `false`).
+pub const DEF_TIDB_POINT_GET_CACHE: bool = false;
+/// Go `DefTiDBEnableTelemetry` (= `true`).
+pub const DEF_TIDB_ENABLE_TELEMETRY: bool = true;
+/// Go `DefTiDBEnableParallelApply` (= `false`).
+pub const DEF_TIDB_ENABLE_PARALLEL_APPLY: bool = false;
+/// Go `DefTiDBPartitionPruneMode` (= `"dynamic"`).
+pub const DEF_TIDB_PARTITION_PRUNE_MODE: &str = "dynamic";
+/// Go `DefTiDBEnableRateLimitAction` (= `false`).
+pub const DEF_TIDB_ENABLE_RATE_LIMIT_ACTION: bool = false;
+/// Go `DefTiDBEnableAsyncCommit` (= `false`).
+pub const DEF_TIDB_ENABLE_ASYNC_COMMIT: bool = false;
+/// Go `DefTiDBEnable1PC` (= `false`).
+pub const DEF_TIDB_ENABLE1_PC: bool = false;
+/// Go `DefTiDBGuaranteeLinearizability` (= `true`).
+pub const DEF_TIDB_GUARANTEE_LINEARIZABILITY: bool = true;
+/// Go `DefTiDBAnalyzeVersion` (= `2`).
+pub const DEF_TIDB_ANALYZE_VERSION: i64 = 2;
+/// Deprecated: This variable is deprecated, please do not use this variable.
+/// Go `DefTiDBAutoAnalyzePartitionBatchSize` (= `mysql.PartitionCountLimit`).
+/// Resolved from mysql.PartitionCountLimit.
+pub const DEF_TIDB_AUTO_ANALYZE_PARTITION_BATCH_SIZE: i64 = 8192;
+/// Go `DefTiDBEnableIndexMergeJoin` (= `false`).
+pub const DEF_TIDB_ENABLE_INDEX_MERGE_JOIN: bool = false;
+/// Go `DefTiDBTrackAggregateMemoryUsage` (= `true`).
+pub const DEF_TIDB_TRACK_AGGREGATE_MEMORY_USAGE: bool = true;
+/// Go `DefCTEMaxRecursionDepth` (= `1000`).
+pub const DEF_CTE_MAX_RECURSION_DEPTH: i64 = 1000;
+/// Go `DefTiDBTmpTableMaxSize` (= `64 << 20`).
+/// Resolved from 64 << 20.
+pub const DEF_TIDB_TMP_TABLE_MAX_SIZE: i64 = 67108864;
+/// Go `DefTiDBEnableLocalTxn` (= `false`).
+pub const DEF_TIDB_ENABLE_LOCAL_TXN: bool = false;
+/// Go `DefTiDBTSOClientBatchMaxWaitTime` (= `0.0`).
+pub const DEF_TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME: f64 = 0.0;
+/// Go `DefTiDBEnableTSOFollowerProxy` (= `false`).
+pub const DEF_TIDB_ENABLE_TSO_FOLLOWER_PROXY: bool = false;
+/// Go `DefPDEnableFollowerHandleRegion` (= `true`).
+pub const DEF_PD_ENABLE_FOLLOWER_HANDLE_REGION: bool = true;
+/// Go `DefTiDBEnableBatchQueryRegion` (= `false`).
+pub const DEF_TIDB_ENABLE_BATCH_QUERY_REGION: bool = false;
+/// Go `DefTiDBEnableOrderedResultMode` (= `false`).
+pub const DEF_TIDB_ENABLE_ORDERED_RESULT_MODE: bool = false;
+/// Go `DefTiDBEnablePseudoForOutdatedStats` (= `false`).
+pub const DEF_TIDB_ENABLE_PSEUDO_FOR_OUTDATED_STATS: bool = false;
+/// Go `DefTiDBRegardNULLAsPoint` (= `true`).
+pub const DEF_TIDB_REGARD_NULL_AS_POINT: bool = true;
+/// Go `DefEnablePlacementCheck` (= `true`).
+pub const DEF_ENABLE_PLACEMENT_CHECK: bool = true;
+/// Go `DefTimestamp` (= `"0"`).
+pub const DEF_TIMESTAMP: &str = "0";
+/// Go `DefTimestampFloat` (= `0.0`).
+pub const DEF_TIMESTAMP_FLOAT: f64 = 0.0;
+/// Go `DefTiDBEnableStmtSummary` (= `true`).
+pub const DEF_TIDB_ENABLE_STMT_SUMMARY: bool = true;
+/// Go `DefTiDBStmtSummaryInternalQuery` (= `false`).
+pub const DEF_TIDB_STMT_SUMMARY_INTERNAL_QUERY: bool = false;
+/// Go `DefTiDBStmtSummaryRefreshInterval` (= `1800`).
+pub const DEF_TIDB_STMT_SUMMARY_REFRESH_INTERVAL: i64 = 1800;
+/// Go `DefTiDBStmtSummaryHistorySize` (= `24`).
+pub const DEF_TIDB_STMT_SUMMARY_HISTORY_SIZE: i64 = 24;
+/// Go `DefTiDBStmtSummaryMaxStmtCount` (= `3000`).
+pub const DEF_TIDB_STMT_SUMMARY_MAX_STMT_COUNT: i64 = 3000;
+/// Go `DefTiDBStmtSummaryMaxSQLLength` (= `32768`).
+pub const DEF_TIDB_STMT_SUMMARY_MAX_SQL_LENGTH: i64 = 32768;
+/// Go `DefTiDBStmtSummaryPersistEvicted` (= `false`).
+pub const DEF_TIDB_STMT_SUMMARY_PERSIST_EVICTED: bool = false;
+/// Go `DefTiDBStmtSummaryGroupByUser` (= `false`).
+pub const DEF_TIDB_STMT_SUMMARY_GROUP_BY_USER: bool = false;
+/// Go `DefTiDBCapturePlanBaseline` (= `Off`).
+pub const DEF_TIDB_CAPTURE_PLAN_BASELINE: &str = "OFF";
+/// Go `DefTiDBIgnoreInlistPlanDigest` (= `true`).
+pub const DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST: bool = true;
+/// Go `DefTiDBEnableIndexMerge` (= `true`).
+pub const DEF_TIDB_ENABLE_INDEX_MERGE: bool = true;
+/// Go `DefTiDBEnableNoBackslashEscapesInLike` (= `true`).
+pub const DEF_TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE: bool = true;
+/// Go `DefEnableLegacyInstanceScope` (= `true`).
+pub const DEF_ENABLE_LEGACY_INSTANCE_SCOPE: bool = true;
+/// Go `DefTiDBTableCacheLease` (= `3`).
+pub const DEF_TIDB_TABLE_CACHE_LEASE: i64 = 3;
+/// Go `DefTiDBPersistAnalyzeOptions` (= `true`).
+pub const DEF_TIDB_PERSIST_ANALYZE_OPTIONS: bool = true;
+/// Go `DefTiDBStatsLoadSyncWait` (= `100`).
+pub const DEF_TIDB_STATS_LOAD_SYNC_WAIT: i64 = 100;
+/// Go `DefTiDBStatsLoadPseudoTimeout` (= `true`).
+pub const DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT: bool = true;
+/// Go `DefSysdateIsNow` (= `false`).
+pub const DEF_SYSDATE_IS_NOW: bool = false;
+/// Go `DefTiDBEnableParallelHashaggSpill` (= `true`).
+pub const DEF_TIDB_ENABLE_PARALLEL_HASHAGG_SPILL: bool = true;
+/// Go `DefTiDBEnableMutationChecker` (= `false`).
+pub const DEF_TIDB_ENABLE_MUTATION_CHECKER: bool = false;
+/// Go `DefTiDBTxnAssertionLevel` (= `AssertionOffStr`).
+pub const DEF_TIDB_TXN_ASSERTION_LEVEL: &str = "OFF";
+/// Go `DefTiDBIgnorePreparedCacheCloseStmt` (= `false`).
+pub const DEF_TIDB_IGNORE_PREPARED_CACHE_CLOSE_STMT: bool = false;
+/// Go `DefTiDBBatchPendingTiFlashCount` (= `4000`).
+pub const DEF_TIDB_BATCH_PENDING_TIFLASH_COUNT: i64 = 4000;
+/// Go `DefRCReadCheckTS` (= `false`).
+pub const DEF_RC_READ_CHECK_TS: bool = false;
+/// Go `DefTiDBRemoveOrderbyInSubquery` (= `true`).
+pub const DEF_TIDB_REMOVE_ORDERBY_IN_SUBQUERY: bool = true;
+/// Go `DefTiDBSkewDistinctAgg` (= `false`).
+pub const DEF_TIDB_SKEW_DISTINCT_AGG: bool = false;
+/// Go `DefTiDB3StageDistinctAgg` (= `true`).
+pub const DEF_TIDB3_STAGE_DISTINCT_AGG: bool = true;
+/// Go `DefTiDB3StageMultiDistinctAgg` (= `false`).
+pub const DEF_TIDB3_STAGE_MULTI_DISTINCT_AGG: bool = false;
+/// Go `DefTiDBOptExplainEvaledSubquery` (= `false`).
+pub const DEF_TIDB_OPT_EXPLAIN_EVALED_SUBQUERY: bool = false;
+/// Go `DefTiDBReadStaleness` (= `0`).
+pub const DEF_TIDB_READ_STALENESS: i64 = 0;
+/// Go `DefTiDBGCMaxWaitTime` (= `24 * 60 * 60`).
+/// Resolved from 24 * 60 * 60.
+pub const DEF_TIDB_GC_MAX_WAIT_TIME: i64 = 86400;
+/// Go `DefTiDBEnableBatchDML` (= `false`).
+pub const DEF_TIDB_ENABLE_BATCH_DML: bool = false;
+/// Go `DefTiDBMemQuotaQuery` (= `memory.DefMemQuotaQuery`).
+/// Resolved from memory.DefMemQuotaQuery (1GB).
+pub const DEF_TIDB_MEM_QUOTA_QUERY: i64 = 1073741824;
+/// Go `DefTiDBStatsCacheMemQuota` (= `0`).
+pub const DEF_TIDB_STATS_CACHE_MEM_QUOTA: i64 = 0;
+/// Go `DefTiDBQueryLogMaxLen` (= `4096`).
+pub const DEF_TIDB_QUERY_LOG_MAX_LEN: i64 = 4096;
+/// Go `DefRequireSecureTransport` (= `false`).
+pub const DEF_REQUIRE_SECURE_TRANSPORT: bool = false;
+/// Go `DefTiDBCommitterConcurrency` (= `128`).
+pub const DEF_TIDB_COMMITTER_CONCURRENCY: i64 = 128;
+/// Go `DefTiDBPipelinedDmlResourcePolicy` (= `StrategyStandard`).
+pub const DEF_TIDB_PIPELINED_DML_RESOURCE_POLICY: &str = "standard";
+/// Go `DefTiDBBatchDMLIgnoreError` (= `false`).
+pub const DEF_TIDB_BATCH_DML_IGNORE_ERROR: bool = false;
+/// Go `DefTiDBMemQuotaAnalyze` (= `-1`).
+pub const DEF_TIDB_MEM_QUOTA_ANALYZE: i64 = -1;
+/// Go `DefTiDBEnableAutoAnalyze` (= `true`).
+pub const DEF_TIDB_ENABLE_AUTO_ANALYZE: bool = true;
+/// Go `DefTiDBEnableAutoAnalyzePriorityQueue` (= `true`).
+pub const DEF_TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE: bool = true;
+/// Go `DefTiDBAnalyzeColumnOptions` (= `"ALL"`).
+pub const DEF_TIDB_ANALYZE_COLUMN_OPTIONS: &str = "ALL";
+/// Go `DefTiDBAnalyzeDefaultNumBuckets` (= `256`).
+pub const DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS: i64 = 256;
+/// Go `DefTiDBAnalyzeDefaultNumTopN` (= `100`).
+pub const DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N: i64 = 100;
+/// Go `DefTiDBMemOOMAction` (= `"CANCEL"`).
+pub const DEF_TIDB_MEM_OOM_ACTION: &str = "CANCEL";
+/// Go `DefTiDBMaxAutoAnalyzeTime` (= `12 * 60 * 60`).
+/// Resolved from 12 * 60 * 60.
+pub const DEF_TIDB_MAX_AUTO_ANALYZE_TIME: i64 = 43200;
+/// Go `DefTiDBAutoAnalyzeConcurrency` (= `3`).
+pub const DEF_TIDB_AUTO_ANALYZE_CONCURRENCY: i64 = 3;
+/// Go `DefTiDBEnablePrepPlanCache` (= `true`).
+pub const DEF_TIDB_ENABLE_PREP_PLAN_CACHE: bool = true;
+/// Go `DefTiDBPrepPlanCacheSize` (= `100`).
+pub const DEF_TIDB_PREP_PLAN_CACHE_SIZE: i64 = 100;
+/// Go `DefTiDBSessionPlanCacheSize` (= `100`).
+pub const DEF_TIDB_SESSION_PLAN_CACHE_SIZE: i64 = 100;
+/// Go `DefTiDBEnablePrepPlanCacheMemoryMonitor` (= `true`).
+pub const DEF_TIDB_ENABLE_PREP_PLAN_CACHE_MEMORY_MONITOR: bool = true;
+/// Go `DefTiDBPrepPlanCacheMemoryGuardRatio` (= `0.1`).
+pub const DEF_TIDB_PREP_PLAN_CACHE_MEMORY_GUARD_RATIO: f64 = 0.1;
+/// Go `DefTiDBEnableWorkloadBasedLearning` (= `false`).
+pub const DEF_TIDB_ENABLE_WORKLOAD_BASED_LEARNING: bool = false;
+/// Go `DefTiDBWorkloadBasedLearningInterval` (= `24 * time.Hour`).
+/// Resolved from 24 * time.Hour, nanoseconds.
+pub const DEF_TIDB_WORKLOAD_BASED_LEARNING_INTERVAL: i64 = 86400000000000;
+/// Go `DefTiDBEnableDistTask` (= `true`).
+pub const DEF_TIDB_ENABLE_DIST_TASK: bool = true;
+/// Go `DefTiDBMaxDistTaskNodes` (= `-1`).
+pub const DEF_TIDB_MAX_DIST_TASK_NODES: i64 = -1;
+/// Go `DefTiDBEnableFastCreateTable` (= `true`).
+pub const DEF_TIDB_ENABLE_FAST_CREATE_TABLE: bool = true;
+/// Go `DefTiDBSimplifiedMetrics` (= `false`).
+pub const DEF_TIDB_SIMPLIFIED_METRICS: bool = false;
+/// Go `DefTiDBEnablePaging` (= `true`).
+pub const DEF_TIDB_ENABLE_PAGING: bool = true;
+/// Go `DefTiFlashFineGrainedShuffleStreamCount` (= `0`).
+pub const DEF_TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT: i64 = 0;
+/// Go `DefStreamCountWhenMaxThreadsNotSet` (= `8`).
+pub const DEF_STREAM_COUNT_WHEN_MAX_THREADS_NOT_SET: i64 = 8;
+/// Go `DefTiFlashFineGrainedShuffleBatchSize` (= `8192`).
+pub const DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE: i64 = 8192;
+/// Go `DefAdaptiveClosestReadThreshold` (= `4096`).
+pub const DEF_ADAPTIVE_CLOSEST_READ_THRESHOLD: i64 = 4096;
+/// Go `DefTiDBEnableAnalyzeSnapshot` (= `false`).
+pub const DEF_TIDB_ENABLE_ANALYZE_SNAPSHOT: bool = false;
+/// Go `DefTiDBGenerateBinaryPlan` (= `true`).
+pub const DEF_TIDB_GENERATE_BINARY_PLAN: bool = true;
+/// Go `DefTiDBEnableDDLAnalyze` (= `false`).
+pub const DEF_TIDB_ENABLE_DDL_ANALYZE: bool = false;
+/// Go `DefEnableTiDBGCAwareMemoryTrack` (= `false`).
+pub const DEF_ENABLE_TIDB_GC_AWARE_MEMORY_TRACK: bool = false;
+/// Go `DefTiDBDefaultStrMatchSelectivity` (= `0`).
+pub const DEF_TIDB_DEFAULT_STR_MATCH_SELECTIVITY: i64 = 0;
+/// Go `DefTiDBEnableTmpStorageOnOOM` (= `true`).
+pub const DEF_TIDB_ENABLE_TMP_STORAGE_ON_OOM: bool = true;
+/// Go `DefTiDBEnableMDL` (= `true`).
+pub const DEF_TIDB_ENABLE_MDL: bool = true;
+/// Go `DefTiFlashFastScan` (= `false`).
+pub const DEF_TIFLASH_FAST_SCAN: bool = false;
+/// Go `DefMemoryUsageAlarmRatio` (= `0.7`).
+pub const DEF_MEMORY_USAGE_ALARM_RATIO: f64 = 0.7;
+/// Go `DefMemoryUsageAlarmKeepRecordNum` (= `5`).
+pub const DEF_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM: i64 = 5;
+/// Go `DefTiDBEnableFastReorg` (= `true`).
+pub const DEF_TIDB_ENABLE_FAST_REORG: bool = true;
+/// Go `DefTiDBDDLDiskQuota` (= `100 * 1024 * 1024 * 1024`).
+/// Resolved from 100 * 1024 * 1024 * 1024.
+pub const DEF_TIDB_DDL_DISK_QUOTA: i64 = 107374182400;
+/// Go `DefExecutorConcurrency` (= `5`).
+pub const DEF_EXECUTOR_CONCURRENCY: i64 = 5;
+/// Go `DefTiDBEnableNonPreparedPlanCache` (= `false`).
+pub const DEF_TIDB_ENABLE_NON_PREPARED_PLAN_CACHE: bool = false;
+/// Go `DefTiDBEnableNonPreparedPlanCacheForDML` (= `true`).
+pub const DEF_TIDB_ENABLE_NON_PREPARED_PLAN_CACHE_FOR_DML: bool = true;
+/// Go `DefTiDBPlanCacheStrategy` (= `TiDBPlanCacheStrategyAll`).
+pub const DEF_TIDB_PLAN_CACHE_STRATEGY: &str = "all";
+/// Go `DefTiDBNonPreparedPlanCacheSize` (= `100`).
+pub const DEF_TIDB_NON_PREPARED_PLAN_CACHE_SIZE: i64 = 100;
+/// Go `DefTiDBPlanCacheMaxPlanSize` (= `2 * size.MB`).
+/// Resolved from 2 * size.MB.
+pub const DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE: i64 = 2097152;
+/// Go `DefTiDBInstancePlanCacheMaxMemSize` (= `100 * size.MB`).
+/// Resolved from 100 * size.MB.
+pub const DEF_TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE: i64 = 104857600;
+/// Go `DefTiDBInstancePlanCacheReservedPercentage` (= `0.1`).
+pub const DEF_TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE: f64 = 0.1;
+/// Go `DefTiDBAutoBuildStatsConcurrency` (= `DefBuildStatsConcurrency`).
+/// Resolved from ref DefBuildStatsConcurrency.
+pub const DEF_TIDB_AUTO_BUILD_STATS_CONCURRENCY: i64 = 2;
+/// Go `DefTiDBSysProcScanConcurrency` (= `DefAnalyzeDistSQLScanConcurrency`).
+/// Resolved from ref DefAnalyzeDistSQLScanConcurrency.
+pub const DEF_TIDB_SYS_PROC_SCAN_CONCURRENCY: i64 = 4;
+/// Go `DefTiDBRcWriteCheckTs` (= `false`).
+pub const DEF_TIDB_RC_WRITE_CHECK_TS: bool = false;
+/// Go `DefTiDBForeignKeyChecks` (= `true`).
+pub const DEF_TIDB_FOREIGN_KEY_CHECKS: bool = true;
+/// Go `DefTiDBForeignKeyCheckInSharedLock` (= `false`).
+pub const DEF_TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK: bool = false;
+/// Go `DefTiDBOptAdvancedJoinHint` (= `true`).
+pub const DEF_TIDB_OPT_ADVANCED_JOIN_HINT: bool = true;
+/// Go `DefTiDBAnalyzePartitionConcurrency` (= `2`).
+pub const DEF_TIDB_ANALYZE_PARTITION_CONCURRENCY: i64 = 2;
+/// Go `DefTiDBOptRangeMaxSize` (= `64 * int64(size.MB)`).
+/// Resolved from 64 * int64(size.MB).
+pub const DEF_TIDB_OPT_RANGE_MAX_SIZE: i64 = 67108864;
+/// Go `DefTiDBCostModelVer` (= `2`).
+pub const DEF_TIDB_COST_MODEL_VER: i64 = 2;
+/// Go `DefTiDBServerMemoryLimitSessMinSize` (= `128 << 20`).
+/// Resolved from 128 << 20.
+pub const DEF_TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE: i64 = 134217728;
+/// Go `DefTiDBMergePartitionStatsConcurrency` (= `1`).
+pub const DEF_TIDB_MERGE_PARTITION_STATS_CONCURRENCY: i64 = 1;
+/// Go `DefTiDBServerMemoryLimitGCTrigger` (= `0.7`).
+pub const DEF_TIDB_SERVER_MEMORY_LIMIT_GC_TRIGGER: f64 = 0.7;
+/// Go `DefTiDBEnableGOGCTuner` (= `true`).
+pub const DEF_TIDB_ENABLE_GOGC_TUNER: bool = true;
+/// Go `DefTiDBGOGCMaxValue` (= `500`).
+pub const DEF_TIDB_GOGC_MAX_VALUE: i64 = 500;
+/// Go `DefTiDBGOGCMinValue` (= `100`).
+pub const DEF_TIDB_GOGC_MIN_VALUE: i64 = 100;
+/// Go `DefTiDBOptPrefixIndexSingleScan` (= `true`).
+pub const DEF_TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN: bool = true;
+/// Go `DefTiDBOptPartialOrderedIndexForTopN` (= `"DISABLE"`).
+pub const DEF_TIDB_OPT_PARTIAL_ORDERED_INDEX_FOR_TOP_N: &str = "DISABLE";
+/// Go `DefTiDBEnableAsyncMergeGlobalStats` (= `true`).
+pub const DEF_TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS: bool = true;
+/// Go `DefTiDBExternalTS` (= `0`).
+pub const DEF_TIDB_EXTERNAL_TS: i64 = 0;
+/// Go `DefTiDBEnableExternalTSRead` (= `false`).
+pub const DEF_TIDB_ENABLE_EXTERNAL_TS_READ: bool = false;
+/// Go `DefTiDBEnableReusechunk` (= `true`).
+pub const DEF_TIDB_ENABLE_REUSECHUNK: bool = true;
+/// Go `DefTiDBUseAlloc` (= `false`).
+pub const DEF_TIDB_USE_ALLOC: bool = false;
+/// Go `DefTiDBEnablePlanReplayerCapture` (= `true`).
+pub const DEF_TIDB_ENABLE_PLAN_REPLAYER_CAPTURE: bool = true;
+/// Go `DefTiDBIndexMergeIntersectionConcurrency` (= `ConcurrencyUnset`).
+/// Resolved from Go ConcurrencyUnset = -1.
+pub const DEF_TIDB_INDEX_MERGE_INTERSECTION_CONCURRENCY: i64 = -1;
+/// Go `DefTiDBTTLJobEnable` (= `true`).
+pub const DEF_TIDB_TTL_JOB_ENABLE: bool = true;
+/// Go `DefTiDBTTLScanBatchSize` (= `500`).
+pub const DEF_TIDB_TTL_SCAN_BATCH_SIZE: i64 = 500;
+/// Go `DefTiDBTTLScanBatchMaxSize` (= `10240`).
+pub const DEF_TIDB_TTL_SCAN_BATCH_MAX_SIZE: i64 = 10240;
+/// Go `DefTiDBTTLScanBatchMinSize` (= `1`).
+pub const DEF_TIDB_TTL_SCAN_BATCH_MIN_SIZE: i64 = 1;
+/// Go `DefTiDBTTLDeleteBatchSize` (= `100`).
+pub const DEF_TIDB_TTL_DELETE_BATCH_SIZE: i64 = 100;
+/// Go `DefTiDBTTLDeleteBatchMaxSize` (= `10240`).
+pub const DEF_TIDB_TTL_DELETE_BATCH_MAX_SIZE: i64 = 10240;
+/// Go `DefTiDBTTLDeleteBatchMinSize` (= `1`).
+pub const DEF_TIDB_TTL_DELETE_BATCH_MIN_SIZE: i64 = 1;
+/// Go `DefTiDBTTLDeleteRateLimit` (= `0`).
+pub const DEF_TIDB_TTL_DELETE_RATE_LIMIT: i64 = 0;
+/// Go `DefTiDBTTLRunningTasks` (= `-1`).
+pub const DEF_TIDB_TTL_RUNNING_TASKS: i64 = -1;
+/// Go `DefPasswordReuseHistory` (= `0`).
+pub const DEF_PASSWORD_REUSE_HISTORY: i64 = 0;
+/// Go `DefPasswordReuseTime` (= `0`).
+pub const DEF_PASSWORD_REUSE_TIME: i64 = 0;
+/// Go `DefMaxUserConnections` (= `0`).
+pub const DEF_MAX_USER_CONNECTIONS: i64 = 0;
+/// Go `DefTiDBStoreBatchSize` (= `4`).
+pub const DEF_TIDB_STORE_BATCH_SIZE: i64 = 4;
+/// Go `DefTiDBHistoricalStatsDuration` (= `7 * 24 * time.Hour`).
+/// Resolved from 7 * 24 * time.Hour, nanoseconds.
+pub const DEF_TIDB_HISTORICAL_STATS_DURATION: i64 = 604800000000000;
+/// Go `DefTiDBEnableHistoricalStatsForCapture` (= `false`).
+pub const DEF_TIDB_ENABLE_HISTORICAL_STATS_FOR_CAPTURE: bool = false;
+/// Go `DefTiDBTTLJobScheduleWindowStartTime` (= `"00:00 +0000"`).
+pub const DEF_TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME: &str = "00:00 +0000";
+/// Go `DefTiDBTTLJobScheduleWindowEndTime` (= `"23:59 +0000"`).
+pub const DEF_TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME: &str = "23:59 +0000";
+/// Go `DefTiDBTTLScanWorkerCount` (= `4`).
+pub const DEF_TIDB_TTL_SCAN_WORKER_COUNT: i64 = 4;
+/// Go `DefTiDBTTLDeleteWorkerCount` (= `4`).
+pub const DEF_TIDB_TTL_DELETE_WORKER_COUNT: i64 = 4;
+/// Go `DefaultExchangeCompressionMode` (= `ExchangeCompressionModeUnspecified`).
+/// Resolved from Go ExchangeCompressionModeUnspecified = 1 (iota).
+pub const DEFAULT_EXCHANGE_COMPRESSION_MODE: i64 = 1;
+/// Go `DefTiDBEnableResourceControl` (= `true`).
+pub const DEF_TIDB_ENABLE_RESOURCE_CONTROL: bool = true;
+/// Go `DefTiDBResourceControlStrictMode` (= `true`).
+pub const DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE: bool = true;
+/// Go `DefTiDBPessimisticTransactionFairLocking` (= `false`).
+pub const DEF_TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING: bool = false;
+/// Go `DefTiDBEnablePlanCacheForParamLimit` (= `true`).
+pub const DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT: bool = true;
+/// Go `DefTiDBEnableINLJoinMultiPattern` (= `true`).
+pub const DEF_TIDB_ENABLE_INL_JOIN_MULTI_PATTERN: bool = true;
+/// Go `DefTiFlashComputeDispatchPolicy` (= `DispatchPolicyConsistentHashStr`).
+pub const DEF_TIFLASH_COMPUTE_DISPATCH_POLICY: &str = "consistent_hash";
+/// Go `DefTiDBEnablePlanCacheForSubquery` (= `true`).
+pub const DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY: bool = true;
+/// Go `DefTiDBLoadBasedReplicaReadThreshold` (= `time.Second`).
+/// Resolved from time.Second, nanoseconds.
+pub const DEF_TIDB_LOAD_BASED_REPLICA_READ_THRESHOLD: i64 = 1000000000;
+/// Go `DefTiDBOptEnableLateMaterialization` (= `true`).
+pub const DEF_TIDB_OPT_ENABLE_LATE_MATERIALIZATION: bool = true;
+/// Go `DefTiDBOptOrderingIdxSelThresh` (= `0.0`).
+pub const DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH: f64 = 0.0;
+/// Go `DefTiDBOptOrderingIdxSelRatio` (= `0.01`).
+pub const DEF_TIDB_OPT_ORDERING_IDX_SEL_RATIO: f64 = 0.01;
+/// Go `DefTiDBOptEnableMPPSharedCTEExecution` (= `false`).
+pub const DEF_TIDB_OPT_ENABLE_MPP_SHARED_CTE_EXECUTION: bool = false;
+/// Go `DefTiDBPlanCacheInvalidationOnFreshStats` (= `true`).
+pub const DEF_TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS: bool = true;
+/// Go `DefTiDBPlanCacheSkipStatsOnBinding` (= `true`).
+pub const DEF_TIDB_PLAN_CACHE_SKIP_STATS_ON_BINDING: bool = true;
+/// Go `DefTiDBEnableRowLevelChecksum` (= `false`).
+pub const DEF_TIDB_ENABLE_ROW_LEVEL_CHECKSUM: bool = false;
+/// Go `DefAuthenticationLDAPSASLAuthMethodName` (= `"SCRAM-SHA-1"`).
+pub const DEF_AUTHENTICATION_LDAPSASL_AUTH_METHOD_NAME: &str = "SCRAM-SHA-1";
+/// Go `DefAuthenticationLDAPSASLServerPort` (= `389`).
+pub const DEF_AUTHENTICATION_LDAPSASL_SERVER_PORT: i64 = 389;
+/// Go `DefAuthenticationLDAPSASLTLS` (= `false`).
+pub const DEF_AUTHENTICATION_LDAPSASLTLS: bool = false;
+/// Go `DefAuthenticationLDAPSASLUserSearchAttr` (= `"uid"`).
+pub const DEF_AUTHENTICATION_LDAPSASL_USER_SEARCH_ATTR: &str = "uid";
+/// Go `DefAuthenticationLDAPSASLInitPoolSize` (= `10`).
+pub const DEF_AUTHENTICATION_LDAPSASL_INIT_POOL_SIZE: i64 = 10;
+/// Go `DefAuthenticationLDAPSASLMaxPoolSize` (= `1000`).
+pub const DEF_AUTHENTICATION_LDAPSASL_MAX_POOL_SIZE: i64 = 1000;
+/// Go `DefAuthenticationLDAPSimpleAuthMethodName` (= `"SIMPLE"`).
+pub const DEF_AUTHENTICATION_LDAP_SIMPLE_AUTH_METHOD_NAME: &str = "SIMPLE";
+/// Go `DefAuthenticationLDAPSimpleServerPort` (= `389`).
+pub const DEF_AUTHENTICATION_LDAP_SIMPLE_SERVER_PORT: i64 = 389;
+/// Go `DefAuthenticationLDAPSimpleTLS` (= `false`).
+pub const DEF_AUTHENTICATION_LDAP_SIMPLE_TLS: bool = false;
+/// Go `DefAuthenticationLDAPSimpleUserSearchAttr` (= `"uid"`).
+pub const DEF_AUTHENTICATION_LDAP_SIMPLE_USER_SEARCH_ATTR: &str = "uid";
+/// Go `DefAuthenticationLDAPSimpleInitPoolSize` (= `10`).
+pub const DEF_AUTHENTICATION_LDAP_SIMPLE_INIT_POOL_SIZE: i64 = 10;
+/// Go `DefAuthenticationLDAPSimpleMaxPoolSize` (= `1000`).
+pub const DEF_AUTHENTICATION_LDAP_SIMPLE_MAX_POOL_SIZE: i64 = 1000;
+/// Go `DefTiFlashReplicaRead` (= `AllReplicaStr`).
+pub const DEF_TIFLASH_REPLICA_READ: &str = "all_replicas";
+/// Go `DefTiDBEnableFastCheckTable` (= `true`).
+pub const DEF_TIDB_ENABLE_FAST_CHECK_TABLE: bool = true;
+/// Go `DefRuntimeFilterType` (= `"IN"`).
+pub const DEF_RUNTIME_FILTER_TYPE: &str = "IN";
+/// Go `DefRuntimeFilterMode` (= `"OFF"`).
+pub const DEF_RUNTIME_FILTER_MODE: &str = "OFF";
+/// Go `DefTiDBLockUnchangedKeys` (= `true`).
+pub const DEF_TIDB_LOCK_UNCHANGED_KEYS: bool = true;
+/// Go `DefTiDBEnableCheckConstraint` (= `false`).
+pub const DEF_TIDB_ENABLE_CHECK_CONSTRAINT: bool = false;
+/// Go `DefTiDBSkipMissingPartitionStats` (= `true`).
+pub const DEF_TIDB_SKIP_MISSING_PARTITION_STATS: bool = true;
+/// Go `DefTiDBOptEnableHashJoin` (= `true`).
+pub const DEF_TIDB_OPT_ENABLE_HASH_JOIN: bool = true;
+/// Go `DefTiDBHashJoinVersion` (= `joinversion.HashJoinVersionOptimized`).
+/// Resolved from joinversion.HashJoinVersionOptimized.
+pub const DEF_TIDB_HASH_JOIN_VERSION: &str = "optimized";
+/// Go `DefTiDBOptIndexJoinBuild` (= `true`).
+pub const DEF_TIDB_OPT_INDEX_JOIN_BUILD: bool = true;
+/// Go `DefTiDBOptObjective` (= `OptObjectiveModerate`).
+pub const DEF_TIDB_OPT_OBJECTIVE: &str = "moderate";
+/// Go `DefTiDBSchemaVersionCacheLimit` (= `16`).
+pub const DEF_TIDB_SCHEMA_VERSION_CACHE_LIMIT: i64 = 16;
+/// Go `DefTiDBIdleTransactionTimeout` (= `0`).
+pub const DEF_TIDB_IDLE_TRANSACTION_TIMEOUT: i64 = 0;
+/// Go `DefTiDBTxnEntrySizeLimit` (= `0`).
+pub const DEF_TIDB_TXN_ENTRY_SIZE_LIMIT: i64 = 0;
+/// Go `DefTiDBSchemaCacheSize` (= `512 * 1024 * 1024`).
+/// Resolved from 512 * 1024 * 1024.
+pub const DEF_TIDB_SCHEMA_CACHE_SIZE: i64 = 536870912;
+/// Go `DefTiDBLowResolutionTSOUpdateInterval` (= `2000`).
+pub const DEF_TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL: i64 = 2000;
+/// Go `DefDivPrecisionIncrement` (= `4`).
+pub const DEF_DIV_PRECISION_INCREMENT: i64 = 4;
+/// Go `DefTiDBDMLType` (= `"STANDARD"`).
+pub const DEF_TIDB_DML_TYPE: &str = "STANDARD";
+/// Go `DefGroupConcatMaxLen` (= `uint64(1024)`).
+/// Resolved from uint64(1024).
+pub const DEF_GROUP_CONCAT_MAX_LEN: u64 = 1024;
+/// Go `DefDefaultWeekFormat` (= `"0"`).
+pub const DEF_DEFAULT_WEEK_FORMAT: &str = "0";
+/// Go `DefTiFlashPreAggMode` (= `ForcePreAggStr`).
+pub const DEF_TIFLASH_PRE_AGG_MODE: &str = "force_preagg";
+/// Go `DefTiDBEnableLazyCursorFetch` (= `false`).
+pub const DEF_TIDB_ENABLE_LAZY_CURSOR_FETCH: bool = false;
+/// Go `DefOptEnableProjectionPushDown` (= `true`).
+pub const DEF_OPT_ENABLE_PROJECTION_PUSH_DOWN: bool = true;
+/// Go `DefTiDBEnableSharedLockPromotion` (= `false`).
+pub const DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION: bool = false;
+/// Go `DefTiDBTSOClientRPCMode` (= `TSOClientRPCModeDefault`).
+pub const DEF_TIDB_TSO_CLIENT_RPC_MODE: &str = "DEFAULT";
+/// Go `DefTiDBCircuitBreakerPDMetaErrorRateRatio` (= `0.0`).
+pub const DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO: f64 = 0.0;
+/// Go `DefTiDBAccelerateUserCreationUpdate` (= `false`).
+pub const DEF_TIDB_ACCELERATE_USER_CREATION_UPDATE: bool = false;
+/// Go `DefTiDBEnableTSValidation` (= `true`).
+pub const DEF_TIDB_ENABLE_TS_VALIDATION: bool = true;
+/// Go `DefTiDBLoadBindingTimeout` (= `200`).
+pub const DEF_TIDB_LOAD_BINDING_TIMEOUT: i64 = 200;
+/// Go `DefTiDBEnableBindingUsage` (= `true`).
+pub const DEF_TIDB_ENABLE_BINDING_USAGE: bool = true;
+/// Go `DefTiDBAdvancerCheckPointLagLimit` (= `48 * time.Hour`).
+/// Resolved from 48 * time.Hour, nanoseconds.
+pub const DEF_TIDB_ADVANCER_CHECK_POINT_LAG_LIMIT: i64 = 172800000000000;
+/// Go `DefTiDBMemArbitratorSoftLimitText` (= `memory.ArbitratorSoftLimitModDisableName`).
+/// Resolved from memory.ArbitratorSoftLimitModDisableName.
+pub const DEF_TIDB_MEM_ARBITRATOR_SOFT_LIMIT_TEXT: &str = "0";
+/// Go `DefTiDBMemArbitratorModeText` (= `memory.ArbitratorModeDisableName`).
+/// Resolved from memory.ArbitratorModeDisableName.
+pub const DEF_TIDB_MEM_ARBITRATOR_MODE_TEXT: &str = "disable";
+/// Go `DefTiDBMemArbitratorQueryReservedText` (= `"0"`).
+pub const DEF_TIDB_MEM_ARBITRATOR_QUERY_RESERVED_TEXT: &str = "0";
+/// Go `DefTiDBMemArbitratorWaitAverse` (= `"0"`).
+pub const DEF_TIDB_MEM_ARBITRATOR_WAIT_AVERSE: &str = "0";
+/// Go `DefTiDBIndexLookUpPushDownPolicy` (= `IndexLookUpPushDownPolicyHintOnly`).
+pub const DEF_TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY: &str = "hint-only";
+/// Go `DefEnableCachePrepareStmt` (= `false`).
+pub const DEF_ENABLE_CACHE_PREPARE_STMT: bool = false;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spot_check_defaults() {
+        // literal forms
+        assert_eq!(DEF_HOSTNAME, "localhost");
+        assert!(!DEF_SKIP_UTF8_CHECK);
+        assert_eq!(DEF_AUTO_ANALYZE_RATIO, 0.5);
+        assert_eq!(DEF_INDEX_JOIN_BATCH_SIZE, 25000);
+        // resolved references
+        assert_eq!(DEF_INDEX_LOOKUP_CONCURRENCY, -1); // ConcurrencyUnset
+        assert_eq!(DEF_TIDB_TXN_MODE, "pessimistic");
+        assert_eq!(DEF_TIDB_HASH_JOIN_VERSION, "optimized");
+        // resolved constant expressions
+        assert_eq!(DEF_TIDB_MEM_QUOTA_APPLY_CACHE, 32 << 20);
+        assert_eq!(DEF_TIDB_SHARD_ALLOCATE_STEP, i64::MAX); // math.MaxInt64
+        assert_eq!(DEF_GROUP_CONCAT_MAX_LEN, 1024u64);
+        // time.Duration defaults, nanoseconds
+        assert_eq!(DEF_TIDB_LOAD_BASED_REPLICA_READ_THRESHOLD, 1_000_000_000);
+        assert_eq!(DEF_TIDB_GC_MAX_WAIT_TIME, 24 * 60 * 60);
+    }
+}

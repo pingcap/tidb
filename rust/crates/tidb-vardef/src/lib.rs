@@ -12,19 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! System-variable **name** constants from `pkg/sessionctx/vardef/tidb_vars.go`.
+//! Constants from `pkg/sessionctx/vardef/tidb_vars.go`.
 //!
-//! These are the string identifiers used to reference session/global system
-//! variables throughout parse -> plan -> execute. Every consumer that names a
-//! sysvar (session context, planner, executor) depends on these literals.
+//! - [`tidb_vars`]: the system-variable **name** constants -- the string
+//!   identifiers used to reference session/global system variables throughout
+//!   parse -> plan -> execute.
 //!
-//! SCOPE (documented seed, not the whole `vardef` package): this module ports
-//! only the string-literal name constants (508 of them, script-extracted and
-//! byte-verified verbatim against the Go source). Still DEFERRED from the full
-//! package: the numeric/bool/float `Def*` default-value constants (mixed
-//! types), the mutable `var (...)` block of runtime-tunable globals (atomics),
-//! `sysvar.go`'s `SysVar` struct + the `GetSysVar`/`SetSysVar` global registry
-//! (the mutable singleton the rewrite deliberately replaces with explicit
-//! wiring), and `runtime.go`. Those land in follow-up units.
+//! - [`defaults`]: the `Def*` **default-value** constants for those variables.
+//!
+//! SCOPE (documented, not yet the whole `vardef` package): the name constants
+//! (508) and the `Def*` defaults (389) are ported, both script-extracted and
+//! byte-verified against the Go source. Still DEFERRED from the full package:
+//! the mutable `var (...)` block of runtime-tunable globals (atomics), the
+//! small `ExchangeCompressionMode` / iota helper enums and their `Name`/`To*`
+//! methods, `sysvar.go`'s `SysVar` struct + the `GetSysVar`/`SetSysVar` global
+//! registry (the mutable singleton the rewrite deliberately replaces with
+//! explicit wiring), and `runtime.go`. Those land in follow-up units.
 
+pub mod defaults;
 pub mod tidb_vars;
