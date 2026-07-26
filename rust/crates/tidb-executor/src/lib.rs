@@ -24,15 +24,18 @@
 //!
 //! SEED SCOPE: the `Executor` trait core (open/next/close/schema/ret_field_types/
 //! init_cap/max_chunk_size/new_chunk) plus [`TableDualExec`] (the FROM-less
-//! source) and [`ProjectionExec`] (evaluates expressions per row). Together they
-//! run `SELECT <expr>` end-to-end. DEFERRED (documented): the Go
+//! source), [`ProjectionExec`] (evaluates expressions per row), and
+//! [`SelectionExec`] (the `WHERE` filter). Together they run
+//! `SELECT <expr> [WHERE <pred>]` end-to-end. DEFERRED (documented): the Go
 //! `context.Context`/`sessionctx` propagation, runtime stats, the SQL killer,
 //! `Detach`, parallel projection, and the many other operators.
 
 pub mod executor;
 pub mod projection;
+pub mod selection;
 pub mod table_dual;
 
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use projection::ProjectionExec;
+pub use selection::SelectionExec;
 pub use table_dual::TableDualExec;
