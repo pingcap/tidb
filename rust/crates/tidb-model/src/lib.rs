@@ -20,6 +20,9 @@
 //! self-contained leaf types; only the modules declared below are ported so
 //! far. It is seed evidence, not yet the complete package.
 
+pub mod flags;
+pub mod schema_state;
 pub mod table_mode;
 
+pub use schema_state::SchemaState;
 pub use table_mode::{AlterTableModeTarget, TableMode};
