@@ -20,12 +20,16 @@
 //! self-contained leaf types; only the modules declared below are ported so
 //! far. It is seed evidence, not yet the complete package.
 
+pub mod action_type;
+pub mod bdr;
 pub mod engine_attribute;
 pub mod flags;
 pub mod masking_policy;
 pub mod schema_state;
 pub mod table_mode;
 
+pub use action_type::{ActionType, ACTION_MAP};
+pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
 pub use masking_policy::{MaskingPolicyInfo, MaskingPolicyStatus};
 pub use schema_state::SchemaState;
 pub use table_mode::{AlterTableModeTarget, TableMode};
