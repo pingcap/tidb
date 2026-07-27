@@ -23,10 +23,16 @@
 //! encode -> store -> scan -> decode path a real TiKV-backed table takes
 //! (Go `pkg/executor` table reader over `tablecodec`).
 //!
-//! STAND-IN (documented): the byte store here is a sorted map scanned
-//! directly. The `tidb-txnkv` `Snapshot`/`Retriever` trait integration (MVCC,
-//! regions, coprocessor pushdown) replaces this container without touching
-//! the codec path -- the bytes are already the real format.
+//! The bytes live in a `tidb-txnkv` [`MemStorage`] and are read back through
+//! the `Retriever`/`KvIterator` traits -- the same contract a TiKV snapshot
+//! implements -- so the scan is written against the storage interface rather
+//! than against a container.
+//!
+//! NOT MODELLED (documented): the storage behind those traits is in-process
+//! and has no MVCC versions, timestamps, locks, regions, or coprocessor
+//! pushdown, so a scan reads the latest write immediately. Replacing
+//! [`MemStorage`] with a transaction-backed snapshot does not touch the codec
+//! or the scan loop.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use std::collections::BTreeMap;
@@ -35,6 +41,7 @@ use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_ran
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
+use tidb_txnkv::{Key, KvIterator, MemStorage, Mutator, Retriever};
 
 /// A column of a [`KvTable`]: name, column id, and type.
 #[derive(Clone, Debug)]
@@ -54,8 +61,8 @@ pub struct KvTable {
     pub table_id: i64,
     /// The columns, in schema order.
     pub columns: Vec<KvColumn>,
-    /// The byte store (the `Snapshot` stand-in; see the module doc).
-    store: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The byte store, read through the `Retriever` contract (module doc).
+    store: MemStorage,
     /// The next integer row handle (Go `_tidb_rowid` allocation, simplified to
     /// a monotone counter; the real autoid allocator is a separate unit).
     next_handle: i64,
@@ -68,6 +75,8 @@ pub enum KvTableError {
     Encode(String),
     /// A stored value failed to decode.
     Decode(String),
+    /// The storage layer refused a read or write.
+    Storage(String),
 }
 
 impl KvTable {
@@ -77,7 +86,7 @@ impl KvTable {
         KvTable {
             table_id,
             columns,
-            store: BTreeMap::new(),
+            store: MemStorage::new(),
             next_handle: 1,
         }
     }
@@ -103,31 +112,49 @@ impl KvTable {
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         let handle = self.next_handle;
         self.next_handle += 1;
-        let key = encode_row_key_with_handle(self.table_id, &RecordHandle::Int(handle));
-        self.store.insert(key, value);
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            self.table_id,
+            &RecordHandle::Int(handle),
+        ));
+        self.store
+            .set(key, value)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         Ok(handle)
     }
 
     /// Scans the table's record-key range in key order, decoding each value.
     /// Returns rows as `Datum`s in schema order (a missing column decodes NULL).
-    pub fn scan_rows(&self) -> Result<Vec<Vec<Datum>>, KvTableError> {
+    pub fn scan_rows(&mut self) -> Result<Vec<Vec<Datum>>, KvTableError> {
         let (low, high) = get_table_handle_key_range(self.table_id);
         let column_types: BTreeMap<i64, FieldType> = self
             .columns
             .iter()
             .map(|c| (c.id, c.field_type.clone()))
             .collect();
+        let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
+        // `get_table_handle_key_range` returns an inclusive upper bound, while
+        // the iterator's is exclusive, so the scan runs to the key just past it.
+        let mut upper = high;
+        upper.push(0);
+        let mut iterator = self
+            .store
+            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+
         let mut rows = Vec::new();
-        for (_key, value) in self.store.range(low..=high) {
-            let mut decoded = decode_table_row_to_map(value, &column_types, None)
+        while iterator.valid() {
+            let mut decoded = decode_table_row_to_map(iterator.value(), &column_types, None)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            let row: Vec<Datum> = self
-                .columns
+            let row: Vec<Datum> = column_ids
                 .iter()
-                .map(|c| decoded.remove(&c.id).unwrap_or(Datum::Null))
+                .map(|id| decoded.remove(id).unwrap_or(Datum::Null))
                 .collect();
             rows.push(row);
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
+        iterator.close();
         Ok(rows)
     }
 }
@@ -231,6 +258,33 @@ mod tests {
                 },
             ],
         )
+    }
+
+    /// The scan bound must cover the whole table and nothing beyond it: the
+    /// codec's handle range is inclusive at the top while the iterator's upper
+    /// bound is exclusive, so the largest handle must still be returned and a
+    /// neighbouring table's rows must not be.
+    #[test]
+    fn scan_covers_the_whole_table_and_stops_at_its_range() {
+        let mut t = test_table();
+        for i in 0..3 {
+            t.insert_row(&[Datum::Int(i), Datum::Bytes(b"x".to_vec())])
+                .unwrap();
+        }
+        // A row of the next table id, written into the same storage layout.
+        let mut neighbour = KvTable::new(t.table_id + 1, t.columns.clone());
+        neighbour
+            .insert_row(&[Datum::Int(99), Datum::Bytes(b"y".to_vec())])
+            .unwrap();
+
+        let rows = t.scan_rows().unwrap();
+        assert_eq!(
+            rows.len(),
+            3,
+            "every handle including the largest is scanned"
+        );
+        assert_eq!(rows[2][0], Datum::Int(2));
+        assert_eq!(neighbour.scan_rows().unwrap().len(), 1);
     }
 
     #[test]

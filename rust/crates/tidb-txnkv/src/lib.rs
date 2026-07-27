@@ -43,6 +43,7 @@ mod keyspace;
 mod kv_api;
 mod kv_contract;
 pub mod lock;
+mod mem_storage;
 mod mpp;
 mod mvcc_metadata;
 mod new_txn;
@@ -128,6 +129,7 @@ pub use kv_contract::{
     StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT, DEFAULT_TXN_TOTAL_SIZE_LIMIT,
     GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
 };
+pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
 pub use mpp::{
     CancelMppTasksParam, DispatchMppTaskParam, EstablishMppConnsParam, MppBuildTasksRequest,
     MppClient, MppCoordinator, MppDispatchRequest, MppQueryId, MppTask, MppTaskLocation,

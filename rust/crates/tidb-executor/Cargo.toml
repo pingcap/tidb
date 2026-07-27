@@ -16,6 +16,7 @@ tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 
 [lints]
 workspace = true
