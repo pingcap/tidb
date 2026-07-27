@@ -34,6 +34,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_executor::{
     run_create_table_on, run_delete_on, run_insert_on, run_update_on, Catalog, DriverError,
 };
+use tidb_executor::{SchemaErrorKind, DEFAULT_DATABASE};
 
 /// The result of running one statement.
 #[derive(Debug, PartialEq)]
@@ -91,13 +92,28 @@ pub type SharedCatalog = Arc<Mutex<Catalog>>;
 /// mirrors that with a shared, mutex-guarded catalog; the statement-level lock
 /// stands in for Go's schema-version/lease machinery, which is a separate
 /// tier (documented deferral).
-#[derive(Default)]
 pub struct Session {
     catalog: SharedCatalog,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// The session's system and user variables.
     vars: SessionVars,
+    /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
+    /// Empty means no database is selected, which is Go's `ErrNoDB` case.
+    current_db: String,
+}
+
+impl Default for Session {
+    /// A session on its own empty catalog, with `test` selected as a fresh
+    /// TiDB connection has.
+    fn default() -> Self {
+        Session {
+            catalog: SharedCatalog::default(),
+            txn: None,
+            vars: SessionVars::new(),
+            current_db: DEFAULT_DATABASE.to_owned(),
+        }
+    }
 }
 
 /// An open transaction's state.
@@ -132,6 +148,19 @@ fn var_error(error: VarError) -> DriverError {
     })
 }
 
+/// A one-column result set of strings, the shape SHOW DATABASES and SHOW
+/// TABLES produce.
+fn string_column_output(column: &str, values: Vec<String>) -> StmtOutput {
+    let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+    StmtOutput::Rows {
+        columns: vec![(column.to_owned(), field_type)],
+        rows: values
+            .into_iter()
+            .map(|value| vec![Datum::Bytes(value.into_bytes())])
+            .collect(),
+    }
+}
+
 /// The text form a system variable stores for a datum (Go keeps every system
 /// variable as a string).
 fn datum_text(value: &Datum) -> Option<String> {
@@ -152,6 +181,125 @@ impl Session {
     #[must_use]
     pub fn new() -> Self {
         Session::default()
+    }
+
+    /// Go `SessionVars.CurrentDB`. Empty when no database is selected.
+    #[must_use]
+    pub fn current_database(&self) -> &str {
+        &self.current_db
+    }
+
+    /// Applies `USE`, `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
+    /// and `SHOW TABLES`.
+    ///
+    /// Returns `Some(output)` for those statements and `None` for anything
+    /// else, so a caller can dispatch without re-parsing.
+    pub fn apply_schema_statement(&mut self, sql: &str) -> Result<Option<StmtOutput>, DriverError> {
+        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        match &stmt {
+            Stmt::Session(session_stmt) => match &**session_stmt {
+                SessionStmt::Use(name) => {
+                    self.use_database(name)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                _ => Ok(None),
+            },
+            Stmt::Ddl(ddl) => match &**ddl {
+                tidb_ast::DdlStmt::CreateDatabase {
+                    if_not_exists,
+                    name,
+                    options,
+                } => {
+                    if !options.is_empty() {
+                        return Err(DriverError::Unsupported(
+                            "database charset and collation options are not supported yet",
+                        ));
+                    }
+                    let created =
+                        self.with_catalog_mut(|catalog| Ok(catalog.create_database(name)))?;
+                    // Go raises ErrDBCreateExists unless IF NOT EXISTS.
+                    if !created && !*if_not_exists {
+                        return Err(DriverError::Schema(SchemaErrorKind::DatabaseExists(
+                            name.clone(),
+                        )));
+                    }
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                tidb_ast::DdlStmt::DropDatabase { if_exists, name } => {
+                    let dropped =
+                        self.with_catalog_mut(|catalog| Ok(catalog.drop_database(name)))?;
+                    // Go raises ErrDBDropExists unless IF EXISTS.
+                    if !dropped && !*if_exists {
+                        return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
+                            name.clone(),
+                        )));
+                    }
+                    // Dropping the current database leaves the session with
+                    // none selected, which is Go's ErrNoDB state for the next
+                    // unqualified statement.
+                    if dropped && self.current_db.eq_ignore_ascii_case(name) {
+                        self.current_db.clear();
+                    }
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                _ => Ok(None),
+            },
+            Stmt::Admin(admin) => match &**admin {
+                tidb_ast::AdminStmt::ShowDatabases(show) => {
+                    if show.filter.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "SHOW DATABASES filters are not supported yet",
+                        ));
+                    }
+                    let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
+                    Ok(Some(string_column_output("Database", names)))
+                }
+                tidb_ast::AdminStmt::ShowTables(show) => {
+                    if show.filter.is_some() || show.full {
+                        return Err(DriverError::Unsupported(
+                            "SHOW FULL TABLES and SHOW TABLES filters are not supported yet",
+                        ));
+                    }
+                    let database = match &show.database {
+                        Some(name) => name.clone(),
+                        None => self.require_current_database()?.to_owned(),
+                    };
+                    let names =
+                        self.with_catalog_mut(|catalog| Ok(catalog.table_names(&database)))?;
+                    let names = names.ok_or_else(|| {
+                        DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
+                    })?;
+                    // Go names the column after the schema being listed.
+                    Ok(Some(string_column_output(
+                        &format!("Tables_in_{database}"),
+                        names,
+                    )))
+                }
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
+    /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
+    /// switch also updates `collation_database`.
+    fn use_database(&mut self, name: &str) -> Result<(), DriverError> {
+        let exists = self.with_catalog_mut(|catalog| Ok(catalog.has_database(name)))?;
+        if !exists {
+            return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
+                name.to_owned(),
+            )));
+        }
+        self.current_db = name.to_owned();
+        Ok(())
+    }
+
+    /// The current database, or Go's `ErrNoDB` when none is selected.
+    fn require_current_database(&self) -> Result<&str, DriverError> {
+        if self.current_db.is_empty() {
+            return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+        }
+        Ok(&self.current_db)
     }
 
     /// The session's variables.
@@ -426,6 +574,7 @@ impl Session {
             catalog,
             txn: None,
             vars: SessionVars::new(),
+            current_db: DEFAULT_DATABASE.to_owned(),
         }
     }
 
@@ -490,10 +639,19 @@ impl Session {
     /// Like [`Session::run`], but a query result also carries its column
     /// metadata (`(name, type)` per column) for wire-protocol fronts.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
+        if let Some(output) = self.apply_schema_statement(sql)? {
+            return Ok(output);
+        }
         let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         // `@@x` / `@x` read the session's own state, so they are bound before
         // the statement reaches the driver.
         self.bind_variables(&mut stmt)?;
+        // Go raises ErrNoDB when a statement resolves an unqualified name and
+        // no database is selected.
+        if matches!(stmt, Stmt::Query(_) | Stmt::Dml(_) | Stmt::Ddl(_)) {
+            self.require_current_database()?;
+        }
         match &stmt {
             Stmt::Query(query) => {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
@@ -765,6 +923,134 @@ mod tests {
 
         // A non-SET statement is not claimed by the hook.
         assert_eq!(session.apply_set("SELECT 1").unwrap(), None);
+    }
+
+    /// Transcreated from Go `pkg/executor/test/ddl/ddl_test.go`
+    /// `TestCreateDropDatabase`, case for case, minus the parts that need
+    /// tiers this seed does not have yet.
+    ///
+    /// NOT PORTED from that Go test (documented): every `charset`/`collate`
+    /// database option and its `SHOW CREATE DATABASE` output, which need the
+    /// charset tier; the `drop database mysql` rejection, which needs the
+    /// system schemas; and the privilege/role cases.
+    #[test]
+    fn create_drop_database() {
+        let mut session = Session::new();
+
+        // tk.MustExec("create database if not exists drop_test;")
+        session
+            .run("CREATE DATABASE IF NOT EXISTS drop_test")
+            .unwrap();
+        // tk.MustExec("drop database if exists drop_test;")
+        session.run("DROP DATABASE IF EXISTS drop_test").unwrap();
+        // tk.MustExec("create database drop_test;")
+        session.run("CREATE DATABASE drop_test").unwrap();
+        // tk.MustExec("use drop_test;")
+        session.run("USE drop_test").unwrap();
+        assert_eq!(session.current_database(), "drop_test");
+        // tk.MustExec("drop database drop_test;")
+        session.run("DROP DATABASE drop_test").unwrap();
+
+        // tk.MustGetDBError("drop table t;", plannererrors.ErrNoDB)
+        // tk.MustGetDBError("select * from t;", plannererrors.ErrNoDB)
+        // Dropping the current database leaves none selected.
+        assert_eq!(session.current_database(), "");
+        assert!(matches!(
+            session.run("SELECT * FROM t"),
+            Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))
+        ));
+        assert!(matches!(
+            session.run("INSERT INTO t VALUES (1)"),
+            Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))
+        ));
+
+        // Creating a database that exists is Go's ErrDBCreateExists unless
+        // IF NOT EXISTS was written.
+        session.run("CREATE DATABASE drop_test").unwrap();
+        assert!(matches!(
+            session.run("CREATE DATABASE drop_test"),
+            Err(DriverError::Schema(SchemaErrorKind::DatabaseExists(_)))
+        ));
+        session
+            .run("CREATE DATABASE IF NOT EXISTS drop_test")
+            .unwrap();
+        // Dropping one that does not exist is ErrDBDropExists unless IF EXISTS.
+        session.run("DROP DATABASE drop_test").unwrap();
+        assert!(matches!(
+            session.run("DROP DATABASE drop_test"),
+            Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(_)))
+        ));
+        session.run("DROP DATABASE IF EXISTS drop_test").unwrap();
+
+        // USE on an unknown schema is Go's ErrDatabaseNotExists.
+        assert!(matches!(
+            session.run("USE no_such_database"),
+            Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(_)))
+        ));
+    }
+
+    /// SHOW DATABASES and SHOW TABLES, with Go's column naming and ordering.
+    #[test]
+    fn show_databases_and_tables() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE zeta (a BIGINT)").unwrap();
+        session.run("CREATE TABLE alpha (a BIGINT)").unwrap();
+        session.run("CREATE DATABASE other").unwrap();
+
+        // Go's fetchShowDatabases sorts the names; the column is "Database".
+        match session.run_with_columns("SHOW DATABASES").unwrap() {
+            StmtOutput::Rows { columns, rows } => {
+                assert_eq!(columns[0].0, "Database");
+                assert_eq!(
+                    rows.iter()
+                        .map(|row| datum_text(&row[0]).unwrap())
+                        .collect::<Vec<_>>(),
+                    vec!["other".to_owned(), "test".to_owned()]
+                );
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // Go names the column Tables_in_<db> and sorts the table names.
+        match session.run_with_columns("SHOW TABLES").unwrap() {
+            StmtOutput::Rows { columns, rows } => {
+                assert_eq!(columns[0].0, "Tables_in_test");
+                assert_eq!(
+                    rows.iter()
+                        .map(|row| datum_text(&row[0]).unwrap())
+                        .collect::<Vec<_>>(),
+                    vec!["alpha".to_owned(), "zeta".to_owned()]
+                );
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // SHOW TABLES IN <db> reports that schema, and an empty one is empty.
+        match session.run_with_columns("SHOW TABLES IN other").unwrap() {
+            StmtOutput::Rows { columns, rows } => {
+                assert_eq!(columns[0].0, "Tables_in_other");
+                assert!(rows.is_empty());
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+        // An unknown schema is Go's ErrBadDB.
+        assert!(matches!(
+            session.run("SHOW TABLES IN nope"),
+            Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(_)))
+        ));
+    }
+
+    /// A table in another schema is reachable by qualifying it, which is what
+    /// makes the schema tier more than a listing.
+    #[test]
+    fn a_qualified_name_resolves_across_schemas() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT)").unwrap();
+        session.run("INSERT INTO t VALUES (1)").unwrap();
+        assert_eq!(
+            session.run("SELECT a FROM test.t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
     }
 
     #[test]

@@ -52,6 +52,15 @@ const ER_PARSE_ERROR: u16 = 1064;
 /// generic `HY000` TiDB uses for its own KV errors.
 const ER_WRITE_CONFLICT: u16 = 9007;
 
+/// MySQL `ER_DB_CREATE_EXISTS` (1007).
+const ER_DB_CREATE_EXISTS: u16 = 1007;
+
+/// MySQL `ER_NO_DB_ERROR` (1046).
+const ER_NO_DB_ERROR: u16 = 1046;
+
+/// MySQL `ER_BAD_DB_ERROR` (1049).
+const ER_BAD_DB_ERROR: u16 = 1049;
+
 /// MySQL `ER_UNKNOWN_SYSTEM_VARIABLE` (1193).
 const ER_UNKNOWN_SYSTEM_VARIABLE: u16 = 1193;
 
@@ -174,6 +183,26 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 *b"HY000",
                 "Write conflict, please retry the transaction".to_owned(),
             )
+        }
+        // Go: "Unknown database '%-.192s'".
+        tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::UnknownDatabase(
+            name,
+        )) => SqlQueryError::new(
+            ER_BAD_DB_ERROR,
+            *b"42000",
+            format!("Unknown database '{name}'"),
+        ),
+        // Go: "Can't create database '%-.192s'; database exists".
+        tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::DatabaseExists(
+            name,
+        )) => SqlQueryError::new(
+            ER_DB_CREATE_EXISTS,
+            *b"HY000",
+            format!("Can't create database '{name}'; database exists"),
+        ),
+        // Go: "No database selected".
+        tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::NoDatabaseSelected) => {
+            SqlQueryError::new(ER_NO_DB_ERROR, *b"3D000", "No database selected".to_owned())
         }
         // Go: "Unknown system variable '%-.64s'".
         tidb_executor::DriverError::Var(tidb_executor::VarErrorKind::UnknownSystemVariable(

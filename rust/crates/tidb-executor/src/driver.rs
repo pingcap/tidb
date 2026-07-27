@@ -57,16 +57,74 @@ pub struct MemTable {
     pub rows: Vec<Vec<Datum>>,
 }
 
-/// A catalog of in-memory tables the driver can resolve `FROM` against.
-/// Table names are case-insensitive, as in MySQL.
+/// Splits a table reference into its schema and table names. A bare name
+/// resolves in the default schema; `db.t` names its schema explicitly.
+///
+/// DEFERRED (documented): the session's current database is not threaded
+/// through the driver yet, so an unqualified name resolves in
+/// [`DEFAULT_DATABASE`] rather than in whatever `USE` selected. `USE` and the
+/// SHOW statements report the current database correctly; a query against a
+/// non-default schema must qualify its tables until that threading lands.
+fn split_table_path(path: &[String]) -> Result<(&str, &str), DriverError> {
+    match path {
+        [name] => Ok((DEFAULT_DATABASE, name)),
+        [database, name] => Ok((database, name)),
+        _ => Err(DriverError::Unsupported("empty table name")),
+    }
+}
+
+/// Go's default schema: TiDB's bootstrap runs
+/// `CREATE DATABASE IF NOT EXISTS test`, so a fresh server always has it and
+/// a connection with no explicit database lands there.
+pub const DEFAULT_DATABASE: &str = "test";
+
+/// One schema: Go `model.DBInfo`, reduced to the name and its tables.
+///
+/// NOT MODELLED (documented): the schema's charset, collation, placement
+/// policy and state, which live on Go's `DBInfo` and matter to DDL rather
+/// than to resolving a name.
 #[derive(Clone, Debug, Default)]
-pub struct Catalog {
+struct Database {
+    /// The name as written, for `SHOW DATABASES` output.
+    name: String,
     tables: HashMap<String, TableEntry>,
+}
+
+/// A catalog of databases and their tables, the position Go's `infoschema`
+/// occupies. Database and table names are case-insensitive, as in MySQL.
+#[derive(Clone, Debug)]
+pub struct Catalog {
+    databases: HashMap<String, Database>,
     next_table_id: i64,
     /// Bumped by every mutation, so a transaction can detect that the shared
     /// catalog moved under it (Go detects the same at commit through TiKV's
     /// optimistic conflict check on the written keys).
     version: u64,
+}
+
+impl Default for Catalog {
+    /// A catalog holding only `test`, as a freshly bootstrapped TiDB does.
+    ///
+    /// DIVERGENCE (documented): real TiDB also exposes `mysql`,
+    /// `information_schema`, `performance_schema`, `sys` and `metrics_schema`.
+    /// Those are system schemas whose tables this seed does not implement, and
+    /// listing them empty would claim more than is true, so they are absent
+    /// until their contents are ported.
+    fn default() -> Self {
+        let mut databases = HashMap::new();
+        databases.insert(
+            DEFAULT_DATABASE.to_owned(),
+            Database {
+                name: DEFAULT_DATABASE.to_owned(),
+                tables: HashMap::new(),
+            },
+        );
+        Catalog {
+            databases,
+            next_table_id: 0,
+            version: 0,
+        }
+    }
 }
 
 /// A catalog table's backing store.
@@ -93,22 +151,95 @@ impl TableEntry {
 }
 
 impl Catalog {
-    /// Registers a matrix-backed `table` under `name` (case-insensitive).
+    /// Registers a matrix-backed `table` in the default database.
     pub fn register(&mut self, name: &str, table: MemTable) {
-        self.tables
-            .insert(name.to_lowercase(), TableEntry::Mem(table));
-        self.version += 1;
+        self.register_in(DEFAULT_DATABASE, name, TableEntry::Mem(table));
     }
 
-    /// Registers a TiKV-format-byte-backed `table` under `name`.
+    /// Registers a TiKV-format-byte-backed `table` in the default database.
     pub fn register_kv(&mut self, name: &str, table: KvTable) {
-        self.tables
-            .insert(name.to_lowercase(), TableEntry::Kv(table));
+        self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(table));
+    }
+
+    /// Registers `table` in `database`, which must exist.
+    fn register_in(&mut self, database: &str, name: &str, table: TableEntry) {
         self.version += 1;
+        if let Some(database) = self.databases.get_mut(&database.to_lowercase()) {
+            database.tables.insert(name.to_lowercase(), table);
+        }
+    }
+
+    /// Every database name, sorted, with `information_schema` first when it
+    /// exists -- Go's `fetchShowDatabases` ordering.
+    #[must_use]
+    pub fn database_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .databases
+            .values()
+            .map(|database| database.name.clone())
+            .collect();
+        names.sort();
+        if let Some(position) = names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case("information_schema"))
+        {
+            let front = names.remove(position);
+            names.insert(0, front);
+        }
+        names
+    }
+
+    /// Every table name in `database`, sorted as Go's `fetchShowTables` sorts
+    /// them. `None` when the database does not exist.
+    #[must_use]
+    pub fn table_names(&self, database: &str) -> Option<Vec<String>> {
+        let database = self.databases.get(&database.to_lowercase())?;
+        let mut names: Vec<String> = database.tables.keys().cloned().collect();
+        names.sort();
+        Some(names)
+    }
+
+    /// Whether `database` exists (Go `is.SchemaExists`).
+    #[must_use]
+    pub fn has_database(&self, database: &str) -> bool {
+        self.databases.contains_key(&database.to_lowercase())
+    }
+
+    /// Creates `database`, reporting whether it was new. Go raises
+    /// `ErrDBCreateExists` (1007) unless `IF NOT EXISTS` was written.
+    pub fn create_database(&mut self, database: &str) -> bool {
+        self.version += 1;
+        let key = database.to_lowercase();
+        if self.databases.contains_key(&key) {
+            return false;
+        }
+        self.databases.insert(
+            key,
+            Database {
+                name: database.to_owned(),
+                tables: HashMap::new(),
+            },
+        );
+        true
+    }
+
+    /// Drops `database` and its tables, reporting whether it existed. Go
+    /// raises `ErrDBDropExists` (1008) unless `IF EXISTS` was written.
+    pub fn drop_database(&mut self, database: &str) -> bool {
+        self.version += 1;
+        self.databases.remove(&database.to_lowercase()).is_some()
+    }
+
+    /// Resolves a table in `database`.
+    fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
+        self.databases
+            .get(&database.to_lowercase())?
+            .tables
+            .get(&name.to_lowercase())
     }
 
     fn get(&self, name: &str) -> Option<&TableEntry> {
-        self.tables.get(&name.to_lowercase())
+        self.get_in(DEFAULT_DATABASE, name)
     }
 
     /// A mutable handle on a table, for the write paths.
@@ -119,8 +250,16 @@ impl Catalog {
     /// changing nothing still bumps it. That can refuse a commit Go would
     /// allow, never the reverse.
     fn get_mut(&mut self, name: &str) -> Option<&mut TableEntry> {
+        self.get_mut_in(DEFAULT_DATABASE, name)
+    }
+
+    /// A mutable handle on a table of `database`.
+    fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.version += 1;
-        self.tables.get_mut(&name.to_ascii_lowercase())
+        self.databases
+            .get_mut(&database.to_ascii_lowercase())?
+            .tables
+            .get_mut(&name.to_ascii_lowercase())
     }
 
     /// The catalog's mutation counter.
@@ -129,10 +268,10 @@ impl Catalog {
         self.version
     }
 
-    /// Whether a table with `name` exists (case-insensitive).
+    /// Whether a table with `name` exists in the default database.
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
-        self.tables.contains_key(&name.to_lowercase())
+        self.get(name).is_some()
     }
 
     /// Allocates the next table id (a monotone counter standing in for the
@@ -186,9 +325,22 @@ pub enum DriverError {
     Txn(TxnErrorKind),
     /// A session-variable statement failed.
     Var(VarErrorKind),
+    /// A schema statement failed.
+    Schema(SchemaErrorKind),
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
+}
+
+/// Why a schema statement failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SchemaErrorKind {
+    /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB` (1049).
+    UnknownDatabase(String),
+    /// Go `ErrDBCreateExists` (1007).
+    DatabaseExists(String),
+    /// Go `plannererrors.ErrNoDB` (1046).
+    NoDatabaseSelected,
 }
 
 /// Why a session-variable statement failed.
@@ -1505,16 +1657,15 @@ fn build_from(
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     match node {
         JoinNode::Table(table_ref) => {
-            let name = table_ref
-                .name
-                .last()
-                .ok_or(DriverError::Unsupported("empty table name"))?;
+            // A `db.t` reference resolves in that schema; a bare `t` resolves
+            // in the session's current one (Go's name resolution).
+            let (database, name) = split_table_path(&table_ref.name)?;
             let entry = catalog
-                .get(name)
+                .get_in(database, name)
                 .ok_or(DriverError::Unsupported("table not found in catalog"))?;
             let columns = entry.column_list();
             // A table alias replaces the name for qualification, as in Go.
-            let visible = table_ref.alias.clone().unwrap_or_else(|| name.clone());
+            let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
             let schema_columns: Vec<Column> = columns
                 .iter()
                 .enumerate()
