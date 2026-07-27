@@ -160,7 +160,10 @@ func TestAlternativeEngineRestrictedRounds(t *testing.T) {
 
 	// Let the rounds actually run to completion (no failpoint): planning and
 	// execution must succeed and the session's isolation read engines must be
-	// untouched.
+	// untouched. Which plan wins the cost comparison is deliberately not
+	// asserted here — it may vary across cost model changes, and the round
+	// arm/disarm mechanism is already covered by the failpoint-gated cases
+	// above.
 	tk.MustQuery(mixedSQL).Sort().Check(mixedResult)
 	tk.MustQuery(bothSQL).Sort().Check(bothResult)
 	tk.MustQuery("select @@tidb_isolation_read_engines").Check(enginesBefore)
