@@ -110,6 +110,11 @@ IndexMerge	5555.56	root		type: union
 drop table if exists t3;
 create table t3(id int primary key, a int not null, b int not null, index pi(b) where a < 3);
 insert into t3 values (1, 0, 1), (2, 1, 2), (3, 2, 3), (4, 3, 4), (5, 10, 5);
+explain format='brief' select * from t3 where a >= 0;
+id	estRows	task	access object	operator info
+TableReader	3333.33	root		data:Selection
+└─Selection	3333.33	cop[tikv]		ge(planner__core__casetest__index__partialindex.t3.a, 0)
+  └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select id, a, b from t3 where a >= 0 order by b limit 5;
 id	a	b
 1	0	1

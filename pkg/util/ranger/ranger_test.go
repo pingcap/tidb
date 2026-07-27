@@ -2633,6 +2633,82 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 	}
 }
 
+func TestUnionRangesPreservesCallerRanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	sctx := tk.Session()
+	rctx := sctx.GetRangerCtx()
+
+	// Build 3 ranges where r1 and r2 overlap so they trigger the merge path.
+	// r1 = [1, 3], r2 = [2, 4], r3 = [5, 7].
+	binaryCollator := collate.GetBinaryCollator()
+	r1 := &ranger.Range{
+		LowVal:      []types.Datum{types.NewIntDatum(1)},
+		HighVal:     []types.Datum{types.NewIntDatum(3)},
+		LowExclude:  false,
+		HighExclude: false,
+		Collators:   []collate.Collator{binaryCollator},
+	}
+	r2 := &ranger.Range{
+		LowVal:      []types.Datum{types.NewIntDatum(2)},
+		HighVal:     []types.Datum{types.NewIntDatum(4)},
+		LowExclude:  false,
+		HighExclude: false,
+		Collators:   []collate.Collator{binaryCollator},
+	}
+	r3 := &ranger.Range{
+		LowVal:      []types.Datum{types.NewIntDatum(5)},
+		HighVal:     []types.Datum{types.NewIntDatum(7)},
+		LowExclude:  false,
+		HighExclude: false,
+		Collators:   []collate.Collator{binaryCollator},
+	}
+	input := ranger.Ranges{r1, r2, r3}
+
+	// r1 and r2 overlap -> merged to [1, 4]. r3 is disjoint -> kept as [5, 7].
+	// Expected result: [[1, 4], [5, 7]].
+	result, err := ranger.UnionRanges(rctx, input, false /* mergeConsecutive */)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(result))
+	require.Equal(t, int64(1), result[0].LowVal[0].GetInt64())
+	require.Equal(t, int64(4), result[0].HighVal[0].GetInt64())
+	require.Equal(t, int64(5), result[1].LowVal[0].GetInt64())
+	require.Equal(t, int64(7), result[1].HighVal[0].GetInt64())
+
+	// The original range objects must not be modified.
+	require.Equal(t, int64(1), r1.LowVal[0].GetInt64())
+	require.Equal(t, int64(3), r1.HighVal[0].GetInt64())
+	require.False(t, r1.HighExclude)
+	require.Equal(t, int64(2), r2.LowVal[0].GetInt64())
+	require.Equal(t, int64(4), r2.HighVal[0].GetInt64())
+	require.False(t, r2.HighExclude)
+	require.Equal(t, int64(5), r3.LowVal[0].GetInt64())
+	require.Equal(t, int64(7), r3.HighVal[0].GetInt64())
+	require.False(t, r3.HighExclude)
+
+	// [1, 4] and [5, 7] are consecutive after encoding (PrefixNext makes
+	// the encoded end of [1, 4] touch the encoded start of [5, 7]),
+	// so all three ranges merge into one: [1, 7].
+	input = ranger.Ranges{r1, r2, r3}
+	result2, err := ranger.UnionRanges(rctx, input, true /* mergeConsecutive */)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(result2))
+	require.Equal(t, int64(1), result2[0].LowVal[0].GetInt64())
+	require.Equal(t, int64(7), result2[0].HighVal[0].GetInt64())
+
+	// The original range objects still must not be modified.
+	require.Equal(t, int64(1), r1.LowVal[0].GetInt64())
+	require.Equal(t, int64(3), r1.HighVal[0].GetInt64())
+	require.False(t, r1.HighExclude)
+	require.Equal(t, int64(2), r2.LowVal[0].GetInt64())
+	require.Equal(t, int64(4), r2.HighVal[0].GetInt64())
+	require.False(t, r2.HighExclude)
+	require.Equal(t, int64(5), r3.LowVal[0].GetInt64())
+	require.Equal(t, int64(7), r3.HighVal[0].GetInt64())
+	require.False(t, r3.HighExclude)
+}
+
 func TestBinCollationRangeForIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
