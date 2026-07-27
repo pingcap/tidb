@@ -4409,7 +4409,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
-		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
+		systemKSVer := mustGetSystemBootVersion(kvstore.GetSystemStorage())
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
 		} else if targetVer > systemKSVer {
@@ -4925,14 +4925,16 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 }
 
 const (
-	notBootstrapped = 0
+	notBootstrapped                         = 0
+	systemKeyspaceBootstrappedTimeout       = 30 * time.Minute
+	systemKeyspaceBootstrappedRetryInterval = 30 * time.Second
 )
 
 func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 	var ver int64
 	// check in kv store
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		t := meta.NewReader(txn)
 		ver, err = t.GetBootstrapVersion()
@@ -4942,6 +4944,51 @@ func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 		logutil.BgLogger().Fatal("get store bootstrap version failed", zap.Error(err))
 	}
 	return ver
+}
+
+func mustGetSystemBootVersion(store kv.Storage) int64 {
+	return waitForSystemKeyspaceBootstrap(store, systemKeyspaceBootstrappedTimeout, systemKeyspaceBootstrappedRetryInterval)
+}
+
+func waitForSystemKeyspaceBootstrap(store kv.Storage, timeout, retryInterval time.Duration) int64 {
+	timeoutTimer := time.NewTimer(timeout)
+	retryTicker := time.NewTicker(retryInterval)
+	defer timeoutTimer.Stop()
+	defer retryTicker.Stop()
+
+	return waitForSystemKeyspaceBootstrapLoop(
+		func() int64 {
+			return mustGetStoreBootstrapVersion(store)
+		},
+		timeoutTimer.C,
+		retryTicker.C,
+		func() {
+			logutil.BgLogger().Info("waiting SYSTEM keyspace to be bootstrapped")
+		},
+	)
+}
+
+func waitForSystemKeyspaceBootstrapLoop(getVersion func() int64, timeoutCh, retryCh <-chan time.Time, logWait func()) int64 {
+	var ver int64
+	for {
+		select {
+		case <-timeoutCh:
+			return ver
+		default:
+		}
+
+		ver = getVersion()
+		if ver != notBootstrapped {
+			return ver
+		}
+
+		select {
+		case <-retryCh:
+			logWait()
+		case <-timeoutCh:
+			return ver
+		}
+	}
 }
 
 func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
