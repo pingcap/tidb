@@ -113,7 +113,18 @@ func TestMultiSchemaChangeWhiteList(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// todo
+
+	tk.MustExec("drop table if exists test_multi_schema_change_white_list")
+	tk.MustExec("create table test_multi_schema_change_white_list(a int)")
+	tk.MustGetErrCode(
+		"alter table test_multi_schema_change_white_list add column b int, shard_row_id_bits = 1",
+		errno.ErrUnsupportedDDLOperation,
+	)
+	tk.MustQuery("show create table test_multi_schema_change_white_list").Check(testkit.RowsWithSep("|",
+		"test_multi_schema_change_white_list|CREATE TABLE `test_multi_schema_change_white_list` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func TestMultiSchemaChangeModifyColumnAndAddPrimaryKey(t *testing.T) {
