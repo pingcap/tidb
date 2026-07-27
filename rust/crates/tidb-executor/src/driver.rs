@@ -358,6 +358,10 @@ pub enum DriverError {
     Var(VarErrorKind),
     /// A schema statement failed.
     Schema(SchemaErrorKind),
+    /// Go `ErrColumnCantNull` (1048).
+    ColumnCannotBeNull(String),
+    /// Go `ErrNoDefaultForField` (1364).
+    NoDefaultForField(String),
     /// Go `ErrDupEntry` (1062).
     DuplicateEntry {
         /// The rejected key value.
@@ -900,6 +904,28 @@ pub fn run_insert_in(
         c.set_num_virtual_rows(1);
         c
     };
+    // The per-column metadata the default and NOT NULL rules read.
+    let column_meta: Vec<(Option<Datum>, bool, String)> = match table {
+        TableEntry::Kv(kv) => kv
+            .columns
+            .iter()
+            .map(|c| {
+                (
+                    c.default_value.clone(),
+                    c.field_type.flags() & 1 != 0,
+                    c.name.clone(),
+                )
+            })
+            .collect(),
+        // A matrix-backed table carries no column metadata, so every column
+        // is nullable with no default -- the original mock behavior.
+        TableEntry::Mem(mem) => mem
+            .columns
+            .iter()
+            .map(|(name, _)| (None, false, name.clone()))
+            .collect(),
+    };
+
     let mut inserted = 0u64;
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(insert.rows.len());
     for value_row in &insert.rows {
@@ -909,6 +935,7 @@ pub fn run_insert_in(
             ));
         }
         let mut row = vec![Datum::Null; column_list.len()];
+        let mut assigned = vec![false; column_list.len()];
         for (expr, &offset) in value_row.iter().zip(&target_offsets) {
             let rewritten = rewrite_expr_resolved(expr, &NoResolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
@@ -916,6 +943,25 @@ pub fn run_insert_in(
                 .eval(&NoColumns, eval_chunk.get_row(0))
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             row[offset] = value;
+            assigned[offset] = true;
+        }
+        // Only a column the statement omits takes its default, and only such
+        // a column can raise ErrNoDefaultForField (Go `fillColValue`).
+        for offset in 0..column_list.len() {
+            if !assigned[offset] {
+                row[offset] = column_default(&column_meta, offset)?;
+            }
+        }
+        // Go `Column.CheckNotNull`: an explicit NULL in a NOT NULL column is
+        // ErrColumnCantNull, which is a different error from omitting a
+        // column that has no default.
+        for (offset, value) in row.iter().enumerate() {
+            if *value == Datum::Null && column_is_not_null(&column_meta, offset) && assigned[offset]
+            {
+                return Err(DriverError::ColumnCannotBeNull(
+                    column_list[offset].0.clone(),
+                ));
+            }
         }
         new_rows.push(row);
         inserted += 1;
@@ -2277,6 +2323,31 @@ fn single_table_name(
     Ok((database.to_owned(), name.to_owned()))
 }
 
+/// The value an omitted column takes, following Go `GetColDefaultValue` and
+/// `getColDefaultValueFromNil`: the stored `DEFAULT` when one was written, or
+/// NULL for a nullable column; a NOT NULL column with no default is Go's
+/// `ErrNoDefaultForField` under strict mode.
+///
+/// DEFERRED (documented): non-strict mode, where Go warns and writes the
+/// type's zero value instead of failing. This seed always behaves as strict
+/// mode, which is TiDB's default sql_mode.
+fn column_default(
+    meta: &[(Option<Datum>, bool, String)],
+    offset: usize,
+) -> Result<Datum, DriverError> {
+    let (default_value, not_null, name) = &meta[offset];
+    match default_value {
+        Some(value) => Ok(value.clone()),
+        None if *not_null => Err(DriverError::NoDefaultForField(name.clone())),
+        None => Ok(Datum::Null),
+    }
+}
+
+/// Whether the column at `offset` carries Go's `NotNullFlag`.
+fn column_is_not_null(meta: &[(Option<Datum>, bool, String)], offset: usize) -> bool {
+    meta[offset].1
+}
+
 /// Runs a single-table `UPDATE`, returning MySQL's affected-row count.
 ///
 /// Go `executor.UpdateExec` + `updateRecord`: each row the `WHERE` selects is
@@ -3022,11 +3093,13 @@ mod tests {
                         name: "a".to_owned(),
                         id: 1,
                         field_type: FieldType::new(FieldTypeCode::LongLong),
+                        default_value: None,
                     },
                     KvColumn {
                         name: "b".to_owned(),
                         id: 2,
                         field_type: FieldType::new(FieldTypeCode::LongLong),
+                        default_value: None,
                     },
                 ],
             ),
@@ -4240,6 +4313,79 @@ mod tests {
             ranges("SELECT id FROM q WHERE score > 1 OR score < 0"),
             None
         );
+    }
+
+    /// Column defaults and the NOT NULL rules, following Go's fillColValue
+    /// and CheckNotNull: an omitted column takes its DEFAULT, an omitted NOT
+    /// NULL column with no DEFAULT is ErrNoDefaultForField, and an explicit
+    /// NULL into a NOT NULL column is the different ErrColumnCantNull.
+    #[test]
+    fn column_defaults_and_not_null() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE d (id BIGINT PRIMARY KEY, n BIGINT NOT NULL, \
+             w BIGINT DEFAULT 7, s VARCHAR(4) DEFAULT 'zz', plain BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        // Omitted columns take their defaults; a nullable one with no DEFAULT
+        // is NULL.
+        run_insert_on("INSERT INTO d (id, n) VALUES (1, 5)", &mut catalog).unwrap();
+        let row = &run_select_on("SELECT w, s, plain FROM d WHERE id = 1", &catalog).unwrap()[0];
+        assert_eq!(row[0], Datum::Int(7));
+        assert_eq!(datum_text_for_test(&row[1]), "zz");
+        assert_eq!(row[2], Datum::Null);
+
+        // An explicit value overrides the default.
+        run_insert_on("INSERT INTO d (id, n, w) VALUES (2, 5, 100)", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT w FROM d WHERE id = 2", &catalog).unwrap(),
+            vec![vec![Datum::Int(100)]]
+        );
+
+        // An omitted NOT NULL column with no default is 1364.
+        assert!(matches!(
+            run_insert_on("INSERT INTO d (id) VALUES (3)", &mut catalog),
+            Err(DriverError::NoDefaultForField(name)) if name == "n"
+        ));
+        // An explicit NULL into that column is the other error, 1048.
+        assert!(matches!(
+            run_insert_on("INSERT INTO d (id, n) VALUES (3, NULL)", &mut catalog),
+            Err(DriverError::ColumnCannotBeNull(name)) if name == "n"
+        ));
+        // A NULL into a nullable column is fine.
+        run_insert_on(
+            "INSERT INTO d (id, n, plain) VALUES (3, 5, NULL)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        // A DEFAULT NULL column is not the same as no DEFAULT: it is
+        // omittable even when the column is otherwise unconstrained.
+        crate::run_create_table_on(
+            "CREATE TABLE e (id BIGINT PRIMARY KEY, v BIGINT DEFAULT NULL)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("INSERT INTO e (id) VALUES (1)", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT v FROM e", &catalog).unwrap(),
+            vec![vec![Datum::Null]]
+        );
+
+        // A primary key is NOT NULL, so omitting it is 1364 as well.
+        assert!(matches!(
+            run_insert_on("INSERT INTO e (v) VALUES (1)", &mut catalog),
+            Err(DriverError::NoDefaultForField(_))
+        ));
+
+        // Unsupported column sources are rejected rather than ignored.
+        assert!(crate::run_create_table_on(
+            "CREATE TABLE f (a BIGINT AUTO_INCREMENT)",
+            &mut catalog
+        )
+        .is_err());
     }
 
     #[test]

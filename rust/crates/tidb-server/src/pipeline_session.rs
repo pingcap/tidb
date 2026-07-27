@@ -184,6 +184,16 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 "Write conflict, please retry the transaction".to_owned(),
             )
         }
+        // Go: "Column '%-.192s' cannot be null".
+        tidb_executor::DriverError::ColumnCannotBeNull(name) => {
+            SqlQueryError::new(1048, *b"23000", format!("Column '{name}' cannot be null"))
+        }
+        // Go: "Field '%-.192s' doesn't have a default value".
+        tidb_executor::DriverError::NoDefaultForField(name) => SqlQueryError::new(
+            1364,
+            *b"HY000",
+            format!("Field '{name}' doesn't have a default value"),
+        ),
         // Go: "Duplicate entry '%-.64s' for key '%-.192s'".
         tidb_executor::DriverError::DuplicateEntry { value, key } => SqlQueryError::new(
             1062,

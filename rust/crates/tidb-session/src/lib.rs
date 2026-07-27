@@ -162,10 +162,11 @@ const COL_DESC_FIELD_NAMES: &[&str] = &["Field", "Type", "Null", "Key", "Default
 /// and MUL for one that leads a non-unique index -- Go reads those from the
 /// column's key flags, which the DDL sets from the same index definitions.
 ///
-/// NOT MODELLED (documented): `Default` is always NULL because column
-/// defaults are not stored yet, and `Extra` is always empty because
-/// AUTO_INCREMENT, ON UPDATE CURRENT_TIMESTAMP and generated columns are not
-/// supported. Both are stated here rather than filled with a guess.
+/// `Default` is the column's stored `DEFAULT`, or NULL when none was written.
+///
+/// NOT MODELLED (documented): `Extra` is always empty because
+/// AUTO_INCREMENT, ON UPDATE CURRENT_TIMESTAMP and generated columns are
+/// rejected at DDL time, so no column can carry any of them.
 fn column_description(
     column: &tidb_executor::KvColumn,
     offset: usize,
@@ -202,8 +203,14 @@ fn column_description(
         Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
         Datum::Bytes(null_flag.as_bytes().to_vec()),
         Datum::Bytes(key_flag.as_bytes().to_vec()),
-        // Column defaults are not stored yet (see the doc above).
-        Datum::Null,
+        // Go prints the stored default; a column without one shows NULL.
+        match &column.default_value {
+            Some(value) => match datum_text(value) {
+                Some(text) => Datum::Bytes(text.into_bytes()),
+                None => Datum::Null,
+            },
+            None => Datum::Null,
+        },
         Datum::Bytes(Vec::new()),
     ]
 }
@@ -1307,6 +1314,18 @@ mod tests {
                 vec!["tag", "varchar(4)", "YES", "MUL", "NULL", ""],
                 // An unindexed column has no key flag.
                 vec!["v", "bigint(20)", "YES", "", "NULL", ""],
+            ]
+        );
+
+        // A column's stored DEFAULT shows in the Default column.
+        session
+            .run("CREATE TABLE withdef (a BIGINT DEFAULT 7, b VARCHAR(4) DEFAULT 'zz')")
+            .unwrap();
+        assert_eq!(
+            describe(&mut session, "DESCRIBE withdef").1,
+            vec![
+                vec!["a", "bigint(20)", "YES", "", "7", ""],
+                vec!["b", "varchar(4)", "YES", "", "zz", ""],
             ]
         );
 

@@ -92,6 +92,10 @@ pub struct KvColumn {
     pub id: i64,
     /// The column type.
     pub field_type: FieldType,
+    /// Go `ColumnInfo.DefaultValue`: the value an omitted column takes.
+    /// `None` means no `DEFAULT` was written, which is not the same as a
+    /// `DEFAULT NULL`.
+    pub default_value: Option<Datum>,
 }
 
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
@@ -695,11 +699,13 @@ mod tests {
                     name: "a".to_owned(),
                     id: 1,
                     field_type: long(),
+                    default_value: None,
                 },
                 KvColumn {
                     name: "s".to_owned(),
                     id: 2,
                     field_type: varstr(),
+                    default_value: None,
                 },
             ],
         )

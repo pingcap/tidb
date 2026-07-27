@@ -30,7 +30,9 @@ use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{KvColumn, KvIndex, KvTable};
 use tidb_ast::CiString;
 use tidb_ast::{ColumnDef, ColumnTypeArg, DdlStmt, Stmt};
-use tidb_datatype::{str_to_type, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{
+    str_to_type, Datum, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags,
+};
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 
@@ -310,6 +312,16 @@ pub fn run_create_table_in(
 
     // The primary key, written either inline on a column or as a table
     // constraint.
+    for (i, def) in create.columns.iter().enumerate() {
+        if def
+            .options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull))
+        {
+            columns[i].add_flag(NOT_NULL_FLAG);
+        }
+    }
+
     let primary_key = primary_key_column(create)?;
     let pk_offset = match &primary_key {
         Some(pk_name) => {
@@ -334,6 +346,48 @@ pub fn run_create_table_in(
         columns[offset].add_flag(NOT_NULL_FLAG | PRI_KEY_FLAG);
     }
 
+    // Go evaluates a constant DEFAULT at DDL time and stores the value on the
+    // ColumnInfo; a NOT NULL column with no DEFAULT keeps NoDefaultValueFlag,
+    // which is the `None` case here.
+    let mut defaults: Vec<Option<Datum>> = Vec::with_capacity(create.columns.len());
+    for def in &create.columns {
+        let mut default_value = None;
+        for option in &def.options {
+            match option {
+                tidb_ast::ColumnOption::Default(expr) => {
+                    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                        expr,
+                        &tidb_expr::rewriter::NoResolver,
+                    )
+                    .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+                    let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
+                        return Err(DriverError::Unsupported(
+                            "an expression DEFAULT is not supported yet",
+                        ));
+                    };
+                    let value = constant
+                        .eval()
+                        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+                    default_value = Some(value);
+                }
+                // Go treats AUTO_INCREMENT and generated columns as their own
+                // default sources; neither exists yet.
+                tidb_ast::ColumnOption::AutoIncrement => {
+                    return Err(DriverError::Unsupported(
+                        "AUTO_INCREMENT is not supported yet",
+                    ))
+                }
+                tidb_ast::ColumnOption::Generated { .. } => {
+                    return Err(DriverError::Unsupported(
+                        "generated columns are not supported yet",
+                    ))
+                }
+                _ => {}
+            }
+        }
+        defaults.push(default_value);
+    }
+
     let info = TableInfo {
         id: catalog.allocate_table_id(),
         name: CiString::new(name),
@@ -349,6 +403,7 @@ pub fn run_create_table_in(
             name: c.name.original().to_owned(),
             id: c.id,
             field_type: c.field_type.clone(),
+            default_value: defaults[c.offset as usize].clone(),
         })
         .collect();
     let table = KvTable::new(info.id, kv_columns);
