@@ -105,6 +105,26 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, 5, plan.ThreadCnt)
 }
 
+func TestPlanUseNewCollate(t *testing.T) {
+	plan := &Plan{}
+	require.True(t, plan.GetUseNewCollateOrDefault(true))
+	require.False(t, plan.GetUseNewCollateOrDefault(false))
+
+	plan.setUseNewCollate(false)
+	require.False(t, plan.GetUseNewCollateOrDefault(true))
+
+	data, err := json.Marshal(plan)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"use_new_collate":false`)
+
+	var decoded Plan
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.False(t, decoded.GetUseNewCollateOrDefault(true))
+
+	decoded.setUseNewCollate(true)
+	require.True(t, decoded.GetUseNewCollateOrDefault(false))
+}
+
 // for negative case see TestImportIntoOptionsNegativeCase
 func TestInitOptionsPositiveCase(t *testing.T) {
 	sctx := mock.NewContext()

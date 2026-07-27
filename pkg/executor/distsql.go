@@ -1098,6 +1098,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	if e.indexLookUpPushDown {
 		// Paging and Cop-cache is not supported in index lookup push down.
 		builder.Request.Paging.Enable = false
+		builder.Request.Paging.PagingSizeBytes = 0
 		builder.Request.Cacheable = false
 	}
 

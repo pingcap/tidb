@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/testkit/testmain"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -38,7 +40,11 @@ func TestMain(m *testing.M) {
 	os.Args = newArgs
 
 	if !skipLeakTest {
-		goleak.VerifyTestMain(m,
+		cleanup := func(exitCode int) int {
+			memory.CleanupGlobalMemArbitratorForTest()
+			return exitCode
+		}
+		goleak.VerifyTestMain(testmain.WrapTestingM(m, cleanup),
 			goleak.IgnoreCurrent(),
 			goleak.IgnoreTopFunction("github.com/pingcap/tidb/br/pkg/utils.StartExitSingleListener.func1"),
 			goleak.IgnoreTopFunction("github.com/pingcap/tidb/br/pkg/utils.StartDynamicPProfListener.func1"),

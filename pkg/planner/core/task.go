@@ -1719,6 +1719,15 @@ func attach2TaskForMpp1Phase(p *physicalop.PhysicalHashAgg, mpp *physicalop.MppT
 	return mpp
 }
 
+func containsMaxMinCountAgg(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, aggFunc := range aggFuncs {
+		if aggregation.IsMaxMinCount(aggFunc.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 // scaleStats4GroupingSets scale the derived stats because the lower source has been expanded.
 //
 //	 parent OP   <- logicalAgg   <- children OP    (derived stats)
@@ -2087,6 +2096,21 @@ func attach2TaskForMpp(p *physicalop.PhysicalHashAgg, tasks ...base.Task) base.T
 		attachPlan2Task(finalAgg, t)
 		return t
 	case physicalop.MppScalar:
+		if containsMaxMinCountAgg(p.AggFuncs) {
+			prop := &property.PhysicalProperty{
+				TaskTp:         property.MppTaskType,
+				ExpectedCnt:    math.MaxFloat64,
+				MPPPartitionTp: property.SinglePartitionType,
+			}
+			if property.NeedEnforceExchanger(mpp.GetPartitionType(), mpp.HashCols, prop, nil) {
+				newMpp := mpp.EnforceExchanger(prop, nil)
+				if newMpp.Invalid() {
+					return newMpp
+				}
+				mpp = newMpp
+			}
+			return attach2TaskForMpp1Phase(p, mpp)
+		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 		if !property.NeedEnforceExchanger(mpp.GetPartitionType(), mpp.HashCols, prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.

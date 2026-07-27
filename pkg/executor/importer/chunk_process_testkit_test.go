@@ -92,6 +92,7 @@ func TestFileChunkProcess(t *testing.T) {
 		},
 		&importer.LoadDataController{
 			ASTArgs:       &importer.ASTArgs{},
+			Table:         table,
 			InsertColumns: table.VisibleCols(),
 			FieldMappings: fieldMappings,
 		},

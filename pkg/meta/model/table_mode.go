@@ -1,0 +1,89 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package model
+
+import "github.com/pingcap/tidb/pkg/parser/ast"
+
+// TableMode is the state for table mode, it's a table level metadata for prevent
+// table read/write during importing(import into) or BR restoring.
+// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
+// return error.
+// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
+// Now allow switching between the same table modes, and not allow convert between
+// TableModeImport and TableModeRestore
+type TableMode byte
+
+const (
+	// TableModeNormal means the table is in normal mode.
+	TableModeNormal TableMode = iota
+	// TableModeImport means the table is in import mode.
+	TableModeImport
+	// TableModeRestore means the table is in restore mode.
+	TableModeRestore
+)
+
+// String implements fmt.Stringer interface.
+func (t TableMode) String() string {
+	switch t {
+	case TableModeNormal:
+		return "Normal"
+	case TableModeImport:
+		return "Import"
+	case TableModeRestore:
+		return "Restore"
+	default:
+		return ""
+	}
+}
+
+// CanTransitionTo returns whether the table mode can transition from t to target.
+// Now only block import/restore to convert to each other.
+// TODO: Now allow switching between the same table modes, but additional validation will be added later
+// to verify that only the same modification source can perform ALTER same table mode.
+func (t TableMode) CanTransitionTo(target TableMode) bool {
+	if t == TableModeImport && target == TableModeRestore {
+		return false
+	}
+	if t == TableModeRestore && target == TableModeImport {
+		return false
+	}
+	return true
+}
+
+// AlterTableModeTarget describes a table-mode change request and, after resolution,
+// the metadata needed to build an AlterTableMode job.
+type AlterTableModeTarget struct {
+	// SchemaID is required input for AlterTableMode requests. It identifies the
+	// schema containing the target table.
+	SchemaID int64
+	// SchemaName is required input for cross-keyspace AlterTableMode requests
+	// and is runtime-populated for local DDL requests. Resolvers validate it
+	// against metadata before building the job.
+	SchemaName ast.CIStr
+	// TableID is required input for AlterTableMode requests. It identifies the
+	// table whose mode should change.
+	TableID int64
+	// TableName is required input for cross-keyspace AlterTableMode requests and
+	// is runtime-populated for local DDL requests. Resolvers validate it against
+	// metadata before building the job.
+	TableName ast.CIStr
+	// CurrentMode is runtime-populated from table metadata during AlterTableMode
+	// resolution. It is required only for resolved targets passed to
+	// jobsubmit.BuildAlterTableModeJob.
+	CurrentMode TableMode
+	// TargetMode is required input for AlterTableMode requests. It is the table
+	// mode requested by the caller.
+	TargetMode TableMode
+}

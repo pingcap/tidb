@@ -605,6 +605,7 @@
     "Name": "TestAggPrune",
     "Cases": [
       "DataScan(t)->Projection",
+      "DataScan(t)->Projection",
       "DataScan(t)->Aggr(sum(test.t.b))->Projection",
       "DataScan(t)->Projection",
       "DataScan(t)->Projection",

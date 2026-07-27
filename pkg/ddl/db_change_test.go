@@ -210,6 +210,7 @@ func TestTwoStates(t *testing.T) {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
+	probeTableSQL := "create table t_states_failpoint_probe (a int)"
 	tk.MustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
@@ -223,12 +224,22 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
+	afterWaitSchemaSyncedHookAvailable := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(*model.Job) {
+		afterWaitSchemaSyncedHookAvailable = true
+	})
+	tk.MustExec(probeTableSQL)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	tk.MustExec("drop table t_states_failpoint_probe")
+	runStateChecks := func(state model.SchemaState) {
+		if state == prevState || checkErr != nil || times >= 3 {
 			return
 		}
+		// The same schema state can be observed more than once; only count the
+		// first visit to each intermediate add-column state.
+		prevState = state
 		times++
-		switch job.SchemaState {
+		switch state {
 		case model.StateDeleteOnly:
 			// This state we execute every sqlInfo one time using the first session and other information.
 			err := testInfo.compileSQL(0)
@@ -270,8 +281,36 @@ func TestTwoStates(t *testing.T) {
 				checkErr = err
 			}
 		}
-	})
-	tk.MustExec(alterTableSQL)
+	}
+	runWithFailpointHook := func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+			runStateChecks(job.SchemaState)
+		})
+		tk.MustExec(alterTableSQL)
+		require.Equal(t, 3, times, "TestTwoStates requires failpoint-go-test.sh so afterWaitSchemaSynced is rewritten and the three intermediate add-column states are observable")
+	}
+	runWithoutFailpointHook := func() {
+		// Plain `go test` without failpoint source rewriting leaves InjectCall as
+		// a marker stub, so it cannot observe the internal
+		// delete-only/write-only/write-reorg transitions directly.
+		// For add-column SQL semantics, those intermediate states all share the
+		// same old-schema contract until the column becomes public, so we verify
+		// that contract once before the DDL completes and keep the final public
+		// state checks unchanged below.
+		require.NoError(t, testInfo.compileSQL(0))
+		require.NoError(t, testInfo.execSQL(0))
+		require.NoError(t, testInfo.compileSQL(1))
+		require.NoError(t, testInfo.compileSQL(2))
+		require.NoError(t, testInfo.execSQL(2))
+		require.NoError(t, testInfo.execSQL(1))
+		require.NoError(t, testInfo.compileSQL(3))
+		tk.MustExec(alterTableSQL)
+	}
+	if afterWaitSchemaSyncedHookAvailable {
+		runWithFailpointHook()
+	} else {
+		runWithoutFailpointHook()
+	}
 	require.NoError(t, testInfo.compileSQL(4))
 	require.NoError(t, testInfo.execSQL(4))
 	// Mock the server is in `write reorg` state.

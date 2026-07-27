@@ -9,12 +9,21 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
+)
+
+const (
+	// uploadConcurrency and uploadPartSize configure the concurrent multipart
+	// upload of data files. 5 MiB is the object store's minimum part size
+	// (S3/GCS).
+	uploadConcurrency = 4
+	uploadPartSize    = 5 * units.MiB
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -245,9 +254,14 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		return err
 	}
 
+	var wo *storeapi.WriterOption
+	if format == FileFormatCSV || format == FileFormatSQLText {
+		wo = &storeapi.WriterOption{Concurrency: uploadConcurrency, PartSize: uploadPartSize}
+	}
+
 	somethingIsWritten := false
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
+		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType, wo)
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDownErr := tearDown(tctx)
 		if err != nil {
@@ -309,14 +323,6 @@ type outputFileNamer struct {
 	DB         string
 	Table      string
 	format     string
-}
-
-type csvOption struct {
-	nullValue      string
-	separator      []byte
-	delimiter      []byte
-	lineTerminator []byte
-	binaryFormat   BinaryFormat
 }
 
 func newOutputFileNamer(meta TableMeta, chunkIdx int, rows, fileSize bool) *outputFileNamer {

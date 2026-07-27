@@ -558,6 +558,14 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 	})
 }
 
+// PrepareForActivation binds the server listener and only then ends standby, so the
+// activation API reports success after the server is ready to accept connections.
+func (c *LoadKeyspaceController) PrepareForActivation(svr server.StandbyReadyServer) error {
+	err := svr.InitTiDBListener()
+	c.EndStandby(err)
+	return err
+}
+
 // EndStandby is used to notify the temp http server that the tidb server is ready or failed to init.
 func (c *LoadKeyspaceController) EndStandby(err error) {
 	c.endOnce.Do(func() {

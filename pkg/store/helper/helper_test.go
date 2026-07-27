@@ -290,6 +290,10 @@ func (s *mockStore) EtcdAddrs() ([]string, error) {
 	return s.pdAddrs, nil
 }
 
+func (s *mockStore) GetPDAddrs() ([]string, error) {
+	return s.pdAddrs, nil
+}
+
 func (s *mockStore) StartGCWorker() error {
 	panic("not implemented")
 }

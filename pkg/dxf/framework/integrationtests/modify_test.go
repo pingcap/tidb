@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	mockexecute "github.com/pingcap/tidb/pkg/dxf/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -513,7 +514,7 @@ func TestModifyTaskMaxNodeCountForSubtaskBalance(t *testing.T) {
 			return runtimeInfo.activeSubtaskCount.Load() == 1
 		}, 10*time.Second, 100*time.Millisecond)
 		require.NoError(t, c.TaskMgr.WithNewSession(func(se sessionctx.Context) error {
-			rows, err2 := sqlexec.ExecSQL(c.Ctx, se.GetSQLExecutor(), "select count(distinct exec_id) from mysql.tidb_background_subtask where task_key = %?", task.ID)
+			rows, err2 := sqlexec.ExecSQL(c.Ctx, se.GetSQLExecutor(), "select count(distinct exec_id) from mysql.tidb_background_subtask where task_key = %?", storage.TaskIDToKey(task.ID))
 			require.NoError(t, err2)
 			require.Equal(t, 1, len(rows))
 			require.EqualValues(t, 1, rows[0].GetInt64(0))
@@ -533,7 +534,7 @@ func TestModifyTaskMaxNodeCountForSubtaskBalance(t *testing.T) {
 			return runtimeInfo.activeSubtaskCount.Load() == 2
 		}, 10*time.Second, 100*time.Millisecond)
 		require.NoError(t, c.TaskMgr.WithNewSession(func(se sessionctx.Context) error {
-			rows, err2 := sqlexec.ExecSQL(c.Ctx, se.GetSQLExecutor(), "select count(distinct exec_id) from mysql.tidb_background_subtask where task_key = %?", task.ID)
+			rows, err2 := sqlexec.ExecSQL(c.Ctx, se.GetSQLExecutor(), "select count(distinct exec_id) from mysql.tidb_background_subtask where task_key = %?", storage.TaskIDToKey(task.ID))
 			require.NoError(t, err2)
 			require.Equal(t, 1, len(rows))
 			require.EqualValues(t, 2, rows[0].GetInt64(0))

@@ -79,11 +79,13 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type basicHTTPHandlerTestSuite struct {
@@ -655,7 +657,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := tablecodec.EncodeRow(codec.NewEncoder(collate.NewCollationEnabled()), sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	bin := base64.StdEncoding.EncodeToString(bs)
@@ -1244,6 +1246,13 @@ func TestDebugZip(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
+	core, recorded := observer.New(zap.InfoLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+		Core:  core,
+		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+	})
+	defer restore()
+
 	resp, err := ts.FetchStatus("/debug/zip?seconds=1")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -1251,6 +1260,14 @@ func TestDebugZip(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len(b), 0)
 	require.NoError(t, resp.Body.Close())
+
+	profilingLogs := recorded.FilterMessage("profiling request received").
+		FilterField(zap.String("path", "/debug/zip")).
+		FilterField(zap.String("seconds", "1"))
+	require.Len(t, profilingLogs.All(), 1)
+	fields := profilingLogs.All()[0].ContextMap()
+	require.Equal(t, http.MethodGet, fields["method"])
+	require.NotEmpty(t, fields["remote-addr"])
 }
 
 func TestCheckCN(t *testing.T) {

@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -106,7 +107,11 @@ func getTableImporter(
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
+	tbl, err := tables.TableFromMetaWithCollate(
+		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		idAlloc,
+		taskMeta.Plan.TableInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -123,9 +128,19 @@ func getTableImporter(
 	}
 
 	failpoint.Inject("createTableImporterForTest", func() {
-		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
+		failpoint.Return(importer.NewTableImporterForTest(
+			ctx,
+			controller,
+			strconv.FormatInt(taskID, 10),
+			store,
+		))
 	})
-	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
+	return importer.NewTableImporter(
+		ctx,
+		controller,
+		strconv.FormatInt(taskID, 10),
+		store,
+	)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {

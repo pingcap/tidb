@@ -397,6 +397,9 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *physicalop.BatchPointGetPl
 			}
 			for j, param := range params {
 				if param != nil {
+					if j >= len(x.IndexColTypes) || x.IndexColTypes[j] == nil {
+						return errors.New("rebuild to get an unsafe range, missing index column type")
+					}
 					dVal, err := convertConstant2Datum(sctx, param, x.IndexColTypes[j])
 					if err != nil {
 						return err

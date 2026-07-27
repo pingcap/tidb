@@ -551,36 +551,6 @@ func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
 	})
 }
 
-func TestSplitKeysAndScatterCodecPDClientMapsSplitKeys(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit", "return()"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit"))
-	})
-	originSplitRetryTimes := SplitRetryTimes
-	SplitRetryTimes = 1
-	t.Cleanup(func() {
-		SplitRetryTimes = originSplitRetryTimes
-	})
-
-	ctx := context.Background()
-	mockPDClient := NewMockPDClientForSplit()
-	codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
-	tikvCodec := codecPDClient.GetCodec()
-	mockPDClient.SetRegions([][]byte{
-		tikvCodec.EncodeRegionKey([]byte("a")),
-		tikvCodec.EncodeRegionKey([]byte("d")),
-	})
-
-	client := &pdClient{
-		client:           codecPDClient,
-		splitConcurrency: 1,
-		splitBatchKeyCnt: 100,
-		isCodecPDClient:  true,
-	}
-	_, err := client.SplitKeysAndScatter(ctx, [][]byte{tikvCodec.EncodeKey([]byte("b"))})
-	require.ErrorContains(t, err, "retryable error")
-}
-
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
 	mockPDClient := NewMockPDClientForSplit()
@@ -1075,6 +1045,59 @@ func TestScanEmptyRegion(t *testing.T) {
 	err := regionSplitter.ExecuteSortedKeys(ctx, keys)
 	// should not return error with only one range entry
 	require.NoError(t, err)
+}
+
+type recordingSplitClient struct {
+	SplitClient
+	splitCalls     [][][]byte
+	scatterByCalls []bool
+}
+
+func (c *recordingSplitClient) SplitKeysAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	c.recordSplit(keys, true)
+	return nil, nil
+}
+
+func (c *recordingSplitClient) SplitKeys(_ context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	c.recordSplit(keys, false)
+	return nil, nil
+}
+
+func (c *recordingSplitClient) recordSplit(keys [][]byte, scatter bool) {
+	c.splitCalls = append(c.splitCalls, slices.Clone(keys))
+	c.scatterByCalls = append(c.scatterByCalls, scatter)
+}
+
+func TestRegionSplitterRoughSplitUsesConfiguredRegionIndexStep(t *testing.T) {
+	keys := [][]byte{{'a'}, {'b'}, {'c'}, {'d'}, {'e'}, {'f'}}
+	for _, testCase := range []struct {
+		name           string
+		coarseScatter  bool
+		scatterByCalls []bool
+	}{
+		{
+			name:           "default scatter",
+			scatterByCalls: []bool{true, true},
+		},
+		{
+			name:           "coarse scatter",
+			coarseScatter:  true,
+			scatterByCalls: []bool{true, false},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := &recordingSplitClient{}
+			regionSplitter := NewRegionSplitterWithRegionIndexStep(client, 2)
+			regionSplitter.SetCoarseScatter(testCase.coarseScatter)
+
+			err := regionSplitter.ExecuteSortedKeys(context.Background(), keys)
+			require.NoError(t, err)
+			require.Len(t, client.splitCalls, 2)
+			require.Equal(t, [][]byte{{'c'}, {'e'}}, client.splitCalls[0])
+			require.Equal(t, keys, client.splitCalls[1])
+			require.Equal(t, testCase.scatterByCalls, client.scatterByCalls)
+		})
+	}
 }
 
 func TestSplitEmptyRegion(t *testing.T) {

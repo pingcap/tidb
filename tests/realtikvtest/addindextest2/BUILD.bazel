@@ -35,6 +35,8 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
         "//tests/realtikvtest",
         "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",

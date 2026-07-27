@@ -28,7 +28,7 @@ go_test(
     ],
     embed = [":metaservice"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/pdpb",

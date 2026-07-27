@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
@@ -64,6 +65,8 @@ type BuildOptions struct {
 	AllowCastArray bool
 	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
 	TargetFieldType *types.FieldType
+	// UseNewCollate whether to use new collate when building expression.
+	UseNewCollate bool
 }
 
 // BuildOption is a function to apply optional settings
@@ -98,6 +101,14 @@ func WithAllowCastArray(allow bool) BuildOption {
 func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	return func(options *BuildOptions) {
 		options.TargetFieldType = targetFt
+	}
+}
+
+// WithUseNewCollate fixes the collation mode used while building expressions
+// that must stay consistent with table or index encoding created earlier.
+func WithUseNewCollate(useNewCollate bool) BuildOption {
+	return func(options *BuildOptions) {
+		options.UseNewCollate = useNewCollate
 	}
 }
 
@@ -1096,6 +1107,18 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
 func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+	return ColumnInfos2ColumnsAndNamesWithCollate(ctx, dbName, tblName, colInfos, tblInfo, collate.NewCollationEnabled())
+}
+
+// ColumnInfos2ColumnsAndNamesWithCollate converts the ColumnInfo to the *Column
+// and NameSlice with a fixed collation mode.
+func ColumnInfos2ColumnsAndNamesWithCollate(
+	ctx BuildContext,
+	dbName, tblName ast.CIStr,
+	colInfos []*model.ColumnInfo,
+	tblInfo *model.TableInfo,
+	useNewCollate bool,
+) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1136,7 +1159,10 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := BuildSimpleExpr(ctx, expr, WithInputSchemaAndNames(mockSchema, names, tblInfo), WithAllowCastArray(true))
+			e, err := BuildSimpleExpr(ctx, expr,
+				WithInputSchemaAndNames(mockSchema, names, tblInfo),
+				WithAllowCastArray(true),
+				WithUseNewCollate(useNewCollate))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

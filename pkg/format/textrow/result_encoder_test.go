@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,28 +12,52 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package column
+package textrow_test
 
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/format/textrow"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResultEncoder(t *testing.T) {
 	// Encode bytes to utf-8.
-	d := NewResultEncoder("utf-8")
+	d := textrow.NewResultEncoder("utf-8")
 	src := []byte("test_string")
 	result := d.EncodeMeta(src)
 	require.Equal(t, src, result)
 
 	// Encode bytes to GBK.
-	d = NewResultEncoder("gbk")
+	d = textrow.NewResultEncoder("gbk")
 	result = d.EncodeMeta([]byte("一"))
 	require.Equal(t, []byte{0xd2, 0xbb}, result)
 
 	// Encode bytes to binary.
-	d = NewResultEncoder("binary")
+	d = textrow.NewResultEncoder("binary")
 	result = d.EncodeMeta([]byte("一"))
 	require.Equal(t, "一", string(result))
+}
+
+func TestIsStringColumnType(t *testing.T) {
+	stringTypes := []byte{
+		mysql.TypeString,
+		mysql.TypeVarString,
+		mysql.TypeVarchar,
+		mysql.TypeBit,
+		mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob,
+		mysql.TypeLongBlob,
+		mysql.TypeBlob,
+		mysql.TypeEnum,
+		mysql.TypeSet,
+		mysql.TypeJSON,
+		mysql.TypeTiDBVectorFloat32,
+	}
+	for _, tp := range stringTypes {
+		require.True(t, textrow.IsStringColumnType(tp), "type %d", tp)
+	}
+
+	require.False(t, textrow.IsStringColumnType(mysql.TypeLonglong))
 }

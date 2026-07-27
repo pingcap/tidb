@@ -148,7 +148,7 @@ func (d *Deleter) deleteKeysWithRetry(ctx context.Context, keys []tidbkv.Key) er
 	})
 }
 
-func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) error {
+func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) (resErr error) {
 	if d.trafficRec != nil {
 		var writeBytes uint64
 		for _, k := range keys {
@@ -162,8 +162,8 @@ func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) err
 		return errors.Trace(err)
 	}
 	defer func() {
-		if err == nil {
-			err = txn.Commit(ctx)
+		if resErr == nil {
+			resErr = txn.Commit(ctx)
 		} else {
 			if rollbackErr := txn.Rollback(); rollbackErr != nil {
 				d.logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))

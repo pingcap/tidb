@@ -16,7 +16,6 @@ package taskexecutor
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -331,8 +330,8 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		}
 	}()
 
-	holderID := fmt.Sprintf("DXF/executor/%d", task.ID)
-	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(m.taskTable, m.store.GetKeyspace(), task.Keyspace, holderID)
+	holderID := dxfutil.GenHolderID("executor", task.ID)
+	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(m.taskTable, task.Keyspace, holderID)
 	if err != nil {
 		m.logger.Warn("acquire task runtime failed", zap.Int64("task-id", taskBase.ID),
 			zap.String("task-key", taskBase.Key), zap.Error(err))

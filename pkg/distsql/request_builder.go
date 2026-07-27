@@ -363,6 +363,7 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 		builder.SetPaging(dctx.EnablePaging)
 		builder.Request.Paging.MinPagingSize = uint64(dctx.MinPagingSize)
 		builder.Request.Paging.MaxPagingSize = uint64(dctx.MaxPagingSize)
+		builder.Request.Paging.PagingSizeBytes = uint64(dctx.PagingSizeBytes)
 	}
 	builder.RequestSource.RequestSourceInternal = dctx.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = dctx.RequestSourceType

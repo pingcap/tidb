@@ -50,6 +50,10 @@ func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
 func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }

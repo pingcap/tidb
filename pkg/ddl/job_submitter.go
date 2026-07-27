@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -293,16 +292,5 @@ func (s *JobSubmitter) notifyNewJobSubmitted() {
 		asyncNotify(s.ddlJobNotifyCh)
 		return
 	}
-	s.notifyNewJobByEtcd()
-}
-
-func (s *JobSubmitter) notifyNewJobByEtcd() {
-	if s.etcdCli == nil {
-		return
-	}
-
-	err := ddlutil.PutKVToEtcd(s.ctx, s.etcdCli, 1, ddlutil.AddingDDLJobNotifyKey, "0")
-	if err != nil {
-		logutil.DDLLogger().Info("notify new DDL job failed", zap.Error(err))
-	}
+	jobsubmit.NotifyDDLOwnerByEtcd(s.ctx, s.etcdCli)
 }

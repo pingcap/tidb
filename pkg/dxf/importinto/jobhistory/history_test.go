@@ -29,9 +29,19 @@ func TestGetFromHistory(t *testing.T) {
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
 
 	const (
-		keyspace = "ks1"
-		jobID    = int64(9527)
+		keyspace       = "ks1"
+		jobID          = int64(9527)
+		adjacentTaskID = int64(9007199254740992)
+		targetTaskID   = int64(9007199254740993)
 	)
+	_, err := tm.ExecuteSQLWithNewSession(ctx,
+		"alter table mysql.tidb_global_task auto_increment = 9007199254740992")
+	require.NoError(t, err)
+	gotAdjacentTaskID, err := tm.CreateTask(ctx, taskkey.ForJobInKeyspace(keyspace, jobID+1), proto.ImportInto,
+		keyspace, 8, "", 4, proto.ExtraParams{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, adjacentTaskID, gotAdjacentTaskID)
+
 	taskMeta := []byte(`{
 		"Plan": {
 			"DistSQLScanConcurrency": 16,
@@ -47,6 +57,7 @@ func TestGetFromHistory(t *testing.T) {
 	}`)
 	taskID, err := tm.CreateTask(ctx, taskkey.ForJobInKeyspace(keyspace, jobID), proto.ImportInto, keyspace, 8, "", 4, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
+	require.Equal(t, targetTaskID, taskID)
 
 	encodeID := testutil.InsertSubtask(t, tm, taskID, proto.ImportStepEncodeAndSort, "tidb-1",
 		[]byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.ImportInto, 8)
@@ -69,10 +80,15 @@ func TestGetFromHistory(t *testing.T) {
 	updateSubtask(dataID, 700, 2500, `{"bytes": 1073741824}`, `{"kv-group":"data"}`)
 	updateSubtask(indexID, 900, 2100, `{"bytes": 536870912}`, `{"kv-group":"index-1"}`)
 	updateSubtask(invalidDurationID, 0, 0, `{"bytes": 0}`, `{"kv-group":"data"}`)
+	adjacentID := testutil.InsertSubtask(t, tm, adjacentTaskID, proto.ImportStepWriteAndIngest, "tidb-2",
+		[]byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.ImportInto, 8)
+	updateSubtask(adjacentID, 50, 4000, `{"bytes": 4294967296}`, `{"kv-group":"data"}`)
 
 	task, err := tm.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
-	require.NoError(t, tm.TransferTasks2History(ctx, []*proto.Task{task}))
+	adjacentTask, err := tm.GetTaskByID(ctx, adjacentTaskID)
+	require.NoError(t, err)
+	require.NoError(t, tm.TransferTasks2History(ctx, []*proto.Task{task, adjacentTask}))
 
 	info, err := jobhistory.GetFromHistory(ctx, tm, keyspace, jobID)
 	require.NoError(t, err)
@@ -100,6 +116,6 @@ func TestGetFromHistory(t *testing.T) {
 	require.Empty(t, info.Duration.ResolveConflicts)
 	require.Empty(t, info.Duration.PostProcess)
 
-	_, err = jobhistory.GetFromHistory(ctx, tm, keyspace, jobID+1)
+	_, err = jobhistory.GetFromHistory(ctx, tm, keyspace, jobID+2)
 	require.ErrorContains(t, err, "not found in history")
 }

@@ -88,6 +88,14 @@ func TestParseParquetSizeFlags(t *testing.T) {
 	require.EqualValues(t, 128*units.MiB, conf.ParquetRowGroupSize)
 }
 
+func TestParseCSVOutputDialectAcceptsUppercaseFileTypeAndDialect(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t,
+		"--filetype", "CSV",
+		"--csv-output-dialect", "SNOWFLAKE",
+	)
+	require.Equal(t, CSVDialectSnowflake, conf.CsvOutputDialect)
+}
+
 func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 	t.Run("reject template without index when rows split mode and output template are both specified", func(t *testing.T) {
 		_, err := parseConfigFromArgsForTestWithErr(t,

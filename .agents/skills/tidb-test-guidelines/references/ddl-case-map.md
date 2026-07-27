@@ -11,7 +11,7 @@
 ### Tests
 - `pkg/ddl/affinity_test.go` - ddl: Tests affinity build group definitions table.
 - `pkg/ddl/attributes_sql_test.go` - ddl: Tests alter table partition attributes.
-- `pkg/ddl/backfilling_dist_scheduler_test.go` - ddl: Tests backfilling scheduler local mode.
+- `pkg/ddl/backfilling_dist_scheduler_test.go` - ddl: Tests backfilling scheduler local mode and backfilling plan retries.
 - `pkg/ddl/backfilling_test.go` - ddl: Tests done task keeper.
 - `pkg/ddl/backfilling_txn_executor_test.go` - ddl: Tests expected ingest worker count.
 - `pkg/ddl/bdr_test.go` - ddl: Tests denied by BDR when add column.
@@ -51,6 +51,7 @@
 - `pkg/ddl/job_submitter_test.go` - ddl: Tests gen ID and insert jobs with retry.
 - `pkg/ddl/job_worker_test.go` - ddl: Tests check owner.
 - `pkg/ddl/main_test.go` - Configures default goleak settings and registers testdata.
+- `pkg/ddl/masking_policy_internal_test.go` - ddl: Tests missing masking-policy system table errors during DDL operations.
 - `pkg/ddl/metabuild_test.go` - ddl: Tests new meta build context with session ctx.
 - `pkg/ddl/modify_column_test.go` - ddl: Tests modify column reorg info.
 - `pkg/ddl/multi_schema_change_test.go` - ddl: Tests multi schema change add columns cancelled.

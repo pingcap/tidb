@@ -572,7 +572,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		return nodeWithHint.p, nil
 	}
 
-	slices.SortFunc(nodes, func(a, b *Node) int {
+	slices.SortStableFunc(nodes, func(a, b *Node) int {
 		return cmp.Compare(a.cumCost, b.cumCost)
 	})
 

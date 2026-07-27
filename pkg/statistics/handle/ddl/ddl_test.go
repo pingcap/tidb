@@ -1475,21 +1475,42 @@ func TestDropSchema(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int)")
+	tk.MustExec(`
+		create table pt (c1 int)
+		partition by range (c1) (
+			partition p0 values less than (10),
+			partition p1 values less than (20)
+		)
+	`)
 	h := dom.StatsHandle()
 	tk.MustExec("insert into t values (1)")
-	tk.MustExec("flush stats_delta *.*")
+	tk.MustExec("insert into pt values (1), (11)")
+	tk.MustExec("analyze table t, pt")
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
+	partitionedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	require.NoError(t, err)
+	partitionedTableInfo := partitionedTbl.Meta()
+	require.NotNil(t, partitionedTableInfo.Partition)
+	require.Len(t, partitionedTableInfo.Partition.Definitions, 2)
+	statsMetaVersion := func(tableID int64) string {
+		rows := tk.MustQuery(
+			"select version from mysql.stats_meta where table_id = ?",
+			tableID,
+		).Rows()
+		require.Len(t, rows, 1)
+		return rows[0][0].(string)
+	}
 	// Check the current stats meta version.
-	rows := tk.MustQuery(
-		"select version from mysql.stats_meta where table_id = ?",
-		tableInfo.ID,
-	).Rows()
-	require.Len(t, rows, 1)
-	version := rows[0][0].(string)
+	tableVersion := statsMetaVersion(tableInfo.ID)
+	partitionedGlobalVersion := statsMetaVersion(partitionedTableInfo.ID)
+	partitionVersions := make(map[int64]string, len(partitionedTableInfo.Partition.Definitions))
+	for _, def := range partitionedTableInfo.Partition.Definitions {
+		partitionVersions[def.ID] = statsMetaVersion(def.ID)
+	}
 
 	tk.MustExec("drop database test")
 
@@ -1499,12 +1520,11 @@ func TestDropSchema(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check the stats meta version after drop schema.
-	rows = tk.MustQuery(
-		"select version from mysql.stats_meta where table_id = ?",
-		tableInfo.ID,
-	).Rows()
-	require.Len(t, rows, 1)
-	require.NotEqual(t, version, rows[0][0].(string))
+	require.NotEqual(t, tableVersion, statsMetaVersion(tableInfo.ID))
+	require.NotEqual(t, partitionedGlobalVersion, statsMetaVersion(partitionedTableInfo.ID))
+	for _, def := range partitionedTableInfo.Partition.Definitions {
+		require.NotEqual(t, partitionVersions[def.ID], statsMetaVersion(def.ID))
+	}
 }
 
 func TestExchangePartition(t *testing.T) {

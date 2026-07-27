@@ -37,6 +37,14 @@ func TestParallelDistinctSum(t *testing.T) {
 	testParallelDistinctAggCases(t, ast.AggFuncSum, dataTypes, 10000, false)
 }
 
+func TestParallelDistinctSumInt(t *testing.T) {
+	signedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.AddFlag(mysql.UnsignedFlag)
+	dataTypes := []*types.FieldType{signedType, unsignedType}
+	testParallelDistinctAggCases(t, ast.AggFuncSumInt, dataTypes, 10000, false)
+}
+
 func TestParallelDistinctAvg(t *testing.T) {
 	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeNewDecimal)}
 	testParallelDistinctAggCases(t, ast.AggFuncAvg, dataTypes, 10000, false)

@@ -967,7 +967,7 @@ func (d *dispatcher) run() error {
 	for {
 		select {
 		case <-d.workerCtx.Done():
-			return nil
+			return d.workerCtx.Err()
 		case job, ok = <-d.jobFromWorkerCh:
 		}
 		if !ok {

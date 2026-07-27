@@ -10,9 +10,11 @@
 package mock
 
 import (
+	context "context"
 	reflect "reflect"
 
 	kv "github.com/pingcap/tidb/pkg/kv"
+	model "github.com/pingcap/tidb/pkg/meta/model"
 	util "github.com/pingcap/tidb/pkg/util"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -43,6 +45,20 @@ func (m *MockKSRuntimeHandle) EXPECT() *MockKSRuntimeHandleMockRecorder {
 // ISGOMOCK indicates that this struct is a gomock mock.
 func (m *MockKSRuntimeHandle) ISGOMOCK() struct{} {
 	return struct{}{}
+}
+
+// AlterTableMode mocks base method.
+func (m *MockKSRuntimeHandle) AlterTableMode(arg0 context.Context, arg1 model.AlterTableModeTarget) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AlterTableMode", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AlterTableMode indicates an expected call of AlterTableMode.
+func (mr *MockKSRuntimeHandleMockRecorder) AlterTableMode(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AlterTableMode", reflect.TypeOf((*MockKSRuntimeHandle)(nil).AlterTableMode), arg0, arg1)
 }
 
 // Release mocks base method.

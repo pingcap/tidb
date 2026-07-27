@@ -31,9 +31,34 @@ import (
 
 // TiflashStats contains tiflash execution stats.
 type TiflashStats struct {
-	scanContext    TiFlashScanContext
-	waitSummary    TiFlashWaitSummary
-	networkSummary TiFlashNetworkTrafficSummary
+	scanContext         TiFlashScanContext
+	columnarScanContext TiFlashColumnarScanContext
+	waitSummary         TiFlashWaitSummary
+	networkSummary      TiFlashNetworkTrafficSummary
+}
+
+// TiFlashColumnarScanContext is used to express the table scan information in tiflash columnar read path.
+type TiFlashColumnarScanContext struct {
+	hasStats                bool
+	regions                 uint64
+	readTasks               uint64
+	physicalTables          uint64
+	columns                 uint64
+	userReadBytes           uint64
+	mvccInputRows           uint64
+	mvccInputBytes          uint64
+	mvccOutputRows          uint64
+	totalReadBlockMs        uint64
+	totalSerializeBlockMs   uint64
+	totalInitReaderMs       uint64
+	totalPrefetchMs         uint64
+	roughCheckTotalPacks    uint64
+	roughCheckSelectedPacks uint64
+	roughCheckSkippedPacks  uint64
+	roughCheckUnknownPacks  uint64
+	remoteSegments          uint64
+	totalSegments           uint64
+	totalDeserializeBlockMs uint64
 }
 
 // TiFlashScanContext is used to express the table scan information in tiflash
@@ -532,6 +557,153 @@ func (context *TiFlashScanContext) Empty() bool {
 		context.ftsNFromDmfIndex == 0 &&
 		context.ftsNFromDmfNoindex == 0
 	return res
+}
+
+// Clone implements the deep copy of * TiFlashColumnarScanContext
+func (context *TiFlashColumnarScanContext) Clone() TiFlashColumnarScanContext {
+	return TiFlashColumnarScanContext{
+		hasStats:                context.hasStats,
+		regions:                 context.regions,
+		readTasks:               context.readTasks,
+		physicalTables:          context.physicalTables,
+		columns:                 context.columns,
+		userReadBytes:           context.userReadBytes,
+		mvccInputRows:           context.mvccInputRows,
+		mvccInputBytes:          context.mvccInputBytes,
+		mvccOutputRows:          context.mvccOutputRows,
+		totalReadBlockMs:        context.totalReadBlockMs,
+		totalSerializeBlockMs:   context.totalSerializeBlockMs,
+		totalInitReaderMs:       context.totalInitReaderMs,
+		totalPrefetchMs:         context.totalPrefetchMs,
+		roughCheckTotalPacks:    context.roughCheckTotalPacks,
+		roughCheckSelectedPacks: context.roughCheckSelectedPacks,
+		roughCheckSkippedPacks:  context.roughCheckSkippedPacks,
+		roughCheckUnknownPacks:  context.roughCheckUnknownPacks,
+		remoteSegments:          context.remoteSegments,
+		totalSegments:           context.totalSegments,
+		totalDeserializeBlockMs: context.totalDeserializeBlockMs,
+	}
+}
+
+func (context *TiFlashColumnarScanContext) String() string {
+	return fmt.Sprintf("columnar_scan:{"+
+		"mvcc_input_rows:%d, "+
+		"mvcc_input_bytes:%d, "+
+		"mvcc_output_rows:%d, "+
+		"regions:%d, "+
+		"read_tasks:%d, "+
+		"physical_tables:%d, "+
+		"columns:%d, "+
+		"user_read_bytes:%d, "+
+		"read_block:%dms, "+
+		"serialize_block:%dms, "+
+		"init_reader:%dms, "+
+		"prefetch:%dms, "+
+		"deserialize_block:%dms, "+
+		"rough_check:{total:%d, selected:%d, skipped:%d, unknown:%d}, "+
+		"remote_segments:%d, "+
+		"total_segments:%d}",
+		context.mvccInputRows,
+		context.mvccInputBytes,
+		context.mvccOutputRows,
+		context.regions,
+		context.readTasks,
+		context.physicalTables,
+		context.columns,
+		context.userReadBytes,
+		context.totalReadBlockMs,
+		context.totalSerializeBlockMs,
+		context.totalInitReaderMs,
+		context.totalPrefetchMs,
+		context.totalDeserializeBlockMs,
+		context.roughCheckTotalPacks,
+		context.roughCheckSelectedPacks,
+		context.roughCheckSkippedPacks,
+		context.roughCheckUnknownPacks,
+		context.remoteSegments,
+		context.totalSegments)
+}
+
+// Merge make sum to merge the information in TiFlashColumnarScanContext
+func (context *TiFlashColumnarScanContext) Merge(other TiFlashColumnarScanContext) {
+	context.hasStats = context.hasStats || other.hasStats
+	context.regions += other.regions
+	context.readTasks += other.readTasks
+	if other.physicalTables > context.physicalTables {
+		context.physicalTables = other.physicalTables
+	}
+	if other.columns > context.columns {
+		context.columns = other.columns
+	}
+	context.userReadBytes += other.userReadBytes
+	context.mvccInputRows += other.mvccInputRows
+	context.mvccInputBytes += other.mvccInputBytes
+	context.mvccOutputRows += other.mvccOutputRows
+	context.totalReadBlockMs += other.totalReadBlockMs
+	context.totalSerializeBlockMs += other.totalSerializeBlockMs
+	context.totalInitReaderMs += other.totalInitReaderMs
+	context.totalPrefetchMs += other.totalPrefetchMs
+	context.roughCheckTotalPacks += other.roughCheckTotalPacks
+	context.roughCheckSelectedPacks += other.roughCheckSelectedPacks
+	context.roughCheckSkippedPacks += other.roughCheckSkippedPacks
+	context.roughCheckUnknownPacks += other.roughCheckUnknownPacks
+	context.remoteSegments += other.remoteSegments
+	context.totalSegments += other.totalSegments
+	context.totalDeserializeBlockMs += other.totalDeserializeBlockMs
+}
+
+func (context *TiFlashColumnarScanContext) mergeExecSummary(summary *tipb.ColumnarScanContext) {
+	if summary == nil {
+		return
+	}
+	context.hasStats = true
+	context.regions += summary.GetRegions()
+	context.readTasks += summary.GetReadTasks()
+	if summary.GetPhysicalTables() > context.physicalTables {
+		context.physicalTables = summary.GetPhysicalTables()
+	}
+	if summary.GetColumns() > context.columns {
+		context.columns = summary.GetColumns()
+	}
+	context.userReadBytes += summary.GetUserReadBytes()
+	context.mvccInputRows += summary.GetMvccInputRows()
+	context.mvccInputBytes += summary.GetMvccInputBytes()
+	context.mvccOutputRows += summary.GetMvccOutputRows()
+	context.totalReadBlockMs += summary.GetTotalReadBlockMs()
+	context.totalSerializeBlockMs += summary.GetTotalSerializeBlockMs()
+	context.totalInitReaderMs += summary.GetTotalInitReaderMs()
+	context.totalPrefetchMs += summary.GetTotalPrefetchMs()
+	context.roughCheckTotalPacks += summary.GetRoughCheckTotalPacks()
+	context.roughCheckSelectedPacks += summary.GetRoughCheckSelectedPacks()
+	context.roughCheckSkippedPacks += summary.GetRoughCheckSkippedPacks()
+	context.roughCheckUnknownPacks += summary.GetRoughCheckUnknownPacks()
+	context.remoteSegments += summary.GetRemoteSegments()
+	context.totalSegments += summary.GetTotalSegments()
+	context.totalDeserializeBlockMs += summary.GetTotalDeserializeBlockMs()
+}
+
+// Empty check whether TiFlashColumnarScanContext is empty.
+func (context *TiFlashColumnarScanContext) Empty() bool {
+	return !context.hasStats &&
+		context.regions == 0 &&
+		context.readTasks == 0 &&
+		context.physicalTables == 0 &&
+		context.columns == 0 &&
+		context.userReadBytes == 0 &&
+		context.mvccInputRows == 0 &&
+		context.mvccInputBytes == 0 &&
+		context.mvccOutputRows == 0 &&
+		context.totalReadBlockMs == 0 &&
+		context.totalSerializeBlockMs == 0 &&
+		context.totalInitReaderMs == 0 &&
+		context.totalPrefetchMs == 0 &&
+		context.roughCheckTotalPacks == 0 &&
+		context.roughCheckSelectedPacks == 0 &&
+		context.roughCheckSkippedPacks == 0 &&
+		context.roughCheckUnknownPacks == 0 &&
+		context.remoteSegments == 0 &&
+		context.totalSegments == 0 &&
+		context.totalDeserializeBlockMs == 0
 }
 
 // TiFlashWaitSummary is used to express all kinds of wait information in tiflash

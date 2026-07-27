@@ -318,7 +318,7 @@ type blkStoreRegionJobWorker struct {
 func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
+			errdef.ErrKVDiskFull.GenWithStack("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
 	})
 	if w.checkTiKVSpace {
 		for _, peer := range job.region.Region.GetPeers() {

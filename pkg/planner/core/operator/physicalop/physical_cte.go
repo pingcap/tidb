@@ -321,10 +321,10 @@ type PhysicalCTESink struct {
 	CompressionMode vardef.ExchangeCompressionMode
 
 	// CteSinkNum is required by tipb.CTESink and is filled after fragment split.
-	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
+	// See mppTaskGenerator.fillLocalCTECounts.
 	CteSinkNum uint32
 	// CteSourceNum is required by tipb.CTESink and is filled after fragment split.
-	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
+	// See mppTaskGenerator.fillLocalCTECounts.
 	CteSourceNum uint32
 }
 
@@ -426,10 +426,10 @@ type PhysicalCTESource struct {
 	IDForStorage int
 
 	// CteSinkNum is required by tipb.CTESource and is filled after fragment split.
-	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
+	// See mppTaskGenerator.fillLocalCTECounts.
 	CteSinkNum uint32
 	// CteSourceNum is required by tipb.CTESource and is filled after fragment split.
-	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
+	// See mppTaskGenerator.fillLocalCTECounts.
 	CteSourceNum uint32
 }
 

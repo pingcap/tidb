@@ -61,6 +61,7 @@ go_test(
     deps = [
         "//pkg/domain/sqlsvrapi",
         "//pkg/domain/sqlsvrapi/mock",
+        "//pkg/dxf/framework/dxfutil",
         "//pkg/dxf/framework/mock",
         "//pkg/dxf/framework/mock/execute",
         "//pkg/dxf/framework/proto",

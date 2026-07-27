@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
@@ -154,6 +155,99 @@ func (s *Syncer) ttlKeyExists(ctx context.Context) (bool, error) {
 		return false, errors.New("too many arguments in resp.Kvs")
 	}
 	return len(resp.Kvs) == 1, nil
+}
+
+func TestCleanupStaleServerAndOwnerInfo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	client := cluster.RandClient()
+
+	// Configure global config so that new Syncers get IP=1.1.1.1, Port=4000.
+	bak := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(bak)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AdvertiseAddress = "1.1.1.1"
+		conf.Port = 4000
+	})
+
+	// --- Setup: write stale ServerInfo with same IP+Port but different UUID ---
+	staleID := "stale-uuid-old"
+	staleInfo := &ServerInfo{
+		StaticInfo: StaticInfo{
+			ID:             staleID,
+			IP:             "1.1.1.1",
+			Port:           4000,
+			ServerIDGetter: func() uint64 { return 0 },
+		},
+	}
+	staleInfoBuf, err := staleInfo.Marshal()
+	require.NoError(t, err)
+	staleInfoPath := serverInfoKeyPath(staleID)
+	_, err = client.Put(ctx, staleInfoPath, string(staleInfoBuf))
+	require.NoError(t, err)
+
+	// --- Setup: write stale DDL owner election key with the stale UUID as value ---
+	staleOwnerKey := util.DDLOwnerKey + "/12345"
+	_, err = client.Put(ctx, staleOwnerKey, staleID)
+	require.NoError(t, err)
+
+	// --- Setup: write another node's ServerInfo with different IP (should NOT be deleted) ---
+	otherID := "other-uuid"
+	otherInfo := &ServerInfo{
+		StaticInfo: StaticInfo{
+			ID:             otherID,
+			IP:             "2.2.2.2",
+			Port:           4000,
+			ServerIDGetter: func() uint64 { return 0 },
+		},
+	}
+	otherInfoBuf, err := otherInfo.Marshal()
+	require.NoError(t, err)
+	otherInfoPath := serverInfoKeyPath(otherID)
+	_, err = client.Put(ctx, otherInfoPath, string(otherInfoBuf))
+	require.NoError(t, err)
+
+	// --- Act: create a new Syncer with same IP+Port and call NewSessionAndStoreServerInfo ---
+	newID := "new-uuid"
+	syncer := NewSyncer(newID, func() uint64 { return 1 }, client, nil)
+	// Verify the new Syncer has the same IP+Port as the stale entry.
+	newInfo := syncer.GetLocalServerInfo()
+	require.Equal(t, "1.1.1.1", newInfo.IP)
+	require.Equal(t, uint(4000), newInfo.Port)
+	err = syncer.NewSessionAndStoreServerInfo(ctx)
+	require.NoError(t, err)
+
+	// --- Assert: stale ServerInfo should be deleted ---
+	resp, err := client.Get(ctx, staleInfoPath)
+	require.NoError(t, err)
+	require.Empty(t, resp.Kvs, "stale server info should have been deleted")
+
+	// --- Assert: stale DDL owner key should be deleted ---
+	resp, err = client.Get(ctx, staleOwnerKey)
+	require.NoError(t, err)
+	require.Empty(t, resp.Kvs, "stale DDL owner key should have been deleted")
+
+	// --- Assert: other node's ServerInfo should still exist ---
+	resp, err = client.Get(ctx, otherInfoPath)
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1, "other node's server info should not be deleted")
+
+	// --- Assert: new ServerInfo should be registered ---
+	newInfoPath := serverInfoKeyPath(newID)
+	resp, err = client.Get(ctx, newInfoPath)
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1, "new server info should be registered")
 }
 
 func TestAssumedServerInfoSyncer(t *testing.T) {

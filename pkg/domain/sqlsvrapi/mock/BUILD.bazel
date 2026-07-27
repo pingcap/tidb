@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/domain/sqlsvrapi",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/owner",
         "//pkg/util",
         "@org_uber_go_mock//gomock",

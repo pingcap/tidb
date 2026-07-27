@@ -28,6 +28,13 @@ import (
 
 const getAllMembersBackoffMs = 5000
 
+// NewEtcdMetaServiceClient creates a ServiceClient backed by etcd and PD clients.
+// When etcdCli is nil but pdCli is not, it returns a PD-only client that still
+// implements GetPDAddrs and GetPDHttpAddrs.
+func NewEtcdMetaServiceClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
+	return newClient(etcdCli, pdCli)
+}
+
 // client is used to implement etcd meta service.
 type client struct {
 	pdCli           pd.Client
@@ -36,12 +43,17 @@ type client struct {
 
 // newClient is used to implement etcd meta service.
 func newClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
-	if etcdCli == nil {
+	if etcdCli == nil && pdCli == nil {
 		return nil
 	}
+	if etcdCli != nil {
+		return &client{
+			keyspaceEtcdCli: etcdCli,
+			pdCli:           pdCli,
+		}
+	}
 	return &client{
-		keyspaceEtcdCli: etcdCli,
-		pdCli:           pdCli,
+		pdCli: pdCli,
 	}
 }
 
