@@ -30,6 +30,7 @@
 //! `context.Context`/`sessionctx` propagation, runtime stats, the SQL killer,
 //! `Detach`, parallel projection, and the many other operators.
 
+pub mod apply;
 pub mod ddl;
 pub mod driver;
 pub mod executor;
@@ -43,6 +44,7 @@ pub mod selection;
 pub mod sort;
 pub mod table_dual;
 
+pub use apply::ApplyExec;
 pub use ddl::run_create_table_on;
 pub use driver::{
     run_delete_on, run_insert_on, run_select, run_select_meta_on, run_select_on, run_update_on,
