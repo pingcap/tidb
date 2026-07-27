@@ -480,13 +480,46 @@ fn run_select_stmt(
     };
 
     // Resolve FROM: none -> table-dual; otherwise the (possibly joined) tables.
-    let (from_source, scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
+    let (mut from_source, scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
         None => (None, FromScope::default()),
         Some(join) => {
             let (exec, scope) = build_join(join, catalog, current_db)?;
             (Some(exec), scope)
         }
     };
+
+    // Go's TryFastPlan runs before the ordinary plan: a single-table SELECT
+    // whose WHERE pins the handle or a whole unique index reads that one row
+    // instead of scanning. The WHERE stays in the pipeline below, so an
+    // unsatisfied extra condition still filters the row out -- the point get
+    // narrows the source, it does not replace the filter.
+    if let Some(table) = single_kv_table(&select.from, catalog, current_db) {
+        let columns = scope.column_list();
+        if let Some(handle) = try_point_get(select, &table, &columns)? {
+            let mut table = table;
+            let rows = match handle {
+                Some(handle) => table
+                    .get_row_by_handle(handle)
+                    .map_err(|e| DriverError::Parse(format!("point get failed: {e:?}")))?
+                    .map(|row| vec![row])
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            };
+            let schema_columns: Vec<Column> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ft))| {
+                    let mut col = Column::new((i + 1) as i64, ft.clone());
+                    col.index = i as i64;
+                    col
+                })
+                .collect();
+            from_source = Some(Box::new(MemTableSourceExec::new(
+                ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                rows,
+            )));
+        }
+    }
 
     // The column resolver for this query's scope.
     let resolver = ScopeResolver { scope: &scope };
@@ -1654,6 +1687,158 @@ fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverError> {
             ))
         }
     })
+}
+
+/// The single TiKV-backed table a `FROM` names, when it names exactly one.
+/// A point get applies only to that shape (Go `getSingleTableNameAndAlias`).
+fn single_kv_table(
+    from: &Option<tidb_ast::Join>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<KvTable> {
+    let join = from.as_ref()?;
+    if join.right.is_some() {
+        return None;
+    }
+    let JoinNode::Table(table_ref) = &join.left else {
+        return None;
+    };
+    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
+    match catalog.get_in(database, name)? {
+        TableEntry::Kv(kv) => Some(kv.clone()),
+        TableEntry::Mem(_) => None,
+    }
+}
+
+/// One `column = constant` equality from a `WHERE`, Go's `nameValuePair`.
+struct NameValuePair {
+    column: String,
+    value: Datum,
+}
+
+/// Go `getNameValuePairs`: flattens a `WHERE` that is a conjunction of
+/// `column = constant` equalities into pairs, returning `None` for any other
+/// shape.
+///
+/// Go accepts the constant on either side of the `=`, and recurses only
+/// through `AND`; anything else (an `OR`, a comparison, a function call)
+/// makes the statement ineligible for a point get, which is what returning
+/// `None` means here.
+fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValuePair>) -> bool {
+    use tidb_ast::{BinaryOp, Expr};
+    match expr {
+        Expr::Paren(inner) => name_value_pairs(inner, pairs),
+        Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
+            name_value_pairs(lhs, pairs) && name_value_pairs(rhs, pairs)
+        }
+        Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
+            let (column, value) = match (&**lhs, &**rhs) {
+                (Expr::Column(path), other) => (path, other),
+                (other, Expr::Column(path)) => (path, other),
+                _ => return false,
+            };
+            let Some(name) = column.last() else {
+                return false;
+            };
+            // Only a literal qualifies; anything needing evaluation against a
+            // row is not a point-get key.
+            let Ok(value) = rewrite_expr_resolved(value, &NoResolver) else {
+                return false;
+            };
+            let Expression::Constant(constant) = value else {
+                return false;
+            };
+            let Ok(value) = constant.eval() else {
+                return false;
+            };
+            pairs.push(NameValuePair {
+                column: name.clone(),
+                value,
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The row a point get reads, when the statement qualifies for one.
+///
+/// Go `TryFastPlan`/`tryPointGetPlan`: a single-table `SELECT` with no
+/// `HAVING` and no `ORDER BY`, whose `WHERE` is a conjunction of equalities
+/// that pins either the handle or every column of a unique index, reads one
+/// row directly instead of scanning. `LIMIT` is allowed only when it cannot
+/// remove the row (`count > 0` and `offset == 0`), matching Go's check.
+///
+/// Returns `Ok(None)` when the statement does not qualify, so the caller
+/// falls back to the ordinary scan.
+fn try_point_get(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+) -> Result<Option<Option<i64>>, DriverError> {
+    if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
+        return Ok(None);
+    }
+    if let Some(limit) = &select.limit {
+        let count = eval_limit_bound(&limit.count)?;
+        let offset = match &limit.offset {
+            Some(expr) => eval_limit_bound(expr)?,
+            None => 0,
+        };
+        if count == 0 || offset > 0 {
+            return Ok(None);
+        }
+    }
+    let Some(where_clause) = &select.where_clause else {
+        return Ok(None);
+    };
+    let mut pairs = Vec::new();
+    if !name_value_pairs(where_clause, &mut pairs) || pairs.is_empty() {
+        return Ok(None);
+    }
+
+    // The handle path: the primary key pinned by exactly one equality, which
+    // is Go's `len(pairs) == 1` condition on the handle pair.
+    if let Some(handle_offset) = table.pk_handle_offset() {
+        let handle_column = &columns[handle_offset].0;
+        if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
+            return Ok(Some(match &pairs[0].value {
+                Datum::Int(value) => Some(*value),
+                Datum::UInt(value) => Some(*value as i64),
+                // A non-integer constant cannot name an integer handle, so no
+                // row matches rather than the plan being wrong.
+                _ => None,
+            }));
+        }
+    }
+
+    // The unique-index path: every column of some unique index is pinned.
+    let mut table = table.clone();
+    for index in table.indexes().to_vec() {
+        if !index.unique {
+            continue;
+        }
+        let mut values = Vec::with_capacity(index.column_offsets.len());
+        for offset in &index.column_offsets {
+            let name = &columns[*offset].0;
+            let Some(pair) = pairs
+                .iter()
+                .find(|pair| pair.column.eq_ignore_ascii_case(name))
+            else {
+                values.clear();
+                break;
+            };
+            values.push(pair.value.clone());
+        }
+        if values.len() != index.column_offsets.len() {
+            continue;
+        }
+        let handle = table
+            .lookup_unique(index.id, &values)
+            .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?;
+        return Ok(Some(handle));
+    }
+    Ok(None)
 }
 
 /// One table in a query's `FROM`: the name a qualifier must match (its alias
@@ -3447,6 +3632,171 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    /// Go's TryFastPlan: a single-table SELECT whose WHERE pins the handle or
+    /// a whole unique index reads one row instead of scanning. The results
+    /// must be identical to the scan in every case, including the cases that
+    /// do NOT qualify and fall back.
+    #[test]
+    fn point_get_plans() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE g (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO g VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        // Handle point get.
+        assert_eq!(
+            run_select_on("SELECT v FROM g WHERE id = 2", &catalog).unwrap(),
+            vec![vec![Datum::Int(20)]]
+        );
+        // A handle that does not exist reads nothing.
+        assert_eq!(
+            run_select_on("SELECT v FROM g WHERE id = 99", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        // Unique-index point get, through the entry's stored handle.
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE code = 'c'", &catalog).unwrap(),
+            vec![vec![Datum::Int(3)]]
+        );
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE code = 'zz'", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+
+        // The WHERE stays in the pipeline, so an extra condition still
+        // filters: the point get narrows the source, it does not replace the
+        // filter.
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE id = 2 AND v = 20", &catalog).unwrap(),
+            vec![vec![Datum::Int(2)]]
+        );
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE id = 2 AND v = 999", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+
+        // Shapes that do not qualify fall back to the scan and stay correct.
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE v = 30", &catalog).unwrap(),
+            vec![vec![Datum::Int(3)]],
+            "a non-key column is not a point get"
+        );
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE id > 1 ORDER BY id", &catalog).unwrap(),
+            vec![vec![Datum::Int(2)], vec![Datum::Int(3)]],
+            "a range is not a point get"
+        );
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE id = 1 OR id = 3", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)], vec![Datum::Int(3)]],
+            "Go recurses only through AND, so OR is not a point get"
+        );
+        // Go rejects the fast plan when ORDER BY or HAVING is present, or when
+        // LIMIT could remove the row; the answers stay right either way.
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE id = 2 LIMIT 1 OFFSET 1", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE id = 2 ORDER BY id", &catalog).unwrap(),
+            vec![vec![Datum::Int(2)]]
+        );
+
+        // A non-integer constant cannot name an integer handle: no row, not a
+        // wrong row.
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE id = 'x'", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+
+        // A point get sees writes, including the row a DELETE removed.
+        run_update_on("UPDATE g SET v = 99 WHERE id = 2", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT v FROM g WHERE id = 2", &catalog).unwrap(),
+            vec![vec![Datum::Int(99)]]
+        );
+        run_delete_on("DELETE FROM g WHERE id = 2", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT v FROM g WHERE id = 2", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        assert_eq!(
+            run_select_on("SELECT id FROM g WHERE code = 'b'", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new(),
+            "the deleted row's index entry is gone too"
+        );
+    }
+
+    /// The results above would be right even if the fast plan never fired, so
+    /// this asserts the DECISION: which shapes Go's tryPointGetPlan accepts
+    /// and which it rejects.
+    #[test]
+    fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE d (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("INSERT INTO d VALUES (1, 'a', 10)", &mut catalog).unwrap();
+        let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("d") else {
+            panic!("expected a kv table");
+        };
+        let columns = table
+            .columns
+            .iter()
+            .map(|c| (c.name.clone(), c.field_type.clone()))
+            .collect::<Vec<_>>();
+
+        let decides = |sql: &str| {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            let Stmt::Query(query) = &stmt else {
+                panic!("not a query")
+            };
+            let QueryStmt::Select(select) = &**query else {
+                panic!("not a select")
+            };
+            try_point_get(select, table, &columns).unwrap()
+        };
+
+        // Accepted: the handle, and a whole unique index.
+        assert_eq!(decides("SELECT v FROM d WHERE id = 1"), Some(Some(1)));
+        assert_eq!(decides("SELECT v FROM d WHERE 1 = id"), Some(Some(1)));
+        assert_eq!(decides("SELECT v FROM d WHERE code = 'a'"), Some(Some(1)));
+        // The handle path does not probe: it hands the plan the handle the
+        // constant names, and the row read finds nothing. The index path does
+        // probe, because the handle only exists in an index entry.
+        assert_eq!(decides("SELECT v FROM d WHERE id = 7"), Some(Some(7)));
+        assert_eq!(decides("SELECT v FROM d WHERE code = 'z'"), Some(None));
+        // The index path allows extra pairs beyond the key.
+        assert_eq!(
+            decides("SELECT v FROM d WHERE code = 'a' AND v = 10"),
+            Some(Some(1))
+        );
+
+        // Rejected, so the scan runs: Go requires the handle pair to be the
+        // ONLY pair, a conjunction of equalities, no ORDER BY or HAVING, and
+        // a LIMIT that cannot drop the row.
+        assert_eq!(decides("SELECT v FROM d WHERE id = 1 AND v = 10"), None);
+        assert_eq!(decides("SELECT v FROM d WHERE v = 10"), None);
+        assert_eq!(decides("SELECT v FROM d WHERE id > 1"), None);
+        assert_eq!(decides("SELECT v FROM d WHERE id = 1 OR id = 2"), None);
+        assert_eq!(decides("SELECT v FROM d WHERE id = 1 ORDER BY v"), None);
+        assert_eq!(decides("SELECT v FROM d WHERE id = 1 LIMIT 0"), None);
+        assert_eq!(
+            decides("SELECT v FROM d WHERE id = 1 LIMIT 1 OFFSET 1"),
+            None
+        );
+        assert_eq!(decides("SELECT v FROM d"), None);
     }
 
     #[test]

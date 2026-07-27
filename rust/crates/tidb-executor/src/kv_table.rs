@@ -372,6 +372,12 @@ impl KvTable {
         }
     }
 
+    /// The row stored under `handle`, decoded, or `None` when absent -- the
+    /// single read a point-get plan performs.
+    pub fn get_row_by_handle(&mut self, handle: i64) -> Result<Option<Vec<Datum>>, KvTableError> {
+        self.read_row(handle)
+    }
+
     /// The row stored under `handle`, decoded, or `None` when absent.
     fn read_row(&mut self, handle: i64) -> Result<Option<Vec<Datum>>, KvTableError> {
         let key = Key::from_bytes(encode_row_key_with_handle(
