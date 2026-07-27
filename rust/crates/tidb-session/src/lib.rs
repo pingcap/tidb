@@ -2157,13 +2157,42 @@ mod tests {
             Err(DriverError::UnsupportedDropIntegerPrimaryKey)
         ));
 
-        // An indexed column is refused rather than leaving the index pointing
-        // at a column that is gone (documented divergence from TiDB, which
-        // drops the index with it).
+        // Captured: a SINGLE-column index is dropped along with its column,
+        // while a COMPOSITE one refuses the drop with 8200.
         session
             .run("CREATE TABLE ix (a BIGINT, b BIGINT, KEY kb (b))")
             .unwrap();
-        assert!(session.run("ALTER TABLE ix DROP COLUMN b").is_err());
+        session.run("INSERT INTO ix VALUES (1, 2)").unwrap();
+        session.run("ALTER TABLE ix DROP COLUMN b").unwrap();
+        let create_ix = match session.run_with_columns("SHOW CREATE TABLE ix").unwrap() {
+            StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+        assert!(!create_ix.contains("kb"), "the index went with the column");
+        assert_eq!(
+            session.run("SELECT a FROM ix").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // A unique single-column index behaves the same way.
+        session
+            .run("CREATE TABLE uq (a BIGINT, b BIGINT, UNIQUE KEY ua (a))")
+            .unwrap();
+        session.run("ALTER TABLE uq DROP COLUMN a").unwrap();
+
+        // A composite index refuses it, and the table is unchanged.
+        session
+            .run("CREATE TABLE comp (a BIGINT, b BIGINT, c BIGINT, KEY kab (a, b))")
+            .unwrap();
+        assert!(matches!(
+            session.run("ALTER TABLE comp DROP COLUMN a"),
+            Err(DriverError::CannotDropColumnWithCompositeIndex(_))
+        ));
+        let create_comp = match session.run_with_columns("SHOW CREATE TABLE comp").unwrap() {
+            StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+        assert!(create_comp.contains("KEY `kab` (`a`,`b`)"));
 
         // An unknown table is an error, and unsupported actions are rejected.
         assert!(session

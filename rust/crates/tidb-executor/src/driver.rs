@@ -412,6 +412,8 @@ pub enum DriverError {
     },
     /// TiDB `ErrUnsupportedModifyColumn`-family (8200).
     UnsupportedDropIntegerPrimaryKey,
+    /// TiDB 8200: the column is covered by a composite index.
+    CannotDropColumnWithCompositeIndex(String),
     /// Go `ErrWrongNumberOfColumnsInSelect` (1222).
     WrongNumberOfColumnsInSelect,
     /// Go `ErrWrongAutoKey` (1075): more than one auto column.

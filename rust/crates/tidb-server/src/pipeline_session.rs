@@ -249,6 +249,15 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
             *b"42000",
             format!("can't drop only column {column} in table {table}"),
         ),
+        // TiDB: "can't drop column %s with composite index covered or Primary
+        // Key covered now".
+        tidb_executor::DriverError::CannotDropColumnWithCompositeIndex(name) => SqlQueryError::new(
+            8200,
+            *b"HY000",
+            format!(
+                "can't drop column {name} with composite index covered or Primary Key covered now"
+            ),
+        ),
         // TiDB: "Unsupported drop integer primary key".
         tidb_executor::DriverError::UnsupportedDropIntegerPrimaryKey => SqlQueryError::new(
             8200,

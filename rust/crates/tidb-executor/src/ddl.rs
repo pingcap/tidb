@@ -431,16 +431,27 @@ fn drop_column_action(
             "dropping a clustered primary key column is not supported yet",
         ));
     }
-    // An index over the column would be left addressing a column that is
-    // gone, so the drop is refused rather than silently corrupting it.
+    // Captured from TiDB: a COMPOSITE index over the column refuses the drop
+    // with 8200, while a single-column index is dropped along with it.
     if table
         .indexes()
         .iter()
-        .any(|index| index.column_offsets.contains(&offset))
+        .any(|index| index.column_offsets.len() > 1 && index.column_offsets.contains(&offset))
     {
-        return Err(DriverError::Unsupported(
-            "dropping an indexed column is not supported yet",
+        return Err(DriverError::CannotDropColumnWithCompositeIndex(
+            column_name.to_owned(),
         ));
+    }
+    let covering: Vec<String> = table
+        .indexes()
+        .iter()
+        .filter(|index| index.column_offsets == [offset])
+        .map(|index| index.name.clone())
+        .collect();
+    for index_name in covering {
+        table
+            .drop_index(&index_name)
+            .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     }
     table.drop_column(offset);
     Ok(())
