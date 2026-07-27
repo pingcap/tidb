@@ -39,6 +39,62 @@ use tidb_model::table_info::TableInfo;
 /// Builds the column's `FieldType` from its parsed SQL type: code via
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
+/// Runs a `RENAME TABLE`, moving each pair in written order.
+///
+/// Captured from TiDB: renaming onto a name that already exists is 1050, and
+/// renaming a table that does not exist is 1146. A rename may move the table
+/// to another schema, since both sides carry a full path.
+pub fn run_rename_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<(), DriverError> {
+    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let Stmt::Ddl(ddl) = &stmt else {
+        return Err(DriverError::Unsupported(
+            "only RENAME TABLE is supported here",
+        ));
+    };
+    let pairs: Vec<(Vec<String>, Vec<String>)> = match &**ddl {
+        DdlStmt::RenameTable(rename) => rename.pairs.clone(),
+        // `ALTER TABLE x RENAME TO y` is the same operation.
+        DdlStmt::AlterTable(alter) => {
+            let mut pairs = Vec::new();
+            for action in &alter.actions {
+                if let tidb_ast::AlterTableAction::RenameTable { new_name } = action {
+                    pairs.push((alter.name.clone(), new_name.clone()));
+                }
+            }
+            pairs
+        }
+        _ => {
+            return Err(DriverError::Unsupported(
+                "only RENAME TABLE is supported here",
+            ))
+        }
+    };
+
+    for (from, to) in &pairs {
+        let (from_db, from_name) = crate::driver::split_table_path_pub(from, current_db)?;
+        let (from_db, from_name) = (from_db.to_owned(), from_name.to_owned());
+        let (to_db, to_name) = crate::driver::split_table_path_pub(to, current_db)?;
+        let (to_db, to_name) = (to_db.to_owned(), to_name.to_owned());
+
+        if catalog.table_in(&from_db, &from_name).is_none() {
+            return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+                format!("{from_db}.{from_name}"),
+            )));
+        }
+        if catalog.table_in(&to_db, &to_name).is_some() {
+            return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
+                format!("{to_db}.{to_name}"),
+            )));
+        }
+        catalog.rename_table(&from_db, &from_name, &to_db, &to_name);
+    }
+    Ok(())
+}
+
 /// Runs a `TRUNCATE TABLE`, emptying it while keeping its definition.
 ///
 /// Captured from TiDB: the rows and index entries go, the schema and indexes
@@ -323,6 +379,18 @@ pub fn run_alter_table_in(
                     .clone()
                     .unwrap_or_else(|| columns.first().cloned().unwrap_or_default());
                 add_index_to_table(catalog, &database, &name, &index_name, unique, &columns)?;
+            }
+            // `ALTER TABLE x RENAME TO y` is the same operation as
+            // `RENAME TABLE x TO y`.
+            tidb_ast::AlterTableAction::RenameTable { new_name } => {
+                let (to_db, to_name) = crate::driver::split_table_path_pub(new_name, current_db)?;
+                let (to_db, to_name) = (to_db.to_owned(), to_name.to_owned());
+                if catalog.table_in(&to_db, &to_name).is_some() {
+                    return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
+                        format!("{to_db}.{to_name}"),
+                    )));
+                }
+                catalog.rename_table(&database, &name, &to_db, &to_name);
             }
             tidb_ast::AlterTableAction::DropIndex {
                 if_exists,

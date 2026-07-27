@@ -47,7 +47,7 @@ pub mod table_dual;
 pub use apply::ApplyExec;
 pub use ddl::{
     run_alter_table_in, run_create_index_in, run_create_table_in, run_create_table_on,
-    run_drop_index_in, run_drop_table_in, run_truncate_table_in,
+    run_drop_index_in, run_drop_table_in, run_rename_table_in, run_truncate_table_in,
 };
 pub use driver::{
     run_delete_in, run_delete_on, run_insert_in, run_insert_on, run_insert_reporting, run_select,

@@ -1111,6 +1111,13 @@ impl Session {
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
+                DdlStmt::RenameTable(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_rename_table_in(sql, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
                 DdlStmt::TruncateTable(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
@@ -2201,11 +2208,15 @@ mod tests {
         };
         assert!(create_comp.contains("KEY `kab` (`a`,`b`)"));
 
-        // An unknown table is an error, and unsupported actions are rejected.
+        // An unknown table is an error, and an action this tier does not
+        // implement is still rejected rather than ignored. (RENAME TO used to
+        // be this example; it is implemented now.)
         assert!(session
             .run("ALTER TABLE nosuch ADD COLUMN a BIGINT")
             .is_err());
-        assert!(session.run("ALTER TABLE a RENAME TO b").is_err());
+        assert!(session
+            .run("ALTER TABLE a MODIFY COLUMN v VARCHAR(4)")
+            .is_err());
     }
 
     /// CREATE INDEX / DROP INDEX / ALTER TABLE ADD INDEX, checked against
@@ -2337,6 +2348,73 @@ mod tests {
             session.run("TRUNCATE TABLE nosuch"),
             Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
         ));
+    }
+
+    /// RENAME TABLE, checked against captured TiDB behavior.
+    #[test]
+    fn rename_table() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t1 (id BIGINT PRIMARY KEY, v BIGINT, KEY kv (v))")
+            .unwrap();
+        session.run("INSERT INTO t1 VALUES (1, 9)").unwrap();
+
+        // Captured: the table is renamed and keeps its rows.
+        session.run("RENAME TABLE t1 TO t2").unwrap();
+        assert_eq!(
+            session.run("SELECT id, v FROM t2").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1), Datum::Int(9)]])
+        );
+        assert!(session.run("SELECT id FROM t1").is_err());
+        // Its indexes come along, so a read through one still works.
+        assert_eq!(
+            session.run("SELECT id FROM t2 WHERE v = 9").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // Captured: renaming onto an existing name is 1050.
+        session.run("CREATE TABLE t3 (a BIGINT)").unwrap();
+        assert!(matches!(
+            session.run("RENAME TABLE t2 TO t3"),
+            Err(DriverError::Schema(SchemaErrorKind::TableExists(_)))
+        ));
+        // Captured: renaming a table that does not exist is 1146.
+        assert!(matches!(
+            session.run("RENAME TABLE nosuch TO t9"),
+            Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
+        ));
+
+        // Captured: ALTER TABLE ... RENAME TO is the same operation.
+        session.run("ALTER TABLE t2 RENAME TO t4").unwrap();
+        match session.run_with_columns("SHOW TABLES").unwrap() {
+            StmtOutput::Rows { rows, .. } => assert_eq!(
+                rows.into_iter()
+                    .map(|row| datum_text(&row[0]).unwrap())
+                    .collect::<Vec<_>>(),
+                vec!["t3".to_owned(), "t4".to_owned()]
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // A rename may move the table to another schema.
+        session.run("CREATE DATABASE other").unwrap();
+        session.run("RENAME TABLE t4 TO other.moved").unwrap();
+        assert_eq!(
+            session.run("SELECT id FROM other.moved").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // The renamed table reports its NEW name in a duplicate-key error,
+        // which is the table.index form TiDB uses.
+        session
+            .run("CREATE TABLE dup (a BIGINT, UNIQUE KEY ua (a))")
+            .unwrap();
+        session.run("INSERT INTO dup VALUES (1)").unwrap();
+        session.run("RENAME TABLE dup TO dup2").unwrap();
+        match session.run("INSERT INTO dup2 VALUES (1)") {
+            Err(DriverError::DuplicateEntry { key, .. }) => assert_eq!(key, "dup2.ua"),
+            other => panic!("expected a duplicate-entry error, got {other:?}"),
+        }
     }
 
     #[test]

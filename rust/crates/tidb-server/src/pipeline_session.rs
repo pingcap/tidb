@@ -264,6 +264,10 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
             *b"HY000",
             "Unsupported drop integer primary key".to_owned(),
         ),
+        // Go: "Table '%-.192s' already exists".
+        tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::TableExists(name)) => {
+            SqlQueryError::new(1050, *b"42S01", format!("Table '{name}' already exists"))
+        }
         // Go: "Unknown table '%-.129s'" -- DROP TABLE's own code, distinct
         // from the 1146 a read of a missing table reports.
         tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::BadTable(name)) => {

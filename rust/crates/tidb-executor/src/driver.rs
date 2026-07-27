@@ -247,6 +247,34 @@ impl Catalog {
         true
     }
 
+    /// Moves a table to a new schema and name, which is what RENAME does.
+    /// Returns `false` when the source does not exist.
+    pub fn rename_table(
+        &mut self,
+        from_database: &str,
+        from_name: &str,
+        to_database: &str,
+        to_name: &str,
+    ) -> bool {
+        self.version += 1;
+        let Some(source) = self
+            .databases
+            .get_mut(&from_database.to_lowercase())
+            .and_then(|database| database.tables.remove(&from_name.to_lowercase()))
+        else {
+            return false;
+        };
+        // The table carries its own name for duplicate-key messages.
+        let mut source = source;
+        if let TableEntry::Kv(table) = &mut source {
+            table.set_name(to_name);
+        }
+        if let Some(database) = self.databases.get_mut(&to_database.to_lowercase()) {
+            database.tables.insert(to_name.to_lowercase(), source);
+        }
+        true
+    }
+
     /// Drops one table, reporting whether it existed.
     pub fn drop_table_in(&mut self, database: &str, name: &str) -> bool {
         self.version += 1;
@@ -444,6 +472,8 @@ pub enum SchemaErrorKind {
     /// Go `infoschema.ErrTableNotExists` (1146): a statement read a table
     /// that does not exist.
     UnknownTable(String),
+    /// Go `ErrTableExists` (1050).
+    TableExists(String),
     /// Go `ErrBadTable` (1051): `DROP TABLE` named a table that does not
     /// exist. MySQL uses a different code and message here than for a read.
     BadTable(String),
