@@ -30,12 +30,31 @@
 //! uncovered forms keep a LongLong placeholder ret type (evaluation dispatches
 //! on operand kinds, not on this type).
 
+use crate::column::Column;
 use crate::constant::Constant;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
 use tidb_ast::{CiString, Expr};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+/// Resolves a dotted column path to an output column, standing in for the
+/// schema/name resolution Go's `expression_rewriter` performs against the
+/// plan's schema (`resolveColumn`).
+pub trait ColumnResolver {
+    /// Resolves `path` (e.g. `["t", "a"]` or `["a"]`) to
+    /// `(row index, result type, unique id)`, or `None` when unknown.
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
+}
+
+/// A resolver that knows no columns (for constant-only expressions).
+pub struct NoResolver;
+
+impl ColumnResolver for NoResolver {
+    fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+        None
+    }
+}
 
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
     Expression::Constant(Constant::new(datum, FieldType::new(code)))
@@ -58,6 +77,27 @@ fn scalar(name: &str, args: Vec<Expression>) -> Expression {
 /// operators, and parentheses. Returns [`EvalError::Unsupported`] for forms not
 /// yet handled (column references, function calls, other literal kinds).
 pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
+    rewrite_expr_resolved(expr, &NoResolver)
+}
+
+/// [`rewrite_expr`] with column resolution: `Expr::Column` paths are bound
+/// through `resolver` into [`Expression::Column`] nodes (index + result type).
+pub fn rewrite_expr_resolved(
+    expr: &Expr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    if let Expr::Column(path) = expr {
+        let (index, ret_type, unique_id) = resolver
+            .resolve(path)
+            .ok_or(EvalError::Unsupported("unresolved column reference"))?;
+        let mut col = Column::new(unique_id, ret_type);
+        col.index = index as i64;
+        return Ok(Expression::Column(col));
+    }
+    rewrite_leaf(expr, resolver)
+}
+
+fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
     match expr {
         Expr::Int(text) => {
             let value: i64 = text
@@ -79,9 +119,9 @@ pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
                 FieldType::new(FieldTypeCode::VarString),
             )))
         }
-        Expr::Paren(inner) => rewrite_expr(inner),
+        Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
         Expr::Unary(op, inner) => {
-            let arg = rewrite_expr(inner)?;
+            let arg = rewrite_expr_resolved(inner, resolver)?;
             let name = unary_op_name(*op);
             // not/bitneg/unaryminus result types come from the transcreated
             // builtin_op function classes; anything uncovered (unaryplus, the
@@ -96,8 +136,8 @@ pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
             Ok(scalar(name, vec![arg]))
         }
         Expr::Binary(op, lhs, rhs) => {
-            let left = rewrite_expr(lhs)?;
-            let right = rewrite_expr(rhs)?;
+            let left = rewrite_expr_resolved(lhs, resolver)?;
+            let right = rewrite_expr_resolved(rhs, resolver)?;
             let name = binary_op_name(*op);
             // Result types come from the transcreated function classes:
             // builtin_arithmetic (plus/minus/mul/div/intdiv/mod),
