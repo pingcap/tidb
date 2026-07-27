@@ -660,7 +660,7 @@ func TestCreateMySQLDatabase(t *testing.T) {
 
 func TestExtractPartitionIDs(t *testing.T) {
 	// No partition info.
-	ti := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), State: model.StatePublic}
+	ti := &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t"), State: model.StatePublic}
 	b, err := json.Marshal(ti)
 	require.NoError(t, err)
 	require.Nil(t, meta.ExtractPartitionIDs(b))
@@ -668,13 +668,13 @@ func TestExtractPartitionIDs(t *testing.T) {
 	// Partition with definitions.
 	ti = &model.TableInfo{
 		ID:   100,
-		Name: ast.NewCIStr("t"),
+		Name: pmodel.NewCIStr("t"),
 		Partition: &model.PartitionInfo{
 			Expr: "a",
 			Definitions: []model.PartitionDefinition{
-				{ID: 201, Name: ast.NewCIStr("p0")},
-				{ID: 202, Name: ast.NewCIStr("p1")},
-				{ID: 203, Name: ast.NewCIStr("p2")},
+				{ID: 201, Name: pmodel.NewCIStr("p0")},
+				{ID: 202, Name: pmodel.NewCIStr("p1")},
+				{ID: 203, Name: pmodel.NewCIStr("p2")},
 			},
 		},
 		State: model.StatePublic,
@@ -687,7 +687,7 @@ func TestExtractPartitionIDs(t *testing.T) {
 	// Partition with empty definitions.
 	ti2 := &model.TableInfo{
 		ID:   101,
-		Name: ast.NewCIStr("t2"),
+		Name: pmodel.NewCIStr("t2"),
 		Partition: &model.PartitionInfo{
 			Expr:        "b",
 			Definitions: []model.PartitionDefinition{},

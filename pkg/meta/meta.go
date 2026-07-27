@@ -1134,6 +1134,23 @@ func IsTableInfoMustLoad(json []byte) bool {
 	return isTableInfoMustLoad(json, checkAttributesInOrder...)
 }
 
+// ExtractPartitionIDs extracts partition IDs from a serialized TableInfo JSON.
+// Returns nil if the table has no partition info or empty definitions.
+func ExtractPartitionIDs(rawJSON []byte) []int64 {
+	ti := &model.TableInfo{}
+	if err := json.Unmarshal(rawJSON, ti); err != nil {
+		return nil
+	}
+	if ti.Partition == nil || len(ti.Partition.Definitions) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(ti.Partition.Definitions))
+	for i, def := range ti.Partition.Definitions {
+		ids[i] = def.ID
+	}
+	return ids
+}
+
 // NameExtractRegexp is exported for testing.
 const NameExtractRegexp = `"O":"([^"\\]*(?:\\.[^"\\]*)*)",`
 
@@ -1150,10 +1167,10 @@ func Unescape(s string) string {
 // hasSpecialAttributes() is a subset of it, the difference is that:
 // If a table need to be resident in-memory, its table info MUST be loaded.
 // If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
-func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error) {
+func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, map[int64]int64, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	res := make(map[string]int64)
@@ -1161,6 +1178,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 	nameLRegex := regexp.MustCompile(NameExtractRegexp)
 
 	tableInfos := make([]*model.TableInfo, 0)
+	partitionID2TableID := make(map[int64]int64)
 
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
 		if !strings.HasPrefix(string(hack.String(field)), "Table") {
@@ -1185,10 +1203,18 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 			tbInfo.DBID = dbID
 			tableInfos = append(tableInfos, tbInfo)
 		}
+		// For non-must-loaded tables, still extract partition IDs from the raw JSON
+		// to populate pid2tid for FindTableByPartitionID etc.
+		if ids := ExtractPartitionIDs(value); ids != nil {
+			tid := int64(id)
+			for _, pid := range ids {
+				partitionID2TableID[pid] = tid
+			}
+		}
 		return nil
 	})
 
-	return res, tableInfos, errors.Trace(err)
+	return res, tableInfos, partitionID2TableID, errors.Trace(err)
 }
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
@@ -2008,10 +2034,11 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 	return errors.Trace(err)
 }
 
-// GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
+// GetOldestSchemaVersion gets the schema version at the GC safe point.
 // It works by checking the MVCC information (internal txn API) of the schema version meta key.
+// It finds the newest MVCC write whose commit_ts <= safePoint, and returns its ShortValue.
 // This function is only used by infoschema v2 currently.
-func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
+func GetOldestSchemaVersion(h *helper.Helper, safePoint uint64) (int64, error) {
 	ek := make([]byte, 0, len(mMetaPrefix)+len(mSchemaVersionKey)+24)
 	ek = append(ek, mMetaPrefix...)
 	ek = codec.EncodeBytes(ek, mSchemaVersionKey)
@@ -2024,8 +2051,15 @@ func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
 		return 0, errors.Errorf("There is no Write MVCC info for the schema version key")
 	}
 
-	v := mvccResp.Info.Writes[len(mvccResp.Info.Writes)-1]
-	var n int64
-	n, err = strconv.ParseInt(string(v.ShortValue), 10, 64)
-	return n, errors.Trace(err)
+	// Writes are sorted by commit_ts in descending order (newest first) from TiKV.
+	// Find the newest write whose commit_ts <= safePoint.
+	// This corresponds to the schema version that was current at the GC safe point.
+	for _, w := range mvccResp.Info.Writes {
+		if w.CommitTs <= safePoint {
+			var n int64
+			n, err = strconv.ParseInt(string(w.ShortValue), 10, 64)
+			return n, errors.Trace(err)
+		}
+	}
+	return 0, errors.Errorf("There is no Write with commit_ts <= GC safe point %d", safePoint)
 }

@@ -896,6 +896,18 @@ func (b *Builder) sortAllTablesByID() {
 	}
 }
 
+// WithPartitionID2TableID sets the partition ID to table ID mapping for the builder.
+// This is used during the fast path (schemaCacheSize > 0) where partition tables are
+// skipped by IsTableInfoMustLoad, but their pid2tid mappings are still needed.
+func (b *Builder) WithPartitionID2TableID(m map[int64]int64) {
+	if b.partitionID2TableID == nil {
+		b.partitionID2TableID = make(map[int64]int64, len(m))
+	}
+	for k, v := range m {
+		b.partitionID2TableID[k] = v
+	}
+}
+
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
 	info := b.infoSchema

@@ -56,7 +56,7 @@ func TestGCOldVersion(t *testing.T) {
 
 	s := store.(helper.Storage)
 	h := helper.NewHelper(s)
-	old, err := meta.GetOldestSchemaVersion(h)
+	old, err := meta.GetOldestSchemaVersion(h, ^uint64(0))
 	require.NoError(t, err)
 
 	for i := 0; i < 10; i++ {

@@ -147,7 +147,7 @@ func TestTetchAllSchemasWithTables(t *testing.T) {
 
 	snapshot := store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
 	m := meta.NewReader(snapshot)
-	dbs, err := domain.FetchAllSchemasWithTables(m)
+	dbs, _, err := domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)
 	require.Equal(t, len(dbs), 3)
 
@@ -157,7 +157,7 @@ func TestTetchAllSchemasWithTables(t *testing.T) {
 	tk.MustExec("create table t1(i int, s varchar(20), index index_t(i, s))")
 	tk.MustExec("create table t2(i int, s varchar(20), index index_t(i, s))")
 	tk.MustExec("create database test2")
-	dbs, err = domain.FetchAllSchemasWithTables(m)
+	dbs, _, err = domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)
 	require.Equal(t, len(dbs), 5)
 }
@@ -177,7 +177,7 @@ func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 
 	snapshot := store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
 	m := meta.NewReader(snapshot)
-	dbs, err := domain.FetchAllSchemasWithTables(m)
+	dbs, _, err := domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)
 	require.Equal(t, len(dbs), 3)
 
@@ -189,7 +189,7 @@ func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	}
 	variable.SchemaCacheSize.Store(1000000)
 
-	dbs, err = domain.FetchAllSchemasWithTables(m)
+	dbs, _, err = domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)
 	require.Equal(t, len(dbs), 1003)
 
@@ -198,7 +198,7 @@ func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables"))
 	}()
-	dbs, err = domain.FetchAllSchemasWithTables(m)
+	dbs, _, err = domain.FetchAllSchemasWithTables(m)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failpoint: failed to fetch schemas with tables")
 	require.Nil(t, dbs)
