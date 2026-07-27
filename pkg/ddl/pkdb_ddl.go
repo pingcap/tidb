@@ -29,7 +29,6 @@ type CreateTableCTASConfig struct {
 	CTASSubmitterConnID uint64
 }
 
-
 // WithCTASSnapshotTS applies the snapshot timestamp when CTAS is submitted
 func WithCTASSnapshotTS(ts uint64) CreateTableOption {
 	return func(cfg *CreateTableConfig) {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -215,7 +216,10 @@ func TestSystemVars(t *testing.T) {
 		rows := tk1.MustQuery("show session_states").Rows()
 		state := rows[0][0].(string)
 		msg := fmt.Sprintf("var name: '%s', expected value: '%s'", tt.varName, tt.expectedValue)
-		require.Equal(t, tt.inSessionStates, strings.Contains(state, tt.varName), msg)
+		var sessionState sessionstates.SessionStates
+		require.NoError(t, json.Unmarshal([]byte(state), &sessionState))
+		_, inSessionStates := sessionState.SystemVars[tt.varName]
+		require.Equal(t, tt.inSessionStates, inSessionStates, msg)
 		state = strconv.Quote(state)
 		setSQL := fmt.Sprintf("set session_states %s", state)
 		tk2.MustExec(setSQL)

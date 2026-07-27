@@ -1705,6 +1705,15 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: DefaultWeekFormat, Value: DefDefaultWeekFormat, Type: TypeUnsigned, MinValue: 0, MaxValue: 7},
+	{Scope: ScopeGlobal | ScopeSession, Name: ExplicitDefaultsForTimestamp, Value: On, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if vars != nil && normalizedValue == Off && (scope == ScopeGlobal || vars.ExplicitDefaultsForTimestamp) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(ExplicitDefaultsForTimestamp))
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.ExplicitDefaultsForTimestamp = TiDBOptOn(val)
+		return nil
+	}},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    SQLModeVar,
@@ -4221,6 +4230,8 @@ const (
 	CollationServer = "collation_server"
 	// DefaultCollationForUTF8MB4 is the name of 'default_collation_for_utf8mb4' variable.
 	DefaultCollationForUTF8MB4 = "default_collation_for_utf8mb4"
+	// ExplicitDefaultsForTimestamp is the name of 'explicit_defaults_for_timestamp' variable.
+	ExplicitDefaultsForTimestamp = "explicit_defaults_for_timestamp"
 	// NetWriteTimeout is the name of 'net_write_timeout' variable.
 	NetWriteTimeout = "net_write_timeout"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
