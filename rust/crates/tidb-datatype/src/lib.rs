@@ -50,6 +50,7 @@ mod format;
 mod fsp;
 mod json_path;
 mod multibyte_encoding;
+mod mydecimal;
 mod mysql_time;
 mod numeric_helper;
 mod overflow;
@@ -200,6 +201,7 @@ pub use multibyte_encoding::{
     count_valid_bytes, count_valid_bytes_decode, find_encoding, find_encoding_take_utf8_as_noop,
     is_supported_encoding, Encoding, EncodingError, EncodingResult, EncodingType,
 };
+pub use mydecimal::{MyDecimal, MYDECIMAL_STRUCT_SIZE};
 pub use mysql_time::{
     core_time_from_datetime, date_fsp, format_int_width, get_frac_index, get_fsp, get_timezone,
     round_datetime_fraction, truncate_datetime_fraction, Time, TimeError, TimeType, TimezoneSuffix,
