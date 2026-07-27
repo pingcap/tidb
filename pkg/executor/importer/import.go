@@ -250,7 +250,8 @@ type FieldMapping struct {
 
 // LoadDataReaderInfo provides information for a data reader of LOAD DATA.
 type LoadDataReaderInfo struct {
-	// Opener may be called at most once; Parquet whole-file preloading may not call it.
+	// Opener can be called at needed to get a io.ReadSeekCloser. It will only
+	// be called once.
 	Opener func(ctx context.Context) (io.ReadSeekCloser, error)
 	// Remote is not nil only if load from cloud storage.
 	Remote *mydump.SourceFileMeta
