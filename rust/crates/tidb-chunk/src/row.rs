@@ -26,7 +26,9 @@
 //! a `str`-typed `GetString` (pending the crate-wide bytes-vs-str policy).
 
 use crate::chunk::Chunk;
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode, MySqlDuration, Time};
+use tidb_datatype::{
+    Collation, Datum, Decimal, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time,
+};
 
 /// Go `chunk.Row`: a cursor to one row of a [`Chunk`].
 #[derive(Clone, Copy, Debug)]
@@ -103,6 +105,12 @@ impl<'a> Row<'a> {
         self.chunk.columns()[col_idx].get_duration(self.idx, fill_fsp)
     }
 
+    /// Go `GetMyDecimal`.
+    #[must_use]
+    pub fn get_my_decimal(&self, col_idx: usize) -> MyDecimal {
+        self.chunk.columns()[col_idx].get_my_decimal(self.idx)
+    }
+
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
     #[must_use]
     pub fn get_bytes(&self, col_idx: usize) -> &'a [u8] {
@@ -173,6 +181,20 @@ impl<'a> Row<'a> {
             // Go passes tp.GetDecimal() as the fill fsp.
             FieldTypeCode::Duration => {
                 Datum::Duration(self.get_duration(col_idx, field_type.decimal()))
+            }
+            // Go additionally calls SetLength(tp.GetFlen()) and
+            // SetFrac(tp.GetDecimal()) here. The value and its own fractional
+            // digits round-trip exactly through the canonical decimal text
+            // (matching Go's unspecified-decimal branch, which uses the stored
+            // digitsFrac). DEFERRED, documented: the explicit
+            // SetFrac(tp.GetDecimal()) display-metadata override, which only
+            // differs when a column's declared scale disagrees with the scale
+            // actually stored in the cell -- reproducing it needs a
+            // frac-metadata setter that does not round the value.
+            FieldTypeCode::NewDecimal => {
+                let text = String::from_utf8(self.get_my_decimal(col_idx).to_string_bytes())
+                    .expect("decimal text is ASCII");
+                Datum::Decimal(Decimal::from_literal(&text))
             }
             other => panic!(
                 "chunk Row::get_datum: column type {other:?} not yet supported (deferred with its column getter)"

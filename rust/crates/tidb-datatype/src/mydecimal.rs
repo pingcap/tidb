@@ -140,6 +140,12 @@ impl MyDecimal {
         self.negative
     }
 
+    /// Go `digitsFrac`: the decimal digits after the point.
+    #[must_use]
+    pub fn digits_frac(&self) -> i8 {
+        self.digits_frac
+    }
+
     /// Go `removeLeadingZeros`.
     fn remove_leading_zeros(&self) -> (usize, i32) {
         let mut word_idx = 0usize;

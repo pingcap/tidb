@@ -49,7 +49,9 @@
 //! `SetNull(s)`/`nullCount`; a `str`-typed `GetString`; and the `Chunk`/`Row`
 //! containers built on `Column`.
 
-use tidb_datatype::{FieldType, FieldTypeCode, MySqlDuration, Time};
+use tidb_datatype::{
+    FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time, MYDECIMAL_STRUCT_SIZE,
+};
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
 /// column.
@@ -259,6 +261,25 @@ impl Column {
     /// (Go `int64(dur.Duration)`). Fsp is ignored, exactly as in Go.
     pub fn append_duration(&mut self, dur: MySqlDuration) {
         self.append_int64(dur.nanoseconds());
+    }
+
+    /// Go `AppendMyDecimal`: append a decimal as the raw 40-byte
+    /// `types.MyDecimal` struct (Go writes it through `unsafe.Pointer`; the
+    /// bytes are identical).
+    pub fn append_my_decimal(&mut self, dec: &MyDecimal) {
+        self.elem_buf.copy_from_slice(&dec.to_raw_bytes());
+        self.finish_append_fixed();
+    }
+
+    /// Go `GetDecimal`: the decimal in the specific row.
+    ///
+    /// # Panics
+    /// Panics if the stored bytes are not a valid `MyDecimal`; every value
+    /// written by [`Column::append_my_decimal`] round-trips.
+    #[must_use]
+    pub fn get_my_decimal(&self, row_id: usize) -> MyDecimal {
+        let bytes: [u8; MYDECIMAL_STRUCT_SIZE] = self.fixed_elem::<MYDECIMAL_STRUCT_SIZE>(row_id);
+        MyDecimal::from_raw_bytes(bytes).expect("chunk decimal cell holds a valid MyDecimal")
     }
 
     /// Go `GetTime`: the `types.Time` in the specific row.

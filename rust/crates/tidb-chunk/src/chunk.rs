@@ -31,7 +31,7 @@
 
 use crate::column::Column;
 use crate::row::Row;
-use tidb_datatype::{Datum, FieldType, MySqlDuration, Time};
+use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time};
 
 /// Go `chunk.Chunk`: a columnar batch of rows.
 #[derive(Clone, Debug, Default)]
@@ -196,6 +196,12 @@ impl Chunk {
         self.columns[col_idx].append_duration(value);
     }
 
+    /// Go `AppendMyDecimal`.
+    pub fn append_my_decimal(&mut self, col_idx: usize, value: &MyDecimal) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_my_decimal(value);
+    }
+
     /// Go `AppendString`.
     pub fn append_string(&mut self, col_idx: usize, value: &str) {
         self.append_sel(col_idx);
@@ -210,6 +216,12 @@ impl Chunk {
 
     /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
+    ///
+    /// DEFERRED (documented): `Datum::Decimal`. A chunk cell holds the raw
+    /// 40-byte `MyDecimal`, and building one from the digit-string `Decimal`
+    /// needs `MyDecimal::FromString`, which is not ported yet -- so a decimal
+    /// datum panics here rather than being stored through a lossy conversion.
+    /// The typed [`Chunk::append_my_decimal`] path is already exact.
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
     /// float32, string/bytes, time, duration). Other kinds panic, pending
@@ -358,6 +370,30 @@ mod tests {
         }
         // null cell -> Datum::Null regardless of type
         assert_eq!(chk.get_row(1).get_datum(0, &fields[0]), Datum::Null);
+    }
+
+    #[test]
+    fn decimal_cells_round_trip_as_raw_struct_bytes() {
+        use tidb_datatype::{FieldTypeCode, MyDecimal};
+        let ft = FieldType::new(FieldTypeCode::NewDecimal);
+        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&ft), 4);
+        let a = MyDecimal::from_int(12345);
+        let b = MyDecimal::from_int(-7);
+        chk.append_my_decimal(0, &a);
+        chk.append_null(0);
+        chk.append_my_decimal(0, &b);
+        assert_eq!(chk.num_rows(), 3);
+
+        // The cell is the exact 40-byte struct.
+        assert_eq!(chk.get_row(0).get_my_decimal(0), a);
+        assert_eq!(chk.get_row(2).get_my_decimal(0), b);
+        assert_eq!(chk.column(0).get_raw(0), &a.to_raw_bytes()[..]);
+        // And reads back as a decimal datum with the same text.
+        match chk.get_row(0).get_datum(0, &ft) {
+            Datum::Decimal(d) => assert_eq!(d.to_string(), "12345"),
+            other => panic!("expected decimal datum, got {other:?}"),
+        }
+        assert_eq!(chk.get_row(1).get_datum(0, &ft), Datum::Null);
     }
 
     #[test]
