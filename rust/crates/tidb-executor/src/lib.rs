@@ -35,6 +35,7 @@ pub mod executor;
 pub mod limit;
 pub mod projection;
 pub mod selection;
+pub mod sort;
 pub mod table_dual;
 
 pub use driver::{run_select, DriverError};
@@ -42,4 +43,5 @@ pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use limit::LimitExec;
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
+pub use sort::{SortByItem, SortExec};
 pub use table_dual::TableDualExec;
