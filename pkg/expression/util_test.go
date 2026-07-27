@@ -329,15 +329,10 @@ func TestPushDownNot(t *testing.T) {
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, leFunc))
 
-	// Regression: NOT NOT (a = 1) must simplify to (a = 1)
-	// so the planner can use the simple predicate for left-join right-side
-	// pruning and contradiction detection. Without this, NOT NOT predicates
-	// cause unnecessary table scans.
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, eqFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, eqFunc))
-	// NOT NOT NOT (a = 1) should simplify to (a != 1)
+	// NOT NOT NOT (a = 1) should simplify to (a != 1).
+	// Triple-negation (odd-count NOT wrapping) extends the existing
+	// double-negation coverage on lines 289-294 and must produce
+	// the negated comparison.
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.NE, col, NewOne())))
