@@ -1,0 +1,291 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package inference
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/stretchr/testify/require"
+)
+
+type staticEmbedder struct {
+	embeddings [][]float32
+	err        error
+	calls      atomic.Int64
+}
+
+func (s *staticEmbedder) CreateEmbeddings(context.Context, string, []string, map[string]any) ([][]float32, error) {
+	s.calls.Add(1)
+	return s.embeddings, s.err
+}
+
+type controlledEmbedder struct {
+	started     chan struct{}
+	startedOnce sync.Once
+	release     chan struct{}
+	canceled    chan struct{}
+	cancelOnce  sync.Once
+	calls       atomic.Int64
+}
+
+func (c *controlledEmbedder) CreateEmbeddings(ctx context.Context, _ string, _ []string, _ map[string]any) ([][]float32, error) {
+	c.calls.Add(1)
+	c.startedOnce.Do(func() { close(c.started) })
+	select {
+	case <-c.release:
+		return [][]float32{{1, 2, 3}}, nil
+	case <-ctx.Done():
+		c.cancelOnce.Do(func() { close(c.canceled) })
+		return nil, context.Cause(ctx)
+	}
+}
+
+func TestEmbedFnProvidersAndErrors(t *testing.T) {
+	embedFn := NewEmbedFn()
+	t.Cleanup(embedFn.Close)
+
+	for _, provider := range []string{"openai", "jina_ai", "cohere", "huggingface", "nvidia_nim", "gemini"} {
+		require.True(t, embedFn.HasEmbedder(provider), provider)
+	}
+	require.True(t, embedFn.HasEmbedder(" OPENAI "))
+	if !embedFn.HasEmbedder("mock") {
+		embedFn.MustRegisterEmbedder("mock", NewMockEmbedder())
+	}
+
+	embedding, err := embedFn.Embed(nil, "mock/json", "[1,2,3]", nil)
+	require.NoError(t, err)
+	require.Equal(t, []float32{1, 2, 3}, embedding)
+	_, err = embedFn.Embed(func() bool { return true }, "mock/json", "[1,2,3]", nil)
+	require.ErrorIs(t, err, context.Canceled)
+
+	_, err = embedFn.Embed(nil, "model-without-provider", "hello", nil)
+	require.ErrorContains(t, err, "model name must be in format")
+	_, err = embedFn.Embed(nil, "unknown/model", "hello", nil)
+	require.ErrorContains(t, err, "unknown embedding provider")
+
+	embedFn.MustRegisterEmbedder("empty", &staticEmbedder{})
+	_, err = embedFn.Embed(nil, "empty/model", "hello", nil)
+	require.ErrorContains(t, err, "no embeddings returned")
+
+	embedFn.MustRegisterEmbedder("fail", &staticEmbedder{err: errors.New("embed failed")})
+	_, err = embedFn.Embed(nil, "fail/model", "hello", nil)
+	require.ErrorContains(t, err, "embed failed")
+}
+
+func TestEmbedFnCacheIsolationAndInvalidation(t *testing.T) {
+	originalVersion := vardef.EmbeddingConfigVersion.Load()
+	t.Cleanup(func() {
+		vardef.EmbeddingConfigVersion.Store(originalVersion)
+	})
+	embedFn := NewEmbedFn()
+	t.Cleanup(embedFn.Close)
+
+	provider := &staticEmbedder{embeddings: [][]float32{{1, 2, 3}}}
+	embedFn.MustRegisterEmbedder("static", provider)
+
+	embedding, err := embedFn.Embed(nil, "static/model", "hello", nil)
+	require.NoError(t, err)
+	embedding[0] = 99
+
+	embedding, err = embedFn.Embed(nil, "static/model", "hello", nil)
+	require.NoError(t, err)
+	require.Equal(t, []float32{1, 2, 3}, embedding)
+	require.Equal(t, int64(1), provider.calls.Load())
+
+	// Dynamic API-key and endpoint updates advance this version, so cached
+	// results from the previous provider configuration are not reused.
+	vardef.EmbeddingConfigVersion.Inc()
+	embedding, err = embedFn.Embed(nil, "static/model", "hello", nil)
+	require.NoError(t, err)
+	require.Equal(t, []float32{1, 2, 3}, embedding)
+	require.Equal(t, int64(2), provider.calls.Load())
+
+	opts := map[string]any{}
+	optsJSON, err := json.Marshal(opts)
+	require.NoError(t, err)
+	cacheKey := embeddingCacheKey("static/model", "already cached", opts, optsJSON, vardef.EmbeddingConfigVersion.Load())
+	require.True(t, embedFn.cache.Set(cacheKey, []float32{4, 5, 6}, 1))
+	embedFn.cache.Wait()
+	call, cached, cacheHit, err := embedFn.acquireCall(cacheKey, "static/model", "already cached", opts)
+	require.NoError(t, err)
+	require.Nil(t, call)
+	require.True(t, cacheHit)
+	require.Equal(t, []float32{4, 5, 6}, cached)
+	require.Equal(t, int64(2), provider.calls.Load())
+}
+
+func TestEmbeddingCacheKeyAndOptionsSnapshot(t *testing.T) {
+	intOpts := map[string]any{
+		"plus":   int(1),
+		"nested": map[string]any{"dimensions": int(128)},
+	}
+	floatOpts := map[string]any{
+		"plus":   float64(1),
+		"nested": map[string]any{"dimensions": float64(128)},
+	}
+	intJSON, err := json.Marshal(intOpts)
+	require.NoError(t, err)
+	floatJSON, err := json.Marshal(floatOpts)
+	require.NoError(t, err)
+	require.JSONEq(t, string(intJSON), string(floatJSON))
+	require.NotEqual(t,
+		embeddingCacheKey("provider/model", "text", intOpts, intJSON, 1),
+		embeddingCacheKey("provider/model", "text", floatOpts, floatJSON, 1),
+	)
+
+	// Length-prefixing keeps component boundaries unambiguous even when model
+	// names and input text contain NUL bytes.
+	require.NotEqual(t,
+		embeddingCacheKey("a", "b\x00c", nil, nil, 1),
+		embeddingCacheKey("a\x00b", "c", nil, nil, 1),
+	)
+
+	snapshot, err := snapshotEmbeddingOptions(intOpts)
+	require.NoError(t, err)
+	intOpts["nested"].(map[string]any)["dimensions"] = int(512)
+	require.Equal(t, int(128), snapshot["nested"].(map[string]any)["dimensions"])
+}
+
+func TestEmbedFnSharedCallCancellation(t *testing.T) {
+	embedFn := NewEmbedFn()
+	t.Cleanup(embedFn.Close)
+	provider := &controlledEmbedder{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		canceled: make(chan struct{}),
+	}
+	embedFn.MustRegisterEmbedder("controlled", provider)
+
+	ctx1, cancel1 := context.WithCancelCause(context.Background())
+	ctx2, cancel2 := context.WithCancelCause(context.Background())
+	t.Cleanup(func() {
+		cancel1(context.Canceled)
+		cancel2(context.Canceled)
+	})
+	type result struct {
+		embedding []float32
+		err       error
+	}
+	result1 := make(chan result, 1)
+	result2 := make(chan result, 1)
+	go func() {
+		embedding, err := embedFn.EmbedWithContext(ctx1, nil, "controlled/model", "hello", nil)
+		result1 <- result{embedding: embedding, err: err}
+	}()
+	waitForChannel(t, provider.started, "provider request to start")
+	go func() {
+		embedding, err := embedFn.EmbedWithContext(ctx2, nil, "controlled/model", "hello", nil)
+		result2 <- result{embedding: embedding, err: err}
+	}()
+	require.Eventually(t, func() bool {
+		embedFn.mu.Lock()
+		defer embedFn.mu.Unlock()
+		for _, call := range embedFn.inFlight {
+			return call.waiters == 2
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+
+	firstCause := errors.New("first caller canceled")
+	cancel1(firstCause)
+	require.ErrorIs(t, receiveFromChannel(t, result1, "first caller result").err, firstCause)
+	select {
+	case <-provider.canceled:
+		t.Fatal("provider request was canceled while another caller was still waiting")
+	default:
+	}
+
+	close(provider.release)
+	second := receiveFromChannel(t, result2, "second caller result")
+	require.NoError(t, second.err)
+	require.Equal(t, []float32{1, 2, 3}, second.embedding)
+	require.Equal(t, int64(1), provider.calls.Load())
+}
+
+func TestEmbedFnCancelsProviderAfterAllCallersCancel(t *testing.T) {
+	embedFn := NewEmbedFn()
+	t.Cleanup(embedFn.Close)
+	provider := &controlledEmbedder{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		canceled: make(chan struct{}),
+	}
+	embedFn.MustRegisterEmbedder("controlled", provider)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	err1 := make(chan error, 1)
+	err2 := make(chan error, 1)
+	go func() {
+		_, err := embedFn.EmbedWithContext(ctx1, nil, "controlled/model", "hello", nil)
+		err1 <- err
+	}()
+	waitForChannel(t, provider.started, "provider request to start")
+	go func() {
+		_, err := embedFn.EmbedWithContext(ctx2, nil, "controlled/model", "hello", nil)
+		err2 <- err
+	}()
+	require.Eventually(t, func() bool {
+		embedFn.mu.Lock()
+		defer embedFn.mu.Unlock()
+		for _, call := range embedFn.inFlight {
+			return call.waiters == 2
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+
+	cancel1()
+	cancel2()
+	require.ErrorIs(t, receiveFromChannel(t, err1, "first caller cancellation"), context.Canceled)
+	require.ErrorIs(t, receiveFromChannel(t, err2, "second caller cancellation"), context.Canceled)
+	select {
+	case <-provider.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("provider request was not canceled after all callers canceled")
+	}
+}
+
+func TestSetDefaultEmbedFnForTest(t *testing.T) {
+	original := DefaultEmbedFn()
+	replacement := NewEmbedFn()
+	restore := SetDefaultEmbedFnForTest(replacement)
+	require.Same(t, replacement, DefaultEmbedFn())
+	restore()
+	require.Same(t, original, DefaultEmbedFn())
+}
+
+func waitForChannel(t *testing.T, ch <-chan struct{}, description string) {
+	t.Helper()
+	receiveFromChannel(t, ch, description)
+}
+
+func receiveFromChannel[T any](t *testing.T, ch <-chan T, description string) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %s", description)
+		var zero T
+		return zero
+	}
+}

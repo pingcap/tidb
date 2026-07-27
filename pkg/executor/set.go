@@ -183,10 +183,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			}
 			return nil
 		})
-		showValStr := valStr
-		if name == vardef.TiDBCloudStorageURI {
-			showValStr = ast.RedactURL(showValStr)
-		}
+		showValStr := redactGlobalSysVarValueForLog(name, valStr)
 		logstr := "set global var"
 		if v.IsInstance {
 			logstr = "set instance var"
@@ -279,6 +276,25 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
+}
+
+func redactGlobalSysVarValueForLog(name, value string) string {
+	switch name {
+	case vardef.TiDBCloudStorageURI:
+		return ast.RedactURL(value)
+	case vardef.TiDBExpEmbedJinaAIAPIKey,
+		vardef.TiDBExpEmbedOpenAIAPIKey,
+		vardef.TiDBExpEmbedCohereAPIKey,
+		vardef.TiDBExpEmbedHuggingFaceAPIKey,
+		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
+		vardef.TiDBExpEmbedGeminiAPIKey:
+		if value == "" {
+			return ""
+		}
+		return "******"
+	default:
+		return value
+	}
 }
 
 func notifyExternalWorkloadGCLifeTime(ctx context.Context, sctx sessionctx.Context, setValue string) {

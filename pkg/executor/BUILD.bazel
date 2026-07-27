@@ -395,6 +395,7 @@ go_test(
         "sample_test.go",
         "select_into_test.go",
         "select_test.go",
+        "set_internal_test.go",
         "set_test.go",
         "show_affinity_test.go",
         "show_ddl_jobs_test.go",

@@ -1241,6 +1241,20 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling Jina embedding API.
+	TiDBExpEmbedJinaAIAPIKey = "tidb_exp_embed_jina_ai_api_key"
+	// TiDBExpEmbedOpenAIAPIKey is the API key to use when calling OpenAI-compatible embedding API.
+	TiDBExpEmbedOpenAIAPIKey = "tidb_exp_embed_openai_api_key"
+	// TiDBExpEmbedOpenAIAPIBase is the base URL to use when calling OpenAI-compatible embedding API.
+	TiDBExpEmbedOpenAIAPIBase = "tidb_exp_embed_openai_api_base"
+	// TiDBExpEmbedCohereAPIKey is the API key to use when calling Cohere embedding API.
+	TiDBExpEmbedCohereAPIKey = "tidb_exp_embed_cohere_api_key"
+	// TiDBExpEmbedHuggingFaceAPIKey is the API key to use when calling Hugging Face embedding API.
+	TiDBExpEmbedHuggingFaceAPIKey = "tidb_exp_embed_huggingface_api_key"
+	// TiDBExpEmbedNvidiaNIMAPIKey is the API key to use when calling NVIDIA NIM embedding API.
+	TiDBExpEmbedNvidiaNIMAPIKey = "tidb_exp_embed_nvidia_nim_api_key"
+	// TiDBExpEmbedGeminiAPIKey is the API key to use when calling Gemini embedding API.
+	TiDBExpEmbedGeminiAPIKey = "tidb_exp_embed_gemini_api_key"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 	// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
@@ -1522,6 +1536,7 @@ const (
 	DefInitChunkSize                    = 32
 	DefMinPagingSize                    = int(paging.MinPagingSize)
 	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
+	DefTiDBEmbedOpenAIAPIBase           = "https://api.openai.com/v1"
 	// DefPagingSizeBytes defaults to 0 (byte-budget paging disabled).
 	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
 	// is non-burstable (has limited burst).
@@ -1998,8 +2013,18 @@ var (
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
-	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
-	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+	EmbedJinaAPIKey                 = atomic.NewString("")
+	EmbedOpenAIAPIKey               = atomic.NewString("")
+	EmbedOpenAIAPIBase              = atomic.NewString("")
+	EmbedCohereAPIKey               = atomic.NewString("")
+	EmbedHuggingFaceAPIKey          = atomic.NewString("")
+	EmbedNvidiaNIMAPIKey            = atomic.NewString("")
+	EmbedGeminiAPIKey               = atomic.NewString("")
+	// EmbeddingConfigVersion invalidates cached embeddings when a dynamic
+	// provider credential or endpoint changes without putting secrets in cache keys.
+	EmbeddingConfigVersion = atomic.NewUint64(0)
+	IgnoreInlistPlanDigest = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit      = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
