@@ -27,7 +27,7 @@
 //! separate tier).
 
 use crate::driver::{Catalog, DriverError};
-use crate::kv_table::{KvColumn, KvTable};
+use crate::kv_table::{KvColumn, KvIndex, KvTable};
 use tidb_ast::CiString;
 use tidb_ast::{ColumnDef, ColumnTypeArg, DdlStmt, Stmt};
 use tidb_datatype::{str_to_type, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags};
@@ -39,6 +39,112 @@ use tidb_model::table_info::TableInfo;
 const NOT_NULL_FLAG: u32 = 1;
 /// Go `mysql.PriKeyFlag`.
 const PRI_KEY_FLAG: u32 = 1 << 1;
+
+/// Every index a `CREATE TABLE` declares, other than a primary key that
+/// became the row handle.
+///
+/// Go's `buildTableInfo` turns each key constraint into an `IndexInfo` with
+/// its own id, allocated in declaration order starting at 1.
+///
+/// DEFERRED (documented): FULLTEXT, VECTOR and COLUMNAR indexes, prefix
+/// lengths, expression keys and index options, all rejected rather than
+/// silently created as a plain index.
+fn table_indexes(
+    create: &tidb_ast::CreateTableStmt,
+    columns: &[ColumnInfo],
+    pk_is_handle: bool,
+) -> Result<Vec<KvIndex>, DriverError> {
+    let offset_of = |name: &str| -> Result<usize, DriverError> {
+        columns
+            .iter()
+            .position(|col| col.name.original().eq_ignore_ascii_case(name))
+            .ok_or(DriverError::Unsupported(
+                "an index names a column the table does not define",
+            ))
+    };
+    fn push(indexes: &mut Vec<KvIndex>, name: String, unique: bool, offsets: Vec<usize>) {
+        indexes.push(KvIndex {
+            id: (indexes.len() + 1) as i64,
+            name,
+            unique,
+            column_offsets: offsets,
+        });
+    }
+    let mut indexes: Vec<KvIndex> = Vec::new();
+
+    for def in &create.columns {
+        for option in &def.options {
+            if let tidb_ast::ColumnOption::InlineKey(key) = option {
+                match key.kind {
+                    tidb_ast::InlineKeyKind::Unique => {
+                        let offset = offset_of(&def.name)?;
+                        push(&mut indexes, def.name.clone(), true, vec![offset]);
+                    }
+                    // A primary key that is not the row handle still needs an
+                    // index to enforce its uniqueness.
+                    tidb_ast::InlineKeyKind::Primary { .. } if !pk_is_handle => {
+                        let offset = offset_of(&def.name)?;
+                        push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset]);
+                    }
+                    tidb_ast::InlineKeyKind::Primary { .. } => {}
+                }
+            }
+        }
+    }
+
+    for constraint in &create.table_constraints {
+        let tidb_ast::TableConstraint::Index(index) = constraint else {
+            continue;
+        };
+        match index.kind {
+            tidb_ast::IndexConstraintKind::PrimaryKey if pk_is_handle => continue,
+            tidb_ast::IndexConstraintKind::PrimaryKey
+            | tidb_ast::IndexConstraintKind::Unique
+            | tidb_ast::IndexConstraintKind::UniqueKey
+            | tidb_ast::IndexConstraintKind::UniqueIndex
+            | tidb_ast::IndexConstraintKind::Key
+            | tidb_ast::IndexConstraintKind::Index => {}
+            _ => {
+                return Err(DriverError::Unsupported(
+                    "FULLTEXT, VECTOR and COLUMNAR indexes are not supported yet",
+                ))
+            }
+        }
+        let unique = matches!(
+            index.kind,
+            tidb_ast::IndexConstraintKind::Unique
+                | tidb_ast::IndexConstraintKind::UniqueKey
+                | tidb_ast::IndexConstraintKind::UniqueIndex
+                | tidb_ast::IndexConstraintKind::PrimaryKey
+        );
+        let mut offsets = Vec::with_capacity(index.parts.len());
+        for part in &index.parts {
+            let tidb_ast::IndexPart::Column {
+                name, prefix_len, ..
+            } = part
+            else {
+                return Err(DriverError::Unsupported(
+                    "an expression index is not supported yet",
+                ));
+            };
+            if prefix_len.is_some() {
+                return Err(DriverError::Unsupported(
+                    "a prefix-length index is not supported yet",
+                ));
+            }
+            offsets.push(offset_of(name)?);
+        }
+        let name = match index.kind {
+            tidb_ast::IndexConstraintKind::PrimaryKey => "PRIMARY".to_owned(),
+            _ => index
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("idx_{}", indexes.len() + 1)),
+        };
+        push(&mut indexes, name, unique, offsets);
+    }
+    Ok(indexes)
+}
 
 /// Go `isIntCol`: whether the column's type can carry a handle.
 fn is_int_column(column: &ColumnInfo) -> bool {
@@ -74,11 +180,8 @@ fn primary_key_column(create: &tidb_ast::CreateTableStmt) -> Result<Option<Strin
                         }
                         found = Some(def.name.clone());
                     }
-                    tidb_ast::InlineKeyKind::Unique => {
-                        return Err(DriverError::Unsupported(
-                            "UNIQUE keys are deferred (they need the index tier)",
-                        ))
-                    }
+                    // A unique key is collected by `table_indexes`.
+                    tidb_ast::InlineKeyKind::Unique => {}
                 }
             }
         }
@@ -86,13 +189,12 @@ fn primary_key_column(create: &tidb_ast::CreateTableStmt) -> Result<Option<Strin
     for constraint in &create.table_constraints {
         let tidb_ast::TableConstraint::Index(index) = constraint else {
             return Err(DriverError::Unsupported(
-                "only PRIMARY KEY table constraints are supported yet",
+                "only key table constraints are supported yet",
             ));
         };
         if index.kind != tidb_ast::IndexConstraintKind::PrimaryKey {
-            return Err(DriverError::Unsupported(
-                "only PRIMARY KEY table constraints are supported yet",
-            ));
+            // Unique and secondary keys are collected by `table_indexes`.
+            continue;
         }
         if found.is_some() {
             return Err(DriverError::Unsupported(
@@ -255,6 +357,9 @@ pub fn run_create_table_in(
         if let Some(offset) = pk_offset {
             table.set_pk_handle_offset(offset);
         }
+    }
+    for index in table_indexes(create, &info.columns, pk_is_handle)? {
+        table.add_index(index);
     }
     catalog.register_kv_in(&database, name, table);
     Ok(true)

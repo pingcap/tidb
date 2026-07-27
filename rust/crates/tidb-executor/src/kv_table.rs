@@ -37,13 +37,32 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
-use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range, RecordHandle};
+use tidb_codec::table_key::{
+    encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
+};
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
-use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
+use tidb_tablecodec::{
+    decode_handle_in_index_value, decode_table_row_to_map, encode_handle_in_unique_index_value,
+    encode_table_row,
+};
 use tidb_txnkv::{
     GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
 };
+
+/// One index of a [`KvTable`]: Go `model.IndexInfo`, reduced to what an index
+/// write and a uniqueness check need.
+#[derive(Clone, Debug)]
+pub struct KvIndex {
+    /// The index id (Go `IndexInfo.ID`), the `_i` key component.
+    pub id: i64,
+    /// The index name, which a duplicate-key error reports.
+    pub name: String,
+    /// Go `IndexInfo.Unique`.
+    pub unique: bool,
+    /// The indexed columns' offsets in the row, in index order.
+    pub column_offsets: Vec<usize>,
+}
 
 /// A column of a [`KvTable`]: name, column id, and type.
 #[derive(Clone, Debug)]
@@ -71,6 +90,8 @@ pub struct KvTable {
     /// Go `TableInfo.PKIsHandle`: the offset of the single integer primary-key
     /// column whose value IS the row handle, when the table has one.
     pk_handle_offset: Option<usize>,
+    /// The table's indexes (Go `TableInfo.Indices`).
+    indexes: Vec<KvIndex>,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -101,7 +122,19 @@ impl KvTable {
             store: MemStorage::new(),
             next_handle: 1,
             pk_handle_offset: None,
+            indexes: Vec::new(),
         }
+    }
+
+    /// Adds an index, whose entries every later write maintains.
+    pub fn add_index(&mut self, index: KvIndex) {
+        self.indexes.push(index);
+    }
+
+    /// The table's indexes.
+    #[must_use]
+    pub fn indexes(&self) -> &[KvIndex] {
+        &self.indexes
     }
 
     /// Marks the column at `offset` as the table's handle column, which Go
@@ -171,6 +204,9 @@ impl KvTable {
             self.table_id,
             &RecordHandle::Int(handle),
         ));
+        // Go writes the row first, then its index entries; a duplicate on a
+        // unique index aborts the statement.
+        self.write_index_entries(row, handle)?;
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -224,6 +260,144 @@ impl KvTable {
         Ok(rows)
     }
 
+    /// Go `GenIndexKey`: the entry key for one index over `row`, plus Go's
+    /// `distinct` flag.
+    ///
+    /// `distinct` is true only for a unique index whose indexed values are all
+    /// non-NULL -- MySQL lets a unique index hold any number of NULLs, so a
+    /// NULL-bearing entry is stored the non-distinct way (handle appended to
+    /// the key) and never collides.
+    fn index_key(
+        &self,
+        index: &KvIndex,
+        row: &[Datum],
+        handle: i64,
+    ) -> Result<(Vec<u8>, bool), KvTableError> {
+        let values: Vec<Datum> = index
+            .column_offsets
+            .iter()
+            .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
+            .collect();
+        let distinct = index.unique && !values.contains(&Datum::Null);
+        let mut encoded =
+            tidb_codec::encode_key(&values).map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        if !distinct {
+            // Go appends the handle so non-distinct entries stay unique.
+            encoded.extend_from_slice(
+                &tidb_codec::encode_key(&[Datum::Int(handle)])
+                    .map_err(|e| KvTableError::Encode(format!("{e:?}")))?,
+            );
+        }
+        Ok((
+            encode_index_seek_key(self.table_id, index.id, &encoded),
+            distinct,
+        ))
+    }
+
+    /// Writes every index entry for `row`, rejecting a duplicate on a unique
+    /// index as Go's `index.Create` does with `ErrKeyExists`.
+    fn write_index_entries(&mut self, row: &[Datum], handle: i64) -> Result<(), KvTableError> {
+        let indexes = self.indexes.clone();
+        for index in &indexes {
+            let (key, distinct) = self.index_key(index, row, handle)?;
+            let key = Key::from_bytes(key);
+            if distinct {
+                if self.store.get(&key, GetOptions::default()).is_ok() {
+                    return Err(KvTableError::DuplicateEntry {
+                        value: duplicate_value_text(index, row),
+                        key: index.name.clone(),
+                    });
+                }
+                // A distinct entry carries the handle as its value, which is
+                // what makes a unique-index lookup a point read.
+                let value = encode_handle_in_unique_index_value(
+                    &tidb_txnkv::IntHandle::new(handle).into(),
+                    false,
+                );
+                self.store
+                    .set(key, value)
+                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            } else {
+                // Go stores a single version byte for a non-distinct entry.
+                self.store
+                    .set(key, vec![b'0'])
+                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes every index entry for `row`.
+    fn delete_index_entries(&mut self, row: &[Datum], handle: i64) -> Result<(), KvTableError> {
+        let indexes = self.indexes.clone();
+        for index in &indexes {
+            let (key, _) = self.index_key(index, row, handle)?;
+            self.store
+                .delete(Key::from_bytes(key))
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        Ok(())
+    }
+
+    /// Looks a row handle up through a unique index, the point-get Go plans as
+    /// `PointGetPlan` on a unique key. `None` when no entry matches.
+    pub fn lookup_unique(
+        &mut self,
+        index_id: i64,
+        values: &[Datum],
+    ) -> Result<Option<i64>, KvTableError> {
+        let Some(index) = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .cloned()
+        else {
+            return Err(KvTableError::Decode("no such index".to_owned()));
+        };
+        if !index.unique || values.contains(&Datum::Null) {
+            // Only a distinct entry stores the handle in its value.
+            return Ok(None);
+        }
+        let encoded =
+            tidb_codec::encode_key(values).map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        let key = Key::from_bytes(encode_index_seek_key(self.table_id, index.id, &encoded));
+        match self.store.get(&key, GetOptions::default()) {
+            Ok(entry) => {
+                let handle = decode_handle_in_index_value(&entry.value)
+                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                Ok(handle.int_value())
+            }
+            Err(MemStorageError::NotFound) => Ok(None),
+            Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
+        }
+    }
+
+    /// The row stored under `handle`, decoded, or `None` when absent.
+    fn read_row(&mut self, handle: i64) -> Result<Option<Vec<Datum>>, KvTableError> {
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            self.table_id,
+            &RecordHandle::Int(handle),
+        ));
+        let entry = match self.store.get(&key, GetOptions::default()) {
+            Ok(entry) => entry,
+            Err(MemStorageError::NotFound) => return Ok(None),
+            Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+        };
+        let column_types: BTreeMap<i64, FieldType> = self
+            .columns
+            .iter()
+            .map(|c| (c.id, c.field_type.clone()))
+            .collect();
+        let mut decoded = decode_table_row_to_map(&entry.value, &column_types, None)
+            .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+        Ok(Some(
+            self.columns
+                .iter()
+                .map(|c| decoded.remove(&c.id).unwrap_or(Datum::Null))
+                .collect(),
+        ))
+    }
+
     /// Whether a row is already stored under `handle`.
     fn row_exists(&mut self, handle: i64) -> Result<bool, KvTableError> {
         let key = Key::from_bytes(encode_row_key_with_handle(
@@ -241,6 +415,20 @@ impl KvTable {
     /// row back under the same record key when the handle column did not
     /// change).
     pub fn update_row(&mut self, handle: i64, row: &[Datum]) -> Result<(), KvTableError> {
+        // Go removes the old index entries and writes the new ones.
+        if !self.indexes.is_empty() {
+            if let Some(old) = self.read_row(handle)? {
+                self.delete_index_entries(&old, handle)?;
+            }
+            if let Err(error) = self.write_index_entries(row, handle) {
+                // Restore the entries the failed update removed, so a rejected
+                // statement leaves the index as it found it.
+                if let Some(old) = self.read_row(handle)? {
+                    self.write_index_entries(&old, handle)?;
+                }
+                return Err(error);
+            }
+        }
         let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
         let value = encode_table_row(None, row, &column_ids, true, None)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
@@ -255,6 +443,11 @@ impl KvTable {
 
     /// Removes the row stored under `handle`.
     pub fn delete_row(&mut self, handle: i64) -> Result<(), KvTableError> {
+        if !self.indexes.is_empty() {
+            if let Some(row) = self.read_row(handle)? {
+                self.delete_index_entries(&row, handle)?;
+            }
+        }
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
             &RecordHandle::Int(handle),
@@ -263,6 +456,24 @@ impl KvTable {
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))
     }
+}
+
+/// The value MySQL prints in a duplicate-key error: the indexed values joined
+/// by `-`, as Go's `ErrKeyExists` formats them.
+fn duplicate_value_text(index: &KvIndex, row: &[Datum]) -> String {
+    index
+        .column_offsets
+        .iter()
+        .map(|offset| match row.get(*offset) {
+            Some(Datum::Int(value)) => value.to_string(),
+            Some(Datum::UInt(value)) => value.to_string(),
+            Some(Datum::Bytes(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
+            Some(Datum::String(text)) => String::from_utf8_lossy(text.bytes()).into_owned(),
+            Some(other) => format!("{other:?}"),
+            None => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// The integer handle a record key encodes: the trailing big-endian-ordered
