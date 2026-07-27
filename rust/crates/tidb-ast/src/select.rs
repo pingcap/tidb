@@ -1059,6 +1059,12 @@ pub struct SelectFieldList {
 }
 
 impl SelectFieldList {
+    /// The select fields as a contiguous slice.
+    #[must_use]
+    pub fn fields(&self) -> &[SelectField] {
+        &self.fields
+    }
+
     /// Appends a field with empty source metadata.
     pub fn push(&mut self, field: SelectField) {
         self.fields.push(field);

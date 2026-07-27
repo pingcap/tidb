@@ -1339,6 +1339,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-parser",
 ]
 
 [[package]]

@@ -145,6 +145,21 @@ impl Expression {
         }
     }
 
+    /// Go `Expression.GetType` without an `EvalContext`: the expression's static
+    /// result type. `None` mirrors a nil `RetType`.
+    ///
+    /// For a [`ScalarFunction`] this is the placeholder result type set at
+    /// construction (faithful type inference is not yet ported).
+    #[must_use]
+    pub fn static_type(&self) -> Option<&tidb_datatype::FieldType> {
+        match self {
+            Expression::Column(c) => c.get_static_type(),
+            Expression::Constant(c) => c.get_static_type(),
+            Expression::CorrelatedColumn(c) => c.get_static_type(),
+            Expression::ScalarFunction(c) => c.get_static_type(),
+        }
+    }
+
     /// Borrows the inner [`Column`] when this expression is a column reference.
     #[must_use]
     pub fn as_column(&self) -> Option<&Column> {

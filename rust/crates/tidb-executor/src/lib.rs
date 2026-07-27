@@ -30,11 +30,13 @@
 //! `context.Context`/`sessionctx` propagation, runtime stats, the SQL killer,
 //! `Detach`, parallel projection, and the many other operators.
 
+pub mod driver;
 pub mod executor;
 pub mod projection;
 pub mod selection;
 pub mod table_dual;
 
+pub use driver::{run_select, DriverError};
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;

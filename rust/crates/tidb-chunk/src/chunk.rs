@@ -146,10 +146,14 @@ impl Chunk {
 
     /// Go `appendSel`: when appending to column 0 of a selection-carrying chunk,
     /// record the new physical row as selected.
+    ///
+    /// Column 0 is only consulted when a selection is present (Go's
+    /// `colIdx == 0 && c.sel != nil`); a column-less chunk never carries a
+    /// selection, so this must not touch `columns[0]` otherwise.
     fn append_sel(&mut self, col_idx: usize) {
         if col_idx == 0 {
-            let len = self.columns[0].rows();
             if let Some(sel) = &mut self.sel {
+                let len = self.columns[0].rows();
                 sel.push(len);
             }
         }

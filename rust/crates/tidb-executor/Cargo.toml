@@ -8,12 +8,11 @@ repository.workspace = true
 description = "TiDB executor: the wired execution engine spine (Executor trait + operators) (Rust rewrite)."
 
 [dependencies]
+tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
-
-[dev-dependencies]
-tidb-ast = { path = "../tidb-ast" }
+tidb-parser = { path = "../tidb-parser" }
 
 [lints]
 workspace = true
