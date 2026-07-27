@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -162,6 +163,64 @@ func TestUserPrivileges(t *testing.T) {
 	require.Greater(t, len(rows), 0)
 	rows = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
+}
+
+func TestUserAttributesVisibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+
+	root.MustExec(`CREATE USER ua_target_regular ATTRIBUTE '{"type":"regular"}'`)
+	root.MustExec(`CREATE USER ua_target_system ATTRIBUTE '{"type":"system"}'`)
+	root.MustExec("GRANT SYSTEM_USER ON *.* TO ua_target_system")
+
+	root.MustExec("CREATE USER ua_viewer_regular")
+	root.MustExec("CREATE USER ua_viewer_system")
+	root.MustExec("GRANT SYSTEM_USER ON *.* TO ua_viewer_system")
+	root.MustExec("CREATE USER ua_viewer_create")
+	root.MustExec("GRANT CREATE USER ON *.* TO ua_viewer_create")
+	root.MustExec("CREATE USER ua_viewer_create_system")
+	root.MustExec("GRANT CREATE USER, SYSTEM_USER ON *.* TO ua_viewer_create_system")
+	root.MustExec("CREATE USER ua_viewer_super")
+	root.MustExec("GRANT CREATE USER, SUPER ON *.* TO ua_viewer_super")
+	root.MustExec("CREATE USER ua_viewer_select")
+	root.MustExec("GRANT SELECT ON mysql.* TO ua_viewer_select")
+	root.MustExec("CREATE USER ua_viewer_update")
+	root.MustExec("GRANT UPDATE ON mysql.* TO ua_viewer_update")
+	root.MustExec("CREATE USER ua_viewer_table_select")
+	root.MustExec("GRANT SELECT ON mysql.user TO ua_viewer_table_select")
+	root.MustExec("CREATE USER ua_viewer_table_update")
+	root.MustExec("GRANT UPDATE ON mysql.user TO ua_viewer_table_update")
+	root.MustExec("CREATE USER ua_viewer_role")
+	root.MustExec("CREATE ROLE ua_user_admin_role")
+	root.MustExec("GRANT CREATE USER, SYSTEM_USER ON *.* TO ua_user_admin_role")
+	root.MustExec("GRANT ua_user_admin_role TO ua_viewer_role")
+
+	queryAs := func(user string, activeRole string, expectedRows ...string) {
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: "127.0.0.1"}, nil, nil, nil))
+		if activeRole != "" {
+			tk.MustExec("SET ROLE " + activeRole)
+		}
+		query := fmt.Sprintf(`SELECT user FROM information_schema.user_attributes
+			WHERE user IN ('root', 'ua_target_regular', 'ua_target_system', '%s') ORDER BY user`, user)
+		tk.MustQuery(query).Check(testkit.Rows(expectedRows...))
+	}
+
+	queryAs("ua_viewer_regular", "", "ua_viewer_regular")
+	queryAs("ua_viewer_system", "", "ua_viewer_system")
+	queryAs("ua_viewer_create", "", "ua_target_regular", "ua_viewer_create")
+	queryAs("ua_viewer_create_system", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_create_system")
+	queryAs("ua_viewer_super", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_super")
+	queryAs("ua_viewer_select", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_select")
+	queryAs("ua_viewer_update", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_update")
+	queryAs("ua_viewer_table_select", "", "ua_viewer_table_select")
+	queryAs("ua_viewer_table_update", "", "ua_viewer_table_update")
+	queryAs("ua_viewer_role", "ua_user_admin_role", "root", "ua_target_regular", "ua_target_system", "ua_viewer_role")
+
+	originalSkipWithGrant := privileges.SkipWithGrant
+	privileges.SkipWithGrant = true
+	defer func() { privileges.SkipWithGrant = originalSkipWithGrant }()
+	queryAs("ua_viewer_regular", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_regular")
 }
 
 func TestDataForTableStatsField(t *testing.T) {
