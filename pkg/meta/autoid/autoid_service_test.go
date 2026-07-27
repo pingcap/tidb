@@ -56,7 +56,7 @@ func (m *mockAutoIDClient) Rebase(_ context.Context, _ *autoid.RebaseRequest, _ 
 	return nil, m.rebaseErr
 }
 
-type scriptedAutoIDServer struct {
+type scriptedServer struct {
 	autoid.UnimplementedAutoIDAllocServer
 	allocCallCount  atomic.Int64
 	rebaseCallCount atomic.Int64
@@ -64,17 +64,17 @@ type scriptedAutoIDServer struct {
 	rebase          func(int64) (*autoid.RebaseResponse, error)
 }
 
-func (s *scriptedAutoIDServer) AllocAutoID(_ context.Context, _ *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+func (s *scriptedServer) AllocAutoID(_ context.Context, _ *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	call := s.allocCallCount.Add(1)
 	return s.alloc(call)
 }
 
-func (s *scriptedAutoIDServer) Rebase(_ context.Context, _ *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
+func (s *scriptedServer) Rebase(_ context.Context, _ *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 	call := s.rebaseCallCount.Add(1)
 	return s.rebase(call)
 }
 
-func startScriptedAutoIDServer(t *testing.T, service *scriptedAutoIDServer) string {
+func startScriptedServer(t *testing.T, service *scriptedServer) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func startScriptedAutoIDServer(t *testing.T, service *scriptedAutoIDServer) stri
 	return listener.Addr().String()
 }
 
-func newAutoIDTestEtcdClient(t *testing.T) *clientv3.Client {
+func newTestEtcdClient(t *testing.T) *clientv3.Client {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 creates filenames that are invalid on Windows")
@@ -100,20 +100,20 @@ func newAutoIDTestEtcdClient(t *testing.T) *clientv3.Client {
 	return cluster.RandClient()
 }
 
-func putAutoIDServiceEndpoint(t *testing.T, cli *clientv3.Client, address string) {
+func putServiceEndpoint(t *testing.T, cli *clientv3.Client, address string) {
 	t.Helper()
-	_, err := cli.Put(autoIDTestContext(t), AutoIDLeaderPath+"/candidate", address)
+	_, err := cli.Put(testContext(t), AutoIDLeaderPath+"/candidate", address)
 	require.NoError(t, err)
 }
 
-func autoIDTestContext(t *testing.T) context.Context {
+func testContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	return ctx
 }
 
-func observeAutoIDLogs(t *testing.T) *observer.ObservedLogs {
+func observeRetryLogs(t *testing.T) *observer.ObservedLogs {
 	t.Helper()
 	core, logs := observer.New(zap.InfoLevel)
 	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
@@ -131,7 +131,7 @@ func newRPCRetryTestAllocator(t *testing.T, etcdCli *clientv3.Client) *singlePoi
 		tblID:          22,
 		ClientDiscover: NewClientDiscover(etcdCli),
 		keyspaceID:     uint32(tikv.NullspaceID),
-		rpcRetryPolicy: autoIDRPCRetryPolicy{
+		rpcRetryPolicy: rpcRetryPolicy{
 			minErrors:   3,
 			minDuration: 0,
 		},
@@ -150,7 +150,7 @@ func newRPCRetryTestAllocator(t *testing.T, etcdCli *clientv3.Client) *singlePoi
 	return allocator
 }
 
-func runAutoIDTestOperation(ctx context.Context, operation string, allocator *singlePointAlloc) error {
+func runOperation(ctx context.Context, operation string, allocator *singlePointAlloc) error {
 	if operation == "alloc" {
 		_, _, err := allocator.Alloc(ctx, 1, 1, 1)
 		return err
@@ -158,19 +158,15 @@ func runAutoIDTestOperation(ctx context.Context, operation string, allocator *si
 	return allocator.rebase(ctx, 100, false)
 }
 
-func autoIDOperationCallCount(operation string, service *scriptedAutoIDServer) int64 {
+func operationCallCount(operation string, service *scriptedServer) int64 {
 	if operation == "alloc" {
 		return service.allocCallCount.Load()
 	}
 	return service.rebaseCallCount.Load()
 }
 
-func successfulAutoIDResponse() (*autoid.AutoIDResponse, error) {
+func successfulAllocResponse() (*autoid.AutoIDResponse, error) {
 	return &autoid.AutoIDResponse{Min: 100, Max: 101}, nil
-}
-
-func successfulRebaseResponse() (*autoid.RebaseResponse, error) {
-	return &autoid.RebaseResponse{}, nil
 }
 
 // newTestSinglePointAlloc creates a singlePointAlloc with a mock client.
@@ -284,9 +280,9 @@ func TestAutoIDRPCRetryPolicy(t *testing.T) {
 		require.Equal(t, 15*time.Second, policy.minDuration)
 	})
 
-	policy := autoIDRPCRetryPolicy{minErrors: 3, minDuration: 2 * time.Second}
+	policy := rpcRetryPolicy{minErrors: 3, minDuration: 2 * time.Second}
 	start := time.Unix(100, 0)
-	var state autoIDRPCRetryState
+	var state rpcRetryState
 
 	require.False(t, state.observe(start, policy))
 	require.False(t, state.observe(start.Add(time.Second), policy))
@@ -295,12 +291,12 @@ func TestAutoIDRPCRetryPolicy(t *testing.T) {
 	require.Equal(t, start, state.firstError)
 
 	t.Run("count and duration use AND semantics", func(t *testing.T) {
-		var countOnly autoIDRPCRetryState
+		var countOnly rpcRetryState
 		require.False(t, countOnly.observe(start, policy))
 		require.False(t, countOnly.observe(start, policy))
 		require.False(t, countOnly.observe(start, policy))
 
-		var durationOnly autoIDRPCRetryState
+		var durationOnly rpcRetryState
 		require.False(t, durationOnly.observe(start, policy))
 		require.False(t, durationOnly.observe(start.Add(3*time.Second), policy))
 	})
@@ -335,11 +331,11 @@ func TestAutoIDRPCRetry(t *testing.T) {
 
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
-				logs := observeAutoIDLogs(t)
-				etcdCli := newAutoIDTestEtcdClient(t)
-				service := &scriptedAutoIDServer{
-					alloc:  func(int64) (*autoid.AutoIDResponse, error) { return successfulAutoIDResponse() },
-					rebase: func(int64) (*autoid.RebaseResponse, error) { return successfulRebaseResponse() },
+				logs := observeRetryLogs(t)
+				etcdCli := newTestEtcdClient(t)
+				service := &scriptedServer{
+					alloc:  func(int64) (*autoid.AutoIDResponse, error) { return successfulAllocResponse() },
+					rebase: func(int64) (*autoid.RebaseResponse, error) { return &autoid.RebaseResponse{}, nil },
 				}
 				nextError := func(call int64) error {
 					return test.rpcErrors[call-1]
@@ -354,18 +350,18 @@ func TestAutoIDRPCRetry(t *testing.T) {
 					}
 				}
 
-				address := startScriptedAutoIDServer(t, service)
-				putAutoIDServiceEndpoint(t, etcdCli, address)
+				address := startScriptedServer(t, service)
+				putServiceEndpoint(t, etcdCli, address)
 				allocator := newRPCRetryTestAllocator(t, etcdCli)
 
-				err := runAutoIDTestOperation(autoIDTestContext(t), test.operation, allocator)
+				err := runOperation(testContext(t), test.operation, allocator)
 				require.Error(t, err)
 				require.True(t, ErrAutoincReadFailed.Equal(err))
 				require.True(t, IsRPCRetryLimitError(err))
 				require.Contains(t, err.Error(), "3 RPC errors")
 				require.Contains(t, err.Error(), test.rpcErrors[2].Error())
-				require.Contains(t, err.Error(), autoIDRPCRetryAction)
-				require.Equal(t, int64(3), autoIDOperationCallCount(test.operation, service))
+				require.Contains(t, err.Error(), rpcRetryAction)
+				require.Equal(t, int64(3), operationCallCount(test.operation, service))
 
 				starts := logs.FilterMessage("autoid request entered RPC retry").All()
 				terminals := logs.FilterMessage("autoid request stopped after reaching RPC retry limit").All()
@@ -383,30 +379,30 @@ func TestAutoIDRPCRetry(t *testing.T) {
 	t.Run("recovers before the limit", func(t *testing.T) {
 		for _, operation := range []string{"alloc", "rebase"} {
 			t.Run(operation, func(t *testing.T) {
-				logs := observeAutoIDLogs(t)
-				etcdCli := newAutoIDTestEtcdClient(t)
+				logs := observeRetryLogs(t)
+				etcdCli := newTestEtcdClient(t)
 				retryErr := status.Error(codes.Unavailable, "temporary connection failure")
-				service := &scriptedAutoIDServer{
+				service := &scriptedServer{
 					alloc: func(call int64) (*autoid.AutoIDResponse, error) {
 						if call < 3 {
 							return nil, retryErr
 						}
-						return successfulAutoIDResponse()
+						return successfulAllocResponse()
 					},
 					rebase: func(call int64) (*autoid.RebaseResponse, error) {
 						if call < 3 {
 							return nil, retryErr
 						}
-						return successfulRebaseResponse()
+						return &autoid.RebaseResponse{}, nil
 					},
 				}
 
-				address := startScriptedAutoIDServer(t, service)
-				putAutoIDServiceEndpoint(t, etcdCli, address)
+				address := startScriptedServer(t, service)
+				putServiceEndpoint(t, etcdCli, address)
 				allocator := newRPCRetryTestAllocator(t, etcdCli)
 
-				require.NoError(t, runAutoIDTestOperation(autoIDTestContext(t), operation, allocator))
-				require.Equal(t, int64(3), autoIDOperationCallCount(operation, service))
+				require.NoError(t, runOperation(testContext(t), operation, allocator))
+				require.Equal(t, int64(3), operationCallCount(operation, service))
 
 				starts := logs.FilterMessage("autoid request entered RPC retry").All()
 				completions := logs.FilterMessage("autoid request completed after RPC retry").All()
@@ -421,7 +417,7 @@ func TestAutoIDRPCRetry(t *testing.T) {
 	})
 
 	t.Run("non RPC errors are not retried", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
+		logs := observeRetryLogs(t)
 		nonRPCErr := errors.New("local validation failed")
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -442,7 +438,7 @@ func TestAutoIDRPCRetry(t *testing.T) {
 					rebaseErr: nonRPCErr,
 				}
 				allocator := newTestSinglePointAlloc(mockCli)
-				err := runAutoIDTestOperation(test.ctx, test.operation, allocator)
+				err := runOperation(test.ctx, test.operation, allocator)
 				require.ErrorIs(t, err, nonRPCErr)
 				require.False(t, IsRPCRetryLimitError(err))
 				if test.operation == "alloc" {
@@ -456,18 +452,18 @@ func TestAutoIDRPCRetry(t *testing.T) {
 	})
 
 	t.Run("normal success adds no retry logs", func(t *testing.T) {
-		logs := observeAutoIDLogs(t)
-		etcdCli := newAutoIDTestEtcdClient(t)
-		service := &scriptedAutoIDServer{
-			alloc:  func(int64) (*autoid.AutoIDResponse, error) { return successfulAutoIDResponse() },
-			rebase: func(int64) (*autoid.RebaseResponse, error) { return successfulRebaseResponse() },
+		logs := observeRetryLogs(t)
+		etcdCli := newTestEtcdClient(t)
+		service := &scriptedServer{
+			alloc:  func(int64) (*autoid.AutoIDResponse, error) { return successfulAllocResponse() },
+			rebase: func(int64) (*autoid.RebaseResponse, error) { return &autoid.RebaseResponse{}, nil },
 		}
-		address := startScriptedAutoIDServer(t, service)
-		putAutoIDServiceEndpoint(t, etcdCli, address)
+		address := startScriptedServer(t, service)
+		putServiceEndpoint(t, etcdCli, address)
 		allocator := newRPCRetryTestAllocator(t, etcdCli)
 
-		require.NoError(t, runAutoIDTestOperation(autoIDTestContext(t), "alloc", allocator))
-		require.NoError(t, runAutoIDTestOperation(autoIDTestContext(t), "rebase", allocator))
+		require.NoError(t, runOperation(testContext(t), "alloc", allocator))
+		require.NoError(t, runOperation(testContext(t), "rebase", allocator))
 		require.Empty(t, logs.FilterMessage("autoid request entered RPC retry").All())
 		require.Empty(t, logs.FilterMessage("autoid request completed after RPC retry").All())
 		require.Empty(t, logs.FilterMessage("autoid request stopped after reaching RPC retry limit").All())

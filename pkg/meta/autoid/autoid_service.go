@@ -45,7 +45,7 @@ type singlePointAlloc struct {
 	isUnsigned    bool
 	*ClientDiscover
 	keyspaceID     uint32
-	rpcRetryPolicy autoIDRPCRetryPolicy
+	rpcRetryPolicy rpcRetryPolicy
 }
 
 // ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
@@ -64,23 +64,23 @@ type ClientDiscover struct {
 	version uint64
 }
 
-var autoIDRequestSequence atomic.Uint64
+var rpcRetryRequestSequence atomic.Uint64
 
 const (
 	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
 	AutoIDLeaderPath = "tidb/autoid/leader"
 
-	defaultAutoIDRPCRetryMinErrors   = 10
-	defaultAutoIDRPCRetryMinDuration = 15 * time.Second
-	autoIDRPCRetryAction             = "check AutoID service availability and connectivity, then retry the statement"
+	defaultRPCRetryMinErrors   = 10
+	defaultRPCRetryMinDuration = 15 * time.Second
+	rpcRetryAction             = "check AutoID service availability and connectivity, then retry the statement"
 )
 
-type autoIDRPCRetryPolicy struct {
+type rpcRetryPolicy struct {
 	minErrors   int
 	minDuration time.Duration
 }
 
-type autoIDRPCRetryState struct {
+type rpcRetryState struct {
 	errorCount int
 	firstError time.Time
 }
@@ -113,7 +113,7 @@ func IsRPCRetryLimitError(err error) bool {
 	return goerrors.As(err, &marker)
 }
 
-func (s *autoIDRPCRetryState) observe(now time.Time, policy autoIDRPCRetryPolicy) bool {
+func (s *rpcRetryState) observe(now time.Time, policy rpcRetryPolicy) bool {
 	if s.errorCount == 0 {
 		s.firstError = now
 	}
@@ -123,7 +123,7 @@ func (s *autoIDRPCRetryState) observe(now time.Time, policy autoIDRPCRetryPolicy
 		now.Sub(s.firstError) >= policy.minDuration
 }
 
-type autoIDRequestLogState struct {
+type rpcRetryLogState struct {
 	operation       string
 	keyspaceID      uint32
 	dbID            int64
@@ -135,13 +135,13 @@ type autoIDRequestLogState struct {
 	terminalEmitted bool
 }
 
-func newAutoIDRequestLogState(
+func newRPCRetryLogState(
 	operation string,
 	keyspaceID uint32,
 	dbID, tableID int64,
 	requestStarted time.Time,
-) autoIDRequestLogState {
-	return autoIDRequestLogState{
+) rpcRetryLogState {
+	return rpcRetryLogState{
 		operation:      operation,
 		keyspaceID:     keyspaceID,
 		dbID:           dbID,
@@ -150,13 +150,13 @@ func newAutoIDRequestLogState(
 	}
 }
 
-func (s *autoIDRequestLogState) observeRPCRetry() {
+func (s *rpcRetryLogState) observeRPCRetry() {
 	s.rpcErrorCount++
 	if s.active {
 		return
 	}
 	s.active = true
-	s.requestID = autoIDRequestSequence.Add(1)
+	s.requestID = rpcRetryRequestSequence.Add(1)
 	logutil.BgLogger().Info("autoid request entered RPC retry",
 		zap.String("category", "autoid client"),
 		zap.Uint64("autoid-request-id", s.requestID),
@@ -168,7 +168,7 @@ func (s *autoIDRequestLogState) observeRPCRetry() {
 		zap.Int("rpc-error-count", s.rpcErrorCount))
 }
 
-func (s *autoIDRequestLogState) complete(err error) {
+func (s *rpcRetryLogState) complete(err error) {
 	if !s.active || s.terminalEmitted {
 		return
 	}
@@ -197,7 +197,7 @@ func (s *autoIDRequestLogState) complete(err error) {
 	logutil.BgLogger().Info("autoid request completed after RPC retry", fields...)
 }
 
-func (s *autoIDRequestLogState) fastFail(state autoIDRPCRetryState, elapsed time.Duration, err error) {
+func (s *rpcRetryLogState) fastFail(state rpcRetryState, elapsed time.Duration, err error) {
 	s.terminalEmitted = true
 	logutil.BgLogger().Warn("autoid request stopped after reaching RPC retry limit",
 		zap.String("category", "autoid client"),
@@ -210,23 +210,23 @@ func (s *autoIDRequestLogState) fastFail(state autoIDRPCRetryState, elapsed time
 		zap.Duration("rpc-retry-elapsed", elapsed),
 		zap.Int("rpc-error-count", state.errorCount),
 		zap.String("outcome", "fast-failed"),
-		zap.String("action", autoIDRPCRetryAction),
+		zap.String("action", rpcRetryAction),
 		zap.Error(err))
 }
 
-func (sp *singlePointAlloc) effectiveRPCRetryPolicy() autoIDRPCRetryPolicy {
+func (sp *singlePointAlloc) effectiveRPCRetryPolicy() rpcRetryPolicy {
 	if sp.rpcRetryPolicy.minErrors > 0 {
 		return sp.rpcRetryPolicy
 	}
-	return autoIDRPCRetryPolicy{
-		minErrors:   defaultAutoIDRPCRetryMinErrors,
-		minDuration: defaultAutoIDRPCRetryMinDuration,
+	return rpcRetryPolicy{
+		minErrors:   defaultRPCRetryMinErrors,
+		minDuration: defaultRPCRetryMinDuration,
 	}
 }
 
 func (sp *singlePointAlloc) newRPCRetryLimitError(
 	operation string,
-	state autoIDRPCRetryState,
+	state rpcRetryState,
 	now time.Time,
 	rpcErr error,
 ) error {
@@ -240,7 +240,7 @@ func (sp *singlePointAlloc) newRPCRetryLimitError(
 		sp.dbID,
 		sp.tblID,
 		rpcErr,
-		autoIDRPCRetryAction,
+		rpcRetryAction,
 	)})
 }
 
@@ -249,8 +249,8 @@ func (sp *singlePointAlloc) handleRPCRetryError(
 	operation string,
 	version uint64,
 	rpcErr error,
-	state *autoIDRPCRetryState,
-	requestLog *autoIDRequestLogState,
+	state *rpcRetryState,
+	requestLog *rpcRetryLogState,
 ) error {
 	if ctx.Err() != nil {
 		return errors.Trace(ctx.Err())
@@ -359,11 +359,11 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 
 	var bo backoffer
 	start := time.Now()
-	requestLog := newAutoIDRequestLogState("alloc", sp.keyspaceID, sp.dbID, sp.tblID, start)
+	requestLog := newRPCRetryLogState("alloc", sp.keyspaceID, sp.dbID, sp.tblID, start)
 	defer func() {
 		requestLog.complete(retErr)
 	}()
-	var rpcRetryState autoIDRPCRetryState
+	var rpcRetryState rpcRetryState
 retry:
 	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
@@ -508,11 +508,11 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) (retErr error) {
 	var bo backoffer
 	start := time.Now()
-	requestLog := newAutoIDRequestLogState("rebase", sp.keyspaceID, sp.dbID, sp.tblID, start)
+	requestLog := newRPCRetryLogState("rebase", sp.keyspaceID, sp.dbID, sp.tblID, start)
 	defer func() {
 		requestLog.complete(retErr)
 	}()
-	var rpcRetryState autoIDRPCRetryState
+	var rpcRetryState rpcRetryState
 retry:
 	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
