@@ -84,7 +84,20 @@ pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
         Expr::Binary(op, lhs, rhs) => {
             let left = rewrite_expr(lhs)?;
             let right = rewrite_expr(rhs)?;
-            Ok(scalar(binary_op_name(*op), vec![left, right]))
+            let name = binary_op_name(*op);
+            // Arithmetic result types come from the transcreated
+            // builtin_arithmetic function classes; other operators (comparisons,
+            // logic) are ETInt in Go and keep the LongLong placeholder.
+            if let Some(ret_type) =
+                crate::builtin_arithmetic::infer_arithmetic_type(name, &left, &right)
+            {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(name),
+                    ret_type,
+                    vec![left, right],
+                )));
+            }
+            Ok(scalar(name, vec![left, right]))
         }
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",

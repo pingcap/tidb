@@ -328,6 +328,7 @@
 
 mod binary_literal;
 mod build;
+pub mod builtin_arithmetic;
 mod builtin_ext;
 mod cast;
 mod coerce;
