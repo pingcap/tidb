@@ -109,6 +109,13 @@ func TestMultiSchemaChangeSetAutoIncrementPK(t *testing.T) {
 	))
 }
 
+func TestMultiSchemaChangeWhiteList(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// todo
+}
+
 func TestMultiSchemaChangeModifyColumnAndAddPrimaryKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -133,6 +140,69 @@ add primary key (id)`)
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("admin check table tmp_test_unsupported_operate_same")
+}
+
+func TestMultiSchemaChangeIfExistsIfNotExistsWithTableTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// ignoreColumnNotExistsIfExists: the missing MODIFY COLUMN should be skipped,
+	// and the following ADD COLUMN should see the tracked table state correctly.
+	tk.MustExec("drop table if exists test_column_if_exists")
+	tk.MustExec("create table test_column_if_exists(a int, b int)")
+	tk.MustExec("alter table test_column_if_exists modify column if exists c int, add column c int")
+	tk.MustExec("insert into test_column_if_exists values (1, 2, 3)")
+	tk.MustQuery("select * from test_column_if_exists").Check(testkit.Rows("1 2 3"))
+
+	// ignoreColumnExistsIfNotExists: the duplicate ADD COLUMN should be skipped,
+	// and should not overwrite the first ADD COLUMN in the same ALTER statement.
+	tk.MustExec("drop table if exists test_column_if_not_exists")
+	tk.MustExec("create table test_column_if_not_exists(a int, b int)")
+	tk.MustExec("alter table test_column_if_not_exists add column c int default 3, add column if not exists c bigint default 4, add column d int default 5")
+	tk.MustExec("insert into test_column_if_not_exists(a, b) values (1, 2)")
+	tk.MustQuery("select * from test_column_if_not_exists").Check(testkit.Rows("1 2 3 5"))
+
+	// ignoreIndexExistsIfNotExists: the duplicate ADD INDEX should be skipped,
+	// and the first index definition should be preserved.
+	tk.MustExec("drop table if exists test_index_if_not_exists")
+	tk.MustExec("create table test_index_if_not_exists(a int, b int)")
+	tk.MustExec("alter table test_index_if_not_exists add index idx_a(a), add index if not exists idx_a(b), add column c int")
+	tk.MustQuery("show create table test_index_if_not_exists").Check(testkit.RowsWithSep("|",
+		"test_index_if_not_exists|CREATE TABLE `test_index_if_not_exists` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL,\n"+
+			"  `c` int(11) DEFAULT NULL,\n"+
+			"  KEY `idx_a` (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// ignoreIndexNotExistsIfExists: the second DROP INDEX should be skipped after
+	// the first DROP INDEX has removed the index from the tracked table.
+	tk.MustExec("drop table if exists test_index_if_exists")
+	tk.MustExec("create table test_index_if_exists(a int, b int, index idx_a(a))")
+	tk.MustExec("alter table test_index_if_exists drop index idx_a, drop index if exists idx_a, add index idx_b(b)")
+	tk.MustQuery("show create table test_index_if_exists").Check(testkit.RowsWithSep("|",
+		"test_index_if_exists|CREATE TABLE `test_index_if_exists` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL,\n"+
+			"  KEY `idx_b` (`b`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
+func TestMultiSchemaChangeUsesUpdatedTableTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists test_updated_tracker_modify")
+	tk.MustExec("create table test_updated_tracker_modify(a int, b int)")
+	tk.MustGetErrCode("alter table test_updated_tracker_modify add primary key(a), modify column a int null", errno.ErrPrimaryCantHaveNull)
+
+	tk.MustExec("drop table if exists test_updated_tracker_change")
+	tk.MustExec("create table test_updated_tracker_change(a int, b int)")
+	tk.MustGetErrCode("alter table test_updated_tracker_change add primary key(a), change column a a int null", errno.ErrPrimaryCantHaveNull)
 }
 
 func TestMultiSchemaChangeAddColumnsAfterNewColumn(t *testing.T) {
@@ -246,7 +316,7 @@ func TestMultiSchemaChangeDropColumnAfterAddCompositeIndex(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int, b int, c int);")
-	tk.MustGetErrCode("alter table t add index t(a, b), drop column a;", errno.ErrKeyColumnDoesNotExits)
+	tk.MustGetErrCode("alter table t add index t(a, b), drop column a;", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("show index from t;").Check(testkit.Rows())
 }
 

@@ -179,7 +179,7 @@ create table t (a int, b int, c int);
 alter table t add index t(a), drop column a;
 Error 1072 (42000): column does not exist: a
 alter table t add index t(a, b), drop column a;
-Error 1072 (42000): column does not exist: a
+Error 8200 (HY000): can't drop column a with composite index covered or Primary Key covered now
 show index from t;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop table if exists t;
@@ -259,7 +259,7 @@ drop table if exists t;
 create table t(a int, b int);
 insert into t values (1, 2);
 alter table t add primary key(a), modify column a int null default 1 after a;
-Error 1054 (42S22): Unknown column 'a' in 't'
+Error 1171 (42000): All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead
 drop table if exists t;
 create table t(a int, b int);
 insert into t values (1, 2);

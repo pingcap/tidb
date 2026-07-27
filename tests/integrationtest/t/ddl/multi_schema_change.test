@@ -142,7 +142,7 @@ drop table if exists t;
 create table t (a int, b int, c int);
 -- error 1072
 alter table t add index t(a), drop column a;
--- error 1072
+-- error 8200
 alter table t add index t(a, b), drop column a;
 show index from t;
 drop table if exists t;
@@ -224,7 +224,7 @@ alter table t add index i(a), modify column a int null default 1 after a;
 drop table if exists t;
 create table t(a int, b int);
 insert into t values (1, 2);
--- error 1054
+-- error 1171
 alter table t add primary key(a), modify column a int null default 1 after a;
 drop table if exists t;
 create table t(a int, b int);
