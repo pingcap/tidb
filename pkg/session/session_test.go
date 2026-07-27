@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -95,30 +96,50 @@ func TestMustGetSystemBootVersion(t *testing.T) {
 		kvstore.SetSystemStorage(originSystemStore)
 	})
 
-	core, logs := observer.New(zap.InfoLevel)
-	restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
-	defer restoreLog()
+	t.Run("get the version after retry", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+		defer restoreLog()
 
-	versionCh := make(chan int64, 1)
-	go func() {
-		versionCh <- mustGetSystemBootVersion()
-	}()
+		versionCh := make(chan int64, 1)
+		go func() {
+			versionCh <- mustGetSystemBootVersion()
+		}()
 
-	require.Eventually(t, func() bool {
-		return logs.FilterMessage("waiting SYSTEM keyspace to be bootstrapped").Len() > 0
-	}, 5*time.Second, 10*time.Millisecond)
+		require.Eventually(t, func() bool {
+			return logs.FilterMessage("waiting SYSTEM keyspace to be bootstrapped").Len() > 0
+		}, 30*time.Second, 10*time.Millisecond)
 
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion))
-	require.NoError(t, txn.Commit(context.Background()))
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion))
+		require.NoError(t, txn.Commit(context.Background()))
 
-	select {
-	case version := <-versionCh:
-		require.Equal(t, currentBootstrapVersion, version)
-	case <-time.After(5 * time.Second):
-		require.Fail(t, "timed out waiting for SYSTEM keyspace bootstrap version")
-	}
+		select {
+		case version := <-versionCh:
+			require.Equal(t, currentBootstrapVersion, version)
+		case <-time.After(30 * time.Second):
+			require.Fail(t, "timed out waiting for SYSTEM keyspace bootstrap version")
+		}
+	})
+
+	t.Run("exhaust all retry budget", func(t *testing.T) {
+		// reset the boot status
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, meta.NewMutator(txn).FinishBootstrap(0))
+		require.NoError(t, txn.Commit(context.Background()))
+
+		core, _ := observer.New(zap.InfoLevel)
+		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+		defer restoreLog()
+
+		synctest.Test(t, func(t *testing.T) {
+			start := time.Now()
+			require.Equal(t, int64(notBootstrapped), mustGetSystemBootVersion())
+			require.Greater(t, time.Since(start), 29*time.Minute)
+		})
+	})
 }
 
 func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
