@@ -81,6 +81,48 @@ fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
     })
 }
 
+/// The Go scalar-function name for a binary operator (inverse of
+/// [`binary_op_for_name`]); used when building a [`ScalarFunction`] from an AST
+/// operator.
+#[must_use]
+pub fn binary_op_name(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Plus => "plus",
+        BinaryOp::Minus => "minus",
+        BinaryOp::Mul => "mul",
+        BinaryOp::Div => "div",
+        BinaryOp::IntDiv => "intdiv",
+        BinaryOp::Mod => "mod",
+        BinaryOp::BitAnd => "bitand",
+        BinaryOp::BitOr => "bitor",
+        BinaryOp::BitXor => "bitxor",
+        BinaryOp::LeftShift => "leftshift",
+        BinaryOp::RightShift => "rightshift",
+        BinaryOp::Eq => "eq",
+        BinaryOp::NullEq => "nulleq",
+        BinaryOp::Ne => "ne",
+        BinaryOp::Lt => "lt",
+        BinaryOp::Le => "le",
+        BinaryOp::Gt => "gt",
+        BinaryOp::Ge => "ge",
+        BinaryOp::LogicAnd => "and",
+        BinaryOp::LogicOr => "or",
+        BinaryOp::LogicXor => "xor",
+    }
+}
+
+/// The Go scalar-function name for a unary operator (inverse of
+/// [`unary_op_for_name`]). `Not`/`NotKeyword` share the `not` function.
+#[must_use]
+pub fn unary_op_name(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Plus => "unaryplus",
+        UnaryOp::Minus => "unaryminus",
+        UnaryOp::BitNeg => "bitneg",
+        UnaryOp::Not | UnaryOp::NotKeyword => "not",
+    }
+}
+
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
 #[derive(Clone, Debug, Default)]
 pub struct ScalarFunction {

@@ -344,6 +344,7 @@ mod math_fn;
 mod ops;
 pub mod pb_comparison;
 mod regexp;
+pub mod rewriter;
 mod rng;
 mod row;
 pub mod scalar_function;
