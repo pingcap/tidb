@@ -118,17 +118,28 @@ pub struct Catalog {
 impl Default for Catalog {
     /// A catalog holding only `test`, as a freshly bootstrapped TiDB does.
     ///
+    /// `INFORMATION_SCHEMA` is present because its tables are implemented
+    /// (see `tidb-session`'s `infoschema`), and holds no stored tables of its
+    /// own -- its rows are computed at query time.
+    ///
     /// DIVERGENCE (documented): real TiDB also exposes `mysql`,
-    /// `information_schema`, `performance_schema`, `sys` and `metrics_schema`.
-    /// Those are system schemas whose tables this seed does not implement, and
-    /// listing them empty would claim more than is true, so they are absent
-    /// until their contents are ported.
+    /// `performance_schema`, `sys` and `metrics_schema`. Those are system
+    /// schemas whose tables this seed does not implement, and listing them
+    /// empty would claim more than is true, so they stay absent until their
+    /// contents are ported.
     fn default() -> Self {
         let mut databases = HashMap::new();
         databases.insert(
             DEFAULT_DATABASE.to_owned(),
             Database {
                 name: DEFAULT_DATABASE.to_owned(),
+                tables: HashMap::new(),
+            },
+        );
+        databases.insert(
+            "information_schema".to_owned(),
+            Database {
+                name: "INFORMATION_SCHEMA".to_owned(),
                 tables: HashMap::new(),
             },
         );

@@ -141,6 +141,7 @@ struct Transaction {
 
 pub use tidb_executor::TxnErrorKind;
 
+pub mod infoschema;
 pub mod sysvar;
 pub mod vars;
 pub use vars::{SessionVars, VarError};
@@ -300,32 +301,12 @@ fn column_description(
     } else {
         ""
     };
-    let is_handle = table.pk_handle_offset() == Some(offset);
-    let key_flag = if is_handle
-        || table.indexes().iter().any(|index| {
-            index.name.eq_ignore_ascii_case("PRIMARY") && index.column_offsets == [offset]
-        }) {
-        "PRI"
-    } else if table
-        .indexes()
-        .iter()
-        .any(|index| index.unique && index.column_offsets == [offset])
-    {
-        "UNI"
-    } else if table
-        .indexes()
-        .iter()
-        .any(|index| index.column_offsets.first() == Some(&offset))
-    {
-        "MUL"
-    } else {
-        ""
-    };
+    let key_flag = column_key_flag(table, offset);
     vec![
         Datum::Bytes(column.name.clone().into_bytes()),
         Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
         Datum::Bytes(null_flag.as_bytes().to_vec()),
-        Datum::Bytes(key_flag.as_bytes().to_vec()),
+        Datum::Bytes(key_flag.into_bytes()),
         // Go prints the stored default; a column without one shows NULL.
         match &column.default_value {
             Some(value) => match datum_text(value) {
@@ -340,6 +321,35 @@ fn column_description(
 
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
+
+/// Go `NewColDesc`'s key flag, shared by `SHOW COLUMNS` and
+/// `information_schema.COLUMNS`: PRI for a primary key, UNI for a column that
+/// is the whole of a unique index, MUL for one that leads a non-unique index.
+pub(crate) fn column_key_flag(table: &tidb_executor::KvTable, offset: usize) -> String {
+    let is_handle =
+        table.pk_handle_offset() == Some(offset) || table.common_handle_offsets().contains(&offset);
+    if is_handle
+        || table.indexes().iter().any(|index| {
+            index.name.eq_ignore_ascii_case("PRIMARY") && index.column_offsets == [offset]
+        })
+    {
+        "PRI".to_owned()
+    } else if table
+        .indexes()
+        .iter()
+        .any(|index| index.unique && index.column_offsets == [offset])
+    {
+        "UNI".to_owned()
+    } else if table
+        .indexes()
+        .iter()
+        .any(|index| index.column_offsets.first() == Some(&offset))
+    {
+        "MUL".to_owned()
+    } else {
+        String::new()
+    }
+}
 
 /// A one-column result set of strings, the shape SHOW DATABASES and SHOW
 /// TABLES produce.
@@ -534,6 +544,93 @@ impl Session {
             },
             _ => Ok(None),
         }
+    }
+
+    /// Runs a `SELECT` whose `FROM` names an `information_schema` table.
+    ///
+    /// Returns `None` when the statement is an ordinary one, so the caller
+    /// falls through to the storage path.
+    ///
+    /// DEFERRED (documented): the virtual rows are produced whole, so a
+    /// `WHERE` over them is applied by the caller's own filter rather than
+    /// pushed down, and `JOIN`s against a virtual table are not supported --
+    /// both are rejected or fall back rather than answering wrongly.
+    fn run_information_schema_select(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        let Some(join) = &select.from else {
+            return Ok(None);
+        };
+        if join.right.is_some() {
+            return Ok(None);
+        }
+        let tidb_ast::JoinNode::Table(table_ref) = &join.left else {
+            return Ok(None);
+        };
+        // `information_schema.X`, or a bare `X` while that schema is current.
+        let (schema, table_name) = match table_ref.name.as_slice() {
+            [name] => (self.current_db.clone(), name.clone()),
+            [schema, name] => (schema.clone(), name.clone()),
+            _ => return Ok(None),
+        };
+        if !infoschema::is_information_schema(&schema) {
+            return Ok(None);
+        }
+        let Some(columns) = infoschema::table_schema(&table_name) else {
+            return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                "{schema}.{table_name}"
+            ))));
+        };
+        let rows = self.with_catalog_mut(|catalog| {
+            Ok(infoschema::table_rows(&table_name, catalog).unwrap_or_default())
+        })?;
+
+        // Only `SELECT *` and bare column names are answered here; anything
+        // else would need the expression pipeline over a virtual source.
+        let mut projection: Vec<usize> = Vec::new();
+        let mut names: Vec<(String, tidb_datatype::FieldType)> = Vec::new();
+        for field in select.fields.fields() {
+            match field {
+                tidb_ast::SelectField::Wildcard(_) => {
+                    projection.extend(0..columns.len());
+                    names.extend(columns.iter().cloned());
+                }
+                tidb_ast::SelectField::Expr { expr, alias } => {
+                    let tidb_ast::Expr::Column(path) = expr else {
+                        return Err(DriverError::Unsupported(
+                            "only column references are supported over information_schema",
+                        ));
+                    };
+                    let Some(wanted) = path.last() else {
+                        return Err(DriverError::Unsupported("empty column reference"));
+                    };
+                    let Some(index) = columns
+                        .iter()
+                        .position(|(name, _)| name.eq_ignore_ascii_case(wanted))
+                    else {
+                        return Err(DriverError::Unsupported(
+                            "unknown information_schema column",
+                        ));
+                    };
+                    projection.push(index);
+                    let mut column = columns[index].clone();
+                    if let Some(alias) = alias {
+                        column.0 = alias.clone();
+                    }
+                    names.push(column);
+                }
+            }
+        }
+
+        let rows = rows
+            .into_iter()
+            .map(|row| projection.iter().map(|index| row[*index].clone()).collect())
+            .collect();
+        Ok(Some(StmtOutput::Rows {
+            columns: names,
+            rows,
+        }))
     }
 
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
@@ -984,6 +1081,11 @@ impl Session {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
                     return Err(DriverError::Unsupported("set operations are not supported"));
                 };
+                // An information_schema table is virtual: its rows are
+                // computed from the catalog rather than read from storage.
+                if let Some(output) = self.run_information_schema_select(select)? {
+                    return Ok(output);
+                }
                 let current_db = self.current_db.clone();
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
                     tidb_executor::run_select_meta_stmt(select, catalog, &current_db)
@@ -1355,7 +1457,8 @@ mod tests {
         session.run("CREATE TABLE alpha (a BIGINT)").unwrap();
         session.run("CREATE DATABASE other").unwrap();
 
-        // Go's fetchShowDatabases sorts the names; the column is "Database".
+        // Go's fetchShowDatabases sorts the names, then moves
+        // information_schema to the front; the column is "Database".
         match session.run_with_columns("SHOW DATABASES").unwrap() {
             StmtOutput::Rows { columns, rows } => {
                 assert_eq!(columns[0].0, "Database");
@@ -1363,7 +1466,11 @@ mod tests {
                     rows.iter()
                         .map(|row| datum_text(&row[0]).unwrap())
                         .collect::<Vec<_>>(),
-                    vec!["other".to_owned(), "test".to_owned()]
+                    vec![
+                        "INFORMATION_SCHEMA".to_owned(),
+                        "other".to_owned(),
+                        "test".to_owned()
+                    ]
                 );
             }
             other => panic!("expected rows, got {other:?}"),
@@ -1731,6 +1838,161 @@ mod tests {
         session.run("INSERT INTO b VALUES (6)").unwrap();
         assert_eq!(session.statement_insert_id(), 0);
         assert_eq!(session.last_insert_id(), 103);
+    }
+
+    /// information_schema, checked against output captured from a running
+    /// TiDB: the column lists and the values for the same table definition.
+    #[test]
+    fn information_schema() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE t (id BIGINT AUTO_INCREMENT PRIMARY KEY, \
+                 code VARCHAR(8) UNIQUE, v BIGINT DEFAULT 7)",
+            )
+            .unwrap();
+
+        let query = |session: &mut Session, sql: &str| match session.run_with_columns(sql).unwrap()
+        {
+            StmtOutput::Rows { columns, rows } => (
+                columns
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+                rows.into_iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|value| match value {
+                                Datum::Null => "<nil>".to_owned(),
+                                Datum::Int(v) => v.to_string(),
+                                other => datum_text(other).unwrap_or_default(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        };
+
+        // SCHEMATA: captured column list, and a row per schema.
+        let (names, rows) = query(&mut session, "SELECT * FROM information_schema.schemata");
+        assert_eq!(
+            names,
+            [
+                "CATALOG_NAME",
+                "SCHEMA_NAME",
+                "DEFAULT_CHARACTER_SET_NAME",
+                "DEFAULT_COLLATION_NAME",
+                "SQL_PATH",
+                "TIDB_PLACEMENT_POLICY_NAME"
+            ]
+        );
+        // Captured: [def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil>]
+        assert_eq!(
+            rows[0],
+            vec![
+                "def",
+                "INFORMATION_SCHEMA",
+                "utf8mb4",
+                "utf8mb4_bin",
+                "<nil>",
+                "<nil>"
+            ]
+        );
+        assert!(rows.iter().any(|row| row[1] == "test"));
+
+        // TABLES: the captured 28-column list, and the captured values.
+        let (names, rows) = query(&mut session, "SELECT * FROM information_schema.tables");
+        assert_eq!(names.len(), 28, "the captured TABLES column count");
+        assert_eq!(names[0], "TABLE_CATALOG");
+        assert_eq!(names[27], "TIDB_STORAGE_CLASS");
+        let row = rows.iter().find(|row| row[2] == "t").expect("table t");
+        // Captured: def test t BASE TABLE InnoDB 10 Compact ...
+        assert_eq!(
+            &row[..7],
+            ["def", "test", "t", "BASE TABLE", "InnoDB", "10", "Compact"]
+        );
+        assert_eq!(row[17], "utf8mb4_bin", "TABLE_COLLATION");
+        assert_eq!(row[22], "NOT_SHARDED(PK_IS_HANDLE)");
+        assert_eq!(row[23], "CLUSTERED");
+        assert_eq!(row[25], "Normal");
+
+        // COLUMNS: the captured 22-column list and per-column values.
+        let (names, rows) = query(&mut session, "SELECT * FROM information_schema.columns");
+        assert_eq!(names.len(), 22, "the captured COLUMNS column count");
+        assert_eq!(names[4], "ORDINAL_POSITION");
+        assert_eq!(names[21], "SRS_ID");
+        let of = |name: &str| {
+            rows.iter()
+                .find(|row| row[2] == "t" && row[3] == name)
+                .expect("column")
+                .clone()
+        };
+        // Captured: def test t id 1 <nil> NO bigint <nil> <nil> 19 0 <nil>
+        //           <nil> <nil> bigint(20) PRI auto_increment ...
+        let id = of("id");
+        assert_eq!(
+            &id[..8],
+            ["def", "test", "t", "id", "1", "<nil>", "NO", "bigint"]
+        );
+        assert_eq!(
+            &id[8..15],
+            ["<nil>", "<nil>", "19", "0", "<nil>", "<nil>", "<nil>"]
+        );
+        assert_eq!(
+            &id[15..19],
+            [
+                "bigint(20)",
+                "PRI",
+                "auto_increment",
+                "select,insert,update,references"
+            ]
+        );
+        // Captured: code ... 8 32 <nil> <nil> <nil> utf8mb4 utf8mb4_bin
+        //           varchar(8) UNI
+        let code = of("code");
+        assert_eq!(code[7], "varchar");
+        assert_eq!(
+            &code[8..16],
+            [
+                "8",
+                "32",
+                "<nil>",
+                "<nil>",
+                "<nil>",
+                "utf8mb4",
+                "utf8mb4_bin",
+                "varchar(8)"
+            ]
+        );
+        assert_eq!(code[16], "UNI");
+        // Captured: v ... 7 YES bigint, no key
+        let v = of("v");
+        assert_eq!(v[5], "7", "COLUMN_DEFAULT");
+        assert_eq!(v[6], "YES");
+        assert_eq!(v[16], "");
+
+        // Named columns project, and a bare name works while the schema is
+        // current.
+        assert_eq!(
+            query(
+                &mut session,
+                "SELECT table_name FROM information_schema.tables"
+            )
+            .0,
+            ["TABLE_NAME"]
+        );
+        session.run("USE information_schema").unwrap();
+        assert_eq!(
+            query(&mut session, "SELECT schema_name FROM schemata").0,
+            ["SCHEMA_NAME"]
+        );
+
+        // An unimplemented information_schema table is an error, not empty
+        // output that would look like a table with no rows.
+        assert!(session
+            .run("SELECT * FROM information_schema.statistics")
+            .is_err());
     }
 
     #[test]
