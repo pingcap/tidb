@@ -340,6 +340,18 @@ impl KvTable {
         Ok(())
     }
 
+    /// Empties the table, keeping its schema and indexes.
+    ///
+    /// Go implements TRUNCATE by replacing the table with a fresh one that has
+    /// the same definition and a new id, which is why the rows, the index
+    /// entries and the auto-increment counter all start over. Captured from
+    /// TiDB: after truncating, the next auto-increment insert gets 1 again.
+    pub fn truncate(&mut self) {
+        self.store = MemStorage::new();
+        self.next_handle = 1;
+        self.next_auto_id = 1;
+    }
+
     /// Sets the table's name, used to qualify a duplicate-key error.
     pub fn set_name(&mut self, name: &str) {
         self.name = name.to_owned();

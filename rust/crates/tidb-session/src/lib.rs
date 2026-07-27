@@ -1111,6 +1111,13 @@ impl Session {
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
+                DdlStmt::TruncateTable(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_truncate_table_in(sql, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
                 DdlStmt::CreateIndex(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
@@ -2272,6 +2279,64 @@ mod tests {
 
         // An index over an unknown column is rejected.
         assert!(session.run("CREATE INDEX bad ON i1 (nosuch)").is_err());
+    }
+
+    /// TRUNCATE TABLE, checked against captured TiDB behavior: the rows go,
+    /// the definition stays, and the auto-increment counter restarts.
+    #[test]
+    fn truncate_table() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t1 (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT, KEY kv (v))")
+            .unwrap();
+        session
+            .run("INSERT INTO t1 (v) VALUES (1), (2), (3)")
+            .unwrap();
+        assert_eq!(
+            session.run("SELECT id FROM t1").unwrap(),
+            StmtResult::Rows(vec![
+                vec![Datum::Int(1)],
+                vec![Datum::Int(2)],
+                vec![Datum::Int(3)]
+            ])
+        );
+
+        session.run("TRUNCATE TABLE t1").unwrap();
+        // Captured: no rows remain.
+        assert_eq!(
+            session.run("SELECT id FROM t1").unwrap(),
+            StmtResult::Rows(vec![])
+        );
+        // Captured: the next auto-increment insert starts over at 1.
+        session.run("INSERT INTO t1 (v) VALUES (9)").unwrap();
+        assert_eq!(
+            session.run("SELECT id FROM t1").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        // Captured: the definition, including the index, survives.
+        let create = match session.run_with_columns("SHOW CREATE TABLE t1").unwrap() {
+            StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+        assert!(create.contains("AUTO_INCREMENT"));
+        assert!(create.contains("KEY `kv` (`v`)"));
+
+        // The index entries went with the rows: a read through the index sees
+        // only what was written after the truncate.
+        assert_eq!(
+            session.run("SELECT id FROM t1 WHERE v = 1").unwrap(),
+            StmtResult::Rows(vec![])
+        );
+        assert_eq!(
+            session.run("SELECT id FROM t1 WHERE v = 9").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // Captured: truncating a table that does not exist is 1146.
+        assert!(matches!(
+            session.run("TRUNCATE TABLE nosuch"),
+            Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
+        ));
     }
 
     #[test]

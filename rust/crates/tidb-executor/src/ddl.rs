@@ -39,6 +39,38 @@ use tidb_model::table_info::TableInfo;
 /// Builds the column's `FieldType` from its parsed SQL type: code via
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
+/// Runs a `TRUNCATE TABLE`, emptying it while keeping its definition.
+///
+/// Captured from TiDB: the rows and index entries go, the schema and indexes
+/// stay, the auto-increment counter restarts, and truncating a table that
+/// does not exist is 1146.
+pub fn run_truncate_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<(), DriverError> {
+    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let Stmt::Ddl(ddl) = &stmt else {
+        return Err(DriverError::Unsupported(
+            "only TRUNCATE TABLE is supported here",
+        ));
+    };
+    let DdlStmt::TruncateTable(truncate) = &**ddl else {
+        return Err(DriverError::Unsupported(
+            "only TRUNCATE TABLE is supported here",
+        ));
+    };
+    let (database, name) = crate::driver::split_table_path_pub(truncate, current_db)?;
+    let (database, name) = (database.to_owned(), name.to_owned());
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) else {
+        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{name}"),
+        )));
+    };
+    table.truncate();
+    Ok(())
+}
+
 /// Runs a `CREATE INDEX`, backfilling the existing rows.
 ///
 /// Captured from TiDB: a duplicate index name is 1061, and a unique index
