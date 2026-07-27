@@ -212,8 +212,8 @@ func encodeDataRowKey(tableID int64, handle tidbkv.Handle) tidbkv.Key {
 // exported for test.
 type IndexKVHandler struct {
 	*BaseHandler
-	snapshot  *LazyRefreshedSnapshot
-	hdlFilter *KeyFilter
+	snapshot     *LazyRefreshedSnapshot
+	rowKeyFilter *KeyFilter
 
 	targetIdx    *model.IndexInfo
 	bufferedRows []rowKeyWithHandle
@@ -228,9 +228,9 @@ var (
 // exported for test.
 func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filter *KeyFilter) *IndexKVHandler {
 	h := &IndexKVHandler{
-		BaseHandler: base,
-		snapshot:    snapshot,
-		hdlFilter:   filter,
+		BaseHandler:  base,
+		snapshot:     snapshot,
+		rowKeyFilter: filter,
 	}
 	base.KVHandler = h
 	return h
@@ -275,7 +275,7 @@ func (h *IndexKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error
 	}
 	// The filter and snapshot lookup need the data row key, not this index key.
 	rowKey := encodeDataRowKey(tableID, handle)
-	if h.hdlFilter.isHandledGlobally(rowKey) {
+	if h.rowKeyFilter.isHandledGlobally(rowKey) {
 		return nil
 	}
 
@@ -304,7 +304,7 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 	}
 	for rowKey, val := range res {
 		// when it's MV index, 2 index keys might point to the same row key.
-		if h.hdlFilter.isHandledLocally(rowKey) {
+		if h.rowKeyFilter.isHandledLocally(rowKey) {
 			continue
 		}
 		handle := rowKeys2Handle[rowKey]
@@ -320,7 +320,7 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 		//
 		// an alternative solution is to upload those row keys to sort storage and
 		// check them in another pass later.
-		h.hdlFilter.addLocal(rowKey)
+		h.rowKeyFilter.addLocal(rowKey)
 	}
 	h.bufferedRows = h.bufferedRows[:0]
 	return nil

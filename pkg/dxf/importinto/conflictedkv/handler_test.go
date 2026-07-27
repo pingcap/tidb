@@ -169,8 +169,8 @@ func TestHandler(t *testing.T) {
 			encoder := getEncoder(t, tbl)
 			require.NoError(t, err)
 			var sharedSize atomic.Int64
-			alreadyProcessedRowKeys := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
-			locallyProcessedRowKeys := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+			alreadyProcessedRowKeys := conflictedkv.NewBoundedKeySet(logger, &sharedSize, 1<<20)
+			locallyProcessedRowKeys := conflictedkv.NewBoundedKeySet(logger, &sharedSize, 1<<20)
 			alreadyProcessedRowKeys.Add(tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(1)))
 			alreadyProcessedRowKeys.Add(tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(3)))
 
@@ -279,8 +279,8 @@ func TestHandler(t *testing.T) {
 		})
 
 		var sharedSize atomic.Int64
-		globalSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
-		localSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+		globalSet := conflictedkv.NewBoundedKeySet(logger, &sharedSize, 1<<20)
+		localSet := conflictedkv.NewBoundedKeySet(logger, &sharedSize, 1<<20)
 		var handledRowKeys []tidbkv.Key
 		mockEncodedKVHdl := mockHandleEncodedRowFn(func(_ context.Context, rowKey tidbkv.Key, _ []types.Datum, _ *kv.Pairs) error {
 			handledRowKeys = append(handledRowKeys, rowKey.Clone())
@@ -367,8 +367,8 @@ func TestHandler(t *testing.T) {
 		})
 
 		var sharedSize atomic.Int64
-		globalSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
-		localSet := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
+		globalSet := conflictedkv.NewBoundedKeySet(logger, &sharedSize, 1<<20)
+		localSet := conflictedkv.NewBoundedKeySet(logger, &sharedSize, 1<<20)
 		handleErr := errors.New("handle row")
 		handleAttempts := 0
 		mockEncodedKVHdl := mockHandleEncodedRowFn(func(_ context.Context, _ tidbkv.Key, _ []types.Datum, _ *kv.Pairs) error {

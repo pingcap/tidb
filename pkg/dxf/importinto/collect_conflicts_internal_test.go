@@ -124,7 +124,7 @@ func TestCollectConflictsKVGroupIndexInfo(t *testing.T) {
 	require.Same(t, targetIdx, indexInfo)
 
 	_, err = executor.getKVGroupIndexInfo(globalsort.IndexID2KVGroup(3))
-	require.EqualError(t, err, "index 3 in table t")
+	require.EqualError(t, err, `index 3 from KV group "3" not found in table t`)
 }
 
 func TestDispatchMVIndexKVPairs(t *testing.T) {

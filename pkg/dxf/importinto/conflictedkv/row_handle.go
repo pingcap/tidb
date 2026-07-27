@@ -35,7 +35,7 @@ const (
 	rowKeyMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
 )
 
-// KeyFilter is used to filter row handles.
+// KeyFilter is used to filter data row keys.
 type KeyFilter struct {
 	globalSet *BoundedKeySet
 	localSet  *BoundedKeySet
@@ -80,8 +80,8 @@ type BoundedKeySet struct {
 	rowKeys    map[string]bool
 }
 
-// NewBoundedHandleSet creates a new BoundedKeySet.
-func NewBoundedHandleSet(logger *zap.Logger, sharedSize *atomic.Int64, limit int64) *BoundedKeySet {
+// NewBoundedKeySet creates a new BoundedKeySet.
+func NewBoundedKeySet(logger *zap.Logger, sharedSize *atomic.Int64, limit int64) *BoundedKeySet {
 	size := initMapSizeForConflictedRows
 	if sharedSize.Load() >= limit {
 		size = 0

@@ -135,7 +135,11 @@ func NewCollector(
 	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
-		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), NewKeyFilter(globalSet, localSet))
+		h = NewIndexKVHandler(
+			base,
+			NewLazyRefreshedSnapshot(store, trafficRec),
+			NewKeyFilter(globalSet, localSet),
+		)
 	}
 	collector.handler = h
 	return collector

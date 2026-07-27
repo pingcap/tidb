@@ -25,23 +25,23 @@ import (
 )
 
 func TestKeyFilter(t *testing.T) {
-	var hf *KeyFilter
+	var keyFilter *KeyFilter
 	// we allow nil KeyFilter
-	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-1")))
-	require.False(t, hf.isHandledLocally("row-key-1"))
-	hf.addLocal("row-key-1")
+	require.False(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-1")))
+	require.False(t, keyFilter.isHandledLocally("row-key-1"))
+	keyFilter.addLocal("row-key-1")
 
 	var sharedSize atomic.Int64
-	globalSet := NewBoundedHandleSet(nil, &sharedSize, 1024)
-	localSet := NewBoundedHandleSet(nil, &sharedSize, 1024)
+	globalSet := NewBoundedKeySet(nil, &sharedSize, 1024)
+	localSet := NewBoundedKeySet(nil, &sharedSize, 1024)
 	globalSet.Add(tidbkv.Key("row-key-1"))
-	hf = NewKeyFilter(globalSet, localSet)
-	require.True(t, hf.isHandledGlobally(tidbkv.Key("row-key-1")))
-	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-2")))
-	require.False(t, hf.isHandledLocally("row-key-2"))
-	hf.addLocal("row-key-2")
-	require.True(t, hf.isHandledLocally("row-key-2"))
-	require.False(t, hf.isHandledGlobally(tidbkv.Key("row-key-2")))
+	keyFilter = NewKeyFilter(globalSet, localSet)
+	require.True(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-1")))
+	require.False(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-2")))
+	require.False(t, keyFilter.isHandledLocally("row-key-2"))
+	keyFilter.addLocal("row-key-2")
+	require.True(t, keyFilter.isHandledLocally("row-key-2"))
+	require.False(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-2")))
 }
 
 func TestBoundedKeySet(t *testing.T) {
@@ -57,14 +57,14 @@ func TestBoundedKeySet(t *testing.T) {
 
 	t.Run("string keys honor size limit", func(t *testing.T) {
 		var sharedSize atomic.Int64
-		set := NewBoundedHandleSet(zap.NewNop(), &sharedSize, 1024)
+		set := NewBoundedKeySet(zap.NewNop(), &sharedSize, 1024)
 		require.False(t, set.containsStrKey("row-key"))
 		set.addStr("row-key")
 		require.True(t, set.containsStrKey("row-key"))
 		require.EqualValues(t, int64(len("row-key"))+rowKeyMapEntryShallowSize, sharedSize.Load())
 
 		var exceededSize atomic.Int64
-		exceededSet := NewBoundedHandleSet(zap.NewNop(), &exceededSize, 0)
+		exceededSet := NewBoundedKeySet(zap.NewNop(), &exceededSize, 0)
 		exceededSet.addStr("row-key")
 		require.True(t, exceededSet.BoundExceeded())
 		require.False(t, exceededSet.containsStrKey("row-key"))
@@ -75,7 +75,7 @@ func TestBoundedKeySet(t *testing.T) {
 	require.NoError(t, err)
 	sharedSize := atomic.Int64{}
 	limit := 3 * (1 + rowKeyMapEntryShallowSize)
-	set := NewBoundedHandleSet(logger, &sharedSize, limit)
+	set := NewBoundedKeySet(logger, &sharedSize, limit)
 	require.False(t, set.Contains(tidbkv.Key{1}))
 
 	// add row keys within limit
@@ -92,7 +92,7 @@ func TestBoundedKeySet(t *testing.T) {
 	require.False(t, set.Contains(tidbkv.Key{4}))
 
 	// create another set with the shared current size, it should exceed limit directly
-	set2 := NewBoundedHandleSet(logger, &sharedSize, limit)
+	set2 := NewBoundedKeySet(logger, &sharedSize, limit)
 	require.True(t, set2.BoundExceeded())
 	set2.Add(tidbkv.Key{5})
 	require.False(t, set2.Contains(tidbkv.Key{5}))
