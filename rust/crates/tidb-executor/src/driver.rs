@@ -184,9 +184,20 @@ pub enum DriverError {
     CatalogPoisoned,
     /// A transaction could not be committed.
     Txn(TxnErrorKind),
+    /// A session-variable statement failed.
+    Var(VarErrorKind),
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
+}
+
+/// Why a session-variable statement failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VarErrorKind {
+    /// Go `ErrUnknownSystemVar` (1193).
+    UnknownSystemVariable(String),
+    /// Go `ErrIncorrectGlobalLocalVar` (1238): the variable is read-only.
+    ReadOnlyVariable(String),
 }
 
 /// Why a transaction statement failed (Go `kv.ErrWriteConflict` and friends).
@@ -240,6 +251,16 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
         },
         _ => return Err(DriverError::Unsupported("only SELECT is supported")),
     };
+    run_select_stmt(select, catalog)
+}
+
+/// Runs one parsed `SELECT` against the catalog, for a caller that has
+/// already rewritten the statement (session-variable binding, for instance)
+/// and must not go back through SQL text.
+pub fn run_select_meta_stmt(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+) -> Result<SelectMeta, DriverError> {
     run_select_stmt(select, catalog)
 }
 

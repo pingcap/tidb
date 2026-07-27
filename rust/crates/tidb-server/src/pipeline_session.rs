@@ -52,6 +52,12 @@ const ER_PARSE_ERROR: u16 = 1064;
 /// generic `HY000` TiDB uses for its own KV errors.
 const ER_WRITE_CONFLICT: u16 = 9007;
 
+/// MySQL `ER_UNKNOWN_SYSTEM_VARIABLE` (1193).
+const ER_UNKNOWN_SYSTEM_VARIABLE: u16 = 1193;
+
+/// MySQL `ER_INCORRECT_GLOBAL_LOCAL_VAR` (1238).
+const ER_INCORRECT_GLOBAL_LOCAL_VAR: u16 = 1238;
+
 /// MySQL `ER_SUBQUERY_NO_1_ROW` (1242), whose SQL state is `21000`.
 const ER_SUBQUERY_NO_1_ROW: u16 = 1242;
 
@@ -114,7 +120,13 @@ impl QuerySession for PipelineServerSession {
     /// Writes and DDL answer with an OK packet carrying their affected-row
     /// count; the statement kind is decided by parsing alone so the statement
     /// runs exactly once.
+    ///
+    /// A `SET` statement answers the same way, which is what a connecting
+    /// client expects for `SET NAMES` and friends.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        if self.session.apply_set(sql).map_err(map_error)?.is_some() {
+            return Ok(Some(WriteOutcome { affected_rows: 0 }));
+        }
         if self.session.statement_kind(sql).map_err(map_error)? != StmtKind::Write {
             return Ok(None);
         }
@@ -161,6 +173,22 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 ER_WRITE_CONFLICT,
                 *b"HY000",
                 "Write conflict, please retry the transaction".to_owned(),
+            )
+        }
+        // Go: "Unknown system variable '%-.64s'".
+        tidb_executor::DriverError::Var(tidb_executor::VarErrorKind::UnknownSystemVariable(
+            name,
+        )) => SqlQueryError::new(
+            ER_UNKNOWN_SYSTEM_VARIABLE,
+            *b"HY000",
+            format!("Unknown system variable '{name}'"),
+        ),
+        // Go: "Variable '%-.192s' is a %s variable".
+        tidb_executor::DriverError::Var(tidb_executor::VarErrorKind::ReadOnlyVariable(name)) => {
+            SqlQueryError::new(
+                ER_INCORRECT_GLOBAL_LOCAL_VAR,
+                *b"HY000",
+                format!("Variable '{name}' is a read only variable"),
             )
         }
         tidb_executor::DriverError::SubqueryReturnsMoreThanOneRow => SqlQueryError::new(

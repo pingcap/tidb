@@ -238,6 +238,23 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         ]
     );
 
+    // The statements a stock MySQL client sends when it connects: SET NAMES
+    // answers with an OK packet, and the server properties read back as rows.
+    assert_eq!(run_write(&mut client, &mut reader, "SET NAMES utf8mb4"), 0);
+    assert_eq!(
+        run_write(&mut client, &mut reader, "SET autocommit = 1, sql_mode = 'ANSI_QUOTES'"),
+        0
+    );
+    let comment = run_query(&mut client, &mut reader, "SELECT @@version_comment");
+    assert!(
+        comment[0][0].starts_with("TiDB Server (Apache License 2.0)"),
+        "{comment:?}"
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT @@sql_mode"),
+        vec![vec!["ANSI_QUOTES".to_owned()]]
+    );
+
     // A transaction over the wire: BEGIN/COMMIT answer with OK packets whose
     // status advertises SERVER_STATUS_IN_TRANS, and the staged write is
     // visible to the transaction itself and survives the commit.

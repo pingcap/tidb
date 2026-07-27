@@ -32,8 +32,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_datatype::{Datum, FieldType};
 use tidb_executor::{
-    run_create_table_on, run_delete_on, run_insert_on, run_select_meta_on, run_update_on, Catalog,
-    DriverError,
+    run_create_table_on, run_delete_on, run_insert_on, run_update_on, Catalog, DriverError,
 };
 
 /// The result of running one statement.
@@ -97,6 +96,8 @@ pub struct Session {
     catalog: SharedCatalog,
     /// The open transaction, if any.
     txn: Option<Transaction>,
+    /// The session's system and user variables.
+    vars: SessionVars,
 }
 
 /// An open transaction's state.
@@ -118,11 +119,233 @@ struct Transaction {
 
 pub use tidb_executor::TxnErrorKind;
 
+pub mod vars;
+pub use vars::{SessionVars, VarError};
+
+/// Maps a variable error onto the driver error the wire layer renders.
+fn var_error(error: VarError) -> DriverError {
+    DriverError::Var(match error {
+        VarError::UnknownSystemVariable(name) => {
+            tidb_executor::VarErrorKind::UnknownSystemVariable(name)
+        }
+        VarError::ReadOnlyVariable(name) => tidb_executor::VarErrorKind::ReadOnlyVariable(name),
+    })
+}
+
+/// The text form a system variable stores for a datum (Go keeps every system
+/// variable as a string).
+fn datum_text(value: &Datum) -> Option<String> {
+    match value {
+        Datum::Null => None,
+        Datum::Int(v) => Some(v.to_string()),
+        Datum::UInt(v) => Some(v.to_string()),
+        Datum::Real(v) => Some(v.to_string()),
+        Datum::Decimal(d) => Some(d.to_string()),
+        Datum::String(s) => Some(String::from_utf8_lossy(s.bytes()).into_owned()),
+        Datum::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        _ => None,
+    }
+}
+
 impl Session {
     /// A fresh session with its own empty catalog.
     #[must_use]
     pub fn new() -> Self {
         Session::default()
+    }
+
+    /// The session's variables.
+    #[must_use]
+    pub fn vars(&self) -> &SessionVars {
+        &self.vars
+    }
+
+    /// Applies a `SET` statement.
+    ///
+    /// Returns `Some(())` when the SQL is a `SET` this handles and `None`
+    /// otherwise, so a caller can answer with an OK packet without
+    /// re-parsing. Go's `SetExecutor` walks the assignments in source order
+    /// and stops at the first error, which this reproduces.
+    ///
+    /// DEFERRED (documented): `SET GLOBAL` changes only this session here,
+    /// because there is no persisted global tier yet; `SET PASSWORD`,
+    /// resource groups, and the other non-variable `SET` forms stay
+    /// unsupported.
+    pub fn apply_set(&mut self, sql: &str) -> Result<Option<()>, DriverError> {
+        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let Stmt::Session(session_stmt) = &stmt else {
+            return Ok(None);
+        };
+        match &**session_stmt {
+            SessionStmt::Set(set) => {
+                for assignment in &set.assignments {
+                    self.apply_assignment(assignment)?;
+                }
+                Ok(Some(()))
+            }
+            SessionStmt::SetCharset {
+                charset,
+                collation,
+                assignments,
+                ..
+            } => {
+                self.apply_charset(charset.as_deref(), collation.as_deref())?;
+                for assignment in assignments {
+                    self.apply_assignment(assignment)?;
+                }
+                Ok(Some(()))
+            }
+            SessionStmt::SetMixed(items) => {
+                for item in items {
+                    match item {
+                        tidb_ast::SetItem::System(assignment) => {
+                            self.apply_assignment(assignment)?;
+                        }
+                        tidb_ast::SetItem::Charset {
+                            charset, collation, ..
+                        } => self.apply_charset(charset.as_deref(), collation.as_deref())?,
+                    }
+                }
+                Ok(Some(()))
+            }
+            SessionStmt::SetUserVar(set) => {
+                for assignment in &set.assignments {
+                    let value = self.eval_literal(&assignment.value)?;
+                    self.vars.set_user(&assignment.name, value);
+                }
+                Ok(Some(()))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// One `name = value` assignment.
+    fn apply_assignment(
+        &mut self,
+        assignment: &tidb_ast::SystemVariableAssignment,
+    ) -> Result<(), DriverError> {
+        let value = match &assignment.value {
+            // Go restores a variable to its registry default by clearing the
+            // session override.
+            tidb_ast::SetVariableValue::Default => {
+                self.vars
+                    .reset_system(&assignment.name)
+                    .map_err(var_error)?;
+                return Ok(());
+            }
+            tidb_ast::SetVariableValue::Expr(expr) => self.eval_literal(expr)?,
+        };
+        // Go stores every system variable as a string.
+        self.vars
+            .set_system(&assignment.name, value.unwrap_or_default())
+            .map_err(var_error)
+    }
+
+    /// `SET NAMES` / `SET CHARACTER SET`.
+    fn apply_charset(
+        &mut self,
+        charset: Option<&str>,
+        collation: Option<&str>,
+    ) -> Result<(), DriverError> {
+        // `DEFAULT` restores the registry default, which is what the charset
+        // variables already hold when nothing has overridden them.
+        let charset = charset.unwrap_or("utf8mb4");
+        self.vars.set_names(charset, collation).map_err(var_error)
+    }
+
+    /// Evaluates a `SET` right-hand side. Go runs it through the expression
+    /// evaluator; this evaluates it as a constant expression, which covers the
+    /// literals and simple arithmetic a `SET` carries.
+    fn eval_literal(&mut self, expr: &tidb_ast::Expr) -> Result<Option<String>, DriverError> {
+        // An unquoted identifier is a bare word value such as `SET sql_mode =
+        // ANSI_QUOTES` or `SET autocommit = ON`, which MySQL takes literally.
+        if let tidb_ast::Expr::Column(path) = expr {
+            if let [word] = path.as_slice() {
+                return Ok(Some(word.clone()));
+            }
+        }
+        let sql = format!("SELECT {}", expr.restore());
+        let rows = self.with_catalog_mut(|catalog| tidb_executor::run_select_on(&sql, catalog))?;
+        let value = rows
+            .first()
+            .and_then(|row| row.first())
+            .cloned()
+            .unwrap_or(Datum::Null);
+        Ok(datum_text(&value))
+    }
+
+    /// Replaces every variable reference in `sql` with the session's value,
+    /// so the driver plans against ordinary literals.
+    ///
+    /// Go resolves `@@x` and `@x` in the expression rewriter using the
+    /// session's variables; the values live in the session here, so the
+    /// substitution happens here too. An unknown `@@x` is Go's 1193, while an
+    /// unset `@x` is NULL rather than an error, as in MySQL.
+    fn bind_variables(&self, stmt: &mut Stmt) -> Result<(), DriverError> {
+        let Stmt::Query(query) = stmt else {
+            return Ok(());
+        };
+        let tidb_ast::QueryStmt::Select(select) = &mut **query else {
+            return Ok(());
+        };
+        for field in select.fields.fields_mut() {
+            if let tidb_ast::SelectField::Expr { expr, .. } = field {
+                *expr = self.bind_variables_in(expr)?;
+            }
+        }
+        if let Some(where_clause) = &select.where_clause {
+            select.where_clause = Some(self.bind_variables_in(where_clause)?);
+        }
+        if let Some(having) = &select.having {
+            select.having = Some(self.bind_variables_in(having)?);
+        }
+        for item in &mut select.order_by {
+            item.expr = self.bind_variables_in(&item.expr)?;
+        }
+        for item in &mut select.group_by {
+            item.expr = self.bind_variables_in(&item.expr)?;
+        }
+        Ok(())
+    }
+
+    /// Substitutes variable references inside one expression.
+    fn bind_variables_in(&self, expr: &tidb_ast::Expr) -> Result<tidb_ast::Expr, DriverError> {
+        use tidb_ast::Expr;
+        Ok(match expr {
+            Expr::SysVar { name, .. } => {
+                // A scope prefix does not change the value here: there is no
+                // separate global tier yet (documented in `vars`).
+                match self.vars.get_system(name) {
+                    Ok(value) => Expr::String(value),
+                    Err(error) => return Err(var_error(error)),
+                }
+            }
+            Expr::UserVar(name) => match self.vars.get_user(name) {
+                Some(value) => Expr::String(value),
+                None => Expr::Null,
+            },
+            Expr::Paren(inner) => Expr::Paren(Box::new(self.bind_variables_in(inner)?)),
+            Expr::Unary(op, inner) => Expr::Unary(*op, Box::new(self.bind_variables_in(inner)?)),
+            Expr::Binary(op, lhs, rhs) => Expr::Binary(
+                *op,
+                Box::new(self.bind_variables_in(lhs)?),
+                Box::new(self.bind_variables_in(rhs)?),
+            ),
+            Expr::Is { expr, target, not } => Expr::Is {
+                expr: Box::new(self.bind_variables_in(expr)?),
+                target: *target,
+                not: *not,
+            },
+            Expr::In { expr, list, not } => Expr::In {
+                expr: Box::new(self.bind_variables_in(expr)?),
+                list: list
+                    .iter()
+                    .map(|item| self.bind_variables_in(item))
+                    .collect::<Result<_, _>>()?,
+                not: *not,
+            },
+            other => other.clone(),
+        })
     }
 
     /// Whether a transaction is open (the wire's `SERVER_STATUS_IN_TRANS`).
@@ -199,7 +422,11 @@ impl Session {
     /// A session sharing `catalog` with its peers.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
-        Session { catalog, txn: None }
+        Session {
+            catalog,
+            txn: None,
+            vars: SessionVars::new(),
+        }
     }
 
     /// The shared catalog handle, for opening a peer session over the same
@@ -263,11 +490,18 @@ impl Session {
     /// Like [`Session::run`], but a query result also carries its column
     /// metadata (`(name, type)` per column) for wire-protocol fronts.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        // `@@x` / `@x` read the session's own state, so they are bound before
+        // the statement reaches the driver.
+        self.bind_variables(&mut stmt)?;
         match &stmt {
-            Stmt::Query(_) => {
-                let (columns, rows) =
-                    self.with_catalog_mut(|catalog| run_select_meta_on(sql, catalog))?;
+            Stmt::Query(query) => {
+                let tidb_ast::QueryStmt::Select(select) = &**query else {
+                    return Err(DriverError::Unsupported("set operations are not supported"));
+                };
+                let (columns, rows) = self.with_catalog_mut(|catalog| {
+                    tidb_executor::run_select_meta_stmt(select, catalog)
+                })?;
                 Ok(StmtOutput::Rows { columns, rows })
             }
             Stmt::Dml(dml) => match &**dml {
@@ -458,6 +692,79 @@ mod tests {
         assert!(session
             .control_transaction("ROLLBACK TO SAVEPOINT s")
             .is_err());
+    }
+
+    /// The single value a one-column, one-row query returns, as text.
+    fn scalar_text(session: &mut Session, sql: &str) -> Option<String> {
+        match session.run(sql).unwrap() {
+            StmtResult::Rows(rows) => datum_text(&rows[0][0]),
+            other => panic!("expected rows, got {other:?}"),
+        }
+    }
+
+    /// SET and the variable reads a connecting client performs.
+    #[test]
+    fn session_variables() {
+        let mut session = Session::new();
+
+        // A stock client's opening statements.
+        assert_eq!(session.apply_set("SET NAMES utf8mb4").unwrap(), Some(()));
+        assert_eq!(
+            session.vars().get_system("character_set_client").unwrap(),
+            "utf8mb4"
+        );
+        assert_eq!(session.apply_set("SET autocommit = 0").unwrap(), Some(()));
+        assert_eq!(session.vars().get_system("autocommit").unwrap(), "0");
+
+        // Reading variables back through a query.
+        assert_eq!(
+            scalar_text(&mut session, "SELECT @@autocommit"),
+            Some("0".to_owned())
+        );
+        let comment = scalar_text(&mut session, "SELECT @@version_comment").unwrap();
+        assert!(
+            comment.starts_with("TiDB Server (Apache License 2.0)"),
+            "{comment}"
+        );
+
+        // DEFAULT restores the registry default.
+        session.apply_set("SET autocommit = DEFAULT").unwrap();
+        assert_eq!(session.vars().get_system("autocommit").unwrap(), "ON");
+
+        // An unknown system variable is Go's 1193, on read and on write.
+        assert!(matches!(
+            session.apply_set("SET nonexistent_variable = 1"),
+            Err(DriverError::Var(
+                tidb_executor::VarErrorKind::UnknownSystemVariable(_)
+            ))
+        ));
+        assert!(matches!(
+            session.run("SELECT @@nonexistent_variable"),
+            Err(DriverError::Var(
+                tidb_executor::VarErrorKind::UnknownSystemVariable(_)
+            ))
+        ));
+        // A read-only variable cannot be set.
+        assert!(matches!(
+            session.apply_set("SET version = '1'"),
+            Err(DriverError::Var(
+                tidb_executor::VarErrorKind::ReadOnlyVariable(_)
+            ))
+        ));
+
+        // User variables: unset reads as NULL, never an error.
+        assert_eq!(
+            session.run("SELECT @nope").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Null]])
+        );
+        session.apply_set("SET @x = 41 + 1").unwrap();
+        assert_eq!(
+            scalar_text(&mut session, "SELECT @x"),
+            Some("42".to_owned())
+        );
+
+        // A non-SET statement is not claimed by the hook.
+        assert_eq!(session.apply_set("SELECT 1").unwrap(), None);
     }
 
     #[test]
