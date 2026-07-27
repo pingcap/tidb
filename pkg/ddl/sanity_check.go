@@ -83,6 +83,12 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		return 0, nil
 	}
 	switch job.Type {
+	case model.ActionCreateTable:
+		tableIDs, err := getRollbackCTASDeleteRangeTableIDs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return len(tableIDs), nil
 	case model.ActionDropSchema:
 		args, err := model.GetFinishedDropSchemaArgs(job)
 		if err != nil {

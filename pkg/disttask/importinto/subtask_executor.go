@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
@@ -149,6 +150,10 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, &taskMeta.Plan, finalChecksum, se, logger)
+		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), logger,
+			func() (*local.RemoteChecksum, error) {
+				return importer.RemoteChecksumTableBySQL(ctx, se, &taskMeta.Plan, logger)
+			},
+		)
 	})
 }

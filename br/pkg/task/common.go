@@ -79,6 +79,7 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
+	flagStatusTextfileDir = "status-textfile-dir"
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
 	flagSkipAWS                       = "skip-aws"
@@ -237,6 +238,8 @@ type Config struct {
 	LogProgress bool `json:"log-progress" toml:"log-progress"`
 	// OperationContext identifies this command for lock metadata.
 	OperationContext operation.Context `json:"-" toml:"-"`
+	// StatusTextfileDir is the node_exporter textfile collector directory for BR metrics.
+	StatusTextfileDir string `json:"status-textfile-dir" toml:"status-textfile-dir"`
 
 	// CaseSensitive should not be used.
 	//
@@ -358,6 +361,8 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagEnableOpenTracing, false,
 		"Set whether to enable opentracing during the backup/restore process")
+	flags.String(flagStatusTextfileDir, "",
+		"node_exporter textfile collector directory for BR metrics")
 
 	flags.BoolP(flagNoCreds, "", false, "Don't load credentials")
 	_ = flags.MarkHidden(flagNoCreds)
@@ -730,6 +735,10 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.EnableOpenTracing, err = flags.GetBool(flagEnableOpenTracing)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.StatusTextfileDir, err = flags.GetString(flagStatusTextfileDir)
 	if err != nil {
 		return errors.Trace(err)
 	}

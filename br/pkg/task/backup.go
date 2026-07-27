@@ -58,6 +58,8 @@ const (
 	flagKeyspaceName     = "keyspace-name"
 	flagReplicaReadLabel = "replica-read-label"
 	flagTableConcurrency = "table-concurrency"
+	flagStaleRead        = "stale-read"
+	flagPackageFileSize  = "package-file-size"
 
 	flagGCTTL = "gcttl"
 
@@ -94,6 +96,8 @@ type BackupConfig struct {
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
+	StaleRead        bool              `json:"stale-read" toml:"stale-read"`
+	PackageFileSize  uint64            `json:"package-file-size" toml:"package-file-size"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -159,6 +163,11 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
+
+	flags.Bool(flagStaleRead, false, "allow stale read in backup")
+	flags.Uint64(flagPackageFileSize, 0,
+		"When this value is greater than 0, BR packs small SST files into larger .pack files. "+
+			"The value specifies the target size of each .pack file in bytes.")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -206,6 +215,9 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		return errors.Trace(err)
 	}
 	if cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.PackageFileSize, err = flags.GetUint64(flagPackageFileSize); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -269,6 +281,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 			return errors.Trace(err)
 		}
 		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.StaleRead, err = flags.GetBool(flagStaleRead)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -343,9 +359,10 @@ func (cfg *BackupConfig) Adjust() {
 }
 
 type immutableBackupConfig struct {
-	LastBackupTS  uint64 `json:"last-backup-ts"`
-	IgnoreStats   bool   `json:"ignore-stats"`
-	UseCheckpoint bool   `json:"use-checkpoint"`
+	LastBackupTS    uint64 `json:"last-backup-ts"`
+	IgnoreStats     bool   `json:"ignore-stats"`
+	UseCheckpoint   bool   `json:"use-checkpoint"`
+	PackageFileSize uint64 `json:"package-file-size"`
 
 	storage.BackendOptions
 	Storage      string              `json:"storage"`
@@ -360,9 +377,10 @@ type immutableBackupConfig struct {
 // a rough hash for checkpoint checker
 func (cfg *BackupConfig) Hash() ([]byte, error) {
 	config := &immutableBackupConfig{
-		LastBackupTS:  cfg.LastBackupTS,
-		IgnoreStats:   cfg.IgnoreStats,
-		UseCheckpoint: cfg.UseCheckpoint,
+		LastBackupTS:    cfg.LastBackupTS,
+		IgnoreStats:     cfg.IgnoreStats,
+		UseCheckpoint:   cfg.UseCheckpoint,
+		PackageFileSize: cfg.PackageFileSize,
 
 		BackendOptions: cfg.BackendOptions,
 		Storage:        cfg.Storage,
@@ -393,6 +411,17 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
 
+	statusCommand := taskStatusCommand(cmdName)
+	summary.StartTaskStatus(summary.TaskStatusConfig{
+		TaskType:          summary.BackupUnit,
+		Command:           statusCommand,
+		Scope:             taskStatusScope(statusCommand, cfg.ExplicitFilter, cfg.FilterStr),
+		PDAddrs:           cfg.PD,
+		Storage:           cfg.Storage,
+		TaskTS:            cfg.BackupTS,
+		StatusTextfileDir: cfg.StatusTextfileDir,
+	})
+	summary.SetTaskStatusPhase("prepare")
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -457,6 +486,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	client.SetCipher(&cfg.CipherInfo)
 	// set skip checksum status
 	client.SetSkipChecksum(skipChecksum)
+	client.SetExpectPackedFiles(cfg.PackageFileSize > 0)
 
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
@@ -557,8 +587,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		Concurrency:      defaultBackupConcurrency,
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
+		PackageFileSize:  cfg.PackageFileSize,
 		CipherInfo:       &cfg.CipherInfo,
 		ReplicaRead:      len(cfg.ReplicaReadLabel) != 0,
+		StaleRead:        cfg.StaleRead,
 		Context: &kvrpcpb.Context{
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: "", // TODO,
@@ -572,6 +604,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
+	summary.SetTaskStatusPhase("build_ranges")
 	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
@@ -700,6 +733,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	summary.SetTaskStatusPhase("backup_ranges")
 	checksumMap, err := client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.RangeLimit, cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
@@ -727,6 +761,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Info("Skip fast checksum")
 		}
 	}
+	summary.SetTaskStatusPhase("checksum")
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
 
 	if schemas != nil && schemas.Len() > 0 {
@@ -738,6 +773,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 
+	summary.SetTaskStatusPhase("flush_meta")
 	err = metawriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)

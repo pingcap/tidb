@@ -912,8 +912,6 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
-	// Whether enable create table as select
-	EnableCreateTableAsSelect bool `toml:"enable-create-table-as-select" json:"enable-create-table-as-select"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1139,34 +1137,35 @@ func StoreGlobalConfig(config *Config) {
 // they might still be in the config struct to support import,
 // but are not actively used.
 var removedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":                {},
-	"pessimistic-txn.enable":             {},
-	"log.file.log-rotate":                {},
-	"log.log-slow-query":                 {},
-	"txn-local-latches":                  {},
-	"txn-local-latches.enabled":          {},
-	"txn-local-latches.capacity":         {},
-	"performance.max-memory":             {},
-	"max-txn-time-use":                   {},
-	"experimental.allow-auto-random":     {},
-	"enable-redact-log":                  {}, // use variable tidb_redact_log instead
-	"enable-streaming":                   {},
-	"performance.mem-profile-interval":   {},
-	"security.require-secure-transport":  {},
-	"lower-case-table-names":             {},
-	"stmt-summary":                       {},
-	"stmt-summary.enable":                {},
-	"stmt-summary.enable-internal-query": {},
-	"stmt-summary.max-stmt-count":        {},
-	"stmt-summary.max-sql-length":        {},
-	"stmt-summary.refresh-interval":      {},
-	"stmt-summary.history-size":          {},
-	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
-	"mem-quota-query":                    {},
-	"log.query-log-max-len":              {},
-	"performance.committer-concurrency":  {},
-	"experimental.enable-global-kill":    {},
-	"performance.run-auto-analyze":       {}, // use tidb_enable_auto_analyze
+	"pessimistic-txn.ttl":                        {},
+	"pessimistic-txn.enable":                     {},
+	"log.file.log-rotate":                        {},
+	"log.log-slow-query":                         {},
+	"txn-local-latches":                          {},
+	"txn-local-latches.enabled":                  {},
+	"txn-local-latches.capacity":                 {},
+	"performance.max-memory":                     {},
+	"max-txn-time-use":                           {},
+	"experimental.allow-auto-random":             {},
+	"experimental.enable-create-table-as-select": {},
+	"enable-redact-log":                          {}, // use variable tidb_redact_log instead
+	"enable-streaming":                           {},
+	"performance.mem-profile-interval":           {},
+	"security.require-secure-transport":          {},
+	"lower-case-table-names":                     {},
+	"stmt-summary":                               {},
+	"stmt-summary.enable":                        {},
+	"stmt-summary.enable-internal-query":         {},
+	"stmt-summary.max-stmt-count":                {},
+	"stmt-summary.max-sql-length":                {},
+	"stmt-summary.refresh-interval":              {},
+	"stmt-summary.history-size":                  {},
+	"enable-batch-dml":                           {}, // use tidb_enable_batch_dml
+	"mem-quota-query":                            {},
+	"log.query-log-max-len":                      {},
+	"performance.committer-concurrency":          {},
+	"experimental.enable-global-kill":            {},
+	"performance.run-auto-analyze":               {}, // use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},

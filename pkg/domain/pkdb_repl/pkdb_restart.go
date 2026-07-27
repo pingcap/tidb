@@ -96,8 +96,9 @@ func restart() error {
 
 func restartProcess(domain domainCloser) {
 	logutil.BgLogger().Info("will restart process")
-	// need to unblock CheckStandbyBlocking, so we can close ownerMgr properly
-	disableStandbyMode()
+	// Keep the process-wide standby state unchanged until syscall.Exec replaces the
+	// process. Domain.Close stops WatchStandby, but the server may still accept SQL
+	// before the restart completes.
 
 	if domain != nil {
 		closeDomainBeforeRestart(domain)

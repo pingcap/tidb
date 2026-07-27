@@ -963,6 +963,21 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	return conn.ctx.ShowProcess(), ok
 }
 
+// GetSession returns the frontend session that owns the connection ID.
+func (s *Server) GetSession(id uint64) (any, bool) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[id]
+	s.rwlock.RUnlock()
+	if !ok || conn == nil {
+		return nil, false
+	}
+	ctx := conn.getCtx()
+	if ctx == nil || ctx.Session == nil {
+		return nil, false
+	}
+	return ctx.Session, true
+}
+
 // GetConAttrs returns the connection attributes
 func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string {
 	s.rwlock.RLock()

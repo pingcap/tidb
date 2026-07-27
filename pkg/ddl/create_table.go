@@ -228,6 +228,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
+	if args.CTASSql != "" {
+		return w.createTableWithSelect(jobCtx, job, args)
+	}
+
 	tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
 		store:     w.store,
 		autoidCli: w.autoidCli,
@@ -298,6 +302,8 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 	}
 	return ver, errors.Trace(err)
 }
+
+var errWaitCTASLoadSubtask = errors.NewNoStackError("waiting for CTAS load subtask")
 
 func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64

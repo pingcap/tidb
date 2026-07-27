@@ -18,14 +18,26 @@ func SetUnit(unit string) {
 	collector.SetUnit(unit)
 }
 
+// StartTaskStatus starts BR task status textfile export.
+func StartTaskStatus(cfg TaskStatusConfig) {
+	monitor.startTask(cfg)
+}
+
+// SetTaskStatusPhase updates the current BR task phase.
+func SetTaskStatusPhase(phase string) {
+	monitor.setTaskPhase(phase)
+}
+
 // CollectSuccessUnit collects success time costs.
 func CollectSuccessUnit(name string, unitCount int, arg any) {
 	collector.CollectSuccessUnit(name, unitCount, arg)
+	monitor.recordTaskSize(name, arg)
 }
 
 // CollectFailureUnit collects fail reason.
 func CollectFailureUnit(name string, reason error) {
 	collector.CollectFailureUnit(name, reason)
+	monitor.recordTaskFailure(name)
 }
 
 // CollectDuration collects log time field.
@@ -47,6 +59,7 @@ func CollectUint(name string, t uint64) {
 func SetSuccessStatus(success bool) {
 	lastStatus.Store(success)
 	collector.SetSuccessStatus(success)
+	monitor.setTaskSuccess(success)
 }
 
 // Succeed returns whether the last call to `SetSuccessStatus` passes `true`.
@@ -66,6 +79,7 @@ func AdjustStartTimeToEarlierTime(t time.Duration) {
 // Summary outputs summary log.
 func Summary(name string) {
 	collector.Summary(name)
+	monitor.finishTask()
 }
 
 // Log outputs log.

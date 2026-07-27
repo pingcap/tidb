@@ -905,6 +905,12 @@ func (job *Job) MayNeedReorg() bool {
 			}
 		}
 		return false
+	case ActionCreateTable:
+		args, err := GetCreateTableArgs(job)
+		if err != nil || args == nil {
+			return false
+		}
+		return args.CTASSnapshotTS != 0
 	default:
 		return false
 	}

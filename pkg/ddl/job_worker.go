@@ -360,6 +360,12 @@ func JobNeedGC(job *model.Job) bool {
 			return false
 		}
 		switch job.Type {
+		case model.ActionCreateTable:
+			tableIDs, err := getRollbackCTASDeleteRangeTableIDs(job)
+			if err != nil {
+				return false
+			}
+			return len(tableIDs) > 0
 		case model.ActionDropSchema, model.ActionDropTable,
 			model.ActionTruncateTable,
 			model.ActionDropPrimaryKey,

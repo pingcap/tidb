@@ -54,6 +54,7 @@ func TestGetDDLJobs(t *testing.T) {
 		jobs[i] = &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
+			Version:  model.JobVersion1,
 			Type:     model.ActionCreateTable,
 		}
 		err := addDDLJobs(sess, jobs[i])
@@ -146,6 +147,7 @@ func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, jobType model.Actio
 		job := &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
+			Version:  model.JobVersion1,
 			Type:     jobType,
 		}
 		err := addDDLJobs(sess, job)

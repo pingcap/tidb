@@ -1158,6 +1158,8 @@ const (
 
 	ErrInvalidAffinityOption = 8266
 
+	ErrCTASDistTask = 8500
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249

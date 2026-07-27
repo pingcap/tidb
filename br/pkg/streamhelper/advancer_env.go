@@ -94,6 +94,7 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key, endKey []byte, lim
 	return rls, nil
 }
 
+// Stores returns the live regular TiKV stores used by log backup subscriptions.
 func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
 	res, err := c.Client.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
@@ -101,7 +102,7 @@ func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
 	}
 	r := make([]Store, 0, len(res))
 	for _, re := range res {
-		if !engine.IsTiFlash(re) {
+		if !engine.IsTiFlash(re) && !engine.IsReplicator(re) {
 			r = append(r, Store{
 				BootAt: uint64(re.StartTimestamp),
 				ID:     re.GetId(),

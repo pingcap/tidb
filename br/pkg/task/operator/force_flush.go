@@ -21,10 +21,13 @@ func getAllTiKVs(ctx context.Context, p pd.Client) ([]*metapb.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	withoutTiFlash := slices.DeleteFunc(stores, engine.IsTiFlash)
-	return withoutTiFlash, err
+	stores = slices.DeleteFunc(stores, func(store *metapb.Store) bool {
+		return engine.IsTiFlash(store) || engine.IsReplicator(store)
+	})
+	return stores, nil
 }
 
+// RunForceFlush forces matched TiKV stores to flush their log backup data.
 func RunForceFlush(ctx context.Context, cfg *ForceFlushConfig) error {
 	pdMgr, err := dialPD(ctx, &cfg.Config)
 	if err != nil {

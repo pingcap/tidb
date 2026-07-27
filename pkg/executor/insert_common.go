@@ -755,6 +755,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
+				if err = handleExplicitDefaultsForTimestampNull(e.Ctx(), c, &row[i]); err != nil {
+					return nil, err
+				}
 				if err = c.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData); err != nil {
 					return nil, err
 				}

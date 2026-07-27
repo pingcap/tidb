@@ -15,12 +15,15 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
 	"strings"
 	"time"
 
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -67,9 +70,9 @@ type ProcessInfo struct {
 	ResourceGroupName     string
 	SessionAlias          string
 	RedactSQL             string
+	BriefBinaryPlan       string
 	IndexNames            []string
 	TableIDs              []int64
-	PlanExplainRows       [][]string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
@@ -231,4 +234,17 @@ type SessionManager interface {
 	KillNonFlashbackClusterConn()
 	// GetConAttrs gets the connection attributes
 	GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string
+}
+
+// ExplainProcessInfoContext provides the session state needed to fetch remote
+// EXPLAIN FOR CONNECTION payloads through TiDB internal RPCs.
+type ExplainProcessInfoContext interface {
+	GetDistSQLCtx() *distsqlctx.DistSQLContext
+	GetInfoSchema() infoschemacontext.MetaOnlyInfoSchema
+}
+
+// ExplainProcessInfoFetcher is an optional extension for session managers that
+// can resolve EXPLAIN FOR CONNECTION payloads beyond the local TiDB instance.
+type ExplainProcessInfoFetcher interface {
+	GetProcessInfoForExplain(ctx context.Context, execCtx ExplainProcessInfoContext, id uint64) (*ProcessInfo, error)
 }

@@ -633,6 +633,18 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackRenameIndex(jobCtx, job)
 	case model.ActionTruncateTable:
 		ver, err = rollingbackTruncateTable(jobCtx, job)
+	case model.ActionCreateTable:
+		var args *model.CreateTableArgs
+		args, err = model.GetCreateTableArgs(job)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			break
+		}
+		if args.CTASSnapshotTS == 0 || job.SchemaState != model.StateWriteReorganization {
+			ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
+			break
+		}
+		ver, err = w.rollbackCTASTableOnCancel(jobCtx, job, args.TableInfo)
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(jobCtx, job)
 	case model.ActionDropForeignKey:

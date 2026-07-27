@@ -66,6 +66,7 @@ go_test(
         "basic_lib_for_test.go",
         "export_test.go",
         "integration_test.go",
+        "pkdb_advancer_env_test.go",
         "regioniter_test.go",
         "subscription_test.go",
     ],

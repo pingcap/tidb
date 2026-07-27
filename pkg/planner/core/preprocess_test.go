@@ -131,6 +131,7 @@ func TestValidator(t *testing.T) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
+		{"create table t as select 1", false, nil},
 		{"create table t", false, dbterror.ErrTableMustHaveColumns},
 		{"create table t (unique(c))", false, dbterror.ErrTableMustHaveColumns},
 
@@ -206,11 +207,16 @@ func TestValidator(t *testing.T) {
 		{"CREATE TABLE t (a float(54))", false, types.ErrWrongFieldSpec},
 		{"CREATE TABLE t (a double)", true, nil},
 
-		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
-		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
-		{"CREATE TABLE t (m int) SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
-		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
-		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t SELECT * FROM u", false, nil},
+		{"CREATE TABLE t (m int) SELECT * FROM u", false, nil},
+		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, nil},
+		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, nil},
+		{"CREATE TABLE t TABLE u", false, nil},
+		{"CREATE TABLE t AS TABLE u", false, nil},
+		{"CREATE TABLE tupdate AS SELECT * FROM t FOR UPDATE", false,
+			plannererrors.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("t", "tupdate")},
+		{"CREATE TABLE tupdate AS SELECT * FROM missing FOR UPDATE", false,
+			plannererrors.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("missing", "tupdate")},
 
 		// issue 24309
 		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},

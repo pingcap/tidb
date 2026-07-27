@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -770,7 +771,18 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
+	remoteChecksumFn := func() (*local.RemoteChecksum, error) {
+		return RemoteChecksumTableBySQL(ctx, se, plan, logger)
+	}
+	if plan.TableInfo != nil && plan.TableInfo.State != model.StatePublic {
+		remoteChecksumFn = func() (*local.RemoteChecksum, error) {
+			return RemoteChecksumTableByTiKV(ctx, se, plan, logger)
+		}
+	}
+
+	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+		remoteChecksumFn,
+	)
 }
 
 type autoIDRequirement struct {
@@ -830,9 +842,36 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 	return errors.Trace(err)
 }
 
+type remoteChecksumFunction func() (*local.RemoteChecksum, error)
+
+// RemoteChecksumTableByTiKV executes checksum requests directly from table metadata.
+func RemoteChecksumTableByTiKV(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+	pdStore, ok := se.GetStore().(tidbkv.StorageWithPD)
+	if !ok {
+		return nil, errors.New("store does not support PD client for TiKV checksum")
+	}
+	checksumCtx := log.NewContext(ctx, log.Logger{Logger: logger})
+	backoffWeight := GetBackoffWeight(plan)
+	mgr := local.NewTiKVChecksumManager(
+		se.GetStore().GetClient(),
+		pdStore.GetPDClient(),
+		uint(plan.DistSQLScanConcurrency),
+		backoffWeight,
+		se.GetSessionVars().StmtCtx.ResourceGroupName,
+		tidbkv.InternalImportInto,
+	)
+	defer mgr.Close()
+	return mgr.Checksum(checksumCtx, &checkpoints.TidbTableInfo{
+		DB:   plan.DBName,
+		Name: plan.TableInfo.Name.L,
+		Core: plan.TableInfo,
+	})
+}
+
 // VerifyChecksum verify the checksum of the table.
-func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, se sessionctx.Context, logger *zap.Logger) error {
+func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, logger *zap.Logger, getRemoteChecksumFn remoteChecksumFunction) error {
 	if plan.Checksum == config.OpLevelOff {
+		logger.Info("checksum turned off, skip", zap.Object("checksum", &localChecksum))
 		return nil
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
@@ -841,12 +880,12 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 		<-ctx.Done()
 	})
 
-	remoteChecksum, err := checksumTable(ctx, se, plan, logger)
+	remoteChecksum, err := getRemoteChecksumFn()
 	if err != nil {
 		if plan.Checksum != config.OpLevelOptional {
 			return err
 		}
-		logger.Warn("checksumTable failed, will skip this error and go on", zap.Error(err))
+		logger.Warn("get remote checksum failed, will skip this error and go on", zap.Error(err))
 	}
 	if remoteChecksum != nil {
 		if !remoteChecksum.IsEqual(&localChecksum) {
@@ -866,7 +905,8 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	return nil
 }
 
-func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+// RemoteChecksumTableBySQL executes the SQL to get the remote checksum of the table.
+func RemoteChecksumTableBySQL(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
 	var (
 		tableName                    = common.UniqueTable(plan.DBName, plan.TableInfo.Name.L)
 		sql                          = "ADMIN CHECKSUM TABLE " + tableName
@@ -896,12 +936,20 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = func() error {
 			// increase backoff weight
-			if err := setBackoffWeight(se, plan, logger); err != nil {
+			backoffWeight := GetBackoffWeight(plan)
+			logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
+			err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+			if err != nil {
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
 			newConcurrency := max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
-			logger.Info("checksum with adjusted distsql scan concurrency", zap.Int("concurrency", newConcurrency))
+			logger.Info("checksum with adjusted distsql scan concurrency",
+				zap.String("database", plan.DBName),
+				zap.String("table", plan.TableInfo.Name.L),
+				zap.Int64("table-id", plan.TableInfo.ID),
+				zap.String("checksum-table", tableName),
+				zap.Int("concurrency", newConcurrency))
 			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
 
 			// TODO: add resource group name
@@ -943,15 +991,16 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 	return remoteChecksum, txnErr
 }
 
-func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
+// GetBackoffWeight returns the backoff weight for the plan.
+// returns max(local.DefaultBackoffWeight, plan.ImportantSysVars[vardef.TiDBBackOffWeight])
+func GetBackoffWeight(plan *Plan) int {
 	backoffWeight := local.DefaultBackoffWeight
 	if val, ok := plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
 		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
 			backoffWeight = weight
 		}
 	}
-	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
-	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+	return backoffWeight
 }
 
 // GetImportRootDir returns the root directory for import.

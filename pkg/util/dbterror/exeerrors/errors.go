@@ -102,6 +102,7 @@ var (
 	ErrLoadDataInvalidOperation       = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidOperation)
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
+	ErrCTASDistTask                   = dbterror.ClassExecutor.NewStd(mysql.ErrCTASDistTask)
 	ErrUdfExists                      = dbterror.ClassExecutor.NewStd(mysql.ErrUdfExists)
 	ErrSpAlreadyExists                = dbterror.ClassExecutor.NewStd(mysql.ErrSpAlreadyExists)
 	ErrSpDoesNotExist                 = dbterror.ClassExecutor.NewStd(mysql.ErrSpDoesNotExist)

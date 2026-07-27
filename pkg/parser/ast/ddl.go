@@ -1126,11 +1126,12 @@ type CreateTableStmt struct {
 	Constraints    []*Constraint
 	Options        []*TableOption
 	Partition      *PartitionOptions
-	OnDuplicate    OnDuplicateKeyHandlingType
 
 	// used for CREATE TABLE AS SELECT (CTAS)
-	Select        ResultSetNode
-	SelectColumns []*model.CIStr
+	Select         ResultSetNode
+	SelectColumns  []*model.CIStr
+	CTASSnapshotTS uint64
+	OnDuplicate    OnDuplicateKeyHandlingType // 0 means not specified, 1 means IGNORE, 2 means REPLACE
 }
 
 // Restore implements Node interface.

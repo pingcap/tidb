@@ -61,6 +61,8 @@ type ImportIntoExec struct {
 	plan       *plannercore.ImportInto
 	tbl        table.Table
 	dataFilled bool
+
+	ctasFlag bool
 }
 
 var (
@@ -68,7 +70,7 @@ var (
 )
 
 func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionctx.Context,
-	plan *plannercore.ImportInto, tbl table.Table) (*ImportIntoExec, error) {
+	plan *plannercore.ImportInto, tbl table.Table, ctasFlag bool) (*ImportIntoExec, error) {
 	return &ImportIntoExec{
 		BaseExecutor: b,
 		selectExec:   selectExec,
@@ -76,6 +78,7 @@ func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx s
 		stmt:         plan.Stmt,
 		plan:         plan,
 		tbl:          tbl,
+		ctasFlag:     ctasFlag,
 	}, nil
 }
 
@@ -255,9 +258,12 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	defer CloseSession(newSCtx)
 
 	sqlExec := newSCtx.GetSQLExecutor()
-	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
-		return err2
+	if !e.ctasFlag {
+		if err := e.controller.CheckRequirements(ctx, sqlExec); err != nil {
+			return err
+		}
 	}
+
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}

@@ -22,7 +22,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -428,6 +427,51 @@ type preprocessor struct {
 	userDefVarsTypeSet map[string]struct{}
 	userDefStoredFuncs [][2]string
 	resolveCtx         *resolve.Context
+	ctasForUpdate      []createTableAsSelectForUpdateInfo
+}
+
+type createTableAsSelectForUpdateInfo struct {
+	targetTableName string
+	sourceTableName string
+	found           bool
+}
+
+func (p *preprocessor) enterCreateTableAsSelect(stmt *ast.CreateTableStmt) {
+	if stmt.Select == nil {
+		return
+	}
+	p.ctasForUpdate = append(p.ctasForUpdate, createTableAsSelectForUpdateInfo{
+		targetTableName: stmt.Table.Name.O,
+	})
+}
+
+func (p *preprocessor) recordCreateTableAsSelectForUpdate(stmt *ast.SelectStmt) {
+	if p.err != nil || len(p.ctasForUpdate) == 0 {
+		return
+	}
+	info := &p.ctasForUpdate[len(p.ctasForUpdate)-1]
+	if info.found || !isCreateTableAsSelectForUpdateLock(stmt.LockInfo) {
+		return
+	}
+	info.found = true
+	info.sourceTableName = firstLockedTableName(stmt.LockInfo, stmt.From)
+}
+
+func (p *preprocessor) leaveCreateTableAsSelect(stmt *ast.CreateTableStmt) {
+	if stmt.Select == nil {
+		return
+	}
+	idx := len(p.ctasForUpdate) - 1
+	info := p.ctasForUpdate[idx]
+	p.ctasForUpdate = p.ctasForUpdate[:idx]
+	if p.err != nil || !info.found {
+		return
+	}
+	sourceTableName := info.sourceTableName
+	if sourceTableName == "" {
+		sourceTableName = info.targetTableName
+	}
+	p.err = plannererrors.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs(sourceTableName, info.targetTableName)
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -445,6 +489,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
+		p.recordCreateTableAsSelectForUpdate(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
@@ -464,6 +509,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
+		p.enterCreateTableAsSelect(node)
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -793,6 +839,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inCreateOrDropTable
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
+		p.leaveCreateTableAsSelect(x)
 	case *ast.CreateViewStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
@@ -1191,12 +1238,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
 		return
 	}
-	if stmt.Select != nil {
-		if !config.GetGlobalConfig().Experimental.EnableCreateTableAsSelect {
-			p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
-			return
-		}
-	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+	if stmt.Select == nil && len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = dbterror.ErrTableMustHaveColumns
 		return
 	}
@@ -1278,6 +1320,77 @@ func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt
 			}
 		}
 	}
+}
+
+func isCreateTableAsSelectForUpdateLock(lock *ast.SelectLockInfo) bool {
+	if lock == nil {
+		return false
+	}
+	return lock.LockType == ast.SelectLockForUpdate ||
+		lock.LockType == ast.SelectLockForUpdateNoWait ||
+		lock.LockType == ast.SelectLockForUpdateWaitN ||
+		lock.LockType == ast.SelectLockForUpdateSkipLocked
+}
+
+func firstLockedTableName(lock *ast.SelectLockInfo, from *ast.TableRefsClause) string {
+	if lock != nil {
+		for _, table := range lock.Tables {
+			if table != nil && table.Name.O != "" {
+				return table.Name.O
+			}
+		}
+	}
+	return firstTableNameInTableRefs(from)
+}
+
+func firstTableNameInTableRefs(from *ast.TableRefsClause) string {
+	if from == nil || from.TableRefs == nil {
+		return ""
+	}
+	return firstTableNameInResultSet(from.TableRefs)
+}
+
+func firstTableNameInSetOprSelectList(selectList *ast.SetOprSelectList) string {
+	if selectList == nil {
+		return ""
+	}
+	for _, selectNode := range selectList.Selects {
+		switch stmt := selectNode.(type) {
+		case *ast.SelectStmt:
+			if name := firstTableNameInTableRefs(stmt.From); name != "" {
+				return name
+			}
+		case *ast.SetOprSelectList:
+			if name := firstTableNameInSetOprSelectList(stmt); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func firstTableNameInResultSet(resultSet ast.ResultSetNode) string {
+	switch x := resultSet.(type) {
+	case *ast.TableName:
+		return x.Name.O
+	case *ast.TableSource:
+		if x.Source == nil {
+			return ""
+		}
+		return firstTableNameInResultSet(x.Source)
+	case *ast.Join:
+		if name := firstTableNameInResultSet(x.Left); name != "" {
+			return name
+		}
+		if x.Right != nil {
+			return firstTableNameInResultSet(x.Right)
+		}
+	case *ast.SelectStmt:
+		return firstTableNameInTableRefs(x.From)
+	case *ast.SetOprStmt:
+		return firstTableNameInSetOprSelectList(x.SelectList)
+	}
+	return ""
 }
 
 func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {

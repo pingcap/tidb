@@ -698,7 +698,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.ExplainRoutineStmt:
 		return b.buildExplainRoutine(ctx, x)
 	case *ast.ExplainForStmt:
-		return b.buildExplainFor(x)
+		return b.buildExplainFor(ctx, x)
 	case *ast.TraceStmt:
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
@@ -5490,6 +5490,9 @@ func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
+	err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	if tnW.TableInfo.TempTableType != model.TempTableNone {
 		return nil, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
@@ -5897,18 +5900,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			if err := b.checkCreateTableAsSelect(v); err != nil {
 				return nil, err
 			}
-			var selectPlan base.LogicalPlan
-			var err error
-			switch selectStmt := v.Select.(type) {
-			case *ast.SelectStmt:
-				// simple select statement
-				selectPlan, err = b.buildSelect(ctx, selectStmt)
-			case *ast.SetOprStmt:
-				// case select union select
-				selectPlan, err = b.buildSetOpr(ctx, selectStmt)
-			default:
-				return nil, errors.New("unsupported select stmt type: " + reflect.TypeOf(selectStmt).String())
-			}
+			selectPlan, err := b.buildCTASSelectPlan(ctx, v)
 			if err != nil {
 				return nil, err
 			}
@@ -6168,10 +6160,14 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
 		for i, name := range names {
 			tp := convertRetType(schema.Columns[i].RetType)
+			options, err := buildDefaultOptionsForCTAS(logicalPlan, i)
+			if err != nil {
+				return err
+			}
 			v.Cols[i] = &ast.ColumnDef{
 				Name:    &ast.ColumnName{Name: name.ColName},
 				Tp:      tp,
-				Options: []*ast.ColumnOption{},
+				Options: options,
 			}
 		}
 		return nil
@@ -6209,10 +6205,15 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		} else {
 			// Create new column definition for columns that only exist in SELECT
 			tp := convertRetType(schema.Columns[i].RetType)
+			options, err := buildDefaultOptionsForCTAS(logicalPlan, i)
+			if err != nil {
+				return err
+			}
+
 			newCols = append(newCols, &ast.ColumnDef{
 				Name:    &ast.ColumnName{Name: name.ColName},
 				Tp:      tp,
-				Options: []*ast.ColumnOption{},
+				Options: options,
 			})
 		}
 	}
@@ -6224,6 +6225,7 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 // convertRetType adjusts inferred SELECT output types for CTAS column definitions.
 func convertRetType(fieldType *types.FieldType) *types.FieldType {
 	tp := fieldType.Clone()
+	tp.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag)
 	switch tp.GetType() {
 	case mysql.TypeVarString:
 		tp.SetType(mysql.TypeVarchar)
@@ -6361,7 +6363,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (base.Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (base.Plan, error) {
 	format = strings.ToLower(format)
 	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
@@ -6372,7 +6374,7 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 		Format:           format,
 		Analyze:          analyze,
 		ExecStmt:         execStmt,
-		ExplainRows:      explainRows,
+		BriefBinaryPlan:  explainBriefBinary,
 		RuntimeStatsColl: runtimeStats,
 	}
 	p.SetSCtx(b.ctx)
@@ -6381,10 +6383,29 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
 // See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
-func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan, error) {
-	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
-	if !ok {
-		return nil, plannererrors.ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+func (b *PlanBuilder) buildExplainFor(ctx context.Context, explainFor *ast.ExplainForStmt) (base.Plan, error) {
+	sm := b.ctx.GetSessionManager()
+	var processInfo *util2.ProcessInfo
+	if fetcher, ok := sm.(util2.ExplainProcessInfoFetcher); ok {
+		execCtx, ok := b.ctx.(util2.ExplainProcessInfoContext)
+		if !ok {
+			return nil, errors.New("session context does not support remote explain fetch")
+		}
+		var err error
+		processInfo, err = fetcher.GetProcessInfoForExplain(ctx, execCtx, explainFor.ConnectionID)
+		if err != nil {
+			return nil, err
+		}
+		if processInfo == nil {
+			return nil, plannererrors.ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+		}
+	} else {
+		// Keep the original instance-local behavior for session managers without cluster explain support.
+		var ok bool
+		processInfo, ok = sm.GetProcessInfo(explainFor.ConnectionID)
+		if !ok {
+			return nil, plannererrors.ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+		}
 	}
 	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
 		if b.ctx.GetSessionVars().User.Username != processInfo.User {
@@ -6400,14 +6421,14 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 
 	targetPlan, ok := processInfo.Plan.(base.Plan)
 	explainForFormat := strings.ToLower(explainFor.Format)
-	if !ok || targetPlan == nil {
+	if processInfo.BriefBinaryPlan == "" && (!ok || targetPlan == nil) {
 		return &Explain{Format: explainForFormat}, nil
 	}
-	var explainRows [][]string
-	if explainForFormat == types.ExplainFormatROW {
-		explainRows = processInfo.PlanExplainRows
+	// TODO: support other explain formats for connection
+	if explainForFormat != types.ExplainFormatBrief && explainForFormat != types.ExplainFormatROW && explainForFormat != types.ExplainFormatVerbose {
+		return nil, errors.Errorf("explain format '%s' for connection is not supported now", explainForFormat)
 	}
-	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, nil, processInfo.RuntimeStatsColl)
+	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, nil, processInfo.RuntimeStatsColl)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (base.Plan, error) {
@@ -6434,7 +6455,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt, nil)
+	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Stmt, nil)
 }
 
 func (b *PlanBuilder) buildExplainRoutine(ctx context.Context, stmt *ast.ExplainRoutineStmt) (base.Plan, error) {

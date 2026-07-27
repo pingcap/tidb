@@ -21,10 +21,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -90,11 +92,11 @@ func TestIssue29850(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
-		`Projection_8 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─HashJoin_9 0.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_12(Build) 1.00 root table:warehouse handle:1262`,
-		`  └─Point_Get_11(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
+		`Projection 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─HashJoin 0.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get(Build) 1.00 root table:warehouse handle:1262`,
+		`  └─Point_Get(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
 
@@ -974,6 +976,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
@@ -983,6 +986,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
@@ -1006,6 +1010,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
@@ -1015,6 +1020,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("set tidb_mem_quota_apply_cache=0")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})

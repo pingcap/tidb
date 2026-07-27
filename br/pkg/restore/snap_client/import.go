@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -579,10 +580,12 @@ func getSSTMetaFromFile(
 			Start: rangeStart,
 			End:   rangeEnd,
 		},
-		Length:      file.GetSize_(),
-		RegionId:    region.GetId(),
-		RegionEpoch: region.GetRegionEpoch(),
-		CipherIv:    file.GetCipherIv(),
+		Length:            file.GetSize_(),
+		RegionId:          region.GetId(),
+		RegionEpoch:       region.GetRegionEpoch(),
+		CipherIv:          file.GetCipherIv(),
+		PackageFileName:   file.GetPackageFileName(),
+		PackageFileOffset: file.GetPackageFileOffset(),
 	}, nil
 }
 
@@ -798,7 +801,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						return errors.Trace(err)
 					}
 					if resp.GetError() != nil {
-						return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
+						return annotateDownloadResponseError(resp, req)
 					}
 					if resp.GetIsEmpty() {
 						logger.Warn("download file skipped", zap.String("filename", req.Name),
@@ -879,7 +882,7 @@ func (importer *SnapFileImporter) downloadSST(
 					return errors.Trace(err)
 				}
 				if resp.GetError() != nil {
-					return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
+					return annotateDownloadResponseError(resp, req)
 				}
 				if resp.GetIsEmpty() {
 					log.Warn("download file skipped", zap.String("filename", fileName),
@@ -972,7 +975,7 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 						return errors.Trace(err)
 					}
 					if resp.GetError() != nil {
-						return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
+						return annotateDownloadResponseError(resp, req)
 					}
 					if resp.GetIsEmpty() {
 						log.Warn("download file skipped", zap.String("filename", file.Name),
@@ -1112,4 +1115,98 @@ func isDecryptSstErr(err error) bool {
 	return err != nil &&
 		strings.Contains(err.Error(), "Engine Engine") &&
 		strings.Contains(err.Error(), "Corruption: Bad table magic number")
+}
+
+// extractCannotReadObjectPaths extracts object paths from TiKV download errors
+// like "Cannot read <object> into <local path>".
+//
+// This is intentionally narrow: BR uses it only to detect old TiKV restore
+// behavior where TiKV ignores PackageFileName and tries to read the logical
+// .sst object directly from storage.
+func extractCannotReadObjectPaths(msg string) []string {
+	var cannotReadObjectPathRe = regexp.MustCompile(`Cannot read (.*?) into `)
+
+	matches := cannotReadObjectPathRe.FindAllStringSubmatch(msg, -1)
+	paths := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) == 2 {
+			paths = append(paths, match[1])
+		}
+	}
+	return paths
+}
+
+type downloadObjectInfo struct {
+	actualObject string
+	packed       bool
+}
+
+func collectDownloadObjectInfo(req *import_sstpb.DownloadRequest) map[string]downloadObjectInfo {
+	objects := make(map[string]downloadObjectInfo, len(req.GetSsts())+1)
+	if len(req.GetSsts()) > 0 {
+		for logicalName, sst := range req.GetSsts() {
+			info := downloadObjectInfo{actualObject: logicalName}
+			if packName := sst.GetPackageFileName(); packName != "" {
+				info.actualObject = packName
+				info.packed = true
+			}
+			objects[logicalName] = info
+		}
+		return objects
+	}
+
+	if req.GetName() != "" {
+		info := downloadObjectInfo{actualObject: req.GetName()}
+		sstMeta := req.GetSst()
+		if packName := sstMeta.GetPackageFileName(); packName != "" {
+			info.actualObject = packName
+			info.packed = true
+		}
+		objects[req.GetName()] = info
+	}
+
+	return objects
+}
+
+func findPackedSSTReadDirectly(
+	readObjectPaths []string,
+	objects map[string]downloadObjectInfo,
+) (logicalName string, actualObject string, ok bool) {
+	for _, readObjectPath := range readObjectPaths {
+		if !strings.HasSuffix(readObjectPath, ".sst") {
+			continue
+		}
+
+		for logicalName, info := range objects {
+			if readObjectPath != logicalName && !strings.HasSuffix(readObjectPath, "/"+logicalName) {
+				continue
+			}
+			if info.packed {
+				return logicalName, info.actualObject, true
+			}
+			break
+		}
+	}
+	return "", "", false
+}
+
+func annotateDownloadResponseError(
+	resp *import_sstpb.DownloadResponse,
+	req *import_sstpb.DownloadRequest,
+) error {
+	msg := resp.GetError().GetMessage()
+	objects := collectDownloadObjectInfo(req)
+	readObjectPaths := extractCannotReadObjectPaths(msg)
+
+	if logicalName, actualObject, ok := findPackedSSTReadDirectly(readObjectPaths, objects); ok {
+		return errors.Annotatef(
+			berrors.ErrVersionMismatch,
+			"%s; TiKV tried to read SST file %s directly, but BR requested packed file %s, please upgrade TiKV to a version that supports restoring from packed backup",
+			msg,
+			logicalName,
+			actualObject,
+		)
+	}
+
+	return errors.Annotate(berrors.ErrKVDownloadFailed, msg)
 }

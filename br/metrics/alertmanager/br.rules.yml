@@ -1,0 +1,95 @@
+groups:
+- name: alert.rules
+  rules:
+  - alert: BR_task_failed
+    expr: |
+      (
+        br_task_phase{task_type=~"backup|restore", phase="failed"} == 1
+      )
+      * on (status_id, task_type, command) group_left(scope, pd_addrs, storage, task_ts)
+        br_task_info{task_type=~"backup|restore"}
+    labels:
+      env: ENV_LABELS_ENV
+      level: emergency
+    annotations:
+      summary: BR {{ $labels.task_type }} {{ $labels.command }} task failed
+      description: 'cluster: ENV_LABELS_ENV, instance: {{ $labels.instance }}, status_id: {{ $labels.status_id }}, task_type: {{ $labels.task_type }}, command: {{ $labels.command }}, scope: {{ $labels.scope }}, pd_addrs: {{ $labels.pd_addrs }}, storage: {{ $labels.storage }}, task_ts: {{ $labels.task_ts }}'
+
+  - alert: BR_backup_no_recent_success
+    expr: |
+      (
+        time() - max by (task_type, command, scope, pd_addrs, storage) (
+          (
+            br_task_last_success_timestamp_seconds{task_type="backup"} > 0
+          )
+          * on (status_id, task_type, command) group_left(scope, pd_addrs, storage, task_ts)
+            br_task_info{task_type="backup"}
+        ) > 24 * 3600
+      )
+      or
+      (
+        (
+          time() - min by (task_type, command, scope, pd_addrs, storage) (
+            br_task_start_timestamp_seconds{task_type="backup"}
+            * on (status_id, task_type, command) group_left(scope, pd_addrs, storage, task_ts)
+              br_task_info{task_type="backup"}
+          ) > 24 * 3600
+        )
+        unless on (task_type, command, scope, pd_addrs, storage)
+        max by (task_type, command, scope, pd_addrs, storage) (
+          (
+            br_task_last_success_timestamp_seconds{task_type="backup"} > 0
+          )
+          * on (status_id, task_type, command) group_left(scope, pd_addrs, storage, task_ts)
+            br_task_info{task_type="backup"}
+        )
+      )
+    for: 1m
+    labels:
+      env: ENV_LABELS_ENV
+      level: warning
+    annotations:
+      summary: BR backup {{ $labels.command }} task has not succeeded for more than 24h
+      elapsed_time_without_success: '{{ humanizeDuration $value }}'
+      threshold: 24h
+
+  - alert: BR_task_running_too_long
+    expr: |
+      (
+        time() - br_task_start_timestamp_seconds{task_type=~"backup|restore"} > 24 * 3600
+        and br_task_running{task_type=~"backup|restore"} == 1
+      )
+      * on (status_id, task_type, command) group_left(scope, pd_addrs, storage, task_ts)
+        br_task_info{task_type=~"backup|restore"}
+    for: 1m
+    labels:
+      env: ENV_LABELS_ENV
+      level: warning
+    annotations:
+      summary: BR {{ $labels.task_type }} {{ $labels.command }} task has been running for more than 24h
+      description: 'cluster: ENV_LABELS_ENV, instance: {{ $labels.instance }}, status_id: {{ $labels.status_id }}, task_type: {{ $labels.task_type }}, command: {{ $labels.command }}, scope: {{ $labels.scope }}, pd_addrs: {{ $labels.pd_addrs }}, storage: {{ $labels.storage }}, task_ts: {{ $labels.task_ts }}'
+      running_time: '{{ humanizeDuration $value }}'
+
+  - alert: BR_task_abnormally_interrupted
+    expr: |
+      (
+        (
+          time() - br_task_last_update_timestamp_seconds{task_type="backup"} > 90 * 60
+          and br_task_running{task_type="backup"} == 1
+        )
+        or
+        (
+          time() - br_task_last_update_timestamp_seconds{task_type="restore"} > 240 * 60
+          and br_task_running{task_type="restore"} == 1
+        )
+      )
+      * on (status_id, task_type, command) group_left(scope, pd_addrs, storage, task_ts)
+        br_task_info{task_type=~"backup|restore"}
+    for: 1m
+    labels:
+      env: ENV_LABELS_ENV
+      level: warning
+    annotations:
+      summary: BR {{ $labels.task_type }} {{ $labels.command }} task may have been interrupted abnormally
+      description: 'cluster: ENV_LABELS_ENV, instance: {{ $labels.instance }}, status_id: {{ $labels.status_id }}, task_type: {{ $labels.task_type }}, command: {{ $labels.command }}, scope: {{ $labels.scope }}, pd_addrs: {{ $labels.pd_addrs }}, storage: {{ $labels.storage }}, task_ts: {{ $labels.task_ts }}'
+      stale_time: '{{ humanizeDuration $value }}'

@@ -79,6 +79,43 @@ func TestSysVar(t *testing.T) {
 	require.Equal(t, analyzeScan.Value, sysProcScan.Value)
 }
 
+func TestExplicitDefaultsForTimestampSysVar(t *testing.T) {
+	vars := NewSessionVars(nil)
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "0"))
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), ExplicitDefaultsForTimestamp)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+	require.False(t, vars.ExplicitDefaultsForTimestamp)
+
+	warnings := vars.StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	warn := warnings[0].Err
+	require.Equal(t, "[variable:1681]explicit_defaults_for_timestamp is deprecated and will be removed in a future release.", warn.Error())
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "OFF"))
+	require.Len(t, vars.StmtCtx.GetWarnings(), 1)
+	require.False(t, vars.ExplicitDefaultsForTimestamp)
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "ON"))
+	require.Len(t, vars.StmtCtx.GetWarnings(), 1)
+	require.True(t, vars.ExplicitDefaultsForTimestamp)
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "OFF"))
+	require.Len(t, vars.StmtCtx.GetWarnings(), 2)
+	require.False(t, vars.ExplicitDefaultsForTimestamp)
+
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), ExplicitDefaultsForTimestamp, "OFF"))
+	val, err = mock.GetGlobalSysVar(ExplicitDefaultsForTimestamp)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+	require.Len(t, vars.StmtCtx.GetWarnings(), 3)
+}
+
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedValueForVar,

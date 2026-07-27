@@ -1113,6 +1113,9 @@ type SessionVars struct {
 	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
 	DefaultCollationForUTF8MB4 string
 
+	// ExplicitDefaultsForTimestamp indicates whether TIMESTAMP columns use explicit defaults.
+	ExplicitDefaultsForTimestamp bool
+
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
@@ -2384,6 +2387,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		EnableSelectedPartitionStats:  DefTiDBOptEnableSelectedPartitionStats,
+		ExplicitDefaultsForTimestamp:  true,
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,

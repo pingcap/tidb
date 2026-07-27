@@ -175,7 +175,10 @@ func updateRecord(
 	// After these are done, we can finally update the record.
 
 	// Step 2: compare already evaluated columns and update changed, handleChanged and handleChanged flags.
-	for i := range cols {
+	for i, col := range cols {
+		if err := handleExplicitDefaultsForTimestampNull(sctx, col, &newData[i]); err != nil {
+			return false, false, err
+		}
 		if err := checkColumnFunc(i, true); err != nil {
 			return false, false, err
 		}
@@ -357,6 +360,23 @@ func updateRecord(
 	sc.AddCopiedRows(1)
 
 	return true, false, nil
+}
+
+func handleExplicitDefaultsForTimestampNull(sctx sessionctx.Context, col *table.Column, value *types.Datum) error {
+	if !value.IsNull() ||
+		sctx.GetSessionVars().ExplicitDefaultsForTimestamp ||
+		col.IsGenerated() ||
+		col.GetType() != mysql.TypeTimestamp ||
+		!mysql.HasNotNullFlag(col.GetFlag()) {
+		return nil
+	}
+
+	now, err := expression.GetTimeCurrentTimestamp(sctx.GetExprCtx().GetEvalCtx(), col.GetType(), col.GetDecimal())
+	if err != nil {
+		return err
+	}
+	*value = now
+	return nil
 }
 
 const (

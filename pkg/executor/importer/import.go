@@ -1508,6 +1508,7 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+	dupDetectEnabled := e.DataSourceType == DataSourceTypeQuery
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
@@ -1522,8 +1523,8 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		MemTableSize:                config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize:     int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:             true,
-		DupeDetectEnabled:           false,
-		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		DupeDetectEnabled:           dupDetectEnabled,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: dupDetectEnabled},
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),

@@ -865,33 +865,29 @@ type Explain struct {
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
-	Rows        [][]string
-	ExplainRows [][]string
+	Rows            [][]string
+	BriefBinaryPlan string
+
+	decodedBriefBinaryPlan *tipb.ExplainData
 }
 
-// GetExplainRowsForPlan get explain rows for plan.
-func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
-	explain := &Explain{
-		TargetPlan: plan,
-		Format:     types.ExplainFormatROW,
-		Analyze:    false,
+// GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
+func GetBriefBinaryPlan(p base.Plan, runtimeStatsColl ...*execdetails.RuntimeStatsColl) string {
+	var plan base.Plan = p
+	if plan == nil {
+		return ""
 	}
-	if plan != nil {
-		explain.SetSCtx(plan.SCtx())
+	// If the plan is a prepared statement, get execute.Plan.
+	if exec, ok := p.(*Execute); ok {
+		plan = exec.Plan
 	}
-	if sctx := explain.SCtx(); sctx != nil && sctx.GetSessionVars() != nil {
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		originalInExplainStmt := stmtCtx.InExplainStmt
-		originalExplainFormat := stmtCtx.ExplainFormat
-		defer func() {
-			stmtCtx.InExplainStmt = originalInExplainStmt
-			stmtCtx.ExplainFormat = originalExplainFormat
-		}()
+	// Get plan context and statement context
+	planCtx := plan.SCtx()
+	if planCtx == nil {
+		return ""
 	}
-	if err := explain.RenderResult(); err != nil {
-		return rows
-	}
-	return explain.Rows
+	flat := FlattenPhysicalPlan(plan, true)
+	return BinaryPlanStrFromFlatPlan(planCtx, flat, true, runtimeStatsColl...)
 }
 
 // GetExplainAnalyzeRowsForPlan get explain rows for plan.
@@ -905,19 +901,44 @@ func GetExplainAnalyzeRowsForPlan(plan *Explain) (rows [][]string) {
 	return plan.Rows
 }
 
+func (e *Explain) getDecodedBriefBinaryPlan() (*tipb.ExplainData, error) {
+	if e.BriefBinaryPlan == "" {
+		return nil, nil
+	}
+	if e.decodedBriefBinaryPlan != nil {
+		return e.decodedBriefBinaryPlan, nil
+	}
+	// Cache the parsed binary plan so local and remote EXPLAIN FOR CONNECTION
+	// paths do not decompress and unmarshal the same payload twice.
+	pb, err := plancodec.ParseBinaryPlan(e.BriefBinaryPlan)
+	if err != nil {
+		return nil, err
+	}
+	e.decodedBriefBinaryPlan = pb
+	return pb, nil
+}
+
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
 	format := strings.ToLower(e.Format)
+	hasRuntimeStats := e.Analyze || e.RuntimeStatsColl != nil
+	if !hasRuntimeStats && e.BriefBinaryPlan != "" {
+		pb, err := e.getDecodedBriefBinaryPlan()
+		if err != nil {
+			return err
+		}
+		hasRuntimeStats = pb.WithRuntimeStats
+	}
 	if format == types.ExplainFormatTraditional {
 		format = types.ExplainFormatROW
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && !hasRuntimeStats:
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
-		if e.Analyze || e.RuntimeStatsColl != nil {
+		if hasRuntimeStats {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
@@ -925,12 +946,12 @@ func (e *Explain) prepareSchema() error {
 	case format == types.ExplainFormatTrueCardCost:
 		fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatCostTrace:
-		if e.Analyze || e.RuntimeStatsColl != nil {
+		if hasRuntimeStats {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && hasRuntimeStats:
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -994,8 +1015,41 @@ func (e *Explain) RenderFlatResult(flat *FlatPhysicalPlan) error {
 	return nil
 }
 
+func (e *Explain) shouldDecodeBriefBinaryPlan() bool {
+	if e.BriefBinaryPlan == "" {
+		return false
+	}
+	if e.TargetPlan == nil {
+		return true
+	}
+	if e.RuntimeStatsColl == nil {
+		return true
+	}
+	// Prepared Execute plans can keep ParamMarker or DeferredExpr nodes whose values
+	// belong to the original execution context, so live rendering may evaluate missing params.
+	_, isExecute := e.TargetPlan.(*Execute)
+	return isExecute
+}
+
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	// EXPLAIN FOR CONNECTION should prefer the live runtime stats collector because
+	// BriefBinaryPlan is only a snapshot taken when ProcessInfo was recorded.
+	if e.shouldDecodeBriefBinaryPlan() {
+		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
+			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
+		}
+		pb, err := e.getDecodedBriefBinaryPlan()
+		if err != nil {
+			return err
+		}
+		rows, err := plancodec.DecodeBinaryPlan4ConnectionFromData(pb, strings.ToLower(e.Format), false)
+		if err != nil {
+			return err
+		}
+		e.Rows = rows
+		return nil
+	}
 	if e.TargetPlan == nil {
 		return nil
 	}
@@ -1039,7 +1093,6 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
@@ -1059,7 +1112,7 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
-		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat)
+		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat, false)
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatTiDBJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
@@ -1123,9 +1176,8 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
 	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
-	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, explainID)
 
 	for _, idx := range flatOp.ChildrenIdx {
 		cur.SubOperators = append(cur.SubOperators,
@@ -1208,7 +1260,7 @@ func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
 		return
 	}
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p)
 
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
@@ -1235,12 +1287,12 @@ func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
+func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {
 	if p.ExplainID().String() == "_0" {
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
@@ -1256,17 +1308,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 	return jsonRow
 }
 
-func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
-	// For `explain for connection` statement, `e.ExplainRows` will be set.
-	for _, row := range e.ExplainRows {
-		if len(row) < 5 {
-			panic("should never happen")
-		}
-		if row[0] == id {
-			return row[1], "N/A", "N/A", row[3], row[4]
-		}
-	}
-
+func (e *Explain) getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
@@ -1300,8 +1342,12 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
-func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) string {
-	binary := binaryDataFromFlatPlan(explainCtx, flat)
+func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool, runtimeStatsColl ...*execdetails.RuntimeStatsColl) string {
+	var coll *execdetails.RuntimeStatsColl
+	if len(runtimeStatsColl) > 0 {
+		coll = runtimeStatsColl[0]
+	}
+	binary := binaryDataFromFlatPlan(explainCtx, flat, briefBinaryPlan, coll)
 	if binary == nil {
 		return ""
 	}
@@ -1313,7 +1359,7 @@ func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPl
 	return str
 }
 
-func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) *tipb.ExplainData {
+func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool, runtimeStatsColl *execdetails.RuntimeStatsColl) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
@@ -1325,31 +1371,54 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan)
 	res := &tipb.ExplainData{}
 	for _, op := range flat.Main {
 		// We assume that runtime stats are available to this plan tree if any operator in the "Main" has runtime stats.
-		rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
+		rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, runtimeStatsColl)
 		if rootStats != nil || copStats != nil {
 			res.WithRuntimeStats = true
 			break
 		}
 	}
-	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main)
+	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan, runtimeStatsColl)
 	for _, explainedCTE := range flat.CTEs {
-		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE))
+		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan, runtimeStatsColl))
 	}
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree) *tipb.ExplainOperator {
-	s := make([]tipb.ExplainOperator, len(ops))
+func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool, runtimeStatsColl *execdetails.RuntimeStatsColl) *tipb.ExplainOperator {
+	operators := make([]tipb.ExplainOperator, len(ops))
+
+	// First phase: Generate all operators with normal processing (including ID suffix)
 	for i, op := range ops {
-		binaryOpFromFlatOp(explainCtx, op, &s[i])
+		binaryOpFromFlatOp(explainCtx, op, &operators[i], runtimeStatsColl)
+	}
+
+	// Second phase: If briefBinaryPlan is true, set IgnoreExplainIDSuffix and generate BriefName
+	if briefBinaryPlan && len(ops) > 0 && ops[0].Origin.SCtx() != nil {
+		stmtCtx := ops[0].Origin.SCtx().GetSessionVars().StmtCtx
+		originalIgnore := stmtCtx.IgnoreExplainIDSuffix
+		stmtCtx.IgnoreExplainIDSuffix = true
+
+		for i, op := range ops {
+			operators[i].BriefName = op.Origin.ExplainID().String()
+			switch op.Origin.(type) {
+			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
+				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
+			}
+		}
+
+		stmtCtx.IgnoreExplainIDSuffix = originalIgnore
+	}
+
+	// Build the tree structure
+	for i, op := range ops {
 		for _, idx := range op.ChildrenIdx {
-			s[i].Children = append(s[i].Children, &s[idx])
+			operators[i].Children = append(operators[i].Children, &operators[idx])
 		}
 	}
-	return &s[0]
+	return &operators[0]
 }
 
-func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
+func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator, runtimeStatsColl *execdetails.RuntimeStatsColl) {
 	out.Name = fop.Origin.ExplainID().String()
 	switch fop.Label {
 	case BuildSide:
@@ -1391,7 +1460,7 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 
 	// Runtime info
-	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, fop.Origin, nil)
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, fop.Origin, runtimeStatsColl)
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()
 		if basic != nil {
@@ -1426,7 +1495,6 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	} else {
 		out.OperatorInfo = fop.Origin.ExplainInfo()
 	}
-
 	// Access object
 	switch p := fop.Origin.(type) {
 	case dataAccesser:
