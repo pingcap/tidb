@@ -102,13 +102,16 @@ type CliEnv struct {
 	Mgr   *utils.StoreManager
 }
 
+// GetAllLiveStores returns the live regular TiKV stores used for snapshot preparation.
 func (c CliEnv) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
 	stores, err := c.Cache.PDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}
-	withoutTiFlash := slices.DeleteFunc(stores, engine.IsTiFlash)
-	return withoutTiFlash, err
+	stores = slices.DeleteFunc(stores, func(store *metapb.Store) bool {
+		return engine.IsTiFlash(store) || engine.IsReplicator(store)
+	})
+	return stores, nil
 }
 
 func AdaptForGRPCInTest(p PrepareClient) PrepareClient {
