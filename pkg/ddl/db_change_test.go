@@ -941,22 +941,14 @@ func TestShowIndex(t *testing.T) {
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 }
 
-func TestParallelAlterIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+// Regression test for issue 70049. Ordinary indexes with an underscore-delimited
+// suffix must not be mistaken for temporary indexes created by modify column.
+func TestAlterIndexVisibility(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	sql := "alter table t alter index idx1 invisible;"
-	f := func(err1, err2 error) {
-		require.NoError(t, err1)
-		require.NoError(t, err2)
-		tk.MustExec("select * from t")
-	}
-	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
-
-	// Regression test for issue 70049. Ordinary indexes with an underscore-delimited
-	// suffix must not be mistaken for temporary indexes created by modify column.
+	tk.MustExec("use test")
 	query := `select key_name, is_visible from information_schema.tidb_indexes
-		where table_schema = 'test_db_state' and table_name = '%s' order by key_name`
+		where table_schema = 'test' and table_name = '%s' order by key_name`
 	tk.MustExec("create table t_invisible (k int, key idx_k(k), key idx_k_1(k), key idx_k_copy(k))")
 	tk.MustExec("alter table t_invisible alter index idx_k invisible")
 	tk.MustQuery(fmt.Sprintf(query, "t_invisible")).Check(testkit.Rows(
@@ -972,6 +964,19 @@ func TestParallelAlterIndex(t *testing.T) {
 		"idx_k_1 NO",
 		"idx_k_copy NO",
 	))
+}
+
+func TestParallelAlterIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	sql := "alter table t alter index idx1 invisible;"
+	f := func(err1, err2 error) {
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		tk.MustExec("select * from t")
+	}
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 }
 
 func TestParallelAlterModifyColumn(t *testing.T) {
