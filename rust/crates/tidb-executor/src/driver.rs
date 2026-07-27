@@ -30,6 +30,7 @@
 //! replaces [`MemTableSourceExec`] when storage/tablecodec integration lands.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::kv_table::{KvTable, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
@@ -233,6 +234,21 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
         table_name: table.map_or("", |(name, _)| name),
         columns: &column_list,
     };
+
+    // Aggregate path: GROUP BY, or any select field that is an aggregate call.
+    let is_aggregate = !select.group_by.is_empty()
+        || select.fields.fields().iter().any(|f| {
+            matches!(
+                f,
+                SelectField::Expr {
+                    expr: tidb_ast::Expr::Aggregate { .. },
+                    ..
+                }
+            )
+        });
+    if is_aggregate {
+        return run_aggregate_select(select, table, &column_list, &resolver, catalog);
+    }
 
     // Rewrite each projected field into an evaluable expression; `*` expands to
     // every table column in order (Go's unfoldWildStar).
@@ -515,6 +531,218 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
     Ok(inserted)
 }
 
+/// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
+/// through [`HashAggExec`].
+///
+/// Faithful scope (deferred items documented): `COUNT`/`SUM` (Go models
+/// `COUNT(*)` as the literal-`1` argument, which counts every row identically);
+/// any non-aggregate select field becomes a `FIRST_ROW` carrier (Go's planner
+/// does the same; `ONLY_FULL_GROUP_BY` validation is deferred); `DISTINCT`
+/// modifiers, other aggregate functions, `WITH ROLLUP`, `HAVING`, and
+/// `ORDER BY` over aggregate output (needs output-schema resolution) are
+/// rejected as unsupported.
+fn run_aggregate_select(
+    select: &tidb_ast::SelectStmt,
+    table: Option<(&str, &TableEntry)>,
+    column_list: &[(String, FieldType)],
+    resolver: &TableResolver<'_>,
+    _catalog: &Catalog,
+) -> Result<SelectMeta, DriverError> {
+    if select.rollup {
+        return Err(DriverError::Unsupported("WITH ROLLUP is not supported yet"));
+    }
+    if select.having.is_some() {
+        return Err(DriverError::Unsupported("HAVING is not supported yet"));
+    }
+    if !select.order_by.is_empty() {
+        return Err(DriverError::Unsupported(
+            "ORDER BY over aggregate output is not supported yet",
+        ));
+    }
+
+    // Fields -> aggregate functions (+ output names/types).
+    let mut agg_funcs: Vec<AggFunc> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut types: Vec<FieldType> = Vec::new();
+    for field in select.fields.fields() {
+        let SelectField::Expr { expr, alias } = field else {
+            return Err(DriverError::Unsupported(
+                "`*` is not supported in an aggregate SELECT",
+            ));
+        };
+        let display = alias.clone().unwrap_or_else(|| expr.restore());
+        match expr {
+            tidb_ast::Expr::Aggregate {
+                name,
+                distinct,
+                args,
+            } => {
+                if *distinct {
+                    return Err(DriverError::Unsupported("DISTINCT aggregates are deferred"));
+                }
+                let [arg] = args.as_slice() else {
+                    return Err(DriverError::Unsupported(
+                        "multi-argument aggregates are deferred",
+                    ));
+                };
+                let arg = rewrite_expr_resolved(arg, resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                let (kind, ftype) = match name.as_str() {
+                    "COUNT" => (AggKind::Count, FieldType::new(FieldTypeCode::LongLong)),
+                    "SUM" => {
+                        let t = arg
+                            .static_type()
+                            .cloned()
+                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                        (AggKind::Sum, t)
+                    }
+                    _ => {
+                        return Err(DriverError::Unsupported(
+                            "this aggregate function is deferred",
+                        ))
+                    }
+                };
+                agg_funcs.push(AggFunc {
+                    kind,
+                    arg: Some(arg),
+                });
+                names.push(display);
+                types.push(ftype);
+            }
+            other => {
+                // A plain field in an aggregate query rides FIRST_ROW.
+                let rewritten = rewrite_expr_resolved(other, resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                let t = rewritten
+                    .static_type()
+                    .cloned()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                agg_funcs.push(AggFunc {
+                    kind: AggKind::FirstRow,
+                    arg: Some(rewritten),
+                });
+                names.push(match other {
+                    tidb_ast::Expr::Column(path) => {
+                        path.last().cloned().unwrap_or_else(|| other.restore())
+                    }
+                    _ => display,
+                });
+                types.push(t);
+            }
+        }
+    }
+
+    // GROUP BY expressions (legacy ASC/DESC direction ignored, as in MySQL 8).
+    let mut group_by = Vec::with_capacity(select.group_by.len());
+    for item in &select.group_by {
+        group_by.push(
+            rewrite_expr_resolved(&item.expr, resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+        );
+    }
+
+    // Source (+ WHERE), as in the plain path.
+    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match table {
+        Some((_, entry)) => {
+            let source_columns: Vec<Column> = column_list
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ft))| {
+                    let mut col = Column::new((i + 1) as i64, ft.clone());
+                    col.index = i as i64;
+                    col
+                })
+                .collect();
+            let schema = Schema::new(source_columns);
+            let exec: Box<dyn Executor> = match entry {
+                TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
+                    ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    mem.rows.clone(),
+                )),
+                TableEntry::Kv(kv) => Box::new(TableScanExec::new(
+                    ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    kv.clone(),
+                )),
+            };
+            (exec, schema)
+        }
+        None => (
+            Box::new(TableDualExec::new(
+                ExecutorMeta::new(Schema::new(vec![]), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                1,
+            )),
+            Schema::new(vec![]),
+        ),
+    };
+    if let Some(predicate) = &select.where_clause {
+        let pred = rewrite_expr_resolved(predicate, resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        source = Box::new(SelectionExec::new(
+            ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
+            vec![pred],
+            source,
+            NoColumns,
+        ));
+    }
+
+    // The aggregation output schema.
+    let out_columns: Vec<Column> = types
+        .iter()
+        .enumerate()
+        .map(|(i, ft)| {
+            let mut col = Column::new((i + 1) as i64, ft.clone());
+            col.index = i as i64;
+            col
+        })
+        .collect();
+    let out_schema = Schema::new(out_columns);
+    let ret_types: Vec<FieldType> = types.clone();
+
+    let mut root: Box<dyn Executor> = Box::new(HashAggExec::new(
+        ExecutorMeta::new(out_schema, 2, INIT_CAP, MAX_CHUNK_SIZE),
+        group_by,
+        agg_funcs,
+        source,
+        NoColumns,
+    ));
+    if let Some(limit) = &select.limit {
+        let count = eval_limit_bound(&limit.count)?;
+        let offset = match &limit.offset {
+            Some(expr) => eval_limit_bound(expr)?,
+            None => 0,
+        };
+        let limit_schema = root.schema().clone();
+        root = Box::new(LimitExec::new(
+            ExecutorMeta::new(limit_schema, 4, INIT_CAP, MAX_CHUNK_SIZE),
+            offset,
+            count,
+            root,
+        ));
+    }
+
+    root.open()?;
+    let mut req = root.new_chunk();
+    let mut rows: Vec<Vec<Datum>> = Vec::new();
+    loop {
+        root.next(&mut req)?;
+        let n = req.num_rows();
+        if n == 0 {
+            break;
+        }
+        for r in 0..n {
+            let row = req.get_row(r);
+            let values = ret_types
+                .iter()
+                .enumerate()
+                .map(|(c, ft)| row.get_datum(c, ft))
+                .collect();
+            rows.push(values);
+        }
+    }
+    root.close()?;
+    Ok((names.into_iter().zip(ret_types).collect(), rows))
+}
+
 /// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
 fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
     match expr {
@@ -709,6 +937,44 @@ mod tests {
             run_select_on("SELECT a + b FROM kt WHERE a = 1", &catalog).unwrap(),
             vec![vec![Datum::Int(11)]]
         );
+    }
+
+    #[test]
+    fn aggregate_selects() {
+        let catalog = test_catalog();
+        // Global aggregates: rows (1,30),(2,20),(3,10).
+        assert_eq!(
+            run_select_on("SELECT COUNT(*), SUM(a) FROM t", &catalog).unwrap(),
+            vec![vec![Datum::Int(3), Datum::Int(6)]]
+        );
+        // GROUP BY with a carried key column, WHERE below the agg.
+        assert_eq!(
+            run_select_on(
+                "SELECT a, COUNT(*) FROM t WHERE b >= 20 GROUP BY a",
+                &catalog
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(1), Datum::Int(1)],
+                vec![Datum::Int(2), Datum::Int(1)],
+            ]
+        );
+        // Empty-input rules through SQL: global agg over no rows -> one row.
+        assert_eq!(
+            run_select_on("SELECT COUNT(a) FROM t WHERE a > 100", &catalog).unwrap(),
+            vec![vec![Datum::Int(0)]]
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a, COUNT(*) FROM t WHERE a > 100 GROUP BY a",
+                &catalog
+            )
+            .unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        // Unsupported aggregate shapes fail closed.
+        assert!(run_select_on("SELECT AVG(a) FROM t", &catalog).is_err());
+        assert!(run_select_on("SELECT COUNT(DISTINCT a) FROM t", &catalog).is_err());
     }
 
     #[test]
