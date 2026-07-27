@@ -653,6 +653,8 @@ type sortRange struct {
 // For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
 // And this two can be merged as [a, max(b, d)].
 // Otherwise they aren't overlapped.
+//
+// The function does not modify the caller's ranges (see issue #69779).
 func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive bool) (Ranges, error) {
 	if len(ranges) == 0 {
 		return nil, nil
@@ -681,14 +683,15 @@ func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive 
 		return bytes.Compare(i.encodedStart, j.encodedStart)
 	})
 	ranges = ranges[:0]
-	lastRange := &sortRange{
-		originalValue: objects[0].originalValue.Clone(),
-		encodedStart:  objects[0].encodedStart,
-		encodedEnd:    objects[0].encodedEnd,
-	}
+	lastRange := objects[0]
+	detached := false
 	for i := 1; i < len(objects); i++ {
 		if (mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0) ||
 			(!mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) > 0) {
+			if !detached {
+				lastRange.originalValue = lastRange.originalValue.Clone()
+				detached = true
+			}
 			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
 				lastRange.encodedEnd = objects[i].encodedEnd
 				lastRange.originalValue.HighVal = objects[i].originalValue.HighVal
@@ -696,9 +699,8 @@ func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive 
 			}
 		} else {
 			ranges = append(ranges, lastRange.originalValue)
-			lastRange.encodedStart = objects[i].encodedStart
-			lastRange.encodedEnd = objects[i].encodedEnd
-			lastRange.originalValue = objects[i].originalValue.Clone()
+			lastRange = objects[i]
+			detached = false
 		}
 	}
 	ranges = append(ranges, lastRange.originalValue)

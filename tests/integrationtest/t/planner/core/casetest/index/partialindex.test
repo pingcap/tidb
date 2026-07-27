@@ -41,6 +41,7 @@ explain format='brief' select /*+ use_index_merge(tt, idx1, idx2) */ * from tt w
 drop table if exists t3;
 create table t3(id int primary key, a int not null, b int not null, index pi(b) where a < 3);
 insert into t3 values (1, 0, 1), (2, 1, 2), (3, 2, 3), (4, 3, 4), (5, 10, 5);
+explain format='brief' select * from t3 where a >= 0;
 select id, a, b from t3 where a >= 0 order by b limit 5;
 select id, a, b from t3 ignore index(pi) where a >= 0 order by b limit 5;
 drop table t3;
