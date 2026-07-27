@@ -76,7 +76,7 @@ func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {
 	})
 }
 
-func TestMustGetSystemBootVersion(t *testing.T) {
+func TestWaitSystemBootVersion(t *testing.T) {
 	const systemKeyspaceID uint32 = 0xFFFFFF - 1
 	store, err := mockstore.NewMockStore(
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
@@ -127,7 +127,7 @@ func TestMustGetSystemBootVersion(t *testing.T) {
 
 			versionCh := make(chan int64, 1)
 			go func() {
-				versionCh <- mustGetSystemBootVersion()
+				versionCh <- waitSystemBootVersion()
 			}()
 
 			require.Eventually(t, func() bool {
@@ -159,7 +159,7 @@ func TestMustGetSystemBootVersion(t *testing.T) {
 
 		synctest.Test(t, func(t *testing.T) {
 			start := time.Now()
-			require.Equal(t, int64(notBootstrapped), mustGetSystemBootVersion())
+			require.Equal(t, int64(notBootstrapped), waitSystemBootVersion())
 			require.Greater(t, time.Since(start), 29*time.Minute)
 		})
 	})

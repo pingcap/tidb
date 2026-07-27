@@ -4410,7 +4410,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
-		systemKSVer := mustGetSystemBootVersion()
+		systemKSVer := waitSystemBootVersion()
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
 		} else if targetVer > systemKSVer {
@@ -4929,7 +4929,7 @@ const (
 	notBootstrapped = 0
 )
 
-func mustGetSystemBootVersion() int64 {
+func waitSystemBootVersion() int64 {
 	store := kvstore.GetSystemStorage()
 	const (
 		maxRetryCount = 360
@@ -4937,6 +4937,8 @@ func mustGetSystemBootVersion() int64 {
 	)
 	backoffer := backoff.NewExponential(time.Second, 2, maxInterval)
 	var ver int64
+	// User keyspace startup waits for the SYSTEM keyspace to finish bootstrapping; on exhaustion,
+	// notBootstrapped is returned for bootstrapSessionImpl to reject.
 	// total backoff time is around ∑(1, 2, 4, 5...) ~= 30 minutes
 	start := time.Now()
 	for i := range maxRetryCount {
