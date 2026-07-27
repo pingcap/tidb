@@ -369,6 +369,10 @@ pub enum VarErrorKind {
     UnknownSystemVariable(String),
     /// Go `ErrIncorrectGlobalLocalVar` (1238): the variable is read-only.
     ReadOnlyVariable(String),
+    /// Go `ErrWrongTypeForVar` (1232).
+    WrongTypeForVar(String),
+    /// Go `ErrWrongValueForVar` (1231).
+    WrongValueForVar(String, String),
 }
 
 /// Why a transaction statement failed (Go `kv.ErrWriteConflict` and friends).

@@ -204,6 +204,23 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
         tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::NoDatabaseSelected) => {
             SqlQueryError::new(ER_NO_DB_ERROR, *b"3D000", "No database selected".to_owned())
         }
+        // Go: "Incorrect argument type to variable '%-.64s'".
+        tidb_executor::DriverError::Var(tidb_executor::VarErrorKind::WrongTypeForVar(name)) => {
+            SqlQueryError::new(
+                1232,
+                *b"42000",
+                format!("Incorrect argument type to variable '{name}'"),
+            )
+        }
+        // Go: "Variable '%-.64s' can't be set to the value of '%-.200s'".
+        tidb_executor::DriverError::Var(tidb_executor::VarErrorKind::WrongValueForVar(
+            name,
+            value,
+        )) => SqlQueryError::new(
+            1231,
+            *b"42000",
+            format!("Variable '{name}' can't be set to the value of '{value}'"),
+        ),
         // Go: "Unknown system variable '%-.64s'".
         tidb_executor::DriverError::Var(tidb_executor::VarErrorKind::UnknownSystemVariable(
             name,

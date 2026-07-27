@@ -20,152 +20,18 @@
 //! registry does not know is `ErrUnknownSystemVar` (1193), and reading `@@x`
 //! for an unknown name is `ErrUnknownSystemVariable` too.
 //!
-//! PARTIAL REGISTRY (documented, and the reason a divergence is possible):
-//! Go's table has well over a thousand entries; the ones below are
-//! transcreated exactly -- name, scope, and default value read from
-//! `pkg/sessionctx/variable/sysvar.go` and the constants it references -- and
-//! cover what a connecting MySQL client reads and sets. A variable real TiDB
-//! knows but this table does not yet list is rejected with 1193 where TiDB
-//! would accept it. That is a visible, honest failure rather than a silently
-//! wrong answer, and porting the rest of the table is its own unit.
+//! The registry itself is [`crate::sysvar`], which holds all 948 entries
+//! captured from Go's own `GetSysVars()`, and the value validation Go's
+//! `ValidateFromType` performs.
 //!
-//! NOT MODELLED (documented): per-variable validation and typing (Go rejects
-//! an out-of-range or non-enum value), GLOBAL scope persistence (a `SET
-//! GLOBAL` here changes nothing outside the session), `SetSession` hooks such
-//! as autocommit's implicit commit, and the removed-variable list Go silently
-//! accepts.
+//! NOT MODELLED (documented): GLOBAL scope persistence (a `SET GLOBAL` here
+//! changes nothing outside the session), the per-variable `Validation` and
+//! `SetSession` closures such as autocommit's implicit commit, and the
+//! removed-variable list Go silently accepts.
 
 use std::collections::HashMap;
 
-/// Go `vardef.ScopeFlag`: where a system variable can be read and written.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scope {
-    /// Go `ScopeNone`: a read-only server property.
-    None,
-    /// Go `ScopeGlobal | ScopeSession`.
-    GlobalAndSession,
-    /// Go `ScopeSession`.
-    Session,
-}
-
-/// One entry of Go's system-variable registry.
-struct SysVarDef {
-    name: &'static str,
-    scope: Scope,
-    value: &'static str,
-}
-
-/// Go `mysql.DefaultCharset`.
-const DEFAULT_CHARSET: &str = "utf8mb4";
-/// Go `mysql.DefaultCollationName`.
-const DEFAULT_COLLATION: &str = "utf8mb4_bin";
-/// Go `mysql.DefaultSQLMode`.
-const DEFAULT_SQL_MODE: &str =
-    "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
-ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION";
-/// Go `mysql.ServerVersion`: the MySQL compatibility version, a separator,
-/// and the TiDB release version.
-const SERVER_VERSION: &str = "8.0.11-v8.4.0-this-is-a-placeholder";
-/// Go's `version_comment` for the Apache-licensed community edition.
-const VERSION_COMMENT: &str =
-    "TiDB Server (Apache License 2.0) Community Edition, MySQL 8.0 compatible";
-/// Go `config.DefMaxAllowedPacket` (64 << 20).
-const DEF_MAX_ALLOWED_PACKET: &str = "67108864";
-/// Go `vardef.DefWaitTimeout`.
-const DEF_WAIT_TIMEOUT: &str = "28800";
-
-/// The transcreated slice of Go's registry (see the module doc).
-const SYS_VARS: &[SysVarDef] = &[
-    SysVarDef {
-        name: "autocommit",
-        scope: Scope::GlobalAndSession,
-        value: "ON",
-    },
-    SysVarDef {
-        name: "character_set_client",
-        scope: Scope::GlobalAndSession,
-        value: DEFAULT_CHARSET,
-    },
-    SysVarDef {
-        name: "character_set_connection",
-        scope: Scope::GlobalAndSession,
-        value: DEFAULT_CHARSET,
-    },
-    SysVarDef {
-        name: "character_set_results",
-        scope: Scope::GlobalAndSession,
-        value: DEFAULT_CHARSET,
-    },
-    SysVarDef {
-        name: "character_set_server",
-        scope: Scope::GlobalAndSession,
-        value: DEFAULT_CHARSET,
-    },
-    SysVarDef {
-        name: "collation_connection",
-        scope: Scope::GlobalAndSession,
-        value: DEFAULT_COLLATION,
-    },
-    SysVarDef {
-        name: "collation_server",
-        scope: Scope::GlobalAndSession,
-        value: DEFAULT_COLLATION,
-    },
-    SysVarDef {
-        name: "sql_mode",
-        scope: Scope::GlobalAndSession,
-        value: DEFAULT_SQL_MODE,
-    },
-    SysVarDef {
-        name: "time_zone",
-        scope: Scope::GlobalAndSession,
-        value: "SYSTEM",
-    },
-    SysVarDef {
-        name: "max_allowed_packet",
-        scope: Scope::GlobalAndSession,
-        value: DEF_MAX_ALLOWED_PACKET,
-    },
-    SysVarDef {
-        name: "transaction_isolation",
-        scope: Scope::GlobalAndSession,
-        value: "REPEATABLE-READ",
-    },
-    SysVarDef {
-        name: "tx_isolation",
-        scope: Scope::GlobalAndSession,
-        value: "REPEATABLE-READ",
-    },
-    SysVarDef {
-        name: "wait_timeout",
-        scope: Scope::GlobalAndSession,
-        value: DEF_WAIT_TIMEOUT,
-    },
-    SysVarDef {
-        name: "interactive_timeout",
-        scope: Scope::GlobalAndSession,
-        value: "28800",
-    },
-    // Go `ScopeNone`: read-only server properties.
-    SysVarDef {
-        name: "version",
-        scope: Scope::None,
-        value: SERVER_VERSION,
-    },
-    SysVarDef {
-        name: "version_comment",
-        scope: Scope::None,
-        value: VERSION_COMMENT,
-    },
-];
-
-/// Looks a system variable up by name, case-insensitively as Go's
-/// `GetSysVar` does after lowercasing.
-fn sys_var(name: &str) -> Option<&'static SysVarDef> {
-    SYS_VARS
-        .iter()
-        .find(|candidate| candidate.name.eq_ignore_ascii_case(name))
-}
+use crate::sysvar::{get_sys_var, ValidationError};
 
 /// Why a variable statement failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,6 +40,10 @@ pub enum VarError {
     UnknownSystemVariable(String),
     /// Go `ErrIncorrectGlobalLocalVar` (1238): the variable is read-only.
     ReadOnlyVariable(String),
+    /// Go `ErrWrongTypeForVar` (1232).
+    WrongTypeForVar(String),
+    /// Go `ErrWrongValueForVar` (1231).
+    WrongValueForVar(String, String),
 }
 
 /// A session's variable state: the system variables it has overridden and its
@@ -193,7 +63,7 @@ impl SessionVars {
 
     /// Reads a system variable, falling back to the registry default.
     pub fn get_system(&self, name: &str) -> Result<String, VarError> {
-        let def = sys_var(name)
+        let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
         Ok(self
             .systems
@@ -202,27 +72,34 @@ impl SessionVars {
             .unwrap_or_else(|| def.value.to_owned()))
     }
 
-    /// Sets a session system variable.
+    /// Sets a session system variable, validating the value as Go's
+    /// `ValidateFromType` does: the stored value is the normalized one, and
+    /// an out-of-range value is clamped exactly as Go clamps it.
     ///
-    /// A `ScopeNone` variable is read-only, which Go reports as
-    /// `ErrIncorrectGlobalLocalVar`. Value validation and typing are not
-    /// modelled (see the module doc), so any string is stored.
+    /// A read-only variable is Go's `ErrIncorrectGlobalLocalVar`.
     pub fn set_system(&mut self, name: &str, value: String) -> Result<(), VarError> {
-        let def = sys_var(name)
+        let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if def.scope == Scope::None {
+        if def.is_read_only() {
             return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
         }
-        self.systems.insert(name.to_ascii_lowercase(), value);
+        let validated = def.validate(&value).map_err(|error| match error {
+            ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
+            ValidationError::WrongValue => {
+                VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
+            }
+        })?;
+        self.systems
+            .insert(name.to_ascii_lowercase(), validated.value);
         Ok(())
     }
 
     /// Clears a session override so the registry default applies again
     /// (Go's `SET x = DEFAULT`).
     pub fn reset_system(&mut self, name: &str) -> Result<(), VarError> {
-        let def = sys_var(name)
+        let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if def.scope == Scope::None {
+        if def.is_read_only() {
             return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
         }
         self.systems.remove(&name.to_ascii_lowercase());

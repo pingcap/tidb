@@ -133,6 +133,7 @@ struct Transaction {
 
 pub use tidb_executor::TxnErrorKind;
 
+pub mod sysvar;
 pub mod vars;
 pub use vars::{SessionVars, VarError};
 
@@ -143,6 +144,10 @@ fn var_error(error: VarError) -> DriverError {
             tidb_executor::VarErrorKind::UnknownSystemVariable(name)
         }
         VarError::ReadOnlyVariable(name) => tidb_executor::VarErrorKind::ReadOnlyVariable(name),
+        VarError::WrongTypeForVar(name) => tidb_executor::VarErrorKind::WrongTypeForVar(name),
+        VarError::WrongValueForVar(name, value) => {
+            tidb_executor::VarErrorKind::WrongValueForVar(name, value)
+        }
     })
 }
 
@@ -899,12 +904,13 @@ mod tests {
             "utf8mb4"
         );
         assert_eq!(session.apply_set("SET autocommit = 0").unwrap(), Some(()));
-        assert_eq!(session.vars().get_system("autocommit").unwrap(), "0");
+        // Go's checkBoolSystemVar canonicalizes 0/1 to OFF/ON.
+        assert_eq!(session.vars().get_system("autocommit").unwrap(), "OFF");
 
         // Reading variables back through a query.
         assert_eq!(
             scalar_text(&mut session, "SELECT @@autocommit"),
-            Some("0".to_owned())
+            Some("OFF".to_owned())
         );
         let comment = scalar_text(&mut session, "SELECT @@version_comment").unwrap();
         assert!(
