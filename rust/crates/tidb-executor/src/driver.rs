@@ -184,6 +184,9 @@ pub enum DriverError {
     CatalogPoisoned,
     /// A transaction could not be committed.
     Txn(TxnErrorKind),
+    /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
+    /// one row.
+    SubqueryReturnsMoreThanOneRow,
 }
 
 /// Why a transaction statement failed (Go `kv.ErrWriteConflict` and friends).
@@ -236,6 +239,24 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
             }
         },
         _ => return Err(DriverError::Unsupported("only SELECT is supported")),
+    };
+    run_select_stmt(select, catalog)
+}
+
+/// Runs one parsed `SELECT` against the catalog.
+fn run_select_stmt(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+) -> Result<SelectMeta, DriverError> {
+    // Uncorrelated subqueries are evaluated now and folded into literals, so
+    // everything below plans against ordinary expressions (Go's
+    // handleScalarSubquery for the non-Apply case).
+    let folded;
+    let select = if select_has_subquery(select) {
+        folded = fold_select_subqueries(select, catalog)?;
+        &folded
+    } else {
+        select
     };
 
     // Resolve FROM: none -> table-dual; otherwise the (possibly joined) tables.
@@ -751,6 +772,227 @@ fn build_agg_func(
         },
         ftype,
     ))
+}
+
+/// Whether any clause of `select` contains a subquery, so the fold pass runs
+/// only when it has something to do.
+fn select_has_subquery(select: &tidb_ast::SelectStmt) -> bool {
+    let fields = select.fields.fields().iter().any(|field| match field {
+        SelectField::Expr { expr, .. } => expr_has_subquery(expr),
+        SelectField::Wildcard(_) => false,
+    });
+    fields
+        || select.where_clause.as_ref().is_some_and(expr_has_subquery)
+        || select.having.as_ref().is_some_and(expr_has_subquery)
+        || select
+            .order_by
+            .iter()
+            .any(|item| expr_has_subquery(&item.expr))
+        || select
+            .group_by
+            .iter()
+            .any(|item| expr_has_subquery(&item.expr))
+}
+
+/// Whether `expr` contains a subquery in a position the fold pass walks.
+fn expr_has_subquery(expr: &tidb_ast::Expr) -> bool {
+    use tidb_ast::Expr;
+    match expr {
+        Expr::Subquery(_)
+        | Expr::Exists { .. }
+        | Expr::InSubquery { .. }
+        | Expr::CompareSubquery { .. } => true,
+        Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Is { expr: inner, .. } => {
+            expr_has_subquery(inner)
+        }
+        Expr::Binary(_, lhs, rhs) => expr_has_subquery(lhs) || expr_has_subquery(rhs),
+        Expr::In { expr, list, .. } => {
+            expr_has_subquery(expr) || list.iter().any(expr_has_subquery)
+        }
+        _ => false,
+    }
+}
+
+/// Folds every subquery in `select`'s clauses, returning the rewritten copy.
+fn fold_select_subqueries(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+) -> Result<tidb_ast::SelectStmt, DriverError> {
+    let mut folded = select.clone();
+    for field in folded.fields.fields_mut() {
+        if let SelectField::Expr { expr, .. } = field {
+            *expr = fold_subqueries(expr, catalog)?;
+        }
+    }
+    if let Some(where_clause) = &folded.where_clause {
+        folded.where_clause = Some(fold_subqueries(where_clause, catalog)?);
+    }
+    if let Some(having) = &folded.having {
+        folded.having = Some(fold_subqueries(having, catalog)?);
+    }
+    for item in &mut folded.order_by {
+        item.expr = fold_subqueries(&item.expr, catalog)?;
+    }
+    for item in &mut folded.group_by {
+        item.expr = fold_subqueries(&item.expr, catalog)?;
+    }
+    Ok(folded)
+}
+
+/// Replaces every uncorrelated subquery in `expr` with the value it produces.
+///
+/// This is Go's `handleScalarSubquery` path for a subquery with no correlated
+/// columns: the subquery is planned and run on the spot
+/// (`EvalSubqueryFirstRow`) and its result folded into a `Constant`, so the
+/// outer statement plans against ordinary literals. Go's `buildMaxOneRow`
+/// wrapper is the "more than one row" check below; a subquery producing no
+/// rows yields NULL.
+///
+/// `EXISTS` folds to 1 or 0, and `x IN (subquery)` folds to `x IN (values)`,
+/// which evaluates identically for an uncorrelated subquery -- including the
+/// NULL rules, since the folded list is compared by the same `IN` code.
+///
+/// DEFERRED (documented): CORRELATED subqueries, which Go turns into an Apply
+/// operator rather than folding, and which this rejects rather than silently
+/// evaluating the inner query against the wrong row; `ANY`/`ALL` comparison
+/// subqueries; and row constructors (a subquery selecting several columns).
+fn fold_subqueries(
+    expr: &tidb_ast::Expr,
+    catalog: &Catalog,
+) -> Result<tidb_ast::Expr, DriverError> {
+    use tidb_ast::Expr;
+    Ok(match expr {
+        Expr::Subquery(query) => {
+            let rows = run_subquery(query, catalog)?;
+            match rows.len() {
+                // Go: a scalar subquery with no rows is NULL.
+                0 => Expr::Null,
+                1 => {
+                    let row = &rows[0];
+                    let [value] = row.as_slice() else {
+                        return Err(DriverError::Unsupported(
+                            "a scalar subquery selecting several columns is not supported yet",
+                        ));
+                    };
+                    datum_to_literal(value)?
+                }
+                // Go's buildMaxOneRow raises ER_SUBQUERY_NO_1_ROW here.
+                _ => return Err(DriverError::SubqueryReturnsMoreThanOneRow),
+            }
+        }
+        Expr::Exists { subquery, not } => {
+            let rows = run_subquery(subquery, catalog)?;
+            let exists = !rows.is_empty();
+            Expr::Int(i64::from(exists != *not).to_string())
+        }
+        Expr::InSubquery {
+            expr,
+            subquery,
+            not,
+        } => {
+            let rows = run_subquery(subquery, catalog)?;
+            let mut list = Vec::with_capacity(rows.len());
+            for row in &rows {
+                let [value] = row.as_slice() else {
+                    return Err(DriverError::Unsupported(
+                        "an IN subquery selecting several columns is not supported yet",
+                    ));
+                };
+                list.push(datum_to_literal(value)?);
+            }
+            if list.is_empty() {
+                // `x IN ()` is not sayable in SQL: an empty subquery result is
+                // false, and `NOT IN` over it is true, for every x including
+                // NULL (MySQL evaluates the semi join, which finds nothing).
+                return Ok(Expr::Int(i64::from(*not).to_string()));
+            }
+            Expr::In {
+                expr: Box::new(fold_subqueries(expr, catalog)?),
+                list,
+                not: *not,
+            }
+        }
+        Expr::CompareSubquery { .. } => {
+            return Err(DriverError::Unsupported(
+                "ANY/ALL comparison subqueries are not supported yet",
+            ))
+        }
+        // Walk the forms the expression rewriter itself supports; anything
+        // else is returned unchanged and fails to rewrite as it already does.
+        Expr::Paren(inner) => Expr::Paren(Box::new(fold_subqueries(inner, catalog)?)),
+        Expr::Unary(op, inner) => Expr::Unary(*op, Box::new(fold_subqueries(inner, catalog)?)),
+        Expr::Binary(op, lhs, rhs) => Expr::Binary(
+            *op,
+            Box::new(fold_subqueries(lhs, catalog)?),
+            Box::new(fold_subqueries(rhs, catalog)?),
+        ),
+        Expr::Is { expr, target, not } => Expr::Is {
+            expr: Box::new(fold_subqueries(expr, catalog)?),
+            target: *target,
+            not: *not,
+        },
+        Expr::In { expr, list, not } => Expr::In {
+            expr: Box::new(fold_subqueries(expr, catalog)?),
+            list: list
+                .iter()
+                .map(|item| fold_subqueries(item, catalog))
+                .collect::<Result<_, _>>()?,
+            not: *not,
+        },
+        other => other.clone(),
+    })
+}
+
+/// Runs a subquery against the catalog, rejecting the correlated case.
+///
+/// A correlated subquery references a column of the OUTER query, which this
+/// resolver cannot see -- so it fails to resolve here and the error surfaces
+/// rather than the subquery being evaluated against the wrong scope.
+fn run_subquery(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    let tidb_ast::QueryStmt::Select(_) = query else {
+        return Err(DriverError::Unsupported(
+            "set-operation subqueries are not supported yet",
+        ));
+    };
+    let tidb_ast::QueryStmt::Select(select) = query else {
+        unreachable!("the set-operation case is rejected above")
+    };
+    run_select_stmt(select, catalog).map(|(_, rows)| rows)
+}
+
+/// Go turns a subquery's result `Datum` into an `expression.Constant`; the
+/// same value has to travel back through the AST here, so it becomes the
+/// literal that parses to it.
+fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverError> {
+    use tidb_ast::Expr;
+    Ok(match value {
+        Datum::Null => Expr::Null,
+        Datum::Int(v) => {
+            // A negative literal is a unary minus over a positive one, which
+            // is how the parser itself represents it.
+            if *v < 0 {
+                Expr::Unary(
+                    tidb_ast::UnaryOp::Minus,
+                    Box::new(Expr::Int(v.unsigned_abs().to_string())),
+                )
+            } else {
+                Expr::Int(v.to_string())
+            }
+        }
+        Datum::UInt(v) => Expr::Int(v.to_string()),
+        Datum::Real(v) => Expr::Float(*v),
+        Datum::Decimal(d) => Expr::Decimal(d.to_string()),
+        Datum::String(s) => Expr::String(String::from_utf8_lossy(s.bytes()).into_owned()),
+        Datum::Bytes(b) => Expr::String(String::from_utf8_lossy(b).into_owned()),
+        _ => {
+            return Err(DriverError::Unsupported(
+                "this subquery result kind is not supported yet",
+            ))
+        }
+    })
 }
 
 /// One table in a query's `FROM`: the name a qualifier must match (its alias
@@ -2105,6 +2347,108 @@ mod tests {
         // Unsupported join shapes fail closed.
         assert!(run_select_on("SELECT * FROM l NATURAL JOIN r", &catalog).is_err());
         assert!(run_select_on("SELECT * FROM l JOIN r USING (id)", &catalog).is_err());
+    }
+
+    /// Uncorrelated subqueries are evaluated and folded into literals, the way
+    /// Go's handleScalarSubquery does for the non-Apply case.
+    #[test]
+    fn subqueries() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE s (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+        crate::run_create_table_on("CREATE TABLE u (a BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO s VALUES (1, 10), (2, 20), (3, 30)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("INSERT INTO u VALUES (2), (3)", &mut catalog).unwrap();
+
+        // A scalar subquery in the select list and in a predicate.
+        assert_eq!(
+            run_select_on("SELECT (SELECT MAX(b) FROM s)", &catalog).unwrap(),
+            vec![vec![Datum::Int(30)]]
+        );
+        assert_eq!(
+            run_select_on("SELECT a FROM s WHERE b = (SELECT MAX(b) FROM s)", &catalog).unwrap(),
+            vec![vec![Datum::Int(3)]]
+        );
+
+        // No rows is NULL, as Go's buildMaxOneRow leaves it.
+        assert_eq!(
+            run_select_on("SELECT (SELECT a FROM s WHERE a > 100)", &catalog).unwrap(),
+            vec![vec![Datum::Null]]
+        );
+        // More than one row is Go's ER_SUBQUERY_NO_1_ROW.
+        assert!(matches!(
+            run_select_on("SELECT (SELECT a FROM s)", &catalog),
+            Err(DriverError::SubqueryReturnsMoreThanOneRow)
+        ));
+
+        // IN / NOT IN over a subquery.
+        assert_eq!(
+            run_select_on("SELECT a FROM s WHERE a IN (SELECT a FROM u)", &catalog).unwrap(),
+            vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
+        );
+        assert_eq!(
+            run_select_on("SELECT a FROM s WHERE a NOT IN (SELECT a FROM u)", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)]]
+        );
+        // An empty IN subquery matches nothing, and NOT IN over it matches all.
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s WHERE a IN (SELECT a FROM u WHERE a > 100)",
+                &catalog
+            )
+            .unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s WHERE a NOT IN (SELECT a FROM u WHERE a > 100)",
+                &catalog
+            )
+            .unwrap()
+            .len(),
+            3
+        );
+
+        // EXISTS / NOT EXISTS fold to 1 / 0.
+        assert_eq!(
+            run_select_on("SELECT a FROM s WHERE EXISTS (SELECT 1 FROM u)", &catalog)
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s WHERE NOT EXISTS (SELECT 1 FROM u)",
+                &catalog
+            )
+            .unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+
+        // A subquery in HAVING, over the aggregate path.
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s GROUP BY a HAVING SUM(b) > (SELECT MIN(b) FROM s)",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
+        );
+
+        // A CORRELATED subquery is rejected rather than silently evaluated
+        // against the wrong scope (Go builds an Apply for it).
+        assert!(run_select_on(
+            "SELECT a FROM s WHERE b = (SELECT MAX(b) FROM u WHERE u.a = s.a)",
+            &catalog
+        )
+        .is_err());
+        // ANY/ALL comparison subqueries are not supported yet.
+        assert!(
+            run_select_on("SELECT a FROM s WHERE a > ANY (SELECT a FROM u)", &catalog).is_err()
+        );
     }
 
     #[test]

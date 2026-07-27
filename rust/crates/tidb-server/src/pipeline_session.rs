@@ -52,6 +52,9 @@ const ER_PARSE_ERROR: u16 = 1064;
 /// generic `HY000` TiDB uses for its own KV errors.
 const ER_WRITE_CONFLICT: u16 = 9007;
 
+/// MySQL `ER_SUBQUERY_NO_1_ROW` (1242), whose SQL state is `21000`.
+const ER_SUBQUERY_NO_1_ROW: u16 = 1242;
+
 /// One connection's pipeline-backed query session.
 pub struct PipelineServerSession {
     session: Session,
@@ -160,6 +163,11 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 "Write conflict, please retry the transaction".to_owned(),
             )
         }
+        tidb_executor::DriverError::SubqueryReturnsMoreThanOneRow => SqlQueryError::new(
+            ER_SUBQUERY_NO_1_ROW,
+            *b"21000",
+            "Subquery returns more than 1 row".to_owned(),
+        ),
         tidb_executor::DriverError::CatalogPoisoned => {
             SqlQueryError::unknown("the shared catalog is unusable after a failed statement")
         }

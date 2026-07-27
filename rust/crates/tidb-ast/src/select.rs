@@ -1065,6 +1065,13 @@ impl SelectFieldList {
         &self.fields
     }
 
+    /// The select fields as a mutable slice, for a pass that rewrites a
+    /// field's expression in place. The count and the per-field source text
+    /// are unchanged, so the restore metadata stays aligned.
+    pub fn fields_mut(&mut self) -> &mut [SelectField] {
+        &mut self.fields
+    }
+
     /// Appends a field with empty source metadata.
     pub fn push(&mut self, field: SelectField) {
         self.fields.push(field);

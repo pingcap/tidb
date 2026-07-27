@@ -218,6 +218,26 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
         return Some(result);
     }
     let result = match name {
+        // Go's `in` builtin: args[0] is the tested value and the rest are the
+        // list. Three-valued: a match is 1; no match with a NULL anywhere
+        // (including the tested value) is NULL; otherwise 0.
+        "IN" if vals.len() >= 2 => {
+            let (value, list) = vals.split_first().expect("at least two arguments");
+            let mut found_null = *value == Datum::Null;
+            for item in list {
+                match eval_binary(BinaryOp::Eq, value.clone(), item.clone()) {
+                    Ok(Datum::Int(0)) => {}
+                    Ok(Datum::Null) => found_null = true,
+                    Ok(_) => return Some(Ok(Datum::Int(1))),
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+            Ok(if found_null {
+                Datum::Null
+            } else {
+                Datum::Int(0)
+            })
+        }
         // Go `builtinIntIsNullSig`: 1 when the argument is NULL, else 0 --
         // never NULL itself. `IS UNKNOWN` is the same function.
         "ISNULL" if vals.len() == 1 => Ok(Datum::Int(i64::from(vals[0] == Datum::Null))),

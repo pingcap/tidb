@@ -120,6 +120,31 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             )))
         }
         Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
+        // Go's `in` builtin takes the tested value as args[0] and the list as
+        // the remaining arguments; `NOT IN` wraps it in a unary NOT, which
+        // keeps NULL as NULL exactly as MySQL requires.
+        Expr::In { expr, list, not } => {
+            let mut args = Vec::with_capacity(list.len() + 1);
+            args.push(rewrite_expr_resolved(expr, resolver)?);
+            for item in list {
+                args.push(rewrite_expr_resolved(item, resolver)?);
+            }
+            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
+            ret_type.set_flen(1);
+            let call = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("in"),
+                ret_type.clone(),
+                args,
+            ));
+            if *not {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(unary_op_name(UnaryOp::Not)),
+                    ret_type,
+                    vec![call],
+                )));
+            }
+            Ok(call)
+        }
         // Go rewrites `x IS <target>` into the isnull/istrue/isfalse builtin,
         // wrapping `IS NOT` in a unary NOT. These return 0/1 and never NULL,
         // so the wrapping NOT is exact.
@@ -211,6 +236,48 @@ mod tests {
     /// `IS NULL` / `IS TRUE` / `IS FALSE` (and their `IS NOT` forms) return
     /// 0 or 1 and never NULL, which is what makes the `IS NOT` wrapping NOT
     /// exact. `IS UNKNOWN` is `IS NULL`.
+    /// Go's `in` builtin is three-valued: a match is 1, no match with a NULL
+    /// anywhere is NULL, otherwise 0. `NOT IN` is a unary NOT over it, so
+    /// NULL stays NULL rather than becoming true.
+    #[test]
+    fn rewrite_and_eval_in_lists() {
+        let int = |text: &str| Box::new(Expr::Int(text.to_owned()));
+        let in_list = |expr: Box<Expr>, list: Vec<Expr>, not: bool| Expr::In { expr, list, not };
+
+        // 2 IN (1, 2, 3) -> 1; 5 IN (1, 2) -> 0.
+        assert_eq!(
+            eval_const(&in_list(int("2"), vec![*int("1"), *int("2")], false)),
+            Datum::Int(1)
+        );
+        assert_eq!(
+            eval_const(&in_list(int("5"), vec![*int("1"), *int("2")], false)),
+            Datum::Int(0)
+        );
+        // A NULL in the list turns a non-match into NULL, but not a match.
+        assert_eq!(
+            eval_const(&in_list(int("5"), vec![*int("1"), Expr::Null], false)),
+            Datum::Null
+        );
+        assert_eq!(
+            eval_const(&in_list(int("1"), vec![*int("1"), Expr::Null], false)),
+            Datum::Int(1)
+        );
+        // A NULL tested value is always NULL.
+        assert_eq!(
+            eval_const(&in_list(Box::new(Expr::Null), vec![*int("1")], false)),
+            Datum::Null
+        );
+        // NOT IN negates, and NULL stays NULL.
+        assert_eq!(
+            eval_const(&in_list(int("5"), vec![*int("1")], true)),
+            Datum::Int(1)
+        );
+        assert_eq!(
+            eval_const(&in_list(int("5"), vec![*int("1"), Expr::Null], true)),
+            Datum::Null
+        );
+    }
+
     #[test]
     fn rewrite_and_eval_is_predicates() {
         let is = |expr: Expr, target: IsTarget, not: bool| Expr::Is {
