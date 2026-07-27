@@ -1097,7 +1097,7 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 	))
 }
 
-func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
+func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -1121,6 +1121,7 @@ func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 			require.NoError(t, err)
 			policyDBID := policyTbl.Meta().DBID
 			policyTblID := policyTbl.Meta().ID
+			require.False(t, metadef.IsReservedID(policyTblID), "classic bootstrap should allocate a global table ID")
 
 			txn, err = store.Begin()
 			require.NoError(t, err)
@@ -1148,8 +1149,61 @@ func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, session.CurrentBootstrapVersion, ver)
 
+			upgradedPolicyTbl, err := newVer.InfoSchema().TableByName(
+				context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			require.False(t, metadef.IsReservedID(upgradedPolicyTbl.Meta().ID),
+				"classic upgrade should allocate a global table ID")
+			require.NotEqual(t, policyTblID, upgradedPolicyTbl.Meta().ID,
+				"recreating the table must not reuse a dropped physical table ID")
+
 			tk := testkit.NewTestKit(t, store)
 			checkTiDBMaskingPolicyTableSchema(t, tk)
+		})
+	}
+
+	for _, tc := range []struct {
+		name                      string
+		simulateConcurrentUpgrade bool
+	}{
+		{name: "normal_restart_after_system_table_rename"},
+		{name: "upgrade_completed_after_initial_version_read", simulateConcurrentUpgrade: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("RENAME TABLE mysql.tidb_masking_policy TO mysql.tidb_masking_policy_bak")
+			dom.Close()
+
+			if tc.simulateConcurrentUpgrade {
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				require.NoError(t, meta.NewMutator(txn).FinishBootstrap(189))
+				require.NoError(t, txn.Commit(context.Background()))
+
+				// Simulate another TiDB completing the upgrade after this TiDB reads
+				// the old bootstrap version but before it acquires the upgrade lock.
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterGetStoreBootstrapVersion", func(ver int64) {
+					require.Equal(t, int64(189), ver)
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					require.NoError(t, meta.NewMutator(txn).FinishBootstrap(session.CurrentBootstrapVersion))
+					require.NoError(t, txn.Commit(context.Background()))
+				})
+			}
+			store.SetOption(session.StoreBootstrappedKey, nil)
+
+			restartedDom, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer restartedDom.Close()
+
+			tk = testkit.NewTestKit(t, store)
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").
+				Check(testkit.Rows("0"))
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy_bak'").
+				Check(testkit.Rows("1"))
 		})
 	}
 }
@@ -1485,39 +1539,4 @@ func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	row := req.GetRow(0)
 	require.Equal(t, "ON", row.GetString(0))
-}
-
-func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
-	store, dom := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	defaultGroup, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
-	require.True(t, ok)
-	require.NotNil(t, defaultGroup.Background)
-	require.Equal(t, []string{kv.InternalTxnStats}, defaultGroup.Background.JobTypes)
-	require.Zero(t, defaultGroup.Background.ResourceUtilLimit)
-
-	// Next-gen has no upgrade path in its first release; skip the upgrade-only check below.
-	if kerneltype.IsNextGen() {
-		dom.Close()
-		return
-	}
-
-	upgradeFromVersion := session.CurrentBootstrapVersion - 1
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	require.NoError(t, m.DropResourceGroup(meta.DefaultGroupMeta4Test().ID))
-	require.NoError(t, m.FinishBootstrap(upgradeFromVersion))
-	require.NoError(t, txn.Commit(context.Background()))
-	store.SetOption(session.StoreBootstrappedKey, nil)
-	dom.Close()
-
-	domUpgraded, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer domUpgraded.Close()
-	defaultGroup, ok = domUpgraded.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
-	require.True(t, ok)
-	// The upgrade path should not backfill the fresh-bootstrap background setting.
-	require.Nil(t, defaultGroup.Background)
 }

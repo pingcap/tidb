@@ -2107,6 +2107,83 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
+
+	t.Run("context canceled before import completes", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipStartWorker", "return()")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectVariables", "return()")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		oldJobToWorkerCh := testJobToWorkerCh
+		oldJobWg := testJobWg
+		oldFakeRegionJobs := fakeRegionJobs
+		t.Cleanup(func() {
+			testJobToWorkerCh = oldJobToWorkerCh
+			testJobWg = oldJobWg
+			fakeRegionJobs = oldFakeRegionJobs
+		})
+
+		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
+		data := &Engine{}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{{
+					keyRange:   jobRange,
+					ingestData: data,
+					region:     dummyRegionInfo,
+				}},
+			},
+		}
+		testJobToWorkerCh = make(chan *regionJob, 1)
+
+		mockEngine := &mockEngineWithData{
+			data:   data,
+			ranges: []engineapi.Range{jobRange},
+		}
+		local := &Backend{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(1),
+			},
+		}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				mockEngine,
+				[][]byte{jobRange.Start, jobRange.End},
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		var job *regionJob
+		select {
+		case job = <-testJobToWorkerCh:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for a dispatched region job")
+		}
+		cancel()
+		job.done(testJobWg)
+
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for doImport to return")
+		}
+	})
+
+	t.Run("dispatcher propagates context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		dispatcher := &dispatcher{workerCtx: ctx}
+		require.ErrorIs(t, dispatcher.run(), context.Canceled)
+	})
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {

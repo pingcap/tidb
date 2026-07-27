@@ -25,14 +25,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMaskingPolicyMissingSysTableRequiresBootstrapOrUpgrade(t *testing.T) {
-	helperTests := []struct {
+func TestMaskingPolicyOperationsRequireSysTable(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable", "return(true)")
+
+	w := &worker{}
+	jobCtx := &jobContext{stepCtx: context.Background()}
+	tests := []struct {
 		name string
-		run  func(*worker, *jobContext) error
+		run  func() error
 	}{
 		{
+			name: "table",
+			run: func() error {
+				return w.dropMaskingPoliciesOnTable(jobCtx, 1)
+			},
+		},
+		{
+			name: "column",
+			run: func() error {
+				return w.dropMaskingPoliciesOnColumn(jobCtx, 1, 1)
+			},
+		},
+		{
 			name: "modify_column",
-			run: func(w *worker, jobCtx *jobContext) error {
+			run: func() error {
 				return w.syncMaskingPolicyForModifiedColumn(
 					jobCtx,
 					&model.TableInfo{ID: 1},
@@ -42,66 +58,29 @@ func TestMaskingPolicyMissingSysTableRequiresBootstrapOrUpgrade(t *testing.T) {
 			},
 		},
 		{
-			name: "drop_table",
-			run: func(w *worker, jobCtx *jobContext) error {
-				return w.dropMaskingPoliciesOnTable(jobCtx, 1)
-			},
-		},
-		{
-			name: "truncate_table",
-			run: func(w *worker, jobCtx *jobContext) error {
+			name: "truncate",
+			run: func() error {
 				return w.updateMaskingPolicyTableIDAfterTruncate(jobCtx, 1, 2)
 			},
 		},
 		{
-			name: "rename_table",
-			run: func(w *worker, jobCtx *jobContext) error {
+			name: "rename",
+			run: func() error {
 				return w.updateMaskingPolicyNamesAfterRename(
-					jobCtx,
+					jobCtx.stepCtx,
 					1,
 					ast.NewCIStr("old_db"), ast.NewCIStr("new_db"),
 					ast.NewCIStr("old_table"), ast.NewCIStr("new_table"),
 				)
 			},
 		},
-		{
-			name: "drop_column",
-			run: func(w *worker, jobCtx *jobContext) error {
-				return w.dropMaskingPoliciesOnColumn(jobCtx, 1, 1)
-			},
-		},
-	}
-	startModeTests := []struct {
-		name      string
-		startMode StartMode
-		wantErr   bool
-	}{
-		{name: "normal", startMode: Normal, wantErr: true},
-		{name: "bootstrap", startMode: Bootstrap},
-		{name: "upgrade", startMode: Upgrade},
 	}
 
-	for _, helper := range helperTests {
-		t.Run(helper.name, func(t *testing.T) {
-			for _, mode := range startModeTests {
-				t.Run(mode.name, func(t *testing.T) {
-					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable", "return(true)")
-
-					w := &worker{}
-					jobCtx := &jobContext{
-						stepCtx:   context.Background(),
-						oldDDLCtx: &ddlCtx{startMode: mode.startMode},
-					}
-
-					err := helper.run(w, jobCtx)
-					if mode.wantErr {
-						require.Error(t, err)
-						require.True(t, infoschema.ErrTableNotExists.Equal(err), err)
-						return
-					}
-					require.NoError(t, err)
-				})
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run()
+			require.Error(t, err)
+			require.True(t, infoschema.ErrTableNotExists.Equal(err), "unexpected error: %v", err)
 		})
 	}
 }

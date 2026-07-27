@@ -1342,6 +1342,67 @@ func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
 	require.Greater(t, peak, int64(0))
 }
 
+func TestParquetParserLargePagePeakMemory(t *testing.T) {
+	const (
+		rows                      = 64
+		valueSize                 = 512 << 10 // One plain page holds 32 MiB of values.
+		maxStreamingAllocatorPeak = 4 << 20
+	)
+
+	origThreshold := rowGroupInMemoryThreshold
+	rowGroupInMemoryThreshold = 1
+	t.Cleanup(func() { rowGroupInMemoryThreshold = origThreshold })
+
+	makeValue := func(row int) []byte {
+		value := make([]byte, valueSize)
+		for i := range value {
+			value[i] = byte(row + i)
+		}
+		return value
+	}
+
+	dir := t.TempDir()
+	const fileName = "large-page.parquet"
+	columns := []testutils.ParquetColumn{{
+		Name:      "data",
+		Type:      parquet.Types.ByteArray,
+		Converted: schema.ConvertedTypes.UTF8,
+		Gen: func(numRows int) (any, []int16) {
+			data := make([]parquet.ByteArray, numRows)
+			definitionLevels := make([]int16, numRows)
+			for i := range numRows {
+				data[i] = makeValue(i)
+				definitionLevels[i] = 1
+			}
+			return data, definitionLevels
+		},
+	}}
+	require.NoError(t, testutils.WriteParquetFile(dir, fileName, columns, rows,
+		parquet.WithDictionaryFor("data", false),
+		parquet.WithCompressionFor("data", compress.Codecs.Uncompressed),
+		parquet.WithDataPageSize(int64(rows)*valueSize*2),
+	))
+
+	allocator := &trackingAllocator{}
+	reader := newParquetParserForTest(context.Background(), t, dir, fileName, FileMeta{allocator: allocator})
+	require.True(t, reader.prop.BufferedStreamEnabled)
+	require.True(t, reader.prop.PageStreamingEnabled)
+	require.Equal(t, int64(1024), reader.prop.BufferSize)
+
+	columnChunk, err := reader.fileMeta.RowGroup(0).ColumnChunk(0)
+	require.NoError(t, err)
+	require.Greater(t, columnChunk.TotalUncompressedSize(), int64(20<<20))
+
+	for i := range rows {
+		require.NoError(t, reader.ReadRow())
+		require.Equal(t, makeValue(i), reader.lastRow.Row[0].GetBytes())
+	}
+	require.ErrorIs(t, reader.ReadRow(), io.EOF)
+	// Allow a few streaming chunks and decoder bookkeeping, while ensuring the
+	// 32 MiB page is never materialized in the tracking allocator.
+	require.Less(t, allocator.peakAllocation.Load(), int64(maxStreamingAllocatorPeak))
+}
+
 // getStringFromParquetByteOld is the previous implementation used to convert
 // parquet byte to string. It's only used to generate expected results in tests.
 func getStringFromParquetByteOld(rawBytes []byte, scale int) string {

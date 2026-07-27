@@ -36,6 +36,14 @@ const (
 
 var testState *testing.T
 
+func buildDigestIDForTest(parts ...string) uint64 {
+	builder := NewDigestIDBuilder()
+	for _, part := range parts {
+		builder.AddString(part)
+	}
+	return builder.Sum64()
+}
+
 func (m *MemArbitrator) removeEntryForTest(entry *rootPoolEntry) bool {
 	require.True(testState, m.removeRootPoolEntry(entry))
 	return true
@@ -225,12 +233,20 @@ func (t *arbitrateHelperForTest) HeapInuse() int64 {
 func (t *arbitrateHelperForTest) Finish() {
 }
 
+func (t *arbitrateHelperForTest) Done() <-chan struct{} {
+	return t.cancelCh
+}
+
 func (t *arbitrateHelperForTest) Stop(reason ArbitratorStopReason) bool {
 	close(t.cancelCh)
 	if reason == ArbitratorOOMRiskKill {
-		t.killCB()
+		if t.killCB != nil {
+			t.killCB()
+		}
 	} else {
-		t.cancelCB()
+		if t.cancelCB != nil {
+			t.cancelCB()
+		}
 	}
 
 	return true
@@ -354,12 +370,12 @@ func (m *MemArbitrator) tasksCountForTest() (sz int64) {
 	return sz
 }
 
-func newCtxForTest(ch <-chan struct{}, h ArbitrateHelper, memPriority ArbitrationPriority, waitAverse bool, preferPrivilege bool) *ArbitrationContext {
-	return NewArbitrationContext(ch, h, memPriority, waitAverse, preferPrivilege)
+func newCtxForTest(h ArbitrateHelper, memPriority ArbitrationPriority, waitAverse bool, preferPrivilege bool) *ArbitrationContext {
+	return NewArbitrationContext(h, memPriority, waitAverse, preferPrivilege)
 }
 
 func newDefCtxForTest(memPriority ArbitrationPriority) *ArbitrationContext {
-	return newCtxForTest(nil, nil, memPriority, NoWaitAverse, false)
+	return newCtxForTest(nil, memPriority, NoWaitAverse, false)
 }
 
 func (m *MemArbitrator) newPoolWithHelperForTest(prefix string, memPriority ArbitrationPriority, waitAverse, preferPrivilege bool) *rootPoolEntry {
@@ -374,7 +390,7 @@ func (m *MemArbitrator) newCtxWithHelperForTest(memPriority ArbitrationPriority,
 	h := &arbitrateHelperForTest{
 		cancelCh: make(chan struct{}),
 	}
-	ctx := newCtxForTest(h.cancelCh, h, memPriority, waitAverse, preferPrivilege)
+	ctx := newCtxForTest(h, memPriority, waitAverse, preferPrivilege)
 	return ctx
 }
 
@@ -1023,7 +1039,12 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 		m.ResetRootPoolByID(entry4.pool.uid, 0, false)
 
 		selfCancelCh := make(chan struct{})
-		m.restartEntryForTest(entry4, newCtxForTest(selfCancelCh, nil, entry4.ctx.memPriority, NoWaitAverse, false))
+		m.restartEntryForTest(entry4, newCtxForTest(
+			&arbitrateHelperForTest{cancelCh: selfCancelCh},
+			entry4.ctx.memPriority,
+			NoWaitAverse,
+			false,
+		))
 		m.prepareAlloc(entry4, baseQuotaUnit*1000)
 		require.True(t, m.tasksCountForTest() == 2)
 
@@ -1297,7 +1318,12 @@ func TestMemArbitrator(t *testing.T) {
 
 			m.resetExecMetricsForTest()
 			cancel := make(chan struct{})
-			m.restartEntryForTest(entry1, newCtxForTest(cancel, nil, ArbitrationPriorityMedium, NoWaitAverse, false))
+			m.restartEntryForTest(entry1, newCtxForTest(
+				&arbitrateHelperForTest{cancelCh: cancel},
+				ArbitrationPriorityMedium,
+				NoWaitAverse,
+				false,
+			))
 			wg := newNotiferWrap(m)
 			go func() {
 				defer wg.close()
@@ -1315,7 +1341,12 @@ func TestMemArbitrator(t *testing.T) {
 			m.resetEntryForTest(entry1)
 
 			cancel = make(chan struct{})
-			m.restartEntryForTest(entry1, newCtxForTest(cancel, nil, ArbitrationPriorityMedium, NoWaitAverse, false))
+			m.restartEntryForTest(entry1, newCtxForTest(
+				&arbitrateHelperForTest{cancelCh: cancel},
+				ArbitrationPriorityMedium,
+				NoWaitAverse,
+				false,
+			))
 			wg = newNotiferWrap(m)
 			go func() {
 				defer wg.close()
@@ -1635,7 +1666,12 @@ func TestMemArbitrator(t *testing.T) {
 		m.SetLimit(10000)
 		require.Equal(t, PoolAllocProfile{10, 20, 100}, m.poolAllocStats.PoolAllocProfile)
 
-		digestID1 := HashStr("test")
+		_, ok := m.GetDigestProfileCache(InvalidDigestID, 1)
+		require.False(t, ok)
+		m.UpdateDigestProfileCache(InvalidDigestID, 1009, 1)
+		require.Equal(t, int64(0), m.digestProfileCache.num.Load())
+
+		digestID1 := buildDigestIDForTest("test")
 		digestID2 := digestID1 + 1
 		{
 			_, ok := m.GetDigestProfileCache(digestID1, 1)
@@ -2110,7 +2146,7 @@ func TestMemArbitrator(t *testing.T) {
 			}, tMetrics)
 			require.True(t, e2.ctx.Load().stopped.Load())
 			select {
-			case <-e2.ctx.Load().cancelCh:
+			case <-e2.ctx.cancelCh:
 			default:
 				require.Fail(t, "")
 			}
@@ -2562,6 +2598,12 @@ func TestBasicUtils(t *testing.T) {
 
 	testState = t
 
+	require.NotEqual(t, buildDigestIDForTest("ab", "c"), buildDigestIDForTest("a", "bc"))
+	require.NotEqual(t, buildDigestIDForTest(), buildDigestIDForTest(""))
+	require.NotEqual(t,
+		buildDigestIDForTest("db1", "t1", "db2", "t2"),
+		buildDigestIDForTest("db2", "t2", "db1", "t1"))
+
 	{
 		const cnt = 1 << 8
 		bgID := uint64(4068484684)
@@ -2716,7 +2758,6 @@ func TestBench(t *testing.T) {
 				cancelEvent := 0
 				killed := false
 				ctx := NewArbitrationContext(
-					cancelCh,
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
@@ -2802,7 +2843,6 @@ func TestBench(t *testing.T) {
 				}
 
 				ctx := NewArbitrationContext(
-					cancelCh,
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {

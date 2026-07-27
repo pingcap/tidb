@@ -23,12 +23,15 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -40,7 +43,66 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
+
+type setGCLifeTimeManager struct {
+	extworkload.Manager
+	gcLifeTime time.Duration
+	updateCnt  int
+	role       config.ExternalWorkloadRole
+	meta       *keyspacepb.KeyspaceMeta
+}
+
+func (m *setGCLifeTimeManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+
+func (m *setGCLifeTimeManager) Meta() *keyspacepb.KeyspaceMeta {
+	return m.meta
+}
+
+func (m *setGCLifeTimeManager) UpdateGCLifeTime(_ context.Context, gcLifeTime time.Duration) error {
+	m.updateCnt++
+	m.gcLifeTime = gcLifeTime
+	return nil
+}
+
+func TestSetGCLifeTimeNotifiesExternalWorkloadWithEffectiveValue(t *testing.T) {
+	keyspaceLevelMeta := &keyspacepb.KeyspaceMeta{Config: map[string]string{
+		pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+	}}
+	cases := []struct {
+		name           string
+		role           config.ExternalWorkloadRole
+		meta           *keyspacepb.KeyspaceMeta
+		setValue       string
+		expectedGlobal time.Duration
+		expectedNotify time.Duration
+		expectedUpdate int
+	}{
+		{name: "master", role: config.RoleMaster, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "GCV2 worker", role: config.RoleGCV2Worker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "TTL worker", role: config.RoleTTLTaskWorker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "auto analyze worker", role: config.RoleAutoAnalyzeWorker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "minimum value", role: config.RoleMaster, meta: keyspaceLevelMeta, setValue: "1m", expectedGlobal: 10 * time.Minute, expectedNotify: 10 * time.Minute, expectedUpdate: 1},
+		{name: "unified GC", role: config.RoleMaster, meta: &keyspacepb.KeyspaceMeta{}, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedUpdate: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			mgr := &setGCLifeTimeManager{role: tc.role, meta: tc.meta}
+			extworkload.SetManagerForStore(store, mgr)
+
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(fmt.Sprintf("set global tidb_gc_life_time = '%s'", tc.setValue))
+			tk.MustQuery("select @@global.tidb_gc_life_time").Check(testkit.Rows(tc.expectedGlobal.String()))
+			require.Equal(t, tc.expectedUpdate, mgr.updateCnt)
+			require.Equal(t, tc.expectedNotify, mgr.gcLifeTime)
+		})
+	}
+}
 
 func TestSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
