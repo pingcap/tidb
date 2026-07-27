@@ -186,10 +186,22 @@ func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
 	return nil
 }
 
+func checkMultiSchemaJobType(jobType model.ActionType) error {
+	switch jobType {
+	case model.ActionAddColumn, model.ActionDropColumn, model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionRenameIndex, model.ActionModifyColumn, model.ActionSetDefaultValue, model.ActionAlterIndexVisibility, model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate, model.ActionAddForeignKey, model.ActionDropForeignKey:
+		return nil
+	default:
+		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(jobType.String())
+	}
+}
+
 func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 	var reorgTp model.ReorgType
 	if jobW.ReorgMeta != nil {
 		reorgTp = jobW.ReorgMeta.ReorgTp
+	}
+	if err := checkMultiSchemaJobType(jobW.Type); err != nil {
+		return err
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
 		Type:        jobW.Type,

@@ -3737,6 +3737,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 func (e *executor) getModifiableColumnJob(
 	ctx context.Context, sctx sessionctx.Context,
 	ident ast.Ident, originalColName pmodel.CIStr, spec *ast.AlterTableSpec,
+	tbTracker *TableTracker,
 ) (*JobWrapper, error) {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -3744,6 +3745,9 @@ func (e *executor) getModifiableColumnJob(
 		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
 	t, err := is.TableByName(ctx, ident.Schema, ident.Name)
+	if tbTracker != nil {
+		t = getTrackedTable(t, tbTracker)
+	}
 	if err != nil {
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -3775,7 +3779,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 	}
 
-	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec, tbTracker)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(spec.OldColumnName.Name, ident.Name))
@@ -3890,7 +3894,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 	}
 
 	originalColName := specNewColumn.Name.Name
-	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec, tbTracker)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
