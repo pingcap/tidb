@@ -39,6 +39,7 @@ use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
     encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
+    RECORD_ROW_KEY_LEN,
 };
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
@@ -49,6 +50,39 @@ use tidb_tablecodec::{
 use tidb_txnkv::{
     GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
 };
+
+/// Go `kv.Handle`: the row identifier a record key encodes.
+///
+/// An integer handle comes from a single-column integer primary key (or the
+/// allocated `_tidb_rowid` when the table has none); a common handle is the
+/// codec encoding of a clustered primary key's columns, which is what makes a
+/// string or multi-column primary key clustered.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TableHandle {
+    /// Go `kv.IntHandle`.
+    Int(i64),
+    /// Go `kv.CommonHandle`, holding the encoded key datums.
+    Common(Vec<u8>),
+}
+
+impl TableHandle {
+    /// The record-key component this handle contributes.
+    fn record_handle(&self) -> RecordHandle {
+        match self {
+            TableHandle::Int(value) => RecordHandle::Int(*value),
+            TableHandle::Common(bytes) => RecordHandle::Common(bytes.clone()),
+        }
+    }
+
+    /// The integer value, for the callers that only support int handles.
+    #[must_use]
+    pub fn int_value(&self) -> Option<i64> {
+        match self {
+            TableHandle::Int(value) => Some(*value),
+            TableHandle::Common(_) => None,
+        }
+    }
+}
 
 /// Go `ranger.Range`: one scanned interval of an index.
 ///
@@ -115,6 +149,10 @@ pub struct KvTable {
     pk_handle_offset: Option<usize>,
     /// The table's indexes (Go `TableInfo.Indices`).
     indexes: Vec<KvIndex>,
+    /// Go `TableInfo.IsCommonHandle`: the clustered primary key's column
+    /// offsets, whose encoding IS the row handle. Empty when the table has no
+    /// clustered common handle.
+    common_handle_offsets: Vec<usize>,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -146,7 +184,103 @@ impl KvTable {
             next_handle: 1,
             pk_handle_offset: None,
             indexes: Vec::new(),
+            common_handle_offsets: Vec::new(),
         }
+    }
+
+    /// Marks the columns whose encoding is the clustered row handle, which Go
+    /// records as `TableInfo.IsCommonHandle`.
+    pub fn set_common_handle_offsets(&mut self, offsets: Vec<usize>) {
+        self.common_handle_offsets = offsets;
+    }
+
+    /// The clustered primary key's column offsets, empty when there is none.
+    #[must_use]
+    pub fn common_handle_offsets(&self) -> &[usize] {
+        &self.common_handle_offsets
+    }
+
+    /// The column offsets the handle carries, which the row value omits
+    /// (Go `CanSkip`: a PK handle column and a full-length common-handle
+    /// column are both skipped from the encoded row).
+    fn handle_column_offsets(&self) -> Vec<usize> {
+        match self.pk_handle_offset {
+            Some(offset) => vec![offset],
+            None => self.common_handle_offsets.clone(),
+        }
+    }
+
+    /// The handle a row's values produce.
+    fn handle_of_row(&mut self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
+        if !self.common_handle_offsets.is_empty() {
+            let values: Vec<Datum> = self
+                .common_handle_offsets
+                .iter()
+                .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
+                .collect();
+            let encoded = tidb_codec::encode_key(&values)
+                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+            return Ok(TableHandle::Common(encoded));
+        }
+        match self.pk_handle_offset {
+            Some(offset) => match row.get(offset) {
+                Some(Datum::Int(value)) => Ok(TableHandle::Int(*value)),
+                Some(Datum::UInt(value)) => Ok(TableHandle::Int(*value as i64)),
+                Some(Datum::Null) | None => Err(KvTableError::Encode(
+                    "the primary key column has no value".to_owned(),
+                )),
+                Some(other) => Err(KvTableError::Encode(format!(
+                    "a handle primary key needs an integer value, got {other:?}"
+                ))),
+            },
+            None => {
+                let handle = self.next_handle;
+                self.next_handle += 1;
+                Ok(TableHandle::Int(handle))
+            }
+        }
+    }
+
+    /// The row value bytes, omitting the columns the handle already carries.
+    fn encode_row_value(&self, row: &[Datum]) -> Result<Vec<u8>, KvTableError> {
+        let skip = self.handle_column_offsets();
+        let mut ids = Vec::with_capacity(self.columns.len());
+        let mut values = Vec::with_capacity(self.columns.len());
+        for (offset, column) in self.columns.iter().enumerate() {
+            if skip.contains(&offset) {
+                continue;
+            }
+            ids.push(column.id);
+            values.push(row.get(offset).cloned().unwrap_or(Datum::Null));
+        }
+        encode_table_row(None, &values, &ids, true, None)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))
+    }
+
+    /// Restores the handle columns into a decoded row, which Go does by
+    /// reading `h.IntValue()` or `h.EncodedCol(i)` rather than the value.
+    fn fill_handle_columns(
+        &self,
+        row: &mut [Datum],
+        handle: &TableHandle,
+    ) -> Result<(), KvTableError> {
+        match handle {
+            TableHandle::Int(value) => {
+                if let Some(offset) = self.pk_handle_offset {
+                    row[offset] = Datum::Int(*value);
+                }
+            }
+            TableHandle::Common(bytes) => {
+                let mut rest: &[u8] = bytes;
+                for offset in &self.common_handle_offsets {
+                    let (remaining, value) = tidb_codec::decode_one(rest)
+                        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                    row[*offset] = value;
+                    rest = remaining;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Adds an index, whose entries every later write maintains.
@@ -187,49 +321,24 @@ impl KvTable {
     /// Inserts one row (a `Datum` per column, in schema order): encodes the
     /// record key from the next handle and the value through the v2 row format,
     /// exactly the bytes a TiKV-backed table would store.
-    pub fn insert_row(&mut self, row: &[Datum]) -> Result<i64, KvTableError> {
-        let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
-        let value = encode_table_row(None, row, &column_ids, true, None)
-            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        // Go `addRecord`: with PKIsHandle the primary key's value IS the
-        // handle, so the row key encodes it and a repeat is a duplicate.
-        let handle = match self.pk_handle_offset {
-            Some(offset) => {
-                let handle = match row.get(offset) {
-                    Some(Datum::Int(value)) => *value,
-                    Some(Datum::UInt(value)) => *value as i64,
-                    Some(Datum::Null) | None => {
-                        return Err(KvTableError::Encode(
-                            "the primary key column has no value".to_owned(),
-                        ))
-                    }
-                    Some(other) => {
-                        return Err(KvTableError::Encode(format!(
-                            "a handle primary key needs an integer value, got {other:?}"
-                        )))
-                    }
-                };
-                if self.row_exists(handle)? {
-                    return Err(KvTableError::DuplicateEntry {
-                        value: handle.to_string(),
-                        key: "PRIMARY".to_owned(),
-                    });
-                }
-                handle
-            }
-            None => {
-                let handle = self.next_handle;
-                self.next_handle += 1;
-                handle
-            }
-        };
+    pub fn insert_row(&mut self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
+        let value = self.encode_row_value(row)?;
+        // Go `addRecord`: a clustered key IS the handle, so a repeat collides.
+        let handle = self.handle_of_row(row)?;
+        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
+        if clustered && self.row_exists(&handle)? {
+            return Err(KvTableError::DuplicateEntry {
+                value: clustered_key_text(self, row),
+                key: "PRIMARY".to_owned(),
+            });
+        }
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
-            &RecordHandle::Int(handle),
+            &handle.record_handle(),
         ));
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
-        self.write_index_entries(row, handle)?;
+        self.write_index_entries(row, &handle)?;
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -237,7 +346,8 @@ impl KvTable {
     }
 
     /// Scans the table's record-key range in key order, decoding each value.
-    /// Returns rows as `Datum`s in schema order (a missing column decodes NULL).
+    /// Returns rows as `Datum`s in schema order (a missing column decodes
+    /// NULL, and the handle columns come from the key).
     pub fn scan_rows(&mut self) -> Result<Vec<Vec<Datum>>, KvTableError> {
         Ok(self
             .scan_rows_with_handles()?
@@ -248,7 +358,9 @@ impl KvTable {
 
     /// Like [`KvTable::scan_rows`], but each row carries the record handle its
     /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
-    pub fn scan_rows_with_handles(&mut self) -> Result<Vec<(i64, Vec<Datum>)>, KvTableError> {
+    pub fn scan_rows_with_handles(
+        &mut self,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let (low, high) = get_table_handle_key_range(self.table_id);
         let column_types: BTreeMap<i64, FieldType> = self
             .columns
@@ -267,13 +379,14 @@ impl KvTable {
 
         let mut rows = Vec::new();
         while iterator.valid() {
-            let handle = decode_int_handle(iterator.key().as_bytes())?;
+            let handle = self.decode_record_handle(iterator.key().as_bytes())?;
             let mut decoded = decode_table_row_to_map(iterator.value(), &column_types, None)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            let row: Vec<Datum> = column_ids
+            let mut row: Vec<Datum> = column_ids
                 .iter()
                 .map(|id| decoded.remove(id).unwrap_or(Datum::Null))
                 .collect();
+            self.fill_handle_columns(&mut row, &handle)?;
             rows.push((handle, row));
             iterator
                 .next()
@@ -294,7 +407,7 @@ impl KvTable {
         &self,
         index: &KvIndex,
         row: &[Datum],
-        handle: i64,
+        handle: &TableHandle,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
         let values: Vec<Datum> = index
             .column_offsets
@@ -306,10 +419,13 @@ impl KvTable {
             tidb_codec::encode_key(&values).map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         if !distinct {
             // Go appends the handle so non-distinct entries stay unique.
-            encoded.extend_from_slice(
-                &tidb_codec::encode_key(&[Datum::Int(handle)])
-                    .map_err(|e| KvTableError::Encode(format!("{e:?}")))?,
-            );
+            match handle {
+                TableHandle::Int(value) => encoded.extend_from_slice(
+                    &tidb_codec::encode_key(&[Datum::Int(*value)])
+                        .map_err(|e| KvTableError::Encode(format!("{e:?}")))?,
+                ),
+                TableHandle::Common(bytes) => encoded.extend_from_slice(bytes),
+            }
         }
         Ok((
             encode_index_seek_key(self.table_id, index.id, &encoded),
@@ -319,7 +435,11 @@ impl KvTable {
 
     /// Writes every index entry for `row`, rejecting a duplicate on a unique
     /// index as Go's `index.Create` does with `ErrKeyExists`.
-    fn write_index_entries(&mut self, row: &[Datum], handle: i64) -> Result<(), KvTableError> {
+    fn write_index_entries(
+        &mut self,
+        row: &[Datum],
+        handle: &TableHandle,
+    ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in &indexes {
             let (key, distinct) = self.index_key(index, row, handle)?;
@@ -333,10 +453,18 @@ impl KvTable {
                 }
                 // A distinct entry carries the handle as its value, which is
                 // what makes a unique-index lookup a point read.
-                let value = encode_handle_in_unique_index_value(
-                    &tidb_txnkv::IntHandle::new(handle).into(),
-                    false,
-                );
+                let value = match handle {
+                    TableHandle::Int(value) => encode_handle_in_unique_index_value(
+                        &tidb_txnkv::IntHandle::new(*value).into(),
+                        false,
+                    ),
+                    // Go stores the encoded common handle as the entry value.
+                    TableHandle::Common(bytes) => {
+                        let common = tidb_txnkv::CommonHandle::new(bytes.clone())
+                            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+                        encode_handle_in_unique_index_value(&common.into(), false)
+                    }
+                };
                 self.store
                     .set(key, value)
                     .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -351,7 +479,11 @@ impl KvTable {
     }
 
     /// Removes every index entry for `row`.
-    fn delete_index_entries(&mut self, row: &[Datum], handle: i64) -> Result<(), KvTableError> {
+    fn delete_index_entries(
+        &mut self,
+        row: &[Datum],
+        handle: &TableHandle,
+    ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in &indexes {
             let (key, _) = self.index_key(index, row, handle)?;
@@ -368,7 +500,7 @@ impl KvTable {
         &mut self,
         index_id: i64,
         values: &[Datum],
-    ) -> Result<Option<i64>, KvTableError> {
+    ) -> Result<Option<TableHandle>, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
@@ -388,7 +520,7 @@ impl KvTable {
             Ok(entry) => {
                 let handle = decode_handle_in_index_value(&entry.value)
                     .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                Ok(handle.int_value())
+                Ok(Some(convert_handle(&handle)))
             }
             Err(MemStorageError::NotFound) => Ok(None),
             Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
@@ -397,15 +529,18 @@ impl KvTable {
 
     /// The row stored under `handle`, decoded, or `None` when absent -- the
     /// single read a point-get plan performs.
-    pub fn get_row_by_handle(&mut self, handle: i64) -> Result<Option<Vec<Datum>>, KvTableError> {
+    pub fn get_row_by_handle(
+        &mut self,
+        handle: &TableHandle,
+    ) -> Result<Option<Vec<Datum>>, KvTableError> {
         self.read_row(handle)
     }
 
     /// The row stored under `handle`, decoded, or `None` when absent.
-    fn read_row(&mut self, handle: i64) -> Result<Option<Vec<Datum>>, KvTableError> {
+    fn read_row(&mut self, handle: &TableHandle) -> Result<Option<Vec<Datum>>, KvTableError> {
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
-            &RecordHandle::Int(handle),
+            &handle.record_handle(),
         ));
         let entry = match self.store.get(&key, GetOptions::default()) {
             Ok(entry) => entry,
@@ -419,12 +554,15 @@ impl KvTable {
             .collect();
         let mut decoded = decode_table_row_to_map(&entry.value, &column_types, None)
             .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-        Ok(Some(
-            self.columns
-                .iter()
-                .map(|c| decoded.remove(&c.id).unwrap_or(Datum::Null))
-                .collect(),
-        ))
+        let mut row: Vec<Datum> = self
+            .columns
+            .iter()
+            .map(|c| decoded.remove(&c.id).unwrap_or(Datum::Null))
+            .collect();
+        // The handle columns are not in the value; Go reads them from the
+        // handle itself.
+        self.fill_handle_columns(&mut row, handle)?;
+        Ok(Some(row))
     }
 
     /// The handles an index range covers, in index order.
@@ -439,7 +577,7 @@ impl KvTable {
         &mut self,
         index_id: i64,
         range: &IndexRange,
-    ) -> Result<Vec<i64>, KvTableError> {
+    ) -> Result<Vec<TableHandle>, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
@@ -478,6 +616,7 @@ impl KvTable {
                 &index,
                 iterator.key().as_bytes(),
                 iterator.value(),
+                !self.common_handle_offsets.is_empty(),
             )?);
             iterator
                 .next()
@@ -487,11 +626,23 @@ impl KvTable {
         Ok(handles)
     }
 
+    /// The handle a record key encodes: the bytes after the record prefix,
+    /// read as an integer or kept whole as a common handle.
+    fn decode_record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
+        if self.common_handle_offsets.is_empty() {
+            return decode_int_handle(key).map(TableHandle::Int);
+        }
+        let bytes = key
+            .get(RECORD_ROW_KEY_LEN - 8..)
+            .ok_or_else(|| KvTableError::Decode("record key is too short".to_owned()))?;
+        Ok(TableHandle::Common(bytes.to_vec()))
+    }
+
     /// Whether a row is already stored under `handle`.
-    fn row_exists(&mut self, handle: i64) -> Result<bool, KvTableError> {
+    fn row_exists(&mut self, handle: &TableHandle) -> Result<bool, KvTableError> {
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
-            &RecordHandle::Int(handle),
+            &handle.record_handle(),
         ));
         match self.store.get(&key, GetOptions::default()) {
             Ok(_) => Ok(true),
@@ -503,7 +654,7 @@ impl KvTable {
     /// Replaces the row stored under `handle` (Go's `UPDATE` writes the new
     /// row back under the same record key when the handle column did not
     /// change).
-    pub fn update_row(&mut self, handle: i64, row: &[Datum]) -> Result<(), KvTableError> {
+    pub fn update_row(&mut self, handle: &TableHandle, row: &[Datum]) -> Result<(), KvTableError> {
         // Go removes the old index entries and writes the new ones.
         if !self.indexes.is_empty() {
             if let Some(old) = self.read_row(handle)? {
@@ -523,7 +674,7 @@ impl KvTable {
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
-            &RecordHandle::Int(handle),
+            &handle.record_handle(),
         ));
         self.store
             .set(key, value)
@@ -531,7 +682,7 @@ impl KvTable {
     }
 
     /// Removes the row stored under `handle`.
-    pub fn delete_row(&mut self, handle: i64) -> Result<(), KvTableError> {
+    pub fn delete_row(&mut self, handle: &TableHandle) -> Result<(), KvTableError> {
         if !self.indexes.is_empty() {
             if let Some(row) = self.read_row(handle)? {
                 self.delete_index_entries(&row, handle)?;
@@ -539,7 +690,7 @@ impl KvTable {
         }
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
-            &RecordHandle::Int(handle),
+            &handle.record_handle(),
         ));
         self.store
             .delete(key)
@@ -547,11 +698,41 @@ impl KvTable {
     }
 }
 
+/// The text a clustered-key duplicate reports: the key columns joined by `-`,
+/// as Go's `ErrKeyExists` formats them.
+fn clustered_key_text(table: &KvTable, row: &[Datum]) -> String {
+    let offsets = table.handle_column_offsets();
+    offsets
+        .iter()
+        .map(|offset| match row.get(*offset) {
+            Some(Datum::Int(value)) => value.to_string(),
+            Some(Datum::UInt(value)) => value.to_string(),
+            Some(Datum::Bytes(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
+            Some(Datum::String(text)) => String::from_utf8_lossy(text.bytes()).into_owned(),
+            Some(other) => format!("{other:?}"),
+            None => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 /// The row handle an index entry names.
 ///
 /// A distinct entry keeps the handle in its value; a non-distinct entry keeps
 /// it appended to its key, which is the same split Go's index reader makes.
-fn index_entry_handle(index: &KvIndex, key: &[u8], value: &[u8]) -> Result<i64, KvTableError> {
+fn convert_handle(handle: &tidb_txnkv::Handle) -> TableHandle {
+    match handle.int_value() {
+        Some(value) => TableHandle::Int(value),
+        None => TableHandle::Common(handle.clone().encoded()),
+    }
+}
+
+fn index_entry_handle(
+    index: &KvIndex,
+    key: &[u8],
+    value: &[u8],
+    common: bool,
+) -> Result<TableHandle, KvTableError> {
     if index.unique {
         // Only a distinct entry stores the handle in the value; a unique index
         // holding NULLs writes non-distinct entries too, so fall through when
@@ -559,19 +740,20 @@ fn index_entry_handle(index: &KvIndex, key: &[u8], value: &[u8]) -> Result<i64, 
         if value != *b"0" {
             let handle = decode_handle_in_index_value(value)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            return handle.int_value().ok_or_else(|| {
-                KvTableError::Decode("index entry has no integer handle".to_owned())
-            });
+            return Ok(convert_handle(&handle));
         }
     }
-    // The handle is the last encoded datum of the key.
+    // The handle is appended to the key after the indexed values.
     let (_, rest) = cut_index_key(key, index.column_offsets.len())
         .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+    if common {
+        return Ok(TableHandle::Common(rest.to_vec()));
+    }
     let (_, handle) =
         tidb_codec::decode_one(rest).map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
     match handle {
-        Datum::Int(value) => Ok(value),
-        Datum::UInt(value) => Ok(value as i64),
+        Datum::Int(value) => Ok(TableHandle::Int(value)),
+        Datum::UInt(value) => Ok(TableHandle::Int(value as i64)),
         other => Err(KvTableError::Decode(format!(
             "an index key ended with {other:?} rather than a handle"
         ))),
@@ -728,7 +910,7 @@ mod tests {
                     .unwrap(),
             );
         }
-        let scanned: Vec<i64> = t
+        let scanned: Vec<TableHandle> = t
             .scan_rows_with_handles()
             .unwrap()
             .into_iter()
@@ -737,21 +919,21 @@ mod tests {
         assert_eq!(scanned, handles);
 
         // A row written under an explicit handle round-trips too.
-        t.update_row(handles[1], &[Datum::Int(99), Datum::Bytes(b"y".to_vec())])
+        t.update_row(&handles[1], &[Datum::Int(99), Datum::Bytes(b"y".to_vec())])
             .unwrap();
         let rows = t.scan_rows_with_handles().unwrap();
         assert_eq!(rows.len(), 3, "update replaced in place, it did not append");
         assert_eq!(rows[1].0, handles[1]);
         assert_eq!(rows[1].1[0], Datum::Int(99));
 
-        t.delete_row(handles[0]).unwrap();
-        let after: Vec<i64> = t
+        t.delete_row(&handles[0]).unwrap();
+        let after: Vec<TableHandle> = t
             .scan_rows_with_handles()
             .unwrap()
             .into_iter()
             .map(|(handle, _)| handle)
             .collect();
-        assert_eq!(after, vec![handles[1], handles[2]]);
+        assert_eq!(after, vec![handles[1].clone(), handles[2].clone()]);
     }
 
     #[test]

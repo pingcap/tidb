@@ -204,12 +204,20 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         clauses.push(clause);
     }
 
-    // Go emits the handle primary key here, because PKIsHandle keeps it out of
-    // the index list.
-    if let Some(offset) = table.pk_handle_offset() {
+    // Go emits a clustered primary key here, because a clustered key -- an
+    // int handle or a common handle -- is not in the index list.
+    let clustered: Vec<usize> = match table.pk_handle_offset() {
+        Some(offset) => vec![offset],
+        None => table.common_handle_offsets().to_vec(),
+    };
+    if !clustered.is_empty() {
+        let columns = clustered
+            .iter()
+            .map(|offset| escape_name(&table.columns[*offset].name))
+            .collect::<Vec<_>>()
+            .join(",");
         clauses.push(format!(
-            "  PRIMARY KEY ({}) /*T![clustered_index] CLUSTERED */",
-            escape_name(&table.columns[offset].name)
+            "  PRIMARY KEY ({columns}) /*T![clustered_index] CLUSTERED */"
         ));
     }
 
@@ -1570,14 +1578,10 @@ mod tests {
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
         );
 
-        // KNOWN DIVERGENCE, asserted rather than hidden: for a single-column
-        // STRING primary key, real TiDB reports
-        //   `k` varchar(10) NOT NULL,
-        //   PRIMARY KEY (`k`) /*T![clustered_index] CLUSTERED */
-        // because its default clustered-index mode builds a common handle.
-        // This seed has no common handle -- such a key is enforced by a
-        // unique index over separately allocated row handles, which is
-        // exactly NONCLUSTERED -- so it reports what it actually built.
+        // A string primary key is now a clustered common handle, so this
+        // matches TiDB's captured output exactly. The previous commit
+        // reported NONCLUSTERED, truthfully, because no common handle
+        // existed then.
         assert_eq!(
             create(
                 &mut session,
@@ -1586,7 +1590,7 @@ mod tests {
             ),
             "CREATE TABLE `t3` (\n  \
              `k` varchar(10) NOT NULL,\n  \
-             PRIMARY KEY (`k`) /*T![clustered_index] NONCLUSTERED */\n\
+             PRIMARY KEY (`k`) /*T![clustered_index] CLUSTERED */\n\
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
         );
 

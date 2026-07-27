@@ -32,7 +32,7 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::join::{JoinExec, JoinKind};
-use crate::kv_table::{IndexRange, KvTable, TableScanExec};
+use crate::kv_table::{IndexRange, KvTable, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::projection::ProjectionExec;
@@ -520,7 +520,7 @@ fn run_select_stmt(
                         .map_err(|e| DriverError::Parse(format!("index scan failed: {e:?}")))?
                     {
                         if let Some(row) = table
-                            .get_row_by_handle(handle)
+                            .get_row_by_handle(&handle)
                             .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
                         {
                             rows.push(row);
@@ -546,7 +546,7 @@ fn run_select_stmt(
             let mut table = table;
             let rows = match handle {
                 Some(handle) => table
-                    .get_row_by_handle(handle)
+                    .get_row_by_handle(&handle)
                     .map_err(|e| DriverError::Parse(format!("point get failed: {e:?}")))?
                     .map(|row| vec![row])
                     .unwrap_or_default(),
@@ -2055,7 +2055,7 @@ fn try_point_get(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
-) -> Result<Option<Option<i64>>, DriverError> {
+) -> Result<Option<Option<TableHandle>>, DriverError> {
     if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
         return Ok(None);
     }
@@ -2083,8 +2083,8 @@ fn try_point_get(
         let handle_column = &columns[handle_offset].0;
         if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
             return Ok(Some(match &pairs[0].value {
-                Datum::Int(value) => Some(*value),
-                Datum::UInt(value) => Some(*value as i64),
+                Datum::Int(value) => Some(TableHandle::Int(*value)),
+                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
                 // A non-integer constant cannot name an integer handle, so no
                 // row matches rather than the plan being wrong.
                 _ => None,
@@ -2470,7 +2470,7 @@ pub fn run_update_in(
                 if let Some(new_row) =
                     compute_updated_row(&row, &field_types, &predicate, &set_exprs)?
                 {
-                    kv.update_row(handle, &new_row).map_err(|e| match e {
+                    kv.update_row(&handle, &new_row).map_err(|e| match e {
                         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                             DriverError::DuplicateEntry { value, key }
                         }
@@ -2601,7 +2601,7 @@ pub fn run_delete_in(
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
             for (handle, row) in rows {
                 if row_is_selected(&row, &field_types, &predicate)? {
-                    kv.delete_row(handle)
+                    kv.delete_row(&handle)
                         .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
                     deleted += 1;
                 }
@@ -3783,8 +3783,6 @@ mod tests {
     fn unsupported_constraints_are_rejected() {
         let mut catalog = Catalog::default();
         for ddl in [
-            // A multi-column primary key needs the common-handle tier.
-            "CREATE TABLE c (a BIGINT, b BIGINT, PRIMARY KEY (a, b))",
             // Two primary keys is not a table.
             "CREATE TABLE c (a BIGINT PRIMARY KEY, b BIGINT PRIMARY KEY)",
             // A prefix-length primary key needs prefix index support.
@@ -3930,7 +3928,7 @@ mod tests {
             table
                 .lookup_unique(index_id, &[Datum::Bytes(b"abc".to_vec())])
                 .unwrap(),
-            Some(7),
+            Some(TableHandle::Int(7)),
             "the entry carries the row's handle"
         );
         assert_eq!(
@@ -4076,18 +4074,30 @@ mod tests {
         };
 
         // Accepted: the handle, and a whole unique index.
-        assert_eq!(decides("SELECT v FROM d WHERE id = 1"), Some(Some(1)));
-        assert_eq!(decides("SELECT v FROM d WHERE 1 = id"), Some(Some(1)));
-        assert_eq!(decides("SELECT v FROM d WHERE code = 'a'"), Some(Some(1)));
+        assert_eq!(
+            decides("SELECT v FROM d WHERE id = 1"),
+            Some(Some(TableHandle::Int(1)))
+        );
+        assert_eq!(
+            decides("SELECT v FROM d WHERE 1 = id"),
+            Some(Some(TableHandle::Int(1)))
+        );
+        assert_eq!(
+            decides("SELECT v FROM d WHERE code = 'a'"),
+            Some(Some(TableHandle::Int(1)))
+        );
         // The handle path does not probe: it hands the plan the handle the
         // constant names, and the row read finds nothing. The index path does
         // probe, because the handle only exists in an index entry.
-        assert_eq!(decides("SELECT v FROM d WHERE id = 7"), Some(Some(7)));
+        assert_eq!(
+            decides("SELECT v FROM d WHERE id = 7"),
+            Some(Some(TableHandle::Int(7)))
+        );
         assert_eq!(decides("SELECT v FROM d WHERE code = 'z'"), Some(None));
         // The index path allows extra pairs beyond the key.
         assert_eq!(
             decides("SELECT v FROM d WHERE code = 'a' AND v = 10"),
-            Some(Some(1))
+            Some(Some(TableHandle::Int(1)))
         );
 
         // Rejected, so the scan runs: Go requires the handle pair to be the
@@ -4386,6 +4396,103 @@ mod tests {
             &mut catalog
         )
         .is_err());
+    }
+
+    /// A primary key that is not a single integer column becomes a clustered
+    /// COMMON handle: its encoding IS the row key, so rows scan in key order,
+    /// the columns live in the key rather than the value, and a repeat is a
+    /// duplicate (Go's IsCommonHandle path in addRecord).
+    #[test]
+    fn clustered_common_handle() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE c (k VARCHAR(8) PRIMARY KEY, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO c VALUES ('b', 2), ('a', 1), ('c', 3)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        // Key order, not insertion order -- the key IS the primary key.
+        assert_eq!(
+            run_select_on("SELECT k, v FROM c", &catalog)
+                .unwrap()
+                .into_iter()
+                .map(|row| datum_text_for_test(&row[0]))
+                .collect::<Vec<_>>(),
+            vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]
+        );
+        // The key column round-trips even though the value omits it.
+        assert_eq!(
+            run_select_on("SELECT v FROM c WHERE k = 'b'", &catalog).unwrap(),
+            vec![vec![Datum::Int(2)]]
+        );
+        // A repeated key is a duplicate.
+        assert!(matches!(
+            run_insert_on("INSERT INTO c VALUES ('a', 9)", &mut catalog),
+            Err(DriverError::DuplicateEntry { .. })
+        ));
+
+        // Writes address the row through its clustered key.
+        run_update_on("UPDATE c SET v = 20 WHERE k = 'b'", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT v FROM c WHERE k = 'b'", &catalog).unwrap(),
+            vec![vec![Datum::Int(20)]]
+        );
+        run_delete_on("DELETE FROM c WHERE k = 'a'", &mut catalog).unwrap();
+        assert_eq!(run_select_on("SELECT k FROM c", &catalog).unwrap().len(), 2);
+        // The freed key can be inserted again.
+        run_insert_on("INSERT INTO c VALUES ('a', 1)", &mut catalog).unwrap();
+
+        // A multi-column primary key is a clustered common handle too.
+        crate::run_create_table_on(
+            "CREATE TABLE m (a BIGINT, b VARCHAR(4), v BIGINT, PRIMARY KEY (a, b))",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO m VALUES (1, 'y', 10), (1, 'x', 20), (2, 'a', 30)",
+            &mut catalog,
+        )
+        .unwrap();
+        assert_eq!(
+            run_select_on("SELECT a, b FROM m", &catalog)
+                .unwrap()
+                .into_iter()
+                .map(|row| format!("{:?}/{}", row[0], datum_text_for_test(&row[1])))
+                .collect::<Vec<_>>(),
+            vec![
+                "Int(1)/x".to_owned(),
+                "Int(1)/y".to_owned(),
+                "Int(2)/a".to_owned()
+            ]
+        );
+        // Only the whole key must be unique; a repeated leading column is fine.
+        assert!(matches!(
+            run_insert_on("INSERT INTO m VALUES (1, 'x', 99)", &mut catalog),
+            Err(DriverError::DuplicateEntry { .. })
+        ));
+        run_insert_on("INSERT INTO m VALUES (1, 'z', 40)", &mut catalog).unwrap();
+
+        // A secondary index over a clustered table stores the common handle
+        // and still resolves to its row.
+        crate::run_create_table_on(
+            "CREATE TABLE s (k VARCHAR(4) PRIMARY KEY, tag BIGINT, KEY tag_idx (tag))",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("INSERT INTO s VALUES ('p', 1), ('q', 2)", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT k FROM s WHERE tag >= 2", &catalog)
+                .unwrap()
+                .into_iter()
+                .map(|row| datum_text_for_test(&row[0]))
+                .collect::<Vec<_>>(),
+            vec!["q".to_owned()]
+        );
     }
 
     #[test]

@@ -172,8 +172,10 @@ fn is_int_column(column: &ColumnInfo) -> bool {
 /// prefix-length key; and `UNIQUE`/`KEY`/`FOREIGN KEY` constraints, which
 /// need the index tier. All are rejected rather than silently dropped, so a
 /// table never claims a constraint it does not enforce.
-fn primary_key_column(create: &tidb_ast::CreateTableStmt) -> Result<Option<String>, DriverError> {
-    let mut found: Option<String> = None;
+fn primary_key_column(
+    create: &tidb_ast::CreateTableStmt,
+) -> Result<Option<Vec<String>>, DriverError> {
+    let mut found: Option<Vec<String>> = None;
     for def in &create.columns {
         for option in &def.options {
             if let tidb_ast::ColumnOption::InlineKey(key) = option {
@@ -184,7 +186,7 @@ fn primary_key_column(create: &tidb_ast::CreateTableStmt) -> Result<Option<Strin
                                 "a table may define only one primary key",
                             ));
                         }
-                        found = Some(def.name.clone());
+                        found = Some(vec![def.name.clone()]);
                     }
                     // A unique key is collected by `table_indexes`.
                     tidb_ast::InlineKeyKind::Unique => {}
@@ -207,25 +209,24 @@ fn primary_key_column(create: &tidb_ast::CreateTableStmt) -> Result<Option<Strin
                 "a table may define only one primary key",
             ));
         }
-        let [part] = index.parts.as_slice() else {
-            return Err(DriverError::Unsupported(
-                "a multi-column primary key is deferred (it needs the common-handle tier)",
-            ));
-        };
-        let tidb_ast::IndexPart::Column {
-            name, prefix_len, ..
-        } = part
-        else {
-            return Err(DriverError::Unsupported(
-                "an expression primary key is not supported yet",
-            ));
-        };
-        if prefix_len.is_some() {
-            return Err(DriverError::Unsupported(
-                "a prefix-length primary key is not supported yet",
-            ));
+        let mut names = Vec::with_capacity(index.parts.len());
+        for part in &index.parts {
+            let tidb_ast::IndexPart::Column {
+                name, prefix_len, ..
+            } = part
+            else {
+                return Err(DriverError::Unsupported(
+                    "an expression primary key is not supported yet",
+                ));
+            };
+            if prefix_len.is_some() {
+                return Err(DriverError::Unsupported(
+                    "a prefix-length primary key is not supported yet",
+                ));
+            }
+            names.push(name.clone());
         }
-        found = Some(name.clone());
+        found = Some(names);
     }
     Ok(found)
 }
@@ -327,27 +328,44 @@ pub fn run_create_table_in(
     }
 
     let primary_key = primary_key_column(create)?;
-    let pk_offset = match &primary_key {
-        Some(pk_name) => {
-            let offset = columns
-                .iter()
-                .position(|col| col.name.original().eq_ignore_ascii_case(pk_name))
-                .ok_or(DriverError::Unsupported(
-                    "the primary key names a column the table does not define",
-                ))?;
-            Some(offset)
+    let pk_offsets: Vec<usize> = match &primary_key {
+        Some(names) => {
+            let mut offsets = Vec::with_capacity(names.len());
+            for name in names {
+                offsets.push(
+                    columns
+                        .iter()
+                        .position(|col| col.name.original().eq_ignore_ascii_case(name))
+                        .ok_or(DriverError::Unsupported(
+                            "the primary key names a column the table does not define",
+                        ))?,
+                );
+            }
+            offsets
         }
-        None => None,
+        None => Vec::new(),
+    };
+    let pk_offset = if pk_offsets.len() == 1 {
+        Some(pk_offsets[0])
+    } else {
+        None
     };
     // Go `isSingleIntPK` + `ShouldBuildClusteredIndex`: a single-column
     // integer primary key becomes the row handle rather than a separate
     // index, which is what `TableInfo.PKIsHandle` records.
     let pk_is_handle = pk_offset.is_some_and(|offset| is_int_column(&columns[offset]));
-    if let Some(offset) = pk_offset {
-        // A primary key column is implicitly NOT NULL, as in MySQL.
-        // Go marks a primary-key column NOT NULL and PRI (mysql.NotNullFlag,
-        // mysql.PriKeyFlag).
-        columns[offset].add_flag(NOT_NULL_FLAG | PRI_KEY_FLAG);
+    // Go `ShouldBuildClusteredIndex` under the default clustered-index mode:
+    // a primary key that is not a single integer column becomes a clustered
+    // COMMON handle, whose encoding is the row key.
+    let common_handle_offsets: Vec<usize> = if pk_is_handle || pk_offsets.is_empty() {
+        Vec::new()
+    } else {
+        pk_offsets.clone()
+    };
+    for offset in &pk_offsets {
+        // A primary key column is implicitly NOT NULL, as in MySQL, and Go
+        // marks it PRI (mysql.NotNullFlag, mysql.PriKeyFlag).
+        columns[*offset].add_flag(NOT_NULL_FLAG | PRI_KEY_FLAG);
     }
 
     // Go evaluates a constant DEFAULT at DDL time and stores the value on the
@@ -416,8 +434,11 @@ pub fn run_create_table_in(
         if let Some(offset) = pk_offset {
             table.set_pk_handle_offset(offset);
         }
+    } else if !common_handle_offsets.is_empty() {
+        table.set_common_handle_offsets(common_handle_offsets.clone());
     }
-    for index in table_indexes(create, &info.columns, pk_is_handle)? {
+    let clustered = pk_is_handle || !common_handle_offsets.is_empty();
+    for index in table_indexes(create, &info.columns, clustered)? {
         table.add_index(index);
     }
     catalog.register_kv_in(&database, name, table);
