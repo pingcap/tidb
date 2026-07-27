@@ -29,11 +29,44 @@
 //! a second, differently-shaped combination rule from the `=`/`<>`/
 //! ordering operators below, not a trivial extension of them.
 
+use std::cmp::Ordering;
+
 use tidb_ast::BinaryOp;
 
 use crate::coerce::bool_int;
 use crate::ops::eval_binary;
 use crate::{Datum, EvalError};
+
+/// Total order over two scalar datums — Go `types/datum.go` `Datum.Compare`
+/// as used for sorting (`pkg/util/chunk/compare.go` `GetCompareFunc`).
+///
+/// Semantics are exactly the ones this crate's own `=`/`<` operators use
+/// (the ordering behind `IN`/`BETWEEN`/comparison), plus the sort-side NULL
+/// rule: NULL orders below every non-NULL value and equal to NULL (Go
+/// `chunk.cmpNull` / `Datum.Compare`'s `KindNull` arm) instead of the
+/// operators' three-valued NULL propagation. Strings compare under the
+/// session `utf8mb4_bin` PAD SPACE collation; numeric kinds compare
+/// cross-kind through MySQL's promotion rules (Int/UInt/Decimal exactly,
+/// Real via `f64`); string-vs-numeric compares as MySQL real coercion.
+/// Errors surface for operand kinds the evaluator does not order.
+pub fn compare_datums(l: &Datum, r: &Datum) -> Result<Ordering, EvalError> {
+    match (l, r) {
+        (Datum::Null, Datum::Null) => return Ok(Ordering::Equal),
+        (Datum::Null, _) => return Ok(Ordering::Less),
+        (_, Datum::Null) => return Ok(Ordering::Greater),
+        _ => {}
+    }
+    match eval_binary(BinaryOp::Eq, l.clone(), r.clone())? {
+        Datum::Int(1) => return Ok(Ordering::Equal),
+        Datum::Int(0) => {}
+        _ => unreachable!("eval_binary(Eq, non-NULL, non-NULL) only ever returns Int(0/1)"),
+    }
+    match eval_binary(BinaryOp::Lt, l.clone(), r.clone())? {
+        Datum::Int(1) => Ok(Ordering::Less),
+        Datum::Int(0) => Ok(Ordering::Greater),
+        _ => unreachable!("eval_binary(Lt, non-NULL, non-NULL) only ever returns Int(0/1)"),
+    }
+}
 
 /// `l = r` for two same-arity row values — three-valued, SQL `AND`-
 /// composed equality across ALL positions (confirmed via `gorun`: a

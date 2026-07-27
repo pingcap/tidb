@@ -363,6 +363,7 @@ pub use context::{Columns, EvalError, NoColumns, SessionTimeZone};
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};
 pub use rng::MysqlRng;
+pub use row::compare_datums;
 pub(crate) use tidb_datatype::{Datum, Decimal};
 
 use tidb_ast::{CastStyle, Expr, GetFormatSelector, IsTarget};

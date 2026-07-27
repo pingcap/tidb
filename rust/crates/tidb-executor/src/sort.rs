@@ -30,10 +30,13 @@
 //!
 //! DEFERRED (documented): spill-to-disk partitions and the multi-way merger,
 //! the parallel sort workers/fetcher/generator pipeline, memory and disk
-//! trackers, the SQL killer, and the failpoints. Row comparison here is a
-//! minimal Datum ordering (Int/UInt/Real/String-bytes/Null); the full
-//! collation-aware compare (`pkg/util/chunk/compare.go` `GetCompareFunc`) is
-//! deferred to the shared comparator in `tidb-expr` once it is exported.
+//! trackers, the SQL killer, and the failpoints.
+//!
+//! Row comparison is `tidb_expr::compare_datums` — the shared,
+//! collation-aware datum comparator (Go `types/datum.go` `Datum.Compare`
+//! via `pkg/util/chunk/compare.go` `GetCompareFunc`). A comparison error
+//! (an unorderable key kind) is captured during the sort and returned from
+//! `Next`, as Go returns it from `Next`.
 
 use std::cmp::Ordering;
 
@@ -70,42 +73,6 @@ pub struct SortExec<C: Columns> {
     order: Vec<(usize, usize)>,
     /// Go `Unparallel.Idx` in spirit: how many sorted rows were emitted.
     cursor: usize,
-}
-
-/// Minimal datum ordering for sort keys. NULL sorts below every non-NULL
-/// value (Go `chunk.cmpNull`). The full collation-aware compare is deferred
-/// (see the module doc); supported kinds are validated when the keys are
-/// built, so this comparator itself cannot fail.
-fn datum_cmp(l: &Datum, r: &Datum) -> Ordering {
-    match (l, r) {
-        (Datum::Null, Datum::Null) => Ordering::Equal,
-        (Datum::Null, _) => Ordering::Less,
-        (_, Datum::Null) => Ordering::Greater,
-        (Datum::Int(a), Datum::Int(b)) => a.cmp(b),
-        (Datum::UInt(a), Datum::UInt(b)) => a.cmp(b),
-        (Datum::Real(a), Datum::Real(b)) => a.total_cmp(b),
-        (Datum::String(a), Datum::String(b)) => a.bytes().cmp(b.bytes()),
-        (Datum::Bytes(a), Datum::Bytes(b)) => a.cmp(b),
-        // Keys are pre-validated to one of the kinds above, and a by-item
-        // expression has one static result type, so mixed kinds cannot reach
-        // here (Go's per-column CompareFunc has the same same-type contract).
-        _ => Ordering::Equal,
-    }
-}
-
-/// Whether `datum_cmp` supports this key kind (the local subset; anything
-/// else is rejected up front, as Go rejects types without a `CompareFunc`
-/// with "Sort executor not supports type ...").
-fn key_supported(d: &Datum) -> bool {
-    matches!(
-        d,
-        Datum::Null
-            | Datum::Int(_)
-            | Datum::UInt(_)
-            | Datum::Real(_)
-            | Datum::String(_)
-            | Datum::Bytes(_)
-    )
 }
 
 impl<C: Columns> SortExec<C> {
@@ -151,13 +118,7 @@ impl<C: Columns> SortExec<C> {
                 let row = chunk.get_row(ri);
                 let mut key = Vec::with_capacity(self.by_items.len());
                 for item in &self.by_items {
-                    let datum = item.expr.eval(&self.ctx, row)?;
-                    if !key_supported(&datum) {
-                        return Err(ExecError::Unsupported(
-                            "sort key datum kind not yet ported to the local comparator",
-                        ));
-                    }
-                    key.push(datum);
+                    key.push(item.expr.eval(&self.ctx, row)?);
                 }
                 keys.push(key);
                 self.order.push((ci, ri));
@@ -166,11 +127,24 @@ impl<C: Columns> SortExec<C> {
 
         // Go `lessRow`: first non-equal key decides; `Desc` negates it.
         // Stable sort where Go's `sort.Slice` is unstable (see module doc).
+        // `sort_by` cannot return an error, so the first comparison error is
+        // captured and the whole sort fails afterwards -- Go's `keyCmpFuncs`
+        // reject unorderable types up front, so an error here likewise means
+        // the sort's output must not be used, and `Next` returns it.
         let by_items = &self.by_items;
+        let mut sort_err: Option<ExecError> = None;
         let mut indices: Vec<usize> = (0..self.order.len()).collect();
         indices.sort_by(|&a, &b| {
             for (i, item) in by_items.iter().enumerate() {
-                let mut cmp = datum_cmp(&keys[a][i], &keys[b][i]);
+                let mut cmp = match tidb_expr::compare_datums(&keys[a][i], &keys[b][i]) {
+                    Ok(cmp) => cmp,
+                    Err(err) => {
+                        if sort_err.is_none() {
+                            sort_err = Some(err.into());
+                        }
+                        return Ordering::Equal;
+                    }
+                };
                 if item.desc {
                     cmp = cmp.reverse();
                 }
@@ -180,6 +154,9 @@ impl<C: Columns> SortExec<C> {
             }
             Ordering::Equal
         });
+        if let Some(err) = sort_err {
+            return Err(err);
+        }
         self.order = indices.iter().map(|&i| self.order[i]).collect();
         Ok(())
     }
