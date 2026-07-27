@@ -212,9 +212,9 @@ fn format_row(row: Vec<Datum>) -> Result<Vec<Option<Vec<u8>>>, String> {
 
 fn format_datum(datum: Datum) -> Result<Option<Vec<u8>>, String> {
     match datum {
-        Datum::Null => return Ok(None),
-        Datum::MinNotNull => return Err("cannot render MinNotNull as a SQL row".to_owned()),
-        Datum::MaxValue => return Err("cannot render MaxValue as a SQL row".to_owned()),
+        Datum::Null => Ok(None),
+        Datum::MinNotNull => Err("cannot render MinNotNull as a SQL row".to_owned()),
+        Datum::MaxValue => Err("cannot render MaxValue as a SQL row".to_owned()),
         value => value
             .to_bytes()
             .map(Some)

@@ -19,34 +19,26 @@
 //! the existing `COM_QUERY` text path can serve `CREATE TABLE` / `INSERT` /
 //! `SELECT` through the pipeline.
 //!
-//! Write-result representation (investigated, documented): the `COM_QUERY`
-//! response vocabulary the existing wire code supports is exactly (a) a result
-//! set streamed by `write_connection_result_set_to_sink` (column count packet,
-//! column definitions, rows, EOF) or (b) an error packet; an OK packet is
-//! emitted only for ping, transaction control, and prepared writes, none of
-//! which this text path can reach without modifying `mysql_connection.rs`
-//! (out of scope here). A zero-column source would encode a column-count
-//! packet of `0` followed by EOF packets, which is not a valid MySQL response.
-//! So a write result (`INSERT` affected count, `CREATE TABLE` completion) is
-//! rendered as a valid one-column result set named `affected_rows` carrying
-//! one `BIGINT UNSIGNED` row: `INSERT` reports its inserted-row count and DDL
-//! reports `0`, mirroring MySQL's OK-packet `affected_rows` for DDL. Emitting
-//! a true OK packet for text writes requires extending the [`QuerySession`]
-//! contract and the connection loop, which is deferred.
+//! Write-result representation: `COM_QUERY` writes answer with a real OK
+//! packet carrying their affected-row count, through the [`QuerySession`]
+//! `execute_write` hook. The statement kind is decided by parsing alone
+//! ([`tidb_session::Session::statement_kind`]) so a write runs exactly once.
 //!
-//! DEFERRED (documented): each connection owns its own private
-//! [`tidb_session::Session`] and therefore its own catalog; tables created on
-//! one connection are invisible to others. Sharing requires
-//! `Arc<Mutex<Catalog>>` threading through `tidb-session`/`tidb-executor`
-//! (whose execution paths take `&Catalog`/`&mut Catalog` directly), so it is
-//! not trivially supportable and lands with the session-manager slice.
+//! Catalog sharing: every session a [`PipelineSessionFactory`] opens shares
+//! one `Arc<Mutex<Catalog>>`, as TiDB's sessions read the domain-owned
+//! `infoschema` rather than private copies -- a table created on one
+//! connection is visible on the others. The per-statement lock stands in for
+//! Go's schema-version/lease machinery, which is a separate tier (deferred).
+//!
 //! Prepared statements and transaction control keep the trait's fail-closed
 //! defaults.
+
+use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata};
 use tidb_protocol::ColumnInfo;
-use tidb_session::{Session, StmtKind, StmtOutput, StmtResult};
+use tidb_session::{Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
 
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -69,6 +61,14 @@ impl PipelineServerSession {
             session: Session::new(),
         }
     }
+
+    /// Creates a session over `catalog`, which its peers share.
+    #[must_use]
+    pub fn with_catalog(catalog: SharedCatalog) -> Self {
+        Self {
+            session: Session::with_catalog(catalog),
+        }
+    }
 }
 
 impl Default for PipelineServerSession {
@@ -77,18 +77,23 @@ impl Default for PipelineServerSession {
     }
 }
 
-/// Opens one private pipeline [`Session`] per authenticated connection.
+/// Opens one pipeline [`Session`] per authenticated connection.
 ///
-/// See the module documentation: the catalog is connection-local, so this
-/// factory provides isolated sessions, not one shared database.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PipelineSessionFactory;
+/// Every connection the factory opens shares one catalog, as the sessions of a
+/// TiDB instance share the domain's schema state: a table one connection
+/// creates is immediately visible to the others.
+#[derive(Default)]
+pub struct PipelineSessionFactory {
+    catalog: SharedCatalog,
+}
 
 impl QuerySessionFactory for PipelineSessionFactory {
     type Session = PipelineServerSession;
 
     fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
-        Ok(PipelineServerSession::new())
+        Ok(PipelineServerSession::with_catalog(Arc::clone(
+            &self.catalog,
+        )))
     }
 }
 
@@ -138,6 +143,9 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
         ),
         tidb_executor::DriverError::Unsupported(message) => SqlQueryError::unknown(message),
         tidb_executor::DriverError::Exec(error) => SqlQueryError::unknown(format!("{error:?}")),
+        tidb_executor::DriverError::CatalogPoisoned => {
+            SqlQueryError::unknown("the shared catalog is unusable after a failed statement")
+        }
     }
 }
 
@@ -262,6 +270,10 @@ mod tests {
     }
 
     fn open_session() -> PipelineServerSession {
+        open_on(&PipelineSessionFactory::default(), 1)
+    }
+
+    fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {
         let users =
             ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
                 .expect("configured user store");
@@ -269,14 +281,37 @@ mod tests {
             .authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
             .expect("authenticated identity");
         let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
-        PipelineSessionFactory
+        factory
             .open_session(SessionContext {
-                connection_id: 1,
+                connection_id,
                 peer_addr,
                 identity,
                 cancellation: ConnectionCancellation::default(),
             })
             .expect("pipeline session opens without process authorities")
+    }
+
+    /// Go's sessions read the instance-wide schema state, so a table created
+    /// on one connection is visible on every other one. The factory hands each
+    /// session the same catalog, which is what makes that true here.
+    #[test]
+    fn a_table_created_on_one_connection_is_visible_on_another() {
+        let factory = PipelineSessionFactory::default();
+        let mut writer = open_on(&factory, 1);
+        let mut reader = open_on(&factory, 2);
+
+        writer
+            .execute_write("CREATE TABLE t (a BIGINT)")
+            .expect("create table succeeds");
+        writer
+            .execute_write("INSERT INTO t VALUES (7)")
+            .expect("insert succeeds");
+
+        let mut result = reader
+            .execute("SELECT a FROM t")
+            .expect("the peer session sees the table");
+        let (_, rows) = drain(&mut result, 8);
+        assert_eq!(rows, vec![vec![Datum::Int(7)]]);
     }
 
     fn drain(result: &mut QueryResult<'_>, batch: usize) -> (Vec<ColumnInfo>, Vec<Vec<Datum>>) {

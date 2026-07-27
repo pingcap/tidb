@@ -154,6 +154,9 @@ pub enum DriverError {
     Unsupported(&'static str),
     /// Rewriting an expression or executing failed.
     Exec(ExecError),
+    /// The shared catalog is unusable because a statement panicked while
+    /// holding it, so its schema state may be half-written.
+    CatalogPoisoned,
 }
 
 impl From<ExecError> for DriverError {

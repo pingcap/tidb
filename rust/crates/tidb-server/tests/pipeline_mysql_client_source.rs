@@ -104,7 +104,7 @@ fn authenticate(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) {
     assert_eq!(reader.read_packet().unwrap()[0], 0, "auth OK");
 }
 
-fn read_length_encoded_string<'a>(packet: &mut &'a [u8]) -> Vec<u8> {
+fn read_length_encoded_string(packet: &mut &[u8]) -> Vec<u8> {
     let length = usize::from(packet[0]);
     assert!(length < 0xfb, "test values use one-byte lengths");
     *packet = &packet[1..];
@@ -142,7 +142,7 @@ fn run_query(
     reader.set_sequence(1);
 
     let first = reader.read_packet().unwrap();
-    assert_ne!(first[0], 0xff, "query errored: {:?}", &first);
+    assert_ne!(first[0], 0xff, "query errored: {first:?}");
     let column_count = usize::from(first[0]);
     assert!(column_count > 0, "the pipeline answers with result sets");
     for _ in 0..column_count {
@@ -178,7 +178,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory,
+            &PipelineSessionFactory::default(),
             &users(),
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,

@@ -27,6 +27,8 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
+use std::sync::{Arc, Mutex, MutexGuard};
+
 use tidb_ast::{DdlStmt, DmlStmt, Stmt};
 use tidb_datatype::{Datum, FieldType};
 use tidb_executor::{run_create_table_on, run_insert_on, run_select_meta_on, Catalog, DriverError};
@@ -76,23 +78,49 @@ pub enum StmtKind {
     Write,
 }
 
-/// A session: owns the catalog and runs statements against it.
+/// A process-wide catalog shared by every session, as Go's domain-owned
+/// `infoschema` is shared by every session of a TiDB instance.
+pub type SharedCatalog = Arc<Mutex<Catalog>>;
+
+/// A session: runs statements against a catalog shared with its peers.
+///
+/// Go sessions borrow the process's schema state rather than owning private
+/// copies, so a table one connection creates is visible to the others. This
+/// mirrors that with a shared, mutex-guarded catalog; the statement-level lock
+/// stands in for Go's schema-version/lease machinery, which is a separate
+/// tier (documented deferral).
 #[derive(Default)]
 pub struct Session {
-    catalog: Catalog,
+    catalog: SharedCatalog,
 }
 
 impl Session {
-    /// A fresh session with an empty catalog.
+    /// A fresh session with its own empty catalog.
     #[must_use]
     pub fn new() -> Self {
         Session::default()
     }
 
-    /// A read-only view of the session's catalog.
+    /// A session sharing `catalog` with its peers.
     #[must_use]
-    pub fn catalog(&self) -> &Catalog {
-        &self.catalog
+    pub fn with_catalog(catalog: SharedCatalog) -> Self {
+        Session { catalog }
+    }
+
+    /// The shared catalog handle, for opening a peer session over the same
+    /// schema state.
+    #[must_use]
+    pub fn shared_catalog(&self) -> SharedCatalog {
+        Arc::clone(&self.catalog)
+    }
+
+    /// Borrows the shared catalog for one statement. The lock is held for the
+    /// statement's duration only, which is the granularity Go's schema state
+    /// is consumed at.
+    fn lock_catalog(&self) -> Result<MutexGuard<'_, Catalog>, DriverError> {
+        self.catalog
+            .lock()
+            .map_err(|_| DriverError::CatalogPoisoned)
     }
 
     /// Classifies a statement by parsing alone (no execution), so a caller can
@@ -124,22 +152,23 @@ impl Session {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         match &stmt {
             Stmt::Query(_) => {
-                let (columns, rows) = run_select_meta_on(sql, &self.catalog)?;
+                let (columns, rows) = run_select_meta_on(sql, &*self.lock_catalog()?)?;
                 Ok(StmtOutput::Rows { columns, rows })
             }
             Stmt::Dml(dml) => match &**dml {
                 DmlStmt::Insert(_) => {
-                    Ok(StmtOutput::Affected(run_insert_on(sql, &mut self.catalog)?))
+                    let mut catalog = self.lock_catalog()?;
+                    Ok(StmtOutput::Affected(run_insert_on(sql, &mut catalog)?))
                 }
                 _ => Err(DriverError::Unsupported(
                     "this DML statement kind is not supported yet",
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
-                DdlStmt::CreateTable(_) => Ok(StmtOutput::Done(run_create_table_on(
-                    sql,
-                    &mut self.catalog,
-                )?)),
+                DdlStmt::CreateTable(_) => {
+                    let mut catalog = self.lock_catalog()?;
+                    Ok(StmtOutput::Done(run_create_table_on(sql, &mut catalog)?))
+                }
                 _ => Err(DriverError::Unsupported(
                     "this DDL statement kind is not supported yet",
                 )),
