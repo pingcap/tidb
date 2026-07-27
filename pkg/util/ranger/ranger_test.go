@@ -2640,8 +2640,10 @@ func TestUnionRangesPreservesCallerRanges(t *testing.T) {
 	sctx := tk.Session()
 	rctx := sctx.GetRangerCtx()
 
-	// Build 3 ranges where r1 and r2 overlap so they trigger the merge path.
+	// First group: r1 and r2 overlap, r3 is disjoint.
 	// r1 = [1, 3], r2 = [2, 4], r3 = [5, 7].
+	// Second group: r4 and r5 overlap, covers the "start new merge" branch.
+	// r4 = [10, 13], r5 = [12, 15].
 	binaryCollator := collate.GetBinaryCollator()
 	r1 := &ranger.Range{
 		LowVal:      []types.Datum{types.NewIntDatum(1)},
@@ -2664,17 +2666,34 @@ func TestUnionRangesPreservesCallerRanges(t *testing.T) {
 		HighExclude: false,
 		Collators:   []collate.Collator{binaryCollator},
 	}
-	input := ranger.Ranges{r1, r2, r3}
+	r4 := &ranger.Range{
+		LowVal:      []types.Datum{types.NewIntDatum(10)},
+		HighVal:     []types.Datum{types.NewIntDatum(13)},
+		LowExclude:  false,
+		HighExclude: false,
+		Collators:   []collate.Collator{binaryCollator},
+	}
+	r5 := &ranger.Range{
+		LowVal:      []types.Datum{types.NewIntDatum(12)},
+		HighVal:     []types.Datum{types.NewIntDatum(15)},
+		LowExclude:  false,
+		HighExclude: false,
+		Collators:   []collate.Collator{binaryCollator},
+	}
+	input := ranger.Ranges{r1, r2, r3, r4, r5}
 
 	// r1 and r2 overlap -> merged to [1, 4]. r3 is disjoint -> kept as [5, 7].
-	// Expected result: [[1, 4], [5, 7]].
+	// r4 and r5 overlap -> merged to [10, 15].
+	// Expected result: [[1, 4], [5, 7], [10, 15]].
 	result, err := ranger.UnionRanges(rctx, input, false /* mergeConsecutive */)
 	require.NoError(t, err)
-	require.Equal(t, 2, len(result))
+	require.Equal(t, 3, len(result))
 	require.Equal(t, int64(1), result[0].LowVal[0].GetInt64())
 	require.Equal(t, int64(4), result[0].HighVal[0].GetInt64())
 	require.Equal(t, int64(5), result[1].LowVal[0].GetInt64())
 	require.Equal(t, int64(7), result[1].HighVal[0].GetInt64())
+	require.Equal(t, int64(10), result[2].LowVal[0].GetInt64())
+	require.Equal(t, int64(15), result[2].HighVal[0].GetInt64())
 
 	// The original range objects must not be modified.
 	require.Equal(t, int64(1), r1.LowVal[0].GetInt64())
@@ -2686,16 +2705,26 @@ func TestUnionRangesPreservesCallerRanges(t *testing.T) {
 	require.Equal(t, int64(5), r3.LowVal[0].GetInt64())
 	require.Equal(t, int64(7), r3.HighVal[0].GetInt64())
 	require.False(t, r3.HighExclude)
+	require.Equal(t, int64(10), r4.LowVal[0].GetInt64())
+	require.Equal(t, int64(13), r4.HighVal[0].GetInt64())
+	require.False(t, r4.HighExclude)
+	require.Equal(t, int64(12), r5.LowVal[0].GetInt64())
+	require.Equal(t, int64(15), r5.HighVal[0].GetInt64())
+	require.False(t, r5.HighExclude)
 
 	// [1, 4] and [5, 7] are consecutive after encoding (PrefixNext makes
 	// the encoded end of [1, 4] touch the encoded start of [5, 7]),
-	// so all three ranges merge into one: [1, 7].
-	input = ranger.Ranges{r1, r2, r3}
+	// so the first three ranges merge into [1, 7].
+	// r4 and r5 overlap -> merged to [10, 15], disjoint from [1, 7].
+	// Expected result: [[1, 7], [10, 15]].
+	input = ranger.Ranges{r1, r2, r3, r4, r5}
 	result2, err := ranger.UnionRanges(rctx, input, true /* mergeConsecutive */)
 	require.NoError(t, err)
-	require.Equal(t, 1, len(result2))
+	require.Equal(t, 2, len(result2))
 	require.Equal(t, int64(1), result2[0].LowVal[0].GetInt64())
 	require.Equal(t, int64(7), result2[0].HighVal[0].GetInt64())
+	require.Equal(t, int64(10), result2[1].LowVal[0].GetInt64())
+	require.Equal(t, int64(15), result2[1].HighVal[0].GetInt64())
 
 	// The original range objects still must not be modified.
 	require.Equal(t, int64(1), r1.LowVal[0].GetInt64())
@@ -2707,6 +2736,12 @@ func TestUnionRangesPreservesCallerRanges(t *testing.T) {
 	require.Equal(t, int64(5), r3.LowVal[0].GetInt64())
 	require.Equal(t, int64(7), r3.HighVal[0].GetInt64())
 	require.False(t, r3.HighExclude)
+	require.Equal(t, int64(10), r4.LowVal[0].GetInt64())
+	require.Equal(t, int64(13), r4.HighVal[0].GetInt64())
+	require.False(t, r4.HighExclude)
+	require.Equal(t, int64(12), r5.LowVal[0].GetInt64())
+	require.Equal(t, int64(15), r5.HighVal[0].GetInt64())
+	require.False(t, r5.HighExclude)
 }
 
 func TestBinCollationRangeForIndex(t *testing.T) {
