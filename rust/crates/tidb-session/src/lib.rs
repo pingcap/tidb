@@ -28,14 +28,34 @@
 //! to remove when the driver's runners take parsed statements.
 
 use tidb_ast::{DdlStmt, DmlStmt, Stmt};
-use tidb_datatype::Datum;
-use tidb_executor::{run_create_table_on, run_insert_on, run_select_on, Catalog, DriverError};
+use tidb_datatype::{Datum, FieldType};
+use tidb_executor::{run_create_table_on, run_insert_on, run_select_meta_on, Catalog, DriverError};
 
 /// The result of running one statement.
 #[derive(Debug, PartialEq)]
 pub enum StmtResult {
     /// A query's result rows.
     Rows(Vec<Vec<Datum>>),
+    /// A DML statement's affected-row count.
+    Affected(u64),
+    /// A DDL statement completed (`false` = `IF NOT EXISTS` no-op).
+    Done(bool),
+}
+
+/// The result of running one statement, with wire-facing column metadata.
+///
+/// [`StmtResult::Rows`] loses column names/types; a server front end needs one
+/// `(name, type)` per result column to build protocol column definitions, so
+/// [`Session::run_with_columns`] returns this richer shape instead.
+#[derive(Debug, PartialEq)]
+pub enum StmtOutput {
+    /// A query's result columns and rows.
+    Rows {
+        /// One `(display name, field type)` per output column.
+        columns: Vec<(String, FieldType)>,
+        /// The result rows (one `Datum` per column).
+        rows: Vec<Vec<Datum>>,
+    },
     /// A DML statement's affected-row count.
     Affected(u64),
     /// A DDL statement completed (`false` = `IF NOT EXISTS` no-op).
@@ -64,19 +84,32 @@ impl Session {
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
     /// statement kind, and executes over the session catalog.
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {
+        Ok(match self.run_with_columns(sql)? {
+            StmtOutput::Rows { rows, .. } => StmtResult::Rows(rows),
+            StmtOutput::Affected(count) => StmtResult::Affected(count),
+            StmtOutput::Done(created) => StmtResult::Done(created),
+        })
+    }
+
+    /// Like [`Session::run`], but a query result also carries its column
+    /// metadata (`(name, type)` per column) for wire-protocol fronts.
+    pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         match &stmt {
-            Stmt::Query(_) => Ok(StmtResult::Rows(run_select_on(sql, &self.catalog)?)),
+            Stmt::Query(_) => {
+                let (columns, rows) = run_select_meta_on(sql, &self.catalog)?;
+                Ok(StmtOutput::Rows { columns, rows })
+            }
             Stmt::Dml(dml) => match &**dml {
                 DmlStmt::Insert(_) => {
-                    Ok(StmtResult::Affected(run_insert_on(sql, &mut self.catalog)?))
+                    Ok(StmtOutput::Affected(run_insert_on(sql, &mut self.catalog)?))
                 }
                 _ => Err(DriverError::Unsupported(
                     "this DML statement kind is not supported yet",
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
-                DdlStmt::CreateTable(_) => Ok(StmtResult::Done(run_create_table_on(
+                DdlStmt::CreateTable(_) => Ok(StmtOutput::Done(run_create_table_on(
                     sql,
                     &mut self.catalog,
                 )?)),

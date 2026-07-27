@@ -1488,9 +1488,11 @@ dependencies = [
  "tidb-datatype",
  "tidb-distsql",
  "tidb-exec",
+ "tidb-executor",
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
+ "tidb-session",
  "tidb-util",
 ]
 

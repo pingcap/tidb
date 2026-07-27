@@ -21,7 +21,9 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-planner = { path = "../tidb-planner" }
+tidb-executor = { path = "../tidb-executor" }
 tidb-protocol = { path = "../tidb-protocol" }
+tidb-session = { path = "../tidb-session" }
 tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]

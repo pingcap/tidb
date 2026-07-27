@@ -44,7 +44,8 @@ pub mod table_dual;
 
 pub use ddl::run_create_table_on;
 pub use driver::{
-    run_insert_on, run_select, run_select_on, Catalog, DriverError, MemTable, TableEntry,
+    run_insert_on, run_select, run_select_meta_on, run_select_on, Catalog, DriverError, MemTable,
+    SelectMeta, TableEntry,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};

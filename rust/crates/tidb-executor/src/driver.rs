@@ -172,6 +172,21 @@ pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
 /// Parses and runs a single-table (or `FROM`-less) `SELECT` against `catalog`,
 /// returning its rows as `Datum`s.
 pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, DriverError> {
+    run_select_meta_on(sql, catalog).map(|(_, rows)| rows)
+}
+
+/// A `SELECT` result with metadata: the output columns as `(name, type)`, then
+/// the rows.
+pub type SelectMeta = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
+
+/// Like [`run_select_on`], but also returns the result-column metadata the
+/// wire protocol needs: one `(name, type)` per output column.
+///
+/// Naming follows Go's result-field resolution in spirit, simplified for the
+/// seed driver: an `AS` alias wins; a plain column reference uses the column's
+/// own name; any other expression uses its restored text (Go's
+/// `RestoreString`); `*` expands to the table's column names.
+pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
     let select = match &stmt {
@@ -222,12 +237,20 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
     // Rewrite each projected field into an evaluable expression; `*` expands to
     // every table column in order (Go's unfoldWildStar).
     let mut exprs: Vec<Expression> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
     for field in select.fields.fields() {
         match field {
-            SelectField::Expr { expr, .. } => {
+            SelectField::Expr { expr, alias } => {
                 let rewritten = rewrite_expr_resolved(expr, &resolver)
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                 exprs.push(rewritten);
+                names.push(match (alias, expr) {
+                    (Some(alias), _) => alias.clone(),
+                    (None, tidb_ast::Expr::Column(path)) => {
+                        path.last().cloned().unwrap_or_else(|| expr.restore())
+                    }
+                    (None, _) => expr.restore(),
+                });
             }
             SelectField::Wildcard(qualifier) => {
                 let Some((table_name, _)) = table else {
@@ -242,10 +265,11 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
                         ));
                     }
                 }
-                for (i, (_, ft)) in column_list.iter().enumerate() {
+                for (i, (name, ft)) in column_list.iter().enumerate() {
                     let mut col = Column::new((i + 1) as i64, ft.clone());
                     col.index = i as i64;
                     exprs.push(Expression::Column(col));
+                    names.push(name.clone());
                 }
             }
         }
@@ -388,7 +412,8 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
         }
     }
     root.close()?;
-    Ok(rows)
+    let columns = names.into_iter().zip(ret_types).collect();
+    Ok((columns, rows))
 }
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against

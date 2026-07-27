@@ -42,6 +42,7 @@ mod listener;
 mod mysql_connection;
 mod native_password;
 mod node_config;
+mod pipeline_session;
 mod real_tikv_multi_node;
 mod real_tikv_node;
 pub mod resultset_source;
@@ -114,6 +115,9 @@ pub use native_password::{
 pub use node_config::{
     ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig,
     NodeConfigError,
+};
+pub use pipeline_session::{
+    MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
 pub use real_tikv_multi_node::{
     run_configured_multi_node, RealTiKvMultiServerSession, RealTiKvMultiSessionFactory,
