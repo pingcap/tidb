@@ -96,6 +96,9 @@ pub struct Session {
     txn: Option<Transaction>,
     /// The session's system and user variables.
     vars: SessionVars,
+    /// The warnings the last statement produced, which Go keeps in
+    /// `StmtCtx.warnings` and `SHOW WARNINGS` reads.
+    warnings: Vec<SqlWarning>,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     last_insert_id: u64,
@@ -115,6 +118,7 @@ impl Default for Session {
             catalog: SharedCatalog::default(),
             txn: None,
             vars: SessionVars::new(),
+            warnings: Vec::new(),
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
@@ -968,6 +972,7 @@ impl Session {
             catalog,
             txn: None,
             vars: SessionVars::new(),
+            warnings: Vec::new(),
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
@@ -1045,6 +1050,13 @@ impl Session {
         self.bind_variables(&mut stmt)?;
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
+        // Go's preprocessor runs before planning, so a gated clause is
+        // refused before any table is touched.
+        self.warnings.clear();
+        if let Stmt::Query(query) = &stmt {
+            self.check_noop_functions(query)?;
+            self.check_query_clauses(query)?;
+        }
         // Go raises ErrNoDB when a statement resolves an unqualified name and
         // no database is selected.
         if matches!(stmt, Stmt::Query(_) | Stmt::Dml(_) | Stmt::Ddl(_)) {
@@ -1172,6 +1184,215 @@ impl Session {
                 "this statement kind is not supported yet",
             )),
         }
+    }
+}
+
+/// A statement warning, which Go keeps in `StmtCtx` and `SHOW WARNINGS`
+/// reports as `Level | Code | Message`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlWarning {
+    /// The MySQL error code the warning carries.
+    pub code: u16,
+    /// The message text.
+    pub message: String,
+}
+
+/// Go `variable.NoopFuncsMode`: how a clause TiDB only implements as a
+/// no-op is treated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoopFuncsMode {
+    /// `OFF` (the default): the statement is refused.
+    Off,
+    /// `ON`: the clause is accepted and does nothing.
+    On,
+    /// `WARN`: the clause is accepted with a warning.
+    Warn,
+}
+
+impl Session {
+    /// The warnings the last statement produced.
+    #[must_use]
+    pub fn warnings(&self) -> &[SqlWarning] {
+        &self.warnings
+    }
+
+    /// The query clauses this tier parses but cannot execute.
+    ///
+    /// `INTO OUTFILE` writes a server-side file, which this seed has no path
+    /// for; Go returns an empty result set after writing the file, so
+    /// executing the query and returning rows instead would be silently
+    /// wrong. It is refused rather than ignored.
+    ///
+    /// ACCEPTED WITH A DEFERRAL (documented): `FOR UPDATE`. TiDB's default
+    /// `tidb_txn_mode` is pessimistic, where the clause takes row locks at
+    /// read time; this seed's transactions are optimistic, where TiDB itself
+    /// takes no read-time lock and resolves the conflict at COMMIT -- which
+    /// is exactly what this seed does. The rows returned therefore match;
+    /// what is missing is the pessimistic lock, not the result. `OF t`,
+    /// `NOWAIT`, `SKIP LOCKED` and `WAIT n` all only shape that missing
+    /// lock's waiting behavior, so they are accepted for the same reason.
+    fn check_query_clauses(&self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
+        let into_outfile = match query {
+            tidb_ast::QueryStmt::Select(select) => select.into_outfile.is_some(),
+            tidb_ast::QueryStmt::SetOpr(_) => false,
+        };
+        if into_outfile {
+            return Err(DriverError::Unsupported(
+                "SELECT ... INTO OUTFILE is not supported yet",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Go `preprocessor.checkNoopFuncs` + `checkGroupBy`: refuses the clauses
+    /// TiDB parses but only implements as no-ops, unless
+    /// `tidb_enable_noop_functions` says otherwise.
+    ///
+    /// Captured from TiDB with the variable at its `OFF` default:
+    /// `SELECT SQL_CALC_FOUND_ROWS ...`, `... FOR SHARE` and `... LOCK IN
+    /// SHARE MODE` all raise 1235; `FOR UPDATE` does not.
+    ///
+    /// DEFERRED (documented): `tidb_enable_shared_lock_promotion`, which
+    /// turns `FOR SHARE` into `FOR UPDATE` before this check, and the
+    /// `ForShareLockEnabledByNoop` statement flag that only a real locking
+    /// layer would read.
+    fn check_noop_functions(&mut self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
+        let mode = match self
+            .vars
+            .get_system("tidb_enable_noop_functions")
+            .unwrap_or_else(|_| "OFF".to_owned())
+            .to_ascii_uppercase()
+            .as_str()
+        {
+            "ON" | "1" => NoopFuncsMode::On,
+            "WARN" => NoopFuncsMode::Warn,
+            _ => NoopFuncsMode::Off,
+        };
+        let mut gated: Vec<&'static str> = Vec::new();
+        collect_noop_clauses(query, &mut gated);
+        if gated.is_empty() || mode == NoopFuncsMode::On {
+            return Ok(());
+        }
+        for clause in gated {
+            let message = format!(
+                "function {clause} has only noop implementation in tidb now, use \
+                 tidb_enable_noop_functions to enable these functions"
+            );
+            if mode == NoopFuncsMode::Off {
+                return Err(DriverError::FunctionsNoopImpl(clause));
+            }
+            self.warnings.push(SqlWarning {
+                code: 1235,
+                message,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Names every gated clause the query uses, in the order Go's preprocessor
+/// would reach them.
+///
+/// Go walks the whole statement tree, so a gated clause inside a derived
+/// table, a CTE or a subquery counts too; this walk covers the same
+/// containers.
+fn collect_noop_clauses(query: &tidb_ast::QueryStmt, out: &mut Vec<&'static str>) {
+    match query {
+        tidb_ast::QueryStmt::Select(select) => collect_noop_in_select(select, out),
+        tidb_ast::QueryStmt::SetOpr(set_opr) => collect_noop_in_set_opr(set_opr, out),
+    }
+}
+
+fn collect_noop_in_set_opr(set_opr: &tidb_ast::SetOprStmt, out: &mut Vec<&'static str>) {
+    if let Some(with) = &set_opr.with {
+        for cte in &with.ctes {
+            collect_noop_clauses(&cte.query, out);
+        }
+    }
+    for term in &set_opr.terms {
+        match &term.body {
+            tidb_ast::SetOprTermBody::Select(select) => collect_noop_in_select(select, out),
+            tidb_ast::SetOprTermBody::Nested(nested) => collect_noop_in_set_opr(nested, out),
+        }
+    }
+    // A set operation carries its own trailing locking clause, which the
+    // grammar attaches to the whole statement rather than the last term.
+    if share_lock(&set_opr.lock) || share_lock(&set_opr.outer_lock) {
+        out.push("LOCK IN SHARE MODE");
+    }
+}
+
+/// Whether a locking clause is the shared kind, which is the gated one --
+/// `FOR UPDATE` is a real lock in TiDB and is never gated.
+fn share_lock(lock: &Option<tidb_ast::SelectLock>) -> bool {
+    matches!(
+        lock,
+        Some(tidb_ast::SelectLock {
+            kind: tidb_ast::LockKind::Share,
+            ..
+        })
+    )
+}
+
+fn collect_noop_in_select(select: &tidb_ast::SelectStmt, out: &mut Vec<&'static str>) {
+    if select.calc_found_rows {
+        out.push("SQL_CALC_FOUND_ROWS");
+    }
+    if share_lock(&select.lock) {
+        out.push("LOCK IN SHARE MODE");
+    }
+    // Go's `checkGroupBy`: a written ASC/DESC on a GROUP BY item is a no-op,
+    // because TiDB does not order groups.
+    if select.group_by.iter().any(|item| item.desc.is_some()) {
+        out.push("GROUP BY expr ASC|DESC");
+    }
+    if let Some(with) = &select.with {
+        for cte in &with.ctes {
+            collect_noop_clauses(&cte.query, out);
+        }
+    }
+    if let Some(from) = &select.from {
+        collect_noop_in_join(from, out);
+    }
+    for expr in select
+        .where_clause
+        .iter()
+        .chain(select.having.iter())
+        .chain(select.group_by.iter().map(|item| &item.expr))
+        .chain(select.order_by.iter().map(|item| &item.expr))
+    {
+        collect_noop_in_expr(expr, out);
+    }
+}
+
+/// The subqueries a `FROM` clause holds, which are derived tables.
+fn collect_noop_in_join(join: &tidb_ast::Join, out: &mut Vec<&'static str>) {
+    for node in std::iter::once(&join.left).chain(join.right.iter()) {
+        match node {
+            tidb_ast::JoinNode::Derived { subquery, .. } => collect_noop_clauses(subquery, out),
+            tidb_ast::JoinNode::Join(nested) => collect_noop_in_join(nested, out),
+            tidb_ast::JoinNode::Table(_) => {}
+        }
+    }
+    if let Some(on) = &join.on {
+        collect_noop_in_expr(on, out);
+    }
+}
+
+/// The subqueries an expression holds.
+fn collect_noop_in_expr(expr: &tidb_ast::Expr, out: &mut Vec<&'static str>) {
+    match expr {
+        tidb_ast::Expr::Subquery(query) => collect_noop_clauses(query, out),
+        tidb_ast::Expr::Exists { subquery, .. } => collect_noop_clauses(subquery, out),
+        tidb_ast::Expr::InSubquery { expr, subquery, .. } => {
+            collect_noop_in_expr(expr, out);
+            collect_noop_clauses(subquery, out);
+        }
+        tidb_ast::Expr::CompareSubquery { left, subquery, .. } => {
+            collect_noop_in_expr(left, out);
+            collect_noop_clauses(subquery, out);
+        }
+        _ => {}
     }
 }
 
@@ -2359,6 +2580,99 @@ mod tests {
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
         }
+    }
+
+    /// The clauses TiDB parses but only implements as no-ops, checked
+    /// against captured TiDB output with `tidb_enable_noop_functions` at its
+    /// `OFF` default.
+    ///
+    /// NOT PORTED from Go's own suites: `tidb_enable_shared_lock_promotion`
+    /// (no locking layer here to promote to) and the `READ ONLY` /
+    /// `OFFLINE MODE` / `sql_auto_is_null` gates, which belong to variable
+    /// and transaction surfaces this tier does not have.
+    #[test]
+    fn noop_function_gate() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1, 10), (2, 20)")
+            .unwrap();
+
+        // Captured: FOR UPDATE runs and returns the rows.
+        assert_eq!(
+            session
+                .run("SELECT b FROM t WHERE a = 1 FOR UPDATE")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(10)]])
+        );
+        // Its waiting options only shape a lock this tier does not take.
+        session.run("SELECT b FROM t FOR UPDATE NOWAIT").unwrap();
+        session.run("SELECT b FROM t FOR UPDATE OF t").unwrap();
+
+        // Captured: the shared lock and SQL_CALC_FOUND_ROWS are 1235.
+        for sql in [
+            "SELECT b FROM t FOR SHARE",
+            "SELECT b FROM t LOCK IN SHARE MODE",
+            "SELECT SQL_CALC_FOUND_ROWS b FROM t LIMIT 1",
+            "SELECT b FROM t GROUP BY b DESC",
+        ] {
+            assert!(
+                matches!(session.run(sql), Err(DriverError::FunctionsNoopImpl(_))),
+                "expected a noop-function error from {sql}"
+            );
+        }
+        // An explicit ASC is written too, so it is gated the same way.
+        assert!(matches!(
+            session.run("SELECT b FROM t GROUP BY b ASC"),
+            Err(DriverError::FunctionsNoopImpl("GROUP BY expr ASC|DESC"))
+        ));
+        // A GROUP BY with no direction is not.
+        session.run("SELECT b FROM t GROUP BY b").unwrap();
+
+        // The gate reaches a subquery, a derived table and a set operation.
+        assert!(matches!(
+            session.run("SELECT b FROM t WHERE a IN (SELECT a FROM t LOCK IN SHARE MODE)"),
+            Err(DriverError::FunctionsNoopImpl(_))
+        ));
+        assert!(matches!(
+            session.run("SELECT x.b FROM (SELECT b FROM t LOCK IN SHARE MODE) x"),
+            Err(DriverError::FunctionsNoopImpl(_))
+        ));
+        assert!(matches!(
+            session.run("SELECT b FROM t UNION SELECT a FROM t LOCK IN SHARE MODE"),
+            Err(DriverError::FunctionsNoopImpl(_))
+        ));
+
+        // ON: the clause is accepted and does nothing, with no warning.
+        session
+            .apply_set("SET tidb_enable_noop_functions = 'ON'")
+            .unwrap();
+        session.run("SELECT b FROM t LOCK IN SHARE MODE").unwrap();
+        assert!(session.warnings().is_empty());
+
+        // WARN: accepted, with the same message as a warning.
+        session
+            .apply_set("SET tidb_enable_noop_functions = 'WARN'")
+            .unwrap();
+        session.run("SELECT b FROM t LOCK IN SHARE MODE").unwrap();
+        assert_eq!(session.warnings().len(), 1);
+        assert_eq!(session.warnings()[0].code, 1235);
+        assert!(session.warnings()[0].message.contains("LOCK IN SHARE MODE"));
+        // The warnings belong to the last statement only.
+        session.run("SELECT b FROM t").unwrap();
+        assert!(session.warnings().is_empty());
+
+        // INTO OUTFILE writes a server-side file, which this tier cannot do,
+        // so it is refused rather than answered with rows.
+        session
+            .apply_set("SET tidb_enable_noop_functions = 'OFF'")
+            .unwrap();
+        assert!(matches!(
+            session.run("SELECT b FROM t INTO OUTFILE '/tmp/x'"),
+            Err(DriverError::Unsupported(_))
+        ));
     }
 
     /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB

@@ -258,6 +258,16 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 "can't drop column {name} with composite index covered or Primary Key covered now"
             ),
         ),
+        // Go: "function %s has only noop implementation in tidb now, use
+        // tidb_enable_noop_functions to enable these functions" (1235).
+        tidb_executor::DriverError::FunctionsNoopImpl(clause) => SqlQueryError::new(
+            1235,
+            *b"42000",
+            format!(
+                "function {clause} has only noop implementation in tidb now, use \
+                 tidb_enable_noop_functions to enable these functions"
+            ),
+        ),
         // TiDB: "Unsupported modify column: %s".
         tidb_executor::DriverError::UnsupportedModifyColumn(reason) => SqlQueryError::new(
             8200,

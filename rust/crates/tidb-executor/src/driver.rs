@@ -440,6 +440,9 @@ pub enum DriverError {
     },
     /// TiDB `ErrUnsupportedModifyColumn`-family (8200).
     UnsupportedDropIntegerPrimaryKey,
+    /// Go `ErrFunctionsNoopImpl` (1235): a clause TiDB only implements as a
+    /// no-op, refused unless `tidb_enable_noop_functions` allows it.
+    FunctionsNoopImpl(&'static str),
     /// TiDB `ErrUnsupportedModifyColumn` (8200), carrying Go's reason text.
     UnsupportedModifyColumn(&'static str),
     /// Go `ErrBadField` (1054): the column is not in the table.
