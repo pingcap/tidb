@@ -511,6 +511,32 @@ fn run_select_stmt(
     // narrows the source, it does not replace the filter.
     if let Some(table) = single_kv_table(&select.from, catalog, current_db) {
         let columns = scope.column_list();
+        // Go tries the batch point get before the single one.
+        if let Some(handles) = try_batch_point_get(select, &table, &columns)? {
+            let mut table = table.clone();
+            let mut rows = Vec::with_capacity(handles.len());
+            for handle in &handles {
+                if let Some(row) = table
+                    .get_row_by_handle(handle)
+                    .map_err(|e| DriverError::Parse(format!("batch point get failed: {e:?}")))?
+                {
+                    rows.push(row);
+                }
+            }
+            let schema_columns: Vec<Column> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ft))| {
+                    let mut col = Column::new((i + 1) as i64, ft.clone());
+                    col.index = i as i64;
+                    col
+                })
+                .collect();
+            from_source = Some(Box::new(MemTableSourceExec::new(
+                ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                rows,
+            )));
+        } else
         // An index range scan, when no point get applies: the ranges replace
         // the full scan with the rows the index covers, and the WHERE stays
         // above to apply the conditions the ranges did not consume.
@@ -2036,6 +2062,103 @@ fn single_kv_table(
         TableEntry::Kv(kv) => Some(kv.clone()),
         TableEntry::Mem(_) => None,
     }
+}
+
+/// Go `tryWhereIn2BatchPointGet`: a single-table `SELECT` whose whole `WHERE`
+/// is `column IN (constants)` over the handle or a single-column unique index
+/// reads those rows directly instead of scanning.
+///
+/// Go rejects the fast plan when `ORDER BY`, `GROUP BY`, `LIMIT`, `HAVING`,
+/// `DISTINCT` or a window spec is present, when the `IN` is negated, and when
+/// its list is empty. The handle path applies when the table's primary key IS
+/// the handle and the column names it; otherwise a unique index whose only
+/// column it is.
+///
+/// DEFERRED (documented): Go's row form, `(a, b) IN ((1, 2), (3, 4))`, which
+/// needs multi-column key lookup.
+fn try_batch_point_get(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+) -> Result<Option<Vec<TableHandle>>, DriverError> {
+    if select.having.is_some()
+        || !select.order_by.is_empty()
+        || !select.group_by.is_empty()
+        || select.limit.is_some()
+        || select.distinct
+    {
+        return Ok(None);
+    }
+    let Some(where_clause) = &select.where_clause else {
+        return Ok(None);
+    };
+    // The WHERE must be exactly the IN, as Go requires a PatternInExpr.
+    let tidb_ast::Expr::In { expr, list, not } = where_clause else {
+        return Ok(None);
+    };
+    if *not || list.is_empty() {
+        return Ok(None);
+    }
+    let tidb_ast::Expr::Column(path) = &**expr else {
+        return Ok(None);
+    };
+    let Some(name) = path.last() else {
+        return Ok(None);
+    };
+
+    // Every list element must be a constant, or this is not a point plan.
+    let mut values = Vec::with_capacity(list.len());
+    for item in list {
+        let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(item, &NoResolver) else {
+            return Ok(None);
+        };
+        let Ok(value) = constant.eval() else {
+            return Ok(None);
+        };
+        values.push(value);
+    }
+
+    // The handle path.
+    if let Some(offset) = table.pk_handle_offset() {
+        if columns[offset].0.eq_ignore_ascii_case(name) {
+            let mut handles = Vec::with_capacity(values.len());
+            for value in &values {
+                match value {
+                    Datum::Int(v) => handles.push(TableHandle::Int(*v)),
+                    Datum::UInt(v) => handles.push(TableHandle::Int(*v as i64)),
+                    // A non-integer constant names no integer handle, so it
+                    // simply matches nothing.
+                    _ => {}
+                }
+            }
+            return Ok(Some(handles));
+        }
+    }
+
+    // The unique-index path.
+    let mut table = table.clone();
+    for index in table.indexes().to_vec() {
+        if !index.unique || index.column_offsets.len() != 1 {
+            continue;
+        }
+        if !columns[index.column_offsets[0]]
+            .0
+            .eq_ignore_ascii_case(name)
+        {
+            continue;
+        }
+        let mut handles = Vec::new();
+        for value in &values {
+            if let Some(handle) = table
+                .lookup_unique(index.id, std::slice::from_ref(value))
+                .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
+            {
+                handles.push(handle);
+            }
+        }
+        return Ok(Some(handles));
+    }
+    Ok(None)
 }
 
 /// One `column = constant` equality from a `WHERE`, Go's `nameValuePair`.
@@ -4612,6 +4735,132 @@ mod tests {
             ),
             Err(DriverError::WrongColumnSpecifier(_))
         ));
+    }
+
+    /// Go's tryWhereIn2BatchPointGet: `col IN (constants)` over the handle or
+    /// a single-column unique index reads those rows directly. Results must
+    /// match the scan in every case, including the shapes Go rejects.
+    #[test]
+    fn batch_point_get() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE b (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO b VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        let ids = |sql: &str, catalog: &Catalog| {
+            let mut got: Vec<i64> = run_select_on(sql, catalog)
+                .unwrap()
+                .into_iter()
+                .map(|row| match row[0] {
+                    Datum::Int(value) => value,
+                    ref other => panic!("expected an int, got {other:?}"),
+                })
+                .collect();
+            got.sort_unstable();
+            got
+        };
+
+        // Handle path, including a value that matches nothing.
+        assert_eq!(
+            ids("SELECT id FROM b WHERE id IN (1, 3)", &catalog),
+            vec![1, 3]
+        );
+        assert_eq!(
+            ids("SELECT id FROM b WHERE id IN (3, 99)", &catalog),
+            vec![3]
+        );
+        assert_eq!(
+            ids("SELECT id FROM b WHERE id IN (99)", &catalog),
+            Vec::<i64>::new()
+        );
+        // Unique-index path.
+        assert_eq!(
+            ids("SELECT id FROM b WHERE code IN ('a', 'c')", &catalog),
+            vec![1, 3]
+        );
+
+        // Shapes Go rejects fall back to the scan and stay correct: NOT IN,
+        // a non-key column, and an IN with anything else in the WHERE.
+        assert_eq!(
+            ids("SELECT id FROM b WHERE id NOT IN (1, 3)", &catalog),
+            vec![2]
+        );
+        assert_eq!(
+            ids("SELECT id FROM b WHERE v IN (20, 30)", &catalog),
+            vec![2, 3]
+        );
+        assert_eq!(
+            ids("SELECT id FROM b WHERE id IN (1, 3) AND v = 30", &catalog),
+            vec![3]
+        );
+        // Go also rejects it with ORDER BY, LIMIT or DISTINCT present.
+        assert_eq!(
+            ids("SELECT id FROM b WHERE id IN (3, 1) ORDER BY id", &catalog),
+            vec![1, 3]
+        );
+        assert_eq!(
+            run_select_on("SELECT id FROM b WHERE id IN (1, 2, 3) LIMIT 2", &catalog)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    /// The answers above would be right from a scan too, so this asserts the
+    /// DECISION: which shapes Go's batch point get claims.
+    #[test]
+    fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE bd (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("INSERT INTO bd VALUES (1, 'a', 10)", &mut catalog).unwrap();
+        let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("bd") else {
+            panic!("expected a kv table");
+        };
+        let columns = table
+            .columns
+            .iter()
+            .map(|c| (c.name.clone(), c.field_type.clone()))
+            .collect::<Vec<_>>();
+        let decides = |sql: &str| {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            let Stmt::Query(query) = &stmt else {
+                panic!("not a query")
+            };
+            let QueryStmt::Select(select) = &**query else {
+                panic!("not a select")
+            };
+            try_batch_point_get(select, table, &columns).unwrap()
+        };
+
+        assert_eq!(
+            decides("SELECT v FROM bd WHERE id IN (1, 2)"),
+            Some(vec![TableHandle::Int(1), TableHandle::Int(2)]),
+            "the handle path does not probe, as the single point get does not"
+        );
+        assert_eq!(
+            decides("SELECT v FROM bd WHERE code IN ('a', 'zz')"),
+            Some(vec![TableHandle::Int(1)]),
+            "the index path probes, so a missing key yields no handle"
+        );
+        // Rejected shapes.
+        assert_eq!(decides("SELECT v FROM bd WHERE id NOT IN (1)"), None);
+        assert_eq!(decides("SELECT v FROM bd WHERE v IN (1)"), None);
+        assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) AND v = 1"), None);
+        assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) ORDER BY v"), None);
+        assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) LIMIT 1"), None);
+        assert_eq!(decides("SELECT DISTINCT v FROM bd WHERE id IN (1)"), None);
+        assert_eq!(decides("SELECT v FROM bd WHERE id = 1"), None);
     }
 
     #[test]
