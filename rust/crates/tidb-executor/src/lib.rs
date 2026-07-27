@@ -40,7 +40,9 @@ pub mod selection;
 pub mod sort;
 pub mod table_dual;
 
-pub use driver::{run_insert_on, run_select, run_select_on, Catalog, DriverError, MemTable};
+pub use driver::{
+    run_insert_on, run_select, run_select_on, Catalog, DriverError, MemTable, TableEntry,
+};
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use kv_table::{KvColumn, KvTable, TableScanExec};
 pub use limit::LimitExec;

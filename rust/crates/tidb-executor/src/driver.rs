@@ -30,6 +30,7 @@
 //! replaces [`MemTableSourceExec`] when storage/tablecodec integration lands.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::kv_table::{KvTable, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::projection::ProjectionExec;
@@ -58,16 +59,46 @@ pub struct MemTable {
 /// Table names are case-insensitive, as in MySQL.
 #[derive(Clone, Debug, Default)]
 pub struct Catalog {
-    tables: HashMap<String, MemTable>,
+    tables: HashMap<String, TableEntry>,
+}
+
+/// A catalog table's backing store.
+#[derive(Clone, Debug)]
+pub enum TableEntry {
+    /// A plain value matrix (the original mock backing).
+    Mem(MemTable),
+    /// Rows stored as real TiKV-format bytes (see [`crate::kv_table`]).
+    Kv(KvTable),
+}
+
+impl TableEntry {
+    /// The table's columns as `(name, type)` in schema order.
+    fn column_list(&self) -> Vec<(String, FieldType)> {
+        match self {
+            TableEntry::Mem(mem) => mem.columns.clone(),
+            TableEntry::Kv(kv) => kv
+                .columns
+                .iter()
+                .map(|c| (c.name.clone(), c.field_type.clone()))
+                .collect(),
+        }
+    }
 }
 
 impl Catalog {
-    /// Registers `table` under `name` (case-insensitive).
+    /// Registers a matrix-backed `table` under `name` (case-insensitive).
     pub fn register(&mut self, name: &str, table: MemTable) {
-        self.tables.insert(name.to_lowercase(), table);
+        self.tables
+            .insert(name.to_lowercase(), TableEntry::Mem(table));
     }
 
-    fn get(&self, name: &str) -> Option<&MemTable> {
+    /// Registers a TiKV-format-byte-backed `table` under `name`.
+    pub fn register_kv(&mut self, name: &str, table: KvTable) {
+        self.tables
+            .insert(name.to_lowercase(), TableEntry::Kv(table));
+    }
+
+    fn get(&self, name: &str) -> Option<&TableEntry> {
         self.tables.get(&name.to_lowercase())
     }
 }
@@ -140,7 +171,7 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
     };
 
     // Resolve FROM: none -> table-dual; a single plain table -> the catalog.
-    let table: Option<(&str, &MemTable)> = match &select.from {
+    let table: Option<(&str, &TableEntry)> = match &select.from {
         None => None,
         Some(join) => {
             if join.right.is_some() {
@@ -167,10 +198,11 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
     };
 
     // The column resolver for this query's scope.
-    let no_columns: [(String, FieldType); 0] = [];
+    let column_list: Vec<(String, FieldType)> =
+        table.map_or_else(Vec::new, |(_, t)| t.column_list());
     let resolver = TableResolver {
         table_name: table.map_or("", |(name, _)| name),
-        columns: table.map_or(&no_columns[..], |(_, t)| &t.columns),
+        columns: &column_list,
     };
 
     // Rewrite each projected field into an evaluable expression; `*` expands to
@@ -184,7 +216,7 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
                 exprs.push(rewritten);
             }
             SelectField::Wildcard(qualifier) => {
-                let Some((table_name, mem)) = table else {
+                let Some((table_name, _)) = table else {
                     return Err(DriverError::Unsupported(
                         "`*` is not supported in a FROM-less SELECT",
                     ));
@@ -196,7 +228,7 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
                         ));
                     }
                 }
-                for (i, (_, ft)) in mem.columns.iter().enumerate() {
+                for (i, (_, ft)) in column_list.iter().enumerate() {
                     let mut col = Column::new((i + 1) as i64, ft.clone());
                     col.index = i as i64;
                     exprs.push(Expression::Column(col));
@@ -226,11 +258,11 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
         .map(|c| c.ret_type.clone().expect("output column has a type"))
         .collect();
 
-    // Source: the mem-table rows, or one virtual row from a table-dual.
+    // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
+    // from a table-dual.
     let (mut source, source_schema): (Box<dyn Executor>, Schema) = match table {
-        Some((_, mem)) => {
-            let source_columns: Vec<Column> = mem
-                .columns
+        Some((_, entry)) => {
+            let source_columns: Vec<Column> = column_list
                 .iter()
                 .enumerate()
                 .map(|(i, (_, ft))| {
@@ -240,13 +272,17 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
                 })
                 .collect();
             let schema = Schema::new(source_columns);
-            (
-                Box::new(MemTableSourceExec::new(
+            let exec: Box<dyn Executor> = match entry {
+                TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
                     ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
                     mem.rows.clone(),
                 )),
-                schema,
-            )
+                TableEntry::Kv(kv) => Box::new(TableScanExec::new(
+                    ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    kv.clone(),
+                )),
+            };
+            (exec, schema)
         }
         None => (
             Box::new(TableDualExec::new(
@@ -383,6 +419,7 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
         .tables
         .get_mut(&table_name.to_lowercase())
         .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+    let column_list = table.column_list();
 
     // Map an explicit column list to table offsets; without one, values map to
     // every column in order.
@@ -391,15 +428,14 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
             .columns
             .iter()
             .map(|name| {
-                table
-                    .columns
+                column_list
                     .iter()
                     .position(|(n, _)| n.eq_ignore_ascii_case(name))
                     .ok_or(DriverError::Unsupported("unknown column in column list"))
             })
             .collect::<Result<_, _>>()?
     } else {
-        (0..table.columns.len()).collect()
+        (0..column_list.len()).collect()
     };
 
     // Evaluate each VALUES row (constant expressions over the dual row).
@@ -416,7 +452,7 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
                 "VALUES arity does not match the column list",
             ));
         }
-        let mut row = vec![Datum::Null; table.columns.len()];
+        let mut row = vec![Datum::Null; column_list.len()];
         for (expr, &offset) in value_row.iter().zip(&target_offsets) {
             let rewritten = rewrite_expr_resolved(expr, &NoResolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
@@ -428,7 +464,15 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
         new_rows.push(row);
         inserted += 1;
     }
-    table.rows.extend(new_rows);
+    match table {
+        TableEntry::Mem(mem) => mem.rows.extend(new_rows),
+        TableEntry::Kv(kv) => {
+            for row in &new_rows {
+                kv.insert_row(row)
+                    .map_err(|e| DriverError::Parse(format!("row encode failed: {e:?}")))?;
+            }
+        }
+    }
     Ok(inserted)
 }
 
@@ -578,6 +622,54 @@ mod tests {
         // Arity mismatch and unknown table are rejected.
         assert!(run_insert_on("INSERT INTO t (a) VALUES (1, 2)", &mut catalog).is_err());
         assert!(run_insert_on("INSERT INTO missing VALUES (1)", &mut catalog).is_err());
+    }
+
+    /// The deployment-ladder proof: INSERT and SELECT round-trip through a
+    /// table whose rows are genuine TiKV-format bytes (record keys + v2 row
+    /// values), not a value matrix.
+    #[test]
+    fn sql_round_trips_through_real_tikv_bytes() {
+        use crate::kv_table::{KvColumn, KvTable};
+        use tidb_datatype::FieldTypeCode;
+        let mut catalog = Catalog::default();
+        catalog.register_kv(
+            "kt",
+            KvTable::new(
+                77,
+                vec![
+                    KvColumn {
+                        name: "a".to_owned(),
+                        id: 1,
+                        field_type: FieldType::new(FieldTypeCode::LongLong),
+                    },
+                    KvColumn {
+                        name: "b".to_owned(),
+                        id: 2,
+                        field_type: FieldType::new(FieldTypeCode::LongLong),
+                    },
+                ],
+            ),
+        );
+
+        assert_eq!(
+            run_insert_on(
+                "INSERT INTO kt VALUES (1, 10), (2, 20), (3, 30)",
+                &mut catalog
+            )
+            .unwrap(),
+            3
+        );
+        assert_eq!(
+            run_select_on("SELECT a, b FROM kt WHERE a > 1 ORDER BY b DESC", &catalog).unwrap(),
+            vec![
+                vec![Datum::Int(3), Datum::Int(30)],
+                vec![Datum::Int(2), Datum::Int(20)],
+            ]
+        );
+        assert_eq!(
+            run_select_on("SELECT a + b FROM kt WHERE a = 1", &catalog).unwrap(),
+            vec![vec![Datum::Int(11)]]
+        );
     }
 
     #[test]
