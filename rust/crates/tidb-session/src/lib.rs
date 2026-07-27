@@ -151,6 +151,98 @@ fn var_error(error: VarError) -> DriverError {
     })
 }
 
+/// Go `mysql.DefaultCharset` and the collation `getDefaultCollate` returns for
+/// it, which is what a table with no explicit charset reports.
+const TABLE_CHARSET: &str = "utf8mb4";
+const TABLE_COLLATE: &str = "utf8mb4_bin";
+
+/// Go `stringutil.Escape` with a non-ANSI_QUOTES sql_mode: backtick-quoted,
+/// with an embedded backtick doubled.
+fn escape_name(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// Go `constructResultOfShowCreateTable`, over the metadata this seed keeps.
+///
+/// The shape is Go's line for line: the header, two-space-indented column
+/// clauses separated by ",\n", the clustered primary key when the handle is
+/// one, then the indexes, then the closing paren with the engine and charset.
+///
+/// NOT MODELLED (documented, and each one rejected at DDL time so no table can
+/// carry it): generated columns, AUTO_INCREMENT, AUTO_RANDOM, ON UPDATE
+/// CURRENT_TIMESTAMP, column and index comments, foreign keys, check
+/// constraints, partitioning, temporary tables, views and sequences.
+/// Per-column CHARACTER SET / COLLATE clauses are omitted because this seed
+/// stores no per-column charset, so every column takes the table's.
+fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String {
+    let mut out = format!("CREATE TABLE {} (\n", escape_name(name));
+    let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
+
+    for column in &table.columns {
+        let mut clause = format!(
+            "  {} {}",
+            escape_name(&column.name),
+            column.field_type.compact_str(false)
+        );
+        let not_null = column.field_type.flags() & NOT_NULL_FLAG != 0;
+        if not_null {
+            clause.push_str(" NOT NULL");
+        }
+        // Go prints nothing for a column carrying NoDefaultValueFlag, which is
+        // a NOT NULL column with no DEFAULT clause; a nullable column with no
+        // DEFAULT reports DEFAULT NULL, as MySQL does.
+        match &column.default_value {
+            Some(Datum::Null) => clause.push_str(" DEFAULT NULL"),
+            Some(value) => {
+                // Go quotes every non-bit default, integers included.
+                let text = datum_text(value).unwrap_or_default();
+                clause.push_str(&format!(" DEFAULT '{text}'"));
+            }
+            None if !not_null => clause.push_str(" DEFAULT NULL"),
+            None => {}
+        }
+        clauses.push(clause);
+    }
+
+    // Go emits the handle primary key here, because PKIsHandle keeps it out of
+    // the index list.
+    if let Some(offset) = table.pk_handle_offset() {
+        clauses.push(format!(
+            "  PRIMARY KEY ({}) /*T![clustered_index] CLUSTERED */",
+            escape_name(&table.columns[offset].name)
+        ));
+    }
+
+    for index in table.indexes() {
+        let columns = index
+            .column_offsets
+            .iter()
+            .map(|offset| escape_name(&table.columns[*offset].name))
+            .collect::<Vec<_>>()
+            .join(",");
+        if index.name.eq_ignore_ascii_case("PRIMARY") {
+            // A primary key that is not the handle is non-clustered here,
+            // since this seed builds no clustered common handle.
+            clauses.push(format!(
+                "  PRIMARY KEY ({columns}) /*T![clustered_index] NONCLUSTERED */"
+            ));
+        } else if index.unique {
+            clauses.push(format!(
+                "  UNIQUE KEY {} ({columns})",
+                escape_name(&index.name)
+            ));
+        } else {
+            clauses.push(format!("  KEY {} ({columns})", escape_name(&index.name)));
+        }
+    }
+
+    out.push_str(&clauses.join(",\n"));
+    out.push_str(&format!(
+        "\n) ENGINE=InnoDB DEFAULT CHARSET={TABLE_CHARSET} COLLATE={TABLE_COLLATE}"
+    ));
+    out
+}
+
 /// Go `table.ColDescFieldNames(false)`: the columns `SHOW COLUMNS` and
 /// `DESCRIBE` produce.
 const COL_DESC_FIELD_NAMES: &[&str] = &["Field", "Type", "Null", "Key", "Default", "Extra"];
@@ -323,6 +415,46 @@ impl Session {
                     }
                     let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                     Ok(Some(string_column_output("Database", names)))
+                }
+                // Go `fetchShowCreateTable`.
+                tidb_ast::AdminStmt::ShowCreate { kind, name, .. } => {
+                    if *kind != tidb_ast::ShowCreateKind::Table {
+                        return Ok(None);
+                    }
+                    let current = self.require_current_database()?.to_owned();
+                    let (database, table_name) = match name.as_slice() {
+                        [table] => (current, table.clone()),
+                        [database, table] => (database.clone(), table.clone()),
+                        _ => return Err(DriverError::Unsupported("empty table name")),
+                    };
+                    let (text, reported) = self.with_catalog_mut(|catalog| {
+                        let Some(entry) = catalog.table_in(&database, &table_name) else {
+                            return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
+                                format!("{database}.{table_name}"),
+                            )));
+                        };
+                        let tidb_executor::TableEntry::Kv(table) = entry else {
+                            return Err(DriverError::Unsupported(
+                                "SHOW CREATE TABLE needs a storage-backed table",
+                            ));
+                        };
+                        Ok((
+                            show_create_table_text(&table_name, table),
+                            table_name.clone(),
+                        ))
+                    })?;
+                    let field_type =
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            ("Table".to_owned(), field_type.clone()),
+                            ("Create Table".to_owned(), field_type),
+                        ],
+                        rows: vec![vec![
+                            Datum::Bytes(reported.into_bytes()),
+                            Datum::Bytes(text.into_bytes()),
+                        ]],
+                    }))
                 }
                 // Go `fetchShowColumns`.
                 tidb_ast::AdminStmt::ShowColumns(show) => {
@@ -1348,6 +1480,121 @@ mod tests {
 
         // An unknown table is an error, not empty output.
         assert!(session.run("SHOW COLUMNS FROM nope").is_err());
+    }
+
+    /// SHOW CREATE TABLE, checked against output captured from real TiDB by
+    /// running the same DDL through `pkg/executor/test/showtest` and printing
+    /// `show create table`. Every expectation below is that captured text.
+    #[test]
+    fn show_create_table() {
+        let mut session = Session::new();
+        let create = |session: &mut Session, sql: &str, name: &str| {
+            session.run(sql).unwrap();
+            match session
+                .run_with_columns(&format!("SHOW CREATE TABLE {name}"))
+                .unwrap()
+            {
+                StmtOutput::Rows { columns, rows } => {
+                    assert_eq!(
+                        columns.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+                        ["Table", "Create Table"]
+                    );
+                    assert_eq!(datum_text(&rows[0][0]).unwrap(), name);
+                    datum_text(&rows[0][1]).unwrap()
+                }
+                other => panic!("expected rows, got {other:?}"),
+            }
+        };
+
+        // Captured from TiDB verbatim.
+        assert_eq!(
+            create(
+                &mut session,
+                "create table t1 (id bigint primary key, code varchar(8) unique, \
+                 tag varchar(4), v bigint, key tag_idx (tag))",
+                "t1"
+            ),
+            "CREATE TABLE `t1` (\n  \
+             `id` bigint(20) NOT NULL,\n  \
+             `code` varchar(8) DEFAULT NULL,\n  \
+             `tag` varchar(4) DEFAULT NULL,\n  \
+             `v` bigint(20) DEFAULT NULL,\n  \
+             PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  \
+             KEY `tag_idx` (`tag`),\n  \
+             UNIQUE KEY `code` (`code`)\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        );
+
+        assert_eq!(
+            create(
+                &mut session,
+                "create table t2 (a bigint default 7, b varchar(4) default 'zz', \
+                 c bigint not null, d bigint)",
+                "t2"
+            ),
+            "CREATE TABLE `t2` (\n  \
+             `a` bigint(20) DEFAULT '7',\n  \
+             `b` varchar(4) DEFAULT 'zz',\n  \
+             `c` bigint(20) NOT NULL,\n  \
+             `d` bigint(20) DEFAULT NULL\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        );
+
+        assert_eq!(
+            create(
+                &mut session,
+                "create table t4 (a bigint, b bigint, key ab (a,b))",
+                "t4"
+            ),
+            "CREATE TABLE `t4` (\n  \
+             `a` bigint(20) DEFAULT NULL,\n  \
+             `b` bigint(20) DEFAULT NULL,\n  \
+             KEY `ab` (`a`,`b`)\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        );
+
+        // Index order: table constraints first, then inline ones in column
+        // order -- also captured from TiDB.
+        assert_eq!(
+            create(
+                &mut session,
+                "create table x1 (a bigint unique, b bigint unique, key kb (b))",
+                "x1"
+            ),
+            "CREATE TABLE `x1` (\n  \
+             `a` bigint(20) DEFAULT NULL,\n  \
+             `b` bigint(20) DEFAULT NULL,\n  \
+             KEY `kb` (`b`),\n  \
+             UNIQUE KEY `a` (`a`),\n  \
+             UNIQUE KEY `b` (`b`)\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        );
+
+        // KNOWN DIVERGENCE, asserted rather than hidden: for a single-column
+        // STRING primary key, real TiDB reports
+        //   `k` varchar(10) NOT NULL,
+        //   PRIMARY KEY (`k`) /*T![clustered_index] CLUSTERED */
+        // because its default clustered-index mode builds a common handle.
+        // This seed has no common handle -- such a key is enforced by a
+        // unique index over separately allocated row handles, which is
+        // exactly NONCLUSTERED -- so it reports what it actually built.
+        assert_eq!(
+            create(
+                &mut session,
+                "create table t3 (k varchar(10) primary key)",
+                "t3"
+            ),
+            "CREATE TABLE `t3` (\n  \
+             `k` varchar(10) NOT NULL,\n  \
+             PRIMARY KEY (`k`) /*T![clustered_index] NONCLUSTERED */\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        );
+
+        // An unknown table is an error, and another schema is reachable.
+        assert!(session.run("SHOW CREATE TABLE nope").is_err());
+        session.run("CREATE DATABASE other").unwrap();
+        session.run("USE other").unwrap();
+        assert!(session.run("SHOW CREATE TABLE test.t1").is_ok());
     }
 
     #[test]

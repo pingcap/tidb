@@ -46,7 +46,11 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 /// became the row handle.
 ///
 /// Go's `buildTableInfo` turns each key constraint into an `IndexInfo` with
-/// its own id, allocated in declaration order starting at 1.
+/// its own id. The order is table-level constraints first, in written order,
+/// then the inline column constraints in column order -- captured from real
+/// TiDB's `SHOW CREATE TABLE`, which lists them in index order:
+/// `create table x (a bigint unique, b bigint unique, key kb (b))` reports
+/// `KEY kb` before `UNIQUE KEY a` and `UNIQUE KEY b`.
 ///
 /// DEFERRED (documented): FULLTEXT, VECTOR and COLUMNAR indexes, prefix
 /// lengths, expression keys and index options, all rejected rather than
@@ -73,26 +77,6 @@ fn table_indexes(
         });
     }
     let mut indexes: Vec<KvIndex> = Vec::new();
-
-    for def in &create.columns {
-        for option in &def.options {
-            if let tidb_ast::ColumnOption::InlineKey(key) = option {
-                match key.kind {
-                    tidb_ast::InlineKeyKind::Unique => {
-                        let offset = offset_of(&def.name)?;
-                        push(&mut indexes, def.name.clone(), true, vec![offset]);
-                    }
-                    // A primary key that is not the row handle still needs an
-                    // index to enforce its uniqueness.
-                    tidb_ast::InlineKeyKind::Primary { .. } if !pk_is_handle => {
-                        let offset = offset_of(&def.name)?;
-                        push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset]);
-                    }
-                    tidb_ast::InlineKeyKind::Primary { .. } => {}
-                }
-            }
-        }
-    }
 
     for constraint in &create.table_constraints {
         let tidb_ast::TableConstraint::Index(index) = constraint else {
@@ -145,6 +129,26 @@ fn table_indexes(
         };
         push(&mut indexes, name, unique, offsets);
     }
+    for def in &create.columns {
+        for option in &def.options {
+            if let tidb_ast::ColumnOption::InlineKey(key) = option {
+                match key.kind {
+                    tidb_ast::InlineKeyKind::Unique => {
+                        let offset = offset_of(&def.name)?;
+                        push(&mut indexes, def.name.clone(), true, vec![offset]);
+                    }
+                    // A primary key that is not the row handle still needs an
+                    // index to enforce its uniqueness.
+                    tidb_ast::InlineKeyKind::Primary { .. } if !pk_is_handle => {
+                        let offset = offset_of(&def.name)?;
+                        push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset]);
+                    }
+                    tidb_ast::InlineKeyKind::Primary { .. } => {}
+                }
+            }
+        }
+    }
+
     Ok(indexes)
 }
 
