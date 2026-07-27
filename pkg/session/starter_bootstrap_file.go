@@ -165,6 +165,8 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 }
 
 func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBootstrapFileSpec) error {
+	// Reset markers are written before TiDB starts, so the codec snapshot is
+	// sufficient for the no-reset fast path.
 	resetState, privilegeResetPending, err := readStarterPrivilegeResetState(store, false)
 	if err != nil {
 		return err
