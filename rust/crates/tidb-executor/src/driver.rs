@@ -32,7 +32,7 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::join::{JoinExec, JoinKind};
-use crate::kv_table::{KvTable, TableScanExec};
+use crate::kv_table::{IndexRange, KvTable, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::projection::ProjectionExec;
@@ -495,6 +495,41 @@ fn run_select_stmt(
     // narrows the source, it does not replace the filter.
     if let Some(table) = single_kv_table(&select.from, catalog, current_db) {
         let columns = scope.column_list();
+        // An index range scan, when no point get applies: the ranges replace
+        // the full scan with the rows the index covers, and the WHERE stays
+        // above to apply the conditions the ranges did not consume.
+        if try_point_get(select, &table, &columns)?.is_none() {
+            if let Some((index_id, ranges)) = try_index_ranges(select, &table, &columns) {
+                let mut table = table.clone();
+                let mut rows = Vec::new();
+                for range in &ranges {
+                    for handle in table
+                        .scan_index_range(index_id, range)
+                        .map_err(|e| DriverError::Parse(format!("index scan failed: {e:?}")))?
+                    {
+                        if let Some(row) = table
+                            .get_row_by_handle(handle)
+                            .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
+                        {
+                            rows.push(row);
+                        }
+                    }
+                }
+                let schema_columns: Vec<Column> = columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, ft))| {
+                        let mut col = Column::new((i + 1) as i64, ft.clone());
+                        col.index = i as i64;
+                        col
+                    })
+                    .collect();
+                from_source = Some(Box::new(MemTableSourceExec::new(
+                    ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    rows,
+                )));
+            }
+        }
         if let Some(handle) = try_point_get(select, &table, &columns)? {
             let mut table = table;
             let rows = match handle {
@@ -1687,6 +1722,197 @@ fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverError> {
             ))
         }
     })
+}
+
+/// Go `ranger`'s point pair for one comparison, before points become ranges.
+///
+/// Go builds a sorted point list and folds it into ranges; for the
+/// single-column access this covers, each comparison yields exactly one range,
+/// which is that fold already applied.
+fn range_for_comparison(op: tidb_ast::BinaryOp, value: Datum) -> Option<IndexRange> {
+    use tidb_ast::BinaryOp;
+    // Go's builder starts every ordinary comparison at MinNotNull rather than
+    // at NULL, which is what makes a NULL value satisfy no comparison.
+    Some(match op {
+        BinaryOp::Eq => IndexRange {
+            low: vec![value.clone()],
+            high: vec![value],
+            low_exclusive: false,
+            high_exclusive: false,
+        },
+        BinaryOp::Lt => IndexRange {
+            low: vec![Datum::MinNotNull],
+            high: vec![value],
+            low_exclusive: false,
+            high_exclusive: true,
+        },
+        BinaryOp::Le => IndexRange {
+            low: vec![Datum::MinNotNull],
+            high: vec![value],
+            low_exclusive: false,
+            high_exclusive: false,
+        },
+        BinaryOp::Gt => IndexRange {
+            low: vec![value],
+            high: vec![Datum::MaxValue],
+            low_exclusive: true,
+            high_exclusive: false,
+        },
+        BinaryOp::Ge => IndexRange {
+            low: vec![value],
+            high: vec![Datum::MaxValue],
+            low_exclusive: false,
+            high_exclusive: false,
+        },
+        _ => return None,
+    })
+}
+
+/// The index access path for a `WHERE`, when one applies.
+///
+/// Go's `DetachCondAndBuildRangeForIndex` splits a predicate into access
+/// conditions, which become index ranges, and filter conditions, which stay
+/// above the read. This builds ranges for the conditions on one index's
+/// leading column and leaves the whole `WHERE` in the pipeline, so the filter
+/// half is applied by the selection rather than dropped.
+///
+/// DEFERRED (documented): multi-column ranges (Go extends the prefix while
+/// equalities pin leading columns), `IN` lists and `BETWEEN` as ranges, `OR`
+/// unions across ranges, and cost-based choice among several usable indexes --
+/// this takes the first index whose leading column the `WHERE` constrains.
+fn try_index_ranges(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+) -> Option<(i64, Vec<IndexRange>)> {
+    let where_clause = select.where_clause.as_ref()?;
+    let mut conditions = Vec::new();
+    collect_conjuncts(where_clause, &mut conditions);
+
+    for index in table.indexes() {
+        // Only the leading column can be constrained without the multi-column
+        // range builder.
+        let leading = &columns[*index.column_offsets.first()?].0;
+        let mut ranges: Vec<IndexRange> = Vec::new();
+        for condition in &conditions {
+            let tidb_ast::Expr::Binary(op, lhs, rhs) = condition else {
+                continue;
+            };
+            // Go accepts the constant on either side, flipping the operator
+            // when the column is on the right.
+            let (op, value) = match (&**lhs, &**rhs) {
+                (tidb_ast::Expr::Column(path), other)
+                    if path
+                        .last()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(leading)) =>
+                {
+                    (*op, other)
+                }
+                (other, tidb_ast::Expr::Column(path))
+                    if path
+                        .last()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(leading)) =>
+                {
+                    (flip_comparison(*op)?, other)
+                }
+                _ => continue,
+            };
+            let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(value, &NoResolver)
+            else {
+                continue;
+            };
+            let Ok(value) = constant.eval() else {
+                continue;
+            };
+            // A NULL constant makes every comparison unknown, so no row
+            // qualifies; Go represents that as an empty range set.
+            if value == Datum::Null {
+                return Some((index.id, Vec::new()));
+            }
+            if let Some(range) = range_for_comparison(op, value) {
+                ranges.push(range);
+            }
+        }
+        if ranges.is_empty() {
+            continue;
+        }
+        // Several conditions on the same column intersect.
+        let combined = ranges
+            .into_iter()
+            .reduce(intersect_ranges)
+            .expect("at least one range");
+        return Some((index.id, vec![combined]));
+    }
+    None
+}
+
+/// Flattens an `AND` chain into its conjuncts.
+fn collect_conjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+    match expr {
+        tidb_ast::Expr::Paren(inner) => collect_conjuncts(inner, out),
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) => {
+            collect_conjuncts(lhs, out);
+            collect_conjuncts(rhs, out);
+        }
+        other => out.push(other),
+    }
+}
+
+/// The operator with its operands swapped, so `5 < a` reads as `a > 5`.
+fn flip_comparison(op: tidb_ast::BinaryOp) -> Option<tidb_ast::BinaryOp> {
+    use tidb_ast::BinaryOp;
+    Some(match op {
+        BinaryOp::Eq => BinaryOp::Eq,
+        BinaryOp::Lt => BinaryOp::Gt,
+        BinaryOp::Le => BinaryOp::Ge,
+        BinaryOp::Gt => BinaryOp::Lt,
+        BinaryOp::Ge => BinaryOp::Le,
+        _ => return None,
+    })
+}
+
+/// The intersection of two ranges over the same column, which is what several
+/// conditions on that column mean together.
+fn intersect_ranges(left: IndexRange, right: IndexRange) -> IndexRange {
+    let (low, low_exclusive) = match compare_bounds(&left.low, &right.low) {
+        std::cmp::Ordering::Greater => (left.low, left.low_exclusive),
+        std::cmp::Ordering::Less => (right.low, right.low_exclusive),
+        // Equal bounds: the exclusive one wins, being the tighter.
+        std::cmp::Ordering::Equal => (left.low, left.low_exclusive || right.low_exclusive),
+    };
+    let (high, high_exclusive) = match compare_bounds(&left.high, &right.high) {
+        std::cmp::Ordering::Less => (left.high, left.high_exclusive),
+        std::cmp::Ordering::Greater => (right.high, right.high_exclusive),
+        std::cmp::Ordering::Equal => (left.high, left.high_exclusive || right.high_exclusive),
+    };
+    IndexRange {
+        low,
+        high,
+        low_exclusive,
+        high_exclusive,
+    }
+}
+
+/// Orders two single-datum bounds, with `MinNotNull` below and `MaxValue`
+/// above every ordinary value.
+fn compare_bounds(left: &[Datum], right: &[Datum]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (Some(left), Some(right)) = (left.first(), right.first()) else {
+        return Ordering::Equal;
+    };
+    let rank = |value: &Datum| match value {
+        Datum::MinNotNull => 0,
+        Datum::MaxValue => 2,
+        _ => 1,
+    };
+    match rank(left).cmp(&rank(right)) {
+        Ordering::Equal => {}
+        other => return other,
+    }
+    if rank(left) != 1 {
+        return Ordering::Equal;
+    }
+    tidb_expr::compare_datums(left, right).unwrap_or(Ordering::Equal)
 }
 
 /// The single TiKV-backed table a `FROM` names, when it names exactly one.
@@ -3797,6 +4023,215 @@ mod tests {
             None
         );
         assert_eq!(decides("SELECT v FROM d"), None);
+    }
+
+    /// Index range scans: a comparison on an indexed column reads the rows the
+    /// index covers instead of scanning the table, with Go's range semantics.
+    #[test]
+    fn index_range_scans() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE r (id BIGINT PRIMARY KEY, score BIGINT, KEY score_idx (score))",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO r VALUES (1, 10), (2, 20), (3, 30), (4, 20), (5, NULL)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        let ids = |sql: &str, catalog: &Catalog| {
+            let mut got: Vec<i64> = run_select_on(sql, catalog)
+                .unwrap()
+                .into_iter()
+                .map(|row| match row[0] {
+                    Datum::Int(value) => value,
+                    ref other => panic!("expected an int, got {other:?}"),
+                })
+                .collect();
+            got.sort_unstable();
+            got
+        };
+
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score > 15", &catalog),
+            vec![2, 3, 4]
+        );
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score >= 20", &catalog),
+            vec![2, 3, 4]
+        );
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score < 30", &catalog),
+            vec![1, 2, 4]
+        );
+        assert_eq!(ids("SELECT id FROM r WHERE score <= 10", &catalog), vec![1]);
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score = 20", &catalog),
+            vec![2, 4]
+        );
+        // The constant may sit on the left, with the operator flipped.
+        assert_eq!(
+            ids("SELECT id FROM r WHERE 15 < score", &catalog),
+            vec![2, 3, 4]
+        );
+
+        // Several conditions on the column intersect into one range.
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score > 10 AND score < 30", &catalog),
+            vec![2, 4]
+        );
+        assert_eq!(
+            ids(
+                "SELECT id FROM r WHERE score >= 20 AND score <= 20",
+                &catalog
+            ),
+            vec![2, 4]
+        );
+
+        // Go's ranges start at MinNotNull, so a NULL satisfies no comparison
+        // -- row 5 never appears, and IS NULL still finds it through the scan.
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score > -100", &catalog),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score IS NULL", &catalog),
+            vec![5]
+        );
+
+        // A condition the ranges do not consume still filters, because the
+        // WHERE stays above the read.
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score > 15 AND id = 3", &catalog),
+            vec![3]
+        );
+
+        // Writes are visible to a later range scan, including through the
+        // index entries a DELETE removed.
+        run_update_on("UPDATE r SET score = 99 WHERE id = 1", &mut catalog).unwrap();
+        assert_eq!(ids("SELECT id FROM r WHERE score > 50", &catalog), vec![1]);
+        run_delete_on("DELETE FROM r WHERE id = 1", &mut catalog).unwrap();
+        assert_eq!(
+            ids("SELECT id FROM r WHERE score > 50", &catalog),
+            Vec::<i64>::new()
+        );
+    }
+
+    /// A range scan over a UNIQUE index reads its handles out of the entry
+    /// VALUES, not the key, so this covers the other half of the entry format
+    /// -- including the NULL entries a unique index stores non-distinctly.
+    #[test]
+    fn index_range_scan_over_a_unique_index() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE u2 (id BIGINT PRIMARY KEY, code BIGINT UNIQUE)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO u2 VALUES (1, 100), (2, 200), (3, 300), (4, NULL)",
+            &mut catalog,
+        )
+        .unwrap();
+        let mut ids: Vec<Datum> = run_select_on("SELECT id FROM u2 WHERE code >= 200", &catalog)
+            .unwrap()
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect();
+        ids.sort_by_key(|value| match value {
+            Datum::Int(v) => *v,
+            other => panic!("expected an int, got {other:?}"),
+        });
+        assert_eq!(ids, vec![Datum::Int(2), Datum::Int(3)]);
+        // The NULL row is reachable, just never through a comparison.
+        assert_eq!(
+            run_select_on("SELECT id FROM u2 WHERE code IS NULL", &catalog).unwrap(),
+            vec![vec![Datum::Int(4)]]
+        );
+    }
+
+    /// The answers above would be right even from a full scan, so this asserts
+    /// the DECISION and the ranges themselves.
+    #[test]
+    fn index_ranges_are_built_the_way_go_builds_them() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE q (id BIGINT PRIMARY KEY, score BIGINT, note VARCHAR(8), KEY s (score))",
+            &mut catalog,
+        )
+        .unwrap();
+        let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("q") else {
+            panic!("expected a kv table");
+        };
+        let columns = table
+            .columns
+            .iter()
+            .map(|c| (c.name.clone(), c.field_type.clone()))
+            .collect::<Vec<_>>();
+        let ranges = |sql: &str| {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            let Stmt::Query(query) = &stmt else {
+                panic!("not a query")
+            };
+            let QueryStmt::Select(select) = &**query else {
+                panic!("not a select")
+            };
+            try_index_ranges(select, table, &columns)
+        };
+
+        // Go: GT is (v, MaxValue], LT is [MinNotNull, v).
+        assert_eq!(
+            ranges("SELECT id FROM q WHERE score > 5"),
+            Some((
+                1,
+                vec![IndexRange {
+                    low: vec![Datum::Int(5)],
+                    high: vec![Datum::MaxValue],
+                    low_exclusive: true,
+                    high_exclusive: false,
+                }]
+            ))
+        );
+        assert_eq!(
+            ranges("SELECT id FROM q WHERE score < 5"),
+            Some((
+                1,
+                vec![IndexRange {
+                    low: vec![Datum::MinNotNull],
+                    high: vec![Datum::Int(5)],
+                    low_exclusive: false,
+                    high_exclusive: true,
+                }]
+            ))
+        );
+        // An intersection keeps the tighter end of each side.
+        assert_eq!(
+            ranges("SELECT id FROM q WHERE score > 5 AND score <= 9"),
+            Some((
+                1,
+                vec![IndexRange {
+                    low: vec![Datum::Int(5)],
+                    high: vec![Datum::Int(9)],
+                    low_exclusive: true,
+                    high_exclusive: false,
+                }]
+            ))
+        );
+        // A NULL constant matches nothing, which Go represents as no ranges.
+        assert_eq!(
+            ranges("SELECT id FROM q WHERE score > NULL"),
+            Some((1, vec![]))
+        );
+
+        // No usable index: an unindexed column, no WHERE, or an OR.
+        assert_eq!(ranges("SELECT id FROM q WHERE note = 'x'"), None);
+        assert_eq!(ranges("SELECT id FROM q"), None);
+        assert_eq!(
+            ranges("SELECT id FROM q WHERE score > 1 OR score < 0"),
+            None
+        );
     }
 
     #[test]

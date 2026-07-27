@@ -43,12 +43,31 @@ use tidb_codec::table_key::{
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 use tidb_tablecodec::{
-    decode_handle_in_index_value, decode_table_row_to_map, encode_handle_in_unique_index_value,
-    encode_table_row,
+    cut_index_key, decode_handle_in_index_value, decode_table_row_to_map,
+    encode_handle_in_unique_index_value, encode_table_row,
 };
 use tidb_txnkv::{
     GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
 };
+
+/// Go `ranger.Range`: one scanned interval of an index.
+///
+/// Both bounds are datum tuples over the index's leading columns, with a flag
+/// for whether each end is excluded. Go's builder always produces bounds that
+/// exclude NULL for an ordinary comparison -- a `<`/`<=` range starts at
+/// `MinNotNull`, not at NULL -- which is why a NULL value never satisfies a
+/// comparison.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndexRange {
+    /// Go `Range.LowVal`.
+    pub low: Vec<Datum>,
+    /// Go `Range.HighVal`.
+    pub high: Vec<Datum>,
+    /// Go `Range.LowExclude`.
+    pub low_exclusive: bool,
+    /// Go `Range.HighExclude`.
+    pub high_exclusive: bool,
+}
 
 /// One index of a [`KvTable`]: Go `model.IndexInfo`, reduced to what an index
 /// write and a uniqueness check need.
@@ -404,6 +423,66 @@ impl KvTable {
         ))
     }
 
+    /// The handles an index range covers, in index order.
+    ///
+    /// Go turns a range into a key interval in `IndexRangesToKVRanges`: the
+    /// low key is the encoded low bound, advanced to its `PrefixNext` when the
+    /// bound is excluded; the high key is the encoded high bound, advanced to
+    /// its `PrefixNext` when the bound is INCLUDED, because the scan's upper
+    /// end is exclusive. This walks that interval and reads the handle out of
+    /// each entry.
+    pub fn scan_index_range(
+        &mut self,
+        index_id: i64,
+        range: &IndexRange,
+    ) -> Result<Vec<i64>, KvTableError> {
+        let Some(index) = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .cloned()
+        else {
+            return Err(KvTableError::Decode("no such index".to_owned()));
+        };
+        let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
+            tidb_codec::encode_key(values).map_err(|e| KvTableError::Encode(format!("{e:?}")))
+        };
+        let mut low = Key::from_bytes(encode_index_seek_key(
+            self.table_id,
+            index_id,
+            &encode(&range.low)?,
+        ));
+        if range.low_exclusive {
+            low = low.prefix_next();
+        }
+        let mut high = Key::from_bytes(encode_index_seek_key(
+            self.table_id,
+            index_id,
+            &encode(&range.high)?,
+        ));
+        if !range.high_exclusive {
+            high = high.prefix_next();
+        }
+
+        let mut iterator = self
+            .store
+            .iter(Some(&low), Some(&high))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let mut handles = Vec::new();
+        while iterator.valid() {
+            handles.push(index_entry_handle(
+                &index,
+                iterator.key().as_bytes(),
+                iterator.value(),
+            )?);
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        iterator.close();
+        Ok(handles)
+    }
+
     /// Whether a row is already stored under `handle`.
     fn row_exists(&mut self, handle: i64) -> Result<bool, KvTableError> {
         let key = Key::from_bytes(encode_row_key_with_handle(
@@ -461,6 +540,37 @@ impl KvTable {
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+    }
+}
+
+/// The row handle an index entry names.
+///
+/// A distinct entry keeps the handle in its value; a non-distinct entry keeps
+/// it appended to its key, which is the same split Go's index reader makes.
+fn index_entry_handle(index: &KvIndex, key: &[u8], value: &[u8]) -> Result<i64, KvTableError> {
+    if index.unique {
+        // Only a distinct entry stores the handle in the value; a unique index
+        // holding NULLs writes non-distinct entries too, so fall through when
+        // the value is the non-distinct marker.
+        if value != *b"0" {
+            let handle = decode_handle_in_index_value(value)
+                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+            return handle.int_value().ok_or_else(|| {
+                KvTableError::Decode("index entry has no integer handle".to_owned())
+            });
+        }
+    }
+    // The handle is the last encoded datum of the key.
+    let (_, rest) = cut_index_key(key, index.column_offsets.len())
+        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+    let (_, handle) =
+        tidb_codec::decode_one(rest).map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+    match handle {
+        Datum::Int(value) => Ok(value),
+        Datum::UInt(value) => Ok(value as i64),
+        other => Err(KvTableError::Decode(format!(
+            "an index key ended with {other:?} rather than a handle"
+        ))),
     }
 }
 
