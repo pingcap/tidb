@@ -1031,6 +1031,224 @@ func TestToDatum(t *testing.T) {
 	match(t, datums[1], expectedEvictedDatum...)
 }
 
+<<<<<<< HEAD
+=======
+func TestToDatumIAColumns(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	ssMap.beginTimeForCurInterval = now + 60
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
+
+	stmtExecInfo2 := generateAnyExecInfo()
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
+
+	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(stmtExecInfo2)
+	reader := newStmtSummaryReaderWithColumnNamesForTest(
+		ssMap,
+		AvgIARemoteReadSegmentCountStr,
+		MaxIARemoteReadSegmentCountStr,
+		AvgIARemoteReadSegmentSizeStr,
+		MaxIARemoteReadSegmentSizeStr,
+		AvgIARemoteReadSegmentWaitTimeStr,
+		MaxIARemoteReadSegmentWaitTimeStr,
+	)
+
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, 1)
+	require.Equal(t, 4.0, rows[0][0].GetFloat64())
+	require.Equal(t, uint64(5), rows[0][1].GetUint64())
+	require.Equal(t, 6144.0, rows[0][2].GetFloat64())
+	require.Equal(t, uint64(8192), rows[0][3].GetUint64())
+	require.Equal(t, int64(7*time.Millisecond), rows[0][4].GetInt64())
+	require.Equal(t, int64(9*time.Millisecond), rows[0][5].GetInt64())
+}
+
+func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	ssMap.beginTimeForCurInterval = now + 60
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
+
+	stmtExecInfo2 := generateAnyExecInfo()
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
+
+	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(stmtExecInfo2)
+
+	reader := newStmtSummaryReaderWithColumnNamesForTest(
+		ssMap,
+		AvgIARemoteReadSegmentCountStr,
+		MaxIARemoteReadSegmentCountStr,
+		AvgIARemoteReadSegmentSizeStr,
+		MaxIARemoteReadSegmentSizeStr,
+		AvgIARemoteReadSegmentWaitTimeStr,
+		MaxIARemoteReadSegmentWaitTimeStr,
+	)
+
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, 1)
+
+	maxUnsignedType := types.NewFieldType(mysql.TypeLonglong)
+	maxUnsignedType.SetFlag(mysql.UnsignedFlag)
+	retTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeDouble),
+		maxUnsignedType,
+		types.NewFieldType(mysql.TypeDouble),
+		maxUnsignedType.Clone(),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	mutRow := chunk.MutRowFromTypes(retTypes)
+	mutRow.SetDatums(rows[0]...)
+	row := mutRow.ToRow()
+
+	require.Equal(t, 4.0, row.GetFloat64(0))
+	require.Equal(t, uint64(5), row.GetUint64(1))
+	require.Equal(t, 6144.0, row.GetFloat64(2))
+	require.Equal(t, uint64(8192), row.GetUint64(3))
+	require.Equal(t, int64(7*time.Millisecond), row.GetInt64(4))
+	require.Equal(t, int64(9*time.Millisecond), row.GetInt64(5))
+}
+
+// Regression test for issue #69913.
+func TestCurrentRowsExcludePreviousIntervalEvictedOther(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	require.NoError(t, ssMap.SetMaxStmtCount(10))
+
+	interval := ssMap.refreshInterval()
+	// Use future interval boundaries so AddStatement does not rotate them based
+	// on the wall clock while the test advances the intervals explicitly.
+	previousBegin := time.Now().Unix() + interval
+	ssMap.beginTimeForCurInterval = previousBegin
+
+	previousStmt := generateAnyExecInfo()
+	for i := range 11 {
+		previousStmt.Digest = fmt.Sprintf("previous_digest_%d", i)
+		ssMap.AddStatement(previousStmt)
+	}
+	require.Equal(t, 10, ssMap.summaryMap.Size())
+	require.Equal(t, 1, ssMap.other.history.Len())
+
+	currentBegin := previousBegin + interval
+	ssMap.beginTimeForCurInterval = currentBegin
+	currentStmt := generateAnyExecInfo()
+	currentStmt.Digest = "current_digest"
+	ssMap.AddStatement(currentStmt)
+	require.Equal(t, 10, ssMap.summaryMap.Size())
+
+	reader := newStmtSummaryReaderForTest(ssMap)
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, 1)
+	require.Equal(t, currentStmt.Digest, rows[0][4].GetString())
+	currentBeginTime := types.NewTime(types.FromGoTime(time.Unix(currentBegin, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
+	require.Equal(t, currentBeginTime, rows[0][0].GetMysqlTime())
+}
+
+// Regression test for issue #69913.
+func TestDisablingInternalQueryPreservesLRUOrder(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	const capacity = 20
+	require.NoError(t, ssMap.SetMaxStmtCount(capacity))
+	require.NoError(t, ssMap.SetEnabledInternalQuery(true))
+
+	interval := ssMap.refreshInterval()
+	currentBegin := time.Now().Unix() + interval
+	ssMap.beginTimeForCurInterval = currentBegin
+
+	for i := range capacity - 2 {
+		stmt := generateAnyExecInfo()
+		stmt.Digest = fmt.Sprintf("digest_%02d", i)
+		ssMap.AddStatement(stmt)
+	}
+	pureInternal := generateAnyExecInfo()
+	pureInternal.Digest = "pure_internal_digest"
+	pureInternal.IsInternal = true
+	ssMap.AddStatement(pureInternal)
+
+	mixedInternal := generateAnyExecInfo()
+	mixedInternal.Digest = "mixed_digest"
+	mixedInternal.IsInternal = true
+	ssMap.AddStatement(mixedInternal)
+	mixedExternal := generateAnyExecInfo()
+	mixedExternal.Digest = mixedInternal.Digest
+	ssMap.AddStatement(mixedExternal)
+
+	hotDigests := []string{"digest_00", "digest_01"}
+	for _, digest := range hotDigests {
+		stmt := generateAnyExecInfo()
+		stmt.Digest = digest
+		ssMap.AddStatement(stmt)
+	}
+
+	lruDigests := func() []string {
+		values := ssMap.summaryMap.Values()
+		digests := make([]string, 0, len(values))
+		for _, value := range values {
+			digests = append(digests, value.(*stmtSummaryByDigest).digest)
+		}
+		return digests
+	}
+
+	before := lruDigests()
+	require.NoError(t, ssMap.SetEnabledInternalQuery(false))
+	expected := make([]string, 0, len(before)-1)
+	for _, digest := range before {
+		if digest != pureInternal.Digest {
+			expected = append(expected, digest)
+		}
+	}
+	require.Equal(t, expected, lruDigests())
+	require.NotContains(t, lruDigests(), pureInternal.Digest)
+	require.Contains(t, lruDigests(), mixedInternal.Digest)
+
+	for _, digest := range []string{"new_digest_0", "new_digest_1", "new_digest_2"} {
+		stmt := generateAnyExecInfo()
+		stmt.Digest = digest
+		ssMap.AddStatement(stmt)
+	}
+
+	evictedRows := ssMap.ToEvictedCountDatum()
+	require.Len(t, evictedRows, 1)
+	currentBeginTime := types.NewTime(types.FromGoTime(time.Unix(currentBegin, 0)), mysql.TypeTimestamp, 0)
+	require.Equal(t, currentBeginTime, evictedRows[0][0].GetMysqlTime())
+	require.Equal(t, int64(2), evictedRows[0][2].GetInt64())
+
+	reader := newStmtSummaryReaderForTest(ssMap)
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, capacity+1)
+	normalExecCounts := make(map[string]int64, capacity)
+	var othersExecCount int64
+	for _, row := range rows {
+		if row[4].IsNull() {
+			othersExecCount = row[11].GetInt64()
+			continue
+		}
+		normalExecCounts[row[4].GetString()] = row[11].GetInt64()
+	}
+	require.Len(t, normalExecCounts, capacity)
+	require.Equal(t, int64(2), normalExecCounts[hotDigests[0]])
+	require.Equal(t, int64(2), normalExecCounts[hotDigests[1]])
+	require.Equal(t, int64(2), normalExecCounts[mixedInternal.Digest])
+	require.NotContains(t, normalExecCounts, pureInternal.Digest)
+	require.NotContains(t, normalExecCounts, "digest_02")
+	require.NotContains(t, normalExecCounts, "digest_03")
+	require.Equal(t, int64(2), othersExecCount)
+}
+
+>>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
 // Test AddStatement and ToDatum parallel.
 func TestAddStatementParallel(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()

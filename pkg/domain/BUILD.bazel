@@ -158,6 +158,11 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+<<<<<<< HEAD
+=======
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/extstore",
+>>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
         "//pkg/server",
         "//pkg/session",
         "//pkg/sessionctx/variable",
@@ -165,10 +170,16 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+<<<<<<< HEAD
         "//pkg/util",
+=======
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+>>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
         "//pkg/util/mathutil",
         "//pkg/util/mock",
         "//pkg/util/replayer",
+        "//pkg/util/sqlexec",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
