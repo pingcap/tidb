@@ -350,6 +350,30 @@ pub fn run_alter_table_in(
                     )?;
                 }
             }
+            tidb_ast::AlterTableAction::ModifyColumn {
+                if_exists,
+                column,
+                position,
+            } => modify_column_action(
+                catalog,
+                &database,
+                &name,
+                &column.name,
+                column,
+                position,
+                *if_exists,
+            )?,
+            tidb_ast::AlterTableAction::ChangeColumn {
+                if_exists,
+                old_name,
+                column,
+                position,
+            } => {
+                let old = old_name
+                    .last()
+                    .ok_or(DriverError::Unsupported("empty CHANGE COLUMN name"))?;
+                modify_column_action(catalog, &database, &name, old, column, position, *if_exists)?;
+            }
             tidb_ast::AlterTableAction::DropColumn {
                 if_exists,
                 name: column_name,
@@ -409,6 +433,173 @@ pub fn run_alter_table_in(
 }
 
 /// One `ADD COLUMN`.
+/// `ALTER TABLE ... MODIFY COLUMN` and `... CHANGE COLUMN`, which differ only
+/// in whether the column is also renamed.
+///
+/// Go runs these as one `ActionModifyColumn` job: it finds the old column by
+/// name, checks the new type against the stored data, then swaps the column
+/// definition in place, keeping the column id so indexes and handles survive.
+///
+/// NOT MODELLED (documented, and rejected rather than ignored): a type change
+/// on a clustered handle column to anything but another integer type (Go 8200
+/// "this column has primary key flag"), a BLOB/TEXT column that an index
+/// covers (Go 1170), generated columns, and the column options beyond
+/// NULL/NOT NULL/DEFAULT that CREATE TABLE also rejects here.
+fn modify_column_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    old_name: &str,
+    def: &ColumnDef,
+    position: &tidb_ast::ColumnPosition,
+    if_exists: bool,
+) -> Result<(), DriverError> {
+    let field_type = field_type_of(def)?;
+    let mut default_value = None;
+    for option in &def.options {
+        match option {
+            tidb_ast::ColumnOption::Default(expr) => {
+                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                    expr,
+                    &tidb_expr::rewriter::NoResolver,
+                )
+                .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+                let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
+                    return Err(DriverError::Unsupported(
+                        "an expression DEFAULT is not supported yet",
+                    ));
+                };
+                default_value = Some(
+                    constant
+                        .eval()
+                        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
+                );
+            }
+            tidb_ast::ColumnOption::NotNull | tidb_ast::ColumnOption::Null => {}
+            _ => {
+                return Err(DriverError::Unsupported(
+                    "this column option is not supported in ALTER TABLE MODIFY COLUMN",
+                ))
+            }
+        }
+    }
+    let not_null = def
+        .options
+        .iter()
+        .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull));
+
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        ));
+    };
+    let Some(offset) = table
+        .columns
+        .iter()
+        .position(|column| column.name.eq_ignore_ascii_case(old_name))
+    else {
+        // Go's IF EXISTS turns the missing column into a no-op (with a note).
+        if if_exists {
+            return Ok(());
+        }
+        return Err(DriverError::UnknownColumnInTable {
+            column: old_name.to_owned(),
+            table: table_name.to_owned(),
+        });
+    };
+    // A rename onto another column's name is a duplicate, but renaming a
+    // column to the name it already has is allowed.
+    if !def.name.eq_ignore_ascii_case(old_name)
+        && table
+            .columns
+            .iter()
+            .any(|column| column.name.eq_ignore_ascii_case(&def.name))
+    {
+        return Err(DriverError::DuplicateColumnName(def.name.clone()));
+    }
+
+    let mut field_type = field_type;
+    if not_null {
+        field_type.add_flags(NOT_NULL_FLAG);
+    }
+    let integer_type = |code| {
+        matches!(
+            code,
+            tidb_datatype::FieldTypeCode::Tiny
+                | tidb_datatype::FieldTypeCode::Short
+                | tidb_datatype::FieldTypeCode::Int24
+                | tidb_datatype::FieldTypeCode::Long
+                | tidb_datatype::FieldTypeCode::LongLong
+        )
+    };
+    // Go refuses to move a clustered handle off the integer domain, because
+    // the handle IS the row key.
+    let is_handle = table.pk_handle_offset() == Some(offset);
+    if is_handle && !integer_type(field_type.code()) {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "this column has primary key flag",
+        ));
+    }
+    // Go `ErrBlobKeyWithoutLength`: an index cannot cover a full BLOB/TEXT.
+    let blob_type = matches!(
+        field_type.code(),
+        tidb_datatype::FieldTypeCode::Blob
+            | tidb_datatype::FieldTypeCode::TinyBlob
+            | tidb_datatype::FieldTypeCode::MediumBlob
+            | tidb_datatype::FieldTypeCode::LongBlob
+    );
+    if blob_type
+        && table
+            .indexes()
+            .iter()
+            .any(|index| index.column_offsets.contains(&offset))
+    {
+        return Err(DriverError::BlobKeyWithoutLength(def.name.clone()));
+    }
+
+    let new_position = match position {
+        tidb_ast::ColumnPosition::Default => None,
+        tidb_ast::ColumnPosition::First => Some(0),
+        tidb_ast::ColumnPosition::After(after) => {
+            let target = table
+                .columns
+                .iter()
+                .position(|column| column.name.eq_ignore_ascii_case(after))
+                .ok_or_else(|| DriverError::UnknownColumnInTable {
+                    column: after.clone(),
+                    table: table_name.to_owned(),
+                })?;
+            // Moving forward, the column lands right after the target once the
+            // target has closed the gap the move opened.
+            Some(if target > offset { target } else { target + 1 })
+        }
+    };
+    let column = KvColumn {
+        name: def.name.clone(),
+        id: table.columns[offset].id,
+        field_type,
+        default_value: default_value.clone(),
+        origin_default: default_value,
+    };
+    table
+        .modify_column(offset, column, new_position)
+        .map_err(|e| match e {
+            crate::kv_table::KvTableError::TruncatedIncorrectValue { kind, value } => {
+                DriverError::TruncatedIncorrectValue { kind, value }
+            }
+            crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
+                DriverError::DataTruncatedValue { column, value }
+            }
+            crate::kv_table::KvTableError::DataTruncatedAtRow { column, row } => {
+                DriverError::DataTruncatedAtRow { column, row }
+            }
+            crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
+                DriverError::DuplicateEntry { value, key }
+            }
+            other => DriverError::Parse(format!("column modification failed: {other:?}")),
+        })
+}
+
 fn add_column_action(
     catalog: &mut Catalog,
     database: &str,

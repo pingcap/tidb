@@ -258,6 +258,43 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 "can't drop column {name} with composite index covered or Primary Key covered now"
             ),
         ),
+        // TiDB: "Unsupported modify column: %s".
+        tidb_executor::DriverError::UnsupportedModifyColumn(reason) => SqlQueryError::new(
+            8200,
+            *b"HY000",
+            format!("Unsupported modify column: {reason}"),
+        ),
+        // Go: "Unknown column '%-.192s' in '%-.192s'".
+        tidb_executor::DriverError::UnknownColumnInTable { column, table } => SqlQueryError::new(
+            1054,
+            *b"42S22",
+            format!("Unknown column '{column}' in '{table}'"),
+        ),
+        // Go: "BLOB/TEXT column '%-.192s' used in key specification without a
+        // key length".
+        tidb_executor::DriverError::BlobKeyWithoutLength(column) => SqlQueryError::new(
+            1170,
+            *b"42000",
+            format!("BLOB/TEXT column '{column}' used in key specification without a key length"),
+        ),
+        // Go: "Truncated incorrect %-.32s value: '%-.128s'".
+        tidb_executor::DriverError::TruncatedIncorrectValue { kind, value } => SqlQueryError::new(
+            1292,
+            *b"22007",
+            format!("Truncated incorrect {kind} value: '{value}'"),
+        ),
+        // Go: "Data truncated for column '%s', value is '%s'".
+        tidb_executor::DriverError::DataTruncatedValue { column, value } => SqlQueryError::new(
+            1265,
+            *b"01000",
+            format!("Data truncated for column '{column}', value is '{value}'"),
+        ),
+        // Go: "Data truncated for column '%s' at row %d".
+        tidb_executor::DriverError::DataTruncatedAtRow { column, row } => SqlQueryError::new(
+            1265,
+            *b"01000",
+            format!("Data truncated for column '{column}' at row {row}"),
+        ),
         // TiDB: "Unsupported drop integer primary key".
         tidb_executor::DriverError::UnsupportedDropIntegerPrimaryKey => SqlQueryError::new(
             8200,

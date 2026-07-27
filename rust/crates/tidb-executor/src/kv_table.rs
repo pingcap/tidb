@@ -181,11 +181,38 @@ pub enum KvTableError {
         /// The violated key's name; Go names the clustered one PRIMARY.
         key: String,
     },
+    /// Go `ErrTruncatedWrongValue` (1292): a stored value is not a valid
+    /// number for the column's new numeric type.
+    TruncatedIncorrectValue {
+        /// The numeric domain Go names in the message.
+        kind: &'static str,
+        /// The value it could not read.
+        value: String,
+    },
+    /// Go `ErrTruncatedWrongValueForField` (1265) with the value form: a
+    /// stored value does not fit the column's new type.
+    DataTruncatedValue {
+        /// The column being modified.
+        column: String,
+        /// The value that does not fit.
+        value: String,
+    },
+    /// Go `ErrTruncatedWrongValueForField` (1265) with the row form: a stored
+    /// NULL is rejected by the column's new NOT NULL.
+    DataTruncatedAtRow {
+        /// The column being modified.
+        column: String,
+        /// The offending row's 1-based position.
+        row: usize,
+    },
     /// A stored value failed to decode.
     Decode(String),
     /// The storage layer refused a read or write.
     Storage(String),
 }
+
+/// Go `mysql.NotNullFlag`.
+const NOT_NULL_FLAG: u32 = 1;
 
 impl KvTable {
     /// Builds an empty table.
@@ -504,6 +531,109 @@ impl KvTable {
         for index in &mut self.indexes {
             for value in &mut index.column_offsets {
                 shift(value);
+            }
+        }
+    }
+
+    /// Rewrites a column's definition, converting the stored values into the
+    /// new type, which is Go's ALTER TABLE MODIFY / CHANGE COLUMN.
+    ///
+    /// The column keeps its id, so index entries and handles stay valid; the
+    /// rows are re-encoded because the value bytes carry the column's type.
+    /// `new_position` moves the column, which Go's `FIRST`/`AFTER` clause does
+    /// by reordering `TableInfo.Columns` while the ids stay put.
+    ///
+    /// A value the new type cannot hold aborts the whole statement and leaves
+    /// the table untouched, as Go's `checkModifyColumnData` does before the
+    /// schema change is applied.
+    pub fn modify_column(
+        &mut self,
+        offset: usize,
+        new_column: KvColumn,
+        new_position: Option<usize>,
+    ) -> Result<(), KvTableError> {
+        let target = new_column.field_type.clone();
+        let not_null = target.flags() & NOT_NULL_FLAG != 0;
+        let rows = self.scan_rows_with_handles()?;
+        let mut converted_rows = Vec::with_capacity(rows.len());
+        for (row_number, (handle, row)) in rows.into_iter().enumerate() {
+            let mut row = row;
+            let value = row[offset].clone();
+            // Go reports the offending row's 1-based position for a value the
+            // new NOT NULL rejects, and the value itself for a bad conversion.
+            if value.is_null() {
+                if not_null {
+                    return Err(KvTableError::DataTruncatedAtRow {
+                        column: new_column.name.clone(),
+                        row: row_number + 1,
+                    });
+                }
+            } else {
+                let converted = value
+                    .convert_to(&target, tidb_datatype::STRICT_FLAGS)
+                    .map_err(|_| convert_failure(&new_column.name, &target, &value))?;
+                if converted.event.is_some() {
+                    return Err(convert_failure(&new_column.name, &target, &value));
+                }
+                row[offset] = converted.value;
+            }
+            converted_rows.push((handle, row));
+        }
+
+        self.columns[offset] = new_column;
+        if let Some(position) = new_position.filter(|position| *position != offset) {
+            self.move_column(offset, position);
+            for (_, row) in &mut converted_rows {
+                let value = row.remove(offset);
+                row.insert(position, value);
+            }
+        }
+
+        // The value bytes encode the column's type, so every row is written
+        // again; the handles and index ids are unchanged.
+        self.store = MemStorage::new();
+        for (handle, row) in &converted_rows {
+            let value = self.encode_row_value(row)?;
+            let key = Key::from_bytes(encode_row_key_with_handle(
+                self.table_id,
+                &handle.record_handle(),
+            ));
+            self.write_index_entries(row, handle)?;
+            self.store
+                .set(key, value)
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        Ok(())
+    }
+
+    /// Moves the column at `from` to `to`, carrying every offset that
+    /// addresses a column with it.
+    fn move_column(&mut self, from: usize, to: usize) {
+        let column = self.columns.remove(from);
+        self.columns.insert(to, column);
+        let shift = |offset: &mut usize| {
+            *offset = if *offset == from {
+                to
+            } else if from < *offset && *offset <= to {
+                *offset - 1
+            } else if to <= *offset && *offset < from {
+                *offset + 1
+            } else {
+                *offset
+            };
+        };
+        if let Some(offset) = self.pk_handle_offset.as_mut() {
+            shift(offset);
+        }
+        for offset in &mut self.common_handle_offsets {
+            shift(offset);
+        }
+        if let Some(offset) = self.auto_increment_offset.as_mut() {
+            shift(offset);
+        }
+        for index in &mut self.indexes {
+            for offset in &mut index.column_offsets {
+                shift(offset);
             }
         }
     }
@@ -996,6 +1126,46 @@ fn index_entry_handle(
 
 /// The value MySQL prints in a duplicate-key error: the indexed values joined
 /// by `-`, as Go's `ErrKeyExists` formats them.
+/// How Go reports a value the modified column cannot hold.
+///
+/// A string that is not a number going into a numeric column is
+/// `ErrTruncatedWrongValue` naming the numeric domain (Go converts through
+/// `StrToFloat`, hence "DOUBLE"); anything else -- a string too long for the
+/// new width, an out-of-range number -- is `ErrTruncatedWrongValueForField`
+/// naming the column.
+fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTableError {
+    let text = datum_text(value);
+    let source_is_string = matches!(value, Datum::Bytes(_) | Datum::String(_));
+    let numeric_target = matches!(
+        target.eval_type(),
+        tidb_datatype::EvalType::Int
+            | tidb_datatype::EvalType::Real
+            | tidb_datatype::EvalType::Decimal
+    );
+    if source_is_string && numeric_target {
+        return KvTableError::TruncatedIncorrectValue {
+            kind: "DOUBLE",
+            value: text,
+        };
+    }
+    KvTableError::DataTruncatedValue {
+        column: column.to_owned(),
+        value: text,
+    }
+}
+
+/// A datum as MySQL prints it inside an error message.
+fn datum_text(value: &Datum) -> String {
+    match value {
+        Datum::Int(value) => value.to_string(),
+        Datum::UInt(value) => value.to_string(),
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+        Datum::Real(value) => value.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
 fn duplicate_value_text(index: &KvIndex, row: &[Datum]) -> String {
     index
         .column_offsets

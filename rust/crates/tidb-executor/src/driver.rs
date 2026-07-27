@@ -440,6 +440,38 @@ pub enum DriverError {
     },
     /// TiDB `ErrUnsupportedModifyColumn`-family (8200).
     UnsupportedDropIntegerPrimaryKey,
+    /// TiDB `ErrUnsupportedModifyColumn` (8200), carrying Go's reason text.
+    UnsupportedModifyColumn(&'static str),
+    /// Go `ErrBadField` (1054): the column is not in the table.
+    UnknownColumnInTable {
+        /// The column the statement named.
+        column: String,
+        /// The table it looked in.
+        table: String,
+    },
+    /// Go `ErrBlobKeyWithoutLength` (1170).
+    BlobKeyWithoutLength(String),
+    /// Go `ErrTruncatedWrongValue` (1292).
+    TruncatedIncorrectValue {
+        /// The numeric domain Go names.
+        kind: &'static str,
+        /// The value it could not read.
+        value: String,
+    },
+    /// Go `ErrTruncatedWrongValueForField` (1265), value form.
+    DataTruncatedValue {
+        /// The column being modified.
+        column: String,
+        /// The value that does not fit.
+        value: String,
+    },
+    /// Go `ErrTruncatedWrongValueForField` (1265), row form.
+    DataTruncatedAtRow {
+        /// The column being modified.
+        column: String,
+        /// The offending row's 1-based position.
+        row: usize,
+    },
     /// TiDB 8200: the column is covered by a composite index.
     CannotDropColumnWithCompositeIndex(String),
     /// Go `ErrWrongNumberOfColumnsInSelect` (1222).

@@ -2214,9 +2214,7 @@ mod tests {
         assert!(session
             .run("ALTER TABLE nosuch ADD COLUMN a BIGINT")
             .is_err());
-        assert!(session
-            .run("ALTER TABLE a MODIFY COLUMN v VARCHAR(4)")
-            .is_err());
+        assert!(session.run("ALTER TABLE a ORDER BY v").is_err());
     }
 
     /// CREATE INDEX / DROP INDEX / ALTER TABLE ADD INDEX, checked against
@@ -2351,6 +2349,166 @@ mod tests {
     }
 
     /// RENAME TABLE, checked against captured TiDB behavior.
+    /// A result's rows as text, so an assertion does not depend on which
+    /// datum kind the codec hands back for a given column type.
+    fn row_text(result: Result<StmtResult, DriverError>) -> Vec<Vec<String>> {
+        match result.unwrap() {
+            StmtResult::Rows(rows) => rows
+                .into_iter()
+                .map(|row| row.iter().map(|v| datum_text(v).unwrap()).collect())
+                .collect(),
+            other => panic!("expected rows, got {other:?}"),
+        }
+    }
+
+    /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB
+    /// output (`alter table t modify column ...` on a mock store).
+    ///
+    /// NOT PORTED from Go's own DDL suites: the concurrent/rollback schema
+    /// states (this tier applies a DDL atomically), reorg-worker batching,
+    /// and the type changes needing a full index rebuild across a partitioned
+    /// table -- none of those surfaces exist here.
+    #[test]
+    fn modify_column() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10), c BIGINT NOT NULL DEFAULT 5, KEY kb (b))")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1, 'xx', 7), (2, 'yy', 8)")
+            .unwrap();
+
+        // Captured: widening keeps the rows, and the index still reads.
+        session
+            .run("ALTER TABLE t MODIFY COLUMN b VARCHAR(20)")
+            .unwrap();
+        assert_eq!(
+            session.run("SELECT a FROM t WHERE b = 'xx'").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // Captured: CHANGE renames the column, and the rows survive.
+        session
+            .run("ALTER TABLE t CHANGE COLUMN c d BIGINT")
+            .unwrap();
+        assert_eq!(
+            session.run("SELECT a, d FROM t").unwrap(),
+            StmtResult::Rows(vec![
+                vec![Datum::Int(1), Datum::Int(7)],
+                vec![Datum::Int(2), Datum::Int(8)],
+            ])
+        );
+        assert!(session.run("SELECT c FROM t").is_err());
+
+        // Captured: an unknown column is 1054 naming the table, unless the
+        // statement says IF EXISTS.
+        assert!(matches!(
+            session.run("ALTER TABLE t MODIFY COLUMN nosuch BIGINT"),
+            Err(DriverError::UnknownColumnInTable { .. })
+        ));
+        assert!(matches!(
+            session.run("ALTER TABLE t CHANGE COLUMN nosuch e BIGINT"),
+            Err(DriverError::UnknownColumnInTable { .. })
+        ));
+        session
+            .run("ALTER TABLE t MODIFY COLUMN IF EXISTS nosuch BIGINT")
+            .unwrap();
+
+        // Captured: a value the new type cannot read is 1292, and the table is
+        // left untouched.
+        assert!(matches!(
+            session.run("ALTER TABLE t MODIFY COLUMN b BIGINT"),
+            Err(DriverError::TruncatedIncorrectValue { kind: "DOUBLE", .. })
+        ));
+        assert_eq!(
+            row_text(session.run("SELECT b FROM t WHERE a = 1")),
+            [["xx"]]
+        );
+
+        // Captured: a clustered handle cannot leave the integer domain (8200),
+        // but may change to another integer type.
+        assert!(matches!(
+            session.run("ALTER TABLE t MODIFY COLUMN a VARCHAR(10)"),
+            Err(DriverError::UnsupportedModifyColumn(_))
+        ));
+        session.run("ALTER TABLE t MODIFY COLUMN a INT").unwrap();
+
+        // Captured: an index cannot cover a full BLOB/TEXT column (1170).
+        assert!(matches!(
+            session.run("ALTER TABLE t MODIFY COLUMN b TEXT"),
+            Err(DriverError::BlobKeyWithoutLength(_))
+        ));
+
+        // Captured: NOT NULL and DEFAULT come from the new definition.
+        session
+            .run("ALTER TABLE t MODIFY COLUMN b VARCHAR(20) NOT NULL")
+            .unwrap();
+        assert!(session.run("INSERT INTO t (a, d) VALUES (3, 1)").is_err());
+        session
+            .run("ALTER TABLE t MODIFY COLUMN d BIGINT DEFAULT 3")
+            .unwrap();
+
+        // Captured: FIRST and AFTER move the column, rows and index included.
+        session
+            .run("ALTER TABLE t MODIFY COLUMN b VARCHAR(20) NOT NULL FIRST")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t")),
+            [["xx", "1", "7"], ["yy", "2", "8"]]
+        );
+        session
+            .run("ALTER TABLE t CHANGE COLUMN b bb VARCHAR(20) NOT NULL AFTER d")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t")),
+            [["1", "7", "xx"], ["2", "8", "yy"]]
+        );
+        // The renamed, moved column still reads through its index.
+        assert_eq!(
+            session.run("SELECT a FROM t WHERE bb = 'xx'").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // Captured: renaming onto an existing column is 1060; renaming a
+        // column to its own name is allowed.
+        assert!(matches!(
+            session.run("ALTER TABLE t CHANGE COLUMN bb a VARCHAR(20)"),
+            Err(DriverError::DuplicateColumnName(_))
+        ));
+        session
+            .run("ALTER TABLE t CHANGE COLUMN d d BIGINT")
+            .unwrap();
+
+        // Captured: a stored NULL is rejected by a new NOT NULL, with the
+        // row's position; a convertible string becomes the new type.
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE u (a BIGINT, b VARCHAR(10), c BIGINT)")
+            .unwrap();
+        session.run("INSERT INTO u VALUES (1, '12', NULL)").unwrap();
+        assert!(matches!(
+            session.run("ALTER TABLE u MODIFY COLUMN c BIGINT NOT NULL"),
+            Err(DriverError::DataTruncatedAtRow { row: 1, .. })
+        ));
+        session.run("ALTER TABLE u MODIFY COLUMN b BIGINT").unwrap();
+        assert_eq!(
+            session.run("SELECT b FROM u").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(12)]])
+        );
+
+        // Captured: a value too wide for the narrowed type is 1265, and the
+        // table keeps its old definition.
+        session
+            .run("CREATE TABLE w (a BIGINT, b VARCHAR(10))")
+            .unwrap();
+        session.run("INSERT INTO w VALUES (1, 'xxxxxxxx')").unwrap();
+        assert!(matches!(
+            session.run("ALTER TABLE w MODIFY COLUMN b VARCHAR(3)"),
+            Err(DriverError::DataTruncatedValue { .. })
+        ));
+        assert_eq!(row_text(session.run("SELECT b FROM w")), [["xxxxxxxx"]]);
+    }
+
     #[test]
     fn rename_table() {
         let mut session = Session::new();
