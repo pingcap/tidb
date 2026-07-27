@@ -118,11 +118,7 @@ go_test(
         "common_test.go",
         "config_test.go",
         "encryption_test.go",
-<<<<<<< HEAD
-=======
         "pkdb_common_test.go",
-        "restore_nokit_test.go",
->>>>>>> 190e6c1... cherry-pick: PR #1046
         "restore_test.go",
         "stream_test.go",
     ],
