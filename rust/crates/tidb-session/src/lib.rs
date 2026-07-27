@@ -1053,7 +1053,15 @@ impl Session {
         match &stmt {
             Stmt::Query(query) => {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
-                    return Err(DriverError::Unsupported("set operations are not supported"));
+                    // A set operation runs through its own fold.
+                    let tidb_ast::QueryStmt::SetOpr(set_opr) = &**query else {
+                        unreachable!("a query is a SELECT or a set operation")
+                    };
+                    let current_db = self.current_db.clone();
+                    let (columns, rows) = self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_set_opr_stmt(set_opr, catalog, &current_db)
+                    })?;
+                    return Ok(StmtOutput::Rows { columns, rows });
                 };
                 // An information_schema table is virtual: its rows are
                 // computed from the catalog rather than read from storage.

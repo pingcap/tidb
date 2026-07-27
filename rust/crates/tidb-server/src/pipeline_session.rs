@@ -190,6 +190,12 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 "Write conflict, please retry the transaction".to_owned(),
             )
         }
+        // Go: "The used SELECT statements have a different number of columns".
+        tidb_executor::DriverError::WrongNumberOfColumnsInSelect => SqlQueryError::new(
+            1222,
+            *b"21000",
+            "The used SELECT statements have a different number of columns".to_owned(),
+        ),
         // Go: "Incorrect table definition; there can be only one auto column
         // and it must be defined as a key".
         tidb_executor::DriverError::WrongAutoKey => SqlQueryError::new(
