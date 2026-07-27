@@ -3745,11 +3745,11 @@ func (e *executor) getModifiableColumnJob(
 		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
 	t, err := is.TableByName(ctx, ident.Schema, ident.Name)
-	if tbTracker != nil {
-		t = getTrackedTable(t, tbTracker)
-	}
 	if err != nil {
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+	if tbTracker != nil {
+		t = getTrackedTable(t, tbTracker)
 	}
 
 	return GetModifiableColumnJob(ctx, sctx, is, ident, originalColName, schema, t, spec)
@@ -3773,12 +3773,6 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
-	if tbTracker != nil {
-		if err := tbTracker.AlterTable(spec); err != nil {
-			return err
-		}
-	}
-
 	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec, tbTracker)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
@@ -3796,7 +3790,15 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenameColumn renames an existing column.
@@ -3809,12 +3811,13 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		return errors.Trace(err)
 	}
 
-	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
+	currentTbl := getTrackedTable(tbl, tbTracker)
+	oldCol := table.FindCol(currentTbl.VisibleCols(), oldColName.L)
 	if oldCol == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
 	}
 	// check if column can rename with check constraint
-	err = IsColumnRenameableWithCheckConstraint(oldCol.Name, tbl.Meta())
+	err = IsColumnRenameableWithCheckConstraint(oldCol.Name, currentTbl.Meta())
 	if err != nil {
 		return err
 	}
@@ -3826,7 +3829,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
-	allCols := tbl.Cols()
+	allCols := currentTbl.Cols()
 	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
 	if colWithNewNameAlreadyExist {
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
@@ -3837,15 +3840,9 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkDropColumnWithPartitionConstraint(tbl, oldColName)
+	err = checkDropColumnWithPartitionConstraint(currentTbl, oldColName)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	if tbTracker != nil {
-		if err := tbTracker.AlterTable(spec); err != nil {
-			return err
-		}
 	}
 
 	newCol := oldCol.Clone()
@@ -3874,7 +3871,15 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Position:      spec.Position,
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
@@ -3887,12 +3892,6 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
 	}
-	if tbTracker != nil {
-		if err := tbTracker.AlterTable(spec); err != nil {
-			return err
-		}
-	}
-
 	originalColName := specNewColumn.Name.Name
 	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec, tbTracker)
 	if err != nil {
@@ -3911,7 +3910,15 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
@@ -3926,9 +3933,10 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
 
+	currentTbl := getTrackedTable(t, tbTracker)
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
-	oldCol := table.FindCol(t.Cols(), colName.L)
+	oldCol := table.FindCol(currentTbl.Cols(), colName.L)
 	if oldCol == nil {
 		return dbterror.ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
@@ -3944,7 +3952,7 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		}
 		col.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
-		if IsAutoRandomColumnID(t.Meta(), col.ID) {
+		if IsAutoRandomColumnID(currentTbl.Meta(), col.ID) {
 			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 		hasDefaultValue, err := SetDefaultValue(ctx.GetExprCtx(), col, specNewColumn.Options[0])
@@ -3953,12 +3961,6 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		}
 		if err = checkDefaultValue(ctx.GetExprCtx(), col, hasDefaultValue); err != nil {
 			return errors.Trace(err)
-		}
-	}
-
-	if tbTracker != nil {
-		if err := tbTracker.AlterTable(spec); err != nil {
-			return err
 		}
 	}
 
@@ -3980,7 +3982,15 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		Col: col.ColumnInfo,
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AlterTableComment updates the table comment information.
@@ -5860,12 +5870,6 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 		}
 	}
 
-	if tbTracker != nil {
-		if err := tbTracker.AlterTable(spec); err != nil {
-			return err
-		}
-	}
-
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
@@ -5897,7 +5901,15 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	}
 
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName pmodel.CIStr, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
@@ -5912,8 +5924,9 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
+	currentTbl := getTrackedTable(t, tbTracker)
 	foundFK := false
-	for _, fk := range t.Meta().ForeignKeys {
+	for _, fk := range currentTbl.Meta().ForeignKeys {
 		if fk.Name.L == fkName.L {
 			foundFK = true
 			break
@@ -5921,12 +5934,6 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 	}
 	if !foundFK {
 		return infoschema.ErrForeignKeyNotExists.GenWithStackByArgs(fkName)
-	}
-
-	if tbTracker != nil {
-		if err := tbTracker.AlterTable(spec); err != nil {
-			return err
-		}
 	}
 
 	job := &model.Job{
@@ -5946,7 +5953,15 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 
 	args := &model.DropForeignKeyArgs{FkName: fkName}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *executor) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
