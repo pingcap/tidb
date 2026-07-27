@@ -10,9 +10,11 @@ description = "TiDB executor: the wired execution engine spine (Executor trait +
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 
 [lints]
 workspace = true

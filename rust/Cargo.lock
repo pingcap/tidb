@@ -1337,9 +1337,11 @@ version = "0.0.0"
 dependencies = [
  "tidb-ast",
  "tidb-chunk",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-expr",
  "tidb-parser",
+ "tidb-tablecodec",
 ]
 
 [[package]]

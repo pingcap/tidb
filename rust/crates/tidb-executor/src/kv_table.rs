@@ -1,0 +1,295 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! A table stored as real TiKV-format key/value bytes, plus the scan executor
+//! that reads it back -- the storage-backed leg of the deployment ladder.
+//!
+//! Rows are written with the transcreated codecs: record keys through
+//! `tidb_codec::table_key::encode_row_key_with_handle` (`t{tid}_r{handle}`)
+//! and row values through `tidb_tablecodec::encode_table_row` (the v2 row
+//! format). [`TableScanExec`] iterates the table's record-key range and
+//! decodes each pair back into chunk rows -- the same
+//! encode -> store -> scan -> decode path a real TiKV-backed table takes
+//! (Go `pkg/executor` table reader over `tablecodec`).
+//!
+//! STAND-IN (documented): the byte store here is a sorted map scanned
+//! directly. The `tidb-txnkv` `Snapshot`/`Retriever` trait integration (MVCC,
+//! regions, coprocessor pushdown) replaces this container without touching
+//! the codec path -- the bytes are already the real format.
+
+use crate::executor::{ExecError, Executor, ExecutorMeta};
+use std::collections::BTreeMap;
+use tidb_chunk::chunk::Chunk;
+use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range, RecordHandle};
+use tidb_datatype::{Datum, FieldType};
+use tidb_expr::schema::Schema;
+use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
+
+/// A column of a [`KvTable`]: name, column id, and type.
+#[derive(Clone, Debug)]
+pub struct KvColumn {
+    /// The column name.
+    pub name: String,
+    /// The column id (Go `ColumnInfo.ID`), the key of the row-format entries.
+    pub id: i64,
+    /// The column type.
+    pub field_type: FieldType,
+}
+
+/// A table whose rows live as TiKV-format bytes in a sorted key/value map.
+#[derive(Clone, Debug)]
+pub struct KvTable {
+    /// The table id (Go `TableInfo.ID`), the record-key prefix.
+    pub table_id: i64,
+    /// The columns, in schema order.
+    pub columns: Vec<KvColumn>,
+    /// The byte store (the `Snapshot` stand-in; see the module doc).
+    store: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The next integer row handle (Go `_tidb_rowid` allocation, simplified to
+    /// a monotone counter; the real autoid allocator is a separate unit).
+    next_handle: i64,
+}
+
+/// A failure while encoding or decoding table bytes.
+#[derive(Debug)]
+pub enum KvTableError {
+    /// A row failed to encode.
+    Encode(String),
+    /// A stored value failed to decode.
+    Decode(String),
+}
+
+impl KvTable {
+    /// Builds an empty table.
+    #[must_use]
+    pub fn new(table_id: i64, columns: Vec<KvColumn>) -> Self {
+        KvTable {
+            table_id,
+            columns,
+            store: BTreeMap::new(),
+            next_handle: 1,
+        }
+    }
+
+    /// The number of stored rows.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    /// Whether the table has no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.store.is_empty()
+    }
+
+    /// Inserts one row (a `Datum` per column, in schema order): encodes the
+    /// record key from the next handle and the value through the v2 row format,
+    /// exactly the bytes a TiKV-backed table would store.
+    pub fn insert_row(&mut self, row: &[Datum]) -> Result<i64, KvTableError> {
+        let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
+        let value = encode_table_row(None, row, &column_ids, true, None)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        let key = encode_row_key_with_handle(self.table_id, &RecordHandle::Int(handle));
+        self.store.insert(key, value);
+        Ok(handle)
+    }
+
+    /// Scans the table's record-key range in key order, decoding each value.
+    /// Returns rows as `Datum`s in schema order (a missing column decodes NULL).
+    pub fn scan_rows(&self) -> Result<Vec<Vec<Datum>>, KvTableError> {
+        let (low, high) = get_table_handle_key_range(self.table_id);
+        let column_types: BTreeMap<i64, FieldType> = self
+            .columns
+            .iter()
+            .map(|c| (c.id, c.field_type.clone()))
+            .collect();
+        let mut rows = Vec::new();
+        for (_key, value) in self.store.range(low..=high) {
+            let mut decoded = decode_table_row_to_map(value, &column_types, None)
+                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+            let row: Vec<Datum> = self
+                .columns
+                .iter()
+                .map(|c| decoded.remove(&c.id).unwrap_or(Datum::Null))
+                .collect();
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+}
+
+/// Scans a [`KvTable`]'s record range into chunks -- the storage-backed source
+/// (Go's table reader over `tablecodec`, minus distsql/coprocessor).
+pub struct TableScanExec {
+    meta: ExecutorMeta,
+    table: KvTable,
+    emitted: bool,
+}
+
+impl TableScanExec {
+    /// Builds a scan over `table`.
+    #[must_use]
+    pub fn new(meta: ExecutorMeta, table: KvTable) -> Self {
+        TableScanExec {
+            meta,
+            table,
+            emitted: false,
+        }
+    }
+}
+
+impl Executor for TableScanExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.emitted = false;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        if self.emitted {
+            return Ok(());
+        }
+        let rows = self
+            .table
+            .scan_rows()
+            .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+        for row in &rows {
+            for (c, value) in row.iter().enumerate() {
+                req.append_datum(c, value);
+            }
+        }
+        self.emitted = true;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+
+    fn long() -> FieldType {
+        FieldType::new(FieldTypeCode::LongLong)
+    }
+
+    fn varstr() -> FieldType {
+        FieldType::new(FieldTypeCode::VarString)
+    }
+
+    fn test_table() -> KvTable {
+        KvTable::new(
+            42,
+            vec![
+                KvColumn {
+                    name: "a".to_owned(),
+                    id: 1,
+                    field_type: long(),
+                },
+                KvColumn {
+                    name: "s".to_owned(),
+                    id: 2,
+                    field_type: varstr(),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn insert_encodes_real_bytes_and_scan_decodes() {
+        let mut t = test_table();
+        let mut s1 = Datum::Null;
+        s1.set_bytes(b"hello".to_vec());
+        t.insert_row(&[Datum::Int(7), s1.clone()]).unwrap();
+        t.insert_row(&[Datum::Int(8), Datum::Null]).unwrap();
+        assert_eq!(t.len(), 2);
+
+        let rows = t.scan_rows().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][0], Datum::Int(7));
+        assert_eq!(rows[1][0], Datum::Int(8));
+        assert_eq!(rows[1][1], Datum::Null);
+        // The string round-trips through the v2 row format.
+        match &rows[0][1] {
+            Datum::Bytes(b) => assert_eq!(b.as_slice(), b"hello"),
+            Datum::String(s) => assert_eq!(s.bytes(), b"hello"),
+            other => panic!("unexpected decoded string datum {other:?}"),
+        }
+    }
+
+    #[test]
+    fn table_scan_exec_emits_chunks() {
+        let mut t = test_table();
+        let mut s = Datum::Null;
+        s.set_bytes(b"x".to_vec());
+        t.insert_row(&[Datum::Int(1), s]).unwrap();
+
+        let mut out_cols = Vec::new();
+        for (i, ft) in [long(), varstr()].into_iter().enumerate() {
+            let mut c = Column::new((i + 1) as i64, ft);
+            c.index = i as i64;
+            out_cols.push(c);
+        }
+        let mut scan = TableScanExec::new(ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024), t);
+        scan.open().unwrap();
+        let mut req = scan.new_chunk();
+        scan.next(&mut req).unwrap();
+        assert_eq!(req.num_rows(), 1);
+        assert_eq!(req.get_row(0).get_int64(0), 1);
+        assert_eq!(req.get_row(0).get_bytes(1), b"x");
+        // EOF afterwards.
+        scan.next(&mut req).unwrap();
+        assert_eq!(req.num_rows(), 0);
+    }
+
+    #[test]
+    fn record_keys_are_the_real_format() {
+        // t{tid}_r + memcomparable handle: 19 bytes, 't' prefix.
+        let key = encode_row_key_with_handle(42, &RecordHandle::Int(1));
+        assert_eq!(key[0], b't');
+        assert!(key.len() > 10);
+        // Keys sort by handle within the table range.
+        let k2 = encode_row_key_with_handle(42, &RecordHandle::Int(2));
+        assert!(key < k2);
+        let (low, high) = get_table_handle_key_range(42);
+        assert!(low < key && key < high);
+    }
+}
