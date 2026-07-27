@@ -515,6 +515,21 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 }
+                // A DML write or DDL answers with an OK packet carrying its
+                // affected-row count, as MySQL does on the text protocol;
+                // everything else runs as an ordinary result-set query.
+                match engine.execute_write(sql) {
+                    Ok(Some(outcome)) => {
+                        write_affected_rows_ok(&mut output, 1, outcome.affected_rows, protocol_41)?;
+                        queries += 1;
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        write_query_error(&mut output, &error, protocol_41)?;
+                        continue;
+                    }
+                }
                 let mut result = match engine.execute(sql) {
                     Ok(result) => result,
                     Err(error) => {

@@ -62,6 +62,20 @@ pub enum StmtOutput {
     Done(bool),
 }
 
+/// What kind of answer a statement produces, decided by parsing alone.
+///
+/// The MySQL text protocol answers a query with a result set and a write or
+/// DDL with an OK packet, so a server front end must know which shape a
+/// statement takes *before* running it (running it twice would duplicate the
+/// write).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StmtKind {
+    /// A query: answers with rows.
+    Query,
+    /// A DML write or DDL: answers with an affected-row count.
+    Write,
+}
+
 /// A session: owns the catalog and runs statements against it.
 #[derive(Default)]
 pub struct Session {
@@ -79,6 +93,19 @@ impl Session {
     #[must_use]
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+
+    /// Classifies a statement by parsing alone (no execution), so a caller can
+    /// choose the protocol answer shape before running it.
+    pub fn statement_kind(&self, sql: &str) -> Result<StmtKind, DriverError> {
+        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        match &stmt {
+            Stmt::Query(_) => Ok(StmtKind::Query),
+            Stmt::Dml(_) | Stmt::Ddl(_) => Ok(StmtKind::Write),
+            _ => Err(DriverError::Unsupported(
+                "this statement kind is not supported yet",
+            )),
+        }
     }
 
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by

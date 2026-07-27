@@ -46,11 +46,11 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata};
 use tidb_protocol::ColumnInfo;
-use tidb_session::{Session, StmtOutput};
+use tidb_session::{Session, StmtKind, StmtOutput, StmtResult};
 
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 
 /// MySQL `ER_PARSE_ERROR`.
@@ -93,13 +93,36 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    /// Writes and DDL answer with an OK packet carrying their affected-row
+    /// count; the statement kind is decided by parsing alone so the statement
+    /// runs exactly once.
+    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        if self.session.statement_kind(sql).map_err(map_error)? != StmtKind::Write {
+            return Ok(None);
+        }
+        let affected_rows = match self.session.run(sql).map_err(map_error)? {
+            StmtResult::Affected(count) => count,
+            // DDL affects zero rows, exactly as MySQL's OK packet reports.
+            StmtResult::Done(_) => 0,
+            StmtResult::Rows(_) => {
+                return Err(SqlQueryError::unknown(
+                    "a write statement unexpectedly produced rows",
+                ))
+            }
+        };
+        Ok(Some(WriteOutcome { affected_rows }))
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         let source = match self.session.run_with_columns(sql).map_err(map_error)? {
             StmtOutput::Rows { columns, rows } => {
                 MaterializedResultSetSource::new(select_columns(&columns), rows)
             }
+            // Writes normally answer through `execute_write` (a real OK
+            // packet). These arms remain for a caller that invokes `execute`
+            // directly, which the trait permits: report the count as a
+            // one-column result set rather than an invalid zero-column one.
             StmtOutput::Affected(count) => affected_rows_source(count),
-            // DDL affects zero rows, exactly as MySQL's OK packet reports.
             StmtOutput::Done(_) => affected_rows_source(0),
         };
         Ok(QueryResult::new(Box::new(source)))

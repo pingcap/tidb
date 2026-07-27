@@ -17,9 +17,9 @@
 //! (`PipelineSessionFactory` -> `tidb_session::Session` -> real TiKV-format
 //! bytes) through the real handshake/auth/COM_QUERY wire path.
 //!
-//! Writes currently answer as a one-column `affected_rows` result set (the
-//! COM_QUERY path's supported vocabulary; the true-OK-packet contract
-//! extension is a recorded follow-up), and this test pins that behavior.
+//! Writes and DDL answer with a real MySQL OK packet carrying `affected_rows`
+//! (through the `QuerySession::execute_write` hook), exactly as a stock client
+//! expects; queries answer with a streamed text result set.
 
 use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
@@ -113,6 +113,21 @@ fn read_length_encoded_string<'a>(packet: &mut &'a [u8]) -> Vec<u8> {
     value.to_vec()
 }
 
+/// Sends one COM_QUERY expected to answer with an OK packet (a write or DDL)
+/// and returns its `affected_rows`.
+fn run_write(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: &str) -> u64 {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(packet[0], 0x00, "a write answers with an OK packet: {packet:?}");
+    // OK payload: header 0x00, length-encoded affected_rows, ...
+    let affected = packet[1];
+    assert!(affected < 0xfb, "test writes report small counts");
+    u64::from(affected)
+}
+
 /// Sends one COM_QUERY and reads its (deprecate-EOF) text result set:
 /// column-count, column definitions, rows, terminal OK-with-0xFE-header.
 /// Returns each row's columns as strings.
@@ -176,18 +191,18 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let mut reader = PacketReader::new(read_side);
     authenticate(&mut client, &mut reader);
 
-    // DDL and DML answer as the documented one-column affected_rows set.
+    // DDL and DML answer with real OK packets, as a stock client expects.
     assert_eq!(
-        run_query(&mut client, &mut reader, "CREATE TABLE t (a BIGINT, b BIGINT)"),
-        vec![vec!["0".to_owned()]]
+        run_write(&mut client, &mut reader, "CREATE TABLE t (a BIGINT, b BIGINT)"),
+        0
     );
     assert_eq!(
-        run_query(
+        run_write(
             &mut client,
             &mut reader,
             "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)"
         ),
-        vec![vec!["3".to_owned()]]
+        3
     );
     // The query reads the rows back through real TiKV-format bytes.
     assert_eq!(

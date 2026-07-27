@@ -409,6 +409,19 @@ pub trait QuerySession {
     fn control_transaction(&mut self, _sql: &str) -> Result<Option<bool>, SqlQueryError> {
         Ok(None)
     }
+
+    /// Runs one statement that answers with an OK packet rather than a result
+    /// set — a DML write or DDL, as MySQL answers them on the text protocol.
+    ///
+    /// Returns `Some(outcome)` when the SQL is such a statement (the caller
+    /// writes an OK packet carrying `affected_rows`), and `None` when it is an
+    /// ordinary query the caller should run through [`QuerySession::execute`].
+    /// This mirrors [`QuerySession::control_transaction`]'s shape: sessions
+    /// that serve only queries keep the default and answer everything with a
+    /// result set.
+    fn execute_write(&mut self, _sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        Ok(None)
+    }
 }
 
 /// Process-owned factory invoked only after authentication, inside a worker.
