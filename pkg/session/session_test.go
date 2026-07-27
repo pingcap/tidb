@@ -97,30 +97,53 @@ func TestMustGetSystemBootVersion(t *testing.T) {
 	})
 
 	t.Run("get the version after retry", func(t *testing.T) {
-		core, logs := observer.New(zap.InfoLevel)
-		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
-		defer restoreLog()
-
-		versionCh := make(chan int64, 1)
+		// Unistore was opened outside the synctest bubble, so keep its write path
+		// outside too to avoid mixing its WaitGroups across the bubble boundary.
+		bootstrapCh := make(chan struct{})
+		bootstrapErrCh := make(chan error, 1)
+		stopCh := make(chan struct{})
+		defer close(stopCh)
 		go func() {
-			versionCh <- mustGetSystemBootVersion()
+			select {
+			case <-bootstrapCh:
+			case <-stopCh:
+				return
+			}
+
+			txn, err := store.Begin()
+			if err == nil {
+				err = meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion)
+			}
+			if err == nil {
+				err = txn.Commit(context.Background())
+			}
+			bootstrapErrCh <- err
 		}()
 
-		require.Eventually(t, func() bool {
-			return logs.FilterMessage("waiting SYSTEM keyspace to be bootstrapped").Len() > 0
-		}, 30*time.Second, 10*time.Millisecond)
+		synctest.Test(t, func(t *testing.T) {
+			core, logs := observer.New(zap.InfoLevel)
+			restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+			defer restoreLog()
 
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		require.NoError(t, meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion))
-		require.NoError(t, txn.Commit(context.Background()))
+			versionCh := make(chan int64, 1)
+			go func() {
+				versionCh <- mustGetSystemBootVersion()
+			}()
 
-		select {
-		case version := <-versionCh:
-			require.Equal(t, currentBootstrapVersion, version)
-		case <-time.After(30 * time.Second):
-			require.Fail(t, "timed out waiting for SYSTEM keyspace bootstrap version")
-		}
+			require.Eventually(t, func() bool {
+				return logs.FilterMessage("waiting for the SYSTEM keyspace bootstrap to complete").Len() > 0
+			}, 30*time.Second, 10*time.Millisecond)
+
+			bootstrapCh <- struct{}{}
+			require.NoError(t, <-bootstrapErrCh)
+
+			select {
+			case version := <-versionCh:
+				require.Equal(t, currentBootstrapVersion, version)
+			case <-time.After(30 * time.Second):
+				require.Fail(t, "timed out waiting for SYSTEM keyspace bootstrap version")
+			}
+		})
 	})
 
 	t.Run("exhaust all retry budget", func(t *testing.T) {

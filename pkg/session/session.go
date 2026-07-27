@@ -4938,13 +4938,15 @@ func mustGetSystemBootVersion() int64 {
 	backoffer := backoff.NewExponential(time.Second, 2, maxInterval)
 	var ver int64
 	// total backoff time is around ∑(1, 2, 4, 5...) ~= 30 minutes
+	start := time.Now()
 	for i := range maxRetryCount {
 		ver = mustGetStoreBootstrapVersion(store)
 		if ver != notBootstrapped {
 			break
 		}
-		if i%5 == 0 {
-			logutil.BgLogger().Info("waiting SYSTEM keyspace to be bootstrapped")
+		if (i+1)%5 == 0 {
+			logutil.BgLogger().Info("waiting for the SYSTEM keyspace bootstrap to complete",
+				zap.Duration("total-waited", time.Since(start)))
 		}
 		time.Sleep(backoffer.Backoff(i))
 	}
