@@ -1237,6 +1237,18 @@ func testNormalVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: "split table t between (0) and (100) regions 10",
+			ans: []visitInfo{
+				{mysql.SuperPriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER"), false, nil, false},
+			},
+		},
+		{
+			sql: "split table t index f between (0) and (100) regions 10",
+			ans: []visitInfo{
+				{mysql.SuperPriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER"), false, nil, false},
+			},
+		},
+		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
