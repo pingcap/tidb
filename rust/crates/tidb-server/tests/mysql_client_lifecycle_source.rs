@@ -354,7 +354,10 @@ impl QuerySession for PreparedSession {
             ConfiguredPreparedWrite::UpdatePoint { .. }
             | ConfiguredPreparedWrite::DeletePoint { .. } => 1,
         };
-        Ok(WriteOutcome { affected_rows })
+        Ok(WriteOutcome {
+            affected_rows,
+            last_insert_id: 0,
+        })
     }
 }
 

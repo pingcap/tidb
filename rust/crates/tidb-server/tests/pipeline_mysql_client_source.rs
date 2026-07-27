@@ -128,6 +128,26 @@ fn run_write(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: 
     u64::from(affected)
 }
 
+/// Sends one write and returns the OK packet's `last_insert_id`, the field a
+/// client reads a generated key from.
+fn run_write_insert_id(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> u64 {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(packet[0], 0x00, "a write answers with an OK packet: {packet:?}");
+    // OK payload: header, length-encoded affected_rows, then length-encoded
+    // last_insert_id.
+    assert!(packet[1] < 0xfb, "test writes report small counts");
+    assert!(packet[2] < 0xfb, "test ids are small");
+    u64::from(packet[2])
+}
+
 /// Sends one transaction-control COM_QUERY and returns whether the OK
 /// packet's status flags advertise `SERVER_STATUS_IN_TRANS` (0x0001).
 fn run_transaction_control(
@@ -253,6 +273,30 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     assert_eq!(
         run_query(&mut client, &mut reader, "SELECT @@sql_mode"),
         vec![vec!["ANSI_QUOTES".to_owned()]]
+    );
+
+    // A generated key comes back in the OK packet, which is how a client
+    // reads it, and LAST_INSERT_ID() reports the same value.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "CREATE TABLE gen (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)"
+        ),
+        0
+    );
+    assert_eq!(
+        run_write_insert_id(&mut client, &mut reader, "INSERT INTO gen (v) VALUES (1)"),
+        1
+    );
+    assert_eq!(
+        run_write_insert_id(&mut client, &mut reader, "INSERT INTO gen (v) VALUES (2), (3)"),
+        2,
+        "a multi-row insert reports its first id"
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT LAST_INSERT_ID()"),
+        vec![vec!["2".to_owned()]]
     );
 
     // A transaction over the wire: BEGIN/COMMIT answer with OK packets whose

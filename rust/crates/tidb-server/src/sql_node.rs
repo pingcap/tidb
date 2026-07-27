@@ -287,6 +287,9 @@ impl PreparedStatement {
 pub struct WriteOutcome {
     /// Rows to report in the MySQL OK packet.
     pub affected_rows: u64,
+    /// The auto-increment id this statement generated, which the OK packet
+    /// carries as `last_insert_id`. Zero when the statement generated none.
+    pub last_insert_id: u64,
 }
 
 impl<'a> QueryResult<'a> {

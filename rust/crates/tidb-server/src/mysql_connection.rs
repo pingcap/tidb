@@ -520,7 +520,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // everything else runs as an ordinary result-set query.
                 match engine.execute_write(sql) {
                     Ok(Some(outcome)) => {
-                        write_affected_rows_ok(&mut output, 1, outcome.affected_rows, protocol_41)?;
+                        write_affected_rows_ok(
+                            &mut output,
+                            1,
+                            outcome.affected_rows,
+                            outcome.last_insert_id,
+                            protocol_41,
+                        )?;
                         queries += 1;
                         continue;
                     }
@@ -759,6 +765,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     &mut output,
                                     1,
                                     outcome.affected_rows,
+                                    outcome.last_insert_id,
                                     protocol_41,
                                 )?;
                                 queries += 1;
@@ -800,10 +807,12 @@ fn write_affected_rows_ok(
     output: &mut TcpStream,
     sequence: u8,
     affected_rows: u64,
+    last_insert_id: u64,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
         affected_rows,
+        last_insert_id,
         status_flags: SERVER_STATUS_AUTOCOMMIT,
         protocol_41,
         ..OkPacket::default()

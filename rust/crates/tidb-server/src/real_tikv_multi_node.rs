@@ -352,6 +352,8 @@ impl QuerySession for RealTiKvMultiServerSession {
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
+            // This node has no auto-increment allocator.
+            last_insert_id: 0,
         })
     }
 }

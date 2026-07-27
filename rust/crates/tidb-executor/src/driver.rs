@@ -855,6 +855,20 @@ pub fn run_insert_in(
     catalog: &mut Catalog,
     current_db: &str,
 ) -> Result<u64, DriverError> {
+    run_insert_reporting(sql, catalog, current_db).map(|outcome| outcome.0)
+}
+
+/// [`run_insert_in`], also reporting the first auto-increment id the statement
+/// allocated, which is what MySQL answers with as `LAST_INSERT_ID`.
+///
+/// `None` when the statement allocated nothing: an explicit auto value or a
+/// table with no auto column leaves the session's value untouched, which is
+/// the behavior captured from TiDB.
+pub fn run_insert_reporting(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<(u64, Option<i64>), DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
     let insert = match &stmt {
@@ -935,6 +949,7 @@ pub fn run_insert_in(
         TableEntry::Mem(_) => None,
     };
     let mut auto_rows: Vec<usize> = Vec::new();
+    let mut first_allocated: Option<i64> = None;
 
     let mut inserted = 0u64;
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(insert.rows.len());
@@ -995,7 +1010,12 @@ pub fn run_insert_in(
             // The allocator lives on the table, so the ids are handed out here
             // rather than while the rows were being built.
             for index in &auto_rows {
-                kv.apply_auto_increment(&mut new_rows[*index]);
+                if let Some(allocated) = kv.apply_auto_increment(&mut new_rows[*index]) {
+                    // Go keeps the FIRST allocated id of the statement.
+                    if first_allocated.is_none() {
+                        first_allocated = Some(allocated);
+                    }
+                }
             }
             for row in &new_rows {
                 kv.insert_row(row).map_err(|e| match e {
@@ -1007,7 +1027,7 @@ pub fn run_insert_in(
             }
         }
     }
-    Ok(inserted)
+    Ok((inserted, first_allocated))
 }
 
 /// Go `aggregation.NewAggFuncDesc` + `baseFuncDesc.TypeInfer`: the aggregate

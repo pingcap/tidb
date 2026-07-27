@@ -134,7 +134,10 @@ impl QuerySession for PipelineServerSession {
     /// client expects for `SET NAMES` and friends.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
-            return Ok(Some(WriteOutcome { affected_rows: 0 }));
+            return Ok(Some(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }));
         }
         if self.session.statement_kind(sql).map_err(map_error)? != StmtKind::Write {
             return Ok(None);
@@ -149,7 +152,10 @@ impl QuerySession for PipelineServerSession {
                 ))
             }
         };
-        Ok(Some(WriteOutcome { affected_rows }))
+        Ok(Some(WriteOutcome {
+            affected_rows,
+            last_insert_id: self.session.statement_insert_id(),
+        }))
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {

@@ -96,6 +96,12 @@ pub struct Session {
     txn: Option<Transaction>,
     /// The session's system and user variables.
     vars: SessionVars,
+    /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
+    /// which only a statement that ALLOCATED an auto value updates.
+    last_insert_id: u64,
+    /// The id the last statement allocated, which the OK packet carries and
+    /// which is 0 for a statement that allocated nothing.
+    statement_insert_id: u64,
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
@@ -109,6 +115,8 @@ impl Default for Session {
             catalog: SharedCatalog::default(),
             txn: None,
             vars: SessionVars::new(),
+            last_insert_id: 0,
+            statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
         }
     }
@@ -594,6 +602,22 @@ impl Session {
         Ok(&self.current_db)
     }
 
+    /// Go `LAST_INSERT_ID()`: the first id the most recent ALLOCATING
+    /// statement handed out. A statement that allocated nothing -- an explicit
+    /// auto value, a table with no auto column, an UPDATE -- leaves it as it
+    /// was, which is what MySQL and TiDB both do.
+    #[must_use]
+    pub fn last_insert_id(&self) -> u64 {
+        self.last_insert_id
+    }
+
+    /// The id the last statement allocated, which the OK packet reports and
+    /// which is 0 when the statement allocated nothing.
+    #[must_use]
+    pub fn statement_insert_id(&self) -> u64 {
+        self.statement_insert_id
+    }
+
     /// The session's variables.
     #[must_use]
     pub fn vars(&self) -> &SessionVars {
@@ -760,6 +784,13 @@ impl Session {
                     Err(error) => return Err(var_error(error)),
                 }
             }
+            // `LAST_INSERT_ID()` reads session state, so it binds here for
+            // the same reason `@@x` does.
+            Expr::Func { name, args, .. }
+                if name.eq_ignore_ascii_case("LAST_INSERT_ID") && args.is_empty() =>
+            {
+                Expr::Int(self.last_insert_id.to_string())
+            }
             Expr::UserVar(name) => match self.vars.get_user(name) {
                 Some(value) => Expr::String(value),
                 None => Expr::Null,
@@ -866,6 +897,8 @@ impl Session {
             catalog,
             txn: None,
             vars: SessionVars::new(),
+            last_insert_id: 0,
+            statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
         }
     }
@@ -939,6 +972,8 @@ impl Session {
         // `@@x` / `@x` read the session's own state, so they are bound before
         // the statement reaches the driver.
         self.bind_variables(&mut stmt)?;
+        // Only an allocating INSERT sets it; every other statement reports 0.
+        self.statement_insert_id = 0;
         // Go raises ErrNoDB when a statement resolves an unqualified name and
         // no database is selected.
         if matches!(stmt, Stmt::Query(_) | Stmt::Dml(_) | Stmt::Ddl(_)) {
@@ -958,13 +993,14 @@ impl Session {
             Stmt::Dml(dml) => match &**dml {
                 DmlStmt::Insert(_) => {
                     let current_db = self.current_db.clone();
-                    self.with_catalog_mut(|catalog| {
-                        Ok(StmtOutput::Affected(tidb_executor::run_insert_in(
-                            sql,
-                            catalog,
-                            &current_db,
-                        )?))
-                    })
+                    let (affected, allocated) = self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_insert_reporting(sql, catalog, &current_db)
+                    })?;
+                    self.statement_insert_id = allocated.unwrap_or(0).max(0) as u64;
+                    if let Some(allocated) = allocated {
+                        self.last_insert_id = allocated.max(0) as u64;
+                    }
+                    Ok(StmtOutput::Affected(affected))
                 }
                 DmlStmt::Update(_) => {
                     let current_db = self.current_db.clone();
@@ -1641,6 +1677,60 @@ mod tests {
         session.run("CREATE DATABASE other").unwrap();
         session.run("USE other").unwrap();
         assert!(session.run("SHOW CREATE TABLE test.t1").is_ok());
+    }
+
+    /// LAST_INSERT_ID, checked against a sequence captured from real TiDB:
+    /// 0, 1, 2 (the FIRST id of a multi-row insert), unchanged by an explicit
+    /// value, then 101 and 102, and unchanged by a non-allocating statement.
+    #[test]
+    fn last_insert_id() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE a (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        let read = |session: &mut Session| match session.run("SELECT LAST_INSERT_ID()").unwrap() {
+            StmtResult::Rows(rows) => datum_text(&rows[0][0]).unwrap(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+
+        assert_eq!(read(&mut session), "0", "captured: start");
+        session.run("INSERT INTO a (v) VALUES (10)").unwrap();
+        assert_eq!(read(&mut session), "1", "captured: after single auto");
+        session
+            .run("INSERT INTO a (v) VALUES (20), (30), (40)")
+            .unwrap();
+        assert_eq!(
+            read(&mut session),
+            "2",
+            "captured: a multi-row insert reports its FIRST id"
+        );
+        session.run("INSERT INTO a VALUES (100, 50)").unwrap();
+        assert_eq!(
+            read(&mut session),
+            "2",
+            "captured: an explicit value leaves it unchanged"
+        );
+        session.run("INSERT INTO a (v) VALUES (60)").unwrap();
+        assert_eq!(read(&mut session), "101", "captured: after auto again");
+        session.run("INSERT INTO a VALUES (NULL, 70)").unwrap();
+        assert_eq!(read(&mut session), "102", "captured: NULL allocates");
+
+        // A table with no auto column, and an UPDATE, both leave it alone.
+        session
+            .run("CREATE TABLE b (id BIGINT PRIMARY KEY)")
+            .unwrap();
+        session.run("INSERT INTO b VALUES (5)").unwrap();
+        assert_eq!(read(&mut session), "102", "captured: non-auto insert");
+        session.run("UPDATE a SET v = 0 WHERE id = 1").unwrap();
+        assert_eq!(read(&mut session), "102", "captured: after update");
+
+        // The OK packet's field is per statement, so it is 0 for a statement
+        // that allocated nothing, unlike the sticky function value.
+        session.run("INSERT INTO a (v) VALUES (80)").unwrap();
+        assert_eq!(session.statement_insert_id(), 103);
+        session.run("INSERT INTO b VALUES (6)").unwrap();
+        assert_eq!(session.statement_insert_id(), 0);
+        assert_eq!(session.last_insert_id(), 103);
     }
 
     #[test]

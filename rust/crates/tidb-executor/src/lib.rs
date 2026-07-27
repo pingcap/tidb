@@ -47,10 +47,10 @@ pub mod table_dual;
 pub use apply::ApplyExec;
 pub use ddl::{run_create_table_in, run_create_table_on};
 pub use driver::{
-    run_delete_in, run_delete_on, run_insert_in, run_insert_on, run_select, run_select_meta_in,
-    run_select_meta_on, run_select_meta_stmt, run_select_on, run_update_in, run_update_on, Catalog,
-    DriverError, MemTable, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind,
-    DEFAULT_DATABASE,
+    run_delete_in, run_delete_on, run_insert_in, run_insert_on, run_insert_reporting, run_select,
+    run_select_meta_in, run_select_meta_on, run_select_meta_stmt, run_select_on, run_update_in,
+    run_update_on, Catalog, DriverError, MemTable, SchemaErrorKind, SelectMeta, TableEntry,
+    TxnErrorKind, VarErrorKind, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
