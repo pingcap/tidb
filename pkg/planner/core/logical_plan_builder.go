@@ -4509,6 +4509,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				return nil, err
 			}
 		}
+		// Deduplicate GROUP BY items for non-ROLLUP queries so buildAggregation
+		// does not compute redundant grouping keys. For ROLLUP, buildExpand
+		// already handles dedup internally and returns the correct list.
+		if !rollup && len(gbyCols) > 0 {
+			gbyCols, _ = expression.DeduplicateGbyExpression(gbyCols)
+		}
 		var aggIndexMap map[int]int
 		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
 		if err != nil {
