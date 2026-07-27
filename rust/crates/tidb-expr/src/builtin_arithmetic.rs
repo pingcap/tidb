@@ -101,8 +101,11 @@ fn numeric_context_result_type(expr: &Expression) -> EvalType {
 }
 
 /// Go `newReturnFieldTypeForBaseBuiltinFunc`, restricted to the numeric arms
-/// this module needs: the base result type for an Int/Real/Decimal signature.
-fn new_return_field_type(ret: EvalType) -> FieldType {
+/// this module (and the sibling `builtin_compare`/`builtin_op` modules) needs:
+/// the base result type for an Int/Real/Decimal signature. The Go function's
+/// trailing `booleanFunctions` check is applied by the callers that need it
+/// (none of the arithmetic classes are boolean functions).
+pub(crate) fn new_return_field_type(ret: EvalType) -> FieldType {
     let mut ft = match ret {
         EvalType::Int => FieldTypeBuilder::new()
             .with_code(FieldTypeCode::LongLong)

@@ -24,8 +24,11 @@
 //! DEFERRED (documented): column references (need schema/name resolution), the
 //! full literal domain (decimal/hex/bit/charset strings, unsigned promotion of
 //! large integers), function calls, subqueries, and the result-type inference
-//! that Go performs while rewriting (the ScalarFunction result type is a
-//! placeholder here; evaluation dispatches on operand kinds, not this type).
+//! that Go performs while rewriting for forms other than the arithmetic,
+//! comparison, logic, bit and unary operators (which consult the transcreated
+//! `builtin_arithmetic`/`builtin_compare`/`builtin_op` function classes);
+//! uncovered forms keep a LongLong placeholder ret type (evaluation dispatches
+//! on operand kinds, not on this type).
 
 use crate::constant::Constant;
 use crate::expression::{Expression, ScalarFunction};
@@ -79,17 +82,32 @@ pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
         Expr::Paren(inner) => rewrite_expr(inner),
         Expr::Unary(op, inner) => {
             let arg = rewrite_expr(inner)?;
-            Ok(scalar(unary_op_name(*op), vec![arg]))
+            let name = unary_op_name(*op);
+            // not/bitneg/unaryminus result types come from the transcreated
+            // builtin_op function classes; anything uncovered (unaryplus, the
+            // deferred unaryminus arms) keeps the LongLong placeholder.
+            if let Some(ret_type) = crate::builtin_op::infer_unary_op_type(name, &arg) {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(name),
+                    ret_type,
+                    vec![arg],
+                )));
+            }
+            Ok(scalar(name, vec![arg]))
         }
         Expr::Binary(op, lhs, rhs) => {
             let left = rewrite_expr(lhs)?;
             let right = rewrite_expr(rhs)?;
             let name = binary_op_name(*op);
-            // Arithmetic result types come from the transcreated
-            // builtin_arithmetic function classes; other operators (comparisons,
-            // logic) are ETInt in Go and keep the LongLong placeholder.
+            // Result types come from the transcreated function classes:
+            // builtin_arithmetic (plus/minus/mul/div/intdiv/mod),
+            // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
+            // (logic and bit operators). Anything still uncovered keeps the
+            // LongLong placeholder.
             if let Some(ret_type) =
                 crate::builtin_arithmetic::infer_arithmetic_type(name, &left, &right)
+                    .or_else(|| crate::builtin_compare::infer_compare_type(name))
+                    .or_else(|| crate::builtin_op::infer_op_type(name))
             {
                 return Ok(Expression::ScalarFunction(ScalarFunction::new(
                     CiString::new(name),
@@ -154,6 +172,51 @@ mod tests {
             Datum::Real(f) => assert_eq!(f, 1.5),
             other => panic!("expected real, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rewrite_infers_compare_and_op_ret_types() {
+        use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+
+        let one = || Box::new(Expr::Int("1".to_owned()));
+        let two = || Box::new(Expr::Int("2".to_owned()));
+
+        // 1 < 2: comparison ret type is LongLong with flen 1 (boolean).
+        let lt = rewrite_expr(&Expr::Binary(BinaryOp::Lt, one(), two())).unwrap();
+        let Expression::ScalarFunction(f) = &lt else {
+            panic!("expected a scalar function");
+        };
+        let ret = f.ret_type.as_ref().unwrap();
+        assert_eq!(ret.code(), FieldTypeCode::LongLong);
+        assert_eq!(ret.flen(), 1);
+        assert_ne!(ret.flags() & FieldTypeFlags::IS_BOOLEAN, 0);
+
+        // 1 AND 2: logic ret type is also flen 1.
+        let and = rewrite_expr(&Expr::Binary(BinaryOp::LogicAnd, one(), two())).unwrap();
+        let Expression::ScalarFunction(f) = &and else {
+            panic!("expected a scalar function");
+        };
+        assert_eq!(f.ret_type.as_ref().unwrap().flen(), 1);
+
+        // 1 & 2: bit ops are unsigned LongLong.
+        let band = rewrite_expr(&Expr::Binary(BinaryOp::BitAnd, one(), two())).unwrap();
+        let Expression::ScalarFunction(f) = &band else {
+            panic!("expected a scalar function");
+        };
+        assert!(f.ret_type.as_ref().unwrap().is_unsigned());
+
+        // NOT 1: flen 1; ~1: unsigned.
+        let not = rewrite_expr(&Expr::Unary(UnaryOp::Not, one())).unwrap();
+        let Expression::ScalarFunction(f) = &not else {
+            panic!("expected a scalar function");
+        };
+        assert_eq!(f.ret_type.as_ref().unwrap().flen(), 1);
+
+        let neg = rewrite_expr(&Expr::Unary(UnaryOp::BitNeg, one())).unwrap();
+        let Expression::ScalarFunction(f) = &neg else {
+            panic!("expected a scalar function");
+        };
+        assert!(f.ret_type.as_ref().unwrap().is_unsigned());
     }
 
     #[test]
