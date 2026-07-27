@@ -34,6 +34,7 @@ pub mod ddl;
 pub mod driver;
 pub mod executor;
 pub mod hash_agg;
+pub mod join;
 pub mod kv_table;
 pub mod limit;
 pub mod mem_table;
@@ -49,6 +50,7 @@ pub use driver::{
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
+pub use join::{JoinExec, JoinKind};
 pub use kv_table::{KvColumn, KvTable, TableScanExec};
 pub use limit::LimitExec;
 pub use mem_table::MemTableSourceExec;

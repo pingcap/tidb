@@ -35,7 +35,7 @@ use crate::constant::Constant;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
-use tidb_ast::{CiString, Expr};
+use tidb_ast::{CiString, Expr, IsTarget, UnaryOp};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Resolves a dotted column path to an output column, standing in for the
@@ -120,6 +120,34 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             )))
         }
         Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
+        // Go rewrites `x IS <target>` into the isnull/istrue/isfalse builtin,
+        // wrapping `IS NOT` in a unary NOT. These return 0/1 and never NULL,
+        // so the wrapping NOT is exact.
+        Expr::Is { expr, target, not } => {
+            let arg = rewrite_expr_resolved(expr, resolver)?;
+            let name = match target {
+                // `IS UNKNOWN` is `IS NULL` (Go maps both to isnull).
+                IsTarget::Null | IsTarget::Unknown => "isnull",
+                IsTarget::True => "istrue",
+                IsTarget::False => "isfalse",
+            };
+            // Go's result is a one-digit integer (`flen` 1, boolean-flagged).
+            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
+            ret_type.set_flen(1);
+            let call = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type.clone(),
+                vec![arg],
+            ));
+            if *not {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(unary_op_name(UnaryOp::Not)),
+                    ret_type,
+                    vec![call],
+                )));
+            }
+            Ok(call)
+        }
         Expr::Unary(op, inner) => {
             let arg = rewrite_expr_resolved(inner, resolver)?;
             let name = unary_op_name(*op);
@@ -178,6 +206,39 @@ mod tests {
         let mut c = chunk;
         c.set_num_virtual_rows(1);
         rewritten.eval(&NoColumns, c.get_row(0)).unwrap()
+    }
+
+    /// `IS NULL` / `IS TRUE` / `IS FALSE` (and their `IS NOT` forms) return
+    /// 0 or 1 and never NULL, which is what makes the `IS NOT` wrapping NOT
+    /// exact. `IS UNKNOWN` is `IS NULL`.
+    #[test]
+    fn rewrite_and_eval_is_predicates() {
+        let is = |expr: Expr, target: IsTarget, not: bool| Expr::Is {
+            expr: Box::new(expr),
+            target,
+            not,
+        };
+        let null = || Expr::Null;
+        let int = |text: &str| Expr::Int(text.to_owned());
+
+        for (expr, want) in [
+            (is(null(), IsTarget::Null, false), 1),
+            (is(int("1"), IsTarget::Null, false), 0),
+            (is(null(), IsTarget::Null, true), 0),
+            (is(int("1"), IsTarget::Null, true), 1),
+            (is(null(), IsTarget::Unknown, false), 1),
+            (is(int("2"), IsTarget::True, false), 1),
+            (is(int("0"), IsTarget::True, false), 0),
+            (is(null(), IsTarget::True, false), 0),
+            (is(int("0"), IsTarget::False, false), 1),
+            (is(int("2"), IsTarget::False, false), 0),
+            (is(null(), IsTarget::False, false), 0),
+            // NULL is neither true nor false, so both IS NOT forms hold.
+            (is(null(), IsTarget::True, true), 1),
+            (is(null(), IsTarget::False, true), 1),
+        ] {
+            assert_eq!(eval_const(&expr), Datum::Int(want), "{expr:?}");
+        }
     }
 
     #[test]

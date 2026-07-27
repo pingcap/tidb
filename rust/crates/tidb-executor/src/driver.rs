@@ -31,6 +31,7 @@
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
+use crate::join::{JoinExec, JoinKind};
 use crate::kv_table::{KvTable, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
@@ -208,40 +209,17 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
         _ => return Err(DriverError::Unsupported("only SELECT is supported")),
     };
 
-    // Resolve FROM: none -> table-dual; a single plain table -> the catalog.
-    let table: Option<(&str, &TableEntry)> = match &select.from {
-        None => None,
+    // Resolve FROM: none -> table-dual; otherwise the (possibly joined) tables.
+    let (from_source, scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
+        None => (None, FromScope::default()),
         Some(join) => {
-            if join.right.is_some() {
-                return Err(DriverError::Unsupported("joins are not supported yet"));
-            }
-            match &join.left {
-                JoinNode::Table(table_ref) => {
-                    let name = table_ref
-                        .name
-                        .last()
-                        .ok_or(DriverError::Unsupported("empty table name"))?;
-                    let table = catalog
-                        .get(name)
-                        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
-                    Some((name.as_str(), table))
-                }
-                _ => {
-                    return Err(DriverError::Unsupported(
-                        "derived tables are not supported yet",
-                    ))
-                }
-            }
+            let (exec, scope) = build_join(join, catalog)?;
+            (Some(exec), scope)
         }
     };
 
     // The column resolver for this query's scope.
-    let column_list: Vec<(String, FieldType)> =
-        table.map_or_else(Vec::new, |(_, t)| t.column_list());
-    let resolver = TableResolver {
-        table_name: table.map_or("", |(name, _)| name),
-        columns: &column_list,
-    };
+    let resolver = ScopeResolver { scope: &scope };
 
     // Aggregate path: GROUP BY, or any select field that is an aggregate call.
     let is_aggregate = !select.group_by.is_empty()
@@ -255,7 +233,7 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
             )
         });
     if is_aggregate {
-        return run_aggregate_select(select, table, &column_list, &resolver, catalog);
+        return run_aggregate_select(select, from_source, &resolver, catalog);
     }
 
     // Rewrite each projected field into an evaluable expression; `*` expands to
@@ -277,23 +255,37 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
                 });
             }
             SelectField::Wildcard(qualifier) => {
-                let Some((table_name, _)) = table else {
+                if scope.tables.is_empty() {
                     return Err(DriverError::Unsupported(
                         "`*` is not supported in a FROM-less SELECT",
                     ));
-                };
-                if let Some(q) = qualifier.last() {
-                    if !q.eq_ignore_ascii_case(table_name) {
-                        return Err(DriverError::Unsupported(
-                            "`t.*` qualifier does not match the FROM table",
-                        ));
-                    }
                 }
-                for (i, (name, ft)) in column_list.iter().enumerate() {
-                    let mut col = Column::new((i + 1) as i64, ft.clone());
-                    col.index = i as i64;
-                    exprs.push(Expression::Column(col));
-                    names.push(name.clone());
+                // `*` expands to every column of every FROM table in order,
+                // `t.*` to one table's (Go's unfoldWildStar).
+                let selected: Vec<&FromTable> = match qualifier.last() {
+                    None => scope.tables.iter().collect(),
+                    Some(q) => {
+                        let matching: Vec<&FromTable> = scope
+                            .tables
+                            .iter()
+                            .filter(|t| t.name.eq_ignore_ascii_case(q))
+                            .collect();
+                        if matching.is_empty() {
+                            return Err(DriverError::Unsupported(
+                                "`t.*` qualifier does not match a FROM table",
+                            ));
+                        }
+                        matching
+                    }
+                };
+                for table in selected {
+                    for (i, (name, ft)) in table.columns.iter().enumerate() {
+                        let index = table.offset + i;
+                        let mut col = Column::new((index + 1) as i64, ft.clone());
+                        col.index = index as i64;
+                        exprs.push(Expression::Column(col));
+                        names.push(name.clone());
+                    }
                 }
             }
         }
@@ -322,28 +314,9 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
 
     // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
     // from a table-dual.
-    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match table {
-        Some((_, entry)) => {
-            let source_columns: Vec<Column> = column_list
-                .iter()
-                .enumerate()
-                .map(|(i, (_, ft))| {
-                    let mut col = Column::new((i + 1) as i64, ft.clone());
-                    col.index = i as i64;
-                    col
-                })
-                .collect();
-            let schema = Schema::new(source_columns);
-            let exec: Box<dyn Executor> = match entry {
-                TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
-                    ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                    mem.rows.clone(),
-                )),
-                TableEntry::Kv(kv) => Box::new(TableScanExec::new(
-                    ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                    kv.clone(),
-                )),
-            };
+    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match from_source {
+        Some(exec) => {
+            let schema = exec.schema().clone();
             (exec, schema)
         }
         None => (
@@ -628,7 +601,7 @@ fn substitute_aggregates(
     names: &mut Vec<String>,
     types: &mut Vec<FieldType>,
     group_by_names: &[String],
-    resolver: &TableResolver<'_>,
+    resolver: &ScopeResolver<'_>,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
     Ok(match expr {
@@ -724,7 +697,7 @@ fn substitute_aggregates(
 /// `Expr::Aggregate` node.
 fn build_agg_func(
     expr: &tidb_ast::Expr,
-    resolver: &TableResolver<'_>,
+    resolver: &ScopeResolver<'_>,
 ) -> Result<(AggFunc, FieldType), DriverError> {
     let tidb_ast::Expr::Aggregate {
         name,
@@ -750,6 +723,198 @@ fn build_agg_func(
         },
         ftype,
     ))
+}
+
+/// One table in a query's `FROM`: the name a qualifier must match (its alias
+/// when it has one, as in Go's `TableSource`), its columns, and the offset of
+/// its first column in the joined row.
+#[derive(Clone, Debug)]
+struct FromTable {
+    name: String,
+    columns: Vec<(String, FieldType)>,
+    offset: usize,
+}
+
+/// The joined `FROM` scope: every table's columns concatenated left to right,
+/// which is the row layout [`JoinExec`] produces.
+#[derive(Clone, Debug, Default)]
+struct FromScope {
+    tables: Vec<FromTable>,
+}
+
+impl FromScope {
+    /// Every column of the scope in row order.
+    fn column_list(&self) -> Vec<(String, FieldType)> {
+        self.tables
+            .iter()
+            .flat_map(|t| t.columns.iter().cloned())
+            .collect()
+    }
+
+    fn width(&self) -> usize {
+        self.tables.iter().map(|t| t.columns.len()).sum()
+    }
+}
+
+/// Resolves a column reference against the joined `FROM` scope.
+///
+/// A qualified `t.a` binds to table `t`'s column; an unqualified `a` binds to
+/// the one table that has such a column, and is rejected as ambiguous when
+/// several do -- MySQL's `ERROR 1052 (23000): Column 'a' in field list is
+/// ambiguous`, which Go raises from `expression.buildColumn`.
+struct ScopeResolver<'a> {
+    scope: &'a FromScope,
+}
+
+impl ColumnResolver for ScopeResolver<'_> {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let (qualifier, name) = match path {
+            [name] => (None, name),
+            [table, name] => (Some(table), name),
+            // db.t.a qualification waits on a multi-schema catalog.
+            _ => return None,
+        };
+        let mut found: Option<(usize, FieldType)> = None;
+        for table in &self.scope.tables {
+            if let Some(q) = qualifier {
+                if !q.eq_ignore_ascii_case(&table.name) {
+                    continue;
+                }
+            }
+            for (i, (candidate, ft)) in table.columns.iter().enumerate() {
+                if candidate.eq_ignore_ascii_case(name) {
+                    if found.is_some() {
+                        // Ambiguous across tables: MySQL errors rather than
+                        // picking one.
+                        return None;
+                    }
+                    found = Some((table.offset + i, ft.clone()));
+                }
+            }
+        }
+        let (index, ft) = found?;
+        Some((index, ft, (index + 1) as i64))
+    }
+}
+
+/// Builds the `FROM` scope and the executor that produces its rows.
+///
+/// Go's `buildJoin` builds a left-deep tree of `LogicalJoin`s over the
+/// `FROM` list; this walks the same tree, so `a JOIN b JOIN c` nests as
+/// `(a JOIN b) JOIN c` and the row layout is `a`'s columns, then `b`'s, then
+/// `c`'s.
+///
+/// DEFERRED (documented): derived tables, `USING`, `NATURAL`, and
+/// `STRAIGHT_JOIN`'s ordering guarantee.
+fn build_from(
+    node: &JoinNode,
+    catalog: &Catalog,
+) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+    match node {
+        JoinNode::Table(table_ref) => {
+            let name = table_ref
+                .name
+                .last()
+                .ok_or(DriverError::Unsupported("empty table name"))?;
+            let entry = catalog
+                .get(name)
+                .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+            let columns = entry.column_list();
+            // A table alias replaces the name for qualification, as in Go.
+            let visible = table_ref.alias.clone().unwrap_or_else(|| name.clone());
+            let schema_columns: Vec<Column> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ft))| {
+                    let mut col = Column::new((i + 1) as i64, ft.clone());
+                    col.index = i as i64;
+                    col
+                })
+                .collect();
+            let schema = Schema::new(schema_columns);
+            let exec: Box<dyn Executor> = match entry {
+                TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
+                    ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    mem.rows.clone(),
+                )),
+                TableEntry::Kv(kv) => Box::new(TableScanExec::new(
+                    ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    kv.clone(),
+                )),
+            };
+            let scope = FromScope {
+                tables: vec![FromTable {
+                    name: visible,
+                    columns,
+                    offset: 0,
+                }],
+            };
+            Ok((exec, scope))
+        }
+        JoinNode::Join(join) => build_join(join, catalog),
+        JoinNode::Derived { .. } => Err(DriverError::Unsupported(
+            "derived tables are not supported yet",
+        )),
+    }
+}
+
+/// Builds one join node (or passes through the single-table wrapper).
+fn build_join(
+    join: &tidb_ast::Join,
+    catalog: &Catalog,
+) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+    let (left_exec, left_scope) = build_from(&join.left, catalog)?;
+    let Some(right_node) = &join.right else {
+        // The single-table wrapper the parser always produces.
+        return Ok((left_exec, left_scope));
+    };
+    if join.natural || !join.using.is_empty() {
+        return Err(DriverError::Unsupported(
+            "NATURAL and USING joins are not supported yet",
+        ));
+    }
+    let (right_exec, right_scope) = build_from(right_node, catalog)?;
+
+    // The joined scope: the right tables' columns follow the left's.
+    let left_width = left_scope.width();
+    let mut scope = left_scope;
+    for table in right_scope.tables {
+        scope.tables.push(FromTable {
+            name: table.name,
+            columns: table.columns,
+            offset: table.offset + left_width,
+        });
+    }
+
+    let column_list = scope.column_list();
+    let schema_columns: Vec<Column> = column_list
+        .iter()
+        .enumerate()
+        .map(|(i, (_, ft))| {
+            let mut col = Column::new((i + 1) as i64, ft.clone());
+            col.index = i as i64;
+            col
+        })
+        .collect();
+    let meta = ExecutorMeta::new(Schema::new(schema_columns), 6, INIT_CAP, MAX_CHUNK_SIZE);
+
+    let conditions = match &join.on {
+        Some(expr) => {
+            let resolver = ScopeResolver { scope: &scope };
+            vec![rewrite_expr_resolved(expr, &resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?]
+        }
+        None => Vec::new(),
+    };
+    let kind = match join.tp {
+        tidb_ast::JoinType::Cross => JoinKind::Inner,
+        tidb_ast::JoinType::Left => JoinKind::Left,
+        tidb_ast::JoinType::Right => JoinKind::Right,
+    };
+    let exec: Box<dyn Executor> = Box::new(JoinExec::new(
+        meta, kind, conditions, left_exec, right_exec, NoColumns,
+    ));
+    Ok((exec, scope))
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.
@@ -1054,9 +1219,8 @@ fn datum_is_true(value: &Datum) -> bool {
 /// column and trimmed by a final projection.
 fn run_aggregate_select(
     select: &tidb_ast::SelectStmt,
-    table: Option<(&str, &TableEntry)>,
-    column_list: &[(String, FieldType)],
-    resolver: &TableResolver<'_>,
+    from_source: Option<Box<dyn Executor>>,
+    resolver: &ScopeResolver<'_>,
     _catalog: &Catalog,
 ) -> Result<SelectMeta, DriverError> {
     if select.rollup {
@@ -1172,28 +1336,9 @@ fn run_aggregate_select(
     }
 
     // Source (+ WHERE), as in the plain path.
-    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match table {
-        Some((_, entry)) => {
-            let source_columns: Vec<Column> = column_list
-                .iter()
-                .enumerate()
-                .map(|(i, (_, ft))| {
-                    let mut col = Column::new((i + 1) as i64, ft.clone());
-                    col.index = i as i64;
-                    col
-                })
-                .collect();
-            let schema = Schema::new(source_columns);
-            let exec: Box<dyn Executor> = match entry {
-                TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
-                    ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                    mem.rows.clone(),
-                )),
-                TableEntry::Kv(kv) => Box::new(TableScanExec::new(
-                    ExecutorMeta::new(schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                    kv.clone(),
-                )),
-            };
+    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match from_source {
+        Some(exec) => {
+            let schema = exec.schema().clone();
             (exec, schema)
         }
         None => (
@@ -1782,6 +1927,156 @@ mod tests {
             assert!(run_delete_on("DELETE FROM w ORDER BY a LIMIT 1", &mut catalog).is_err());
             assert!(run_update_on("UPDATE w SET zzz = 1", &mut catalog).is_err());
         }
+    }
+
+    /// Two-table joins: inner, left/right outer with NULL padding, the
+    /// ON-vs-WHERE distinction, qualified and ambiguous column references,
+    /// wildcard expansion, and a three-table left-deep chain.
+    #[test]
+    fn joins() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
+        crate::run_create_table_on("CREATE TABLE r (id BIGINT, w BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO l VALUES (1, 10), (2, 20), (3, 30)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO r VALUES (1, 100), (3, 300), (3, 301)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        // INNER JOIN: only matches, and a left row matching twice emits twice.
+        assert_eq!(
+            run_select_on(
+                "SELECT l.id, l.v, r.w FROM l JOIN r ON l.id = r.id",
+                &catalog
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(1), Datum::Int(10), Datum::Int(100)],
+                vec![Datum::Int(3), Datum::Int(30), Datum::Int(300)],
+                vec![Datum::Int(3), Datum::Int(30), Datum::Int(301)],
+            ]
+        );
+
+        // LEFT JOIN pads the unmatched left row with NULLs.
+        assert_eq!(
+            run_select_on(
+                "SELECT l.id, r.w FROM l LEFT JOIN r ON l.id = r.id",
+                &catalog
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(1), Datum::Int(100)],
+                vec![Datum::Int(2), Datum::Null],
+                vec![Datum::Int(3), Datum::Int(300)],
+                vec![Datum::Int(3), Datum::Int(301)],
+            ]
+        );
+
+        // The ON/WHERE distinction: filtering the padded rows is an anti-join.
+        assert_eq!(
+            run_select_on(
+                "SELECT l.id FROM l LEFT JOIN r ON l.id = r.id WHERE r.id IS NULL",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(2)]]
+        );
+        // A condition in ON does NOT drop the left row; it only stops matching.
+        assert_eq!(
+            run_select_on(
+                "SELECT l.id, r.w FROM l LEFT JOIN r ON l.id = r.id AND r.w > 200",
+                &catalog
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(1), Datum::Null],
+                vec![Datum::Int(2), Datum::Null],
+                vec![Datum::Int(3), Datum::Int(300)],
+                vec![Datum::Int(3), Datum::Int(301)],
+            ]
+        );
+
+        // RIGHT JOIN keeps every right row, padding the left side.
+        assert_eq!(
+            run_select_on(
+                "SELECT l.v, r.id FROM l RIGHT JOIN r ON l.id = r.id AND l.v > 100",
+                &catalog
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Null, Datum::Int(1)],
+                vec![Datum::Null, Datum::Int(3)],
+                vec![Datum::Null, Datum::Int(3)],
+            ]
+        );
+
+        // A comma join with no ON is a Cartesian product.
+        assert_eq!(
+            run_select_on("SELECT l.id FROM l, r", &catalog)
+                .unwrap()
+                .len(),
+            9
+        );
+
+        // `*` expands across both tables in FROM order; `t.*` over one.
+        assert_eq!(
+            run_select_on("SELECT * FROM l JOIN r ON l.id = r.id", &catalog)
+                .unwrap()
+                .first()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            run_select_on("SELECT r.* FROM l JOIN r ON l.id = r.id", &catalog)
+                .unwrap()
+                .first()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // An unqualified column present in both tables is ambiguous, as in
+        // MySQL; one present in only one table resolves.
+        assert!(run_select_on("SELECT id FROM l JOIN r ON l.id = r.id", &catalog).is_err());
+        assert_eq!(
+            run_select_on("SELECT v, w FROM l JOIN r ON l.id = r.id", &catalog)
+                .unwrap()
+                .len(),
+            3
+        );
+
+        // An alias replaces the table name for qualification.
+        assert_eq!(
+            run_select_on(
+                "SELECT a.id FROM l AS a JOIN r AS b ON a.id = b.id",
+                &catalog
+            )
+            .unwrap()
+            .len(),
+            3
+        );
+
+        // A three-table left-deep chain, and an aggregate over a join.
+        crate::run_create_table_on("CREATE TABLE m (id BIGINT)", &mut catalog).unwrap();
+        run_insert_on("INSERT INTO m VALUES (3)", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on(
+                "SELECT COUNT(*) FROM l JOIN r ON l.id = r.id JOIN m ON m.id = r.id",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(2)]]
+        );
+
+        // Unsupported join shapes fail closed.
+        assert!(run_select_on("SELECT * FROM l NATURAL JOIN r", &catalog).is_err());
+        assert!(run_select_on("SELECT * FROM l JOIN r USING (id)", &catalog).is_err());
     }
 
     #[test]

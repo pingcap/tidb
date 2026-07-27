@@ -200,11 +200,35 @@ pub(crate) fn eval_func(
 /// `COALESCE` is eager here exactly as in `eval_func`'s existing eager path
 /// (Go's `builtinCoalesceSig` evaluates arguments in order over values, not
 /// lazily over unevaluated branches — no guarded-error semantics to protect).
+/// Go's truth test for the `IS TRUE`/`IS FALSE` family: `None` for NULL,
+/// otherwise whether the value is non-zero.
+fn datum_truth(value: &Datum) -> Option<bool> {
+    match value {
+        Datum::Null => None,
+        Datum::Int(v) => Some(*v != 0),
+        Datum::UInt(v) => Some(*v != 0),
+        Datum::Real(v) => Some(*v != 0.0),
+        Datum::Decimal(d) => Some(!d.is_zero()),
+        _ => Some(true),
+    }
+}
+
 pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
     if let Some(result) = crate::math_fn::dispatch_values(name, vals) {
         return Some(result);
     }
     let result = match name {
+        // Go `builtinIntIsNullSig`: 1 when the argument is NULL, else 0 --
+        // never NULL itself. `IS UNKNOWN` is the same function.
+        "ISNULL" if vals.len() == 1 => Ok(Datum::Int(i64::from(vals[0] == Datum::Null))),
+        // Go `builtinIntIsTrueSig` with keepNull false: NULL and zero are 0.
+        "ISTRUE" if vals.len() == 1 => {
+            Ok(Datum::Int(i64::from(datum_truth(&vals[0]) == Some(true))))
+        }
+        // Go `builtinIntIsFalseSig`: 1 only for a non-NULL zero.
+        "ISFALSE" if vals.len() == 1 => {
+            Ok(Datum::Int(i64::from(datum_truth(&vals[0]) == Some(false))))
+        }
         // COALESCE returns the first non-NULL argument.
         "COALESCE" => Ok(vals
             .iter()
