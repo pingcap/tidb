@@ -127,7 +127,7 @@ func (t *TableCommon) Copy() TableCommon {
 	return newTable
 }
 
-// MockTableFromMeta converts a mode.TableInfo struct into table.Table
+// MockTableFromMeta converts a model.TableInfo into a table.Table.
 func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {

@@ -1532,12 +1532,13 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column b;",
 		"can't drop column b with Vector Key covered now")
-	tk.MustExec("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'")
+	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
+		"Unsupported multi schema change for add vector index")
 
 	// test alter index visibility
 	tk.MustContainErrMsg("alter table t alter index idx invisible", "Unsupported set vector index invisible")
 	query := "select distinct index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't' order by index_name"
-	tk.MustQuery(query).Check(testkit.Rows("idx YES", "idx2 YES", "idx3 YES"))
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
 	tk.MustExec("alter table t alter index idx visible")
 
 	// test modify/change column with a vector index
@@ -1549,7 +1550,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes1 := tbl.Meta().Indices
-	require.Equal(t, 3, len(indexes1))
+	require.Equal(t, 1, len(indexes1))
 	require.Equal(t, indexes[0].Tp, indexes1[0].Tp)
 	require.Equal(t, indexes[0].VectorInfo.DistanceMetric, indexes1[0].VectorInfo.DistanceMetric)
 
@@ -1558,15 +1559,13 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
-	require.Equal(t, 2, len(indexes))
+	require.Equal(t, 0, len(indexes))
 	gcCnt := tk.MustQuery("select count(*) from mysql.gc_delete_range").Rows()[0][0]
 	require.Equal(t, "0", gcCnt)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` vector(3) NOT NULL,\n" +
-		"  KEY `idx2` (`a`),\n" +
-		"  VECTOR INDEX `idx3`((VEC_L2_DISTANCE(`b`))) COMMENT 'b comment'\n" +
+		"  `b` vector(3) NOT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test create a vector index with same name
@@ -1574,19 +1573,19 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
-	require.Equal(t, 3, len(indexes))
-	require.Equal(t, model.DistanceMetricCosine, indexes[2].VectorInfo.DistanceMetric)
+	require.Equal(t, 1, len(indexes))
+	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) NOT NULL,\n" +
-		"  KEY `idx2` (`a`),\n" +
-		"  VECTOR INDEX `idx3`((VEC_L2_DISTANCE(`b`))) COMMENT 'b comment',\n" +
 		"  VECTOR INDEX `idx`((VEC_COSINE_DISTANCE(`b`))) COMMENT 'b comment'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for dropping indexes
-	tk.MustExec("alter table t drop index idx, drop index idx2, drop index idx3")
+	tk.MustExec("alter table t add index idx2(a)")
+	tk.MustExec("alter table t drop index idx, drop index idx2")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) NOT NULL\n" +

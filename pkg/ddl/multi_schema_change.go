@@ -188,7 +188,7 @@ func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
 
 func checkMultiSchemaJobType(jobType model.ActionType) error {
 	switch jobType {
-	case model.ActionAddColumn, model.ActionDropColumn, model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionRenameIndex, model.ActionModifyColumn, model.ActionSetDefaultValue, model.ActionAlterIndexVisibility, model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate, model.ActionAddForeignKey, model.ActionDropForeignKey, model.ActionModifyTableAutoIDCache, model.ActionAddVectorIndex:
+	case model.ActionAddColumn, model.ActionDropColumn, model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionRenameIndex, model.ActionModifyColumn, model.ActionSetDefaultValue, model.ActionAlterIndexVisibility, model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate, model.ActionAddForeignKey, model.ActionDropForeignKey, model.ActionModifyTableAutoIDCache:
 		return nil
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(jobType.String())

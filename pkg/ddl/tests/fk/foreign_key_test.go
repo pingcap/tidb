@@ -32,9 +32,9 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {

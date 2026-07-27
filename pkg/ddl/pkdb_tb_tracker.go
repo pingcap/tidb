@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
-// TableTracker tracks the state of tableInfo across multiple schema change operations
+// TableTracker tracks TableInfo state across multiple schema change operations.
 type TableTracker struct {
 	tableInfo  *model.TableInfo
 	schemaInfo *model.DBInfo
@@ -33,7 +33,7 @@ type TableTracker struct {
 	addedIndexColumn map[string]map[string]struct{}
 }
 
-// NewTableTracker inits a new tracker from tableInfo
+// NewTableTracker initializes a tracker from the given TableInfo.
 func NewTableTracker(tbInfo *model.TableInfo, schemaInfo *model.DBInfo, sctx sessionctx.Context) *TableTracker {
 	return &TableTracker{
 		tableInfo:        tbInfo.Clone(),
