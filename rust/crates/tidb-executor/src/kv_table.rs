@@ -149,6 +149,10 @@ pub struct KvTable {
     pk_handle_offset: Option<usize>,
     /// The table's indexes (Go `TableInfo.Indices`).
     indexes: Vec<KvIndex>,
+    /// The AUTO_INCREMENT column's offset, if the table has one.
+    auto_increment_offset: Option<usize>,
+    /// Go's auto-id allocator base: the next value to hand out.
+    next_auto_id: i64,
     /// Go `TableInfo.IsCommonHandle`: the clustered primary key's column
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
@@ -185,7 +189,49 @@ impl KvTable {
             pk_handle_offset: None,
             indexes: Vec::new(),
             common_handle_offsets: Vec::new(),
+            auto_increment_offset: None,
+            next_auto_id: 1,
         }
+    }
+
+    /// Marks the AUTO_INCREMENT column.
+    pub fn set_auto_increment_offset(&mut self, offset: usize) {
+        self.auto_increment_offset = Some(offset);
+    }
+
+    /// The AUTO_INCREMENT column's offset, if any.
+    #[must_use]
+    pub fn auto_increment_offset(&self) -> Option<usize> {
+        self.auto_increment_offset
+    }
+
+    /// Go `adjustAutoIncrementDatum`: fills the auto-increment column.
+    ///
+    /// An omitted, NULL or zero value takes the next allocated id; an explicit
+    /// non-zero value is kept and REBASES the allocator so later rows exceed
+    /// it. Returns the id allocated for this row, which the statement reports
+    /// as `LAST_INSERT_ID` for the first such row.
+    ///
+    /// DEFERRED (documented): the `NO_AUTO_VALUE_ON_ZERO` sql_mode, under
+    /// which Go keeps an explicit zero instead of allocating.
+    pub fn apply_auto_increment(&mut self, row: &mut [Datum]) -> Option<i64> {
+        let offset = self.auto_increment_offset?;
+        let current = match row.get(offset) {
+            Some(Datum::Int(value)) => *value,
+            Some(Datum::UInt(value)) => *value as i64,
+            _ => 0,
+        };
+        if current != 0 {
+            // Go rebases so the next allocation is past the explicit value.
+            if current >= self.next_auto_id {
+                self.next_auto_id = current + 1;
+            }
+            return None;
+        }
+        let allocated = self.next_auto_id;
+        self.next_auto_id += 1;
+        row[offset] = Datum::Int(allocated);
+        Some(allocated)
     }
 
     /// Marks the columns whose encoding is the clustered row handle, which Go

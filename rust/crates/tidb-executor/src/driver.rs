@@ -358,6 +358,10 @@ pub enum DriverError {
     Var(VarErrorKind),
     /// A schema statement failed.
     Schema(SchemaErrorKind),
+    /// Go `ErrWrongAutoKey` (1075): more than one auto column.
+    WrongAutoKey,
+    /// Go `ErrWrongFieldSpec` (1063): AUTO_INCREMENT on a non-integer column.
+    WrongColumnSpecifier(String),
     /// Go `ErrColumnCantNull` (1048).
     ColumnCannotBeNull(String),
     /// Go `ErrNoDefaultForField` (1364).
@@ -926,6 +930,12 @@ pub fn run_insert_in(
             .collect(),
     };
 
+    let auto_increment_offset = match table {
+        TableEntry::Kv(kv) => kv.auto_increment_offset(),
+        TableEntry::Mem(_) => None,
+    };
+    let mut auto_rows: Vec<usize> = Vec::new();
+
     let mut inserted = 0u64;
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(insert.rows.len());
     for value_row in &insert.rows {
@@ -944,6 +954,19 @@ pub fn run_insert_in(
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             row[offset] = value;
             assigned[offset] = true;
+        }
+        // Go fills the auto-increment column before the default and NOT NULL
+        // rules run, so an omitted auto column never looks like a missing
+        // value (`adjustAutoIncrementDatum` runs inside the row build).
+        if let Some(offset) = auto_increment_offset {
+            // An omitted or explicitly NULL auto column becomes the zero
+            // marker, which allocation replaces; Go does this before the
+            // NOT NULL check, so a NULL here is never a bad-null error.
+            if !assigned[offset] || row[offset] == Datum::Null {
+                row[offset] = Datum::Int(0);
+            }
+            assigned[offset] = true;
+            auto_rows.push(new_rows.len());
         }
         // Only a column the statement omits takes its default, and only such
         // a column can raise ErrNoDefaultForField (Go `fillColValue`).
@@ -969,6 +992,11 @@ pub fn run_insert_in(
     match table {
         TableEntry::Mem(mem) => mem.rows.extend(new_rows),
         TableEntry::Kv(kv) => {
+            // The allocator lives on the table, so the ids are handed out here
+            // rather than while the rows were being built.
+            for index in &auto_rows {
+                kv.apply_auto_increment(&mut new_rows[*index]);
+            }
             for row in &new_rows {
                 kv.insert_row(row).map_err(|e| match e {
                     crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
@@ -4390,9 +4418,20 @@ mod tests {
             Err(DriverError::NoDefaultForField(_))
         ));
 
-        // Unsupported column sources are rejected rather than ignored.
+        // An AUTO_INCREMENT column supplies its own value, so omitting it is
+        // never the missing-default case (see the auto_increment test).
+        crate::run_create_table_on("CREATE TABLE f (a BIGINT AUTO_INCREMENT)", &mut catalog)
+            .unwrap();
+        run_insert_on("INSERT INTO f () VALUES ()", &mut catalog)
+            .or_else(|_| run_insert_on("INSERT INTO f VALUES (NULL)", &mut catalog))
+            .unwrap();
+        assert_eq!(
+            run_select_on("SELECT a FROM f", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)]]
+        );
+        // A generated column is still rejected rather than ignored.
         assert!(crate::run_create_table_on(
-            "CREATE TABLE f (a BIGINT AUTO_INCREMENT)",
+            "CREATE TABLE g2 (a BIGINT, b BIGINT GENERATED ALWAYS AS (a+1) VIRTUAL)",
             &mut catalog
         )
         .is_err());
@@ -4493,6 +4532,66 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["q".to_owned()]
         );
+    }
+
+    /// AUTO_INCREMENT, checked against behavior captured from real TiDB:
+    /// inserting 1,2 then an explicit 100 rebases the allocator, so the next
+    /// rows are 101, 102, 103 -- NULL and 0 both allocate.
+    #[test]
+    fn auto_increment() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE a1 (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("INSERT INTO a1 (v) VALUES (10), (20)", &mut catalog).unwrap();
+        run_insert_on("INSERT INTO a1 VALUES (100, 30)", &mut catalog).unwrap();
+        run_insert_on("INSERT INTO a1 (v) VALUES (40)", &mut catalog).unwrap();
+        run_insert_on("INSERT INTO a1 VALUES (NULL, 50), (0, 60)", &mut catalog).unwrap();
+
+        // Captured from TiDB: [[1 10] [2 20] [100 30] [101 40] [102 50] [103 60]]
+        assert_eq!(
+            run_select_on("SELECT id, v FROM a1", &catalog).unwrap(),
+            vec![
+                vec![Datum::Int(1), Datum::Int(10)],
+                vec![Datum::Int(2), Datum::Int(20)],
+                vec![Datum::Int(100), Datum::Int(30)],
+                vec![Datum::Int(101), Datum::Int(40)],
+                vec![Datum::Int(102), Datum::Int(50)],
+                vec![Datum::Int(103), Datum::Int(60)],
+            ]
+        );
+
+        // TiDB does NOT require the auto column to be a key -- captured, and
+        // unlike MySQL, which raises 1075 for it.
+        crate::run_create_table_on(
+            "CREATE TABLE bad (a BIGINT AUTO_INCREMENT, b BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("INSERT INTO bad (b) VALUES (1), (2)", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT a FROM bad", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+        );
+
+        // A second auto column is Go's 1075, and a non-integer one is its
+        // "Incorrect column specifier" -- both captured from TiDB.
+        assert!(matches!(
+            crate::run_create_table_on(
+                "CREATE TABLE two (a BIGINT AUTO_INCREMENT PRIMARY KEY, b BIGINT AUTO_INCREMENT)",
+                &mut catalog
+            ),
+            Err(DriverError::WrongAutoKey)
+        ));
+        assert!(matches!(
+            crate::run_create_table_on(
+                "CREATE TABLE strk (a VARCHAR(4) AUTO_INCREMENT PRIMARY KEY)",
+                &mut catalog
+            ),
+            Err(DriverError::WrongColumnSpecifier(_))
+        ));
     }
 
     #[test]

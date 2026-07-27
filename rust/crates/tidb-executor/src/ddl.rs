@@ -39,6 +39,9 @@ use tidb_model::table_info::TableInfo;
 /// Builds the column's `FieldType` from its parsed SQL type: code via
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
+/// Go `mysql.AutoIncrementFlag`.
+const AUTO_INCREMENT_FLAG: u32 = 1 << 9;
+
 /// Go `mysql.PriKeyFlag`.
 const PRI_KEY_FLAG: u32 = 1 << 1;
 
@@ -327,6 +330,30 @@ pub fn run_create_table_in(
         }
     }
 
+    // Go rejects a second auto column with ErrWrongAutoKey (1075) and a
+    // non-integer one with "Incorrect column specifier"; captured from real
+    // TiDB, which -- unlike MySQL -- does NOT require the column to be a key.
+    let mut auto_increment_offset = None;
+    for (i, def) in create.columns.iter().enumerate() {
+        if !def
+            .options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement))
+        {
+            continue;
+        }
+        if auto_increment_offset.is_some() {
+            return Err(DriverError::WrongAutoKey);
+        }
+        if !is_int_column(&columns[i]) {
+            return Err(DriverError::WrongColumnSpecifier(def.name.clone()));
+        }
+        // An auto-increment column is implicitly NOT NULL and carries Go's
+        // AutoIncrementFlag.
+        columns[i].add_flag(NOT_NULL_FLAG | AUTO_INCREMENT_FLAG);
+        auto_increment_offset = Some(i);
+    }
+
     let primary_key = primary_key_column(create)?;
     let pk_offsets: Vec<usize> = match &primary_key {
         Some(names) => {
@@ -392,13 +419,8 @@ pub fn run_create_table_in(
                         .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
                     default_value = Some(value);
                 }
-                // Go treats AUTO_INCREMENT and generated columns as their own
-                // default sources; neither exists yet.
-                tidb_ast::ColumnOption::AutoIncrement => {
-                    return Err(DriverError::Unsupported(
-                        "AUTO_INCREMENT is not supported yet",
-                    ))
-                }
+                // AUTO_INCREMENT is its own value source, handled below.
+                tidb_ast::ColumnOption::AutoIncrement => {}
                 tidb_ast::ColumnOption::Generated { .. } => {
                     return Err(DriverError::Unsupported(
                         "generated columns are not supported yet",
@@ -438,6 +460,9 @@ pub fn run_create_table_in(
         table.set_common_handle_offsets(common_handle_offsets.clone());
     }
     let clustered = pk_is_handle || !common_handle_offsets.is_empty();
+    if let Some(offset) = auto_increment_offset {
+        table.set_auto_increment_offset(offset);
+    }
     for index in table_indexes(create, &info.columns, clustered)? {
         table.add_index(index);
     }

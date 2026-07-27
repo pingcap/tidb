@@ -178,13 +178,20 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
     let mut out = format!("CREATE TABLE {} (\n", escape_name(name));
     let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
 
-    for column in &table.columns {
+    for (offset, column) in table.columns.iter().enumerate() {
         let mut clause = format!(
             "  {} {}",
             escape_name(&column.name),
             column.field_type.compact_str(false)
         );
         let not_null = column.field_type.flags() & NOT_NULL_FLAG != 0;
+        if table.auto_increment_offset() == Some(offset) {
+            // Go writes the pair together for an auto column and prints no
+            // default for it.
+            clause.push_str(" NOT NULL AUTO_INCREMENT");
+            clauses.push(clause);
+            continue;
+        }
         if not_null {
             clause.push_str(" NOT NULL");
         }
@@ -264,9 +271,11 @@ const COL_DESC_FIELD_NAMES: &[&str] = &["Field", "Type", "Null", "Key", "Default
 ///
 /// `Default` is the column's stored `DEFAULT`, or NULL when none was written.
 ///
-/// NOT MODELLED (documented): `Extra` is always empty because
-/// AUTO_INCREMENT, ON UPDATE CURRENT_TIMESTAMP and generated columns are
-/// rejected at DDL time, so no column can carry any of them.
+/// `Extra` reports `auto_increment` for the auto column.
+///
+/// NOT MODELLED (documented): the other `Extra` values -- ON UPDATE
+/// CURRENT_TIMESTAMP and the generated-column markers -- because those column
+/// kinds are rejected at DDL time, so no column can carry them.
 fn column_description(
     column: &tidb_executor::KvColumn,
     offset: usize,
@@ -276,6 +285,12 @@ fn column_description(
         "NO"
     } else {
         "YES"
+    };
+    // Go `NewColDesc`: an auto-increment column reports auto_increment.
+    let extra = if table.auto_increment_offset() == Some(offset) {
+        "auto_increment"
+    } else {
+        ""
     };
     let is_handle = table.pk_handle_offset() == Some(offset);
     let key_flag = if is_handle
@@ -311,7 +326,7 @@ fn column_description(
             },
             None => Datum::Null,
         },
-        Datum::Bytes(Vec::new()),
+        Datum::Bytes(extra.as_bytes().to_vec()),
     ]
 }
 
@@ -1457,6 +1472,19 @@ mod tests {
             ]
         );
 
+        // Go reports auto_increment in Extra; captured from TiDB's DESCRIBE:
+        // [[id bigint(20) NO PRI <nil> auto_increment] [v bigint(20) YES  <nil> ]]
+        session
+            .run("CREATE TABLE ai (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        assert_eq!(
+            describe(&mut session, "DESCRIBE ai").1,
+            vec![
+                vec!["id", "bigint(20)", "NO", "PRI", "NULL", "auto_increment"],
+                vec!["v", "bigint(20)", "YES", "", "NULL", ""],
+            ]
+        );
+
         // A column's stored DEFAULT shows in the Default column.
         session
             .run("CREATE TABLE withdef (a BIGINT DEFAULT 7, b VARCHAR(4) DEFAULT 'zz')")
@@ -1591,6 +1619,20 @@ mod tests {
             "CREATE TABLE `t3` (\n  \
              `k` varchar(10) NOT NULL,\n  \
              PRIMARY KEY (`k`) /*T![clustered_index] CLUSTERED */\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        );
+
+        // AUTO_INCREMENT, captured from TiDB verbatim.
+        assert_eq!(
+            create(
+                &mut session,
+                "create table a1 (id bigint auto_increment primary key, v bigint)",
+                "a1"
+            ),
+            "CREATE TABLE `a1` (\n  \
+             `id` bigint(20) NOT NULL AUTO_INCREMENT,\n  \
+             `v` bigint(20) DEFAULT NULL,\n  \
+             PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n\
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
         );
 

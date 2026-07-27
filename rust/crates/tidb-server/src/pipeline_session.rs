@@ -184,6 +184,19 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 "Write conflict, please retry the transaction".to_owned(),
             )
         }
+        // Go: "Incorrect table definition; there can be only one auto column
+        // and it must be defined as a key".
+        tidb_executor::DriverError::WrongAutoKey => SqlQueryError::new(
+            1075,
+            *b"42000",
+            "Incorrect table definition; there can be only one auto column and it must be defined as a key".to_owned(),
+        ),
+        // Go: "Incorrect column specifier for column '%-.192s'".
+        tidb_executor::DriverError::WrongColumnSpecifier(name) => SqlQueryError::new(
+            1063,
+            *b"42000",
+            format!("Incorrect column specifier for column '{name}'"),
+        ),
         // Go: "Column '%-.192s' cannot be null".
         tidb_executor::DriverError::ColumnCannotBeNull(name) => {
             SqlQueryError::new(1048, *b"23000", format!("Column '{name}' cannot be null"))
