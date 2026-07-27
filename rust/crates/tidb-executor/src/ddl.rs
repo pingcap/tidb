@@ -62,6 +62,20 @@ fn field_type_of(def: &ColumnDef) -> Result<FieldType, DriverError> {
 /// registering a TiKV-byte-backed table in `catalog`. Returns whether a table
 /// was created (`false` only for `IF NOT EXISTS` over an existing name).
 pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, DriverError> {
+    run_create_table_in(sql, catalog, tidb_executor_default_database())
+}
+
+/// The default schema an unqualified `CREATE TABLE` lands in.
+fn tidb_executor_default_database() -> &'static str {
+    crate::driver::DEFAULT_DATABASE
+}
+
+/// [`run_create_table_on`] creating the table in `current_db`.
+pub fn run_create_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<bool, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
     let create = match &stmt {
@@ -92,11 +106,9 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
         return Err(DriverError::Unsupported("a table needs columns"));
     }
 
-    let name = create
-        .name
-        .last()
-        .ok_or(DriverError::Unsupported("empty table name"))?;
-    if catalog.contains(name) {
+    let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
+    let (database, name) = (database.to_owned(), name);
+    if catalog.contains_in(&database, name) {
         if create.if_not_exists {
             return Ok(false);
         }
@@ -114,7 +126,7 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
 
     let info = TableInfo {
         id: catalog.allocate_table_id(),
-        name: CiString::new(name.as_str()),
+        name: CiString::new(name),
         columns,
         ..TableInfo::default()
     };
@@ -129,7 +141,7 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
         })
         .collect();
     let table = KvTable::new(info.id, kv_columns);
-    catalog.register_kv(name, table);
+    catalog.register_kv_in(&database, name, table);
     Ok(true)
 }
 

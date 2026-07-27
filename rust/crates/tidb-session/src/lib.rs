@@ -31,9 +31,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_datatype::{Datum, FieldType};
-use tidb_executor::{
-    run_create_table_on, run_delete_on, run_insert_on, run_update_on, Catalog, DriverError,
-};
+use tidb_executor::{Catalog, DriverError};
 use tidb_executor::{SchemaErrorKind, DEFAULT_DATABASE};
 
 /// The result of running one statement.
@@ -657,29 +655,58 @@ impl Session {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
                     return Err(DriverError::Unsupported("set operations are not supported"));
                 };
+                let current_db = self.current_db.clone();
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_select_meta_stmt(select, catalog)
+                    tidb_executor::run_select_meta_stmt(select, catalog, &current_db)
                 })?;
                 Ok(StmtOutput::Rows { columns, rows })
             }
             Stmt::Dml(dml) => match &**dml {
-                DmlStmt::Insert(_) => self.with_catalog_mut(|catalog| {
-                    Ok(StmtOutput::Affected(run_insert_on(sql, catalog)?))
-                }),
-                DmlStmt::Update(_) => self.with_catalog_mut(|catalog| {
-                    Ok(StmtOutput::Affected(run_update_on(sql, catalog)?))
-                }),
-                DmlStmt::Delete(_) => self.with_catalog_mut(|catalog| {
-                    Ok(StmtOutput::Affected(run_delete_on(sql, catalog)?))
-                }),
+                DmlStmt::Insert(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        Ok(StmtOutput::Affected(tidb_executor::run_insert_in(
+                            sql,
+                            catalog,
+                            &current_db,
+                        )?))
+                    })
+                }
+                DmlStmt::Update(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        Ok(StmtOutput::Affected(tidb_executor::run_update_in(
+                            sql,
+                            catalog,
+                            &current_db,
+                        )?))
+                    })
+                }
+                DmlStmt::Delete(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        Ok(StmtOutput::Affected(tidb_executor::run_delete_in(
+                            sql,
+                            catalog,
+                            &current_db,
+                        )?))
+                    })
+                }
                 _ => Err(DriverError::Unsupported(
                     "this DML statement kind is not supported yet",
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
-                DdlStmt::CreateTable(_) => self.with_catalog_mut(|catalog| {
-                    Ok(StmtOutput::Done(run_create_table_on(sql, catalog)?))
-                }),
+                DdlStmt::CreateTable(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        Ok(StmtOutput::Done(tidb_executor::run_create_table_in(
+                            sql,
+                            catalog,
+                            &current_db,
+                        )?))
+                    })
+                }
                 _ => Err(DriverError::Unsupported(
                     "this DDL statement kind is not supported yet",
                 )),
@@ -1050,6 +1077,53 @@ mod tests {
         assert_eq!(
             session.run("SELECT a FROM test.t").unwrap(),
             StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+    }
+
+    /// USE changes where unqualified names resolve, which is the point of the
+    /// schema tier: the same table name in two schemas is two tables.
+    #[test]
+    fn use_changes_unqualified_name_resolution() {
+        let mut session = Session::new();
+        session.run("CREATE DATABASE other").unwrap();
+
+        session.run("CREATE TABLE t (a BIGINT)").unwrap();
+        session.run("INSERT INTO t VALUES (1)").unwrap();
+
+        session.run("USE other").unwrap();
+        // `t` here is a different table, in the other schema.
+        session.run("CREATE TABLE t (a BIGINT)").unwrap();
+        session.run("INSERT INTO t VALUES (2)").unwrap();
+        assert_eq!(
+            session.run("SELECT a FROM t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(2)]])
+        );
+        // The first schema's table is still reachable by qualifying it.
+        assert_eq!(
+            session.run("SELECT a FROM test.t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        assert_eq!(
+            session.run_with_columns("SHOW TABLES").unwrap(),
+            StmtOutput::Rows {
+                columns: vec![(
+                    "Tables_in_other".to_owned(),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+                )],
+                rows: vec![vec![Datum::Bytes(b"t".to_vec())]],
+            }
+        );
+
+        session.run("USE test").unwrap();
+        assert_eq!(
+            session.run("SELECT a FROM t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        // Writes follow the current schema too.
+        session.run("UPDATE t SET a = 10").unwrap();
+        assert_eq!(
+            session.run("SELECT a FROM other.t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(2)]])
         );
     }
 

@@ -60,14 +60,27 @@ pub struct MemTable {
 /// Splits a table reference into its schema and table names. A bare name
 /// resolves in the default schema; `db.t` names its schema explicitly.
 ///
-/// DEFERRED (documented): the session's current database is not threaded
-/// through the driver yet, so an unqualified name resolves in
-/// [`DEFAULT_DATABASE`] rather than in whatever `USE` selected. `USE` and the
-/// SHOW statements report the current database correctly; a query against a
-/// non-default schema must qualify its tables until that threading lands.
-fn split_table_path(path: &[String]) -> Result<(&str, &str), DriverError> {
+/// Splits a table path for another module in this crate.
+pub(crate) fn split_table_path_pub<'a>(
+    path: &'a [String],
+    current_db: &'a str,
+) -> Result<(&'a str, &'a str), DriverError> {
+    split_table_path(path, current_db)
+}
+
+/// `current_db` is the session's selected schema (Go `SessionVars.CurrentDB`);
+/// an empty one is Go's `ErrNoDB`.
+fn split_table_path<'a>(
+    path: &'a [String],
+    current_db: &'a str,
+) -> Result<(&'a str, &'a str), DriverError> {
     match path {
-        [name] => Ok((DEFAULT_DATABASE, name)),
+        [name] => {
+            if current_db.is_empty() {
+                return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+            }
+            Ok((current_db, name))
+        }
         [database, name] => Ok((database, name)),
         _ => Err(DriverError::Unsupported("empty table name")),
     }
@@ -242,18 +255,13 @@ impl Catalog {
         self.get_in(DEFAULT_DATABASE, name)
     }
 
-    /// A mutable handle on a table, for the write paths.
+    /// A mutable handle on a table of `database`, for the write paths.
     ///
     /// Taking it bumps [`Catalog::version`], which is what a transaction's
     /// conflict check observes. The count is deliberately over-approximate:
     /// every write path goes through here, so a statement that ends up
     /// changing nothing still bumps it. That can refuse a commit Go would
     /// allow, never the reverse.
-    fn get_mut(&mut self, name: &str) -> Option<&mut TableEntry> {
-        self.get_mut_in(DEFAULT_DATABASE, name)
-    }
-
-    /// A mutable handle on a table of `database`.
     fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.version += 1;
         self.databases
@@ -266,6 +274,17 @@ impl Catalog {
     #[must_use]
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Whether `database` holds a table called `name`.
+    #[must_use]
+    pub fn contains_in(&self, database: &str, name: &str) -> bool {
+        self.get_in(database, name).is_some()
+    }
+
+    /// Registers a TiKV-format-byte-backed table in `database`.
+    pub fn register_kv_in(&mut self, database: &str, name: &str, table: KvTable) {
+        self.register_in(database, name, TableEntry::Kv(table));
     }
 
     /// Whether a table with `name` exists in the default database.
@@ -392,6 +411,15 @@ pub type SelectMeta = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
 /// own name; any other expression uses its restored text (Go's
 /// `RestoreString`); `*` expands to the table's column names.
 pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, DriverError> {
+    run_select_meta_in(sql, catalog, DEFAULT_DATABASE)
+}
+
+/// [`run_select_meta_on`] resolving unqualified names in `current_db`.
+pub fn run_select_meta_in(
+    sql: &str,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<SelectMeta, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
     let select = match &stmt {
@@ -403,7 +431,7 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
         },
         _ => return Err(DriverError::Unsupported("only SELECT is supported")),
     };
-    run_select_stmt(select, catalog)
+    run_select_stmt(select, catalog, current_db)
 }
 
 /// Runs one parsed `SELECT` against the catalog, for a caller that has
@@ -412,21 +440,23 @@ pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, Dr
 pub fn run_select_meta_stmt(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<SelectMeta, DriverError> {
-    run_select_stmt(select, catalog)
+    run_select_stmt(select, catalog, current_db)
 }
 
 /// Runs one parsed `SELECT` against the catalog.
 fn run_select_stmt(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<SelectMeta, DriverError> {
     // Uncorrelated subqueries are evaluated now and folded into literals, so
     // everything below plans against ordinary expressions (Go's
     // handleScalarSubquery for the non-Apply case).
     let folded;
-    let select = if select_has_uncorrelated_subquery(select, catalog) {
-        folded = fold_select_subqueries(select, catalog)?;
+    let select = if select_has_uncorrelated_subquery(select, catalog, current_db) {
+        folded = fold_select_subqueries(select, catalog, current_db)?;
         &folded
     } else {
         select
@@ -436,7 +466,7 @@ fn run_select_stmt(
     let (from_source, scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
         None => (None, FromScope::default()),
         Some(join) => {
-            let (exec, scope) = build_join(join, catalog)?;
+            let (exec, scope) = build_join(join, catalog, current_db)?;
             (Some(exec), scope)
         }
     };
@@ -557,8 +587,14 @@ fn run_select_stmt(
     if let Some(predicate) = &select.where_clause {
         let mut correlated = None;
         let appended = scope.width();
-        let predicate =
-            extract_correlated_subquery(predicate, &scope, catalog, appended, &mut correlated)?;
+        let predicate = extract_correlated_subquery(
+            predicate,
+            &scope,
+            catalog,
+            current_db,
+            appended,
+            &mut correlated,
+        )?;
         let (predicate_resolver, predicate_scope);
         let mut source_schema = source_schema;
         if let Some(correlated) = correlated {
@@ -566,7 +602,7 @@ fn run_select_stmt(
             let mut applied = scope.clone();
             let mut value_type = FieldType::new(FieldTypeCode::LongLong);
             if correlated.exists.is_none() {
-                value_type = subquery_result_type(&correlated.select, catalog)
+                value_type = subquery_result_type(&correlated.select, catalog, current_db)
                     .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             }
             applied.tables.push(FromTable {
@@ -589,13 +625,19 @@ fn run_select_stmt(
             // The apply callback outlives this borrow of the catalog, so it
             // owns a snapshot (see ApplyExec::new).
             let inner_catalog = catalog.clone();
+            let inner_db = current_db.to_owned();
             let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
-                run_correlated_subquery(&correlated, values, &inner_scope, &inner_catalog).map_err(
-                    |e| match e {
-                        DriverError::Exec(exec) => exec,
-                        other => ExecError::Unsupported(driver_error_text(&other)),
-                    },
+                run_correlated_subquery(
+                    &correlated,
+                    values,
+                    &inner_scope,
+                    &inner_catalog,
+                    &inner_db,
                 )
+                .map_err(|e| match e {
+                    DriverError::Exec(exec) => exec,
+                    other => ExecError::Unsupported(driver_error_text(&other)),
+                })
             });
             source = Box::new(crate::apply::ApplyExec::new(
                 ExecutorMeta::new(apply_schema.clone(), 7, INIT_CAP, MAX_CHUNK_SIZE),
@@ -703,6 +745,15 @@ fn run_select_stmt(
 /// listed in an explicit column list are filled with NULL (column defaults
 /// wait on ColumnInfo default-value wiring).
 pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
+    run_insert_in(sql, catalog, DEFAULT_DATABASE)
+}
+
+/// [`run_insert_on`] resolving unqualified names in `current_db`.
+pub fn run_insert_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<u64, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
     let insert = match &stmt {
@@ -726,13 +777,10 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
         ));
     }
 
-    let table_name = insert
-        .table
-        .last()
-        .ok_or(DriverError::Unsupported("empty table name"))?
-        .clone();
+    let (database, table_name) = split_table_path(&insert.table, current_db)?;
+    let (database, table_name) = (database.to_owned(), table_name.to_owned());
     let table = catalog
-        .get_mut(&table_name)
+        .get_mut_in(&database, &table_name)
         .ok_or(DriverError::Unsupported("table not found in catalog"))?;
     let column_list = table.column_list();
 
@@ -1008,8 +1056,12 @@ fn build_agg_func(
 /// type its select field reports when the query is planned with no bindings.
 /// Falling back to `LongLong` matches what the rest of the seed does for an
 /// expression whose type is not inferred.
-fn subquery_result_type(select: &tidb_ast::SelectStmt, catalog: &Catalog) -> Option<FieldType> {
-    run_select_stmt(select, catalog)
+fn subquery_result_type(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<FieldType> {
+    run_select_stmt(select, catalog, current_db)
         .ok()
         .and_then(|(columns, _)| columns.first().map(|(_, ft)| ft.clone()))
 }
@@ -1042,11 +1094,12 @@ fn collect_correlated_columns(
     select: &tidb_ast::SelectStmt,
     outer: &FromScope,
     catalog: &Catalog,
+    current_db: &str,
     found: &mut Vec<Vec<String>>,
 ) {
     let inner = match &select.from {
         None => FromScope::default(),
-        Some(join) => match build_join(join, catalog) {
+        Some(join) => match build_join(join, catalog, current_db) {
             Ok((_, scope)) => scope,
             // An unresolvable inner FROM is reported by the inner run itself.
             Err(_) => FromScope::default(),
@@ -1192,6 +1245,7 @@ fn run_correlated_subquery(
     outer_values: &[Datum],
     outer_scope: &FromScope,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<Datum, DriverError> {
     let mut bindings = Vec::with_capacity(correlated.columns.len());
     for path in &correlated.columns {
@@ -1225,7 +1279,7 @@ fn run_correlated_subquery(
         item.expr = bind_correlated_columns(&item.expr, &bindings)?;
     }
 
-    let (_, rows) = run_select_stmt(&bound, catalog)?;
+    let (_, rows) = run_select_stmt(&bound, catalog, current_db)?;
     match correlated.exists {
         // EXISTS folds to 1/0 per outer row.
         Some(not) => Ok(Datum::Int(i64::from(!rows.is_empty() != not))),
@@ -1253,6 +1307,7 @@ fn extract_correlated_subquery(
     expr: &tidb_ast::Expr,
     outer: &FromScope,
     catalog: &Catalog,
+    current_db: &str,
     index: usize,
     found: &mut Option<CorrelatedSubquery>,
 ) -> Result<tidb_ast::Expr, DriverError> {
@@ -1270,7 +1325,7 @@ fn extract_correlated_subquery(
                 ));
             };
             let mut columns = Vec::new();
-            collect_correlated_columns(select, outer, catalog, &mut columns);
+            collect_correlated_columns(select, outer, catalog, current_db, &mut columns);
             if columns.is_empty() {
                 // Uncorrelated: the folding pass handles it.
                 return Ok(expr.clone());
@@ -1297,17 +1352,17 @@ fn extract_correlated_subquery(
             expr.clone()
         }
         Expr::Paren(inner) => Expr::Paren(Box::new(extract_correlated_subquery(
-            inner, outer, catalog, index, found,
+            inner, outer, catalog, current_db, index, found,
         )?)),
         Expr::Unary(op, inner) => Expr::Unary(
             *op,
             Box::new(extract_correlated_subquery(
-                inner, outer, catalog, index, found,
+                inner, outer, catalog, current_db, index, found,
             )?),
         ),
         Expr::Is { expr, target, not } => Expr::Is {
             expr: Box::new(extract_correlated_subquery(
-                expr, outer, catalog, index, found,
+                expr, outer, catalog, current_db, index, found,
             )?),
             target: *target,
             not: *not,
@@ -1315,10 +1370,10 @@ fn extract_correlated_subquery(
         Expr::Binary(op, lhs, rhs) => Expr::Binary(
             *op,
             Box::new(extract_correlated_subquery(
-                lhs, outer, catalog, index, found,
+                lhs, outer, catalog, current_db, index, found,
             )?),
             Box::new(extract_correlated_subquery(
-                rhs, outer, catalog, index, found,
+                rhs, outer, catalog, current_db, index, found,
             )?),
         ),
         other => other.clone(),
@@ -1327,19 +1382,24 @@ fn extract_correlated_subquery(
 
 /// Whether any clause of `select` contains a subquery the folding pass should
 /// run on. A correlated subquery in the `WHERE` is left for the Apply path.
-fn select_has_uncorrelated_subquery(select: &tidb_ast::SelectStmt, catalog: &Catalog) -> bool {
+fn select_has_uncorrelated_subquery(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> bool {
     if let Some(where_clause) = &select.where_clause {
         if expr_has_subquery(where_clause) {
             let outer = match &select.from {
                 None => FromScope::default(),
-                Some(join) => match build_join(join, catalog) {
+                Some(join) => match build_join(join, catalog, current_db) {
                     Ok((_, scope)) => scope,
                     Err(_) => FromScope::default(),
                 },
             };
             let mut found = None;
             // A correlated WHERE subquery is the Apply path's job.
-            if extract_correlated_subquery(where_clause, &outer, catalog, 0, &mut found).is_ok()
+            if extract_correlated_subquery(where_clause, &outer, catalog, current_db, 0, &mut found)
+                .is_ok()
                 && found.is_some()
             {
                 return false;
@@ -1392,24 +1452,25 @@ fn expr_has_subquery(expr: &tidb_ast::Expr) -> bool {
 fn fold_select_subqueries(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<tidb_ast::SelectStmt, DriverError> {
     let mut folded = select.clone();
     for field in folded.fields.fields_mut() {
         if let SelectField::Expr { expr, .. } = field {
-            *expr = fold_subqueries(expr, catalog)?;
+            *expr = fold_subqueries(expr, catalog, current_db)?;
         }
     }
     if let Some(where_clause) = &folded.where_clause {
-        folded.where_clause = Some(fold_subqueries(where_clause, catalog)?);
+        folded.where_clause = Some(fold_subqueries(where_clause, catalog, current_db)?);
     }
     if let Some(having) = &folded.having {
-        folded.having = Some(fold_subqueries(having, catalog)?);
+        folded.having = Some(fold_subqueries(having, catalog, current_db)?);
     }
     for item in &mut folded.order_by {
-        item.expr = fold_subqueries(&item.expr, catalog)?;
+        item.expr = fold_subqueries(&item.expr, catalog, current_db)?;
     }
     for item in &mut folded.group_by {
-        item.expr = fold_subqueries(&item.expr, catalog)?;
+        item.expr = fold_subqueries(&item.expr, catalog, current_db)?;
     }
     Ok(folded)
 }
@@ -1434,11 +1495,12 @@ fn fold_select_subqueries(
 fn fold_subqueries(
     expr: &tidb_ast::Expr,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
     Ok(match expr {
         Expr::Subquery(query) => {
-            let rows = run_subquery(query, catalog)?;
+            let rows = run_subquery(query, catalog, current_db)?;
             match rows.len() {
                 // Go: a scalar subquery with no rows is NULL.
                 0 => Expr::Null,
@@ -1456,7 +1518,7 @@ fn fold_subqueries(
             }
         }
         Expr::Exists { subquery, not } => {
-            let rows = run_subquery(subquery, catalog)?;
+            let rows = run_subquery(subquery, catalog, current_db)?;
             let exists = !rows.is_empty();
             Expr::Int(i64::from(exists != *not).to_string())
         }
@@ -1465,7 +1527,7 @@ fn fold_subqueries(
             subquery,
             not,
         } => {
-            let rows = run_subquery(subquery, catalog)?;
+            let rows = run_subquery(subquery, catalog, current_db)?;
             let mut list = Vec::with_capacity(rows.len());
             for row in &rows {
                 let [value] = row.as_slice() else {
@@ -1482,7 +1544,7 @@ fn fold_subqueries(
                 return Ok(Expr::Int(i64::from(*not).to_string()));
             }
             Expr::In {
-                expr: Box::new(fold_subqueries(expr, catalog)?),
+                expr: Box::new(fold_subqueries(expr, catalog, current_db)?),
                 list,
                 not: *not,
             }
@@ -1494,23 +1556,25 @@ fn fold_subqueries(
         }
         // Walk the forms the expression rewriter itself supports; anything
         // else is returned unchanged and fails to rewrite as it already does.
-        Expr::Paren(inner) => Expr::Paren(Box::new(fold_subqueries(inner, catalog)?)),
-        Expr::Unary(op, inner) => Expr::Unary(*op, Box::new(fold_subqueries(inner, catalog)?)),
+        Expr::Paren(inner) => Expr::Paren(Box::new(fold_subqueries(inner, catalog, current_db)?)),
+        Expr::Unary(op, inner) => {
+            Expr::Unary(*op, Box::new(fold_subqueries(inner, catalog, current_db)?))
+        }
         Expr::Binary(op, lhs, rhs) => Expr::Binary(
             *op,
-            Box::new(fold_subqueries(lhs, catalog)?),
-            Box::new(fold_subqueries(rhs, catalog)?),
+            Box::new(fold_subqueries(lhs, catalog, current_db)?),
+            Box::new(fold_subqueries(rhs, catalog, current_db)?),
         ),
         Expr::Is { expr, target, not } => Expr::Is {
-            expr: Box::new(fold_subqueries(expr, catalog)?),
+            expr: Box::new(fold_subqueries(expr, catalog, current_db)?),
             target: *target,
             not: *not,
         },
         Expr::In { expr, list, not } => Expr::In {
-            expr: Box::new(fold_subqueries(expr, catalog)?),
+            expr: Box::new(fold_subqueries(expr, catalog, current_db)?),
             list: list
                 .iter()
-                .map(|item| fold_subqueries(item, catalog))
+                .map(|item| fold_subqueries(item, catalog, current_db))
                 .collect::<Result<_, _>>()?,
             not: *not,
         },
@@ -1526,6 +1590,7 @@ fn fold_subqueries(
 fn run_subquery(
     query: &tidb_ast::QueryStmt,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let tidb_ast::QueryStmt::Select(_) = query else {
         return Err(DriverError::Unsupported(
@@ -1535,7 +1600,7 @@ fn run_subquery(
     let tidb_ast::QueryStmt::Select(select) = query else {
         unreachable!("the set-operation case is rejected above")
     };
-    run_select_stmt(select, catalog).map(|(_, rows)| rows)
+    run_select_stmt(select, catalog, current_db).map(|(_, rows)| rows)
 }
 
 /// Go turns a subquery's result `Datum` into an `expression.Constant`; the
@@ -1654,12 +1719,13 @@ impl ColumnResolver for ScopeResolver<'_> {
 fn build_from(
     node: &JoinNode,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     match node {
         JoinNode::Table(table_ref) => {
             // A `db.t` reference resolves in that schema; a bare `t` resolves
             // in the session's current one (Go's name resolution).
-            let (database, name) = split_table_path(&table_ref.name)?;
+            let (database, name) = split_table_path(&table_ref.name, current_db)?;
             let entry = catalog
                 .get_in(database, name)
                 .ok_or(DriverError::Unsupported("table not found in catalog"))?;
@@ -1695,7 +1761,7 @@ fn build_from(
             };
             Ok((exec, scope))
         }
-        JoinNode::Join(join) => build_join(join, catalog),
+        JoinNode::Join(join) => build_join(join, catalog, current_db),
         JoinNode::Derived { .. } => Err(DriverError::Unsupported(
             "derived tables are not supported yet",
         )),
@@ -1706,8 +1772,9 @@ fn build_from(
 fn build_join(
     join: &tidb_ast::Join,
     catalog: &Catalog,
+    current_db: &str,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
-    let (left_exec, left_scope) = build_from(&join.left, catalog)?;
+    let (left_exec, left_scope) = build_from(&join.left, catalog, current_db)?;
     let Some(right_node) = &join.right else {
         // The single-table wrapper the parser always produces.
         return Ok((left_exec, left_scope));
@@ -1717,7 +1784,7 @@ fn build_join(
             "NATURAL and USING joins are not supported yet",
         ));
     }
-    let (right_exec, right_scope) = build_from(right_node, catalog)?;
+    let (right_exec, right_scope) = build_from(right_node, catalog, current_db)?;
 
     // The joined scope: the right tables' columns follow the left's.
     let left_width = left_scope.width();
@@ -1762,12 +1829,12 @@ fn build_join(
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.
-fn single_table_name(table_ref: &tidb_ast::TableRef) -> Result<String, DriverError> {
-    table_ref
-        .name
-        .last()
-        .cloned()
-        .ok_or(DriverError::Unsupported("empty table name"))
+fn single_table_name(
+    table_ref: &tidb_ast::TableRef,
+    current_db: &str,
+) -> Result<(String, String), DriverError> {
+    let (database, name) = split_table_path(&table_ref.name, current_db)?;
+    Ok((database.to_owned(), name.to_owned()))
 }
 
 /// Runs a single-table `UPDATE`, returning MySQL's affected-row count.
@@ -1789,6 +1856,15 @@ fn single_table_name(table_ref: &tidb_ast::TableRef) -> Result<String, DriverErr
 /// and the handle-changed path (a row whose primary-key handle column is
 /// assigned is deleted and re-inserted in Go; this seed rejects it).
 pub fn run_update_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
+    run_update_in(sql, catalog, DEFAULT_DATABASE)
+}
+
+/// [`run_update_on`] resolving unqualified names in `current_db`.
+pub fn run_update_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<u64, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let update = match &stmt {
         Stmt::Dml(dml) => match &**dml {
@@ -1814,9 +1890,9 @@ pub fn run_update_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
             ))
         }
     };
-    let name = single_table_name(table_ref)?;
+    let (database, name) = single_table_name(table_ref, current_db)?;
     let column_list = catalog
-        .get(&name)
+        .get_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?
         .column_list();
 
@@ -1856,7 +1932,7 @@ pub fn run_update_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
 
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let entry = catalog
-        .get_mut(&name)
+        .get_mut_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?;
 
     let mut changed = 0u64;
@@ -1935,6 +2011,15 @@ fn compute_updated_row(
 /// DEFERRED (documented): multi-table DELETE, `ORDER BY`/`LIMIT` tails,
 /// `IGNORE`, and `RETURNING`.
 pub fn run_delete_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
+    run_delete_in(sql, catalog, DEFAULT_DATABASE)
+}
+
+/// [`run_delete_on`] resolving unqualified names in `current_db`.
+pub fn run_delete_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<u64, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let delete = match &stmt {
         Stmt::Dml(dml) => match &**dml {
@@ -1961,9 +2046,9 @@ pub fn run_delete_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
             ))
         }
     };
-    let name = single_table_name(table_ref)?;
+    let (database, name) = single_table_name(table_ref, current_db)?;
     let column_list = catalog
-        .get(&name)
+        .get_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?
         .column_list();
     let resolver = TableResolver {
@@ -1979,7 +2064,7 @@ pub fn run_delete_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let entry = catalog
-        .get_mut(&name)
+        .get_mut_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?;
 
     let mut deleted = 0u64;
