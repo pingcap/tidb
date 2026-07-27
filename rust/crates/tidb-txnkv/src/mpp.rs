@@ -134,9 +134,11 @@ impl<L: MppTaskLocation> MppTask<L> {
             mpp_version: self.version.as_i64(),
             connection_id: self.session_id,
             connection_alias: self.session_alias.clone(),
-            address: (self.id != -1)
-                .then(|| self.location.address().to_owned())
-                .unwrap_or_default(),
+            address: if self.id == -1 {
+                String::new()
+            } else {
+                self.location.address().to_owned()
+            },
             ..MppTaskMeta::default()
         }
     }

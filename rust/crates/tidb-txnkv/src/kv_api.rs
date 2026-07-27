@@ -346,6 +346,10 @@ pub trait Transaction:
     fn memory_hook_is_set(&self) -> bool;
     /// Returns buffered entry count.
     fn len(&self) -> usize;
+    /// Returns whether no entries are buffered.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     /// Commits the transaction.
     fn commit(
         &mut self,

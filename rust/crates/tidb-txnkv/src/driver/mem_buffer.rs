@@ -48,7 +48,7 @@ impl StagingHandle {
     /// Returns a positive backend-native staging index.
     #[must_use]
     pub fn index(self) -> Option<usize> {
-        (self.0 > 0).then(|| self.0 as usize)
+        (self.0 > 0).then_some(self.0 as usize)
     }
 
     /// Returns the source signed representation.

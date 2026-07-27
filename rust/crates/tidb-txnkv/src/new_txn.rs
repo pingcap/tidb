@@ -138,10 +138,7 @@ where
     let mut last_error = None;
 
     for attempt in 0..max_retry_count {
-        let mut transaction = match storage.begin() {
-            Ok(transaction) => transaction,
-            Err(error) => return Err(error),
-        };
+        let mut transaction = storage.begin()?;
         set_request_source(context, &mut transaction);
 
         if attempt == 0 {
