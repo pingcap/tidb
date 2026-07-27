@@ -39,8 +39,8 @@ go_test(
         "meta_test.go",
     ],
     embed = [":meta"],
-    flaky = True,
-    shard_count = 18,
+        flaky = True,
+    shard_count = 25,
     deps = [
         "//pkg/ddl",
         "//pkg/infoschema/context",

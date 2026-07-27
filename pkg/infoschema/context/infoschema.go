@@ -82,8 +82,10 @@ var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 }
 
 // HasSpecialAttributes checks if a table has any special attributes.
+// Note: PartitionAttribute is excluded here to allow partition tables to be on-demand loaded
+// from the Sieve cache in InfoSchema V2.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.

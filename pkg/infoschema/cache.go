@@ -15,11 +15,13 @@
 package infoschema
 
 import (
+	"context"
 	"sort"
 	"sync"
 	"time"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -389,14 +391,33 @@ func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
 	}
 }
 
+// gcOldVersion gets the GC safe point from PD, then finds the schema version at
+// that safe point, and GCs btree entries with schema version lower than that.
 func (h *InfoCache) gcOldVersion() {
-	tikvStore, ok := h.r.Store().(helper.Storage)
+	store := h.r.Store()
+	tikvStore, ok := store.(helper.Storage)
 	if !ok {
 		return
 	}
 
+	// Get the GC safe point from PD. The safe point is the timestamp up to which
+	// TiKV has garbage-collected old MVCC versions. We use it to find the corresponding
+	// schema version: among all MVCC writes of the schema version meta key, the newest
+	// write with commit_ts <= safePoint tells us which schema version was current at
+	// the GC safe point. Only schema versions older than that can be safely GC'd.
+	pdStore, ok := store.(kv.StorageWithPD)
+	if !ok {
+		logutil.BgLogger().Warn("store doesn't support PD client, skip GC")
+		return
+	}
+	safePoint, err := pdStore.GetPDClient().UpdateGCSafePoint(context.Background(), 0)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get GC safe point", zap.Error(err))
+		return
+	}
+
 	newHelper := helper.NewHelper(tikvStore)
-	version, err := meta.GetOldestSchemaVersion(newHelper)
+	version, err := meta.GetOldestSchemaVersion(newHelper, safePoint)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to GC old schema version", zap.Error(err))
 		return
@@ -408,5 +429,6 @@ func (h *InfoCache) gcOldVersion() {
 		zap.Int64("oldest version", version),
 		zap.Int("deleted", deleted),
 		zap.Int64("total", total),
+		zap.Uint64("safePoint", safePoint),
 		zap.Duration("takes", time.Since(start)))
 }

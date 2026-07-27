@@ -372,7 +372,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	})
 
 	// full load.
-	schemas, err := do.fetchAllSchemasWithTables(m)
+	schemas, partitionID2TableID, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -399,6 +399,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		data = infoschema.NewData()
 	}
 	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2)
+	builder.WithPartitionID2TableID(partitionID2TableID)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -465,14 +466,43 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
+// partitionIDMap is a thread-safe map for collecting partition ID→table ID mappings
+// across concurrent schema fetch operations.
+type partitionIDMap struct {
+	mu sync.Mutex
+	m  map[int64]int64
+}
+
+func newPartitionIDMap() *partitionIDMap {
+	return &partitionIDMap{m: make(map[int64]int64)}
+}
+
+func (pm *partitionIDMap) store(pid, tid int64) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.m[pid] = tid
+}
+
+func (pm *partitionIDMap) loadAll() map[int64]int64 {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	result := make(map[int64]int64, len(pm.m))
+	for k, v := range pm.m {
+		result[k] = v
+	}
+	return result
+}
+
+func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, map[int64]int64, error) {
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(allSchemas) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
+
+	pm := newPartitionIDMap()
 
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 	concurrency := min(len(splittedSchemas), 128)
@@ -482,13 +512,13 @@ func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, err
 	for _, schemas := range splittedSchemas {
 		ss := schemas
 		eg.Go(func() error {
-			return do.fetchSchemasWithTables(ectx, ss, m)
+			return do.fetchSchemasWithTables(ectx, ss, m, pm)
 		})
 	}
 	if err := eg.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return allSchemas, nil
+	return allSchemas, pm.loadAll(), nil
 }
 
 // fetchSchemaConcurrency controls the goroutines to load schemas, but more goroutines
@@ -516,7 +546,7 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	return splitted
 }
 
-func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader) error {
+func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, pm *partitionIDMap) error {
 	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
 		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
 	})
@@ -529,12 +559,16 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		var tables []*model.TableInfo
 		var err error
 		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
-			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
+			name2ID, specialTableInfos, pid2tid, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
 				return err
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
+			// Merge per-DB partition mappings into the shared thread-safe map
+			for pid, tid := range pid2tid {
+				pm.store(pid, tid)
+			}
 		} else {
 			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
