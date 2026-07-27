@@ -507,6 +507,28 @@ func (s *mockGCSSuite) TestGlobalSortResolvesGlobalIndexConflictsAcrossPartition
 		Check(testkit.Rows("3 12 30 c"))
 }
 
+func (s *mockGCSSuite) TestGlobalSortDistinguishesCommonHandlesWithSameString() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69801: these distinct common handles both stringify as
+	// "{x, y, z}" but belong to different unique-index conflict groups.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			pk1 varchar(32) not null,
+			pk2 varchar(32) not null,
+			u1 int not null,
+			u2 int not null,
+			primary key (pk1, pk2) clustered,
+			unique key uk1 (u1),
+			unique key uk2 (u2)
+		)`,
+		[]string{"\"x, y\",z,10,100\na,b,10,101\nx,\"y, z\",20,200\nc,d,21,200\n"},
+		[]string{},
+		"checksum_table = 'required'",
+	)
+}
+
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
