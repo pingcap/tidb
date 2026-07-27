@@ -298,6 +298,7 @@ func executeRoutineAnalyze(ctx context.Context, procExec *ProcedureExec, analyze
 	previousAnalyzer := procExec.routineAnalyzer
 	procExec.routineAnalyzer = analyzer
 	procExec.cache = make([]plannercore.NeedCloseCur, 0, 10)
+	ctx = plannercore.WithExplainRoutineExecution(ctx)
 	defer func() {
 		procExec.cache = plannercore.ReleaseAll(procExec.cache)
 		procExec.routineAnalyzer = previousAnalyzer

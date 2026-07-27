@@ -1023,6 +1023,7 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 	ip = 0
 	maxID := uint(len(e.procedurePlan.ProcedureCommandList))
 	vars := e.Ctx().GetSessionVars()
+	inExplainRoutineExecution := plannercore.ExplainRoutineExecutionFromContext(ctx)
 	for {
 		if err := vars.SQLKiller.HandleSignal(); err != nil {
 			return errors.Trace(exeerrors.ErrQueryInterrupted)
@@ -1032,8 +1033,10 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 		}
 		oldIP = ip
 		cmd := e.procedurePlan.ProcedureCommandList[ip]
-		if vars.StmtCtx.TriggerCtx.InTrigger || e.isFunction || e.routineAnalyzer != nil {
+		if vars.StmtCtx.TriggerCtx.InTrigger || e.isFunction {
 			cmd.RegisterCompileAndExecFunc(e.executeWithSameContext)
+		} else if e.routineAnalyzer != nil || inExplainRoutineExecution {
+			cmd.RegisterCompileAndExecFunc(e.executeExplainRoutineStmt)
 		}
 
 		e.cache, err = cmd.Execute(ctx, e.Ctx(), &ip, e.cache)
@@ -1084,7 +1087,6 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		}
 		if prepared.PreparedAst != nil && prepared.PreparedAst.Stmt != nil {
 			traceStmt = prepared.PreparedAst.Stmt
-			stmtForStmtCtx = traceStmt
 		}
 	}
 	if e.routineAnalyzer != nil {
@@ -1116,6 +1118,14 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	// being replaced by the nested optimization.
 	originPlannerSelectBlockAsName := vars.PlannerSelectBlockAsName.Load()
 	defer vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+	// Scalar subquery plans are also stored on SessionVars for EXPLAIN rendering.
+	// Nested stored routine calls optimized during expression evaluation may replace
+	// this slice on the same session, so preserve the caller's view and keep a copy
+	// of the statement's scalar subqueries for routine drill-down rendering.
+	originScalarSubQ := vars.MapScalarSubQ
+	defer func() {
+		vars.MapScalarSubQ = originScalarSubQ
+	}()
 	originalStmtCtx := vars.StmtCtx
 	restoreStmtCtx := resetStmtCtx(e.Ctx(), stmtForStmtCtx)
 	defer restoreStmtCtx()
@@ -1156,6 +1166,7 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	if err != nil {
 		return nil, nil, err
 	}
+	stmtScalarSubQ := append([]any(nil), vars.MapScalarSubQ...)
 
 	builder := newExecutorBuilder(ctx, e.Ctx(), e.is, nil)
 	if triggerCtx := e.Ctx().GetSessionVars().StmtCtx.TriggerCtx; triggerCtx.InTrigger {
@@ -1243,8 +1254,119 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		if runtimeStmt != nil {
 			explainable = !routineExplainIsScaffoldingStmt(stmtNode)
 			preferScalarSubQuery := e.routineAnalyzer.prefersScalarSubQueryDrilldown(site.StmtOrdinal)
+			restoreScalarSubQ := restoreRoutineExplainScalarSubQueries(vars, stmtScalarSubQ)
 			planKey = routineExplainPlanKey(planForExplain, preferScalarSubQuery)
 			if captureDrilldown && explainable {
+				drilldownRows, err = renderRoutineExplainAnalyzeRows(
+					planForExplain,
+					runtimeStmt,
+					e.routineAnalyzer.drilldownFormat,
+					preferScalarSubQuery,
+				)
+				if err != nil {
+					restoreScalarSubQ()
+					return nil, nil, err
+				}
+			}
+			restoreScalarSubQ()
+		}
+		e.routineAnalyzer.observe(site.StmtOrdinal, runtimeSQLText, rowsProduced, time.Since(start), planKey, explainable, drilldownRows)
+	}
+	return rows, fieldTypes, nil
+}
+
+func (e *ProcedureExec) executeExplainRoutineStmt(ctx context.Context, stmtNode ast.StmtNode) ([]chunk.Row, []*types.FieldType, error) {
+	var (
+		site             plannercore.ExplainRoutineRuntimeSite
+		hasRoutineSite   bool
+		runtimeStmt      ast.StmtNode
+		runtimeSQLText   string
+		traceStmt        ast.StmtNode
+		stmtForExecution = stmtNode
+		captureDrilldown bool
+	)
+	traceStmt = stmtForExecution
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok && plannercore.IsProcedurePlanCacheExecuteStmt(execStmt) {
+		prepared, err := plannercore.GetPreparedStmt(execStmt, e.Ctx().GetSessionVars())
+		if err != nil {
+			return nil, nil, err
+		}
+		if prepared.PreparedAst != nil && prepared.PreparedAst.Stmt != nil {
+			traceStmt = prepared.PreparedAst.Stmt
+		}
+	}
+	if e.routineAnalyzer != nil {
+		site, hasRoutineSite = plannercore.ExplainRoutineRuntimeSiteFromContext(ctx)
+		if hasRoutineSite {
+			var err error
+			runtimeStmt, runtimeSQLText, err = resolveRoutineExplainRuntimeStmt(stmtNode, e.Ctx().GetSessionVars())
+			if err != nil {
+				return nil, nil, err
+			}
+			captureDrilldown = e.routineAnalyzer.targetMatches(site.StmtOrdinal)
+		}
+	}
+
+	vars := e.Ctx().GetSessionVars()
+	originPlannerSelectBlockAsName := vars.PlannerSelectBlockAsName.Load()
+	defer vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+
+	callStmt, _ := e.Statement.(*ast.CallStmt)
+	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, traceStmt)
+	defer span.Finish()
+	origTraceCtx := e.Ctx().GetTraceCtx()
+	e.Ctx().SetTraceCtx(ctx)
+	defer e.Ctx().SetTraceCtx(origTraceCtx)
+
+	sqlExec, ok := e.Ctx().(sqlexec.SQLExecutor)
+	if !ok {
+		return nil, nil, errors.New("session context does not implement SQLExecutor")
+	}
+
+	start := time.Now()
+	rs, err := sqlExec.ExecuteStmt(ctx, stmtForExecution)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var (
+		rows         []chunk.Row
+		rowsProduced int64
+		fieldTypes   []*types.FieldType
+	)
+	if rs != nil {
+		fields := rs.Fields()
+		fieldTypes = make([]*types.FieldType, 0, len(fields))
+		for _, field := range fields {
+			fieldTypes = append(fieldTypes, &field.Column.FieldType)
+		}
+
+		drainRows := plannercore.ExplainRoutineDrainRowsFromContext(ctx)
+		rows, rowsProduced, err = drainProcedureRecordSet(ctx, rs, vars.MaxChunkSize, drainRows)
+		closeErr := rs.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if e.routineAnalyzer != nil && hasRoutineSite {
+		var (
+			drilldownRows [][]string
+			planKey       string
+			explainable   bool
+		)
+		var planForExplain base.Plan
+		if pi := e.Ctx().ShowProcess(); pi != nil {
+			planForExplain = routineExplainPlanFromProcessInfo(pi.Plan)
+		}
+		if runtimeStmt != nil {
+			explainable = !routineExplainIsScaffoldingStmt(stmtNode)
+			preferScalarSubQuery := e.routineAnalyzer.prefersScalarSubQueryDrilldown(site.StmtOrdinal)
+			planKey = routineExplainPlanKey(planForExplain, preferScalarSubQuery)
+			if captureDrilldown && explainable && planForExplain != nil {
 				drilldownRows, err = renderRoutineExplainAnalyzeRows(
 					planForExplain,
 					runtimeStmt,
@@ -1259,6 +1381,60 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		e.routineAnalyzer.observe(site.StmtOrdinal, runtimeSQLText, rowsProduced, time.Since(start), planKey, explainable, drilldownRows)
 	}
 	return rows, fieldTypes, nil
+}
+
+func drainProcedureRecordSet(ctx context.Context, rs sqlexec.RecordSet, maxChunkSize int, drainRows bool) ([]chunk.Row, int64, error) {
+	var (
+		rows         []chunk.Row
+		rowsProduced int64
+	)
+	req := rs.NewChunk(nil)
+	for {
+		err := rs.Next(ctx, req)
+		if err != nil {
+			return nil, rowsProduced, err
+		}
+		if req.NumRows() == 0 {
+			return rows, rowsProduced, nil
+		}
+		rowsProduced += int64(req.NumRows())
+		if !drainRows {
+			iter := chunk.NewIterator4Chunk(req)
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+				rows = append(rows, row)
+			}
+			req = rs.NewChunk(nil)
+			continue
+		}
+		req = chunk.Renew(req, maxChunkSize)
+	}
+}
+
+func routineExplainPlanFromProcessInfo(plan any) base.Plan {
+	switch plan := plan.(type) {
+	case *plannercore.Explain:
+		if plan.Analyze && plan.TargetPlan != nil {
+			return plan.TargetPlan
+		}
+	case *plannercore.Execute:
+		if plan.Plan != nil {
+			return plan.Plan
+		}
+	case base.Plan:
+		return plan
+	}
+	return nil
+}
+
+func restoreRoutineExplainScalarSubQueries(vars *variable.SessionVars, scalarSubQs []any) func() {
+	if vars == nil {
+		return func() {}
+	}
+	previousScalarSubQ := vars.MapScalarSubQ
+	vars.MapScalarSubQ = append([]any(nil), scalarSubQs...)
+	return func() {
+		vars.MapScalarSubQ = previousScalarSubQ
+	}
 }
 
 type routineTraceSQLRestorer interface {

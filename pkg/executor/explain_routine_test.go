@@ -643,6 +643,90 @@ end`)
 	})
 }
 
+func TestExplainAnalyzeRoutineSetSubqueryKeepsOuterScalarSubqueryAfterNestedFunction(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec("create table t_explain_routine_set_log(a int)")
+	tk.MustExec(`create function f_explain_routine_set_helper(p int) returns int
+begin
+	insert into t_explain_routine_set_log values (p);
+	return 1;
+end`)
+	tk.MustExec(`create function f_explain_routine_set_outer(id int) returns int
+begin
+	declare v int default 0;
+	set v = (select sum(f_explain_routine_set_helper(a)) from t_explain_routine where a <= id);
+	return v;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_set_outer(2)").Rows())
+	targetOrdinal := ""
+	requireAnyRow(t, rows, func(row []string) bool {
+		if row[5] != "set" {
+			return false
+		}
+		targetOrdinal = row[3]
+		return row[4] == "root" && row[7] == "YES" && row[8] == "" && row[10] == "1"
+	})
+	require.NotEmpty(t, targetOrdinal)
+	tk.MustQuery("select count(*) from t_explain_routine_set_log").Check(testkit.Rows("2"))
+
+	tk.MustExec("truncate table t_explain_routine_set_log")
+	drilldownRows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_set_outer(2) for stmt " + targetOrdinal).Rows())
+	tk.MustQuery("select count(*) from t_explain_routine_set_log").Check(testkit.Rows("2"))
+	scalarSubQueryCount := 0
+	for _, row := range drilldownRows {
+		if len(row) > 0 && strings.Contains(row[0], "ScalarSubQuery") {
+			scalarSubQueryCount++
+		}
+	}
+	require.Equal(t, 1, scalarSubQueryCount, "SET drill-down should not render scalar subqueries from transient planner rewrites: %v", drilldownRows)
+	requireAnyRow(t, drilldownRows, func(row []string) bool {
+		return len(row) > 4 && strings.Contains(row[4], "table:t_explain_routine")
+	})
+}
+
+func TestExplainAnalyzeRoutineProcedureSetSubqueryKeepsOuterScalarSubqueryAfterNestedFunction(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec("create table t_explain_routine_proc_set_log(a int)")
+	tk.MustExec(`create function f_explain_routine_proc_set_helper(p int) returns int
+begin
+	insert into t_explain_routine_proc_set_log values (p);
+	return 1;
+end`)
+	tk.MustExec(`create procedure p_explain_routine_proc_set_outer(id int)
+begin
+	declare v int default 0;
+	set v = (select sum(f_explain_routine_proc_set_helper(a)) from t_explain_routine where a <= id);
+	select v;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_proc_set_outer(2)").Rows())
+	targetOrdinal := ""
+	requireAnyRow(t, rows, func(row []string) bool {
+		if row[5] != "set" {
+			return false
+		}
+		targetOrdinal = row[3]
+		return row[4] == "root" && row[7] == "YES" && row[8] == "" && row[10] == "1" && row[13] == "0"
+	})
+	require.NotEmpty(t, targetOrdinal)
+	tk.MustQuery("select count(*) from t_explain_routine_proc_set_log").Check(testkit.Rows("2"))
+
+	tk.MustExec("truncate table t_explain_routine_proc_set_log")
+	drilldownRows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_proc_set_outer(2) for stmt " + targetOrdinal).Rows())
+	tk.MustQuery("select count(*) from t_explain_routine_proc_set_log").Check(testkit.Rows("2"))
+	scalarSubQueryCount := 0
+	for _, row := range drilldownRows {
+		if len(row) > 0 && strings.Contains(row[0], "ScalarSubQuery") {
+			scalarSubQueryCount++
+		}
+	}
+	require.Equal(t, 1, scalarSubQueryCount, "procedure SET drill-down should keep the caller scalar subquery plan: %v", drilldownRows)
+	requireAnyRow(t, drilldownRows, func(row []string) bool {
+		return len(row) > 4 && strings.Contains(row[4], "table:t_explain_routine")
+	})
+}
+
 func TestExplainAnalyzeRoutineDrilldownRejectsNotExecutedTarget(t *testing.T) {
 	tk := setupExplainRoutineTestKit(t)
 	tk.MustExec(`create procedure p_explain_routine_analyze_not_executed(id int)
@@ -879,6 +963,39 @@ end`)
 	require.NotEmpty(t, rows)
 }
 
+func TestExplainAnalyzeRoutineReturnSubqueryKeepsOuterScalarSubqueryAfterNestedFunction(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec("create table t_explain_routine_call_log(a int)")
+	tk.MustExec(`create function f_explain_routine_count_helper(p int) returns int
+begin
+	insert into t_explain_routine_call_log values (p);
+	return 1;
+end`)
+	tk.MustExec(`create function f_explain_routine_count_outer(id int) returns int
+begin
+	return (select sum(f_explain_routine_count_helper(a)) from t_explain_routine where a <= id);
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_count_outer(2)").Rows())
+	targetOrdinal := ""
+	requireAnyRow(t, rows, func(row []string) bool {
+		if row[5] != "return" {
+			return false
+		}
+		targetOrdinal = row[3]
+		return row[10] == "1" && row[13] == "1"
+	})
+	require.NotEmpty(t, targetOrdinal)
+	tk.MustQuery("select count(*) from t_explain_routine_call_log").Check(testkit.Rows("2"))
+
+	tk.MustExec("truncate table t_explain_routine_call_log")
+	drilldownRows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_count_outer(2) for stmt " + targetOrdinal).Rows())
+	tk.MustQuery("select count(*) from t_explain_routine_call_log").Check(testkit.Rows("2"))
+	requireAnyRow(t, drilldownRows, func(row []string) bool {
+		return len(row) > 4 && strings.Contains(row[4], "table:t_explain_routine")
+	})
+}
+
 func TestExplainAnalyzeRoutineNestedReadOnlyCall(t *testing.T) {
 	tk := setupExplainRoutineTestKit(t)
 	tk.MustExec(`create procedure p_explain_routine_nested_helper(id int)
@@ -903,4 +1020,76 @@ end`)
 			strings.Contains(strings.ToLower(row[6]), "select * from t_explain_routine") &&
 			row[7] == "YES" && row[10] == "1" && row[13] == "1"
 	})
+}
+
+func TestExplainAnalyzeRoutineNestedCallReturningResultSet(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec(`create procedure p_explain_routine_inner_result(id int)
+begin
+	select * from t_explain_routine where a = id;
+end`)
+	tk.MustExec(`create procedure p_explain_routine_outer_result(id int)
+begin
+	call p_explain_routine_inner_result(id);
+	select * from t_explain_routine where a = id;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_outer_result(1)").Rows())
+	requireAnyRow(t, rows, func(row []string) bool {
+		return row[4] == "root" && row[5] == "call" &&
+			strings.Contains(strings.ToLower(row[6]), "call p_explain_routine_inner_result") &&
+			row[7] == "YES" && row[10] == "1"
+	})
+	requireAnyRow(t, rows, func(row []string) bool {
+		return row[4] == "root" && row[5] == "select" &&
+			strings.Contains(strings.ToLower(row[6]), "select * from t_explain_routine where a = id") &&
+			row[7] == "YES" && row[10] == "1" && row[13] == "1"
+	})
+}
+
+func TestExplainAnalyzeRoutineRestoresSetVarHintsBetweenStatements(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec(`create procedure p_explain_routine_set_var_restore()
+begin
+	select /*+ set_var(sql_select_limit=1) */ 1;
+	select * from t_explain_routine order by a;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_set_var_restore()").Rows())
+	requireAnyRow(t, rows, func(row []string) bool {
+		return row[4] == "root" && row[5] == "select" &&
+			strings.Contains(strings.ToLower(row[6]), "set_var(sql_select_limit=1)") &&
+			row[10] == "1"
+	})
+	requireAnyRow(t, rows, func(row []string) bool {
+		return row[4] == "root" && row[5] == "select" &&
+			strings.Contains(strings.ToLower(row[6]), "select * from t_explain_routine order by a") &&
+			row[10] == "1" && row[13] == "3"
+	})
+	tk.MustQuery("select @@sql_select_limit").Check(testkit.Rows("18446744073709551615"))
+}
+
+func TestExplainAnalyzeRoutineCursorRowsAcrossChunks(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec("set @@tidb_max_chunk_size = 1")
+	tk.MustExec("create table t_explain_routine_cursor_log(v1 int, v2 int)")
+	tk.MustExec(`create procedure p_explain_routine_cursor_rows()
+begin
+	declare v1 int default 0;
+	declare v2 int default 0;
+	declare c cursor for select a from t_explain_routine order by a;
+	open c;
+	fetch c into v1;
+	fetch c into v2;
+	close c;
+	insert into t_explain_routine_cursor_log values (v1, v2);
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_cursor_rows()").Rows())
+	requireAnyRow(t, rows, func(row []string) bool {
+		return row[4] == "root" && row[5] == "select" &&
+			strings.Contains(strings.ToLower(row[6]), "select a from t_explain_routine order by a") &&
+			row[7] == "YES" && row[10] == "1" && row[13] == "3"
+	})
+	tk.MustQuery("select * from t_explain_routine_cursor_log").Check(testkit.Rows("1 2"))
 }
