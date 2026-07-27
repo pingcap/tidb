@@ -29,8 +29,10 @@
 //! lands), and everything the rewriter does not yet handle.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::limit::LimitExec;
 use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
+use crate::sort::{SortByItem, SortExec};
 use crate::table_dual::TableDualExec;
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -138,18 +140,55 @@ pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
     };
 
     // Projection of the rewritten fields.
-    let mut proj = ProjectionExec::new(
-        ExecutorMeta::new(out_schema, 2, INIT_CAP, MAX_CHUNK_SIZE),
+    let mut root: Box<dyn Executor> = Box::new(ProjectionExec::new(
+        ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
         exprs,
         source,
         NoColumns,
-    );
+    ));
 
-    proj.open()?;
-    let mut req = proj.new_chunk();
+    // ORDER BY: a sort above the projection. The by-item expressions are
+    // rewritten like fields; column references (ordering by a select alias or
+    // output column) wait on schema resolution.
+    if !select.order_by.is_empty() {
+        let mut by_items = Vec::with_capacity(select.order_by.len());
+        for item in &select.order_by {
+            let expr =
+                rewrite_expr(&item.expr).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            by_items.push(SortByItem {
+                expr,
+                desc: item.desc,
+            });
+        }
+        root = Box::new(SortExec::new(
+            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+            by_items,
+            root,
+            NoColumns,
+        ));
+    }
+
+    // LIMIT [offset,] count: both bounds must be non-negative integer literals
+    // (as in SQL; Go validates the same in the planner).
+    if let Some(limit) = &select.limit {
+        let count = eval_limit_bound(&limit.count)?;
+        let offset = match &limit.offset {
+            Some(expr) => eval_limit_bound(expr)?,
+            None => 0,
+        };
+        root = Box::new(LimitExec::new(
+            ExecutorMeta::new(out_schema, 4, INIT_CAP, MAX_CHUNK_SIZE),
+            offset,
+            count,
+            root,
+        ));
+    }
+
+    root.open()?;
+    let mut req = root.new_chunk();
     let mut rows: Vec<Vec<Datum>> = Vec::new();
     loop {
-        proj.next(&mut req)?;
+        root.next(&mut req)?;
         let n = req.num_rows();
         if n == 0 {
             break;
@@ -164,8 +203,20 @@ pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
             rows.push(values);
         }
     }
-    proj.close()?;
+    root.close()?;
     Ok(rows)
+}
+
+/// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
+fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
+    match expr {
+        tidb_ast::Expr::Int(text) => text
+            .parse::<u64>()
+            .map_err(|_| DriverError::Unsupported("LIMIT bound must be a non-negative integer")),
+        _ => Err(DriverError::Unsupported(
+            "LIMIT bound must be an integer literal",
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +250,28 @@ mod tests {
         assert_eq!(
             run_select("SELECT 42 WHERE 1 = 0").unwrap(),
             Vec::<Vec<Datum>>::new()
+        );
+    }
+
+    #[test]
+    fn limit_and_order_by_wire_up() {
+        // LIMIT truncates / zeroes the single row.
+        assert_eq!(
+            run_select("SELECT 42 LIMIT 1").unwrap(),
+            vec![vec![Datum::Int(42)]]
+        );
+        assert_eq!(
+            run_select("SELECT 42 LIMIT 0").unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        assert_eq!(
+            run_select("SELECT 42 LIMIT 1, 1").unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        // ORDER BY over the single dual row passes through the sort.
+        assert_eq!(
+            run_select("SELECT 42 ORDER BY 1 DESC").unwrap(),
+            vec![vec![Datum::Int(42)]]
         );
     }
 
