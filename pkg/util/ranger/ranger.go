@@ -688,11 +688,11 @@ func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive 
 	for i := 1; i < len(objects); i++ {
 		if (mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0) ||
 			(!mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) > 0) {
-			if !detached {
-				lastRange.originalValue = lastRange.originalValue.Clone()
-				detached = true
-			}
 			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
+				if !detached {
+					lastRange.originalValue = lastRange.originalValue.Clone()
+					detached = true
+				}
 				lastRange.encodedEnd = objects[i].encodedEnd
 				lastRange.originalValue.HighVal = objects[i].originalValue.HighVal
 				lastRange.originalValue.HighExclude = objects[i].originalValue.HighExclude
