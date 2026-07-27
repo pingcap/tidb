@@ -456,7 +456,7 @@ func (t *Tracker) Consume(bs int64) {
 		if tracker.IsRootTrackerOfSess {
 			sessionRootTracker = tracker
 		}
-		if m := tracker.MemArbitrator; m != nil {
+		if m := tracker.MemArbitrator; m != nil && m.state.Load() != memArbitratorStateDown {
 			if bs > 0 {
 				if m.useBigBudget() {
 					if m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() {
@@ -1095,6 +1095,10 @@ func (m *memArbitrator) intoBigBudget() bool {
 	m.budget.useBig.Lock()
 	defer m.budget.useBig.Unlock()
 
+	if m.state.Load() == memArbitratorStateDown {
+		return false
+	}
+
 	if m.useBigBudget() {
 		return false
 	}
@@ -1121,9 +1125,11 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	smallUsed := max(0, m.smallBudgetUsed())
 
-	if !m.RestartEntryByContext(root, m.ctx) || !m.state.CompareAndSwap(memArbitratorStateSmallBudget, memArbitratorStateIntoBigBudget) {
+	if !m.RestartEntryByContext(root, m.ctx) {
 		panic("failed to init mem pool")
 	}
+
+	m.state.Store(memArbitratorStateIntoBigBudget)
 
 	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > m.buffer.size.Load() {
 		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
@@ -1167,8 +1173,8 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.addBigBudgetUsed(m.cleanSmallBudget() - smallUsed)
 	m.budget.useBig.Store(true)
-
-	if m.state.CompareAndSwap(memArbitratorStateIntoBigBudget, memArbitratorStateBigBudget) {
+	{
+		m.state.Store(memArbitratorStateBigBudget)
 		globalArbitrator.metrics.pools.intoBig.Add(-1)
 		globalArbitrator.metrics.pools.big.Add(1)
 	}
@@ -1224,19 +1230,16 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		return false
 	}
 
+	m.budget.useBig.Lock()
+	defer m.budget.useBig.Unlock()
+
 	switch oriState := m.state.Swap(memArbitratorStateDown); oriState {
 	case memArbitratorStateSmallBudget:
 		globalArbitrator.metrics.pools.small.Add(-1)
-	case memArbitratorStateIntoBigBudget, memArbitratorStateBigBudget:
-		if oriState == memArbitratorStateIntoBigBudget { // wait for intoBigBudget to finish
-			m.budget.useBig.Lock()
-
-			globalArbitrator.metrics.pools.intoBig.Add(-1)
-
-			m.budget.useBig.Unlock()
-		} else {
-			globalArbitrator.metrics.pools.big.Add(-1)
-		}
+	case memArbitratorStateIntoBigBudget:
+		globalArbitrator.metrics.pools.intoBig.Add(-1)
+	case memArbitratorStateBigBudget:
+		globalArbitrator.metrics.pools.big.Add(-1)
 	default:
 		return false
 	}
