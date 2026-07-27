@@ -460,7 +460,7 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a int default 1, b int default 2);")
 		tk.MustExec("insert into t values ();")
-		tk.MustGetErrCode("alter table t change column b c double, drop column b", errno.ErrBadField)
+		tk.MustGetErrCode("alter table t change column b c double, drop column b", errno.ErrCantDropFieldOrKey)
 
 		// Test change and add with same column
 		tk.MustExec("drop table if exists t;")
