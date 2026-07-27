@@ -150,7 +150,7 @@ func (c *Collector) Run(ctx context.Context, ch chan *simplesst.KVPair) (err err
 }
 
 // HandleEncodedRow handles the re-encoded row from conflict KV.
-func (c *Collector) HandleEncodedRow(ctx context.Context, rowKey tidbkv.Key,
+func (c *Collector) HandleEncodedRow(ctx context.Context, _ tidbkv.Key,
 	row []types.Datum, kvPairs *kv.Pairs) error {
 	if err := c.recordRowToFile(ctx, row); err != nil {
 		return err
