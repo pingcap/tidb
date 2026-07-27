@@ -1111,6 +1111,13 @@ impl Session {
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
+                DdlStmt::AlterTable(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_alter_table_in(sql, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
                 DdlStmt::DropTable(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
@@ -2049,6 +2056,106 @@ mod tests {
             session.run("SELECT b FROM d2").unwrap(),
             StmtResult::Rows(vec![])
         );
+    }
+
+    /// ALTER TABLE ADD/DROP COLUMN, checked against captured TiDB behavior.
+    /// The one that matters most: ADD COLUMN ... DEFAULT 7 makes rows written
+    /// EARLIER read back 7, without rewriting them.
+    #[test]
+    fn alter_table_columns() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE a (id BIGINT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO a VALUES (1, 10), (2, 20)")
+            .unwrap();
+
+        // Captured: [[1 10 7] [2 20 7]] -- the existing rows take the default.
+        session
+            .run("ALTER TABLE a ADD COLUMN w BIGINT DEFAULT 7")
+            .unwrap();
+        assert_eq!(
+            session.run("SELECT id, v, w FROM a").unwrap(),
+            StmtResult::Rows(vec![
+                vec![Datum::Int(1), Datum::Int(10), Datum::Int(7)],
+                vec![Datum::Int(2), Datum::Int(20), Datum::Int(7)],
+            ])
+        );
+        // Captured: without a default the existing rows read NULL.
+        session.run("ALTER TABLE a ADD COLUMN x BIGINT").unwrap();
+        assert_eq!(
+            session.run("SELECT id, x FROM a").unwrap(),
+            StmtResult::Rows(vec![
+                vec![Datum::Int(1), Datum::Null],
+                vec![Datum::Int(2), Datum::Null],
+            ])
+        );
+
+        let columns = |session: &mut Session| match session.run_with_columns("DESCRIBE a").unwrap()
+        {
+            StmtOutput::Rows { rows, .. } => rows
+                .into_iter()
+                .map(|row| datum_text(&row[0]).unwrap())
+                .collect::<Vec<_>>(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+        // Captured order after FIRST then AFTER v: y, id, v, z, w, x.
+        session
+            .run("ALTER TABLE a ADD COLUMN y BIGINT FIRST")
+            .unwrap();
+        session
+            .run("ALTER TABLE a ADD COLUMN z BIGINT AFTER v")
+            .unwrap();
+        assert_eq!(columns(&mut session), ["y", "id", "v", "z", "w", "x"]);
+
+        // A new column is written and read like any other, and the rows that
+        // predate it still report their defaults.
+        session
+            .run("INSERT INTO a (id, v, w, x, y, z) VALUES (3, 30, 1, 2, 3, 4)")
+            .unwrap();
+        assert_eq!(
+            session.run("SELECT w FROM a WHERE id = 3").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // Captured: DROP COLUMN removes it from the schema.
+        session.run("ALTER TABLE a DROP COLUMN w").unwrap();
+        assert_eq!(columns(&mut session), ["y", "id", "v", "z", "x"]);
+        assert!(session.run("SELECT w FROM a").is_err());
+
+        // Captured error codes.
+        assert!(matches!(
+            session.run("ALTER TABLE a ADD COLUMN v BIGINT"),
+            Err(DriverError::DuplicateColumnName(_))
+        ));
+        assert!(matches!(
+            session.run("ALTER TABLE a DROP COLUMN nosuch"),
+            Err(DriverError::UnknownColumnInAlter(_))
+        ));
+        session.run("CREATE TABLE one (a BIGINT)").unwrap();
+        assert!(matches!(
+            session.run("ALTER TABLE one DROP COLUMN a"),
+            Err(DriverError::CannotDropOnlyColumn { .. })
+        ));
+        assert!(matches!(
+            session.run("ALTER TABLE a DROP COLUMN id"),
+            Err(DriverError::UnsupportedDropIntegerPrimaryKey)
+        ));
+
+        // An indexed column is refused rather than leaving the index pointing
+        // at a column that is gone (documented divergence from TiDB, which
+        // drops the index with it).
+        session
+            .run("CREATE TABLE ix (a BIGINT, b BIGINT, KEY kb (b))")
+            .unwrap();
+        assert!(session.run("ALTER TABLE ix DROP COLUMN b").is_err());
+
+        // An unknown table is an error, and unsupported actions are rejected.
+        assert!(session
+            .run("ALTER TABLE nosuch ADD COLUMN a BIGINT")
+            .is_err());
+        assert!(session.run("ALTER TABLE a RENAME TO b").is_err());
     }
 
     #[test]

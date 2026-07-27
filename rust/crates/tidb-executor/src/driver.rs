@@ -296,6 +296,11 @@ impl Catalog {
         self.version
     }
 
+    /// A mutable table of `database`, for the schema-changing statements.
+    pub fn table_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
+        self.get_mut_in(database, name)
+    }
+
     /// A table of `database`, for the metadata statements.
     #[must_use]
     pub fn table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
@@ -390,6 +395,19 @@ pub enum DriverError {
     Var(VarErrorKind),
     /// A schema statement failed.
     Schema(SchemaErrorKind),
+    /// Go `ErrDupFieldName` (1060).
+    DuplicateColumnName(String),
+    /// Go `ErrCantDropFieldOrKey` (1091).
+    UnknownColumnInAlter(String),
+    /// Go `ErrCantRemoveAllFields` (1090).
+    CannotDropOnlyColumn {
+        /// The column the statement named.
+        column: String,
+        /// The table it belongs to.
+        table: String,
+    },
+    /// TiDB `ErrUnsupportedModifyColumn`-family (8200).
+    UnsupportedDropIntegerPrimaryKey,
     /// Go `ErrWrongNumberOfColumnsInSelect` (1222).
     WrongNumberOfColumnsInSelect,
     /// Go `ErrWrongAutoKey` (1075): more than one auto column.
@@ -3647,12 +3665,16 @@ mod tests {
                         id: 1,
                         field_type: FieldType::new(FieldTypeCode::LongLong),
                         default_value: None,
+                        // A column present at CREATE TABLE has no pre-existing rows.
+                        origin_default: None,
                     },
                     KvColumn {
                         name: "b".to_owned(),
                         id: 2,
                         field_type: FieldType::new(FieldTypeCode::LongLong),
                         default_value: None,
+                        // A column present at CREATE TABLE has no pre-existing rows.
+                        origin_default: None,
                     },
                 ],
             ),

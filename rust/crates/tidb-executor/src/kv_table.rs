@@ -130,6 +130,11 @@ pub struct KvColumn {
     /// `None` means no `DEFAULT` was written, which is not the same as a
     /// `DEFAULT NULL`.
     pub default_value: Option<Datum>,
+    /// Go `ColumnInfo.OriginDefaultValue`: what a row written BEFORE this
+    /// column existed reads back as. `ADD COLUMN ... DEFAULT 7` gives the
+    /// existing rows 7, not NULL, and the row bytes are never rewritten --
+    /// the value is filled in on read.
+    pub origin_default: Option<Datum>,
 }
 
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
@@ -329,6 +334,70 @@ impl KvTable {
         Ok(())
     }
 
+    /// Adds a column at `position`, which is Go's ALTER TABLE ADD COLUMN.
+    ///
+    /// The column takes a fresh id, so rows written earlier simply do not
+    /// carry it and read back its origin default. Index and handle offsets
+    /// shift with the insertion, since they address columns by position.
+    pub fn add_column(&mut self, position: usize, column: KvColumn) {
+        let position = position.min(self.columns.len());
+        self.columns.insert(position, column);
+        let shift = |offset: &mut usize| {
+            if *offset >= position {
+                *offset += 1;
+            }
+        };
+        if let Some(offset) = self.pk_handle_offset.as_mut() {
+            shift(offset);
+        }
+        for offset in &mut self.common_handle_offsets {
+            shift(offset);
+        }
+        if let Some(offset) = self.auto_increment_offset.as_mut() {
+            shift(offset);
+        }
+        for index in &mut self.indexes {
+            for offset in &mut index.column_offsets {
+                shift(offset);
+            }
+        }
+    }
+
+    /// The next free column id, which Go allocates from `TableInfo.MaxColumnID`
+    /// so a dropped id is never reused.
+    #[must_use]
+    pub fn next_column_id(&self) -> i64 {
+        self.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1
+    }
+
+    /// Removes the column at `offset`, shifting the offsets above it.
+    ///
+    /// The rows keep the dropped column's bytes, which are simply never read
+    /// again because nothing lists that id -- Go likewise leaves the old row
+    /// values in place until the table is rewritten.
+    pub fn drop_column(&mut self, offset: usize) {
+        self.columns.remove(offset);
+        let shift = |value: &mut usize| {
+            if *value > offset {
+                *value -= 1;
+            }
+        };
+        if let Some(value) = self.pk_handle_offset.as_mut() {
+            shift(value);
+        }
+        for value in &mut self.common_handle_offsets {
+            shift(value);
+        }
+        if let Some(value) = self.auto_increment_offset.as_mut() {
+            shift(value);
+        }
+        for index in &mut self.indexes {
+            for value in &mut index.column_offsets {
+                shift(value);
+            }
+        }
+    }
+
     /// Adds an index, whose entries every later write maintains.
     pub fn add_index(&mut self, index: KvIndex) {
         self.indexes.push(index);
@@ -413,7 +482,6 @@ impl KvTable {
             .iter()
             .map(|c| (c.id, c.field_type.clone()))
             .collect();
-        let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
         // `get_table_handle_key_range` returns an inclusive upper bound, while
         // the iterator's is exclusive, so the scan runs to the key just past it.
         let mut upper = high;
@@ -428,9 +496,16 @@ impl KvTable {
             let handle = self.decode_record_handle(iterator.key().as_bytes())?;
             let mut decoded = decode_table_row_to_map(iterator.value(), &column_types, None)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            let mut row: Vec<Datum> = column_ids
+            let mut row: Vec<Datum> = self
+                .columns
                 .iter()
-                .map(|id| decoded.remove(id).unwrap_or(Datum::Null))
+                .map(|column| {
+                    decoded
+                        .remove(&column.id)
+                        // A row written before this column existed reads back
+                        // its origin default.
+                        .unwrap_or_else(|| column.origin_default.clone().unwrap_or(Datum::Null))
+                })
                 .collect();
             self.fill_handle_columns(&mut row, &handle)?;
             rows.push((handle, row));
@@ -603,7 +678,11 @@ impl KvTable {
         let mut row: Vec<Datum> = self
             .columns
             .iter()
-            .map(|c| decoded.remove(&c.id).unwrap_or(Datum::Null))
+            .map(|column| {
+                decoded
+                    .remove(&column.id)
+                    .unwrap_or_else(|| column.origin_default.clone().unwrap_or(Datum::Null))
+            })
             .collect();
         // The handle columns are not in the value; Go reads them from the
         // handle itself.
@@ -715,9 +794,8 @@ impl KvTable {
                 return Err(error);
             }
         }
-        let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
-        let value = encode_table_row(None, row, &column_ids, true, None)
-            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        // The handle columns stay out of the value, as on insert.
+        let value = self.encode_row_value(row)?;
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
             &handle.record_handle(),
@@ -928,12 +1006,16 @@ mod tests {
                     id: 1,
                     field_type: long(),
                     default_value: None,
+                    // A column present at CREATE TABLE has no pre-existing rows.
+                    origin_default: None,
                 },
                 KvColumn {
                     name: "s".to_owned(),
                     id: 2,
                     field_type: varstr(),
                     default_value: None,
+                    // A column present at CREATE TABLE has no pre-existing rows.
+                    origin_default: None,
                 },
             ],
         )

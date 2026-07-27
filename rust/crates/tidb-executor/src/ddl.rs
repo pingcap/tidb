@@ -39,6 +39,224 @@ use tidb_model::table_info::TableInfo;
 /// Builds the column's `FieldType` from its parsed SQL type: code via
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
+/// Runs an `ALTER TABLE`, applying its actions in source order.
+///
+/// The rules are captured from TiDB: `ADD COLUMN ... DEFAULT d` gives rows
+/// written earlier the value `d` rather than NULL, without rewriting them;
+/// `FIRST`/`AFTER` place the column; a duplicate name is 1060, dropping an
+/// unknown column is 1091, dropping the last column is 1090, and dropping an
+/// integer primary key is TiDB's own 8200.
+///
+/// DEFERRED (documented): every other ALTER action -- MODIFY, CHANGE, RENAME,
+/// index and constraint changes -- is rejected rather than silently accepted,
+/// and dropping a column an index uses is rejected rather than leaving the
+/// index addressing a column that is gone.
+pub fn run_alter_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<(), DriverError> {
+    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let alter = match &stmt {
+        Stmt::Ddl(ddl) => match &**ddl {
+            DdlStmt::AlterTable(alter) => alter,
+            _ => {
+                return Err(DriverError::Unsupported(
+                    "only ALTER TABLE is supported here",
+                ))
+            }
+        },
+        _ => {
+            return Err(DriverError::Unsupported(
+                "only ALTER TABLE is supported here",
+            ))
+        }
+    };
+    let (database, name) = crate::driver::split_table_path_pub(&alter.name, current_db)?;
+    let (database, name) = (database.to_owned(), name.to_owned());
+    if catalog.table_in(&database, &name).is_none() {
+        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{name}"),
+        )));
+    }
+
+    for action in &alter.actions {
+        match action {
+            tidb_ast::AlterTableAction::AddColumn {
+                column, position, ..
+            } => add_column_action(catalog, &database, &name, column, position)?,
+            tidb_ast::AlterTableAction::AddColumns {
+                columns,
+                constraints,
+                ..
+            } => {
+                if !constraints.is_empty() {
+                    return Err(DriverError::Unsupported(
+                        "adding constraints with ALTER TABLE is not supported yet",
+                    ));
+                }
+                for column in columns {
+                    add_column_action(
+                        catalog,
+                        &database,
+                        &name,
+                        column,
+                        &tidb_ast::ColumnPosition::Default,
+                    )?;
+                }
+            }
+            tidb_ast::AlterTableAction::DropColumn {
+                if_exists,
+                name: column_name,
+            } => drop_column_action(catalog, &database, &name, column_name, *if_exists)?,
+            _ => {
+                return Err(DriverError::Unsupported(
+                    "this ALTER TABLE action is not supported yet",
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One `ADD COLUMN`.
+fn add_column_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    def: &ColumnDef,
+    position: &tidb_ast::ColumnPosition,
+) -> Result<(), DriverError> {
+    let field_type = field_type_of(def)?;
+    let mut default_value = None;
+    for option in &def.options {
+        match option {
+            tidb_ast::ColumnOption::Default(expr) => {
+                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                    expr,
+                    &tidb_expr::rewriter::NoResolver,
+                )
+                .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+                let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
+                    return Err(DriverError::Unsupported(
+                        "an expression DEFAULT is not supported yet",
+                    ));
+                };
+                default_value = Some(
+                    constant
+                        .eval()
+                        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
+                );
+            }
+            tidb_ast::ColumnOption::NotNull => {}
+            tidb_ast::ColumnOption::Null => {}
+            _ => {
+                return Err(DriverError::Unsupported(
+                    "this column option is not supported in ALTER TABLE ADD COLUMN",
+                ))
+            }
+        }
+    }
+    let not_null = def
+        .options
+        .iter()
+        .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull));
+
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        ));
+    };
+    if table
+        .columns
+        .iter()
+        .any(|column| column.name.eq_ignore_ascii_case(&def.name))
+    {
+        return Err(DriverError::DuplicateColumnName(def.name.clone()));
+    }
+    let index = match position {
+        tidb_ast::ColumnPosition::Default => table.columns.len(),
+        tidb_ast::ColumnPosition::First => 0,
+        tidb_ast::ColumnPosition::After(after) => table
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(after))
+            .map(|offset| offset + 1)
+            .ok_or_else(|| DriverError::UnknownColumnInAlter(after.clone()))?,
+    };
+    let mut field_type = field_type;
+    if not_null {
+        field_type.add_flags(NOT_NULL_FLAG);
+    }
+    let id = table.next_column_id();
+    table.add_column(
+        index,
+        KvColumn {
+            name: def.name.clone(),
+            id,
+            field_type,
+            default_value: default_value.clone(),
+            // Rows written before this column existed read back the default.
+            origin_default: default_value,
+        },
+    );
+    Ok(())
+}
+
+/// One `DROP COLUMN`.
+fn drop_column_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    column_name: &str,
+    if_exists: bool,
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        ));
+    };
+    let Some(offset) = table
+        .columns
+        .iter()
+        .position(|column| column.name.eq_ignore_ascii_case(column_name))
+    else {
+        if if_exists {
+            return Ok(());
+        }
+        return Err(DriverError::UnknownColumnInAlter(column_name.to_owned()));
+    };
+    // Captured: dropping the only column is 1090.
+    if table.columns.len() == 1 {
+        return Err(DriverError::CannotDropOnlyColumn {
+            column: column_name.to_owned(),
+            table: table_name.to_owned(),
+        });
+    }
+    // Captured: dropping an integer primary key is TiDB's 8200.
+    if table.pk_handle_offset() == Some(offset) {
+        return Err(DriverError::UnsupportedDropIntegerPrimaryKey);
+    }
+    if table.common_handle_offsets().contains(&offset) {
+        return Err(DriverError::Unsupported(
+            "dropping a clustered primary key column is not supported yet",
+        ));
+    }
+    // An index over the column would be left addressing a column that is
+    // gone, so the drop is refused rather than silently corrupting it.
+    if table
+        .indexes()
+        .iter()
+        .any(|index| index.column_offsets.contains(&offset))
+    {
+        return Err(DriverError::Unsupported(
+            "dropping an indexed column is not supported yet",
+        ));
+    }
+    table.drop_column(offset);
+    Ok(())
+}
+
 /// Runs a `DROP TABLE`, removing every named table that exists.
 ///
 /// Go drops the tables it finds and reports `ErrBadTable` for the first name
@@ -502,6 +720,8 @@ pub fn run_create_table_in(
             id: c.id,
             field_type: c.field_type.clone(),
             default_value: defaults[c.offset as usize].clone(),
+            // A column present at CREATE TABLE has no pre-existing rows.
+            origin_default: None,
         })
         .collect();
     let table = KvTable::new(info.id, kv_columns);

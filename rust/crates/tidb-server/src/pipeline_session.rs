@@ -225,6 +225,28 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
             *b"23000",
             format!("Duplicate entry '{value}' for key '{key}'"),
         ),
+        // Go: "Duplicate column name '%-.192s'".
+        tidb_executor::DriverError::DuplicateColumnName(name) => {
+            SqlQueryError::new(1060, *b"42S21", format!("Duplicate column name '{name}'"))
+        }
+        // Go: "Can't DROP '%-.192s'; check that column/key exists".
+        tidb_executor::DriverError::UnknownColumnInAlter(name) => SqlQueryError::new(
+            1091,
+            *b"42000",
+            format!("Can't DROP '{name}'; check that column/key exists"),
+        ),
+        // Go: "can't drop only column %s in table %s".
+        tidb_executor::DriverError::CannotDropOnlyColumn { column, table } => SqlQueryError::new(
+            1090,
+            *b"42000",
+            format!("can't drop only column {column} in table {table}"),
+        ),
+        // TiDB: "Unsupported drop integer primary key".
+        tidb_executor::DriverError::UnsupportedDropIntegerPrimaryKey => SqlQueryError::new(
+            8200,
+            *b"HY000",
+            "Unsupported drop integer primary key".to_owned(),
+        ),
         // Go: "Unknown table '%-.129s'" -- DROP TABLE's own code, distinct
         // from the 1146 a read of a missing table reports.
         tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::BadTable(name)) => {
@@ -557,7 +579,9 @@ mod tests {
         assert_eq!(parse.code, 1064);
         assert_eq!(&parse.state, b"42000");
 
-        let Err(unsupported) = session.execute("ALTER TABLE t ADD COLUMN b INT") else {
+        // A statement kind that is unsupported regardless of catalog state,
+        // so this assertion does not quietly become an unknown-table one.
+        let Err(unsupported) = session.execute("CREATE VIEW v AS SELECT 1") else {
             panic!("an unsupported statement must not produce a result");
         };
         assert_eq!(unsupported.code, 1105);
