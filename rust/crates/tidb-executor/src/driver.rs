@@ -305,6 +305,18 @@ impl Catalog {
         self.get_in(database, name).is_some()
     }
 
+    /// Registers a matrix-backed table in `database`, creating the schema
+    /// when it does not exist. Used to materialize a virtual table before
+    /// running an ordinary plan over it.
+    pub fn register_mem_in(&mut self, database: &str, name: &str, table: MemTable) {
+        let key = database.to_lowercase();
+        self.databases.entry(key).or_insert_with(|| Database {
+            name: database.to_owned(),
+            tables: HashMap::new(),
+        });
+        self.register_in(database, name, TableEntry::Mem(table));
+    }
+
     /// Registers a TiKV-format-byte-backed table in `database`.
     pub fn register_kv_in(&mut self, database: &str, name: &str, table: KvTable) {
         self.register_in(database, name, TableEntry::Kv(table));

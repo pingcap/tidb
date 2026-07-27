@@ -40,71 +40,71 @@ use tidb_executor::{Catalog, KvTable, TableEntry};
 pub const INFORMATION_SCHEMA: &str = "INFORMATION_SCHEMA";
 
 /// Go `infoschema.tableSchemataCols`.
-const SCHEMATA_COLUMNS: &[&str] = &[
-    "CATALOG_NAME",
-    "SCHEMA_NAME",
-    "DEFAULT_CHARACTER_SET_NAME",
-    "DEFAULT_COLLATION_NAME",
-    "SQL_PATH",
-    "TIDB_PLACEMENT_POLICY_NAME",
+const SCHEMATA_COLUMNS: &[(&str, bool)] = &[
+    ("CATALOG_NAME", false),
+    ("SCHEMA_NAME", false),
+    ("DEFAULT_CHARACTER_SET_NAME", false),
+    ("DEFAULT_COLLATION_NAME", false),
+    ("SQL_PATH", false),
+    ("TIDB_PLACEMENT_POLICY_NAME", false),
 ];
 
 /// Go `infoschema.tableTablesCols`.
-const TABLES_COLUMNS: &[&str] = &[
-    "TABLE_CATALOG",
-    "TABLE_SCHEMA",
-    "TABLE_NAME",
-    "TABLE_TYPE",
-    "ENGINE",
-    "VERSION",
-    "ROW_FORMAT",
-    "TABLE_ROWS",
-    "AVG_ROW_LENGTH",
-    "DATA_LENGTH",
-    "MAX_DATA_LENGTH",
-    "INDEX_LENGTH",
-    "DATA_FREE",
-    "AUTO_INCREMENT",
-    "CREATE_TIME",
-    "UPDATE_TIME",
-    "CHECK_TIME",
-    "TABLE_COLLATION",
-    "CHECKSUM",
-    "CREATE_OPTIONS",
-    "TABLE_COMMENT",
-    "TIDB_TABLE_ID",
-    "TIDB_ROW_ID_SHARDING_INFO",
-    "TIDB_PK_TYPE",
-    "TIDB_PLACEMENT_POLICY_NAME",
-    "TIDB_TABLE_MODE",
-    "TIDB_AFFINITY",
-    "TIDB_STORAGE_CLASS",
+const TABLES_COLUMNS: &[(&str, bool)] = &[
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("TABLE_TYPE", false),
+    ("ENGINE", false),
+    ("VERSION", true),
+    ("ROW_FORMAT", false),
+    ("TABLE_ROWS", true),
+    ("AVG_ROW_LENGTH", true),
+    ("DATA_LENGTH", true),
+    ("MAX_DATA_LENGTH", true),
+    ("INDEX_LENGTH", true),
+    ("DATA_FREE", true),
+    ("AUTO_INCREMENT", true),
+    ("CREATE_TIME", false),
+    ("UPDATE_TIME", false),
+    ("CHECK_TIME", false),
+    ("TABLE_COLLATION", false),
+    ("CHECKSUM", true),
+    ("CREATE_OPTIONS", false),
+    ("TABLE_COMMENT", false),
+    ("TIDB_TABLE_ID", true),
+    ("TIDB_ROW_ID_SHARDING_INFO", false),
+    ("TIDB_PK_TYPE", false),
+    ("TIDB_PLACEMENT_POLICY_NAME", false),
+    ("TIDB_TABLE_MODE", false),
+    ("TIDB_AFFINITY", false),
+    ("TIDB_STORAGE_CLASS", false),
 ];
 
 /// Go `infoschema.tableColumnsCols`.
-const COLUMNS_COLUMNS: &[&str] = &[
-    "TABLE_CATALOG",
-    "TABLE_SCHEMA",
-    "TABLE_NAME",
-    "COLUMN_NAME",
-    "ORDINAL_POSITION",
-    "COLUMN_DEFAULT",
-    "IS_NULLABLE",
-    "DATA_TYPE",
-    "CHARACTER_MAXIMUM_LENGTH",
-    "CHARACTER_OCTET_LENGTH",
-    "NUMERIC_PRECISION",
-    "NUMERIC_SCALE",
-    "DATETIME_PRECISION",
-    "CHARACTER_SET_NAME",
-    "COLLATION_NAME",
-    "COLUMN_TYPE",
-    "COLUMN_KEY",
-    "EXTRA",
-    "PRIVILEGES",
-    "COLUMN_COMMENT",
-    "GENERATION_EXPRESSION",
-    "SRS_ID",
+const COLUMNS_COLUMNS: &[(&str, bool)] = &[
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("COLUMN_NAME", false),
+    ("ORDINAL_POSITION", true),
+    ("COLUMN_DEFAULT", false),
+    ("IS_NULLABLE", false),
+    ("DATA_TYPE", false),
+    ("CHARACTER_MAXIMUM_LENGTH", true),
+    ("CHARACTER_OCTET_LENGTH", true),
+    ("NUMERIC_PRECISION", true),
+    ("NUMERIC_SCALE", true),
+    ("DATETIME_PRECISION", true),
+    ("CHARACTER_SET_NAME", false),
+    ("COLLATION_NAME", false),
+    ("COLUMN_TYPE", false),
+    ("COLUMN_KEY", false),
+    ("EXTRA", false),
+    ("PRIVILEGES", false),
+    ("COLUMN_COMMENT", false),
+    ("GENERATION_EXPRESSION", false),
+    ("SRS_ID", true),
 ];
 
 /// Go's catalog name, which is always `def`.
@@ -126,7 +126,7 @@ pub fn is_information_schema(name: &str) -> bool {
 /// The column names of one `information_schema` table, or `None` when the
 /// table is not one this tier implements.
 #[must_use]
-pub fn table_columns(name: &str) -> Option<&'static [&'static str]> {
+pub fn table_columns(name: &str) -> Option<&'static [(&'static str, bool)]> {
     if name.eq_ignore_ascii_case("SCHEMATA") {
         Some(SCHEMATA_COLUMNS)
     } else if name.eq_ignore_ascii_case("TABLES") {
@@ -364,11 +364,19 @@ fn numeric_precision_of(field_type: &FieldType) -> i64 {
 #[must_use]
 pub fn table_schema(name: &str) -> Option<Vec<(String, FieldType)>> {
     let columns = table_columns(name)?;
-    let field_type = FieldType::new(FieldTypeCode::VarString);
     Some(
         columns
             .iter()
-            .map(|column| ((*column).to_owned(), field_type.clone()))
+            .map(|(column, numeric)| {
+                // A numeric column must be typed as one, or its cells cannot
+                // be written into the chunk.
+                let code = if *numeric {
+                    FieldTypeCode::LongLong
+                } else {
+                    FieldTypeCode::VarString
+                };
+                ((*column).to_owned(), FieldType::new(code))
+            })
             .collect(),
     )
 }

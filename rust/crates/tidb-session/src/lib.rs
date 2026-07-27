@@ -548,13 +548,19 @@ impl Session {
 
     /// Runs a `SELECT` whose `FROM` names an `information_schema` table.
     ///
+    /// The virtual rows are materialized into a scratch catalog and then run
+    /// through the ordinary plan, so `WHERE`, `ORDER BY`, `LIMIT`, expressions
+    /// and aggregates all behave as they do over a stored table. Go reaches
+    /// the same place differently -- its memory tables are real tables to the
+    /// planner -- but the requirement is the same: a predicate over a virtual
+    /// table must filter it.
+    ///
     /// Returns `None` when the statement is an ordinary one, so the caller
     /// falls through to the storage path.
     ///
-    /// DEFERRED (documented): the virtual rows are produced whole, so a
-    /// `WHERE` over them is applied by the caller's own filter rather than
-    /// pushed down, and `JOIN`s against a virtual table are not supported --
-    /// both are rejected or fall back rather than answering wrongly.
+    /// DEFERRED (documented): a join between a virtual table and a stored one,
+    /// because the scratch catalog holds only the virtual side. Such a
+    /// statement is rejected rather than answered from half the data.
     fn run_information_schema_select(
         &mut self,
         select: &tidb_ast::SelectStmt,
@@ -562,9 +568,6 @@ impl Session {
         let Some(join) = &select.from else {
             return Ok(None);
         };
-        if join.right.is_some() {
-            return Ok(None);
-        }
         let tidb_ast::JoinNode::Table(table_ref) = &join.left else {
             return Ok(None);
         };
@@ -577,6 +580,11 @@ impl Session {
         if !infoschema::is_information_schema(&schema) {
             return Ok(None);
         }
+        if join.right.is_some() {
+            return Err(DriverError::Unsupported(
+                "joining an information_schema table is not supported yet",
+            ));
+        }
         let Some(columns) = infoschema::table_schema(&table_name) else {
             return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
                 "{schema}.{table_name}"
@@ -586,51 +594,17 @@ impl Session {
             Ok(infoschema::table_rows(&table_name, catalog).unwrap_or_default())
         })?;
 
-        // Only `SELECT *` and bare column names are answered here; anything
-        // else would need the expression pipeline over a virtual source.
-        let mut projection: Vec<usize> = Vec::new();
-        let mut names: Vec<(String, tidb_datatype::FieldType)> = Vec::new();
-        for field in select.fields.fields() {
-            match field {
-                tidb_ast::SelectField::Wildcard(_) => {
-                    projection.extend(0..columns.len());
-                    names.extend(columns.iter().cloned());
-                }
-                tidb_ast::SelectField::Expr { expr, alias } => {
-                    let tidb_ast::Expr::Column(path) = expr else {
-                        return Err(DriverError::Unsupported(
-                            "only column references are supported over information_schema",
-                        ));
-                    };
-                    let Some(wanted) = path.last() else {
-                        return Err(DriverError::Unsupported("empty column reference"));
-                    };
-                    let Some(index) = columns
-                        .iter()
-                        .position(|(name, _)| name.eq_ignore_ascii_case(wanted))
-                    else {
-                        return Err(DriverError::Unsupported(
-                            "unknown information_schema column",
-                        ));
-                    };
-                    projection.push(index);
-                    let mut column = columns[index].clone();
-                    if let Some(alias) = alias {
-                        column.0 = alias.clone();
-                    }
-                    names.push(column);
-                }
-            }
-        }
-
-        let rows = rows
-            .into_iter()
-            .map(|row| projection.iter().map(|index| row[*index].clone()).collect())
-            .collect();
-        Ok(Some(StmtOutput::Rows {
-            columns: names,
-            rows,
-        }))
+        // A scratch catalog holding just this table, so the ordinary plan runs
+        // over it.
+        let mut scratch = Catalog::default();
+        scratch.register_mem_in(
+            infoschema::INFORMATION_SCHEMA,
+            &table_name,
+            tidb_executor::MemTable { columns, rows },
+        );
+        let (columns, rows) =
+            tidb_executor::run_select_meta_stmt(select, &scratch, infoschema::INFORMATION_SCHEMA)?;
+        Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
@@ -1972,20 +1946,30 @@ mod tests {
         assert_eq!(v[6], "YES");
         assert_eq!(v[16], "");
 
-        // Named columns project, and a bare name works while the schema is
-        // current.
+        // A projected column is named as WRITTEN, which is captured TiDB
+        // behavior: `select table_name ...` reports `table_name`, while
+        // `select TABLE_NAME ...` reports `TABLE_NAME`.
         assert_eq!(
             query(
                 &mut session,
                 "SELECT table_name FROM information_schema.tables"
             )
             .0,
+            ["table_name"]
+        );
+        assert_eq!(
+            query(
+                &mut session,
+                "SELECT TABLE_NAME FROM information_schema.tables"
+            )
+            .0,
             ["TABLE_NAME"]
         );
+        // A bare name works while that schema is current.
         session.run("USE information_schema").unwrap();
         assert_eq!(
             query(&mut session, "SELECT schema_name FROM schemata").0,
-            ["SCHEMA_NAME"]
+            ["schema_name"]
         );
 
         // An unimplemented information_schema table is an error, not empty
