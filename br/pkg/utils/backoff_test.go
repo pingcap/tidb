@@ -197,6 +197,31 @@ func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
 	}, multierr.Errors(err))
 }
 
+func TestNewPeerDownloadSSTBackofferWithGRPCCanceled(t *testing.T) {
+	var counter int
+	backoffStrategy := utils.NewDownloadSSTBackofferWithGRPCCanceledRetry()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		if counter == 1 {
+			return nil
+		}
+		return status.Error(codes.Canceled, "context canceled")
+	}, backoffStrategy)
+	require.Equal(t, 2, counter)
+	require.NoError(t, err)
+}
+
+func TestNewPeerDownloadSSTBackofferWithContextCanceled(t *testing.T) {
+	var counter int
+	backoffStrategy := utils.NewDownloadSSTBackofferWithGRPCCanceledRetry()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		return context.Canceled
+	}, backoffStrategy)
+	require.Equal(t, 1, counter)
+	require.Equal(t, []error{context.Canceled}, multierr.Errors(err))
+}
+
 func TestNewBackupSSTBackofferWithCancel(t *testing.T) {
 	var counter int
 	backoffer := utils.NewBackupSSTBackoffer()
