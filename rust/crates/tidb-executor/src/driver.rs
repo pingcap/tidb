@@ -247,6 +247,15 @@ impl Catalog {
         true
     }
 
+    /// Drops one table, reporting whether it existed.
+    pub fn drop_table_in(&mut self, database: &str, name: &str) -> bool {
+        self.version += 1;
+        match self.databases.get_mut(&database.to_lowercase()) {
+            Some(database) => database.tables.remove(&name.to_lowercase()).is_some(),
+            None => false,
+        }
+    }
+
     /// Drops `database` and its tables, reporting whether it existed. Go
     /// raises `ErrDBDropExists` (1008) unless `IF EXISTS` was written.
     pub fn drop_database(&mut self, database: &str) -> bool {
@@ -408,8 +417,12 @@ pub enum DriverError {
 pub enum SchemaErrorKind {
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB` (1049).
     UnknownDatabase(String),
-    /// Go `infoschema.ErrTableNotExists` (1146).
+    /// Go `infoschema.ErrTableNotExists` (1146): a statement read a table
+    /// that does not exist.
     UnknownTable(String),
+    /// Go `ErrBadTable` (1051): `DROP TABLE` named a table that does not
+    /// exist. MySQL uses a different code and message here than for a read.
+    BadTable(String),
     /// Go `ErrDBCreateExists` (1007).
     DatabaseExists(String),
     /// Go `plannererrors.ErrNoDB` (1046).

@@ -225,6 +225,11 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
             *b"23000",
             format!("Duplicate entry '{value}' for key '{key}'"),
         ),
+        // Go: "Unknown table '%-.129s'" -- DROP TABLE's own code, distinct
+        // from the 1146 a read of a missing table reports.
+        tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::BadTable(name)) => {
+            SqlQueryError::new(1051, *b"42S02", format!("Unknown table '{name}'"))
+        }
         // Go: "Table '%-.192s' doesn't exist".
         tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::UnknownTable(name)) => {
             SqlQueryError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
@@ -552,10 +557,18 @@ mod tests {
         assert_eq!(parse.code, 1064);
         assert_eq!(&parse.state, b"42000");
 
-        let Err(unsupported) = session.execute("DROP TABLE t") else {
+        let Err(unsupported) = session.execute("ALTER TABLE t ADD COLUMN b INT") else {
             panic!("an unsupported statement must not produce a result");
         };
         assert_eq!(unsupported.code, 1105);
+
+        // DROP TABLE is supported, and a missing name is Go's own 1051 rather
+        // than the 1146 a read of a missing table reports.
+        let Err(bad_table) = session.execute_write("DROP TABLE nosuch") else {
+            panic!("dropping a missing table must fail");
+        };
+        assert_eq!(bad_table.code, 1051);
+        assert_eq!(&bad_table.state, b"42S02");
 
         // Prepared statements keep the trait's fail-closed defaults.
         assert!(session.prepare_point_read("SELECT 1").is_err());

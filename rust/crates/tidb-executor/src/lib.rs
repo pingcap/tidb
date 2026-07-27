@@ -45,7 +45,7 @@ pub mod sort;
 pub mod table_dual;
 
 pub use apply::ApplyExec;
-pub use ddl::{run_create_table_in, run_create_table_on};
+pub use ddl::{run_create_table_in, run_create_table_on, run_drop_table_in};
 pub use driver::{
     run_delete_in, run_delete_on, run_insert_in, run_insert_on, run_insert_reporting, run_select,
     run_select_meta_in, run_select_meta_on, run_select_meta_stmt, run_select_on, run_set_opr_stmt,

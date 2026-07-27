@@ -39,6 +39,60 @@ use tidb_model::table_info::TableInfo;
 /// Builds the column's `FieldType` from its parsed SQL type: code via
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
+/// Runs a `DROP TABLE`, removing every named table that exists.
+///
+/// Go drops the tables it finds and reports `ErrBadTable` for the first name
+/// it does not, rather than validating the whole list first: captured from
+/// TiDB, `drop table d1, nosuch` removes `d1` AND errors. `IF EXISTS`
+/// suppresses the error, leaving the drops it did perform.
+///
+/// DEFERRED (documented): `TEMPORARY` tables, which this executor never
+/// models, are rejected rather than silently dropping a permanent table of
+/// the same name.
+pub fn run_drop_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+) -> Result<(), DriverError> {
+    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let drop = match &stmt {
+        Stmt::Ddl(ddl) => match &**ddl {
+            DdlStmt::DropTable(drop) => drop,
+            _ => {
+                return Err(DriverError::Unsupported(
+                    "only DROP TABLE is supported here",
+                ))
+            }
+        },
+        _ => {
+            return Err(DriverError::Unsupported(
+                "only DROP TABLE is supported here",
+            ))
+        }
+    };
+    if drop.temporary != tidb_ast::DropTemporary::None {
+        return Err(DriverError::Unsupported(
+            "temporary tables are not supported yet",
+        ));
+    }
+
+    let mut missing: Option<String> = None;
+    for path in &drop.names {
+        let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
+        let (database, name) = (database.to_owned(), name.to_owned());
+        if !catalog.drop_table_in(&database, &name) && missing.is_none() {
+            // Go reports the first missing name, after the drops it performed.
+            missing = Some(format!("{database}.{name}"));
+        }
+    }
+    match missing {
+        Some(name) if !drop.if_exists => {
+            Err(DriverError::Schema(crate::SchemaErrorKind::BadTable(name)))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Go `mysql.AutoIncrementFlag`.
 const AUTO_INCREMENT_FLAG: u32 = 1 << 9;
 

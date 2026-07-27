@@ -1111,6 +1111,14 @@ impl Session {
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
+                DdlStmt::DropTable(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_drop_table_in(sql, catalog, &current_db)?;
+                        // MySQL answers DDL with a zero affected-row count.
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
                 DdlStmt::CreateTable(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
@@ -1987,11 +1995,66 @@ mod tests {
             .is_err());
     }
 
+    /// DROP TABLE, checked against captured TiDB behavior: a missing name is
+    /// 1051, IF EXISTS suppresses it, and a mixed list still drops the tables
+    /// that exist BEFORE reporting the error.
+    #[test]
+    fn drop_table() {
+        let mut session = Session::new();
+        for name in ["d1", "d2", "d3"] {
+            session
+                .run(&format!("CREATE TABLE {name} (a BIGINT)"))
+                .unwrap();
+        }
+        let tables = |session: &mut Session| match session.run_with_columns("SHOW TABLES").unwrap()
+        {
+            StmtOutput::Rows { rows, .. } => rows
+                .into_iter()
+                .map(|row| datum_text(&row[0]).unwrap())
+                .collect::<Vec<_>>(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+
+        // Captured: [schema:1051]Unknown table 'test.nosuch'
+        assert!(matches!(
+            session.run("DROP TABLE nosuch"),
+            Err(DriverError::Schema(SchemaErrorKind::BadTable(_)))
+        ));
+        // Captured: IF EXISTS is a no-op.
+        session.run("DROP TABLE IF EXISTS nosuch").unwrap();
+
+        // Captured: `drop table d1, nosuch` errors AND still drops d1.
+        assert!(matches!(
+            session.run("DROP TABLE d1, nosuch"),
+            Err(DriverError::Schema(SchemaErrorKind::BadTable(_)))
+        ));
+        assert_eq!(tables(&mut session), vec!["d2".to_owned(), "d3".to_owned()]);
+
+        // A multi-table drop removes them all.
+        session.run("DROP TABLE d2, d3").unwrap();
+        assert!(tables(&mut session).is_empty());
+
+        // A dropped name can be recreated with a different shape, so the drop
+        // removed the metadata rather than only the rows.
+        session.run("CREATE TABLE d2 (b BIGINT)").unwrap();
+        assert_eq!(
+            session.run("SELECT b FROM d2").unwrap(),
+            StmtResult::Rows(vec![])
+        );
+        // The rows are gone too: a recreated table starts empty.
+        session.run("INSERT INTO d2 VALUES (1)").unwrap();
+        session.run("DROP TABLE d2").unwrap();
+        session.run("CREATE TABLE d2 (b BIGINT)").unwrap();
+        assert_eq!(
+            session.run("SELECT b FROM d2").unwrap(),
+            StmtResult::Rows(vec![])
+        );
+    }
+
     #[test]
     fn unsupported_kinds_error() {
         let mut session = Session::new();
         session.run("CREATE TABLE t (a INT)").unwrap();
-        assert!(session.run("DROP TABLE t").is_err());
         // Shapes the write paths do not model yet.
         assert!(session.run("DELETE FROM t ORDER BY a LIMIT 1").is_err());
         assert!(session.run("UPDATE t SET a = 1 LIMIT 1").is_err());
