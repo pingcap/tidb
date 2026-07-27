@@ -481,6 +481,32 @@ func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOn
 	)
 }
 
+func (s *mockGCSSuite) TestGlobalSortResolvesGlobalIndexConflictsAcrossPartitions() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69800: the global index uses the logical table ID, while the
+	// conflicting record KVs are stored under their physical partition IDs.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			id bigint not null,
+			p int not null,
+			u int not null,
+			payload varchar(20),
+			unique key uk_u (u) global
+		) partition by range (p) (
+			partition p0 values less than (10),
+			partition p1 values less than (maxvalue)
+		)`,
+		[]string{"1,1,10,a\n2,11,10,b\n3,12,30,c\n"},
+		[]string{"3 12 30 c"},
+		"checksum_table = 'required'",
+	)
+
+	s.tk.MustQuery("select * from t force index (uk_u) order by id").
+		Check(testkit.Rows("3 12 30 c"))
+}
+
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
