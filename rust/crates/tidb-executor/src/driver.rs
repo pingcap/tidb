@@ -41,7 +41,7 @@ use tidb_ast::{JoinNode, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver, NoResolver};
 use tidb_expr::schema::Schema;
 use tidb_expr::NoColumns;
 
@@ -341,6 +341,97 @@ pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, Dr
     Ok(rows)
 }
 
+/// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
+/// `catalog`, returning the number of inserted rows.
+///
+/// The write half of the in-memory gateway (the storage-backed `InsertExec`
+/// with autoid/defaults/constraints lands with real tables). Unsupported here
+/// (rejected, documented): `REPLACE`, `IGNORE`, `ON DUPLICATE KEY UPDATE`,
+/// `SET` syntax, `INSERT ... SELECT`, partitions, and `RETURNING`. Columns not
+/// listed in an explicit column list are filled with NULL (column defaults
+/// wait on ColumnInfo default-value wiring).
+pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
+    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+
+    let insert = match &stmt {
+        Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Insert(insert) => insert,
+            _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
+        },
+        _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
+    };
+
+    if insert.replace
+        || insert.ignore
+        || !insert.on_duplicate.is_empty()
+        || insert.set_syntax
+        || insert.source.is_some()
+        || !insert.partitions.is_empty()
+        || !insert.returning.fields().is_empty()
+    {
+        return Err(DriverError::Unsupported(
+            "only plain INSERT INTO t [(cols)] VALUES is supported",
+        ));
+    }
+
+    let table_name = insert
+        .table
+        .last()
+        .ok_or(DriverError::Unsupported("empty table name"))?
+        .clone();
+    let table = catalog
+        .tables
+        .get_mut(&table_name.to_lowercase())
+        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+
+    // Map an explicit column list to table offsets; without one, values map to
+    // every column in order.
+    let target_offsets: Vec<usize> = if insert.columns_specified {
+        insert
+            .columns
+            .iter()
+            .map(|name| {
+                table
+                    .columns
+                    .iter()
+                    .position(|(n, _)| n.eq_ignore_ascii_case(name))
+                    .ok_or(DriverError::Unsupported("unknown column in column list"))
+            })
+            .collect::<Result<_, _>>()?
+    } else {
+        (0..table.columns.len()).collect()
+    };
+
+    // Evaluate each VALUES row (constant expressions over the dual row).
+    let eval_chunk = {
+        let mut c = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        c.set_num_virtual_rows(1);
+        c
+    };
+    let mut inserted = 0u64;
+    let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(insert.rows.len());
+    for value_row in &insert.rows {
+        if value_row.len() != target_offsets.len() {
+            return Err(DriverError::Unsupported(
+                "VALUES arity does not match the column list",
+            ));
+        }
+        let mut row = vec![Datum::Null; table.columns.len()];
+        for (expr, &offset) in value_row.iter().zip(&target_offsets) {
+            let rewritten = rewrite_expr_resolved(expr, &NoResolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            let value = rewritten
+                .eval(&NoColumns, eval_chunk.get_row(0))
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            row[offset] = value;
+        }
+        new_rows.push(row);
+        inserted += 1;
+    }
+    table.rows.extend(new_rows);
+    Ok(inserted)
+}
+
 /// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
 fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
     match expr {
@@ -461,6 +552,32 @@ mod tests {
             run_select_on("SELECT a + b FROM t WHERE a = 2", &catalog).unwrap(),
             vec![vec![Datum::Int(22)]]
         );
+    }
+
+    #[test]
+    fn insert_then_select_round_trip() {
+        let mut catalog = test_catalog();
+        // Full-row insert.
+        assert_eq!(
+            run_insert_on("INSERT INTO t VALUES (4, 40), (5, 50)", &mut catalog).unwrap(),
+            2
+        );
+        // Column-list insert: unspecified column fills with NULL.
+        assert_eq!(
+            run_insert_on("INSERT INTO t (a) VALUES (6)", &mut catalog).unwrap(),
+            1
+        );
+        assert_eq!(
+            run_select_on("SELECT a, b FROM t WHERE a > 3 ORDER BY a", &catalog).unwrap(),
+            vec![
+                vec![Datum::Int(4), Datum::Int(40)],
+                vec![Datum::Int(5), Datum::Int(50)],
+                vec![Datum::Int(6), Datum::Null],
+            ]
+        );
+        // Arity mismatch and unknown table are rejected.
+        assert!(run_insert_on("INSERT INTO t (a) VALUES (1, 2)", &mut catalog).is_err());
+        assert!(run_insert_on("INSERT INTO missing VALUES (1)", &mut catalog).is_err());
     }
 
     #[test]
