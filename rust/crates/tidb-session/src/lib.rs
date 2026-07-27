@@ -461,6 +461,28 @@ impl Session {
                     let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                     Ok(Some(string_column_output("Database", names)))
                 }
+                // Go `ShowExec` with `ShowWarnings`/`ShowErrors`: the rows are
+                // the statement-context warnings, whose `Level` column is
+                // `Warning` or `Error`.
+                //
+                // DEFERRED (documented, and refused rather than ignored): the
+                // optional filter Go's shared SHOW grammar accepts here.
+                tidb_ast::AdminStmt::ShowWarnings(show) => {
+                    if show.filter.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "SHOW WARNINGS filters are not supported yet",
+                        ));
+                    }
+                    Ok(Some(self.warning_output(show.count_only, false)))
+                }
+                tidb_ast::AdminStmt::ShowErrors(show) => {
+                    if show.filter.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "SHOW ERRORS filters are not supported yet",
+                        ));
+                    }
+                    Ok(Some(self.warning_output(show.count_only, true)))
+                }
                 // Go `fetchShowCreateTable`.
                 tidb_ast::AdminStmt::ShowCreate { kind, name, .. } => {
                     if *kind != tidb_ast::ShowCreateKind::Table {
@@ -1039,7 +1061,30 @@ impl Session {
 
     /// Like [`Session::run`], but a query result also carries its column
     /// metadata (`(name, type)` per column) for wire-protocol fronts.
+    ///
+    /// Captured from TiDB: a statement that fails leaves its own error in the
+    /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
+    /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        let result = self.execute_statement(sql);
+        if let Err(error) = &result {
+            let reported = error.clone().to_mysql_error();
+            self.warnings.push(SqlWarning {
+                level: WarningLevel::Error,
+                code: reported.code,
+                message: reported.message,
+            });
+        }
+        result
+    }
+
+    fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        // Go clears the warning buffer when a statement starts, so what
+        // `SHOW WARNINGS` reports always belongs to the statement before it --
+        // which is why those two statements must not clear it themselves.
+        if !reports_warnings(sql) {
+            self.warnings.clear();
+        }
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_statement(sql)? {
             return Ok(output);
@@ -1052,7 +1097,6 @@ impl Session {
         self.statement_insert_id = 0;
         // Go's preprocessor runs before planning, so a gated clause is
         // refused before any table is touched.
-        self.warnings.clear();
         if let Stmt::Query(query) = &stmt {
             self.check_noop_functions(query)?;
             self.check_query_clauses(query)?;
@@ -1191,10 +1235,33 @@ impl Session {
 /// reports as `Level | Code | Message`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqlWarning {
+    /// Whether the statement survived it.
+    pub level: WarningLevel,
     /// The MySQL error code the warning carries.
     pub code: u16,
     /// The message text.
     pub message: String,
+}
+
+/// A warning's `Level` column, which Go fills from
+/// `StmtCtx.warnings[i].Level`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarningLevel {
+    /// The statement continued.
+    Warning,
+    /// The statement failed; Go records its error in the same buffer.
+    Error,
+}
+
+impl WarningLevel {
+    /// The text the `Level` column shows.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WarningLevel::Warning => "Warning",
+            WarningLevel::Error => "Error",
+        }
+    }
 }
 
 /// Go `variable.NoopFuncsMode`: how a clause TiDB only implements as a
@@ -1210,6 +1277,55 @@ enum NoopFuncsMode {
 }
 
 impl Session {
+    /// `SHOW WARNINGS` / `SHOW ERRORS` output: one row per buffered warning,
+    /// or the count when the source wrote `SHOW COUNT(*) WARNINGS`.
+    ///
+    /// Captured from TiDB: the columns are `Level`, `Code`, `Message`; the
+    /// count form returns a single `@@session.warning_count` column; and
+    /// `SHOW ERRORS` shows only the `Error`-level rows.
+    fn warning_output(&self, count_only: bool, errors_only: bool) -> StmtOutput {
+        let reported = self
+            .warnings
+            .iter()
+            .filter(|warning| !errors_only || warning.level == WarningLevel::Error);
+        if count_only {
+            let count = reported.count() as i64;
+            let name = if errors_only {
+                "@@session.error_count"
+            } else {
+                "@@session.warning_count"
+            };
+            return StmtOutput::Rows {
+                columns: vec![(
+                    name.to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )],
+                rows: vec![vec![Datum::Int(count)]],
+            };
+        }
+        let text = || FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let rows = reported
+            .map(|warning| {
+                vec![
+                    Datum::Bytes(warning.level.as_str().as_bytes().to_vec()),
+                    Datum::Int(i64::from(warning.code)),
+                    Datum::Bytes(warning.message.clone().into_bytes()),
+                ]
+            })
+            .collect();
+        StmtOutput::Rows {
+            columns: vec![
+                ("Level".to_owned(), text()),
+                (
+                    "Code".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+                ("Message".to_owned(), text()),
+            ],
+            rows,
+        }
+    }
+
     /// The warnings the last statement produced.
     #[must_use]
     pub fn warnings(&self) -> &[SqlWarning] {
@@ -1282,6 +1398,7 @@ impl Session {
                 return Err(DriverError::FunctionsNoopImpl(clause));
             }
             self.warnings.push(SqlWarning {
+                level: WarningLevel::Warning,
                 code: 1235,
                 message,
             });
@@ -1320,6 +1437,28 @@ fn collect_noop_in_set_opr(set_opr: &tidb_ast::SetOprStmt, out: &mut Vec<&'stati
     if share_lock(&set_opr.lock) || share_lock(&set_opr.outer_lock) {
         out.push("LOCK IN SHARE MODE");
     }
+}
+
+/// Whether the statement reports the warning buffer, and so must not clear it
+/// before running. Go decides this on the parsed node; parsing here would mean
+/// parsing the statement twice, so this reads the leading keywords the same
+/// way the dispatcher's own fast paths do.
+fn reports_warnings(sql: &str) -> bool {
+    let mut words = sql
+        .trim_start()
+        .split(|c: char| c.is_whitespace() || c == '(')
+        .filter(|word| !word.is_empty());
+    if !words
+        .next()
+        .is_some_and(|word| word.eq_ignore_ascii_case("SHOW"))
+    {
+        return false;
+    }
+    // `SHOW WARNINGS`, `SHOW ERRORS`, and the `SHOW COUNT(*) WARNINGS` form.
+    words.any(|word| {
+        let word = word.trim_end_matches(';');
+        word.eq_ignore_ascii_case("WARNINGS") || word.eq_ignore_ascii_case("ERRORS")
+    })
 }
 
 /// Whether a locking clause is the shared kind, which is the gated one --
@@ -2580,6 +2719,80 @@ mod tests {
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
         }
+    }
+
+    /// SHOW WARNINGS / SHOW ERRORS, checked against captured TiDB output.
+    ///
+    /// NOT PORTED from Go's own suites: the warnings raised by evaluation
+    /// (`1/0` is 1365 there) and by write-time truncation, because this tier
+    /// does not yet produce those warnings -- only the preprocessor gate and
+    /// the failed-statement error reach the buffer here. The filter forms of
+    /// both statements are refused, not ignored.
+    #[test]
+    fn show_warnings() {
+        let mut session = Session::new();
+        session
+            .apply_set("SET tidb_enable_noop_functions = 'WARN'")
+            .unwrap();
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+        session.run("INSERT INTO t VALUES (1, 1)").unwrap();
+
+        // Captured: the warning the statement raised, as Level/Code/Message.
+        session.run("SELECT a FROM t LOCK IN SHARE MODE").unwrap();
+        let expected = vec![vec![
+            "Warning".to_owned(),
+            "1235".to_owned(),
+            "function LOCK IN SHARE MODE has only noop implementation in tidb now, use \
+             tidb_enable_noop_functions to enable these functions"
+                .to_owned(),
+        ]];
+        assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+        // Captured: SHOW WARNINGS does not consume what it reports.
+        assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+        match session.run_with_columns("SHOW WARNINGS").unwrap() {
+            StmtOutput::Rows { columns, .. } => assert_eq!(
+                columns
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                ["Level", "Code", "Message"]
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        }
+        // Captured: a warning is not an error, so SHOW ERRORS is empty.
+        assert!(row_text(session.run("SHOW ERRORS")).is_empty());
+
+        // Captured: the buffer belongs to the last statement, so an ordinary
+        // statement empties it.
+        session.run("SELECT a FROM t").unwrap();
+        assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+
+        // Captured: a failed statement leaves its own error in the buffer,
+        // which both SHOW WARNINGS and SHOW ERRORS report.
+        session
+            .apply_set("SET tidb_enable_noop_functions = 'OFF'")
+            .unwrap();
+        assert!(session.run("SELECT a FROM t LOCK IN SHARE MODE").is_err());
+        let reported = row_text(session.run("SHOW WARNINGS"));
+        assert_eq!(reported.len(), 1);
+        assert_eq!(reported[0][0], "Error");
+        assert_eq!(reported[0][1], "1235");
+        assert_eq!(row_text(session.run("SHOW ERRORS")), reported);
+
+        // Captured: the count form reports a single count column.
+        match session.run_with_columns("SHOW COUNT(*) WARNINGS").unwrap() {
+            StmtOutput::Rows { columns, rows } => {
+                assert_eq!(columns[0].0, "@@session.warning_count");
+                assert_eq!(rows, vec![vec![Datum::Int(1)]]);
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // A filter would silently report the wrong rows, so it is refused.
+        assert!(matches!(
+            session.run("SHOW WARNINGS WHERE 1"),
+            Err(DriverError::Unsupported(_)) | Err(DriverError::Parse(_))
+        ));
     }
 
     /// The clauses TiDB parses but only implements as no-ops, checked

@@ -406,7 +406,7 @@ impl ColumnResolver for TableResolver<'_> {
 }
 
 /// A failure while running a SQL string through the driver.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DriverError {
     /// The SQL failed to parse.
     Parse(String),
@@ -5612,5 +5612,272 @@ mod tests {
             run_select_on("SELECT a FROM t ORDER BY b DESC LIMIT 2", &catalog).unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
         );
+    }
+}
+
+/// The MySQL error a driver failure becomes on the wire, which is also what
+/// `SHOW WARNINGS` reports for a failed statement.
+///
+/// Go attaches the code, the SQLSTATE and the rendered message to the error
+/// itself (`terror.Error`), so every surface that reports an error -- the
+/// protocol, `SHOW WARNINGS`, the log -- reads the same three fields. This
+/// keeps that single source of truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MysqlError {
+    /// MySQL error number.
+    pub code: u16,
+    /// Five-byte SQLSTATE.
+    pub state: [u8; 5],
+    /// The rendered message.
+    pub message: String,
+}
+
+impl MysqlError {
+    fn new(code: u16, state: [u8; 5], message: impl Into<String>) -> Self {
+        Self {
+            code,
+            state,
+            message: message.into(),
+        }
+    }
+
+    /// Go's catch-all `ER_UNKNOWN_ERROR` (1105), whose SQLSTATE is HY000.
+    fn unknown(message: impl Into<String>) -> Self {
+        Self::new(1105, *b"HY000", message)
+    }
+}
+
+/// MySQL `ER_PARSE_ERROR`.
+const ER_PARSE_ERROR: u16 = 1064;
+/// TiDB `ErrWriteConflict`.
+const ER_WRITE_CONFLICT: u16 = 9007;
+/// MySQL `ER_UNKNOWN_SYSTEM_VARIABLE`.
+const ER_UNKNOWN_SYSTEM_VARIABLE: u16 = 1193;
+/// MySQL `ER_INCORRECT_GLOBAL_LOCAL_VAR`.
+const ER_INCORRECT_GLOBAL_LOCAL_VAR: u16 = 1238;
+/// MySQL `ER_SUBQUERY_NO_1_ROW`.
+const ER_SUBQUERY_NO_1_ROW: u16 = 1242;
+/// MySQL `ER_DB_CREATE_EXISTS`.
+const ER_DB_CREATE_EXISTS: u16 = 1007;
+/// MySQL `ER_NO_DB_ERROR`.
+const ER_NO_DB_ERROR: u16 = 1046;
+/// MySQL `ER_BAD_DB_ERROR`.
+const ER_BAD_DB_ERROR: u16 = 1049;
+
+impl DriverError {
+    /// The code, SQLSTATE and message this failure reports.
+    #[must_use]
+    pub fn to_mysql_error(self) -> MysqlError {
+        match self {
+        DriverError::Parse(message) => MysqlError::new(
+            ER_PARSE_ERROR,
+            *b"42000",
+            format!("You have an error in your SQL syntax: {message}"),
+        ),
+        DriverError::Unsupported(message) => MysqlError::unknown(message),
+        DriverError::Exec(error) => MysqlError::unknown(format!("{error:?}")),
+        DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {
+            MysqlError::new(
+                ER_WRITE_CONFLICT,
+                *b"HY000",
+                "Write conflict, please retry the transaction".to_owned(),
+            )
+        }
+        // Go: "The used SELECT statements have a different number of columns".
+        DriverError::WrongNumberOfColumnsInSelect => MysqlError::new(
+            1222,
+            *b"21000",
+            "The used SELECT statements have a different number of columns".to_owned(),
+        ),
+        // Go: "Incorrect table definition; there can be only one auto column
+        // and it must be defined as a key".
+        DriverError::WrongAutoKey => MysqlError::new(
+            1075,
+            *b"42000",
+            "Incorrect table definition; there can be only one auto column and it must be defined as a key".to_owned(),
+        ),
+        // Go: "Incorrect column specifier for column '%-.192s'".
+        DriverError::WrongColumnSpecifier(name) => MysqlError::new(
+            1063,
+            *b"42000",
+            format!("Incorrect column specifier for column '{name}'"),
+        ),
+        // Go: "Column '%-.192s' cannot be null".
+        DriverError::ColumnCannotBeNull(name) => {
+            MysqlError::new(1048, *b"23000", format!("Column '{name}' cannot be null"))
+        }
+        // Go: "Field '%-.192s' doesn't have a default value".
+        DriverError::NoDefaultForField(name) => MysqlError::new(
+            1364,
+            *b"HY000",
+            format!("Field '{name}' doesn't have a default value"),
+        ),
+        // Go: "Duplicate entry '%-.64s' for key '%-.192s'".
+        DriverError::DuplicateEntry { value, key } => MysqlError::new(
+            1062,
+            *b"23000",
+            format!("Duplicate entry '{value}' for key '{key}'"),
+        ),
+        // Go: "Duplicate key name '%-.192s'".
+        DriverError::DuplicateKeyName(name) => {
+            MysqlError::new(1061, *b"42000", format!("Duplicate key name '{name}'"))
+        }
+        // Go: "index %s doesn't exist" -- 1091's index-specific message.
+        DriverError::UnknownIndex(name) => {
+            MysqlError::new(1091, *b"42000", format!("index {name} doesn't exist"))
+        }
+        // Go: "Duplicate column name '%-.192s'".
+        DriverError::DuplicateColumnName(name) => {
+            MysqlError::new(1060, *b"42S21", format!("Duplicate column name '{name}'"))
+        }
+        // Go: "Can't DROP '%-.192s'; check that column/key exists".
+        DriverError::UnknownColumnInAlter(name) => MysqlError::new(
+            1091,
+            *b"42000",
+            format!("Can't DROP '{name}'; check that column/key exists"),
+        ),
+        // Go: "can't drop only column %s in table %s".
+        DriverError::CannotDropOnlyColumn { column, table } => MysqlError::new(
+            1090,
+            *b"42000",
+            format!("can't drop only column {column} in table {table}"),
+        ),
+        // TiDB: "can't drop column %s with composite index covered or Primary
+        // Key covered now".
+        DriverError::CannotDropColumnWithCompositeIndex(name) => MysqlError::new(
+            8200,
+            *b"HY000",
+            format!(
+                "can't drop column {name} with composite index covered or Primary Key covered now"
+            ),
+        ),
+        // Go: "function %s has only noop implementation in tidb now, use
+        // tidb_enable_noop_functions to enable these functions" (1235).
+        DriverError::FunctionsNoopImpl(clause) => MysqlError::new(
+            1235,
+            *b"42000",
+            format!(
+                "function {clause} has only noop implementation in tidb now, use \
+                 tidb_enable_noop_functions to enable these functions"
+            ),
+        ),
+        // TiDB: "Unsupported modify column: %s".
+        DriverError::UnsupportedModifyColumn(reason) => MysqlError::new(
+            8200,
+            *b"HY000",
+            format!("Unsupported modify column: {reason}"),
+        ),
+        // Go: "Unknown column '%-.192s' in '%-.192s'".
+        DriverError::UnknownColumnInTable { column, table } => MysqlError::new(
+            1054,
+            *b"42S22",
+            format!("Unknown column '{column}' in '{table}'"),
+        ),
+        // Go: "BLOB/TEXT column '%-.192s' used in key specification without a
+        // key length".
+        DriverError::BlobKeyWithoutLength(column) => MysqlError::new(
+            1170,
+            *b"42000",
+            format!("BLOB/TEXT column '{column}' used in key specification without a key length"),
+        ),
+        // Go: "Truncated incorrect %-.32s value: '%-.128s'".
+        DriverError::TruncatedIncorrectValue { kind, value } => MysqlError::new(
+            1292,
+            *b"22007",
+            format!("Truncated incorrect {kind} value: '{value}'"),
+        ),
+        // Go: "Data truncated for column '%s', value is '%s'".
+        DriverError::DataTruncatedValue { column, value } => MysqlError::new(
+            1265,
+            *b"01000",
+            format!("Data truncated for column '{column}', value is '{value}'"),
+        ),
+        // Go: "Data truncated for column '%s' at row %d".
+        DriverError::DataTruncatedAtRow { column, row } => MysqlError::new(
+            1265,
+            *b"01000",
+            format!("Data truncated for column '{column}' at row {row}"),
+        ),
+        // TiDB: "Unsupported drop integer primary key".
+        DriverError::UnsupportedDropIntegerPrimaryKey => MysqlError::new(
+            8200,
+            *b"HY000",
+            "Unsupported drop integer primary key".to_owned(),
+        ),
+        // Go: "Table '%-.192s' already exists".
+        DriverError::Schema(crate::SchemaErrorKind::TableExists(name)) => {
+            MysqlError::new(1050, *b"42S01", format!("Table '{name}' already exists"))
+        }
+        // Go: "Unknown table '%-.129s'" -- DROP TABLE's own code, distinct
+        // from the 1146 a read of a missing table reports.
+        DriverError::Schema(crate::SchemaErrorKind::BadTable(name)) => {
+            MysqlError::new(1051, *b"42S02", format!("Unknown table '{name}'"))
+        }
+        // Go: "Table '%-.192s' doesn't exist".
+        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(name)) => {
+            MysqlError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
+        }
+        // Go: "Unknown database '%-.192s'".
+        DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(
+            name,
+        )) => MysqlError::new(
+            ER_BAD_DB_ERROR,
+            *b"42000",
+            format!("Unknown database '{name}'"),
+        ),
+        // Go: "Can't create database '%-.192s'; database exists".
+        DriverError::Schema(crate::SchemaErrorKind::DatabaseExists(
+            name,
+        )) => MysqlError::new(
+            ER_DB_CREATE_EXISTS,
+            *b"HY000",
+            format!("Can't create database '{name}'; database exists"),
+        ),
+        // Go: "No database selected".
+        DriverError::Schema(crate::SchemaErrorKind::NoDatabaseSelected) => {
+            MysqlError::new(ER_NO_DB_ERROR, *b"3D000", "No database selected".to_owned())
+        }
+        // Go: "Incorrect argument type to variable '%-.64s'".
+        DriverError::Var(crate::VarErrorKind::WrongTypeForVar(name)) => {
+            MysqlError::new(
+                1232,
+                *b"42000",
+                format!("Incorrect argument type to variable '{name}'"),
+            )
+        }
+        // Go: "Variable '%-.64s' can't be set to the value of '%-.200s'".
+        DriverError::Var(crate::VarErrorKind::WrongValueForVar(
+            name,
+            value,
+        )) => MysqlError::new(
+            1231,
+            *b"42000",
+            format!("Variable '{name}' can't be set to the value of '{value}'"),
+        ),
+        // Go: "Unknown system variable '%-.64s'".
+        DriverError::Var(crate::VarErrorKind::UnknownSystemVariable(
+            name,
+        )) => MysqlError::new(
+            ER_UNKNOWN_SYSTEM_VARIABLE,
+            *b"HY000",
+            format!("Unknown system variable '{name}'"),
+        ),
+        // Go: "Variable '%-.192s' is a %s variable".
+        DriverError::Var(crate::VarErrorKind::ReadOnlyVariable(name)) => {
+            MysqlError::new(
+                ER_INCORRECT_GLOBAL_LOCAL_VAR,
+                *b"HY000",
+                format!("Variable '{name}' is a read only variable"),
+            )
+        }
+        DriverError::SubqueryReturnsMoreThanOneRow => MysqlError::new(
+            ER_SUBQUERY_NO_1_ROW,
+            *b"21000",
+            "Subquery returns more than 1 row".to_owned(),
+        ),
+        DriverError::CatalogPoisoned => {
+            MysqlError::unknown("the shared catalog is unusable after a failed statement")
+        }
+        }
     }
 }

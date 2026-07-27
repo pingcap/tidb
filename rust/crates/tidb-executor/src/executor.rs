@@ -22,7 +22,7 @@ use tidb_expr::EvalError;
 
 /// An execution error. Go returns a bare `error`; this wraps the failures the
 /// ported executors can surface.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExecError {
     /// An expression failed to evaluate.
     Eval(EvalError),
