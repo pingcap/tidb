@@ -12,29 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package jina
 
 import "github.com/pingcap/tidb/pkg/inference/embedding/base"
 
-// OpenAI embeddings protocol reference:
-// https://platform.openai.com/docs/api-reference/embeddings/create
-
-// Request is the model for OpenAI embeddings API request.
+// Request is the model for JinaAI embeddings API request.
 type Request struct {
-	Input          []string `json:"input"`
-	Model          string   `json:"model"`
-	EncodingFormat string   `json:"encoding_format"`
+	Input         []string `json:"input"`
+	Model         string   `json:"model"`
+	EmbeddingType string   `json:"embedding_type"`
 }
 
-// Response is the model for OpenAI embeddings API response.
+// Response is the model for JinaAI embeddings API response.
+// See https://jina.ai/embeddings/.
 type Response struct {
 	Model string                        `json:"model"`
 	Data  []base.IndexedBase64Embedding `json:"data"`
 }
 
-// ErrorResponse is the model for OpenAI embeddings API response when an error occurs.
+// ErrorResponse is the model for JinaAI embeddings API response when an error occurs.
 type ErrorResponse struct {
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Detail string `json:"detail"`
 }

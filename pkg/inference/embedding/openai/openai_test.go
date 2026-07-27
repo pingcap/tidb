@@ -20,11 +20,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/inference/embedding/base"
+	"github.com/pingcap/tidb/pkg/inference/embedding/internal/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -63,43 +64,12 @@ func receiveRequestPath(t *testing.T, requestPathCh <-chan string) string {
 }
 
 func TestOpenAIEmbedder_Success(t *testing.T) {
-	// Mock successful response from real OpenAI API
-	mockResponse := `
-    {
-      "object": "list",
-      "data": [
-        {
-          "object": "embedding",
-          "index": 0,
-          "embedding": "oTwEP2H/Kz4Jwho/Gf2RPvl5lb3N1IU+z+t6Pb9Sej5h/6u+UXO5vQ=="
-        },
-        {
-          "object": "embedding",
-          "index": 1,
-          "embedding": "LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="
-        },
-        {
-          "object": "embedding",
-          "index": 2,
-          "embedding": "fSC3PuGE5b3tlAc/C0BCPYgoMTvDC+k+MTB5PkS+7j5W9pm+4DxNvQ=="
-        },
-        {
-          "object": "embedding",
-          "index": 3,
-          "embedding": "9Lo8vsEPLD4Dqho/+EVqPtFTV75Zg6q9NR3HPfjuGL6j26C+SwQVvw=="
-        },
-        {
-          "object": "embedding",
-          "index": 4,
-          "embedding": "57uJvmuWor7Zn0o+adtgPt1OlD5osRC/TzTUvgBgGD6aNfI9qEi3vg=="
-        }
-      ],
-      "model": "text-embedding-3-small",
-      "usage": {
-        "prompt_tokens": 7,
-        "total_tokens": 7
-      }
-    }`
+	mockResponse := `{
+		"data": [
+			{"index": 0, "embedding": "` + testutil.EncodeFloat32Base64(1, 2) + `"},
+			{"index": 1, "embedding": "` + testutil.EncodeFloat32Base64(3, 4) + `"}
+		]
+	}`
 
 	requestCh := make(chan capturedHTTPRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,12 +81,12 @@ func TestOpenAIEmbedder_Success(t *testing.T) {
 	defer server.Close()
 
 	// Create embedder with mock server URL
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
 
-	texts := []string{"hello world", "test text", "sample input", "more text", "last item"}
+	texts := []string{"hello world", "test text"}
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
 
 	require.NoError(t, err)
@@ -128,25 +98,10 @@ func TestOpenAIEmbedder_Success(t *testing.T) {
 	require.Equal(t, "Bearer test-api-key", request.authorization)
 	require.JSONEq(t, `{
 		"model": "text-embedding-3-small",
-		"input": ["hello world", "test text", "sample input", "more text", "last item"],
+		"input": ["hello world", "test text"],
 		"encoding_format": "base64"
 	}`, string(request.body))
-	require.Len(t, embeddings, 5)
-	require.Equal(t, embeddings[0], []float32{
-		0.5165501, 0.16796638, 0.60452324, 0.2851341, -0.07298655, 0.26138917, 0.06126004, 0.24445628, -0.33593276, -0.09055198,
-	})
-	require.Equal(t, embeddings[1], []float32{
-		0.24713585, 0.0253526, 0.34393325, 0.3717625, 0.42621103, -0.2551519, -0.50032157, 0.24290097, 0.08847887, 0.34332827,
-	})
-	require.Equal(t, embeddings[2], []float32{
-		0.35766974, -0.11206985, 0.5296162, 0.047424357, 0.0027032215, 0.45516786, 0.2433479, 0.46629536, -0.30070752, -0.050106883,
-	})
-	require.Equal(t, embeddings[3], []float32{
-		-0.18430692, 0.16802885, 0.6041567, 0.22878253, -0.21028067, -0.08325834, 0.09722368, -0.1493491, -0.3141757, -0.58209676,
-	})
-	require.Equal(t, embeddings[4], []float32{
-		-0.2690117, -0.31755385, 0.1978754, 0.21958698, 0.28966418, -0.565207, -0.41446158, 0.14880371, 0.1182663, -0.3579762,
-	})
+	require.Equal(t, [][]float32{{1, 2}, {3, 4}}, embeddings)
 }
 
 func TestOpenAIEmbedder_WithOptions(t *testing.T) {
@@ -176,7 +131,7 @@ func TestOpenAIEmbedder_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -231,7 +186,7 @@ func TestOpenAIEmbedderBaseURL(t *testing.T) {
 		{suffix: "/v1/embeddings/?api-version=x#section", path: "/v1/embeddings", rawQuery: "api-version=x"},
 	}
 	for _, tt := range testCases {
-		embedder := NewOpenAIEmbedder(EmbedderConfig{
+		embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 			GetAPIKey:  func() string { return "test-api-key" },
 			GetBaseURL: func() string { return server.URL + tt.suffix },
 		})
@@ -243,7 +198,7 @@ func TestOpenAIEmbedderBaseURL(t *testing.T) {
 		require.Equal(t, [][]float32{{1}}, embeddings)
 	}
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return "://invalid" },
 	})
@@ -258,7 +213,7 @@ func TestOpenAIEmbedderHTTPClientTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -271,32 +226,9 @@ func TestOpenAIEmbedderHTTPClientTimeout(t *testing.T) {
 	require.True(t, netErr.Timeout())
 }
 
-func TestOpenAIEmbedderResponseBodyLimit(t *testing.T) {
-	body, err := readResponseBody(strings.NewReader(strings.Repeat("x", 64)), 64)
-	require.NoError(t, err)
-	require.Len(t, body, 64)
-
-	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(strings.Repeat("x", 65)))
-			}))
-			defer server.Close()
-
-			embedder := NewOpenAIEmbedder(EmbedderConfig{
-				GetAPIKey:            func() string { return "test-api-key" },
-				GetBaseURL:           func() string { return server.URL },
-				MaxResponseBodyBytes: 64,
-			})
-
-			_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{"test"}, nil)
-			require.ErrorContains(t, err, "response body exceeds maximum size of 64 bytes")
-		})
-	}
-}
-
 func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
+	firstEmbedding := testutil.EncodeFloat32Base64(1, 2)
+	secondEmbedding := testutil.EncodeFloat32Base64(3, 4)
 	tests := []struct {
 		name         string
 		responseData string
@@ -305,23 +237,23 @@ func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
 		{
 			name: "out of order",
 			responseData: `[
-				{"object":"embedding","index":1,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="},
-				{"object":"embedding","index":0,"embedding":"oTwEP2H/Kz4Jwho/Gf2RPvl5lb3N1IU+z+t6Pb9Sej5h/6u+UXO5vQ=="}
+				{"object":"embedding","index":1,"embedding":"` + secondEmbedding + `"},
+				{"object":"embedding","index":0,"embedding":"` + firstEmbedding + `"}
 			]`,
 		},
 		{
 			name: "duplicate index",
 			responseData: `[
-				{"object":"embedding","index":0,"embedding":"oTwEP2H/Kz4Jwho/Gf2RPvl5lb3N1IU+z+t6Pb9Sej5h/6u+UXO5vQ=="},
-				{"object":"embedding","index":0,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="}
+				{"object":"embedding","index":0,"embedding":"` + firstEmbedding + `"},
+				{"object":"embedding","index":0,"embedding":"` + secondEmbedding + `"}
 			]`,
 			errContains: "duplicate index 0",
 		},
 		{
 			name: "out of range index",
 			responseData: `[
-				{"object":"embedding","index":0,"embedding":"oTwEP2H/Kz4Jwho/Gf2RPvl5lb3N1IU+z+t6Pb9Sej5h/6u+UXO5vQ=="},
-				{"object":"embedding","index":2,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="}
+				{"object":"embedding","index":0,"embedding":"` + firstEmbedding + `"},
+				{"object":"embedding","index":2,"embedding":"` + secondEmbedding + `"}
 			]`,
 			errContains: "out of range",
 		},
@@ -329,7 +261,7 @@ func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
 			name: "invalid decoded embedding length",
 			responseData: `[
 				{"object":"embedding","index":0,"embedding":"AAEC"},
-				{"object":"embedding","index":1,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="}
+				{"object":"embedding","index":1,"embedding":"` + secondEmbedding + `"}
 			]`,
 			errContains: "invalid embedding data",
 		},
@@ -337,16 +269,12 @@ func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"object":"list","model":"text-embedding-3-small","data":` + tt.responseData + `}`))
-			}))
-			defer server.Close()
+			serverURL := testutil.NewJSONServer(t, http.StatusOK,
+				`{"object":"list","model":"text-embedding-3-small","data":`+tt.responseData+`}`)
 
-			embedder := NewOpenAIEmbedder(EmbedderConfig{
+			embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 				GetAPIKey:  func() string { return "test-api-key" },
-				GetBaseURL: func() string { return server.URL },
+				GetBaseURL: func() string { return serverURL },
 			})
 
 			embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{"a", "b"}, nil)
@@ -356,13 +284,7 @@ func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Len(t, embeddings, 2)
-			require.Equal(t, []float32{
-				0.5165501, 0.16796638, 0.60452324, 0.2851341, -0.07298655, 0.26138917, 0.06126004, 0.24445628, -0.33593276, -0.09055198,
-			}, embeddings[0])
-			require.Equal(t, []float32{
-				0.24713585, 0.0253526, 0.34393325, 0.3717625, 0.42621103, -0.2551519, -0.50032157, 0.24290097, 0.08847887, 0.34332827,
-			}, embeddings[1])
+			require.Equal(t, [][]float32{{1, 2}, {3, 4}}, embeddings)
 		})
 	}
 }
@@ -386,7 +308,7 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "invalid-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -404,16 +326,12 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	t.Cleanup(restore)
 
 	providerKey := `dash"secret`
-	badRequestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key: dash\"secret"}}`))
-	}))
-	defer badRequestServer.Close()
+	badRequestServerURL := testutil.NewJSONServer(t, http.StatusBadRequest,
+		`{"error":{"message":"invalid api key: dash\"secret"}}`)
 
-	embedder = NewOpenAIEmbedder(EmbedderConfig{
+	embedder = NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return providerKey },
-		GetBaseURL: func() string { return badRequestServer.URL },
+		GetBaseURL: func() string { return badRequestServerURL },
 	})
 	_, err = embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
 	require.EqualError(t, err, "OpenAI: status code 400, message: invalid api key: [REDACTED]")
@@ -426,16 +344,11 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	require.Equal(t, "invalid api key: [REDACTED]", fields["message"])
 	require.NotContains(t, fields, "body")
 
-	malformedResponseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`{"error":`))
-	}))
-	defer malformedResponseServer.Close()
+	malformedResponseServerURL := testutil.NewJSONServer(t, http.StatusBadGateway, `{"error":`)
 
-	embedder = NewOpenAIEmbedder(EmbedderConfig{
+	embedder = NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return malformedResponseServer.URL },
+		GetBaseURL: func() string { return malformedResponseServerURL },
 	})
 	_, err = embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
 	require.EqualError(t, err, "OpenAI: status code 502, message: Bad Gateway")
@@ -469,7 +382,7 @@ func TestOpenAIEmbedder_InvalidModel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
+	embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
 		GetAPIKey:  func() string { return "valid-api-key" },
 		GetBaseURL: func() string { return server.URL },
 	})
@@ -483,23 +396,20 @@ func TestOpenAIEmbedder_InvalidModel(t *testing.T) {
 	require.ErrorContains(t, err, "model 'text-embedding-3x' does not exist")
 }
 
-func TestOpenAIEmbedder_EmptyTexts(t *testing.T) {
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "http://mock-url" },
+func TestOpenAIEmbedderContract(t *testing.T) {
+	testutil.RunEmbedderContract(t, testutil.EmbedderContract[*Embedder]{
+		Model: "text-embedding-3-small",
+		New: func(cfg testutil.EmbedderConfig) *Embedder {
+			embedder := NewOpenAIEmbedder(base.APIKeyProviderConfig{
+				GetAPIKey:            func() string { return cfg.APIKey },
+				GetBaseURL:           func() string { return cfg.BaseURL },
+				MaxResponseBodyBytes: cfg.MaxResponseBodyBytes,
+			})
+			embedder.client.Transport = cfg.Transport
+			return embedder
+		},
+		RequestError:              "OpenAI request failed",
+		ResponseBodyLimitError:    "response body exceeds maximum size of 64 bytes",
+		TransportCauseIsPreserved: true,
 	})
-
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{}, nil)
-	require.NoError(t, err)
-	require.Len(t, embeddings, 0)
-}
-
-func TestOpenAIEmbedder_NoModel(t *testing.T) {
-	embedder := NewOpenAIEmbedder(EmbedderConfig{
-		GetAPIKey:  func() string { return "test-api-key" },
-		GetBaseURL: func() string { return "http://mock-url" },
-	})
-	embeddings, err := embedder.CreateEmbeddings(context.Background(), "", []string{"test"}, nil)
-	require.Nil(t, embeddings)
-	require.Error(t, err)
 }

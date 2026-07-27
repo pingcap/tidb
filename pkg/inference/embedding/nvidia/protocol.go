@@ -12,29 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package nvidia
 
 import "github.com/pingcap/tidb/pkg/inference/embedding/base"
 
-// OpenAI embeddings protocol reference:
-// https://platform.openai.com/docs/api-reference/embeddings/create
-
-// Request is the model for OpenAI embeddings API request.
+// Request is the model for Nvidia NIM embeddings API request.
 type Request struct {
 	Input          []string `json:"input"`
 	Model          string   `json:"model"`
 	EncodingFormat string   `json:"encoding_format"`
 }
 
-// Response is the model for OpenAI embeddings API response.
+// Response is the model for Nvidia NIM embeddings API response.
 type Response struct {
-	Model string                        `json:"model"`
-	Data  []base.IndexedBase64Embedding `json:"data"`
+	Object string                        `json:"object"`
+	Model  string                        `json:"model"`
+	Data   []base.IndexedBase64Embedding `json:"data"`
+	Usage  struct {
+		PromptTokens int `json:"prompt_tokens"`
+		TotalTokens  int `json:"total_tokens"`
+	} `json:"usage"`
 }
 
-// ErrorResponse is the model for OpenAI embeddings API response when an error occurs.
+// ErrorResponse is the model for Nvidia NIM embeddings API response when an error occurs.
 type ErrorResponse struct {
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Object  string `json:"object"`
+	Status  int    `json:"status"`
+	Title   string `json:"title"`
+	Detail  string `json:"detail"`
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Error   string `json:"error"`
 }
