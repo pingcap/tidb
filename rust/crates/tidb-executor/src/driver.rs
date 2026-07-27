@@ -63,6 +63,10 @@ pub struct MemTable {
 pub struct Catalog {
     tables: HashMap<String, TableEntry>,
     next_table_id: i64,
+    /// Bumped by every mutation, so a transaction can detect that the shared
+    /// catalog moved under it (Go detects the same at commit through TiKV's
+    /// optimistic conflict check on the written keys).
+    version: u64,
 }
 
 /// A catalog table's backing store.
@@ -93,12 +97,14 @@ impl Catalog {
     pub fn register(&mut self, name: &str, table: MemTable) {
         self.tables
             .insert(name.to_lowercase(), TableEntry::Mem(table));
+        self.version += 1;
     }
 
     /// Registers a TiKV-format-byte-backed `table` under `name`.
     pub fn register_kv(&mut self, name: &str, table: KvTable) {
         self.tables
             .insert(name.to_lowercase(), TableEntry::Kv(table));
+        self.version += 1;
     }
 
     fn get(&self, name: &str) -> Option<&TableEntry> {
@@ -106,8 +112,21 @@ impl Catalog {
     }
 
     /// A mutable handle on a table, for the write paths.
+    ///
+    /// Taking it bumps [`Catalog::version`], which is what a transaction's
+    /// conflict check observes. The count is deliberately over-approximate:
+    /// every write path goes through here, so a statement that ends up
+    /// changing nothing still bumps it. That can refuse a commit Go would
+    /// allow, never the reverse.
     fn get_mut(&mut self, name: &str) -> Option<&mut TableEntry> {
+        self.version += 1;
         self.tables.get_mut(&name.to_ascii_lowercase())
+    }
+
+    /// The catalog's mutation counter.
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// Whether a table with `name` exists (case-insensitive).
@@ -163,6 +182,16 @@ pub enum DriverError {
     /// The shared catalog is unusable because a statement panicked while
     /// holding it, so its schema state may be half-written.
     CatalogPoisoned,
+    /// A transaction could not be committed.
+    Txn(TxnErrorKind),
+}
+
+/// Why a transaction statement failed (Go `kv.ErrWriteConflict` and friends).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxnErrorKind {
+    /// The catalog moved under the transaction, so committing would discard
+    /// another session's writes.
+    WriteConflict,
 }
 
 impl From<ExecError> for DriverError {
@@ -452,8 +481,7 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
         .ok_or(DriverError::Unsupported("empty table name"))?
         .clone();
     let table = catalog
-        .tables
-        .get_mut(&table_name.to_lowercase())
+        .get_mut(&table_name)
         .ok_or(DriverError::Unsupported("table not found in catalog"))?;
     let column_list = table.column_list();
 

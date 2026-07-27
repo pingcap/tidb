@@ -128,6 +128,27 @@ fn run_write(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: 
     u64::from(affected)
 }
 
+/// Sends one transaction-control COM_QUERY and returns whether the OK
+/// packet's status flags advertise `SERVER_STATUS_IN_TRANS` (0x0001).
+fn run_transaction_control(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> bool {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(
+        packet[0], 0x00,
+        "transaction control answers with an OK packet: {packet:?}"
+    );
+    // OK payload: header, affected_rows, last_insert_id, then status flags.
+    let status = u16::from_le_bytes([packet[3], packet[4]]);
+    status & 0x0001 != 0
+}
+
 /// Sends one COM_QUERY and reads its (deprecate-EOF) text result set:
 /// column-count, column definitions, rows, terminal OK-with-0xFE-header.
 /// Returns each row's columns as strings.
@@ -215,6 +236,39 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
             vec!["3".to_owned(), "30".to_owned()],
             vec!["2".to_owned(), "20".to_owned()],
         ]
+    );
+
+    // A transaction over the wire: BEGIN/COMMIT answer with OK packets whose
+    // status advertises SERVER_STATUS_IN_TRANS, and the staged write is
+    // visible to the transaction itself and survives the commit.
+    assert!(
+        run_transaction_control(&mut client, &mut reader, "BEGIN"),
+        "BEGIN advertises SERVER_STATUS_IN_TRANS"
+    );
+    assert_eq!(
+        run_write(&mut client, &mut reader, "INSERT INTO t VALUES (4, 40)"),
+        1
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT a FROM t WHERE a = 4"),
+        vec![vec!["4".to_owned()]]
+    );
+    assert!(
+        !run_transaction_control(&mut client, &mut reader, "COMMIT"),
+        "COMMIT clears SERVER_STATUS_IN_TRANS"
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT a FROM t WHERE a = 4"),
+        vec![vec!["4".to_owned()]]
+    );
+
+    // ROLLBACK discards the staged write.
+    run_transaction_control(&mut client, &mut reader, "BEGIN");
+    run_write(&mut client, &mut reader, "INSERT INTO t VALUES (5, 50)");
+    run_transaction_control(&mut client, &mut reader, "ROLLBACK");
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT a FROM t WHERE a = 5"),
+        Vec::<Vec<String>>::new()
     );
 
     // COM_QUIT ends the connection cleanly.

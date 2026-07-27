@@ -48,6 +48,10 @@ use crate::sql_node::{
 /// MySQL `ER_PARSE_ERROR`.
 const ER_PARSE_ERROR: u16 = 1064;
 
+/// TiDB `ErrWriteConflict` (`pkg/errno`: 9007), whose SQL state is the
+/// generic `HY000` TiDB uses for its own KV errors.
+const ER_WRITE_CONFLICT: u16 = 9007;
+
 /// One connection's pipeline-backed query session.
 pub struct PipelineServerSession {
     session: Session,
@@ -98,6 +102,12 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    /// BEGIN/COMMIT/ROLLBACK drive the session's transaction, and the caller
+    /// answers with an OK packet whose status carries the returned flag.
+    fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        self.session.control_transaction(sql).map_err(map_error)
+    }
+
     /// Writes and DDL answer with an OK packet carrying their affected-row
     /// count; the statement kind is decided by parsing alone so the statement
     /// runs exactly once.
@@ -143,6 +153,13 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
         ),
         tidb_executor::DriverError::Unsupported(message) => SqlQueryError::unknown(message),
         tidb_executor::DriverError::Exec(error) => SqlQueryError::unknown(format!("{error:?}")),
+        tidb_executor::DriverError::Txn(tidb_executor::TxnErrorKind::WriteConflict) => {
+            SqlQueryError::new(
+                ER_WRITE_CONFLICT,
+                *b"HY000",
+                "Write conflict, please retry the transaction".to_owned(),
+            )
+        }
         tidb_executor::DriverError::CatalogPoisoned => {
             SqlQueryError::unknown("the shared catalog is unusable after a failed statement")
         }
@@ -416,9 +433,10 @@ mod tests {
         // Prepared statements keep the trait's fail-closed defaults.
         assert!(session.prepare_point_read("SELECT 1").is_err());
         assert!(session.prepare_write("INSERT INTO t VALUES (1)").is_err());
-        // Transaction control stays an ordinary statement (fails as unsupported
-        // downstream rather than pretending a transaction exists).
-        assert_eq!(session.control_transaction("BEGIN").unwrap(), None);
+        // Transaction control is claimed by the hook and reports the state.
+        assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
+        assert_eq!(session.control_transaction("COMMIT").unwrap(), Some(false));
+        assert_eq!(session.control_transaction("SELECT 1").unwrap(), None);
     }
 
     /// Connections do not share a catalog (documented deferral): a table made
