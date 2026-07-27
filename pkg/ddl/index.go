@@ -739,7 +739,10 @@ func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ er
 
 func setIndexVisibility(tblInfo *model.TableInfo, name ast.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == name.L || idx.GetChangingOriginName() == name.O {
+		if idx.Name.L == name.L ||
+			(idx.IsChanging() &&
+				isTempIndex(idx, tblInfo) &&
+				strings.EqualFold(idx.GetChangingOriginName(), name.O)) {
 			idx.Invisible = invisible
 		}
 	}
