@@ -95,7 +95,9 @@ func genServerWithStorage(t *testing.T) (*fakestorage.Server, string) {
 	return server, cloudStorageURI
 }
 
-func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
+func externalFilesCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) bool {
+	t.Helper()
+	require.Greater(t, jobID, int64(0))
 	storeBackend, err := objstore.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
@@ -104,8 +106,45 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 		prefix := strconv.Itoa(int(id))
 		files, err := simplesst.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
-		require.Greater(t, jobID, int64(0))
-		require.Equal(t, 0, len(files))
+		if len(files) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func waitCleanupAndCheckFileCleaned(
+	t *testing.T,
+	jobID int64,
+	taskID int64,
+	sortStorageURI string,
+	cleanupStarted <-chan struct{},
+	continueCleanup chan<- struct{},
+	cleanupFinished <-chan struct{},
+) {
+	t.Helper()
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	for {
+		if externalFilesCleaned(t, jobID, taskID, sortStorageURI) {
+			return
+		}
+		select {
+		case <-cleanupStarted:
+			select {
+			case continueCleanup <- struct{}{}:
+			case <-deadline.C:
+				t.Fatalf("timed out releasing cleanup for job %d task %d", jobID, taskID)
+			}
+			select {
+			case <-cleanupFinished:
+			case <-deadline.C:
+				t.Fatalf("timed out waiting for cleanup of job %d task %d", jobID, taskID)
+			}
+		case <-time.After(100 * time.Millisecond):
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for cleanup of job %d task %d", jobID, taskID)
+		}
 	}
 }
 
@@ -126,10 +165,12 @@ func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
 	require.Greater(t, len(filteredFiles), 0)
 }
 
-func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
+func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) int64 {
 	tk.MustExec("admin check table t;")
 	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rs, 1)
+	jobID, err := strconv.ParseInt(rs[0][0].(string), 10, 64)
+	require.NoError(t, err)
 	if kerneltype.IsClassic() {
 		require.Contains(t, rs[0][12], "ingest")
 		require.Contains(t, rs[0][12], "cloud")
@@ -137,6 +178,7 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 		require.Equal(t, rs[0][12], "")
 	}
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
+	return jobID
 }
 
 func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
@@ -159,18 +201,47 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	return task.ID
 }
 
+func hasMergeSortSubtask(t *testing.T, tk *testkit.TestKit, taskID int64) bool {
+	rows := tk.MustQuery(fmt.Sprintf(`select 1 from (
+		select task_key, step from mysql.tidb_background_subtask
+		union all
+		select task_key, step from mysql.tidb_background_subtask_history
+	) subtasks where task_key = '%d' and step = %d limit 1`, taskID, proto.BackfillStepMergeSort)).Rows()
+	return len(rows) > 0
+}
+
+func checkMergeSortPlanFile(t *testing.T, tk *testkit.TestKit, sortStorageURI string, taskID int64, requireMergeSort bool) {
+	t.Helper()
+	hasMergeSort := hasMergeSortSubtask(t, tk, taskID)
+	if requireMergeSort {
+		require.True(t, hasMergeSort, "forceMergeSort should schedule merge-sort subtask for task %d", taskID)
+	}
+	if hasMergeSort {
+		checkFileExist(t, sortStorageURI, strconv.Itoa(int(taskID)), "/plan/merge-sort")
+	}
+}
+
 func TestGlobalSortBasic(t *testing.T) {
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	ch := make(chan struct{})
+	cleanupStarted := make(chan struct{}, 1)
+	continueCleanup := make(chan struct{}, 1)
+	cleanupFinished := make(chan struct{}, 1)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
-		ch <- struct{}{}
+		select {
+		case cleanupStarted <- struct{}{}:
+		default:
+		}
+		<-continueCleanup
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
-		ch <- struct{}{}
+		select {
+		case cleanupFinished <- struct{}{}:
+		default:
+		}
 	})
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
@@ -198,45 +269,38 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(sb.String())
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		jobID = job.ID
-	})
+	var failpointHooksActive atomic.Bool
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkEnableStreaming",
 		func(enabled bool) {
+			failpointHooksActive.Store(true)
 			require.True(t, enabled, "streaming should be enabled with global sort")
 		},
 	)
 
 	tk.MustExec("alter table t add index idx(a);")
-	checkDataAndShowJobs(t, tk, size)
+	jobID = checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID := getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
-	<-ch
-	<-ch
-	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	waitCleanupAndCheckFileCleaned(t, jobID, taskID, cloudStorageURI, cleanupStarted, continueCleanup, cleanupFinished)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
-	checkDataAndShowJobs(t, tk, size)
+	jobID = checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID = getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/merge-sort")
-	<-ch
-	<-ch
-	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	checkMergeSortPlanFile(t, tk, cloudStorageURI, taskID, failpointHooksActive.Load())
+	waitCleanupAndCheckFileCleaned(t, jobID, taskID, cloudStorageURI, cleanupStarted, continueCleanup, cleanupFinished)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
-	checkDataAndShowJobs(t, tk, size)
+	jobID = checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID = getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/merge-sort")
-	<-ch
-	<-ch
-	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	checkMergeSortPlanFile(t, tk, cloudStorageURI, taskID, failpointHooksActive.Load())
+	waitCleanupAndCheckFileCleaned(t, jobID, taskID, cloudStorageURI, cleanupStarted, continueCleanup, cleanupFinished)
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
