@@ -7,5 +7,11 @@ license.workspace = true
 repository.workspace = true
 description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-parser = { path = "../tidb-parser" }
+
 [lints]
 workspace = true

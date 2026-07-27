@@ -41,6 +41,7 @@ pub mod selection;
 pub mod sort;
 pub mod table_dual;
 
+pub use ddl::run_create_table_on;
 pub use driver::{
     run_insert_on, run_select, run_select_on, Catalog, DriverError, MemTable, TableEntry,
 };

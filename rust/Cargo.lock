@@ -1497,6 +1497,12 @@ dependencies = [
 [[package]]
 name = "tidb-session"
 version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-executor",
+ "tidb-parser",
+]
 
 [[package]]
 name = "tidb-stats"
