@@ -106,12 +106,13 @@ func testCheckpointMetaForRestore(
 	require.Equal(t, checkpointMetaForSnapshotRestore.RestoredTS, checkpointMetaForSnapshotRestore2.RestoredTS)
 
 	checkpointMetaForLogRestore := &checkpoint.CheckpointMetadataForLogRestore{
-		UpstreamClusterID: 123,
-		RestoredTS:        222,
-		StartTS:           111,
-		RewriteTS:         333,
-		GcRatio:           "1.0",
-		TiFlashItems:      map[int64]model.TiFlashReplicaInfo{1: {Count: 1}},
+		UpstreamClusterID:        123,
+		RestoredTS:               222,
+		StartTS:                  111,
+		RewriteTS:                333,
+		GcRatio:                  "1.0",
+		RocksDBMaxBackgroundJobs: "8",
+		TiFlashItems:             map[int64]model.TiFlashReplicaInfo{1: {Count: 1}},
 	}
 
 	err = logMetaManager.SaveCheckpointMetadata(ctx, checkpointMetaForLogRestore)
@@ -123,6 +124,7 @@ func testCheckpointMetaForRestore(
 	require.Equal(t, checkpointMetaForLogRestore.StartTS, checkpointMetaForLogRestore2.StartTS)
 	require.Equal(t, checkpointMetaForLogRestore.RewriteTS, checkpointMetaForLogRestore2.RewriteTS)
 	require.Equal(t, checkpointMetaForLogRestore.GcRatio, checkpointMetaForLogRestore2.GcRatio)
+	require.Equal(t, checkpointMetaForLogRestore.RocksDBMaxBackgroundJobs, checkpointMetaForLogRestore2.RocksDBMaxBackgroundJobs)
 	require.Equal(t, checkpointMetaForLogRestore.TiFlashItems, checkpointMetaForLogRestore2.TiFlashItems)
 
 	exists, err := logMetaManager.ExistsCheckpointProgress(ctx)
@@ -143,6 +145,7 @@ func testCheckpointMetaForRestore(
 	require.Equal(t, uint64(111), taskInfo.Metadata.StartTS)
 	require.Equal(t, uint64(333), taskInfo.Metadata.RewriteTS)
 	require.Equal(t, "1.0", taskInfo.Metadata.GcRatio)
+	require.Equal(t, "8", taskInfo.Metadata.RocksDBMaxBackgroundJobs)
 	require.Equal(t, true, taskInfo.HasSnapshotMetadata)
 	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, taskInfo.Progress)
 

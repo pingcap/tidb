@@ -357,8 +357,8 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 			content: []string{
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 1, \"region-split-size\": \"1MiB\"}, \"import\": {\"num-threads\": 6}}",
 			},
-			// the number of import goroutines is 8 times than import.num-threads.
-			importNumGoroutines: 48,
+			// the default value already satisfies import.num-threads + 4.
+			importNumGoroutines: conn.DefaultImportNumGoroutines,
 			// one tikv detected in this case we are not update default size and keys because they are too small.
 			regionSplitSize: 1 * units.MiB,
 			regionSplitKeys: 1,
@@ -379,7 +379,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 			content: []string{
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
 			},
-			importNumGoroutines: 1024,
+			importNumGoroutines: 132,
 			// one tikv detected in this case and we update with new size and keys.
 			regionSplitSize: 1 * units.GiB,
 			regionSplitKeys: 10000000,
@@ -411,8 +411,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}, \"import\": {\"num-threads\": 12}}",
 			},
-			// two tikv detected in this case and we choose the small one.
-			importNumGoroutines: 96,
+			importNumGoroutines: 132,
 			regionSplitSize:     1 * units.GiB,
 			regionSplitKeys:     10000000,
 		},
