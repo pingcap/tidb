@@ -217,15 +217,16 @@ impl Chunk {
     /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
-    /// DEFERRED (documented): `Datum::Decimal`. A chunk cell holds the raw
-    /// 40-byte `MyDecimal`, and building one from the digit-string `Decimal`
-    /// needs `MyDecimal::FromString`, which is not ported yet -- so a decimal
-    /// datum panics here rather than being stored through a lossy conversion.
-    /// The typed [`Chunk::append_my_decimal`] path is already exact.
+    /// A `Datum::Decimal` carries the digit-string `Decimal`, so it reaches
+    /// the raw 40-byte cell through `MyDecimal::from_string` over its
+    /// canonical text -- the same text `Row::get_datum` reads back out. A
+    /// value too large for the `MyDecimal` buffer panics rather than being
+    /// silently truncated into the cell; callers holding a `MyDecimal`
+    /// already should use the exact [`Chunk::append_my_decimal`].
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
-    /// float32, string/bytes, time, duration). Other kinds panic, pending
-    /// their column support.
+    /// float32, string/bytes, time, duration, decimal). Other kinds panic,
+    /// pending their column support.
     pub fn append_datum(&mut self, col_idx: usize, datum: &Datum) {
         match datum {
             Datum::Null => self.append_null(col_idx),
@@ -240,6 +241,15 @@ impl Chunk {
             Datum::Bytes(b) => self.append_bytes(col_idx, b),
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
+            Datum::Decimal(dec) => {
+                let text = dec.to_string();
+                let (value, err) = MyDecimal::from_string(text.as_bytes());
+                assert!(
+                    err.is_none(),
+                    "Chunk::append_datum: decimal {text} does not fit a MyDecimal cell ({err:?})"
+                );
+                self.append_my_decimal(col_idx, &value);
+            }
             other => panic!(
                 "Chunk::append_datum: datum {other:?} not yet supported (pending its column storage)"
             ),
@@ -370,6 +380,31 @@ mod tests {
         }
         // null cell -> Datum::Null regardless of type
         assert_eq!(chk.get_row(1).get_datum(0, &fields[0]), Datum::Null);
+    }
+
+    /// A decimal datum must survive `append_datum` -> `get_datum` unchanged,
+    /// which is the path an INSERT of a decimal literal takes.
+    #[test]
+    fn decimal_datum_round_trips_through_append_datum() {
+        use tidb_datatype::{Decimal, FieldTypeCode};
+        let ft = FieldType::new(FieldTypeCode::NewDecimal);
+        let mut chunk = Chunk::new(std::slice::from_ref(&ft), 4, 8);
+        for text in ["1.50", "-273.15", "0", "12345678901234567890.123456789"] {
+            chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(text)));
+        }
+        chunk.append_null(0);
+
+        let texts: Vec<String> = (0..4)
+            .map(|i| match chunk.get_row(i).get_datum(0, &ft) {
+                Datum::Decimal(d) => d.to_string(),
+                other => panic!("expected a decimal, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            ["1.50", "-273.15", "0", "12345678901234567890.123456789"]
+        );
+        assert!(chunk.get_row(4).is_null(0));
     }
 
     #[test]
