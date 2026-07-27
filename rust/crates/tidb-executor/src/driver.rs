@@ -838,11 +838,18 @@ fn run_select_stmt(
 
     // Projection of the rewritten fields.
     let mut root: Box<dyn Executor> = Box::new(ProjectionExec::new(
-        ExecutorMeta::new(out_schema, 2, INIT_CAP, MAX_CHUNK_SIZE),
+        ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
         exprs,
         source,
         NoColumns,
     ));
+
+    // SELECT DISTINCT: Go `buildDistinct` builds an aggregation grouping by
+    // every projected column, with a FIRST_ROW aggregate per column, which is
+    // exactly a deduplication. It sits above the projection and below LIMIT.
+    if select.distinct {
+        root = Box::new(distinct_over(root, &out_schema));
+    }
 
     // LIMIT [offset,] count: both bounds must be non-negative integer literals
     // (as in SQL; Go validates the same in the planner).
@@ -3099,6 +3106,22 @@ fn run_aggregate_select(
     }
     let ret_types: Vec<FieldType> = types.clone();
 
+    // `SELECT DISTINCT` over an aggregate result deduplicates the output
+    // rows, the same buildDistinct step the plain path applies.
+    if select.distinct {
+        let columns: Vec<Column> = ret_types
+            .iter()
+            .enumerate()
+            .map(|(i, ft)| {
+                let mut col = Column::new((i + 1) as i64, ft.clone());
+                col.index = i as i64;
+                col
+            })
+            .collect();
+        let schema = Schema::new(columns);
+        root = Box::new(distinct_over(root, &schema));
+    }
+
     root.open()?;
     let mut req = root.new_chunk();
     let mut rows: Vec<Vec<Datum>> = Vec::new();
@@ -3120,6 +3143,31 @@ fn run_aggregate_select(
     }
     root.close()?;
     Ok((names.into_iter().zip(ret_types).collect(), rows))
+}
+
+/// Go `buildDistinct`: an aggregation grouping by every column of `schema`,
+/// carrying each one through a `FIRST_ROW` aggregate.
+///
+/// The hash aggregation emits groups in first-seen order, so a sort below it
+/// still orders the deduplicated rows -- the first row of each group is the
+/// one the sort put first.
+fn distinct_over(child: Box<dyn Executor>, schema: &Schema) -> HashAggExec<NoColumns> {
+    let group_by: Vec<Expression> = schema
+        .columns
+        .iter()
+        .map(|column| Expression::Column(column.clone()))
+        .collect();
+    let agg_funcs: Vec<AggFunc> = group_by
+        .iter()
+        .map(|column| AggFunc::new(AggKind::FirstRow, Some(column.clone())))
+        .collect();
+    HashAggExec::new(
+        ExecutorMeta::new(schema.clone(), 5, INIT_CAP, MAX_CHUNK_SIZE),
+        group_by,
+        agg_funcs,
+        child,
+        NoColumns,
+    )
 }
 
 /// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
@@ -4884,6 +4932,75 @@ mod tests {
         assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) LIMIT 1"), None);
         assert_eq!(decides("SELECT DISTINCT v FROM bd WHERE id IN (1)"), None);
         assert_eq!(decides("SELECT v FROM bd WHERE id = 1"), None);
+    }
+
+    /// SELECT DISTINCT deduplicates the projected rows, which Go builds as an
+    /// aggregation grouping by every projected column with FIRST_ROW
+    /// aggregates. The plain path silently returned duplicates before.
+    #[test]
+    fn select_distinct() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE d2 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO d2 VALUES (1, 1), (1, 2), (1, 1), (2, 2)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        assert_eq!(
+            run_select_on("SELECT DISTINCT a FROM d2", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+        );
+        // Every projected column takes part, so (1,1) collapses but (1,2)
+        // stays.
+        assert_eq!(
+            run_select_on("SELECT DISTINCT a, b FROM d2", &catalog).unwrap(),
+            vec![
+                vec![Datum::Int(1), Datum::Int(1)],
+                vec![Datum::Int(1), Datum::Int(2)],
+                vec![Datum::Int(2), Datum::Int(2)],
+            ]
+        );
+        // Without DISTINCT every row survives.
+        assert_eq!(
+            run_select_on("SELECT a FROM d2", &catalog).unwrap().len(),
+            4
+        );
+
+        // DISTINCT applies to the projected expression, not the source rows.
+        assert_eq!(
+            run_select_on("SELECT DISTINCT a + b FROM d2", &catalog).unwrap(),
+            vec![
+                vec![Datum::Int(2)],
+                vec![Datum::Int(3)],
+                vec![Datum::Int(4)]
+            ]
+        );
+
+        // The dedup emits groups in first-seen order, so a sort below it still
+        // orders the surviving rows.
+        assert_eq!(
+            run_select_on("SELECT DISTINCT a FROM d2 ORDER BY a DESC", &catalog).unwrap(),
+            vec![vec![Datum::Int(2)], vec![Datum::Int(1)]]
+        );
+        // LIMIT applies after the dedup.
+        assert_eq!(
+            run_select_on("SELECT DISTINCT a FROM d2 LIMIT 1", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)]]
+        );
+        // A WHERE below it still filters.
+        assert_eq!(
+            run_select_on("SELECT DISTINCT a FROM d2 WHERE b = 2", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+        );
+
+        // Over an aggregate result, DISTINCT deduplicates the output rows.
+        crate::run_create_table_on("CREATE TABLE g3 (k BIGINT, v BIGINT)", &mut catalog).unwrap();
+        run_insert_on("INSERT INTO g3 VALUES (1, 5), (2, 5), (3, 9)", &mut catalog).unwrap();
+        assert_eq!(
+            run_select_on("SELECT DISTINCT SUM(v) FROM g3 GROUP BY k", &catalog).unwrap(),
+            vec![vec![Datum::Int(5)], vec![Datum::Int(9)]]
+        );
     }
 
     #[test]
