@@ -7,7 +7,6 @@ go_library(
         "domain_sysvars.go",
         "domainctx.go",
         "extract.go",
-        "historical_stats.go",
         "optimize_trace.go",
         "plan_replayer.go",
         "plan_replayer_dump.go",

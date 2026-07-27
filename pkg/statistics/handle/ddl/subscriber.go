@@ -24,26 +24,19 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
-type subscriber struct {
-	statsCache types.StatsCache
-}
+type subscriber struct{}
 
 // newSubscriber creates a new subscriber.
-func newSubscriber(
-	statsCache types.StatsCache,
-) *subscriber {
-	h := subscriber{statsCache: statsCache}
-	return &h
+func newSubscriber() *subscriber {
+	return &subscriber{}
 }
 
 func (h subscriber) handle(
@@ -284,73 +277,31 @@ func (h subscriber) handle(
 	return nil
 }
 
-func (h subscriber) insertStats4PhysicalID(
+func (subscriber) insertStats4PhysicalID(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	info *model.TableInfo,
 	id int64,
 ) error {
-	startTS, err := storage.InsertTableStats2KV(ctx, sctx, info, id)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(h.recordHistoricalStatsMeta(ctx, sctx, id, startTS))
+	return errors.Trace(storage.InsertTableStats2KV(ctx, sctx, info, id))
 }
 
-func (h subscriber) recordHistoricalStatsMeta(
-	ctx context.Context,
-	sctx sessionctx.Context,
-	id int64,
-	startTS uint64,
-) error {
-	if startTS == 0 {
-		return nil
-	}
-	enableHistoricalStats, err2 := getEnableHistoricalStats(sctx)
-	if err2 != nil {
-		return err2
-	}
-	if !enableHistoricalStats {
-		return nil
-	}
-
-	tbl, ok := h.statsCache.Get(id)
-	if !ok || !tbl.IsInitialized() {
-		return nil
-	}
-
-	return history.RecordHistoricalStatsMeta(
-		ctx,
-		sctx,
-		startTS,
-		util.StatsMetaHistorySourceSchemaChange,
-		id,
-	)
-}
-
-func (h subscriber) delayedDeleteStats4PhysicalID(
+func (subscriber) delayedDeleteStats4PhysicalID(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	id int64,
 ) error {
-	startTS, err2 := storage.UpdateStatsMetaVerAndLastHistUpdateVer(ctx, sctx, id)
-	if err2 != nil {
-		return errors.Trace(err2)
-	}
-	return errors.Trace(h.recordHistoricalStatsMeta(ctx, sctx, id, startTS))
+	_, err := storage.UpdateStatsMetaVerAndLastHistUpdateVer(ctx, sctx, id)
+	return errors.Trace(err)
 }
 
-func (h subscriber) insertStats4Col(
+func (subscriber) insertStats4Col(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalID int64,
 	colInfos []*model.ColumnInfo,
 ) error {
-	startTS, err := storage.InsertColStats2KV(ctx, sctx, physicalID, colInfos)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(h.recordHistoricalStatsMeta(ctx, sctx, physicalID, startTS))
+	return errors.Trace(storage.InsertColStats2KV(ctx, sctx, physicalID, colInfos))
 }
 
 func getPhysicalIDs(
@@ -382,15 +333,6 @@ func getCurrentPruneMode(
 		GlobalVarsAccessor.
 		GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	return variable.PartitionPruneMode(pruneMode), errors.Trace(err)
-}
-
-func getEnableHistoricalStats(
-	sctx sessionctx.Context,
-) (bool, error) {
-	val, err := sctx.GetSessionVars().
-		GlobalVarsAccessor.
-		GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
-	return variable.TiDBOptOn(val), errors.Trace(err)
 }
 
 func updateGlobalTableStats4DropPartition(

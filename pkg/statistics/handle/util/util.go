@@ -39,19 +39,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-const (
-	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
-	StatsMetaHistorySourceAnalyze = "analyze"
-	// StatsMetaHistorySourceLoadStats indicates stats history meta source from load stats
-	StatsMetaHistorySourceLoadStats = "load stats"
-	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
-	StatsMetaHistorySourceFlushStats = "flush stats"
-	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
-	StatsMetaHistorySourceSchemaChange = "schema change"
-	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
-	StatsMetaHistorySourceExtendedStats = "extended stats"
-)
-
 var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
@@ -130,13 +117,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
-	// enable historical stats
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
-
 	// partition mode
 	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	if err != nil {
@@ -152,7 +132,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
 
 	// enable skip column types
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		return err
 	}

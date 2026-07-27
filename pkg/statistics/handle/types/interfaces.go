@@ -103,18 +103,6 @@ type IndexUsage interface {
 	GetIndexUsage(tableID int64, indexID int64) indexusage.Sample
 }
 
-// StatsHistory is used to manage historical stats.
-type StatsHistory interface {
-	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
-	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
-
-	// CheckHistoricalStatsEnable check whether historical stats is enabled.
-	CheckHistoricalStatsEnable() (enable bool, err error)
-
-	// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
-}
-
 // PriorityQueueSnapshot is the snapshot of the stats priority queue.
 type PriorityQueueSnapshot struct {
 	CurrentJobs     []AnalysisJobJSON `json:"current_jobs"`
@@ -354,15 +342,15 @@ type StatsReadWriter interface {
 
 	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool) (err error)
 
 	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
-	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
 	// Set it to true if the column/index stats is updated.
-	SaveMetaToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
+	SaveMetaToStorage(needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
@@ -398,19 +386,6 @@ type StatsReadWriter interface {
 	// DumpStatsToJSON dumps statistic to json.
 	DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
 		historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*statsutil.JSONTable, error)
-
-	// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
-	// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
-	// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
-	DumpHistoricalStatsBySnapshot(
-		dbName string,
-		tableInfo *model.TableInfo,
-		snapshot uint64,
-	) (
-		jt *statsutil.JSONTable,
-		fallbackTbls []string,
-		err error,
-	)
 
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
 	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error)
@@ -513,9 +488,6 @@ type StatsHandle interface {
 
 	// StatsUsage is used to handle table delta and stats usage.
 	StatsUsage
-
-	// StatsHistory is used to manage historical stats.
-	StatsHistory
 
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	StatsAnalyze

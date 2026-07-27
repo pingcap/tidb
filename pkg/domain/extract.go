@@ -393,7 +393,7 @@ func (w *extractWorker) dumpExtractPlanPackage(ctx context.Context, task *Extrac
 	}
 	// Dump stats
 	if !task.SkipStats {
-		if _, err = dumpStats(zw, p.tables, GetDomain(w.sctx), 0); err != nil {
+		if err = dumpStats(zw, p.tables, GetDomain(w.sctx)); err != nil {
 			return "", err
 		}
 	}

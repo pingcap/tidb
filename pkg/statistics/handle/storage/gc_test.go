@@ -16,6 +16,8 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,6 +134,61 @@ func TestDeleteAnalyzeJobs(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DeleteAnalyzeJobs(time.Now().Add(time.Second)))
 	rows = testKit.MustQuery("show analyze status").Rows()
 	require.Equal(t, 0, len(rows))
+}
+
+func TestClearOutdatedHistoryStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// The historical stats feature was removed and nothing writes to
+	// mysql.stats_history/mysql.stats_meta_history anymore, but rows written
+	// before an upgrade may remain, so seed legacy rows directly. Use more
+	// than one delete batch (50 rows) of stats_history rows to make sure the
+	// drain loops until completion instead of stopping after the first batch.
+	var sb strings.Builder
+	sb.WriteString("insert into mysql.stats_history (table_id, stats_data, seq_no, version, create_time) values ")
+	for i := range 120 {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, "(1, 'x', %d, %d, '2020-01-01 00:00:00')", i, i+1)
+	}
+	tk.MustExec(sb.String())
+	tk.MustExec("insert into mysql.stats_meta_history (table_id, modify_count, count, version, source, create_time) values (1, 0, 0, 1, 'test', '2020-01-01 00:00:00')")
+	// Rows within the retention window must survive the drain.
+	tk.MustExec("insert into mysql.stats_history (table_id, stats_data, seq_no, version, create_time) values (2, 'x', 0, 1, NOW())")
+	tk.MustExec("insert into mysql.stats_meta_history (table_id, modify_count, count, version, source, create_time) values (2, 0, 0, 1, 'test', NOW())")
+
+	require.NoError(t, dom.StatsHandle().ClearOutdatedHistoryStats())
+	tk.MustQuery("select count(*) from mysql.stats_meta_history").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.stats_history").Check(testkit.Rows("1"))
+
+	// Legacy rows may remain in mysql.stats_history even after
+	// mysql.stats_meta_history is fully drained; they must still be cleared.
+	tk.MustExec("insert into mysql.stats_history (table_id, stats_data, seq_no, version, create_time) values (3, 'x', 0, 1, '2020-01-01 00:00:00')")
+	require.NoError(t, dom.StatsHandle().ClearOutdatedHistoryStats())
+	tk.MustQuery("select count(*) from mysql.stats_history where table_id = 3").Check(testkit.Rows("0"))
+}
+
+func TestGCHistoryStatsAfterDropTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,2),(3,4)")
+	tk.MustExec("analyze table t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tid := tbl.Meta().ID
+	// Seed legacy historical stats rows for the table. Use a recent
+	// create_time so only the drop-table GC path (not the retention-based
+	// drain) can remove them.
+	tk.MustExec(fmt.Sprintf("insert into mysql.stats_history (table_id, stats_data, seq_no, version, create_time) values (%d, 'x', 0, 1, NOW())", tid))
+	tk.MustExec(fmt.Sprintf("insert into mysql.stats_meta_history (table_id, modify_count, count, version, source, create_time) values (%d, 0, 0, 1, 'test', NOW())", tid))
+
+	tk.MustExec("drop table t")
+	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = %d", tid)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = %d", tid)).Check(testkit.Rows("0"))
 }
 
 func TestExtremCaseOfGC(t *testing.T) {

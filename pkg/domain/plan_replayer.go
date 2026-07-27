@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -470,7 +469,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 			zap.Error(err))
 		return false
 	}
-	file, fileName, err := replayer.GeneratePlanReplayerFile(w.ctx, storage, task.IsCapture, task.IsContinuesCapture, vardef.EnableHistoricalStatsForCapture.Load())
+	file, fileName, err := replayer.GeneratePlanReplayerFile(w.ctx, storage, task.IsCapture, task.IsContinuesCapture)
 	if err != nil {
 		logutil.BgLogger().Warn("generate task file failed", zap.String("category", "plan-replayer-capture"),
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -576,14 +575,13 @@ type PlanReplayerDumpTask struct {
 	TblStats map[int64]any
 
 	// variables used to dump the plan
-	StartTS           uint64
-	SessionBindings   [][]*bindinfo.Binding
-	EncodedPlan       string
-	SessionVars       *variable.SessionVars
-	ExecStmts         []ast.StmtNode
-	Analyze           bool
-	HistoricalStatsTS uint64
-	DebugTrace        []any
+	StartTS         uint64
+	SessionBindings [][]*bindinfo.Binding
+	EncodedPlan     string
+	SessionVars     *variable.SessionVars
+	ExecStmts       []ast.StmtNode
+	Analyze         bool
+	DebugTrace      []any
 
 	FileName     string
 	PresignedURL string

@@ -1055,7 +1055,13 @@ var defaultSysVars = []*SysVar{
 			return origin, nil
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableTelemetry, Value: BoolToOnOff(vardef.DefTiDBEnableTelemetry), Type: vardef.TypeBool},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStats, Value: vardef.Off, Type: vardef.TypeBool, Depended: true},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStats, Value: vardef.Off, Type: vardef.TypeBool,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if TiDBOptOn(normalizedValue) {
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("the historical stats feature has been removed, so this will have no effect"))
+			}
+			return normalizedValue, nil
+		}},
 	/* tikv gc metrics */
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBGCEnable, Value: vardef.On, Type: vardef.TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", vardef.On)
@@ -1815,15 +1821,13 @@ var defaultSysVars = []*SysVar{
 		vardef.PasswordReuseInterval.Store(TidbOptInt64(val, vardef.DefPasswordReuseTime))
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStatsForCapture, Value: BoolToOnOff(vardef.DefTiDBEnableHistoricalStatsForCapture), Type: vardef.TypeBool,
-		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			vardef.EnableHistoricalStatsForCapture.Store(TiDBOptOn(s))
-			return nil
-		},
-		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			return BoolToOnOff(vardef.EnableHistoricalStatsForCapture.Load()), nil
-		},
-	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStatsForCapture, Value: vardef.Off, Type: vardef.TypeBool,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if TiDBOptOn(normalizedValue) {
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("the historical stats feature has been removed, so this will have no effect"))
+			}
+			return normalizedValue, nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBHistoricalStatsDuration, Value: vardef.DefTiDBHistoricalStatsDuration.String(), Type: vardef.TypeDuration, MinValue: int64(time.Second), MaxValue: uint64(time.Hour * 24 * 365),
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return vardef.HistoricalStatsDuration.Load().String(), nil
@@ -1859,28 +1863,11 @@ var defaultSysVars = []*SysVar{
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			historicalStatsEnabled, err := s.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
-			if err != nil {
-				return err
-			}
-			if !TiDBOptOn(historicalStatsEnabled) && TiDBOptOn(val) {
-				return errors.Errorf("%v should be enabled before enabling %v", vardef.TiDBEnableHistoricalStats, vardef.TiDBEnablePlanReplayerContinuousCapture)
-			}
 			s.EnablePlanReplayedContinuesCapture = TiDBOptOn(val)
 			return nil
 		},
 		GetSession: func(vars *SessionVars) (string, error) {
 			return BoolToOnOff(vars.EnablePlanReplayedContinuesCapture), nil
-		},
-		Validation: func(vars *SessionVars, s string, s2 string, flag vardef.ScopeFlag) (string, error) {
-			historicalStatsEnabled, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
-			if err != nil {
-				return "", err
-			}
-			if !TiDBOptOn(historicalStatsEnabled) && TiDBOptOn(s) {
-				return "", errors.Errorf("%v should be enabled before enabling %v", vardef.TiDBEnableHistoricalStats, vardef.TiDBEnablePlanReplayerContinuousCapture)
-			}
-			return s, nil
 		},
 	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(vardef.DefTiDBEnablePlanReplayerCapture), Type: vardef.TypeBool,

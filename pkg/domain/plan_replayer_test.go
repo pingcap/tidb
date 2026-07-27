@@ -42,7 +42,7 @@ func TestPlanReplayerDifferentGC(t *testing.T) {
 
 	time1 := time.Now().Add(-7 * 25 * time.Hour).UnixNano()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time1)))
-	file1, fileName1, err := replayer.GeneratePlanReplayerFile(ctx, storage, true, false, false)
+	file1, fileName1, err := replayer.GeneratePlanReplayerFile(ctx, storage, true, false)
 	require.NoError(t, err)
 	require.NoError(t, file1.Close())
 	filePath1 := filepath.Join(dirName, fileName1)
@@ -50,7 +50,7 @@ func TestPlanReplayerDifferentGC(t *testing.T) {
 
 	time2 := time.Now().Add(-7 * 23 * time.Hour).UnixNano()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time2)))
-	file2, fileName2, err := replayer.GeneratePlanReplayerFile(ctx, storage, true, false, false)
+	file2, fileName2, err := replayer.GeneratePlanReplayerFile(ctx, storage, true, false)
 	require.NoError(t, err)
 	require.NoError(t, file2.Close())
 	filePath2 := filepath.Join(dirName, fileName2)
@@ -58,7 +58,7 @@ func TestPlanReplayerDifferentGC(t *testing.T) {
 
 	time3 := time.Now().Add(-2 * time.Hour).UnixNano()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time3)))
-	file3, fileName3, err := replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
+	file3, fileName3, err := replayer.GeneratePlanReplayerFile(ctx, storage, false, false)
 	require.NoError(t, err)
 	require.NoError(t, file3.Close())
 	filePath3 := filepath.Join(dirName, fileName3)
@@ -66,7 +66,7 @@ func TestPlanReplayerDifferentGC(t *testing.T) {
 
 	time4 := time.Now().UnixNano()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time4)))
-	file4, fileName4, err := replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
+	file4, fileName4, err := replayer.GeneratePlanReplayerFile(ctx, storage, false, false)
 	require.NoError(t, err)
 	require.NoError(t, file4.Close())
 	filePath4 := filepath.Join(dirName, fileName4)
@@ -118,42 +118,22 @@ func TestDumpGCFileParseTime(t *testing.T) {
 	require.NoError(t, err)
 
 	var pName string
-	pName, err = replayer.GeneratePlanReplayerFileName(false, false, false)
+	pName, err = replayer.GeneratePlanReplayerFileName(false, false)
 	require.NoError(t, err)
 	_, err = parseTime(pName)
 	require.NoError(t, err)
 
-	pName, err = replayer.GeneratePlanReplayerFileName(true, false, false)
+	pName, err = replayer.GeneratePlanReplayerFileName(true, false)
 	require.NoError(t, err)
 	_, err = parseTime(pName)
 	require.NoError(t, err)
 
-	pName, err = replayer.GeneratePlanReplayerFileName(false, true, false)
+	pName, err = replayer.GeneratePlanReplayerFileName(false, true)
 	require.NoError(t, err)
 	_, err = parseTime(pName)
 	require.NoError(t, err)
 
-	pName, err = replayer.GeneratePlanReplayerFileName(true, true, false)
-	require.NoError(t, err)
-	_, err = parseTime(pName)
-	require.NoError(t, err)
-
-	pName, err = replayer.GeneratePlanReplayerFileName(false, false, true)
-	require.NoError(t, err)
-	_, err = parseTime(pName)
-	require.NoError(t, err)
-
-	pName, err = replayer.GeneratePlanReplayerFileName(true, false, true)
-	require.NoError(t, err)
-	_, err = parseTime(pName)
-	require.NoError(t, err)
-
-	pName, err = replayer.GeneratePlanReplayerFileName(false, true, true)
-	require.NoError(t, err)
-	_, err = parseTime(pName)
-	require.NoError(t, err)
-
-	pName, err = replayer.GeneratePlanReplayerFileName(true, true, true)
+	pName, err = replayer.GeneratePlanReplayerFileName(true, true)
 	require.NoError(t, err)
 	_, err = parseTime(pName)
 	require.NoError(t, err)

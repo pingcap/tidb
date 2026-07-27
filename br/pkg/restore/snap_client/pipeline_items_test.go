@@ -121,7 +121,7 @@ type mockStatsReadWriter struct {
 	rows map[int64]int64
 }
 
-func (m *mockStatsReadWriter) SaveMetaToStorage(_ string, _ bool, metaUpdates ...statstypes.MetaUpdate) (err error) {
+func (m *mockStatsReadWriter) SaveMetaToStorage(_ bool, metaUpdates ...statstypes.MetaUpdate) (err error) {
 	for _, metaUpdate := range metaUpdates {
 		m.rows[metaUpdate.PhysicalID] += metaUpdate.Count
 	}

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
@@ -378,7 +377,6 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			topN,
 			info.StatsVersion,
 			true,
-			util.StatsMetaHistorySourceAnalyze,
 		)
 		if err != nil {
 			statslogutil.StatsLogger().Warn("save global-level stats to storage failed",
