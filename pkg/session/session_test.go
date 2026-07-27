@@ -37,6 +37,7 @@ import (
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -92,7 +93,20 @@ func TestMustGetSystemBootVersion(t *testing.T) {
 
 		versionCh := make(chan int64, 1)
 		go func() {
-			versionCh <- waitForSystemKeyspaceBootstrap(store, time.Second, 10*time.Millisecond)
+			timeoutTimer := time.NewTimer(time.Second)
+			retryTicker := time.NewTicker(10 * time.Millisecond)
+			defer timeoutTimer.Stop()
+			defer retryTicker.Stop()
+			versionCh <- waitForSystemKeyspaceBootstrapLoop(
+				func() int64 {
+					return mustGetStoreBootstrapVersion(store)
+				},
+				timeoutTimer.C,
+				retryTicker.C,
+				func() {
+					logutil.BgLogger().Info("waiting SYSTEM keyspace to be bootstrapped")
+				},
+			)
 		}()
 
 		require.Eventually(t, func() bool {
@@ -123,8 +137,21 @@ func TestMustGetSystemBootVersion(t *testing.T) {
 			require.NoError(t, store.Close())
 		})
 
+		timeoutTimer := time.NewTimer(50 * time.Millisecond)
+		retryTicker := time.NewTicker(10 * time.Millisecond)
+		defer timeoutTimer.Stop()
+		defer retryTicker.Stop()
 		require.Equal(t, int64(notBootstrapped),
-			waitForSystemKeyspaceBootstrap(store, 50*time.Millisecond, 10*time.Millisecond))
+			waitForSystemKeyspaceBootstrapLoop(
+				func() int64 {
+					return mustGetStoreBootstrapVersion(store)
+				},
+				timeoutTimer.C,
+				retryTicker.C,
+				func() {
+					logutil.BgLogger().Info("waiting SYSTEM keyspace to be bootstrapped")
+				},
+			))
 	})
 
 	t.Run("does not start another read after timeout", func(t *testing.T) {
