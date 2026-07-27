@@ -24,16 +24,27 @@
 //! empty group (`SELECT COUNT(c) FROM t` on empty `t` is `[0]`), while
 //! group-by/no-data emits none -- exactly Go's `unparallelExec` rule.
 //!
+//! `MIN`/`MAX` compare with the shared datum ordering and skip NULL inputs
+//! (Go `maxMin4*.UpdatePartialResult`); `AVG` keeps Go's sum/count pair and
+//! divides at finalize, returning DECIMAL for integer/decimal inputs and
+//! DOUBLE for real ones (Go `typeInfer4Avg` + `baseAvg*.AppendFinalResult2Chunk`),
+//! with the same `div_precision_increment` the `/` operator uses. `DISTINCT`
+//! de-duplicates a function's inputs per group on the datum hash key, as Go's
+//! `*4Distinct*` variants do with their `valueSet`.
+//!
 //! DEFERRED (documented): the parallel partial/final worker pipeline, spill,
-//! memory tracking; AVG/MIN/MAX/GROUP_CONCAT and DISTINCT modifiers; and
+//! memory tracking; GROUP_CONCAT and the bit/variance/percentile families;
 //! SUM-over-integer's DECIMAL result domain -- this seed accumulates integer
 //! sums in `i64` and reports overflow as an error rather than widening to
-//! decimal (Go returns DECIMAL; lands with the layout-faithful MyDecimal).
+//! decimal (Go returns DECIMAL; lands with the layout-faithful MyDecimal);
+//! and Go's `Round(retTp.GetDecimal())` display step on the AVG result.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, Decimal, FieldType};
+use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::{Columns, EvalError};
@@ -48,6 +59,12 @@ pub enum AggKind {
     /// `FIRST_ROW(expr)`: the first row's value (the planner's group-column
     /// carrier).
     FirstRow,
+    /// `MIN(expr)`.
+    Min,
+    /// `MAX(expr)`.
+    Max,
+    /// `AVG(expr)`.
+    Avg,
 }
 
 /// One aggregate: a kind plus its argument (`None` only for `COUNT(*)`).
@@ -57,6 +74,21 @@ pub struct AggFunc {
     pub kind: AggKind,
     /// The argument expression; `None` means `COUNT(*)`.
     pub arg: Option<Expression>,
+    /// Go `AggFuncDesc.HasDistinct`: whether repeated input values are counted
+    /// once per group.
+    pub distinct: bool,
+}
+
+impl AggFunc {
+    /// An aggregate without the `DISTINCT` modifier.
+    #[must_use]
+    pub fn new(kind: AggKind, arg: Option<Expression>) -> Self {
+        AggFunc {
+            kind,
+            arg,
+            distinct: false,
+        }
+    }
 }
 
 /// One group's partial results, in agg-func order.
@@ -67,6 +99,59 @@ enum Partial {
     SumReal(Option<f64>),
     /// `None` until the first row is seen.
     FirstRow(Option<Datum>),
+    /// `MIN`/`MAX`: the extreme seen so far, `None` while every input was NULL.
+    MaxMin {
+        value: Option<Datum>,
+        is_max: bool,
+    },
+    /// `AVG` over integer/decimal inputs: Go's exact decimal sum plus count.
+    AvgDecimal {
+        sum: Decimal,
+        count: i64,
+    },
+    /// `AVG` over real inputs: Go's `partialResult4AvgFloat64`.
+    AvgReal {
+        sum: f64,
+        count: i64,
+    },
+}
+
+/// One aggregate's per-group state: its partial result plus, for `DISTINCT`,
+/// the input values already folded in (Go's `valueSet`).
+struct AggState {
+    partial: Partial,
+    seen: Option<HashSet<Vec<u8>>>,
+}
+
+impl AggState {
+    fn new(func: &AggFunc) -> AggState {
+        AggState {
+            partial: Partial::new(func.kind),
+            seen: func.distinct.then(HashSet::new),
+        }
+    }
+
+    /// Folds one row's input in, skipping values this group has already seen
+    /// when the function is `DISTINCT`.
+    ///
+    /// Go keys its `valueSet` on the codec encoding of the evaluated argument;
+    /// the datum hash key is that same encoding. A datum with no hash key
+    /// (Go's encode error) fails the statement rather than silently counting
+    /// twice.
+    fn update(&mut self, value: Option<Datum>) -> Result<(), ExecError> {
+        if let Some(seen) = &mut self.seen {
+            let datum = value.clone().unwrap_or(Datum::Null);
+            if datum != Datum::Null {
+                let key = datum
+                    .to_hash_key()
+                    .map_err(|_| ExecError::Unsupported("DISTINCT over this datum kind"))?;
+                if !seen.insert(key) {
+                    return Ok(());
+                }
+            }
+        }
+        self.partial.update(value)
+    }
 }
 
 impl Partial {
@@ -76,6 +161,21 @@ impl Partial {
             // The sum's domain is chosen lazily from the first non-NULL input.
             AggKind::Sum => Partial::SumInt(None),
             AggKind::FirstRow => Partial::FirstRow(None),
+            AggKind::Min => Partial::MaxMin {
+                value: None,
+                is_max: false,
+            },
+            AggKind::Max => Partial::MaxMin {
+                value: None,
+                is_max: true,
+            },
+            // As with SUM, the domain is chosen from the first non-NULL input:
+            // Go picks it from the inferred return type, which is DECIMAL for
+            // integer/decimal arguments and DOUBLE for real ones.
+            AggKind::Avg => Partial::AvgDecimal {
+                sum: Decimal::from_int(0),
+                count: 0,
+            },
         }
     }
 
@@ -119,6 +219,60 @@ impl Partial {
                     slot.replace(value.unwrap_or(Datum::Null));
                 }
             }
+            (Partial::MaxMin { .. }, None) => {
+                return Err(ExecError::Unsupported("MIN/MAX requires an argument"))
+            }
+            (Partial::MaxMin { .. }, Some(Datum::Null)) => {}
+            (Partial::MaxMin { value, is_max }, Some(input)) => match value {
+                None => *value = Some(input),
+                Some(current) => {
+                    let ordering = compare_datums(&input, current)?;
+                    if (*is_max && ordering == Ordering::Greater)
+                        || (!*is_max && ordering == Ordering::Less)
+                    {
+                        *value = Some(input);
+                    }
+                }
+            },
+            (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, None) => {
+                return Err(ExecError::Unsupported("AVG requires an argument"))
+            }
+            (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, Some(Datum::Null)) => {}
+            (this @ Partial::AvgDecimal { .. }, Some(Datum::Real(v))) => {
+                // First non-NULL input is real: Go's return type is DOUBLE.
+                let Partial::AvgDecimal { count, .. } = this else {
+                    unreachable!()
+                };
+                debug_assert_eq!(*count, 0, "the domain is fixed by the first input");
+                *this = Partial::AvgReal { sum: v, count: 1 };
+            }
+            (Partial::AvgDecimal { sum, count }, Some(input)) => {
+                let addend = match input {
+                    Datum::Int(v) => Decimal::from_int(v),
+                    Datum::UInt(v) => Decimal::from_uint(v),
+                    Datum::Decimal(d) => d,
+                    _ => {
+                        return Err(ExecError::Unsupported(
+                            "AVG over this datum kind is not yet supported",
+                        ))
+                    }
+                };
+                *sum = sum.add(&addend);
+                *count += 1;
+            }
+            (Partial::AvgReal { sum, count }, Some(input)) => {
+                let addend = match input {
+                    Datum::Real(v) => v,
+                    Datum::Int(v) => v as f64,
+                    _ => {
+                        return Err(ExecError::Unsupported(
+                            "AVG over this datum kind is not yet supported",
+                        ))
+                    }
+                };
+                *sum += addend;
+                *count += 1;
+            }
         }
         Ok(())
     }
@@ -130,9 +284,26 @@ impl Partial {
             Partial::SumInt(Some(v)) => Datum::Int(*v),
             Partial::SumReal(Some(v)) => Datum::Real(*v),
             Partial::FirstRow(v) => v.clone().unwrap_or(Datum::Null),
+            Partial::MaxMin { value, .. } => value.clone().unwrap_or(Datum::Null),
+            // Go divides the exact sum by the count with the session's
+            // div_precision_increment, the same rule the `/` operator follows.
+            Partial::AvgDecimal { count: 0, .. } | Partial::AvgReal { count: 0, .. } => Datum::Null,
+            Partial::AvgDecimal { sum, count } => {
+                let divisor = Decimal::from_int(*count);
+                let target_scale = sum.scale() + DIV_PRECISION_INCREMENT;
+                match sum.true_div(&divisor, target_scale) {
+                    Some(quotient) => Datum::Decimal(quotient),
+                    None => Datum::Null,
+                }
+            }
+            Partial::AvgReal { sum, count } => Datum::Real(sum / *count as f64),
         }
     }
 }
+
+/// Go's default `div_precision_increment`, the scale AVG's division adds over
+/// its sum (`typeInfer4Avg` sets the result's decimals to it).
+const DIV_PRECISION_INCREMENT: u32 = 4;
 
 /// Go `HashAggExec` (serial): hash aggregation over the child's rows.
 pub struct HashAggExec<C: Columns> {
@@ -184,7 +355,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
         }
         // Group key (encoded bytes) -> partials; emission in first-seen order.
         let mut groups: HashMap<Vec<u8>, usize> = HashMap::new();
-        let mut ordered: Vec<Vec<Partial>> = Vec::new();
+        let mut ordered: Vec<Vec<AggState>> = Vec::new();
         loop {
             self.child.next(&mut self.child_chunk)?;
             let rows = self.child_chunk.num_rows();
@@ -205,36 +376,26 @@ impl<C: Columns> Executor for HashAggExec<C> {
                     None => {
                         let idx = ordered.len();
                         groups.insert(key, idx);
-                        ordered.push(
-                            self.agg_funcs
-                                .iter()
-                                .map(|f| Partial::new(f.kind))
-                                .collect(),
-                        );
+                        ordered.push(self.agg_funcs.iter().map(AggState::new).collect());
                         idx
                     }
                 };
-                for (f, partial) in self.agg_funcs.iter().zip(ordered[idx].iter_mut()) {
+                for (f, state) in self.agg_funcs.iter().zip(ordered[idx].iter_mut()) {
                     let value = match &f.arg {
                         Some(expr) => Some(expr.eval(&self.ctx, row)?),
                         None => None,
                     };
-                    partial.update(value)?;
+                    state.update(value)?;
                 }
             }
         }
         // No group-by and no data: one empty group, so a global COUNT is 0.
         if ordered.is_empty() && self.group_by.is_empty() {
-            ordered.push(
-                self.agg_funcs
-                    .iter()
-                    .map(|f| Partial::new(f.kind))
-                    .collect(),
-            );
+            ordered.push(self.agg_funcs.iter().map(AggState::new).collect());
         }
-        for partials in &ordered {
-            for (c, partial) in partials.iter().enumerate() {
-                req.append_datum(c, &partial.finish());
+        for states in &ordered {
+            for (c, state) in states.iter().enumerate() {
+                req.append_datum(c, &state.partial.finish());
             }
         }
         self.emitted = true;
@@ -354,6 +515,146 @@ mod tests {
         ExecutorMeta::new(Schema::new(cols), 1, 4, 1024)
     }
 
+    /// An output schema whose column types are given, so a decimal result
+    /// lands in a decimal cell.
+    fn out_meta_typed(types: &[FieldType]) -> ExecutorMeta {
+        let mut cols = Vec::new();
+        for (i, t) in types.iter().enumerate() {
+            let mut c = Column::new((i + 1) as i64, t.clone());
+            c.index = i as i64;
+            cols.push(c);
+        }
+        ExecutorMeta::new(Schema::new(cols), 1, 4, 1024)
+    }
+
+    fn decimal() -> FieldType {
+        FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal)
+    }
+
+    fn run_typed(mut exec: HashAggExec<NoColumns>, types: &[FieldType]) -> Vec<Vec<Datum>> {
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        let mut out = Vec::new();
+        loop {
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            for r in 0..req.num_rows() {
+                let row = req.get_row(r);
+                out.push(
+                    (0..req.num_cols())
+                        .map(|c| row.get_datum(c, &types[c]))
+                        .collect(),
+                );
+            }
+        }
+        exec.close().unwrap();
+        out
+    }
+
+    #[test]
+    fn min_max_skip_nulls_and_report_null_for_an_all_null_group() {
+        let agg = HashAggExec::new(
+            out_meta(2),
+            vec![],
+            vec![
+                AggFunc::new(AggKind::Min, Some(col(1))),
+                AggFunc::new(AggKind::Max, Some(col(1))),
+            ],
+            source(&[(1, Some(30)), (1, None), (1, Some(10)), (1, Some(20))]),
+            NoColumns,
+        );
+        assert_eq!(run(agg), vec![vec![Datum::Int(10), Datum::Int(30)]]);
+
+        let agg = HashAggExec::new(
+            out_meta(2),
+            vec![],
+            vec![
+                AggFunc::new(AggKind::Min, Some(col(1))),
+                AggFunc::new(AggKind::Max, Some(col(1))),
+            ],
+            source(&[(1, None), (1, None)]),
+            NoColumns,
+        );
+        assert_eq!(run(agg), vec![vec![Datum::Null, Datum::Null]]);
+    }
+
+    /// Go divides AVG's exact sum by the count with div_precision_increment,
+    /// so an integer average carries four fraction digits. The expectations
+    /// are `types.DecimalDiv(sum, count, _, 4)` output from the Go
+    /// implementation in this repository.
+    #[test]
+    fn avg_over_integers_is_decimal_scaled_by_the_precision_increment() {
+        let types = [decimal()];
+        for (values, want) in [
+            (vec![1i64, 2, 3], "2.0000"),
+            (vec![1, 2, 4], "2.3333"),
+            (vec![1, 0, 0], "0.3333"),
+        ] {
+            let rows: Vec<(i64, Option<i64>)> = values.iter().map(|v| (1, Some(*v))).collect();
+            let agg = HashAggExec::new(
+                out_meta_typed(&types),
+                vec![],
+                vec![AggFunc::new(AggKind::Avg, Some(col(1)))],
+                source(&rows),
+                NoColumns,
+            );
+            assert_eq!(
+                run_typed(agg, &types),
+                vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
+                    want
+                ))]],
+                "AVG of {values:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn avg_of_an_all_null_group_is_null() {
+        let types = [decimal()];
+        let agg = HashAggExec::new(
+            out_meta_typed(&types),
+            vec![],
+            vec![AggFunc::new(AggKind::Avg, Some(col(1)))],
+            source(&[(1, None)]),
+            NoColumns,
+        );
+        assert_eq!(run_typed(agg, &types), vec![vec![Datum::Null]]);
+    }
+
+    /// DISTINCT folds repeated inputs once per group, and the de-duplication
+    /// is per group, not global.
+    #[test]
+    fn distinct_folds_repeats_within_each_group() {
+        let mut count = AggFunc::new(AggKind::Count, Some(col(1)));
+        count.distinct = true;
+        let mut sum = AggFunc::new(AggKind::Sum, Some(col(1)));
+        sum.distinct = true;
+        let agg = HashAggExec::new(
+            out_meta(3),
+            vec![col(0)],
+            vec![AggFunc::new(AggKind::FirstRow, Some(col(0))), count, sum],
+            source(&[
+                (1, Some(5)),
+                (1, Some(5)),
+                (1, Some(7)),
+                (1, None),
+                (2, Some(5)),
+            ]),
+            NoColumns,
+        );
+        assert_eq!(
+            run(agg),
+            vec![
+                // Group 1 sees 5,5,7,NULL: two distinct non-NULL values.
+                vec![Datum::Int(1), Datum::Int(2), Datum::Int(12)],
+                // Group 2's own 5 is not folded into group 1's.
+                vec![Datum::Int(2), Datum::Int(1), Datum::Int(5)],
+            ]
+        );
+    }
+
     fn run(mut exec: HashAggExec<NoColumns>) -> Vec<Vec<Datum>> {
         exec.open().unwrap();
         let mut req = exec.new_chunk();
@@ -383,18 +684,9 @@ mod tests {
             out_meta(3),
             vec![],
             vec![
-                AggFunc {
-                    kind: AggKind::Count,
-                    arg: Some(col(1)),
-                },
-                AggFunc {
-                    kind: AggKind::Count,
-                    arg: None,
-                },
-                AggFunc {
-                    kind: AggKind::Sum,
-                    arg: Some(col(1)),
-                },
+                AggFunc::new(AggKind::Count, Some(col(1))),
+                AggFunc::new(AggKind::Count, None),
+                AggFunc::new(AggKind::Sum, Some(col(1))),
             ],
             source(&[(1, Some(10)), (1, None), (1, Some(30))]),
             NoColumns,
@@ -412,14 +704,8 @@ mod tests {
             out_meta(2),
             vec![col(0)],
             vec![
-                AggFunc {
-                    kind: AggKind::FirstRow,
-                    arg: Some(col(0)),
-                },
-                AggFunc {
-                    kind: AggKind::Sum,
-                    arg: Some(col(1)),
-                },
+                AggFunc::new(AggKind::FirstRow, Some(col(0))),
+                AggFunc::new(AggKind::Sum, Some(col(1))),
             ],
             source(&[(2, Some(5)), (1, Some(7)), (2, Some(6))]),
             NoColumns,
@@ -440,14 +726,8 @@ mod tests {
             out_meta(2),
             vec![],
             vec![
-                AggFunc {
-                    kind: AggKind::Count,
-                    arg: Some(col(1)),
-                },
-                AggFunc {
-                    kind: AggKind::Sum,
-                    arg: Some(col(1)),
-                },
+                AggFunc::new(AggKind::Count, Some(col(1))),
+                AggFunc::new(AggKind::Sum, Some(col(1))),
             ],
             source(&[]),
             NoColumns,
@@ -459,14 +739,8 @@ mod tests {
             out_meta(2),
             vec![col(0)],
             vec![
-                AggFunc {
-                    kind: AggKind::FirstRow,
-                    arg: Some(col(0)),
-                },
-                AggFunc {
-                    kind: AggKind::Count,
-                    arg: Some(col(1)),
-                },
+                AggFunc::new(AggKind::FirstRow, Some(col(0))),
+                AggFunc::new(AggKind::Count, Some(col(1))),
             ],
             source(&[]),
             NoColumns,

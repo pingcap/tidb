@@ -580,9 +580,6 @@ fn run_aggregate_select(
                 distinct,
                 args,
             } => {
-                if *distinct {
-                    return Err(DriverError::Unsupported("DISTINCT aggregates are deferred"));
-                }
                 let [arg] = args.as_slice() else {
                     return Err(DriverError::Unsupported(
                         "multi-argument aggregates are deferred",
@@ -599,6 +596,36 @@ fn run_aggregate_select(
                             .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
                         (AggKind::Sum, t)
                     }
+                    // Go `typeInfer4MaxMin`: the result carries the argument's
+                    // own type (with NOT NULL dropped, which this seed does not
+                    // track on result columns).
+                    "MIN" | "MAX" => {
+                        let t = arg
+                            .static_type()
+                            .cloned()
+                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                        let kind = if name == "MIN" {
+                            AggKind::Min
+                        } else {
+                            AggKind::Max
+                        };
+                        (kind, t)
+                    }
+                    // Go `typeInfer4Avg`: DOUBLE for real arguments, otherwise
+                    // DECIMAL. The decimal scale Go derives from
+                    // div_precision_increment is display metadata this seed
+                    // does not set on result columns (documented deferral).
+                    "AVG" => {
+                        let code = arg
+                            .static_type()
+                            .map_or(FieldTypeCode::NewDecimal, |t| match t.code() {
+                                FieldTypeCode::Float | FieldTypeCode::Double => {
+                                    FieldTypeCode::Double
+                                }
+                                _ => FieldTypeCode::NewDecimal,
+                            });
+                        (AggKind::Avg, FieldType::new(code))
+                    }
                     _ => {
                         return Err(DriverError::Unsupported(
                             "this aggregate function is deferred",
@@ -608,6 +635,7 @@ fn run_aggregate_select(
                 agg_funcs.push(AggFunc {
                     kind,
                     arg: Some(arg),
+                    distinct: *distinct,
                 });
                 names.push(display);
                 types.push(ftype);
@@ -623,6 +651,7 @@ fn run_aggregate_select(
                 agg_funcs.push(AggFunc {
                     kind: AggKind::FirstRow,
                     arg: Some(rewritten),
+                    distinct: false,
                 });
                 names.push(match other {
                     tidb_ast::Expr::Column(path) => {
@@ -975,9 +1004,37 @@ mod tests {
             .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
-        // Unsupported aggregate shapes fail closed.
-        assert!(run_select_on("SELECT AVG(a) FROM t", &catalog).is_err());
-        assert!(run_select_on("SELECT COUNT(DISTINCT a) FROM t", &catalog).is_err());
+        // MIN/MAX over the shared datum ordering.
+        assert_eq!(
+            run_select_on("SELECT MIN(a), MAX(b) FROM t", &catalog).unwrap(),
+            vec![vec![Datum::Int(1), Datum::Int(30)]]
+        );
+        // AVG over integers is DECIMAL, scaled by div_precision_increment.
+        assert_eq!(
+            run_select_on("SELECT AVG(a) FROM t", &catalog).unwrap(),
+            vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
+                "2.0000"
+            ))]]
+        );
+        // DISTINCT folds repeated inputs once per group: a is 1,2,3 while the
+        // constant 1 collapses to a single counted value.
+        assert_eq!(
+            run_select_on(
+                "SELECT COUNT(DISTINCT a), COUNT(DISTINCT 1) FROM t",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(3), Datum::Int(1)]]
+        );
+        // An all-NULL / empty group is NULL for MIN/MAX and AVG, as in Go.
+        assert_eq!(
+            run_select_on(
+                "SELECT MIN(a), MAX(a), AVG(a) FROM t WHERE a > 100",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Null, Datum::Null, Datum::Null]]
+        );
     }
 
     #[test]
