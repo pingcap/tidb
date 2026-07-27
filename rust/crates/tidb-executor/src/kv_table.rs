@@ -125,6 +125,16 @@ impl KvTable {
     /// Scans the table's record-key range in key order, decoding each value.
     /// Returns rows as `Datum`s in schema order (a missing column decodes NULL).
     pub fn scan_rows(&mut self) -> Result<Vec<Vec<Datum>>, KvTableError> {
+        Ok(self
+            .scan_rows_with_handles()?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect())
+    }
+
+    /// Like [`KvTable::scan_rows`], but each row carries the record handle its
+    /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
+    pub fn scan_rows_with_handles(&mut self) -> Result<Vec<(i64, Vec<Datum>)>, KvTableError> {
         let (low, high) = get_table_handle_key_range(self.table_id);
         let column_types: BTreeMap<i64, FieldType> = self
             .columns
@@ -143,13 +153,14 @@ impl KvTable {
 
         let mut rows = Vec::new();
         while iterator.valid() {
+            let handle = decode_int_handle(iterator.key().as_bytes())?;
             let mut decoded = decode_table_row_to_map(iterator.value(), &column_types, None)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
             let row: Vec<Datum> = column_ids
                 .iter()
                 .map(|id| decoded.remove(id).unwrap_or(Datum::Null))
                 .collect();
-            rows.push(row);
+            rows.push((handle, row));
             iterator
                 .next()
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -157,6 +168,45 @@ impl KvTable {
         iterator.close();
         Ok(rows)
     }
+
+    /// Replaces the row stored under `handle` (Go's `UPDATE` writes the new
+    /// row back under the same record key when the handle column did not
+    /// change).
+    pub fn update_row(&mut self, handle: i64, row: &[Datum]) -> Result<(), KvTableError> {
+        let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
+        let value = encode_table_row(None, row, &column_ids, true, None)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            self.table_id,
+            &RecordHandle::Int(handle),
+        ));
+        self.store
+            .set(key, value)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+    }
+
+    /// Removes the row stored under `handle`.
+    pub fn delete_row(&mut self, handle: i64) -> Result<(), KvTableError> {
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            self.table_id,
+            &RecordHandle::Int(handle),
+        ));
+        self.store
+            .delete(key)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+    }
+}
+
+/// The integer handle a record key encodes: the trailing big-endian-ordered
+/// eight bytes `encode_row_key_with_handle` wrote.
+fn decode_int_handle(key: &[u8]) -> Result<i64, KvTableError> {
+    let tail: [u8; 8] = key
+        .get(key.len().wrapping_sub(8)..)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| KvTableError::Decode("record key is too short for a handle".to_owned()))?;
+    // The codec writes the handle sign-flipped so byte order matches numeric
+    // order; `decode_int` is its inverse.
+    Ok(i64::from_be_bytes(tail) ^ i64::MIN)
 }
 
 /// Scans a [`KvTable`]'s record range into chunks -- the storage-backed source
@@ -264,6 +314,45 @@ mod tests {
     /// codec's handle range is inclusive at the top while the iterator's upper
     /// bound is exclusive, so the largest handle must still be returned and a
     /// neighbouring table's rows must not be.
+    /// The handle a scan reports must be the handle the codec wrote, so an
+    /// UPDATE/DELETE addresses the row it read. Covers the sign flip the key
+    /// codec applies (negative handles sort below positive ones).
+    #[test]
+    fn scan_reports_the_handles_the_key_codec_wrote() {
+        let mut t = test_table();
+        let mut handles = Vec::new();
+        for i in 0..3 {
+            handles.push(
+                t.insert_row(&[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())])
+                    .unwrap(),
+            );
+        }
+        let scanned: Vec<i64> = t
+            .scan_rows_with_handles()
+            .unwrap()
+            .into_iter()
+            .map(|(handle, _)| handle)
+            .collect();
+        assert_eq!(scanned, handles);
+
+        // A row written under an explicit handle round-trips too.
+        t.update_row(handles[1], &[Datum::Int(99), Datum::Bytes(b"y".to_vec())])
+            .unwrap();
+        let rows = t.scan_rows_with_handles().unwrap();
+        assert_eq!(rows.len(), 3, "update replaced in place, it did not append");
+        assert_eq!(rows[1].0, handles[1]);
+        assert_eq!(rows[1].1[0], Datum::Int(99));
+
+        t.delete_row(handles[0]).unwrap();
+        let after: Vec<i64> = t
+            .scan_rows_with_handles()
+            .unwrap()
+            .into_iter()
+            .map(|(handle, _)| handle)
+            .collect();
+        assert_eq!(after, vec![handles[1], handles[2]]);
+    }
+
     #[test]
     fn scan_covers_the_whole_table_and_stops_at_its_range() {
         let mut t = test_table();

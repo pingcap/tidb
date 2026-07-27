@@ -104,6 +104,11 @@ impl Catalog {
         self.tables.get(&name.to_lowercase())
     }
 
+    /// A mutable handle on a table, for the write paths.
+    fn get_mut(&mut self, name: &str) -> Option<&mut TableEntry> {
+        self.tables.get_mut(&name.to_ascii_lowercase())
+    }
+
     /// Whether a table with `name` exists (case-insensitive).
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
@@ -747,6 +752,295 @@ fn build_agg_func(
     ))
 }
 
+/// The table a single-table `UPDATE`/`DELETE` targets.
+fn single_table_name(table_ref: &tidb_ast::TableRef) -> Result<String, DriverError> {
+    table_ref
+        .name
+        .last()
+        .cloned()
+        .ok_or(DriverError::Unsupported("empty table name"))
+}
+
+/// Runs a single-table `UPDATE`, returning MySQL's affected-row count.
+///
+/// Go `executor.UpdateExec` + `updateRecord`: each row the `WHERE` selects is
+/// re-evaluated with the `SET` assignments applied, and a row is written back
+/// only when a column actually changed. The affected-row count is the number
+/// of CHANGED rows, not the number matched -- an unchanged row is "touched"
+/// instead, and only a client that negotiated `CLIENT_FOUND_ROWS` sees it
+/// counted (that capability is not modelled here, so the count is always the
+/// changed-row count).
+///
+/// Assignments are evaluated against the row's ORIGINAL values, left to right,
+/// with each assignment seeing the effects of the previous ones -- Go's
+/// `composeNewRow` order.
+///
+/// DEFERRED (documented): multi-table UPDATE, `ORDER BY`/`LIMIT` tails,
+/// `IGNORE`, `RETURNING`, generated and `ON UPDATE CURRENT_TIMESTAMP` columns,
+/// and the handle-changed path (a row whose primary-key handle column is
+/// assigned is deleted and re-inserted in Go; this seed rejects it).
+pub fn run_update_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
+    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let update = match &stmt {
+        Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Update(update) => update,
+            _ => return Err(DriverError::Unsupported("only UPDATE is supported here")),
+        },
+        _ => return Err(DriverError::Unsupported("only UPDATE is supported here")),
+    };
+    if update.ignore
+        || !update.order_by.is_empty()
+        || update.limit.is_some()
+        || !update.returning.fields().is_empty()
+    {
+        return Err(DriverError::Unsupported(
+            "only plain UPDATE t SET ... [WHERE ...] is supported",
+        ));
+    }
+    let table_ref = match &update.kind {
+        tidb_ast::UpdateKind::Single(table_ref) => table_ref,
+        tidb_ast::UpdateKind::Multi { .. } => {
+            return Err(DriverError::Unsupported(
+                "multi-table UPDATE is not supported yet",
+            ))
+        }
+    };
+    let name = single_table_name(table_ref)?;
+    let column_list = catalog
+        .get(&name)
+        .ok_or(DriverError::Unsupported("unknown table"))?
+        .column_list();
+
+    // SET targets, as offsets into the row.
+    let mut assignments = Vec::with_capacity(update.assignments.len());
+    for assignment in &update.assignments {
+        let column = assignment
+            .col
+            .last()
+            .ok_or(DriverError::Unsupported("empty assignment target"))?;
+        let offset = column_list
+            .iter()
+            .position(|(candidate, _)| candidate.eq_ignore_ascii_case(column))
+            .ok_or(DriverError::Unsupported("unknown column in SET"))?;
+        assignments.push((offset, assignment.value.clone()));
+    }
+
+    let resolver = TableResolver {
+        table_name: &name,
+        columns: &column_list,
+    };
+    let predicate = match &update.where_clause {
+        Some(expr) => Some(
+            rewrite_expr_resolved(expr, &resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+        ),
+        None => None,
+    };
+    let mut set_exprs = Vec::with_capacity(assignments.len());
+    for (offset, value) in &assignments {
+        set_exprs.push((
+            *offset,
+            rewrite_expr_resolved(value, &resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+        ));
+    }
+
+    let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
+    let entry = catalog
+        .get_mut(&name)
+        .ok_or(DriverError::Unsupported("unknown table"))?;
+
+    let mut changed = 0u64;
+    match entry {
+        TableEntry::Mem(mem) => {
+            let mut updates = Vec::new();
+            for (index, row) in mem.rows.iter().enumerate() {
+                if let Some(new_row) =
+                    compute_updated_row(row, &field_types, &predicate, &set_exprs)?
+                {
+                    updates.push((index, new_row));
+                }
+            }
+            changed = updates.len() as u64;
+            for (index, new_row) in updates {
+                mem.rows[index] = new_row;
+            }
+        }
+        TableEntry::Kv(kv) => {
+            let rows = kv
+                .scan_rows_with_handles()
+                .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+            for (handle, row) in rows {
+                if let Some(new_row) =
+                    compute_updated_row(&row, &field_types, &predicate, &set_exprs)?
+                {
+                    kv.update_row(handle, &new_row)
+                        .map_err(|e| DriverError::Parse(format!("row encode failed: {e:?}")))?;
+                    changed += 1;
+                }
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Applies the `SET` assignments to one row, returning the new row only when
+/// the `WHERE` selected it AND a column actually changed (Go's `changed` flag).
+fn compute_updated_row(
+    row: &[Datum],
+    field_types: &[FieldType],
+    predicate: &Option<Expression>,
+    set_exprs: &[(usize, Expression)],
+) -> Result<Option<Vec<Datum>>, DriverError> {
+    let chunk = row_chunk(row, field_types)?;
+    if let Some(predicate) = predicate {
+        let selected = predicate
+            .eval(&NoColumns, chunk.get_row(0))
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        if !datum_is_true(&selected) {
+            return Ok(None);
+        }
+    }
+    let mut new_row = row.to_vec();
+    for (offset, expr) in set_exprs {
+        // Go evaluates each assignment over the row as the previous
+        // assignments left it, so `SET a = 1, b = a` sees the new `a`.
+        let source = row_chunk(&new_row, field_types)?;
+        let value = expr
+            .eval(&NoColumns, source.get_row(0))
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        new_row[*offset] = value;
+    }
+    if new_row == row {
+        // Go counts this row as touched, not affected.
+        return Ok(None);
+    }
+    Ok(Some(new_row))
+}
+
+/// Runs a single-table `DELETE`, returning the number of removed rows.
+///
+/// Go `executor.DeleteExec`: every row the `WHERE` selects is removed, and the
+/// affected-row count is simply that count.
+///
+/// DEFERRED (documented): multi-table DELETE, `ORDER BY`/`LIMIT` tails,
+/// `IGNORE`, and `RETURNING`.
+pub fn run_delete_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
+    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let delete = match &stmt {
+        Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Delete(delete) => delete,
+            _ => return Err(DriverError::Unsupported("only DELETE is supported here")),
+        },
+        _ => return Err(DriverError::Unsupported("only DELETE is supported here")),
+    };
+    if delete.ignore
+        || delete.quick
+        || !delete.order_by.is_empty()
+        || delete.limit.is_some()
+        || !delete.returning.fields().is_empty()
+    {
+        return Err(DriverError::Unsupported(
+            "only plain DELETE FROM t [WHERE ...] is supported",
+        ));
+    }
+    let table_ref = match &delete.kind {
+        tidb_ast::DeleteKind::Single(table_ref) => table_ref,
+        tidb_ast::DeleteKind::Multi { .. } => {
+            return Err(DriverError::Unsupported(
+                "multi-table DELETE is not supported yet",
+            ))
+        }
+    };
+    let name = single_table_name(table_ref)?;
+    let column_list = catalog
+        .get(&name)
+        .ok_or(DriverError::Unsupported("unknown table"))?
+        .column_list();
+    let resolver = TableResolver {
+        table_name: &name,
+        columns: &column_list,
+    };
+    let predicate = match &delete.where_clause {
+        Some(expr) => Some(
+            rewrite_expr_resolved(expr, &resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+        ),
+        None => None,
+    };
+    let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
+    let entry = catalog
+        .get_mut(&name)
+        .ok_or(DriverError::Unsupported("unknown table"))?;
+
+    let mut deleted = 0u64;
+    match entry {
+        TableEntry::Mem(mem) => {
+            let mut kept = Vec::with_capacity(mem.rows.len());
+            for row in std::mem::take(&mut mem.rows) {
+                if row_is_selected(&row, &field_types, &predicate)? {
+                    deleted += 1;
+                } else {
+                    kept.push(row);
+                }
+            }
+            mem.rows = kept;
+        }
+        TableEntry::Kv(kv) => {
+            let rows = kv
+                .scan_rows_with_handles()
+                .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+            for (handle, row) in rows {
+                if row_is_selected(&row, &field_types, &predicate)? {
+                    kv.delete_row(handle)
+                        .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+                    deleted += 1;
+                }
+            }
+        }
+    }
+    Ok(deleted)
+}
+
+/// Whether the `WHERE` predicate (absent = every row) selects this row.
+fn row_is_selected(
+    row: &[Datum],
+    field_types: &[FieldType],
+    predicate: &Option<Expression>,
+) -> Result<bool, DriverError> {
+    let Some(predicate) = predicate else {
+        return Ok(true);
+    };
+    let chunk = row_chunk(row, field_types)?;
+    let selected = predicate
+        .eval(&NoColumns, chunk.get_row(0))
+        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+    Ok(datum_is_true(&selected))
+}
+
+/// A one-row chunk holding `row`, so an expression can be evaluated over it.
+fn row_chunk(
+    row: &[Datum],
+    field_types: &[FieldType],
+) -> Result<tidb_chunk::chunk::Chunk, DriverError> {
+    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(field_types, 1);
+    for (i, value) in row.iter().enumerate() {
+        chunk.append_datum(i, value);
+    }
+    Ok(chunk)
+}
+
+/// Go's `WHERE` truth test: NULL and zero are false.
+fn datum_is_true(value: &Datum) -> bool {
+    match value {
+        Datum::Null => false,
+        Datum::Int(v) => *v != 0,
+        Datum::UInt(v) => *v != 0,
+        Datum::Real(v) => *v != 0.0,
+        other => !matches!(other, Datum::Null),
+    }
+}
+
 /// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
 /// through [`HashAggExec`].
 ///
@@ -1380,6 +1674,114 @@ mod tests {
             run_select_on("SELECT COUNT(*) FROM g HAVING COUNT(*) > 100", &catalog).unwrap(),
             Vec::<Vec<Datum>>::new()
         );
+    }
+
+    /// UPDATE and DELETE over both table backings, including MySQL's
+    /// affected-row rule: an UPDATE counts CHANGED rows, so a row whose new
+    /// values equal its old ones is touched but not affected.
+    #[test]
+    fn update_and_delete_rows() {
+        for kv in [false, true] {
+            let mut catalog = Catalog::default();
+            if kv {
+                crate::run_create_table_on("CREATE TABLE w (a BIGINT, b BIGINT)", &mut catalog)
+                    .unwrap();
+            } else {
+                catalog.register(
+                    "w",
+                    MemTable {
+                        columns: vec![
+                            ("a".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+                            ("b".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+                        ],
+                        rows: vec![],
+                    },
+                );
+            }
+            run_insert_on(
+                "INSERT INTO w VALUES (1, 10), (2, 20), (3, 30)",
+                &mut catalog,
+            )
+            .unwrap();
+
+            // WHERE-selected update, counting only changed rows.
+            assert_eq!(
+                run_update_on("UPDATE w SET b = b + 1 WHERE a >= 2", &mut catalog).unwrap(),
+                2,
+                "kv={kv}"
+            );
+            assert_eq!(
+                run_select_on("SELECT a, b FROM w", &catalog).unwrap(),
+                vec![
+                    vec![Datum::Int(1), Datum::Int(10)],
+                    vec![Datum::Int(2), Datum::Int(21)],
+                    vec![Datum::Int(3), Datum::Int(31)],
+                ],
+                "kv={kv}"
+            );
+
+            // A no-op update matches rows but changes none: MySQL reports 0.
+            assert_eq!(
+                run_update_on("UPDATE w SET b = b WHERE a = 1", &mut catalog).unwrap(),
+                0,
+                "kv={kv}"
+            );
+
+            // Later assignments see earlier ones, as in Go's composeNewRow.
+            assert_eq!(
+                run_update_on("UPDATE w SET a = 7, b = a WHERE a = 1", &mut catalog).unwrap(),
+                1,
+                "kv={kv}"
+            );
+            assert_eq!(
+                run_select_on("SELECT a, b FROM w WHERE a = 7", &catalog).unwrap(),
+                vec![vec![Datum::Int(7), Datum::Int(7)]],
+                "kv={kv}"
+            );
+
+            // A WHERE-less UPDATE touches every row.
+            assert_eq!(
+                run_update_on("UPDATE w SET b = 0", &mut catalog).unwrap(),
+                3,
+                "kv={kv}"
+            );
+
+            // DELETE removes the selected rows and reports their count.
+            assert_eq!(
+                run_delete_on("DELETE FROM w WHERE a >= 3", &mut catalog).unwrap(),
+                2,
+                "kv={kv}"
+            );
+            assert_eq!(
+                run_select_on("SELECT a FROM w", &catalog).unwrap(),
+                vec![vec![Datum::Int(2)]],
+                "kv={kv}"
+            );
+
+            // A WHERE-less DELETE empties the table, and re-inserting works
+            // after it (the store is genuinely empty, not just filtered).
+            assert_eq!(
+                run_delete_on("DELETE FROM w", &mut catalog).unwrap(),
+                1,
+                "kv={kv}"
+            );
+            assert_eq!(
+                run_select_on("SELECT a FROM w", &catalog).unwrap(),
+                Vec::<Vec<Datum>>::new(),
+                "kv={kv}"
+            );
+            run_insert_on("INSERT INTO w VALUES (9, 9)", &mut catalog).unwrap();
+            assert_eq!(
+                run_select_on("SELECT a FROM w", &catalog).unwrap(),
+                vec![vec![Datum::Int(9)]],
+                "kv={kv}"
+            );
+
+            // Unsupported shapes fail closed.
+            assert!(run_update_on("UPDATE w SET a = 1 LIMIT 1", &mut catalog).is_err());
+            assert!(run_delete_on("DELETE FROM w ORDER BY a LIMIT 1", &mut catalog).is_err());
+            assert!(run_update_on("UPDATE w SET zzz = 1", &mut catalog).is_err());
+        }
     }
 
     #[test]

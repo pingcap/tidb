@@ -31,7 +31,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use tidb_ast::{DdlStmt, DmlStmt, Stmt};
 use tidb_datatype::{Datum, FieldType};
-use tidb_executor::{run_create_table_on, run_insert_on, run_select_meta_on, Catalog, DriverError};
+use tidb_executor::{
+    run_create_table_on, run_delete_on, run_insert_on, run_select_meta_on, run_update_on, Catalog,
+    DriverError,
+};
 
 /// The result of running one statement.
 #[derive(Debug, PartialEq)]
@@ -160,6 +163,14 @@ impl Session {
                     let mut catalog = self.lock_catalog()?;
                     Ok(StmtOutput::Affected(run_insert_on(sql, &mut catalog)?))
                 }
+                DmlStmt::Update(_) => {
+                    let mut catalog = self.lock_catalog()?;
+                    Ok(StmtOutput::Affected(run_update_on(sql, &mut catalog)?))
+                }
+                DmlStmt::Delete(_) => {
+                    let mut catalog = self.lock_catalog()?;
+                    Ok(StmtOutput::Affected(run_delete_on(sql, &mut catalog)?))
+                }
                 _ => Err(DriverError::Unsupported(
                     "this DML statement kind is not supported yet",
                 )),
@@ -213,11 +224,43 @@ mod tests {
         );
     }
 
+    /// UPDATE and DELETE run through the session like any other write, and
+    /// report their affected-row counts.
+    #[test]
+    fn update_and_delete_through_the_session() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT)").unwrap();
+        session.run("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+        assert_eq!(
+            session.run("UPDATE t SET a = a * 10 WHERE a > 1").unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            session.run("DELETE FROM t WHERE a >= 20").unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            session.run("SELECT a FROM t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        // Both are classified as writes, so the wire answers with an OK packet.
+        assert_eq!(
+            session.statement_kind("UPDATE t SET a = 1").unwrap(),
+            StmtKind::Write
+        );
+        assert_eq!(
+            session.statement_kind("DELETE FROM t").unwrap(),
+            StmtKind::Write
+        );
+    }
+
     #[test]
     fn unsupported_kinds_error() {
         let mut session = Session::new();
         session.run("CREATE TABLE t (a INT)").unwrap();
-        assert!(session.run("DELETE FROM t").is_err());
         assert!(session.run("DROP TABLE t").is_err());
+        // Shapes the write paths do not model yet.
+        assert!(session.run("DELETE FROM t ORDER BY a LIMIT 1").is_err());
+        assert!(session.run("UPDATE t SET a = 1 LIMIT 1").is_err());
     }
 }
