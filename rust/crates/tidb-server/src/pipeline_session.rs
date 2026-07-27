@@ -190,6 +190,10 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
             *b"23000",
             format!("Duplicate entry '{value}' for key '{key}'"),
         ),
+        // Go: "Table '%-.192s' doesn't exist".
+        tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::UnknownTable(name)) => {
+            SqlQueryError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
+        }
         // Go: "Unknown database '%-.192s'".
         tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::UnknownDatabase(
             name,

@@ -55,7 +55,7 @@ pub use driver::{
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
 pub use join::{JoinExec, JoinKind};
-pub use kv_table::{KvColumn, KvTable, TableScanExec};
+pub use kv_table::{IndexRange, KvColumn, KvIndex, KvTable, TableScanExec};
 pub use limit::LimitExec;
 pub use mem_table::MemTableSourceExec;
 pub use projection::ProjectionExec;

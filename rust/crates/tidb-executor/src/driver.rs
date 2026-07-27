@@ -276,6 +276,12 @@ impl Catalog {
         self.version
     }
 
+    /// A table of `database`, for the metadata statements.
+    #[must_use]
+    pub fn table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
+        self.get_in(database, name)
+    }
+
     /// A table of the default database, for tests that inspect the entry.
     #[must_use]
     pub fn get_table_for_test(&self, name: &str) -> Option<&TableEntry> {
@@ -369,6 +375,8 @@ pub enum DriverError {
 pub enum SchemaErrorKind {
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB` (1049).
     UnknownDatabase(String),
+    /// Go `infoschema.ErrTableNotExists` (1146).
+    UnknownTable(String),
     /// Go `ErrDBCreateExists` (1007).
     DatabaseExists(String),
     /// Go `plannererrors.ErrNoDB` (1046).

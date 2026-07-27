@@ -151,6 +151,66 @@ fn var_error(error: VarError) -> DriverError {
     })
 }
 
+/// Go `table.ColDescFieldNames(false)`: the columns `SHOW COLUMNS` and
+/// `DESCRIBE` produce.
+const COL_DESC_FIELD_NAMES: &[&str] = &["Field", "Type", "Null", "Key", "Default", "Extra"];
+
+/// Go `table.NewColDesc`, restricted to the facts this seed's metadata holds.
+///
+/// `Null` is NO when the column carries `NotNullFlag`; `Key` is PRI for a
+/// primary-key column, UNI for a column that is the whole of a unique index,
+/// and MUL for one that leads a non-unique index -- Go reads those from the
+/// column's key flags, which the DDL sets from the same index definitions.
+///
+/// NOT MODELLED (documented): `Default` is always NULL because column
+/// defaults are not stored yet, and `Extra` is always empty because
+/// AUTO_INCREMENT, ON UPDATE CURRENT_TIMESTAMP and generated columns are not
+/// supported. Both are stated here rather than filled with a guess.
+fn column_description(
+    column: &tidb_executor::KvColumn,
+    offset: usize,
+    table: &tidb_executor::KvTable,
+) -> Vec<Datum> {
+    let null_flag = if column.field_type.flags() & NOT_NULL_FLAG != 0 {
+        "NO"
+    } else {
+        "YES"
+    };
+    let is_handle = table.pk_handle_offset() == Some(offset);
+    let key_flag = if is_handle
+        || table.indexes().iter().any(|index| {
+            index.name.eq_ignore_ascii_case("PRIMARY") && index.column_offsets == [offset]
+        }) {
+        "PRI"
+    } else if table
+        .indexes()
+        .iter()
+        .any(|index| index.unique && index.column_offsets == [offset])
+    {
+        "UNI"
+    } else if table
+        .indexes()
+        .iter()
+        .any(|index| index.column_offsets.first() == Some(&offset))
+    {
+        "MUL"
+    } else {
+        ""
+    };
+    vec![
+        Datum::Bytes(column.name.clone().into_bytes()),
+        Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
+        Datum::Bytes(null_flag.as_bytes().to_vec()),
+        Datum::Bytes(key_flag.as_bytes().to_vec()),
+        // Column defaults are not stored yet (see the doc above).
+        Datum::Null,
+        Datum::Bytes(Vec::new()),
+    ]
+}
+
+/// Go `mysql.NotNullFlag`.
+const NOT_NULL_FLAG: u32 = 1;
+
 /// A one-column result set of strings, the shape SHOW DATABASES and SHOW
 /// TABLES produce.
 fn string_column_output(column: &str, values: Vec<String>) -> StmtOutput {
@@ -257,6 +317,28 @@ impl Session {
                     let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                     Ok(Some(string_column_output("Database", names)))
                 }
+                // Go `fetchShowColumns`.
+                tidb_ast::AdminStmt::ShowColumns(show) => {
+                    if show.filter.is_some() || show.full || show.extended {
+                        return Err(DriverError::Unsupported(
+                            "SHOW FULL/EXTENDED COLUMNS and column filters are not supported yet",
+                        ));
+                    }
+                    let database = match &show.database {
+                        Some(name) => name.clone(),
+                        None => self.require_current_database()?.to_owned(),
+                    };
+                    self.show_columns(&database, &show.table, None).map(Some)
+                }
+                // Go's parser rewrites `DESCRIBE tbl [col]` into a SHOW
+                // COLUMNS statement; this parser keeps a node of its own, so
+                // the same output is produced from it here.
+                tidb_ast::AdminStmt::DescribeTable(describe) => {
+                    let database = self.require_current_database()?.to_owned();
+                    let column = describe.column.as_ref().and_then(|path| path.last());
+                    self.show_columns(&database, &describe.table, column.map(String::as_str))
+                        .map(Some)
+                }
                 tidb_ast::AdminStmt::ShowTables(show) => {
                     if show.filter.is_some() || show.full {
                         return Err(DriverError::Unsupported(
@@ -282,6 +364,51 @@ impl Session {
             },
             _ => Ok(None),
         }
+    }
+
+    /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
+    /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
+    fn show_columns(
+        &mut self,
+        database: &str,
+        table_path: &[String],
+        column: Option<&str>,
+    ) -> Result<StmtOutput, DriverError> {
+        // A `db.tbl` path names its own schema, as everywhere else.
+        let (database, table_name) = match table_path {
+            [name] => (database.to_owned(), name.clone()),
+            [db, name] => (db.clone(), name.clone()),
+            _ => return Err(DriverError::Unsupported("empty table name")),
+        };
+        let rows = self.with_catalog_mut(|catalog| {
+            let Some(entry) = catalog.table_in(&database, &table_name) else {
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{database}.{table_name}"
+                ))));
+            };
+            let tidb_executor::TableEntry::Kv(table) = entry else {
+                return Err(DriverError::Unsupported(
+                    "SHOW COLUMNS needs a storage-backed table",
+                ));
+            };
+            Ok(table
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| {
+                    column.is_none_or(|name| candidate.name.eq_ignore_ascii_case(name))
+                })
+                .map(|(offset, candidate)| column_description(candidate, offset, table))
+                .collect::<Vec<_>>())
+        })?;
+        let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        Ok(StmtOutput::Rows {
+            columns: COL_DESC_FIELD_NAMES
+                .iter()
+                .map(|name| ((*name).to_owned(), field_type.clone()))
+                .collect(),
+            rows,
+        })
     }
 
     /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
@@ -1131,6 +1258,77 @@ mod tests {
             session.run("SELECT a FROM other.t").unwrap(),
             StmtResult::Rows(vec![vec![Datum::Int(2)]])
         );
+    }
+
+    /// SHOW COLUMNS / DESCRIBE, with Go's ColDesc field names and key flags.
+    #[test]
+    fn show_columns_and_describe() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE t (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, \
+                 tag VARCHAR(4), v BIGINT, KEY tag_idx (tag))",
+            )
+            .unwrap();
+
+        let describe = |session: &mut Session, sql: &str| match session
+            .run_with_columns(sql)
+            .unwrap_or_else(|e| panic!("{sql}: {e:?}"))
+        {
+            StmtOutput::Rows { columns, rows } => (
+                columns
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+                rows.into_iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|value| match value {
+                                Datum::Null => "NULL".to_owned(),
+                                other => datum_text(other).unwrap_or_default(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        };
+
+        let (names, rows) = describe(&mut session, "SHOW COLUMNS FROM t");
+        assert_eq!(names, ["Field", "Type", "Null", "Key", "Default", "Extra"]);
+        assert_eq!(
+            rows,
+            vec![
+                // A handle primary key is NOT NULL and PRI, as Go marks it.
+                vec!["id", "bigint(20)", "NO", "PRI", "NULL", ""],
+                // A column that is the whole of a unique index is UNI.
+                vec!["code", "varchar(8)", "YES", "UNI", "NULL", ""],
+                // A column leading a non-unique index is MUL.
+                vec!["tag", "varchar(4)", "YES", "MUL", "NULL", ""],
+                // An unindexed column has no key flag.
+                vec!["v", "bigint(20)", "YES", "", "NULL", ""],
+            ]
+        );
+
+        // DESCRIBE parses to the same node and answers identically.
+        assert_eq!(describe(&mut session, "DESCRIBE t"), (names.clone(), rows));
+        assert_eq!(describe(&mut session, "DESC t").0, names);
+
+        // Another schema's table is reachable by qualifying the FROM.
+        session.run("CREATE DATABASE other").unwrap();
+        session.run("USE other").unwrap();
+        assert_eq!(describe(&mut session, "SHOW COLUMNS FROM test.t").0, names);
+
+        // Go's DESCRIBE takes an optional column, which narrows the output.
+        session.run("USE test").unwrap();
+        let (_, one) = describe(&mut session, "DESCRIBE t code");
+        assert_eq!(
+            one,
+            vec![vec!["code", "varchar(8)", "YES", "UNI", "NULL", ""]]
+        );
+
+        // An unknown table is an error, not empty output.
+        assert!(session.run("SHOW COLUMNS FROM nope").is_err());
     }
 
     #[test]
