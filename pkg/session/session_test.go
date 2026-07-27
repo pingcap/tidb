@@ -37,7 +37,6 @@ import (
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -77,104 +76,49 @@ func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {
 }
 
 func TestMustGetSystemBootVersion(t *testing.T) {
-	require.Equal(t, 30*time.Minute, systemKeyspaceBootstrappedTimeout)
-	require.Equal(t, 30*time.Second, systemKeyspaceBootstrappedRetryInterval)
+	const systemKeyspaceID uint32 = 0xFFFFFF - 1
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+		mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+			Id:   systemKeyspaceID,
+			Name: keyspace.System,
+		}),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 
-	t.Run("waits until SYSTEM keyspace is bootstrapped", func(t *testing.T) {
-		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			require.NoError(t, store.Close())
-		})
+	originSystemStore := kvstore.GetSystemStorage()
+	kvstore.SetSystemStorage(store)
+	t.Cleanup(func() {
+		kvstore.SetSystemStorage(originSystemStore)
+	})
 
-		core, logs := observer.New(zap.InfoLevel)
-		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
-		defer restoreLog()
+	core, logs := observer.New(zap.InfoLevel)
+	restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	defer restoreLog()
 
-		versionCh := make(chan int64, 1)
-		go func() {
-			timeoutTimer := time.NewTimer(time.Second)
-			retryTicker := time.NewTicker(10 * time.Millisecond)
-			defer timeoutTimer.Stop()
-			defer retryTicker.Stop()
-			versionCh <- waitForSystemKeyspaceBootstrapLoop(
-				func() int64 {
-					return mustGetStoreBootstrapVersion(store)
-				},
-				timeoutTimer.C,
-				retryTicker.C,
-				func() {
-					logutil.BgLogger().Info("waiting SYSTEM keyspace to be bootstrapped")
-				},
-			)
-		}()
+	versionCh := make(chan int64, 1)
+	go func() {
+		versionCh <- mustGetSystemBootVersion()
+	}()
 
-		require.Eventually(t, func() bool {
-			return logs.FilterMessage("waiting SYSTEM keyspace to be bootstrapped").Len() > 0
-		}, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return logs.FilterMessage("waiting SYSTEM keyspace to be bootstrapped").Len() > 0
+	}, 5*time.Second, 10*time.Millisecond)
 
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		require.NoError(t, meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion))
-		require.NoError(t, txn.Commit(context.Background()))
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion))
+	require.NoError(t, txn.Commit(context.Background()))
 
-		var version int64
-		require.Eventually(t, func() bool {
-			select {
-			case version = <-versionCh:
-				return true
-			default:
-				return false
-			}
-		}, time.Second, 10*time.Millisecond)
+	select {
+	case version := <-versionCh:
 		require.Equal(t, currentBootstrapVersion, version)
-	})
-
-	t.Run("returns zero after timeout", func(t *testing.T) {
-		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			require.NoError(t, store.Close())
-		})
-
-		timeoutTimer := time.NewTimer(50 * time.Millisecond)
-		retryTicker := time.NewTicker(10 * time.Millisecond)
-		defer timeoutTimer.Stop()
-		defer retryTicker.Stop()
-		require.Equal(t, int64(notBootstrapped),
-			waitForSystemKeyspaceBootstrapLoop(
-				func() int64 {
-					return mustGetStoreBootstrapVersion(store)
-				},
-				timeoutTimer.C,
-				retryTicker.C,
-				func() {
-					logutil.BgLogger().Info("waiting SYSTEM keyspace to be bootstrapped")
-				},
-			))
-	})
-
-	t.Run("does not start another read after timeout", func(t *testing.T) {
-		timeoutCh := make(chan time.Time)
-		retryCh := make(chan time.Time, 1)
-		retryCh <- time.Now()
-
-		readCount := 0
-		version := waitForSystemKeyspaceBootstrapLoop(
-			func() int64 {
-				readCount++
-				return notBootstrapped
-			},
-			timeoutCh,
-			retryCh,
-			func() {
-				close(timeoutCh)
-			},
-		)
-
-		require.Equal(t, int64(notBootstrapped), version)
-		require.Equal(t, 1, readCount)
-	})
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "timed out waiting for SYSTEM keyspace bootstrap version")
+	}
 }
 
 func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
