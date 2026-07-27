@@ -135,6 +135,9 @@ pub(crate) fn eval_func(
     if let Some(result) = crate::math_fn::dispatch(name.as_str(), args, &vals, cols, function_key) {
         return result;
     }
+    if let Some(result) = eval_func_values(name.as_str(), &vals) {
+        return result;
+    }
     match name.as_str() {
         "ROW_COUNT" => match vals.as_slice() {
             [] => cols
@@ -163,15 +166,53 @@ pub(crate) fn eval_func(
             }
             _ => Err(EvalError::Unsupported("bad function arity")),
         },
+        // Family extension modules (`crate::builtin_ext`) and the shared
+        // values-only arms live in `eval_func_values`, tried above; only the
+        // session-state functions and the session-clock time family remain.
+        _ => crate::time_fn::dispatch(name.as_str(), &vals, cols)
+            .unwrap_or(Err(EvalError::Unsupported("unsupported function"))),
+    }
+}
+
+/// Evaluates a builtin whose result is a pure function of its
+/// already-evaluated argument values — the values-only subset of
+/// [`eval_func`]'s eager path. This is the bridge entry
+/// `crate::scalar_function::ScalarFunction::eval` uses to run builtins over
+/// chunk rows; `eval_func` calls it too, so there is exactly ONE
+/// implementation of each function.
+///
+/// Deliberately OUTSIDE this entry (they stay AST/session-bound in
+/// `eval_func`):
+/// - lazy control forms: `IF` (Go's `builtinIf*Sig` evaluates exactly one
+///   branch, so eager-evaluating both would change semantics, e.g. a guarded
+///   `1/0`), `CASE`, and the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`
+///   family whose second argument is an `Expr::Interval`, not a value;
+/// - session-state functions: `ROW_COUNT`, `LAST_INSERT_ID`, `RAND` (needs
+///   the argument AST and per-call `function_key` for generator identity),
+///   the sequence functions (`NEXTVAL`/`LASTVAL`/`SETVAL`), and the
+///   `time_fn` family (its dispatch takes `Columns` for the statement clock,
+///   time zone, and `default_week_format`);
+/// - the `LENGTH`/`OCTET_LENGTH`/`CHAR_LENGTH`/`CHARACTER_LENGTH` family: Go
+///   selects the signature from the argument expression's FieldType via
+///   `BuildContext::build_string_length_for_expr` BEFORE seeing any runtime
+///   value, so it genuinely needs the argument AST, not just the value.
+///
+/// `COALESCE` is eager here exactly as in `eval_func`'s existing eager path
+/// (Go's `builtinCoalesceSig` evaluates arguments in order over values, not
+/// lazily over unevaluated branches — no guarded-error semantics to protect).
+pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
+    if let Some(result) = crate::math_fn::dispatch_values(name, vals) {
+        return Some(result);
+    }
+    let result = match name {
         // COALESCE returns the first non-NULL argument.
         "COALESCE" => Ok(vals
-            .into_iter()
-            .find(|v| *v != Datum::Null)
+            .iter()
+            .find(|v| **v != Datum::Null)
+            .cloned()
             .unwrap_or(Datum::Null)),
         "IFNULL" if vals.len() == 2 => {
-            let mut it = vals.into_iter();
-            let a = it.next().unwrap();
-            let b = it.next().unwrap();
+            let (a, b) = (vals[0].clone(), vals[1].clone());
             Ok(if a != Datum::Null { a } else { b })
         }
         // NULLIF(a, b): NULL when a and b are equal, else a — numeric
@@ -181,73 +222,80 @@ pub(crate) fn eval_func(
         // matching is hand-rolled here; strings stay excluded (never
         // NULL), matching this function's pre-existing scope boundary.
         "NULLIF" if vals.len() == 2 => {
-            let mut it = vals.into_iter();
-            let a = it.next().unwrap();
-            let b = it.next().unwrap();
+            let (a, b) = (vals[0].clone(), vals[1].clone());
             let numeric = |v: &Datum| {
                 matches!(
                     v,
                     Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_)
                 )
             };
-            let equal = numeric(&a)
-                && numeric(&b)
-                && eval_binary(BinaryOp::Eq, a.clone(), b.clone())? == Datum::Int(1);
+            let equal = if numeric(&a) && numeric(&b) {
+                match eval_binary(BinaryOp::Eq, a.clone(), b.clone()) {
+                    Ok(v) => v == Datum::Int(1),
+                    Err(e) => return Some(Err(e)),
+                }
+            } else {
+                false
+            };
             Ok(if equal { Datum::Null } else { a })
         }
         // ---- string functions ----
-        "CONCAT" if !vals.is_empty() => concat(&vals),
-        "UPPER" | "UCASE" => case_convert(&vals, true),
-        "LOWER" | "LCASE" => case_convert(&vals, false),
-        "LEFT" if vals.len() == 2 => str_take(&vals, true),
-        "RIGHT" if vals.len() == 2 => str_take(&vals, false),
-        "SUBSTRING" | "SUBSTR" | "MID" if vals.len() == 3 => substring(&vals),
-        "REVERSE" => str_unary(&vals, |s| {
+        "CONCAT" if !vals.is_empty() => concat(vals),
+        "UPPER" | "UCASE" => case_convert(vals, true),
+        "LOWER" | "LCASE" => case_convert(vals, false),
+        "LEFT" if vals.len() == 2 => str_take(vals, true),
+        "RIGHT" if vals.len() == 2 => str_take(vals, false),
+        "SUBSTRING" | "SUBSTR" | "MID" if vals.len() == 3 => substring(vals),
+        "REVERSE" => str_unary(vals, |s| {
             Datum::new_string(s.chars().rev().collect::<String>())
         }),
         // `ASCII`: the first BYTE's numeric value (0 for the empty string).
-        "ASCII" => ascii(&vals),
-        "REPEAT" if vals.len() == 2 => repeat(&vals),
-        "REPLACE" if vals.len() == 3 => replace(&vals),
-        "SPACE" if vals.len() == 1 => space(&vals),
-        "STRCMP" if vals.len() == 2 => strcmp(&vals),
-        "LPAD" if vals.len() == 3 => pad(&vals, true),
-        "RPAD" if vals.len() == 3 => pad(&vals, false),
+        "ASCII" => ascii(vals),
+        "REPEAT" if vals.len() == 2 => repeat(vals),
+        "REPLACE" if vals.len() == 3 => replace(vals),
+        "SPACE" if vals.len() == 1 => space(vals),
+        "STRCMP" if vals.len() == 2 => strcmp(vals),
+        "LPAD" if vals.len() == 3 => pad(vals, true),
+        "RPAD" if vals.len() == 3 => pad(vals, false),
         // `LOCATE(substr, str)` / `INSTR(str, substr)` — same 1-indexed
         // char position, arguments in the opposite order (reusing
         // `position`, which already handles the empty-substr and
         // not-found rules).
-        "LOCATE" if vals.len() == 2 => Ok(position(coerce_str(&vals[0])?, coerce_str(&vals[1])?)),
-        "INSTR" if vals.len() == 2 => Ok(position(coerce_str(&vals[1])?, coerce_str(&vals[0])?)),
-        "HEX" if vals.len() == 1 => hex(&vals),
-        "UNHEX" if vals.len() == 1 => unhex(&vals),
-        "BIN" if vals.len() == 1 => bin(&vals),
-        "OCT" if vals.len() == 1 => oct(&vals),
-        "BIT_LENGTH" => bit_length(&vals),
-        "FIELD" if vals.len() >= 2 => field(&vals),
-        "ELT" if vals.len() >= 2 => elt(&vals),
-        "CONCAT_WS" if vals.len() >= 2 => concat_ws(&vals),
-        "SUBSTRING_INDEX" if vals.len() == 3 => substring_index(&vals),
+        "LOCATE" if vals.len() == 2 => {
+            coerce_str(&vals[0]).and_then(|a| Ok(position(a, coerce_str(&vals[1])?)))
+        }
+        "INSTR" if vals.len() == 2 => {
+            coerce_str(&vals[1]).and_then(|a| Ok(position(a, coerce_str(&vals[0])?)))
+        }
+        "HEX" if vals.len() == 1 => hex(vals),
+        "UNHEX" if vals.len() == 1 => unhex(vals),
+        "BIN" if vals.len() == 1 => bin(vals),
+        "OCT" if vals.len() == 1 => oct(vals),
+        "BIT_LENGTH" => bit_length(vals),
+        "FIELD" if vals.len() >= 2 => field(vals),
+        "ELT" if vals.len() >= 2 => elt(vals),
+        "CONCAT_WS" if vals.len() >= 2 => concat_ws(vals),
+        "SUBSTRING_INDEX" if vals.len() == 3 => substring_index(vals),
         // The parser renames `INSERT(...)` to `INSERT_FUNC` to avoid the
         // reserved statement keyword (the same desugar `CHAR`→`CHAR_FUNC`
         // uses).
-        "INSERT_FUNC" if vals.len() == 4 => str_insert(&vals),
-        "MAKE_SET" if !vals.is_empty() => make_set(&vals),
+        "INSERT_FUNC" if vals.len() == 4 => str_insert(vals),
+        "MAKE_SET" if !vals.is_empty() => make_set(vals),
         "DATE_FORMAT" if vals.len() == 2 => date_format(&vals[0], &vals[1]),
-        "ORD" if vals.len() == 1 => ord(&vals),
-        "QUOTE" if vals.len() == 1 => quote(&vals),
-        "BIT_COUNT" if vals.len() == 1 => bit_count(&vals),
-        "FORMAT" if vals.len() == 2 => format_num(&vals),
-        "CHAR_FUNC" if !vals.is_empty() => char_func(&vals),
-        "TO_BASE64" if vals.len() == 1 => to_base64(&vals),
-        "FROM_BASE64" if vals.len() == 1 => from_base64(&vals),
+        "ORD" if vals.len() == 1 => ord(vals),
+        "QUOTE" if vals.len() == 1 => quote(vals),
+        "BIT_COUNT" if vals.len() == 1 => bit_count(vals),
+        "FORMAT" if vals.len() == 2 => format_num(vals),
+        "CHAR_FUNC" if !vals.is_empty() => char_func(vals),
+        "TO_BASE64" if vals.len() == 1 => to_base64(vals),
+        "FROM_BASE64" if vals.len() == 1 => from_base64(vals),
         // ---- date-part extraction ----
         // A `DATE`/`DATETIME` value is a plain string to this evaluator (no
         // date value domain), so these parse the string's calendar
         // components directly; `NULL` if it doesn't coerce to a string or
         // doesn't parse as a valid date (calendar-validated: month 1-12, day
         // valid for that specific month/year including leap years).
-        "YEAR" => date_part(&vals, |d| d.0),
+        "YEAR" => date_part(vals, |d| d.0),
         // `HOUR`/`MINUTE`/`SECOND`: a GENUINELY different two-path
         // algorithm from the DATE-part functions above, depending on
         // whether the argument contains a `:` — see
@@ -256,9 +304,9 @@ pub(crate) fn eval_func(
         // (including a bare `DATE`, non-obviously) decodes its OWN
         // leading digit run as a right-aligned `HHMMSS` number, NOT a
         // calendar date at all.
-        "HOUR" => time_part(&vals, |t| i64::from(t.0)),
-        "MINUTE" => time_part(&vals, |t| i64::from(t.1)),
-        "SECOND" => time_part(&vals, |t| i64::from(t.2)),
+        "HOUR" => time_part(vals, |t| i64::from(t.0)),
+        "MINUTE" => time_part(vals, |t| i64::from(t.1)),
+        "SECOND" => time_part(vals, |t| i64::from(t.2)),
         // `DATEDIFF`: the day count between two dates' DATE parts (any
         // time-of-day component is ignored, confirmed via `goeval` — e.g.
         // the same calendar day at 23:59:59 and 00:00:01 diffs to 0), via
@@ -267,16 +315,15 @@ pub(crate) fn eval_func(
         // `TO_DAYS`/`TO_SECONDS`: zero-date calendar arithmetic owned by the
         // time-family module, including strict invalid-suffix handling.
         // `FROM_DAYS`: the reverse of `TO_DAYS` (see `time_fn::calendar::from_days`).
-        "FROM_DAYS" => from_days(&vals),
-        "DATEDIFF" if vals.len() == 2 => date_diff(&vals),
+        "FROM_DAYS" => from_days(vals),
+        "DATEDIFF" if vals.len() == 2 => date_diff(vals),
         // Family extension modules (`crate::builtin_ext`) — each family owns
         // one module with its own `dispatch(name, vals) -> Option<...>`, so
         // parallel agents can add builtins without touching this match.
-        // `None` from every family falls through to the honest error.
-        _ => crate::time_fn::dispatch(name.as_str(), &vals, cols)
-            .or_else(|| crate::builtin_ext::dispatch(name.as_str(), &vals))
-            .unwrap_or(Err(EvalError::Unsupported("unsupported function"))),
-    }
+        // `None` from every family means this entry doesn't know the name.
+        _ => return crate::builtin_ext::dispatch(name, vals),
+    };
+    Some(result)
 }
 
 /// Ports the `EvalInt` coercion used by

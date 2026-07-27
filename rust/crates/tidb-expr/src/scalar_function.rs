@@ -239,6 +239,20 @@ impl ScalarFunction {
                 return crate::apply_unary(op, v);
             }
         }
+        // Values-only builtins (ABS/CONCAT/COALESCE/...): evaluate every
+        // argument, then reuse the single Datum-level implementation shared
+        // with the AST evaluator (`crate::func::eval_func_values`). Lazy
+        // control forms (IF/CASE), session-state functions, and the
+        // AST-typed LENGTH family are not in that entry and stay unsupported
+        // here until their chunk-row builtins are ported.
+        let vals: Vec<Datum> = self
+            .args
+            .iter()
+            .map(|a| a.eval(ctx, row))
+            .collect::<Result<_, _>>()?;
+        if let Some(result) = crate::func::eval_func_values(&name.to_ascii_uppercase(), &vals) {
+            return result;
+        }
         Err(EvalError::Unsupported(
             "this scalar function is not yet ported",
         ))
@@ -313,6 +327,69 @@ mod tests {
         let hc = sf.hash_code().to_vec();
         // Ends with the target EvalType byte (Long -> Int == 0).
         assert_eq!(*hc.last().unwrap(), tidb_datatype::EvalType::Int as u8);
+    }
+
+    #[test]
+    fn eval_bridges_values_only_builtins() {
+        use crate::context::NoColumns;
+        use tidb_chunk::chunk::Chunk;
+
+        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let mut chk = chk;
+        chk.append_int64(0, 0);
+        let row = chk.get_row(0);
+        let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
+
+        // ABS(-5) = 5 via math_fn's shared values-only dispatch.
+        let abs = ScalarFunction::new(CiString::new("abs"), ft(), vec![konst(Datum::Int(-5))]);
+        assert_eq!(abs.eval(&NoColumns, row).unwrap(), Datum::Int(5));
+
+        // CONCAT('a', 'b') = 'ab' via the shared string arm.
+        let concat = ScalarFunction::new(
+            CiString::new("concat"),
+            ft(),
+            vec![konst(Datum::new_string("a")), konst(Datum::new_string("b"))],
+        );
+        assert_eq!(
+            concat.eval(&NoColumns, row).unwrap(),
+            Datum::new_string("ab")
+        );
+
+        // COALESCE(NULL, 7) = 7 (eager over values, matching the old
+        // AST-level evaluator).
+        let coalesce = ScalarFunction::new(
+            CiString::new("coalesce"),
+            ft(),
+            vec![konst(Datum::Null), konst(Datum::Int(7))],
+        );
+        assert_eq!(coalesce.eval(&NoColumns, row).unwrap(), Datum::Int(7));
+
+        // A column argument feeds the builtin from the chunk row: ABS(col).
+        let mut col = Column::new(1, ft());
+        col.index = 0;
+        let mut chk2 = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        chk2.append_int64(0, -9);
+        let abs_col =
+            ScalarFunction::new(CiString::new("abs"), ft(), vec![Expression::Column(col)]);
+        assert_eq!(
+            abs_col.eval(&NoColumns, chk2.get_row(0)).unwrap(),
+            Datum::Int(9)
+        );
+
+        // A function outside the values-only entry stays unsupported.
+        let iff = ScalarFunction::new(
+            CiString::new("if"),
+            ft(),
+            vec![
+                konst(Datum::Int(1)),
+                konst(Datum::Int(2)),
+                konst(Datum::Int(3)),
+            ],
+        );
+        assert!(matches!(
+            iff.eval(&NoColumns, row),
+            Err(EvalError::Unsupported(_))
+        ));
     }
 
     #[test]

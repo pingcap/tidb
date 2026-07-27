@@ -39,8 +39,22 @@ pub(crate) fn dispatch(
     cols: &dyn Columns,
     function_key: Option<usize>,
 ) -> Option<Result<Datum, EvalError>> {
+    // RAND is the one arm that needs the argument AST (constant-versus-row
+    // generator identity), the session `Columns`, and the per-call
+    // `function_key`; every other math builtin is pure over `vals` and lives
+    // in [`dispatch_values`] so the chunk-row bridge can reuse it.
+    if name == "RAND" {
+        return Some(eval_rand(args, vals, cols, function_key));
+    }
+    dispatch_values(name, vals)
+}
+
+/// The values-only subset of [`dispatch`]: every math builtin whose result is
+/// a pure function of its already-evaluated arguments. Shared by the
+/// AST-level `eval_func` path and `crate::func::eval_func_values` (the
+/// `ScalarFunction`/chunk-row bridge).
+pub(crate) fn dispatch_values(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
     let result = match name {
-        "RAND" => eval_rand(args, vals, cols, function_key),
         "ABS" => abs(vals),
         "SIGN" => sign(vals),
         "CEIL" | "CEILING" => ceil_floor(vals, true),
