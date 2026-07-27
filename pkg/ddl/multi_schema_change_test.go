@@ -109,6 +109,32 @@ func TestMultiSchemaChangeSetAutoIncrementPK(t *testing.T) {
 	))
 }
 
+func TestMultiSchemaChangeModifyColumnAndAddPrimaryKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tmp_test_unsupported_operate_same")
+	tk.MustExec(`create table tmp_test_unsupported_operate_same(
+id bigint(20) DEFAULT NULL,
+live_code_id bigint(20) DEFAULT NULL,
+KEY idx_live_code_id (live_code_id)
+)`)
+	tk.MustExec(`alter table tmp_test_unsupported_operate_same
+modify column id bigint(20) not null comment 'ID' first,
+add primary key (id)`)
+
+	tk.MustQuery("show create table tmp_test_unsupported_operate_same").Check(testkit.RowsWithSep("|",
+		"tmp_test_unsupported_operate_same|CREATE TABLE `tmp_test_unsupported_operate_same` (\n"+
+			"  `id` bigint(20) NOT NULL COMMENT 'ID',\n"+
+			"  `live_code_id` bigint(20) DEFAULT NULL,\n"+
+			"  KEY `idx_live_code_id` (`live_code_id`),\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("admin check table tmp_test_unsupported_operate_same")
+}
+
 func TestMultiSchemaChangeAddColumnsAfterNewColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
