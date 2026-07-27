@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -86,7 +87,7 @@ func (dm *domainMap) getWithEtcdClient(
 	store kv.Storage,
 	etcdClient *clientv3.Client,
 	schemaFilter issyncer.Filter,
-	infoSyncerOptions ...infosync.ServerInfoSyncerOption,
+	serverInfoSyncerOptions ...serverinfo.SyncerOption,
 ) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -122,7 +123,7 @@ func (dm *domainMap) getWithEtcdClient(
 			},
 			etcdClient,
 			schemaFilter,
-			infoSyncerOptions...,
+			serverInfoSyncerOptions...,
 		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker

@@ -205,7 +205,7 @@ func (c *statusEndpointClaim) tryCreate(
 	if resp.Succeeded {
 		return true, observedStatusEndpointClaim{}, nil
 	}
-	observed, err := observedStatusEndpointClaimFromTxn(resp)
+	observed, err := observedClaimFromTxn(resp)
 	return false, observed, err
 }
 
@@ -228,7 +228,7 @@ func (c *statusEndpointClaim) reattach(
 	return resp.Succeeded, nil
 }
 
-func observedStatusEndpointClaimFromTxn(resp *clientv3.TxnResponse) (observedStatusEndpointClaim, error) {
+func observedClaimFromTxn(resp *clientv3.TxnResponse) (observedStatusEndpointClaim, error) {
 	if len(resp.Responses) != 1 {
 		return observedStatusEndpointClaim{}, errors.Errorf("unexpected advertised status endpoint claim response count %d", len(resp.Responses))
 	}

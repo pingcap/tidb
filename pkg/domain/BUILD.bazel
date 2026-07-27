@@ -36,6 +36,7 @@ go_library(
         "//pkg/domain/globalconfigsync",
         "//pkg/domain/infosync",
         "//pkg/domain/metrics",
+        "//pkg/domain/serverinfo",
         "//pkg/domain/sqlsvrapi",
         "//pkg/dxf/framework/metering",
         "//pkg/dxf/framework/proto",

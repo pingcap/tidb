@@ -34,6 +34,7 @@ go_library(
         "//pkg/distsql/context",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/domain/sqlsvrapi",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",
