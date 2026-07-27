@@ -30,6 +30,7 @@
 //! `context.Context`/`sessionctx` propagation, runtime stats, the SQL killer,
 //! `Detach`, parallel projection, and the many other operators.
 
+pub mod ddl;
 pub mod driver;
 pub mod executor;
 pub mod kv_table;

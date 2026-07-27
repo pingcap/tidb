@@ -423,6 +423,34 @@ const CHARSET_BIN: &str = "binary";
 const COLLATION_BIN: &str = "binary";
 
 impl ColumnInfo {
+    /// A plain public column with the given id, name, and type; every other
+    /// field takes its zero value (offset set by the caller). This is the
+    /// construction DDL performs when building a table's columns (Go builds
+    /// the literal in `buildColumnAndConstraint`).
+    #[must_use]
+    pub fn new(id: i64, name: &str, field_type: FieldType) -> ColumnInfo {
+        ColumnInfo {
+            id,
+            name: CiString::new(name),
+            offset: 0,
+            origin_default_value: None,
+            origin_default_value_bit: None,
+            default_value: None,
+            default_value_bit: None,
+            default_is_expr: false,
+            generated_expr_string: String::new(),
+            generated_stored: false,
+            dependences: BTreeSet::new(),
+            field_type,
+            changing_field_type: None,
+            state: SchemaState::PUBLIC,
+            comment: String::new(),
+            hidden: false,
+            change_state_info: None,
+            version: 0,
+        }
+    }
+
     // A base BIGINT/binary extra column: id + name, type LongLong, default
     // flen/decimal, binary charset/collation. Callers then set the flags.
     fn extra_long_long_bin(id: i64, name: &str) -> ColumnInfo {

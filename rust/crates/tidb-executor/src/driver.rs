@@ -60,6 +60,7 @@ pub struct MemTable {
 #[derive(Clone, Debug, Default)]
 pub struct Catalog {
     tables: HashMap<String, TableEntry>,
+    next_table_id: i64,
 }
 
 /// A catalog table's backing store.
@@ -100,6 +101,19 @@ impl Catalog {
 
     fn get(&self, name: &str) -> Option<&TableEntry> {
         self.tables.get(&name.to_lowercase())
+    }
+
+    /// Whether a table with `name` exists (case-insensitive).
+    #[must_use]
+    pub fn contains(&self, name: &str) -> bool {
+        self.tables.contains_key(&name.to_lowercase())
+    }
+
+    /// Allocates the next table id (a monotone counter standing in for the
+    /// global autoid allocator, like KvTable's handle counter).
+    pub fn allocate_table_id(&mut self) -> i64 {
+        self.next_table_id += 1;
+        self.next_table_id
     }
 }
 

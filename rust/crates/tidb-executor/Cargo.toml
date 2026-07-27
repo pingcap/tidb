@@ -13,6 +13,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 

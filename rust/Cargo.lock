@@ -1340,6 +1340,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-model",
  "tidb-parser",
  "tidb-tablecodec",
 ]
