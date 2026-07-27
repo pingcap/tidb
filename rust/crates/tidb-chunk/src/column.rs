@@ -29,13 +29,27 @@
 //! Also ported: variable-length append/get (string/bytes via `offsets`) and the
 //! `getFixedLen`/`NewColumn(FieldType)` type dispatch.
 //!
+//! Also ported: the typed append/get for Time (stored as the packed 8-byte
+//! `types.Time` bit pattern, `Time::go_raw`) and Duration (stored as the
+//! `int64` nanosecond count; fsp is supplied by the reader, matching Go
+//! `AppendDuration`/`GetDuration`).
+//!
+//! DEFERRED -- `MyDecimal` cells: Go stores a `NewDecimal` cell as the raw
+//! 40-byte in-memory `types.MyDecimal` struct
+//! (`digitsInt`/`digitsFrac`/`resultFrac`/`negative` + 9 base-1e9 `int32`
+//! words). The Rust `tidb_datatype::Decimal` is a decimal-digit-string
+//! representation and cannot round-trip that 40-byte layout byte-for-byte;
+//! faking a different layout would silently break Go/Rust chunk fidelity, so
+//! `AppendMyDecimal`/`GetDecimal` wait until a layout-faithful `MyDecimal`
+//! exists.
+//!
 //! DEFERRED (documented, later tranches): the typed appends and `Resize*` for
-//! Time, Duration, `MyDecimal`, JSON, Enum, Set, and `VectorFloat32`;
+//! `MyDecimal` (see above), JSON, Enum, Set, and `VectorFloat32`;
 //! `Reset(EvalType)`; the `Reserve`/`resize` capacity helpers;
 //! `SetNull(s)`/`nullCount`; a `str`-typed `GetString`; and the `Chunk`/`Row`
 //! containers built on `Column`.
 
-use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_datatype::{FieldType, FieldTypeCode, MySqlDuration, Time};
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
 /// column.
@@ -229,6 +243,47 @@ impl Column {
     pub fn append_float64(&mut self, value: f64) {
         self.elem_buf.copy_from_slice(&value.to_ne_bytes());
         self.finish_append_fixed();
+    }
+
+    /// Go `AppendTime`: append a `types.Time` value as one fixed 8-byte row.
+    ///
+    /// Go stores the raw in-memory `types.Time` (a single packed `uint64`
+    /// `CoreTime` with the type/fsp metadata in the low 4 bits) via an
+    /// `unsafe.Pointer` cast; `Time::go_raw` is that exact bit pattern.
+    pub fn append_time(&mut self, t: Time) {
+        self.elem_buf.copy_from_slice(&t.go_raw().to_ne_bytes());
+        self.finish_append_fixed();
+    }
+
+    /// Go `AppendDuration`: append a duration as its `int64` nanosecond count
+    /// (Go `int64(dur.Duration)`). Fsp is ignored, exactly as in Go.
+    pub fn append_duration(&mut self, dur: MySqlDuration) {
+        self.append_int64(dur.nanoseconds());
+    }
+
+    /// Go `GetTime`: the `types.Time` in the specific row.
+    ///
+    /// # Panics
+    /// Panics if the stored bits are not a valid packed `types.Time`; every
+    /// value written by [`Column::append_time`] round-trips.
+    #[must_use]
+    pub fn get_time(&self, row_id: usize) -> Time {
+        Time::from_go_raw(u64::from_ne_bytes(self.fixed_elem::<8>(row_id)))
+            .expect("chunk Time cell holds a valid packed types.Time")
+    }
+
+    /// Go `GetDuration`: the duration in the specific row, with `fill_fsp`
+    /// stamped on as the fractional-second precision (the column itself does
+    /// not store fsp).
+    ///
+    /// # Panics
+    /// Panics if `fill_fsp` is out of range (Go's `types.Duration.Fsp` is an
+    /// unchecked `int`; `MySqlDuration` validates). `UNSPECIFIED_FSP` (`-1`)
+    /// maps to the default fsp.
+    #[must_use]
+    pub fn get_duration(&self, row_id: usize, fill_fsp: i64) -> MySqlDuration {
+        MySqlDuration::from_nanoseconds(self.get_int64(row_id), fill_fsp)
+            .expect("valid fill_fsp for chunk duration cell")
     }
 
     /// Go `AppendNull`: leave the null bit unset, then keep element positions
@@ -454,6 +509,63 @@ mod tests {
         let d = c.copy_construct();
         assert_eq!(d.rows(), 1);
         assert_eq!(d.get_int64(0), 42);
+    }
+
+    #[test]
+    fn time_append_get_null_roundtrip() {
+        use tidb_datatype::{CoreTime, TimeType};
+        let mut c = Column::new_column(&FieldType::new(FieldTypeCode::Datetime), 4);
+        assert_eq!(c.type_size(), SIZE_TIME);
+        let dt = Time::new(
+            CoreTime::from_date(2026, 7, 25, 12, 34, 56, 654_321),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        let ts = Time::new(
+            CoreTime::from_date(1999, 12, 31, 23, 59, 59, 0),
+            TimeType::Timestamp,
+            0,
+        )
+        .unwrap();
+        let date = Time::new(
+            CoreTime::from_date(2000, 2, 29, 0, 0, 0, 0),
+            TimeType::Date,
+            0,
+        )
+        .unwrap();
+        c.append_time(dt);
+        c.append_null();
+        c.append_time(ts);
+        c.append_time(date);
+        assert_eq!(c.rows(), 4);
+        assert_eq!(c.get_time(0), dt);
+        assert!(c.is_null(1));
+        assert!(!c.is_null(2));
+        assert_eq!(c.get_time(2), ts);
+        assert_eq!(c.get_time(3), date);
+        // The stored bytes are exactly Go's packed uint64 (native-endian).
+        assert_eq!(c.get_raw(0), &dt.go_raw().to_ne_bytes());
+    }
+
+    #[test]
+    fn duration_append_get_null_roundtrip() {
+        let mut c = Column::new_column(&FieldType::new(FieldTypeCode::Duration), 4);
+        assert_eq!(c.type_size(), 8);
+        let d = MySqlDuration::new(11, 22, 33, 456_789, 6).unwrap();
+        let neg = d.negated();
+        c.append_duration(d);
+        c.append_null();
+        c.append_duration(neg);
+        assert_eq!(c.rows(), 3);
+        // Append ignores fsp; the reader supplies it (Go GetDuration fillFsp).
+        assert_eq!(c.get_duration(0, 6), d);
+        assert_eq!(c.get_duration(0, 3).nanoseconds(), d.nanoseconds());
+        assert_eq!(c.get_duration(0, 3).fsp(), 3);
+        assert!(c.is_null(1));
+        assert_eq!(c.get_duration(2, 6), neg);
+        // Stored as Go's int64 nanoseconds.
+        assert_eq!(c.get_int64(0), d.nanoseconds());
     }
 
     #[test]

@@ -20,12 +20,13 @@
 //!
 //! Ported: the accessors a simple query needs -- `chunk`, `idx`, `len`,
 //! `get_int64`/`get_uint64`/`get_float32`/`get_float64`, `get_bytes`/`get_raw`,
-//! and `is_null`. DEFERRED (documented): the typed getters that need Time/
-//! Duration/`MyDecimal`/JSON column support, `GetDatumRow`, `CopyConstruct`, and
+//! `get_time`/`get_duration`, and `is_null`. DEFERRED (documented): the typed
+//! getters that need `MyDecimal`/JSON/Enum/Set column support (see
+//! `column.rs` for the `MyDecimal` layout deferral), `GetDatumRow`, `CopyConstruct`, and
 //! a `str`-typed `GetString` (pending the crate-wide bytes-vs-str policy).
 
 use crate::chunk::Chunk;
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode, MySqlDuration, Time};
 
 /// Go `chunk.Row`: a cursor to one row of a [`Chunk`].
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +90,19 @@ impl<'a> Row<'a> {
         self.chunk.columns()[col_idx].get_float64(self.idx)
     }
 
+    /// Go `GetTime`.
+    #[must_use]
+    pub fn get_time(&self, col_idx: usize) -> Time {
+        self.chunk.columns()[col_idx].get_time(self.idx)
+    }
+
+    /// Go `GetDuration`: reads the cell's nanoseconds and stamps `fill_fsp` on
+    /// (the column stores no fsp).
+    #[must_use]
+    pub fn get_duration(&self, col_idx: usize, fill_fsp: i64) -> MySqlDuration {
+        self.chunk.columns()[col_idx].get_duration(self.idx, fill_fsp)
+    }
+
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
     #[must_use]
     pub fn get_bytes(&self, col_idx: usize) -> &'a [u8] {
@@ -112,8 +126,10 @@ impl<'a> Row<'a> {
     ///
     /// Ported for the column kinds whose storage exists: NULL, the signed/
     /// unsigned integer family and `Year`, `Float`/`Double`, and the string/blob
-    /// family (as a collation-tagged string). The remaining types
-    /// (Time/Duration/Decimal/Enum/Set/Bit/JSON/VectorFloat32) land with their
+    /// family (as a collation-tagged string), `Date`/`Datetime`/`Timestamp`
+    /// (as a Time datum), and `Duration` (fsp filled from the field type's
+    /// decimal, matching Go). The remaining types
+    /// (Decimal/Enum/Set/Bit/JSON/VectorFloat32) land with their
     /// column getters; reaching one here panics rather than returning a wrong or
     /// silently-null datum.
     #[must_use]
@@ -150,6 +166,13 @@ impl<'a> Row<'a> {
                 let mut d = Datum::Null;
                 d.set_string(self.get_bytes(col_idx).to_vec(), collation);
                 d
+            }
+            FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+                Datum::Time(self.get_time(col_idx))
+            }
+            // Go passes tp.GetDecimal() as the fill fsp.
+            FieldTypeCode::Duration => {
+                Datum::Duration(self.get_duration(col_idx, field_type.decimal()))
             }
             other => panic!(
                 "chunk Row::get_datum: column type {other:?} not yet supported (deferred with its column getter)"

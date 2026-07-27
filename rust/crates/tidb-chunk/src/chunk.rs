@@ -26,11 +26,12 @@
 //! DEFERRED (documented): the `requiredRows`/`IsFull` growth policy,
 //! `GrowAndReset`, `CopyConstructSel` and other selection transforms, the chunk
 //! pool/allocator, disk spilling (`chunk_in_disk`), and the exotic-typed append
-//! helpers that depend on Time/Duration/Decimal/JSON column support.
+//! helpers that depend on Decimal/JSON/Enum/Set column support (Time and
+//! Duration are ported; see `column.rs` for the `MyDecimal` layout deferral).
 
 use crate::column::Column;
 use crate::row::Row;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, MySqlDuration, Time};
 
 /// Go `chunk.Chunk`: a columnar batch of rows.
 #[derive(Clone, Debug, Default)]
@@ -183,6 +184,18 @@ impl Chunk {
         self.columns[col_idx].append_float64(value);
     }
 
+    /// Go `AppendTime`.
+    pub fn append_time(&mut self, col_idx: usize, value: Time) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_time(value);
+    }
+
+    /// Go `AppendDuration` (fsp is ignored, as in Go).
+    pub fn append_duration(&mut self, col_idx: usize, value: MySqlDuration) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_duration(value);
+    }
+
     /// Go `AppendString`.
     pub fn append_string(&mut self, col_idx: usize, value: &str) {
         self.append_sel(col_idx);
@@ -199,7 +212,8 @@ impl Chunk {
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
-    /// float32, string/bytes). Other kinds panic, pending their column support.
+    /// float32, string/bytes, time, duration). Other kinds panic, pending
+    /// their column support.
     pub fn append_datum(&mut self, col_idx: usize, datum: &Datum) {
         match datum {
             Datum::Null => self.append_null(col_idx),
@@ -212,6 +226,8 @@ impl Chunk {
             }
             Datum::String(s) => self.append_bytes(col_idx, s.bytes()),
             Datum::Bytes(b) => self.append_bytes(col_idx, b),
+            Datum::Time(t) => self.append_time(col_idx, *t),
+            Datum::Duration(d) => self.append_duration(col_idx, *d),
             other => panic!(
                 "Chunk::append_datum: datum {other:?} not yet supported (pending its column storage)"
             ),
@@ -342,6 +358,39 @@ mod tests {
         }
         // null cell -> Datum::Null regardless of type
         assert_eq!(chk.get_row(1).get_datum(0, &fields[0]), Datum::Null);
+    }
+
+    #[test]
+    fn time_duration_datum_roundtrip() {
+        use tidb_datatype::{CoreTime, Datum, TimeType};
+        let fields = vec![
+            FieldType::new(FieldTypeCode::Datetime),
+            FieldType::new(FieldTypeCode::Duration).with_decimal(3),
+        ];
+        let t = Time::new(
+            CoreTime::from_date(2026, 7, 25, 8, 30, 15, 500_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        let d = MySqlDuration::new(1, 2, 3, 400_000, 3).unwrap();
+
+        let mut chk = Chunk::new_with_capacity(&fields, 4);
+        chk.append_datum(0, &Datum::Time(t));
+        chk.append_datum(1, &Datum::Duration(d));
+        chk.append_datum(0, &Datum::Null);
+        chk.append_datum(1, &Datum::Null);
+
+        let r0 = chk.get_row(0);
+        assert_eq!(r0.get_time(0), t);
+        assert_eq!(r0.get_datum(0, &fields[0]), Datum::Time(t));
+        // Duration fsp is refilled from the field type's decimal (Go
+        // tp.GetDecimal()), matching what was appended here.
+        assert_eq!(r0.get_duration(1, 3), d);
+        assert_eq!(r0.get_datum(1, &fields[1]), Datum::Duration(d));
+        let r1 = chk.get_row(1);
+        assert_eq!(r1.get_datum(0, &fields[0]), Datum::Null);
+        assert_eq!(r1.get_datum(1, &fields[1]), Datum::Null);
     }
 
     #[test]
