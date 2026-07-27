@@ -175,6 +175,13 @@ func DialEtcdClient(
 	return newEtcdClientFromPDClient(ctx, pdCli, keyspaceMeta, pdAddrs, etcdCfg)
 }
 
+// newEtcdClientFromPDClient assumes the target keyspace is provisioned as a
+// greenfield meta-service-group keyspace: the binding is finished before
+// TiDB/BR/Lightning/IMPORT INTO/TiCDC start, so this path should not see
+// legacy direct-to-PD-etcd metadata for the same keyspace. Legacy `/tidb/...`
+// keys are not reliably scoped to the current keyspace, so this dial path
+// intentionally does not dual-read or fall back to the caller PD etcd
+// namespace.
 func newEtcdClientFromPDClient(
 	ctx context.Context,
 	pdCli pd.Client,
