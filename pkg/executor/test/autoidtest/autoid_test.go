@@ -35,23 +35,23 @@ import (
 	"google.golang.org/grpc"
 )
 
-type rpcRetryLimitTestError struct {
+type rpcRetryLimitError struct {
 	cause error
 }
 
-func (e *rpcRetryLimitTestError) Error() string {
+func (e *rpcRetryLimitError) Error() string {
 	return e.cause.Error()
 }
 
-func (e *rpcRetryLimitTestError) Cause() error {
+func (e *rpcRetryLimitError) Cause() error {
 	return e.cause
 }
 
-func (e *rpcRetryLimitTestError) Unwrap() error {
+func (e *rpcRetryLimitError) Unwrap() error {
 	return e.cause
 }
 
-func (*rpcRetryLimitTestError) AutoIDRPCRetryLimitReached() {}
+func (*rpcRetryLimitError) AutoIDRPCRetryLimitReached() {}
 
 type rpcRetryLimitClient struct {
 	autoidpb.AutoIDAllocClient
@@ -595,7 +595,7 @@ func TestMockAutoIDServiceError(t *testing.T) {
 
 	t.Run("RPC retry limit error is not ignored", func(t *testing.T) {
 		const errMessage = "autoid alloc failed after reaching the RPC retry limit"
-		markedErr := &rpcRetryLimitTestError{
+		markedErr := &rpcRetryLimitError{
 			cause: metaautoid.ErrAutoincReadFailed.GenWithStack(errMessage),
 		}
 		require.True(t, metaautoid.IsRPCRetryLimitError(markedErr))
