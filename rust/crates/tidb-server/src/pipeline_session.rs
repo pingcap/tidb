@@ -225,6 +225,14 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
             *b"23000",
             format!("Duplicate entry '{value}' for key '{key}'"),
         ),
+        // Go: "Duplicate key name '%-.192s'".
+        tidb_executor::DriverError::DuplicateKeyName(name) => {
+            SqlQueryError::new(1061, *b"42000", format!("Duplicate key name '{name}'"))
+        }
+        // Go: "index %s doesn't exist" -- 1091's index-specific message.
+        tidb_executor::DriverError::UnknownIndex(name) => {
+            SqlQueryError::new(1091, *b"42000", format!("index {name} doesn't exist"))
+        }
         // Go: "Duplicate column name '%-.192s'".
         tidb_executor::DriverError::DuplicateColumnName(name) => {
             SqlQueryError::new(1060, *b"42S21", format!("Duplicate column name '{name}'"))

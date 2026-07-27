@@ -1111,6 +1111,20 @@ impl Session {
                 )),
             },
             Stmt::Ddl(ddl) => match &**ddl {
+                DdlStmt::CreateIndex(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_create_index_in(sql, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
+                DdlStmt::DropIndex(_) => {
+                    let current_db = self.current_db.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_drop_index_in(sql, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
                 DdlStmt::AlterTable(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
@@ -2156,6 +2170,79 @@ mod tests {
             .run("ALTER TABLE nosuch ADD COLUMN a BIGINT")
             .is_err());
         assert!(session.run("ALTER TABLE a RENAME TO b").is_err());
+    }
+
+    /// CREATE INDEX / DROP INDEX / ALTER TABLE ADD INDEX, checked against
+    /// captured TiDB behavior -- including that CREATE INDEX backfills the
+    /// rows that already exist.
+    #[test]
+    fn index_ddl() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE i1 (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO i1 VALUES (1, 10, 1), (2, 20, 1), (3, 10, 2)")
+            .unwrap();
+
+        // The index is backfilled, so it finds rows written before it existed.
+        // Captured: select id from i1 where a = 10 -> [[1] [3]].
+        session.run("CREATE INDEX ia ON i1 (a)").unwrap();
+        assert_eq!(
+            session.run("SELECT id FROM i1 WHERE a = 10").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)], vec![Datum::Int(3)]])
+        );
+        // SHOW CREATE TABLE reports it, captured as KEY `ia` (`a`).
+        let create =
+            |session: &mut Session| match session.run_with_columns("SHOW CREATE TABLE i1").unwrap()
+            {
+                StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+                other => panic!("expected rows, got {other:?}"),
+            };
+        assert!(create(&mut session).contains("KEY `ia` (`a`)"));
+
+        // Captured: a duplicate index name is 1061.
+        assert!(matches!(
+            session.run("CREATE INDEX ia ON i1 (b)"),
+            Err(DriverError::DuplicateKeyName(_))
+        ));
+        // Captured: a unique index over data that already collides is 1062
+        // naming table.index, and the index is NOT created.
+        match session.run("CREATE UNIQUE INDEX ua ON i1 (a)") {
+            Err(DriverError::DuplicateEntry { value, key }) => {
+                assert_eq!(value, "10");
+                assert_eq!(key, "i1.ua");
+            }
+            other => panic!("expected a duplicate-entry error, got {other:?}"),
+        }
+        assert!(!create(&mut session).contains("ua"));
+
+        // A unique index over data that does not collide is created.
+        session.run("CREATE UNIQUE INDEX ub ON i1 (b, a)").unwrap();
+        assert!(create(&mut session).contains("UNIQUE KEY `ub` (`b`,`a`)"));
+        // It is enforced from then on.
+        assert!(session.run("INSERT INTO i1 VALUES (4, 10, 1)").is_err());
+
+        // DROP INDEX removes it, and its entries with it: the same insert now
+        // succeeds.
+        session.run("DROP INDEX ub ON i1").unwrap();
+        assert!(!create(&mut session).contains("ub"));
+        session.run("INSERT INTO i1 VALUES (4, 10, 1)").unwrap();
+
+        // Captured: dropping one that does not exist is 1091.
+        assert!(matches!(
+            session.run("DROP INDEX nosuch ON i1"),
+            Err(DriverError::UnknownIndex(_))
+        ));
+
+        // ALTER TABLE ADD INDEX takes the same path.
+        session.run("ALTER TABLE i1 ADD INDEX ic (b)").unwrap();
+        assert!(create(&mut session).contains("KEY `ic` (`b`)"));
+        session.run("ALTER TABLE i1 DROP INDEX ic").unwrap();
+        assert!(!create(&mut session).contains("ic"));
+
+        // An index over an unknown column is rejected.
+        assert!(session.run("CREATE INDEX bad ON i1 (nosuch)").is_err());
     }
 
     #[test]

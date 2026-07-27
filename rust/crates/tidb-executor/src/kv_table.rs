@@ -142,6 +142,9 @@ pub struct KvColumn {
 pub struct KvTable {
     /// The table id (Go `TableInfo.ID`), the record-key prefix.
     pub table_id: i64,
+    /// The table's name, which a duplicate-key error qualifies its index with
+    /// (`Duplicate entry 'a' for key 'm.code'`).
+    pub name: String,
     /// The columns, in schema order.
     pub columns: Vec<KvColumn>,
     /// The byte store, read through the `Retriever` contract (module doc).
@@ -169,6 +172,8 @@ pub struct KvTable {
 pub enum KvTableError {
     /// A row failed to encode.
     Encode(String),
+    /// Go `ErrDupKeyName` (1061).
+    DuplicateKeyName(String),
     /// Go `ErrDupEntry` (1062): a row with this primary key already exists.
     DuplicateEntry {
         /// The rejected key value, as MySQL prints it.
@@ -188,6 +193,7 @@ impl KvTable {
     pub fn new(table_id: i64, columns: Vec<KvColumn>) -> Self {
         KvTable {
             table_id,
+            name: String::new(),
             columns,
             store: MemStorage::new(),
             next_handle: 1,
@@ -334,6 +340,98 @@ impl KvTable {
         Ok(())
     }
 
+    /// Sets the table's name, used to qualify a duplicate-key error.
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.to_owned();
+    }
+
+    /// Go's key name in a duplicate-entry error: `table.index`.
+    fn qualified_key(&self, index_name: &str) -> String {
+        if self.name.is_empty() {
+            index_name.to_owned()
+        } else {
+            format!("{}.{}", self.name, index_name)
+        }
+    }
+
+    /// Creates an index over the existing rows, which Go backfills as part of
+    /// the DDL. A unique index whose existing rows already collide is
+    /// rejected with the duplicate it found, leaving the table unchanged.
+    pub fn create_index(&mut self, index: KvIndex) -> Result<(), KvTableError> {
+        if self
+            .indexes
+            .iter()
+            .any(|existing| existing.name.eq_ignore_ascii_case(&index.name))
+        {
+            return Err(KvTableError::DuplicateKeyName(index.name.clone()));
+        }
+        // Backfill from the rows that already exist.
+        let rows = self.scan_rows_with_handles()?;
+        let mut written = Vec::new();
+        for (handle, row) in &rows {
+            let (key, distinct) = self.index_key(&index, row, handle)?;
+            let key = Key::from_bytes(key);
+            if distinct && self.store.get(&key, GetOptions::default()).is_ok() {
+                // Undo the entries this backfill already wrote, so a rejected
+                // CREATE INDEX leaves no partial index behind.
+                for key in written {
+                    let _ = self.store.delete(key);
+                }
+                return Err(KvTableError::DuplicateEntry {
+                    value: duplicate_value_text(&index, row),
+                    key: self.qualified_key(&index.name),
+                });
+            }
+            let value = if distinct {
+                match handle {
+                    TableHandle::Int(value) => encode_handle_in_unique_index_value(
+                        &tidb_txnkv::IntHandle::new(*value).into(),
+                        false,
+                    ),
+                    TableHandle::Common(bytes) => {
+                        let common = tidb_txnkv::CommonHandle::new(bytes.clone())
+                            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+                        encode_handle_in_unique_index_value(&common.into(), false)
+                    }
+                }
+            } else {
+                vec![b'0']
+            };
+            self.store
+                .set(key.clone(), value)
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            written.push(key);
+        }
+        self.indexes.push(index);
+        Ok(())
+    }
+
+    /// Drops an index and every entry it owns, reporting whether it existed.
+    pub fn drop_index(&mut self, name: &str) -> Result<bool, KvTableError> {
+        let Some(position) = self
+            .indexes
+            .iter()
+            .position(|index| index.name.eq_ignore_ascii_case(name))
+        else {
+            return Ok(false);
+        };
+        let index = self.indexes.remove(position);
+        let rows = self.scan_rows_with_handles()?;
+        for (handle, row) in &rows {
+            let (key, _) = self.index_key(&index, row, handle)?;
+            self.store
+                .delete(Key::from_bytes(key))
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        Ok(true)
+    }
+
+    /// The next free index id.
+    #[must_use]
+    pub fn next_index_id(&self) -> i64 {
+        self.indexes.iter().map(|index| index.id).max().unwrap_or(0) + 1
+    }
+
     /// Adds a column at `position`, which is Go's ALTER TABLE ADD COLUMN.
     ///
     /// The column takes a fresh id, so rows written earlier simply do not
@@ -444,7 +542,7 @@ impl KvTable {
         if clustered && self.row_exists(&handle)? {
             return Err(KvTableError::DuplicateEntry {
                 value: clustered_key_text(self, row),
-                key: "PRIMARY".to_owned(),
+                key: self.qualified_key("PRIMARY"),
             });
         }
         let key = Key::from_bytes(encode_row_key_with_handle(
@@ -569,7 +667,7 @@ impl KvTable {
                 if self.store.get(&key, GetOptions::default()).is_ok() {
                     return Err(KvTableError::DuplicateEntry {
                         value: duplicate_value_text(index, row),
-                        key: index.name.clone(),
+                        key: self.qualified_key(&index.name),
                     });
                 }
                 // A distinct entry carries the handle as its value, which is

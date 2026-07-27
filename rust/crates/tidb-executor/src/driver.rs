@@ -397,6 +397,10 @@ pub enum DriverError {
     Schema(SchemaErrorKind),
     /// Go `ErrDupFieldName` (1060).
     DuplicateColumnName(String),
+    /// Go `ErrDupKeyName` (1061).
+    DuplicateKeyName(String),
+    /// Go `ErrCantDropFieldOrKey` (1091), with the index-specific message.
+    UnknownIndex(String),
     /// Go `ErrCantDropFieldOrKey` (1091).
     UnknownColumnInAlter(String),
     /// Go `ErrCantRemoveAllFields` (1090).
@@ -4418,7 +4422,9 @@ mod tests {
         match run_insert_on("INSERT INTO u VALUES (3, 'a@x', 30)", &mut catalog) {
             Err(DriverError::DuplicateEntry { value, key }) => {
                 assert_eq!(value, "a@x");
-                assert_eq!(key, "email");
+                // Captured from TiDB: the key is qualified table.index, as in
+                // "Duplicate entry 'a' for key 'm.code'".
+                assert_eq!(key, "u.email");
             }
             other => panic!("expected a duplicate-entry error, got {other:?}"),
         }
