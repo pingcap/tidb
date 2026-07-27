@@ -76,8 +76,11 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
+	copTaskCount, _ := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopCountAndRows(sr.rootPlanID)
+	require.Equal(t, int32(1), copTaskCount)
 
 	limiterWaitResp := &mockResponse{
+		closeErr: fmt.Errorf("close failed"),
 		limiterWait: copr.LimiterWaitStats{
 			TotalTime: 5 * time.Millisecond,
 			MaxTime:   3 * time.Millisecond,
@@ -93,7 +96,7 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	}
 	sr.resp = limiterWaitResp
 	sr.stats = &selectResultRuntimeStats{}
-	require.NoError(t, sr.close())
+	require.ErrorIs(t, sr.close(), limiterWaitResp.closeErr)
 	require.True(t, limiterWaitResp.limiterWaitReadAfterClose)
 	require.True(t, limiterWaitResp.unconsumedReadAfterClose)
 	require.Equal(t, limiterWaitResp.limiterWait, sr.stats.limiterWait)
@@ -101,6 +104,11 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.Contains(t,
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(sr.rootPlanID).String(),
 		"limiter_wait:{total:5ms, max:3ms}")
+	copTaskCount, _ = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopCountAndRows(sr.rootPlanID)
+	require.Equal(t, int32(1), copTaskCount)
+	require.ErrorIs(t, sr.close(), limiterWaitResp.closeErr)
+	require.Equal(t, 1, limiterWaitResp.closeCalls)
+	require.Equal(t, limiterWaitResp.limiterWait, sr.stats.limiterWait)
 
 	noRuntimeStatsResp := &mockResponse{
 		limiterWait: copr.LimiterWaitStats{

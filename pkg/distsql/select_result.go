@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -360,6 +361,9 @@ type selectResult struct {
 	paging             bool
 
 	iter *selectResultIter
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -662,6 +666,12 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	r.getOrCreateRuntimeStats()
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
+	if forUnconsumedStats {
+		if copStats.TimeDetail.ProcessTime > 0 {
+			r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
+		}
+		return nil
+	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
@@ -709,7 +719,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
 			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
 			// not trigger an error log in this case.
-			if !forUnconsumedStats && !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
 				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
 					zap.Int("expected", len(r.copPlanIDs)),
 					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
@@ -763,6 +773,13 @@ func (r *selectResult) Close() error {
 }
 
 func (r *selectResult) close() error {
+	r.closeOnce.Do(func() {
+		r.closeErr = r.closeImpl()
+	})
+	return r.closeErr
+}
+
+func (r *selectResult) closeImpl() error {
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
@@ -1063,7 +1080,6 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		copRespTime:             execdetails.Percentile[execdetails.Duration]{},
 		procKeys:                execdetails.Percentile[execdetails.Int64]{},
 		backoffSleep:            make(map[string]time.Duration, len(s.backoffSleep)),
-		reqStat:                 tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency:      s.distSQLConcurrency,
 		extraConcurrency:        s.extraConcurrency,
 		CoprCacheHitNum:         s.CoprCacheHitNum,
@@ -1080,7 +1096,9 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	newRs.reqStat = s.reqStat.Clone()
+	if s.reqStat != nil {
+		newRs.reqStat = s.reqStat.Clone()
+	}
 	return &newRs
 }
 
@@ -1102,7 +1120,13 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
-	s.reqStat.Merge(other.reqStat)
+	if other.reqStat != nil {
+		if s.reqStat == nil {
+			s.reqStat = other.reqStat.Clone()
+		} else {
+			s.reqStat.Merge(other.reqStat)
+		}
+	}
 	s.CoprCacheHitNum += other.CoprCacheHitNum
 	if other.distSQLConcurrency > s.distSQLConcurrency {
 		s.distSQLConcurrency = other.distSQLConcurrency

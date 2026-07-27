@@ -102,6 +102,18 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 	}
 	require.Equal(t, 2, numAllRows)
 	require.NoError(t, response.Close())
+
+	emptyStats := &selectResultRuntimeStats{}
+	require.NotPanics(t, func() {
+		emptyStats.Clone()
+	})
+
+	reqStats := tikv.NewRegionRequestRuntimeStats()
+	reqStats.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Millisecond)
+	require.NotPanics(t, func() {
+		emptyStats.Merge(&selectResultRuntimeStats{reqStat: reqStats})
+	})
+	require.Equal(t, uint32(1), emptyStats.reqStat.GetCmdRPCCount(tikvrpc.CmdCop))
 }
 
 func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
@@ -281,6 +293,8 @@ type mockResponse struct {
 	// intermediateOutputs is used to mock the intermediate output from coprocessor.
 	intermediateOutputs       [][]*tipb.IntermediateOutput
 	closed                    bool
+	closeCalls                int
+	closeErr                  error
 	limiterWait               copr.LimiterWaitStats
 	limiterWaitReadAfterClose bool
 	unconsumedCopStats        []*copr.CopRuntimeStats
@@ -294,8 +308,9 @@ func (resp *mockResponse) Close() error {
 	defer resp.Unlock()
 
 	resp.closed = true
+	resp.closeCalls++
 	resp.count = 0
-	return nil
+	return resp.closeErr
 }
 
 func (resp *mockResponse) GetLimiterWaitStats() copr.LimiterWaitStats {

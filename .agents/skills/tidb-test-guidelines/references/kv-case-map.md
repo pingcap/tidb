@@ -14,7 +14,7 @@
 - `pkg/kv/fault_injection_test.go` - Tests fault injection basic.
 - `pkg/kv/interface_mock_test.go` - Tests interface mock.
 - `pkg/kv/key_test.go` - Tests partial next.
-- `pkg/kv/kv_test.go` - Tests resource group tag encoding.
+- `pkg/kv/kv_test.go` - Tests cop request limiters and resource group tag encoding.
 - `pkg/kv/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/kv/mock_test.go` - Tests interface.
 - `pkg/kv/option_test.go` - Tests set CDC write source.
