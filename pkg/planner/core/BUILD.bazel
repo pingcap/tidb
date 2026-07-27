@@ -227,6 +227,7 @@ go_test(
         "fulltext_to_like_test.go",
         "hint_test.go",
         "integration_test.go",
+        "issue_69925_test.go",
         "lateral_join_test.go",
         "logical_plans_test.go",
         "main_test.go",
