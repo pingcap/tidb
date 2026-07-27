@@ -74,11 +74,11 @@ func (t *TableTracker) checkColumnCanBeModified(colName pmodel.CIStr, tableName 
 	return nil
 }
 
-func (t *TableTracker) checkIndexCanBeDropped(indexName pmodel.CIStr) (skip bool, err error) {
+func (t *TableTracker) checkIndexCanBeDropped(indexName pmodel.CIStr) (err error) {
 	if _, ok := t.addedIndexColumn[indexName.L]; !ok {
-		return false, nil
+		return nil
 	}
-	return false, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+	return dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 }
 
 func (t *TableTracker) markColumnAdded(colName pmodel.CIStr) {
@@ -112,6 +112,22 @@ func (t *TableTracker) markIndexAdded(indexName pmodel.CIStr, indexPartSpecifica
 		}
 	}
 	t.addedIndexColumn[indexName.L] = cols
+}
+
+func (t *TableTracker) ignoreColumnExistsIfNotExists(colName pmodel.CIStr, ifNotExists bool) bool {
+	return ifNotExists && model.FindColumnInfo(t.tableInfo.Columns, colName.L) != nil
+}
+
+func (t *TableTracker) ignoreColumnNotExistsIfExists(colName pmodel.CIStr, ifExists bool) bool {
+	return ifExists && model.FindColumnInfo(t.tableInfo.Columns, colName.L) == nil
+}
+
+func (t *TableTracker) ignoreIndexExistsIfNotExists(indexName pmodel.CIStr, ifNotExists bool) bool {
+	return ifNotExists && t.tableInfo.FindIndexByName(indexName.L) != nil
+}
+
+func (t *TableTracker) ignoreIndexNotExistsIfExists(indexName pmodel.CIStr, ifExists bool) bool {
+	return ifExists && t.tableInfo.FindIndexByName(indexName.L) == nil
 }
 
 // DBInfo returns the schema info used by the table tracker.
@@ -180,8 +196,12 @@ func (tracker *TableTracker) addColumn(spec *ast.AlterTableSpec) error {
 	if len(spec.NewColumns) == 0 {
 		return nil
 	}
-	if colInfo := model.FindColumnInfo(tracker.tableInfo.Columns, spec.NewColumns[0].Name.Name.L); colInfo != nil {
-		return plannererrors.ErrDupFieldName.GenWithStackByArgs(spec.NewColumns[0].Name.Name.O)
+	colName := spec.NewColumns[0].Name.Name
+	if tracker.ignoreColumnExistsIfNotExists(colName, spec.IfNotExists) {
+		return nil
+	}
+	if colInfo := model.FindColumnInfo(tracker.tableInfo.Columns, colName.L); colInfo != nil {
+		return plannererrors.ErrDupFieldName.GenWithStackByArgs(colName.O)
 	}
 
 	col, _, err := columnDefToCol(tracker.metaBuildCtx(), len(tracker.tableInfo.Columns), spec.NewColumns[0], nil)
@@ -216,6 +236,12 @@ func (tracker *TableTracker) addIndex(spec *ast.AlterTableSpec) error {
 			colName = indexParts[0].Column.Name
 		}
 		indexName = GetName4AnonymousIndex(mockTbl, colName, pmodel.NewCIStr(""))
+	}
+	if tracker.ignoreIndexExistsIfNotExists(indexName, spec.Constraint.IfNotExists) {
+		return nil
+	}
+	if tracker.tableInfo.FindIndexByName(indexName.L) != nil {
+		return dbterror.ErrDupKeyName.GenWithStackByArgs(indexName)
 	}
 	hiddenCols, shardIndexVersion, err := BuildHiddenColumnInfo(
 		tracker.metaBuildCtx(),
@@ -327,6 +353,9 @@ func (tracker *TableTracker) modifyColumn(spec *ast.AlterTableSpec) error {
 	case ast.AlterTableRenameColumn:
 		oldColName = spec.OldColumnName.Name
 		newColName = spec.NewColumnName.Name
+		if tracker.ignoreColumnNotExistsIfExists(oldColName, spec.IfExists) {
+			return nil
+		}
 		err = tracker.renameColumn(oldColName, newColName, spec.Position)
 	case ast.AlterTableModifyColumn:
 		if len(spec.NewColumns) == 0 {
@@ -334,6 +363,9 @@ func (tracker *TableTracker) modifyColumn(spec *ast.AlterTableSpec) error {
 		}
 		oldColName = spec.NewColumns[0].Name.Name
 		newColName = oldColName
+		if tracker.ignoreColumnNotExistsIfExists(oldColName, spec.IfExists) {
+			return nil
+		}
 		err = tracker.modifyExistingColumn(spec.NewColumns[0], spec.Position)
 	case ast.AlterTableChangeColumn:
 		if len(spec.NewColumns) == 0 {
@@ -341,6 +373,9 @@ func (tracker *TableTracker) modifyColumn(spec *ast.AlterTableSpec) error {
 		}
 		oldColName = spec.OldColumnName.Name
 		newColName = spec.NewColumns[0].Name.Name
+		if tracker.ignoreColumnNotExistsIfExists(oldColName, spec.IfExists) {
+			return nil
+		}
 		err = tracker.changeExistingColumn(oldColName, spec.NewColumns[0], spec.Position)
 	default:
 		return nil
@@ -541,6 +576,9 @@ func (tracker *TableTracker) changeExistingColumn(oldColName pmodel.CIStr, newCo
 }
 
 func (tracker *TableTracker) renameIndex(spec *ast.AlterTableSpec) error {
+	if tracker.ignoreIndexNotExistsIfExists(spec.FromKey, spec.IfExists) {
+		return nil
+	}
 	if _, ok := tracker.addedIndexColumn[spec.FromKey.L]; ok {
 		return infoschema.ErrKeyNotExists.GenWithStackByArgs(spec.FromKey.O, tracker.TableInfo().Name)
 	}
@@ -589,6 +627,9 @@ func (tracker *TableTracker) alterColumn(spec *ast.AlterTableSpec) error {
 
 func (tracker *TableTracker) dropColumn(spec *ast.AlterTableSpec) error {
 	colName := spec.OldColumnName.Name
+	if tracker.ignoreColumnNotExistsIfExists(colName, spec.IfExists) {
+		return nil
+	}
 	if err := tracker.checkColumnCanBeDroped(colName, tracker.tableInfo.Name); err != nil {
 		return err
 	}
@@ -659,8 +700,13 @@ func (tracker *TableTracker) dropIndex(spec *ast.AlterTableSpec) error {
 	indexName := pmodel.NewCIStr(spec.Name)
 	if spec.Tp == ast.AlterTableDropPrimaryKey {
 		indexName = pmodel.NewCIStr(mysql.PrimaryKeyName)
+		if spec.IfExists && tracker.tableInfo.FindIndexByName(indexName.L) == nil && !tracker.tableInfo.PKIsHandle {
+			return nil
+		}
+	} else if tracker.ignoreIndexNotExistsIfExists(indexName, spec.IfExists) {
+		return nil
 	}
-	if skip, err := tracker.checkIndexCanBeDropped(indexName); skip || err != nil {
+	if err := tracker.checkIndexCanBeDropped(indexName); err != nil {
 		return err
 	}
 	mockTbl := tables.MockTableFromMeta(tracker.tableInfo)

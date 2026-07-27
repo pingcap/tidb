@@ -3570,11 +3570,6 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 	colName := spec.OldColumnName.Name
 	originalCol := table.FindCol(t.VisibleCols(), colName.L)
 	currentCol := table.FindCol(currentTbl.VisibleCols(), colName.L)
-	if tbTracker != nil {
-		if err := tbTracker.checkColumnCanBeDroped(colName, currentTbl.Meta().Name); err != nil {
-			return err
-		}
-	}
 	if currentCol == nil && originalCol != nil {
 		if t.Meta().Partition != nil {
 			return dbterror.ErrRunMultiSchemaChanges
