@@ -490,6 +490,53 @@ pub fn run_select_meta_in(
     run_select_stmt(select, catalog, current_db)
 }
 
+/// Materializes a `WITH` clause's CTEs into `catalog`, so the query that
+/// follows resolves them like ordinary tables.
+///
+/// Go plans a non-recursive CTE as its own subtree the outer query reads from
+/// (`buildWith`), and a later CTE may reference an earlier one; materializing
+/// them in written order gives that.
+///
+/// DEFERRED (documented): `WITH RECURSIVE`, which needs the iterate-to-fixpoint
+/// executor, and is rejected rather than run as if it were non-recursive --
+/// that would silently return only the seed rows.
+fn materialize_ctes(
+    with: &tidb_ast::WithClause,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<Catalog, DriverError> {
+    if with.recursive {
+        return Err(DriverError::Unsupported(
+            "WITH RECURSIVE is not supported yet",
+        ));
+    }
+    // The scratch catalog carries the real tables too, since the CTE bodies
+    // and the outer query both read them.
+    let mut scratch = catalog.clone();
+    for cte in &with.ctes {
+        let tidb_ast::QueryStmt::Select(select) = &*cte.query else {
+            return Err(DriverError::Unsupported(
+                "a set-operation CTE is not supported yet",
+            ));
+        };
+        // Each CTE sees the ones already materialized, which is what lets a
+        // later one reference an earlier one.
+        let (mut columns, rows) = run_select_stmt(select, &scratch, current_db)?;
+        if !cte.columns.is_empty() {
+            if cte.columns.len() != columns.len() {
+                return Err(DriverError::Unsupported(
+                    "the CTE column list does not match its query's columns",
+                ));
+            }
+            for (column, name) in columns.iter_mut().zip(&cte.columns) {
+                column.0 = name.clone();
+            }
+        }
+        scratch.register_mem_in(current_db, &cte.name, MemTable { columns, rows });
+    }
+    Ok(scratch)
+}
+
 /// Runs one parsed `SELECT` against the catalog, for a caller that has
 /// already rewritten the statement (session-variable binding, for instance)
 /// and must not go back through SQL text.
@@ -507,6 +554,16 @@ fn run_select_stmt(
     catalog: &Catalog,
     current_db: &str,
 ) -> Result<SelectMeta, DriverError> {
+    // A WITH clause's CTEs are materialized first, then the query runs against
+    // a catalog that contains them.
+    let with_catalog;
+    let catalog = match &select.with {
+        Some(with) => {
+            with_catalog = materialize_ctes(with, catalog, current_db)?;
+            &with_catalog
+        }
+        None => catalog,
+    };
     // Uncorrelated subqueries are evaluated now and folded into literals, so
     // everything below plans against ordinary expressions (Go's
     // handleScalarSubquery for the non-Apply case).
@@ -5001,6 +5058,87 @@ mod tests {
             run_select_on("SELECT DISTINCT SUM(v) FROM g3 GROUP BY k", &catalog).unwrap(),
             vec![vec![Datum::Int(5)], vec![Datum::Int(9)]]
         );
+    }
+
+    /// Non-recursive CTEs: each is materialized in written order and then
+    /// resolves like an ordinary table, which is the shape Go's buildWith
+    /// plans. The previous behavior was an "unknown table" error.
+    #[test]
+    fn common_table_expressions() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE c1 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO c1 VALUES (1, 10), (2, 20), (3, 30)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        assert_eq!(
+            run_select_on(
+                "WITH c AS (SELECT a FROM c1 WHERE a > 1) SELECT a FROM c",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
+        );
+        // The outer query filters, orders and aggregates the CTE like a table.
+        assert_eq!(
+            run_select_on(
+                "WITH c AS (SELECT a, b FROM c1) SELECT SUM(b) FROM c WHERE a >= 2",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(50)]]
+        );
+        // A column list renames the CTE's columns.
+        assert_eq!(
+            run_select_on(
+                "WITH c (x) AS (SELECT a FROM c1 WHERE a = 3) SELECT x FROM c",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(3)]]
+        );
+        // A later CTE may read an earlier one, which is why they are
+        // materialized in written order.
+        assert_eq!(
+            run_select_on(
+                "WITH c AS (SELECT a FROM c1 WHERE a > 1), d AS (SELECT a FROM c WHERE a > 2) \
+                 SELECT a FROM d",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(3)]]
+        );
+        // A CTE and a real table join.
+        assert_eq!(
+            run_select_on(
+                "WITH c AS (SELECT a FROM c1 WHERE a = 2) SELECT c1.b FROM c JOIN c1 ON c.a = c1.a",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(20)]]
+        );
+        // A CTE shadows a real table of the same name, as in SQL.
+        assert_eq!(
+            run_select_on("WITH c1 AS (SELECT 9 AS a) SELECT a FROM c1", &catalog).unwrap(),
+            vec![vec![Datum::Int(9)]]
+        );
+
+        // WITH RECURSIVE is rejected rather than run as if it were plain,
+        // which would silently return only the seed rows.
+        assert!(run_select_on(
+            "WITH RECURSIVE c (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 3) \
+             SELECT n FROM c",
+            &catalog
+        )
+        .is_err());
+        // A mismatched column list is an error, not a silent rename of some.
+        assert!(run_select_on(
+            "WITH c (x, y) AS (SELECT a FROM c1) SELECT x FROM c",
+            &catalog
+        )
+        .is_err());
     }
 
     #[test]
