@@ -276,6 +276,12 @@ impl Catalog {
         self.version
     }
 
+    /// A table of the default database, for tests that inspect the entry.
+    #[must_use]
+    pub fn get_table_for_test(&self, name: &str) -> Option<&TableEntry> {
+        self.get(name)
+    }
+
     /// Whether `database` holds a table called `name`.
     #[must_use]
     pub fn contains_in(&self, database: &str, name: &str) -> bool {
@@ -346,6 +352,13 @@ pub enum DriverError {
     Var(VarErrorKind),
     /// A schema statement failed.
     Schema(SchemaErrorKind),
+    /// Go `ErrDupEntry` (1062).
+    DuplicateEntry {
+        /// The rejected key value.
+        value: String,
+        /// The violated key's name.
+        key: String,
+    },
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
@@ -835,8 +848,12 @@ pub fn run_insert_in(
         TableEntry::Mem(mem) => mem.rows.extend(new_rows),
         TableEntry::Kv(kv) => {
             for row in &new_rows {
-                kv.insert_row(row)
-                    .map_err(|e| DriverError::Parse(format!("row encode failed: {e:?}")))?;
+                kv.insert_row(row).map_err(|e| match e {
+                    crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
+                        DriverError::DuplicateEntry { value, key }
+                    }
+                    other => DriverError::Parse(format!("row encode failed: {other:?}")),
+                })?;
             }
         }
     }
@@ -3201,6 +3218,104 @@ mod tests {
             &catalog
         )
         .is_err());
+    }
+
+    /// A single-column integer PRIMARY KEY becomes the row handle (Go's
+    /// TableInfo.PKIsHandle), so the key value addresses the row and a repeat
+    /// is ErrDupEntry. Transcreated from Go's own duplicate-key behavior in
+    /// pkg/table/tables `AddRecord`.
+    #[test]
+    fn integer_primary_key_is_the_row_handle() {
+        for ddl in [
+            "CREATE TABLE p (id BIGINT PRIMARY KEY, v BIGINT)",
+            "CREATE TABLE p (id BIGINT, v BIGINT, PRIMARY KEY (id))",
+        ] {
+            let mut catalog = Catalog::default();
+            crate::run_create_table_on(ddl, &mut catalog).unwrap();
+            run_insert_on("INSERT INTO p VALUES (10, 100), (20, 200)", &mut catalog).unwrap();
+
+            // The rows come back in handle order, which is the key's order --
+            // not insertion order, because the handle IS the primary key.
+            run_insert_on("INSERT INTO p VALUES (5, 50)", &mut catalog).unwrap();
+            assert_eq!(
+                run_select_on("SELECT id FROM p", &catalog).unwrap(),
+                vec![
+                    vec![Datum::Int(5)],
+                    vec![Datum::Int(10)],
+                    vec![Datum::Int(20)],
+                ],
+                "{ddl}"
+            );
+
+            // A repeated key is Go's ErrDupEntry.
+            assert!(
+                matches!(
+                    run_insert_on("INSERT INTO p VALUES (10, 999)", &mut catalog),
+                    Err(DriverError::DuplicateEntry { .. })
+                ),
+                "{ddl}"
+            );
+            // The failed insert left the original row untouched.
+            assert_eq!(
+                run_select_on("SELECT v FROM p WHERE id = 10", &catalog).unwrap(),
+                vec![vec![Datum::Int(100)]],
+                "{ddl}"
+            );
+            // A negative key works too: the key codec sign-flips handles.
+            run_insert_on("INSERT INTO p VALUES (-1, 1)", &mut catalog).unwrap();
+            assert_eq!(
+                run_select_on("SELECT id FROM p", &catalog).unwrap().len(),
+                4,
+                "{ddl}"
+            );
+        }
+    }
+
+    /// Without a primary key the handle is the allocated row id, so repeated
+    /// values are fine -- the table is a heap, as in Go with _tidb_rowid.
+    #[test]
+    fn without_a_primary_key_rows_repeat_freely() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE h (a BIGINT)", &mut catalog).unwrap();
+        run_insert_on("INSERT INTO h VALUES (1), (1), (1)", &mut catalog).unwrap();
+        assert_eq!(run_select_on("SELECT a FROM h", &catalog).unwrap().len(), 3);
+    }
+
+    /// Constraint shapes that need tiers this seed lacks are rejected rather
+    /// than silently dropped, so a table never claims what it cannot enforce.
+    #[test]
+    fn unsupported_constraints_are_rejected() {
+        let mut catalog = Catalog::default();
+        for ddl in [
+            // A multi-column primary key needs the common-handle tier.
+            "CREATE TABLE c (a BIGINT, b BIGINT, PRIMARY KEY (a, b))",
+            // UNIQUE needs the index tier.
+            "CREATE TABLE c (a BIGINT UNIQUE)",
+            "CREATE TABLE c (a BIGINT, UNIQUE KEY (a))",
+            // Two primary keys is not a table.
+            "CREATE TABLE c (a BIGINT PRIMARY KEY, b BIGINT PRIMARY KEY)",
+            // A prefix-length primary key needs prefix index support.
+            "CREATE TABLE c (a VARCHAR(10), PRIMARY KEY (a(3)))",
+        ] {
+            assert!(
+                crate::run_create_table_on(ddl, &mut catalog).is_err(),
+                "{ddl} should be rejected"
+            );
+        }
+    }
+
+    /// A non-integer primary key is not a handle: Go only sets PKIsHandle for
+    /// a single integer column, so the table keeps allocating row ids.
+    #[test]
+    fn a_non_integer_primary_key_is_not_the_handle() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE s (k VARCHAR(10) PRIMARY KEY)", &mut catalog)
+            .unwrap();
+        run_insert_on("INSERT INTO s VALUES ('a'), ('b')", &mut catalog).unwrap();
+        assert_eq!(run_select_on("SELECT k FROM s", &catalog).unwrap().len(), 2);
+        // DEFERRED (documented): without the index tier the duplicate is not
+        // detected, so this insert succeeds where real TiDB reports 1062.
+        assert!(run_insert_on("INSERT INTO s VALUES ('a')", &mut catalog).is_ok());
     }
 
     #[test]

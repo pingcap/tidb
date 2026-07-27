@@ -184,6 +184,12 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
                 "Write conflict, please retry the transaction".to_owned(),
             )
         }
+        // Go: "Duplicate entry '%-.64s' for key '%-.192s'".
+        tidb_executor::DriverError::DuplicateEntry { value, key } => SqlQueryError::new(
+            1062,
+            *b"23000",
+            format!("Duplicate entry '{value}' for key '{key}'"),
+        ),
         // Go: "Unknown database '%-.192s'".
         tidb_executor::DriverError::Schema(tidb_executor::SchemaErrorKind::UnknownDatabase(
             name,

@@ -41,7 +41,9 @@ use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_ran
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
-use tidb_txnkv::{Key, KvIterator, MemStorage, Mutator, Retriever};
+use tidb_txnkv::{
+    GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
+};
 
 /// A column of a [`KvTable`]: name, column id, and type.
 #[derive(Clone, Debug)]
@@ -66,6 +68,9 @@ pub struct KvTable {
     /// The next integer row handle (Go `_tidb_rowid` allocation, simplified to
     /// a monotone counter; the real autoid allocator is a separate unit).
     next_handle: i64,
+    /// Go `TableInfo.PKIsHandle`: the offset of the single integer primary-key
+    /// column whose value IS the row handle, when the table has one.
+    pk_handle_offset: Option<usize>,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -73,6 +78,13 @@ pub struct KvTable {
 pub enum KvTableError {
     /// A row failed to encode.
     Encode(String),
+    /// Go `ErrDupEntry` (1062): a row with this primary key already exists.
+    DuplicateEntry {
+        /// The rejected key value, as MySQL prints it.
+        value: String,
+        /// The violated key's name; Go names the clustered one PRIMARY.
+        key: String,
+    },
     /// A stored value failed to decode.
     Decode(String),
     /// The storage layer refused a read or write.
@@ -88,7 +100,20 @@ impl KvTable {
             columns,
             store: MemStorage::new(),
             next_handle: 1,
+            pk_handle_offset: None,
         }
+    }
+
+    /// Marks the column at `offset` as the table's handle column, which Go
+    /// records as `TableInfo.PKIsHandle`.
+    pub fn set_pk_handle_offset(&mut self, offset: usize) {
+        self.pk_handle_offset = Some(offset);
+    }
+
+    /// The handle column's offset, if the table has one.
+    #[must_use]
+    pub fn pk_handle_offset(&self) -> Option<usize> {
+        self.pk_handle_offset
     }
 
     /// The number of stored rows.
@@ -110,8 +135,38 @@ impl KvTable {
         let column_ids: Vec<i64> = self.columns.iter().map(|c| c.id).collect();
         let value = encode_table_row(None, row, &column_ids, true, None)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        let handle = self.next_handle;
-        self.next_handle += 1;
+        // Go `addRecord`: with PKIsHandle the primary key's value IS the
+        // handle, so the row key encodes it and a repeat is a duplicate.
+        let handle = match self.pk_handle_offset {
+            Some(offset) => {
+                let handle = match row.get(offset) {
+                    Some(Datum::Int(value)) => *value,
+                    Some(Datum::UInt(value)) => *value as i64,
+                    Some(Datum::Null) | None => {
+                        return Err(KvTableError::Encode(
+                            "the primary key column has no value".to_owned(),
+                        ))
+                    }
+                    Some(other) => {
+                        return Err(KvTableError::Encode(format!(
+                            "a handle primary key needs an integer value, got {other:?}"
+                        )))
+                    }
+                };
+                if self.row_exists(handle)? {
+                    return Err(KvTableError::DuplicateEntry {
+                        value: handle.to_string(),
+                        key: "PRIMARY".to_owned(),
+                    });
+                }
+                handle
+            }
+            None => {
+                let handle = self.next_handle;
+                self.next_handle += 1;
+                handle
+            }
+        };
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
             &RecordHandle::Int(handle),
@@ -167,6 +222,19 @@ impl KvTable {
         }
         iterator.close();
         Ok(rows)
+    }
+
+    /// Whether a row is already stored under `handle`.
+    fn row_exists(&mut self, handle: i64) -> Result<bool, KvTableError> {
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            self.table_id,
+            &RecordHandle::Int(handle),
+        ));
+        match self.store.get(&key, GetOptions::default()) {
+            Ok(_) => Ok(true),
+            Err(MemStorageError::NotFound) => Ok(false),
+            Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
+        }
     }
 
     /// Replaces the row stored under `handle` (Go's `UPDATE` writes the new

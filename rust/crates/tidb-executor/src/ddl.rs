@@ -35,6 +35,93 @@ use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 
 /// Builds the column's `FieldType` from its parsed SQL type: code via
+/// Go `mysql.NotNullFlag`.
+const NOT_NULL_FLAG: u32 = 1;
+/// Go `mysql.PriKeyFlag`.
+const PRI_KEY_FLAG: u32 = 1 << 1;
+
+/// Go `isIntCol`: whether the column's type can carry a handle.
+fn is_int_column(column: &ColumnInfo) -> bool {
+    matches!(
+        column.field_type.code(),
+        FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+    )
+}
+
+/// The single column a `PRIMARY KEY` names, whether written inline on the
+/// column or as a table constraint.
+///
+/// DEFERRED (documented): a multi-column primary key, which Go turns into a
+/// clustered common handle (`IsCommonHandle`); an expression or
+/// prefix-length key; and `UNIQUE`/`KEY`/`FOREIGN KEY` constraints, which
+/// need the index tier. All are rejected rather than silently dropped, so a
+/// table never claims a constraint it does not enforce.
+fn primary_key_column(create: &tidb_ast::CreateTableStmt) -> Result<Option<String>, DriverError> {
+    let mut found: Option<String> = None;
+    for def in &create.columns {
+        for option in &def.options {
+            if let tidb_ast::ColumnOption::InlineKey(key) = option {
+                match key.kind {
+                    tidb_ast::InlineKeyKind::Primary { .. } => {
+                        if found.is_some() {
+                            return Err(DriverError::Unsupported(
+                                "a table may define only one primary key",
+                            ));
+                        }
+                        found = Some(def.name.clone());
+                    }
+                    tidb_ast::InlineKeyKind::Unique => {
+                        return Err(DriverError::Unsupported(
+                            "UNIQUE keys are deferred (they need the index tier)",
+                        ))
+                    }
+                }
+            }
+        }
+    }
+    for constraint in &create.table_constraints {
+        let tidb_ast::TableConstraint::Index(index) = constraint else {
+            return Err(DriverError::Unsupported(
+                "only PRIMARY KEY table constraints are supported yet",
+            ));
+        };
+        if index.kind != tidb_ast::IndexConstraintKind::PrimaryKey {
+            return Err(DriverError::Unsupported(
+                "only PRIMARY KEY table constraints are supported yet",
+            ));
+        }
+        if found.is_some() {
+            return Err(DriverError::Unsupported(
+                "a table may define only one primary key",
+            ));
+        }
+        let [part] = index.parts.as_slice() else {
+            return Err(DriverError::Unsupported(
+                "a multi-column primary key is deferred (it needs the common-handle tier)",
+            ));
+        };
+        let tidb_ast::IndexPart::Column {
+            name, prefix_len, ..
+        } = part
+        else {
+            return Err(DriverError::Unsupported(
+                "an expression primary key is not supported yet",
+            ));
+        };
+        if prefix_len.is_some() {
+            return Err(DriverError::Unsupported(
+                "a prefix-length primary key is not supported yet",
+            ));
+        }
+        found = Some(name.clone());
+    }
+    Ok(found)
+}
+
 /// `str_to_type`, flen/decimal from numeric type arguments, unsigned flag.
 fn field_type_of(def: &ColumnDef) -> Result<FieldType, DriverError> {
     let code = str_to_type(&def.ty.name.to_lowercase());
@@ -97,11 +184,6 @@ pub fn run_create_table_in(
     if create.like_table.is_some() {
         return Err(DriverError::Unsupported("CREATE TABLE LIKE is deferred"));
     }
-    if !create.table_constraints.is_empty() {
-        return Err(DriverError::Unsupported(
-            "table constraints (PK/UNIQUE/FK) are deferred",
-        ));
-    }
     if create.columns.is_empty() {
         return Err(DriverError::Unsupported("a table needs columns"));
     }
@@ -124,10 +206,37 @@ pub fn run_create_table_in(
         columns.push(col);
     }
 
+    // The primary key, written either inline on a column or as a table
+    // constraint.
+    let primary_key = primary_key_column(create)?;
+    let pk_offset = match &primary_key {
+        Some(pk_name) => {
+            let offset = columns
+                .iter()
+                .position(|col| col.name.original().eq_ignore_ascii_case(pk_name))
+                .ok_or(DriverError::Unsupported(
+                    "the primary key names a column the table does not define",
+                ))?;
+            Some(offset)
+        }
+        None => None,
+    };
+    // Go `isSingleIntPK` + `ShouldBuildClusteredIndex`: a single-column
+    // integer primary key becomes the row handle rather than a separate
+    // index, which is what `TableInfo.PKIsHandle` records.
+    let pk_is_handle = pk_offset.is_some_and(|offset| is_int_column(&columns[offset]));
+    if let Some(offset) = pk_offset {
+        // A primary key column is implicitly NOT NULL, as in MySQL.
+        // Go marks a primary-key column NOT NULL and PRI (mysql.NotNullFlag,
+        // mysql.PriKeyFlag).
+        columns[offset].add_flag(NOT_NULL_FLAG | PRI_KEY_FLAG);
+    }
+
     let info = TableInfo {
         id: catalog.allocate_table_id(),
         name: CiString::new(name),
         columns,
+        pk_is_handle,
         ..TableInfo::default()
     };
 
@@ -141,6 +250,12 @@ pub fn run_create_table_in(
         })
         .collect();
     let table = KvTable::new(info.id, kv_columns);
+    let mut table = table;
+    if pk_is_handle {
+        if let Some(offset) = pk_offset {
+            table.set_pk_handle_offset(offset);
+        }
+    }
     catalog.register_kv_in(&database, name, table);
     Ok(true)
 }
@@ -186,11 +301,21 @@ mod tests {
         );
     }
 
+    /// A single-column integer primary key sets Go's `PKIsHandle`; a
+    /// non-integer one does not (`isIntCol`).
     #[test]
-    fn constraints_are_deferred() {
+    fn primary_key_sets_the_handle_flag_only_for_an_integer_column() {
         let mut catalog = Catalog::default();
-        assert!(
-            run_create_table_on("CREATE TABLE t (a INT, PRIMARY KEY (a))", &mut catalog).is_err()
-        );
+        run_create_table_on("CREATE TABLE t (a INT, PRIMARY KEY (a))", &mut catalog).unwrap();
+        run_create_table_on("CREATE TABLE s (a VARCHAR(4) PRIMARY KEY)", &mut catalog).unwrap();
+        run_create_table_on("CREATE TABLE h (a INT)", &mut catalog).unwrap();
+
+        let handle_offset = |name: &str| match catalog.get_table_for_test(name) {
+            Some(crate::TableEntry::Kv(kv)) => kv.pk_handle_offset(),
+            _ => panic!("expected a kv table"),
+        };
+        assert_eq!(handle_offset("t"), Some(0));
+        assert_eq!(handle_offset("s"), None, "a string PK is not a handle");
+        assert_eq!(handle_offset("h"), None, "no PK, no handle column");
     }
 }
