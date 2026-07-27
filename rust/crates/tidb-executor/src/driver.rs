@@ -534,6 +534,219 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
     Ok(inserted)
 }
 
+/// Go `aggregation.NewAggFuncDesc` + `baseFuncDesc.TypeInfer`: the aggregate
+/// kind and the result type inferred for its argument.
+fn agg_kind_and_type(name: &str, arg: &Expression) -> Result<(AggKind, FieldType), DriverError> {
+    Ok(match name {
+        "COUNT" => (AggKind::Count, FieldType::new(FieldTypeCode::LongLong)),
+        "SUM" => {
+            let t = arg
+                .static_type()
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            (AggKind::Sum, t)
+        }
+        // Go `typeInfer4MaxMin`: the result carries the argument's
+        // own type (with NOT NULL dropped, which this seed does not
+        // track on result columns).
+        "MIN" | "MAX" => {
+            let t = arg
+                .static_type()
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            let kind = if name == "MIN" {
+                AggKind::Min
+            } else {
+                AggKind::Max
+            };
+            (kind, t)
+        }
+        // Go `typeInfer4Avg`: DOUBLE for real arguments, otherwise
+        // DECIMAL. The decimal scale Go derives from
+        // div_precision_increment is display metadata this seed
+        // does not set on result columns (documented deferral).
+        "AVG" => {
+            let code = arg
+                .static_type()
+                .map_or(FieldTypeCode::NewDecimal, |t| match t.code() {
+                    FieldTypeCode::Float | FieldTypeCode::Double => FieldTypeCode::Double,
+                    _ => FieldTypeCode::NewDecimal,
+                });
+            (AggKind::Avg, FieldType::new(code))
+        }
+        _ => {
+            return Err(DriverError::Unsupported(
+                "this aggregate function is deferred",
+            ))
+        }
+    })
+}
+
+/// The aggregation's output columns, addressed by name.
+///
+/// Go rewrites `HAVING`/`ORDER BY` to reference the aggregation's output
+/// schema (`resolveHavingAndOrderBy` + `buildProjection`), so those clauses see
+/// the aggregate results rather than the source rows. This resolver is that
+/// output schema: a name is a select field's alias or column name, or an
+/// aggregate's restored text.
+struct AggOutputResolver {
+    names: Vec<String>,
+    types: Vec<FieldType>,
+}
+
+impl ColumnResolver for AggOutputResolver {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        let index = self
+            .names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))?;
+        Some((index, self.types[index].clone(), (index + 1) as i64))
+    }
+}
+
+/// Go `havingWindowAndOrderbyExprResolver`: rewrites a `HAVING`/`ORDER BY`
+/// expression so every aggregate in it refers to an aggregation output column,
+/// appending a hidden aggregate when the select list does not already compute
+/// it.
+///
+/// The substitution is textual in the same sense Go's is structural: an
+/// aggregate node becomes a column reference whose name is the aggregate's
+/// restored text, which [`AggOutputResolver`] then binds to the output column.
+///
+/// Only the expression forms the expression rewriter itself supports are
+/// walked (literals, parentheses, unary, binary, columns, aggregates); any
+/// other form would fail to rewrite anyway and is returned unchanged.
+fn substitute_aggregates(
+    expr: &tidb_ast::Expr,
+    agg_funcs: &mut Vec<AggFunc>,
+    names: &mut Vec<String>,
+    types: &mut Vec<FieldType>,
+    group_by_names: &[String],
+    resolver: &TableResolver<'_>,
+) -> Result<tidb_ast::Expr, DriverError> {
+    use tidb_ast::Expr;
+    Ok(match expr {
+        // A column that HAVING/ORDER BY references but the select list does
+        // not project: Go carries it out of the aggregation as a hidden
+        // FIRST_ROW column, exactly as it does for a selected group column.
+        // A column that is not grouped is rejected, which is what
+        // ONLY_FULL_GROUP_BY reports in Go.
+        Expr::Column(path) => {
+            let name = path.last().cloned().unwrap_or_default();
+            if names
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
+            {
+                return Ok(expr.clone());
+            }
+            if !group_by_names
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
+            {
+                return Err(DriverError::Unsupported(
+                    "this clause references a column that is neither grouped nor aggregated",
+                ));
+            }
+            let carrier = rewrite_expr_resolved(expr, resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            let ftype = carrier
+                .static_type()
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            agg_funcs.push(AggFunc {
+                kind: AggKind::FirstRow,
+                arg: Some(carrier),
+                distinct: false,
+            });
+            names.push(name.clone());
+            types.push(ftype);
+            Expr::Column(vec![name])
+        }
+        Expr::Aggregate { .. } => {
+            let text = expr.restore();
+            if !names.iter().any(|name| name.eq_ignore_ascii_case(&text)) {
+                let (func, ftype) = build_agg_func(expr, resolver)?;
+                agg_funcs.push(func);
+                names.push(text.clone());
+                types.push(ftype);
+            }
+            Expr::Column(vec![text])
+        }
+        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_aggregates(
+            inner,
+            agg_funcs,
+            names,
+            types,
+            group_by_names,
+            resolver,
+        )?)),
+        Expr::Unary(op, inner) => Expr::Unary(
+            *op,
+            Box::new(substitute_aggregates(
+                inner,
+                agg_funcs,
+                names,
+                types,
+                group_by_names,
+                resolver,
+            )?),
+        ),
+        Expr::Binary(op, lhs, rhs) => Expr::Binary(
+            *op,
+            Box::new(substitute_aggregates(
+                lhs,
+                agg_funcs,
+                names,
+                types,
+                group_by_names,
+                resolver,
+            )?),
+            Box::new(substitute_aggregates(
+                rhs,
+                agg_funcs,
+                names,
+                types,
+                group_by_names,
+                resolver,
+            )?),
+        ),
+        other => other.clone(),
+    })
+}
+
+/// Builds one aggregate function (and its Go-inferred result type) from an
+/// `Expr::Aggregate` node.
+fn build_agg_func(
+    expr: &tidb_ast::Expr,
+    resolver: &TableResolver<'_>,
+) -> Result<(AggFunc, FieldType), DriverError> {
+    let tidb_ast::Expr::Aggregate {
+        name,
+        distinct,
+        args,
+    } = expr
+    else {
+        return Err(DriverError::Unsupported("not an aggregate function"));
+    };
+    let [arg] = args.as_slice() else {
+        return Err(DriverError::Unsupported(
+            "multi-argument aggregates are deferred",
+        ));
+    };
+    let arg =
+        rewrite_expr_resolved(arg, resolver).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+    let (kind, ftype) = agg_kind_and_type(name, &arg)?;
+    Ok((
+        AggFunc {
+            kind,
+            arg: Some(arg),
+            distinct: *distinct,
+        },
+        ftype,
+    ))
+}
+
 /// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
 /// through [`HashAggExec`].
 ///
@@ -541,9 +754,10 @@ pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverErro
 /// `COUNT(*)` as the literal-`1` argument, which counts every row identically);
 /// any non-aggregate select field becomes a `FIRST_ROW` carrier (Go's planner
 /// does the same; `ONLY_FULL_GROUP_BY` validation is deferred); `DISTINCT`
-/// modifiers, other aggregate functions, `WITH ROLLUP`, `HAVING`, and
-/// `ORDER BY` over aggregate output (needs output-schema resolution) are
-/// rejected as unsupported.
+/// other aggregate functions and `WITH ROLLUP` are rejected as unsupported.
+/// `HAVING` and `ORDER BY` run over the aggregation's output, as in Go: an
+/// aggregate appearing only in those clauses is appended as a hidden output
+/// column and trimmed by a final projection.
 fn run_aggregate_select(
     select: &tidb_ast::SelectStmt,
     table: Option<(&str, &TableEntry)>,
@@ -553,14 +767,6 @@ fn run_aggregate_select(
 ) -> Result<SelectMeta, DriverError> {
     if select.rollup {
         return Err(DriverError::Unsupported("WITH ROLLUP is not supported yet"));
-    }
-    if select.having.is_some() {
-        return Err(DriverError::Unsupported("HAVING is not supported yet"));
-    }
-    if !select.order_by.is_empty() {
-        return Err(DriverError::Unsupported(
-            "ORDER BY over aggregate output is not supported yet",
-        ));
     }
 
     // Fields -> aggregate functions (+ output names/types).
@@ -587,51 +793,7 @@ fn run_aggregate_select(
                 };
                 let arg = rewrite_expr_resolved(arg, resolver)
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                let (kind, ftype) = match name.as_str() {
-                    "COUNT" => (AggKind::Count, FieldType::new(FieldTypeCode::LongLong)),
-                    "SUM" => {
-                        let t = arg
-                            .static_type()
-                            .cloned()
-                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-                        (AggKind::Sum, t)
-                    }
-                    // Go `typeInfer4MaxMin`: the result carries the argument's
-                    // own type (with NOT NULL dropped, which this seed does not
-                    // track on result columns).
-                    "MIN" | "MAX" => {
-                        let t = arg
-                            .static_type()
-                            .cloned()
-                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-                        let kind = if name == "MIN" {
-                            AggKind::Min
-                        } else {
-                            AggKind::Max
-                        };
-                        (kind, t)
-                    }
-                    // Go `typeInfer4Avg`: DOUBLE for real arguments, otherwise
-                    // DECIMAL. The decimal scale Go derives from
-                    // div_precision_increment is display metadata this seed
-                    // does not set on result columns (documented deferral).
-                    "AVG" => {
-                        let code = arg
-                            .static_type()
-                            .map_or(FieldTypeCode::NewDecimal, |t| match t.code() {
-                                FieldTypeCode::Float | FieldTypeCode::Double => {
-                                    FieldTypeCode::Double
-                                }
-                                _ => FieldTypeCode::NewDecimal,
-                            });
-                        (AggKind::Avg, FieldType::new(code))
-                    }
-                    _ => {
-                        return Err(DriverError::Unsupported(
-                            "this aggregate function is deferred",
-                        ))
-                    }
-                };
+                let (kind, ftype) = agg_kind_and_type(name, &arg)?;
                 agg_funcs.push(AggFunc {
                     kind,
                     arg: Some(arg),
@@ -662,6 +824,48 @@ fn run_aggregate_select(
                 types.push(t);
             }
         }
+    }
+
+    // Every select field has an output column; anything HAVING/ORDER BY adds
+    // beyond this point is hidden and trimmed at the end.
+    let visible_columns = names.len();
+
+    // The grouped column names, which HAVING/ORDER BY may reference even when
+    // the select list does not project them.
+    let group_by_names: Vec<String> = select
+        .group_by
+        .iter()
+        .filter_map(|item| match &item.expr {
+            tidb_ast::Expr::Column(path) => path.last().cloned(),
+            _ => None,
+        })
+        .collect();
+
+    // HAVING / ORDER BY aggregates -> aggregation output columns.
+    let having_expr = match &select.having {
+        Some(having) => Some(substitute_aggregates(
+            having,
+            &mut agg_funcs,
+            &mut names,
+            &mut types,
+            &group_by_names,
+            resolver,
+        )?),
+        None => None,
+    };
+    let mut order_by_exprs = Vec::with_capacity(select.order_by.len());
+    for item in &select.order_by {
+        order_by_exprs.push((
+            substitute_aggregates(
+                &item.expr,
+                &mut agg_funcs,
+                &mut names,
+                &mut types,
+                &group_by_names,
+                resolver,
+            )?,
+            item.desc,
+        ));
     }
 
     // GROUP BY expressions (legacy ASC/DESC direction ignored, as in MySQL 8).
@@ -728,15 +932,47 @@ fn run_aggregate_select(
         })
         .collect();
     let out_schema = Schema::new(out_columns);
-    let ret_types: Vec<FieldType> = types.clone();
 
     let mut root: Box<dyn Executor> = Box::new(HashAggExec::new(
-        ExecutorMeta::new(out_schema, 2, INIT_CAP, MAX_CHUNK_SIZE),
+        ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
         group_by,
         agg_funcs,
         source,
         NoColumns,
     ));
+
+    // HAVING filters the aggregation's output rows (Go's Selection above the
+    // Aggregation), and ORDER BY sorts them.
+    let agg_resolver = AggOutputResolver {
+        names: names.clone(),
+        types: types.clone(),
+    };
+    if let Some(having) = &having_expr {
+        let predicate = rewrite_expr_resolved(having, &agg_resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        root = Box::new(SelectionExec::new(
+            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+            vec![predicate],
+            root,
+            NoColumns,
+        ));
+    }
+    if !order_by_exprs.is_empty() {
+        let mut by_items = Vec::with_capacity(order_by_exprs.len());
+        for (expr, desc) in &order_by_exprs {
+            by_items.push(SortByItem {
+                expr: rewrite_expr_resolved(expr, &agg_resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                desc: *desc,
+            });
+        }
+        root = Box::new(SortExec::new(
+            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+            by_items,
+            root,
+            NoColumns,
+        ));
+    }
     if let Some(limit) = &select.limit {
         let count = eval_limit_bound(&limit.count)?;
         let offset = match &limit.offset {
@@ -751,6 +987,40 @@ fn run_aggregate_select(
             root,
         ));
     }
+
+    // Aggregates that only HAVING or ORDER BY needed are computed but not
+    // selected, so a projection trims them back to the select list (Go's
+    // final projection over the aggregation's schema).
+    if visible_columns < names.len() {
+        let visible: Vec<Expression> = (0..visible_columns)
+            .map(|i| {
+                let mut col = Column::new((i + 1) as i64, types[i].clone());
+                col.index = i as i64;
+                Expression::Column(col)
+            })
+            .collect();
+        let visible_columns_schema: Vec<Column> = (0..visible_columns)
+            .map(|i| {
+                let mut col = Column::new((i + 1) as i64, types[i].clone());
+                col.index = i as i64;
+                col
+            })
+            .collect();
+        root = Box::new(ProjectionExec::new(
+            ExecutorMeta::new(
+                Schema::new(visible_columns_schema),
+                5,
+                INIT_CAP,
+                MAX_CHUNK_SIZE,
+            ),
+            visible,
+            root,
+            NoColumns,
+        ));
+        names.truncate(visible_columns);
+        types.truncate(visible_columns);
+    }
+    let ret_types: Vec<FieldType> = types.clone();
 
     root.open()?;
     let mut req = root.new_chunk();
@@ -1034,6 +1304,81 @@ mod tests {
             )
             .unwrap(),
             vec![vec![Datum::Null, Datum::Null, Datum::Null]]
+        );
+    }
+
+    /// HAVING filters aggregate output rows, ORDER BY sorts them, and an
+    /// aggregate that appears only in those clauses is computed as a hidden
+    /// column and trimmed from the result (Go's resolveHavingAndOrderBy plus
+    /// the final projection).
+    #[test]
+    fn aggregate_having_and_order_by() {
+        let mut catalog = test_catalog();
+        crate::run_create_table_on("CREATE TABLE g (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO g VALUES (1, 10), (1, 20), (2, 5), (3, 7), (3, 8)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        // HAVING over an aggregate that IS in the select list.
+        assert_eq!(
+            run_select_on(
+                "SELECT a, COUNT(*) FROM g GROUP BY a HAVING COUNT(*) > 1",
+                &catalog
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(1), Datum::Int(2)],
+                vec![Datum::Int(3), Datum::Int(2)],
+            ]
+        );
+        // HAVING over an aggregate that is NOT selected: one output column.
+        assert_eq!(
+            run_select_on("SELECT a FROM g GROUP BY a HAVING SUM(b) > 15", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)]]
+        );
+        // ORDER BY an aggregate that is not selected, descending.
+        assert_eq!(
+            run_select_on("SELECT a FROM g GROUP BY a ORDER BY SUM(b) DESC", &catalog).unwrap(),
+            vec![
+                vec![Datum::Int(1)],
+                vec![Datum::Int(3)],
+                vec![Datum::Int(2)]
+            ]
+        );
+        // HAVING and ORDER BY together, with LIMIT applied after both.
+        assert_eq!(
+            run_select_on(
+                "SELECT a, SUM(b) FROM g GROUP BY a HAVING COUNT(*) > 1 ORDER BY SUM(b) LIMIT 1",
+                &catalog
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(3), Datum::Int(15)]]
+        );
+        // ORDER BY a selected alias.
+        assert_eq!(
+            run_select_on(
+                "SELECT a, SUM(b) AS total FROM g GROUP BY a ORDER BY total",
+                &catalog
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(2), Datum::Int(5)],
+                vec![Datum::Int(3), Datum::Int(15)],
+                vec![Datum::Int(1), Datum::Int(30)],
+            ]
+        );
+        // A grouped column that is not selected is still visible to HAVING
+        // and ORDER BY (Go carries it as a hidden FIRST_ROW column).
+        assert_eq!(
+            run_select_on("SELECT COUNT(*) FROM g GROUP BY a HAVING a > 1", &catalog).unwrap(),
+            vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+        );
+        // A global aggregate's HAVING filters the single group.
+        assert_eq!(
+            run_select_on("SELECT COUNT(*) FROM g HAVING COUNT(*) > 100", &catalog).unwrap(),
+            Vec::<Vec<Datum>>::new()
         );
     }
 
