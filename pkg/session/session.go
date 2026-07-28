@@ -4929,6 +4929,13 @@ const (
 	notBootstrapped = 0
 )
 
+// User keyspace startup waits for the SYSTEM keyspace to finish bootstrapping;
+// on exhaustion, notBootstrapped is returned for bootstrapSessionImpl to reject.
+// Note: we will wait nearly 30 minutes as long as the inner txn reports retryable
+// error, and will not respond kill signal during this time. Since the caller
+// is using a background context and won't cancel on kill signal anyway, pass it
+// won't help here. And do kill during bootstrap seems not that common, we can
+// enhance it later.
 func waitSystemBootVersion() int64 {
 	store := kvstore.GetSystemStorage()
 	const (
@@ -4937,8 +4944,6 @@ func waitSystemBootVersion() int64 {
 	)
 	backoffer := backoff.NewExponential(time.Second, 2, maxInterval)
 	var ver int64
-	// User keyspace startup waits for the SYSTEM keyspace to finish bootstrapping; on exhaustion,
-	// notBootstrapped is returned for bootstrapSessionImpl to reject.
 	// total backoff time is around ∑(1, 2, 4, 5...) ~= 30 minutes
 	start := time.Now()
 	for i := range maxRetryCount {
