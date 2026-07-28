@@ -4449,7 +4449,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	if ver < currentBootstrapVersion {
-		err = runInBootstrapSession(store, ver)
+		err = runInBootstrapSession(store, ver, domainCreateOptions{extWorkloadMgr: extWorkloadMgr})
 		if err != nil {
 			return nil, err
 		}
@@ -4704,7 +4704,7 @@ func getStartMode(ver int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) error {
+func runInBootstrapSession(store kv.Storage, ver int64, opts domainCreateOptions) error {
 	startMode := getStartMode(ver)
 	startTime := time.Now()
 	defer func() {
@@ -4751,7 +4751,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) error {
 			}
 		}
 	}
-	s, err := createSession(store)
+	s, err := createSessionWithDomainOptions(store, opts)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
@@ -4823,7 +4823,11 @@ func createSessionsImpl(store kv.Storage, cnt int) ([]*session, error) {
 // This means the min ts reporter is not aware of it and may report a wrong min start ts.
 // In most cases you should use a session pool in domain instead.
 func createSession(store kv.Storage) (*session, error) {
-	dom, err := domap.Get(store)
+	return createSessionWithDomainOptions(store, domainCreateOptions{})
+}
+
+func createSessionWithDomainOptions(store kv.Storage, opts domainCreateOptions) (*session, error) {
+	dom, err := domap.getWithEtcdClient(store, nil, nil, opts)
 	if err != nil {
 		return nil, err
 	}

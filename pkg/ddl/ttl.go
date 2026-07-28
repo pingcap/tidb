@@ -96,11 +96,7 @@ func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 		return ver, errors.Trace(err)
 	}
 	if jobCtx.oldDDLCtx != nil {
-		if err := jobCtx.oldDDLCtx.registerTTLTableToExternalWorkload(jobCtx.ctx, tblInfo); err != nil {
-			logutil.DDLLogger().Warn("failed to register TTL table to external workload controller",
-				zap.Int64("tableID", tblInfo.ID),
-				zap.Error(err))
-		}
+		jobCtx.oldDDLCtx.syncTTLTableToExternalWorkload(jobCtx.ctx, tblInfo)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -120,6 +116,25 @@ func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInf
 		return nil
 	}
 	return manager.RegisterTTLTask(ctx, tblInfo.ID, vardef.EnableTTLJob.Load())
+}
+
+func (dc *ddlCtx) tryRegisterTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) {
+	if err := dc.registerTTLTableToExternalWorkload(ctx, tblInfo); err != nil {
+		logutil.DDLLogger().Warn("failed to register TTL table to external workload controller",
+			zap.Int64("tableID", tblInfo.ID),
+			zap.Error(err))
+	}
+}
+
+func (dc *ddlCtx) syncTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) {
+	if tblInfo == nil {
+		return
+	}
+	if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
+		dc.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID)
+		return
+	}
+	dc.tryRegisterTTLTableToExternalWorkload(ctx, tblInfo)
 }
 
 func (dc *ddlCtx) deleteTTLTableFromExternalWorkload(ctx context.Context, tableID int64) {

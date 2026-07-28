@@ -257,3 +257,23 @@ func TestExternalWorkloadTTLTableRegisterReturnsError(t *testing.T) {
 	})
 	require.ErrorIs(t, err, boom)
 }
+
+func TestExternalWorkloadTTLTableTryRegisterSwallowsError(t *testing.T) {
+	manager := &fakeExternalWorkloadManager{role: config.RoleMaster, registerErr: errors.New("boom")}
+	dc := &ddlCtx{extWorkload: manager}
+	dc.tryRegisterTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
+		ID:      123,
+		TTLInfo: &model.TTLInfo{Enable: true},
+	})
+	require.Equal(t, int64(123), manager.registeredTable)
+}
+
+func TestExternalWorkloadTTLTableSyncDeletesDisabledTTL(t *testing.T) {
+	manager := &fakeExternalWorkloadManager{role: config.RoleMaster}
+	dc := &ddlCtx{extWorkload: manager}
+	dc.syncTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
+		ID:      123,
+		TTLInfo: &model.TTLInfo{Enable: false},
+	})
+	require.Equal(t, int64(123), manager.deletedTable)
+}

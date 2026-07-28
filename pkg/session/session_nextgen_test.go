@@ -32,6 +32,10 @@ type upgradeGCV2Manager struct {
 	abortCount int
 }
 
+type bootstrapExternalWorkloadManager struct {
+	extworkload.Manager
+}
+
 func (*upgradeGCV2Manager) Role() config.ExternalWorkloadRole {
 	return config.RoleGCV2Worker
 }
@@ -74,7 +78,23 @@ func TestUpgradeGCV2AbortUsesPostLockBootstrapVersion(t *testing.T) {
 
 	mgr := &upgradeGCV2Manager{}
 	extworkload.SetManagerForStore(store, mgr)
-	runInBootstrapSession(store, currentBootstrapVersion-1)
+	runInBootstrapSession(store, currentBootstrapVersion-1, domainCreateOptions{})
 
 	require.Zero(t, mgr.abortCount)
+}
+
+func TestCreateSessionWithDomainOptionsAttachesExternalWorkloadManager(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	dom.Close()
+	domap.Delete(store)
+
+	mgr := &bootstrapExternalWorkloadManager{}
+	newDom, err := domap.getWithEtcdClient(store, nil, nil, domainCreateOptions{extWorkloadMgr: mgr})
+	require.NoError(t, err)
+	require.Same(t, mgr, newDom.ExternalWorkloadManager())
+
+	newDom.Close()
 }
