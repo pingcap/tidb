@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -157,6 +159,52 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	return exprGroups
 }
 
+func splitForcedLateMaterializationConds(sctx base.PlanContext, conds []expression.Expression, physicalTableScan *PhysicalTableScan) ([]expression.Expression, []expression.Expression) {
+	if len(physicalTableScan.ForcedLateMaterializationFilterColumnIDs) == 0 {
+		return nil, conds
+	}
+
+	forcedColumnIDs := make(map[int64]struct{}, len(physicalTableScan.ForcedLateMaterializationFilterColumnIDs))
+	for _, colID := range physicalTableScan.ForcedLateMaterializationFilterColumnIDs {
+		forcedColumnIDs[colID] = struct{}{}
+	}
+	forcedConds := make([]expression.Expression, 0)
+	remainingConds := make([]expression.Expression, 0, len(conds))
+	pushDownCtx := util.GetPushDownCtx(sctx)
+	for _, cond := range conds {
+		columns := expression.ExtractColumns(cond)
+		if len(columns) == 0 {
+			remainingConds = append(remainingConds, cond)
+			continue
+		}
+		matched := true
+		for _, col := range columns {
+			if _, ok := forcedColumnIDs[col.UniqueID]; !ok {
+				matched = false
+				break
+			}
+		}
+		if matched && expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiFlash) {
+			forcedConds = append(forcedConds, cond)
+			continue
+		}
+		remainingConds = append(remainingConds, cond)
+	}
+	return forcedConds, remainingConds
+}
+
+func calcLateMaterializationSelectivity(sctx base.PlanContext, physicalTableScan *PhysicalTableScan, conds []expression.Expression) float64 {
+	if len(conds) == 0 {
+		return 1.0
+	}
+	selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, conds, nil)
+	if err != nil {
+		logutil.BgLogger().Warn("calculate selectivity failed, use selection factor for late materialization", zap.Error(err))
+		return cost.SelectionFactor
+	}
+	return selectivity
+}
+
 // withHeavyCostFunctionForTiFlashPrefetch is used to check if the condition contain heavy cost functions.
 // @param: cond: condition of PhysicalSelection to be checked
 // @note: heavy cost functions are functions that may cause a lot of memory allocation or disk IO.
@@ -229,8 +277,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
-	// When the table is small, there is no need to push down the conditions.
-	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
+	if physicalTableScan.KeepOrder {
 		return
 	}
 	conds := physicalSelection.Conditions
@@ -238,15 +285,30 @@ func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *
 		return
 	}
 
-	// group the conditions by columns and sort them by selectivity
-	sortedConds := groupByColumnsSortBySelectivity(sctx, conds, physicalTableScan)
+	forcedConds, remainingConds := splitForcedLateMaterializationConds(sctx, conds, physicalTableScan)
+	// When the table is small, only the conditions explicitly forced by hints are pushed down.
+	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize {
+		if len(forcedConds) == 0 {
+			return
+		}
+		logutil.BgLogger().Debug("planner: push down forced conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx.GetExprCtx().GetEvalCtx(), forcedConds))))
+		PushedDown(physicalSelection, physicalTableScan, forcedConds, calcLateMaterializationSelectivity(sctx, physicalTableScan, forcedConds))
+		return
+	}
 
-	selectedConds := make([]expression.Expression, 0, len(conds))
+	// group the conditions by columns and sort them by selectivity
+	sortedConds := groupByColumnsSortBySelectivity(sctx, remainingConds, physicalTableScan)
+
+	selectedConds := slices.Clone(forcedConds)
 	selectedIncome := 0.0
 	selectedColumnCount := 0
-	selectedSelectivity := 1.0
 	totalColumnCount := len(physicalTableScan.Columns)
 	tableRowCount := physicalTableScan.StatsInfo().RowCount
+	selectedSelectivity := calcLateMaterializationSelectivity(sctx, physicalTableScan, selectedConds)
+	if len(selectedConds) > 0 {
+		selectedColumnCount = expression.ExtractColumnSet(selectedConds...).Len()
+		selectedIncome = (1 - selectedSelectivity) * tableRowCount * (float64(totalColumnCount) - float64(selectedColumnCount))
+	}
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)

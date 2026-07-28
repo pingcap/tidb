@@ -1985,15 +1985,16 @@ func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTabl
 func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expression.Expression,
 	totalRowCount float64, matchProp bool) (base.PhysicalPlan, []expression.Expression, bool, error) {
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		physicalTableID: ds.PhysicalTableID,
-		HandleCols:      ds.HandleCols,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  slices.Clone(ds.Columns),
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		physicalTableID:                          ds.PhysicalTableID,
+		HandleCols:                               ds.HandleCols,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
@@ -2229,14 +2230,15 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:         util.CloneColInfos(ds.Columns),
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			isPartition:     ds.PartitionDefIdx != nil,
-			physicalTableID: ds.PhysicalTableID,
-			tblCols:         ds.TblCols,
-			tblColHists:     ds.TblColHists,
+			Columns:                                  util.CloneColInfos(ds.Columns),
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			isPartition:                              ds.PartitionDefIdx != nil,
+			physicalTableID:                          ds.PhysicalTableID,
+			tblCols:                                  ds.TblCols,
+			tblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 		}.Init(ds.SCtx(), is.QueryBlockOffset())
 		ts.SetSchema(ds.Schema().Clone())
 		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
@@ -2582,16 +2584,17 @@ func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expressio
 func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		physicalTableID: ds.PhysicalTableID,
-		Ranges:          s.Ranges,
-		AccessCondition: s.AccessConds,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		physicalTableID:                          ds.PhysicalTableID,
+		Ranges:                                   s.Ranges,
+		AccessCondition:                          s.AccessConds,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
@@ -3049,21 +3052,22 @@ func (ts *PhysicalTableScan) getScanRowSize() float64 {
 
 func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		physicalTableID: ds.PhysicalTableID,
-		Ranges:          path.Ranges,
-		AccessCondition: path.AccessConds,
-		StoreType:       path.StoreType,
-		HandleCols:      ds.HandleCols,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
-		constColsByCond: path.ConstCols,
-		prop:            prop,
-		filterCondition: slices.Clone(path.TableFilters),
+		Table:                                    ds.TableInfo,
+		Columns:                                  slices.Clone(ds.Columns),
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		physicalTableID:                          ds.PhysicalTableID,
+		Ranges:                                   path.Ranges,
+		AccessCondition:                          path.AccessConds,
+		StoreType:                                path.StoreType,
+		HandleCols:                               ds.HandleCols,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		constColsByCond:                          path.ConstCols,
+		prop:                                     prop,
+		filterCondition:                          slices.Clone(path.TableFilters),
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess

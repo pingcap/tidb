@@ -482,6 +482,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"TIFLASH_LM_FILTER(t1, c1, c2)", "TIFLASH_LM_FILTER(`t1`, `c1`, `c2`)"},
+		{"TIFLASH_LM_FILTER(@sel_1 t1, c1)", "TIFLASH_LM_FILTER(@`sel_1` `t1`, `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},

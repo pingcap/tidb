@@ -15,6 +15,7 @@
 package casetest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -75,4 +76,11 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		})
 		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
 	}
+
+	tk.MustExec("set @@tidb_opt_enable_late_materialization = off")
+	rows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t1, a, b) */ * from t1 where a + b > 100 and c in (1,2,3)").Rows())
+	plan := strings.Join(rows, "\n")
+	require.Contains(t, plan, "Selection")
+	require.Contains(t, plan, "gt(plus(test.t1.a, test.t1.b)")
+	require.NotContains(t, plan, "pushed down filter")
 }

@@ -1095,6 +1095,7 @@ var hintTokenMap = map[string]int{
 	"LEADING":                 hintLeading,
 	"SEMI_JOIN_REWRITE":       hintSemiJoinRewrite,
 	"NO_DECORRELATE":          hintNoDecorrelate,
+	"TIFLASH_LM_FILTER":       hintTiFlashLMFilter,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,
