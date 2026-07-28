@@ -947,6 +947,75 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         1
     );
 
+    // The third integration's features, through the socket.
+    // EXPLAIN answers the five-column plan table.
+    // `t` has no primary key, so its plan is honestly a full scan; `gen`
+    // has one, so its equality is a point get.
+    let plan = run_query(&mut client, &mut reader, "EXPLAIN SELECT a FROM t WHERE a = 1");
+    assert!(
+        plan.iter().any(|row| row[0].contains("TableFullScan")),
+        "explain over the wire: {plan:?}"
+    );
+    assert_eq!(plan[0].len(), 5, "{plan:?}");
+    let point = run_query(
+        &mut client,
+        &mut reader,
+        "EXPLAIN SELECT v FROM gen WHERE id = 1",
+    );
+    assert!(
+        point.iter().any(|row| row[0].contains("Point_Get")),
+        "point get over the wire: {point:?}"
+    );
+    // GROUPING() distinguishes the rollup subtotal.
+    run_write(
+        &mut client,
+        &mut reader,
+        "CREATE TABLE wg (g BIGINT, n BIGINT)",
+    );
+    run_write(&mut client, &mut reader, "INSERT INTO wg VALUES (1,1),(2,2)");
+    let grouped = run_query(
+        &mut client,
+        &mut reader,
+        "SELECT g, GROUPING(g), SUM(n) FROM wg GROUP BY g WITH ROLLUP ORDER BY GROUPING(g), g",
+    );
+    assert_eq!(
+        grouped,
+        vec![
+            vec!["1".to_owned(), "0".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "0".to_owned(), "2".to_owned()],
+            vec!["NULL".to_owned(), "1".to_owned(), "3".to_owned()],
+        ],
+        "grouping over the wire"
+    );
+    // A DATETIME column compared with a date string, in the time domain.
+    run_write(
+        &mut client,
+        &mut reader,
+        "CREATE TABLE wt (id BIGINT, created DATETIME)",
+    );
+    run_write(
+        &mut client,
+        &mut reader,
+        "INSERT INTO wt VALUES (1,'2024-12-30 23:59:59'),(2,'2025-01-02 00:00:00')",
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT id FROM wt WHERE created <= '2024-12-31'"
+        ),
+        vec![vec!["1".to_owned()]]
+    );
+    // Two of the newly unblocked builtins.
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT SUBSTRING_INDEX('a.b.c', '.', 2), DATE_FORMAT('2024-06-15', '%Y/%m')"
+        ),
+        vec![vec!["a.b".to_owned(), "2024/06".to_owned()]]
+    );
+
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
