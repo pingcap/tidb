@@ -22,6 +22,7 @@ tidb-meta = { path = "../tidb-meta" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-error = { path = "../tidb-error" }
+tidb-executor = { path = "../tidb-executor" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-planner = { path = "../tidb-planner" }

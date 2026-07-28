@@ -574,6 +574,7 @@ mod cluster;
 pub mod cluster_catalog;
 pub mod cluster_ddl;
 pub mod cluster_index_id;
+pub mod cluster_table_storage;
 pub mod concurrent_entry_map;
 pub mod config_int_json;
 pub mod configured_inner_join;

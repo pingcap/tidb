@@ -31,6 +31,7 @@ mod auth_plugin_registry;
 mod auth_session;
 mod auth_token;
 mod bootstrap;
+pub mod cluster_session;
 mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;

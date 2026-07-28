@@ -32,6 +32,7 @@
 
 pub mod apply;
 mod approx_count_distinct;
+pub mod cluster_storage;
 pub mod ddl;
 pub mod driver;
 pub mod executor;
