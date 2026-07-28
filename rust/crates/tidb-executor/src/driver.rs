@@ -578,6 +578,10 @@ pub enum DriverError {
         /// The clause Go names, for example `order clause`.
         clause: String,
     },
+    /// Go `plannererrors.ErrWrongGroupField` (1056): a `GROUP BY` position
+    /// resolves to an aggregate or window-function select field, which
+    /// cannot itself be grouped on.
+    WrongGroupField(String),
     /// Go `types.ErrInvalidDefault` (1067).
     InvalidDefault(String),
     /// Go `ErrDataTooLong` (1406).
@@ -2655,6 +2659,56 @@ fn substitute_output_aliases(
         },
         other => other.clone(),
     })
+}
+
+/// Go `gbyResolver`: a bare integer at the top of a `GROUP BY` item is a
+/// 1-based output position resolved against the SELECT list -- the same rule
+/// `ORDER BY`'s [`substitute_output_aliases`] applies, but `GROUP BY` has no
+/// alias-substitution counterpart (a bare name is resolved by the ordinary
+/// column resolver instead), so only the position form needs handling here.
+///
+/// Captured from TiDB: an out-of-range position is `ErrUnknownColumn` naming
+/// the `group statement`; a position landing on an aggregate or
+/// window-function select field is `ErrWrongGroupField` ("Can't group on
+/// '<name>'"), naming the field's alias if it has one and its written text
+/// otherwise.
+fn resolve_group_by_position<'a>(
+    expr: &'a tidb_ast::Expr,
+    fields: &'a [SelectField],
+) -> Result<std::borrow::Cow<'a, tidb_ast::Expr>, DriverError> {
+    let tidb_ast::Expr::Int(text) = expr else {
+        return Ok(std::borrow::Cow::Borrowed(expr));
+    };
+    let position: usize = text.parse().map_err(|_| unknown_group_position(text))?;
+    if position == 0 {
+        return Err(unknown_group_position(text));
+    }
+    let (target, alias) = fields
+        .iter()
+        .filter_map(|field| match field {
+            SelectField::Expr { expr, alias } => Some((expr, alias)),
+            SelectField::Wildcard(_) => None,
+        })
+        .nth(position - 1)
+        .ok_or_else(|| unknown_group_position(text))?;
+    if matches!(
+        target,
+        tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. }
+    ) || !crate::window::windows_in(target).is_empty()
+    {
+        let name = alias.clone().unwrap_or_else(|| target.restore());
+        return Err(DriverError::WrongGroupField(name));
+    }
+    Ok(std::borrow::Cow::Borrowed(target))
+}
+
+/// Go `ErrUnknownColumn` naming the `group statement`, for a `GROUP BY`
+/// position that is zero or past the end of the SELECT list.
+fn unknown_group_position(text: &str) -> DriverError {
+    DriverError::UnknownColumnInClause {
+        column: text.to_owned(),
+        clause: "group statement".to_owned(),
+    }
 }
 
 /// The `ErrUnknownColumn` an unresolvable `ORDER BY` item reports, when the
@@ -5424,9 +5478,14 @@ fn run_aggregate_select(
     let group_by_names: Vec<String> = select
         .group_by
         .iter()
-        .filter_map(|item| match &item.expr {
-            tidb_ast::Expr::Column(path) => path.last().cloned(),
-            _ => None,
+        .filter_map(|item| {
+            // A positional `GROUP BY 1` names the same column a literal
+            // `GROUP BY a` would, so GROUPING() must see it the same way.
+            let resolved = resolve_group_by_position(&item.expr, select.fields.fields()).ok()?;
+            match resolved.as_ref() {
+                tidb_ast::Expr::Column(path) => path.last().cloned(),
+                _ => None,
+            }
         })
         .collect();
 
@@ -5740,10 +5799,14 @@ fn run_aggregate_select(
     }
 
     // GROUP BY expressions (legacy ASC/DESC direction ignored, as in MySQL 8).
+    // A bare integer is a 1-based output position, resolved against the
+    // SELECT list the same way ORDER BY's is -- see
+    // `resolve_group_by_position`.
     let mut group_by = Vec::with_capacity(select.group_by.len());
     for item in &select.group_by {
+        let resolved = resolve_group_by_position(&item.expr, select.fields.fields())?;
         group_by.push(
-            rewrite_expr_resolved(&item.expr, resolver)
+            rewrite_expr_resolved(resolved.as_ref(), resolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
         );
     }
@@ -9831,6 +9894,12 @@ impl DriverError {
             1054,
             *b"42S22",
             format!("Unknown column '{column}' in '{clause}'"),
+        ),
+        // Go: "Can't group on '%-.192s'".
+        DriverError::WrongGroupField(field) => MysqlError::new(
+            1056,
+            *b"42000",
+            format!("Can't group on '{field}'"),
         ),
         // Go: "Invalid default value for '%-.192s'".
         DriverError::InvalidDefault(column) => MysqlError::new(

@@ -6836,6 +6836,76 @@ mod tests {
         }
     }
 
+    /// `GROUP BY` resolved against the SELECT list, checked against captured
+    /// TiDB output.
+    ///
+    /// A positional `GROUP BY 1` used to rewrite as a constant here too --
+    /// the same silent-wrong-rows bug `ORDER BY 1` once had, but for
+    /// grouping: every row collapsed into one group instead of grouping by
+    /// the first select field.
+    #[test]
+    fn group_by_resolves_against_the_select_list() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,30),(1,31),(2,20),(3,10)")
+            .unwrap();
+
+        // Captured: a bare integer is a 1-based output position, grouping by
+        // the first select field (`a`) -- three groups, not one.
+        assert_eq!(
+            row_text(session.run("SELECT a, COUNT(*) FROM t GROUP BY 1")),
+            [["1", "2"], ["2", "1"], ["3", "1"]]
+        );
+
+        // Captured: a position landing on an aggregate select field is
+        // ErrWrongGroupField (1056), whether or not it carries an alias.
+        for sql in [
+            "SELECT a, COUNT(*) FROM t GROUP BY 2",
+            "SELECT a, COUNT(*) AS c FROM t GROUP BY 2",
+        ] {
+            match session.run(sql) {
+                Err(error) => {
+                    let reported = error.to_mysql_error();
+                    assert_eq!(reported.code, 1056, "{sql}");
+                    assert!(
+                        reported.message.starts_with("Can't group on"),
+                        "{sql}: {}",
+                        reported.message
+                    );
+                }
+                Ok(other) => panic!("expected 1056 from {sql}, got {other:?}"),
+            }
+        }
+
+        // Captured: an out-of-range position (including zero) is 1054 naming
+        // the group statement.
+        for sql in [
+            "SELECT a, COUNT(*) FROM t GROUP BY 0",
+            "SELECT a, COUNT(*) FROM t GROUP BY 3",
+        ] {
+            match session.run(sql) {
+                Err(error) => {
+                    let reported = error.to_mysql_error();
+                    assert_eq!(reported.code, 1054, "{sql}");
+                    assert!(
+                        reported.message.ends_with("in 'group statement'"),
+                        "{sql}: {}",
+                        reported.message
+                    );
+                }
+                Ok(other) => panic!("expected 1054 from {sql}, got {other:?}"),
+            }
+        }
+
+        // An expression BUILT on a position (`1+1`) is arithmetic, not a
+        // position: it groups every row into one bucket by the constant 2.
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(*) FROM t GROUP BY 1+1")),
+            [["4"]]
+        );
+    }
+
     /// The aggregates over each numeric domain, checked against captured
     /// TiDB output.
     ///
