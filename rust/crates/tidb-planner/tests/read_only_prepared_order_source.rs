@@ -31,7 +31,9 @@ use tidb_planner::{
 
 fn catalog() -> ConfiguredCatalog {
     // The sysbench `sbtest` shape: a clustered BIGINT handle, one stored INT,
-    // and two `utf8mb4_bin` CHAR columns.
+    // two `utf8mb4_bin` CHAR columns, and one stored DECIMAL(10, 2), plus a
+    // DECIMAL(65, 2) column whose SUM result flen must clamp under
+    // `mysql.MaxDecimalWidth`.
     ConfiguredCatalog::new([ConfiguredTable::new(
         "sbtest",
         "sbtest1",
@@ -41,6 +43,8 @@ fn catalog() -> ConfiguredCatalog {
             ConfiguredColumn::stored_int_not_null("k", 2),
             ConfiguredColumn::stored_char_not_null("c", 3, 120),
             ConfiguredColumn::stored_char_not_null("pad", 4, 60),
+            ConfiguredColumn::stored_decimal_not_null("d", 5, 10, 2),
+            ConfiguredColumn::stored_decimal_not_null("wide_d", 6, 65, 2),
         ],
     )])
     .expect("test catalog is valid")
@@ -241,6 +245,30 @@ fn an_aliased_sum_takes_the_alias_as_its_output_name() {
     assert_eq!(
         aggregate("SELECT SUM(k) AS total FROM sbtest1 WHERE id = ?"),
         Some((PreparedAggregateKind::Sum, 0, "total".to_owned(), 32, 0)),
+    );
+}
+
+#[test]
+fn sum_over_a_decimal_column_keeps_its_scale_and_widens_flen_by_twenty_two() {
+    // d is DECIMAL(10, 2), so per Go typeInfer4Sum's
+    // UpdateFlenAndDecimalUnderLimit(argType, 0, 22) the result is
+    // DECIMAL(32, 2) — flen 10+22, decimal (scale) unchanged at 2. Verified
+    // against Go in pkg/executor/zz_dump_sumdec_test.go (10.10+20.20+12.34 =
+    // 42.64).
+    assert_eq!(
+        aggregate("SELECT SUM(d) FROM sbtest1 WHERE id = ?"),
+        Some((PreparedAggregateKind::Sum, 0, "SUM(d)".to_owned(), 32, 2)),
+    );
+}
+
+#[test]
+fn sum_over_a_decimal_column_clamps_flen_to_max_decimal_width() {
+    // wide_d is DECIMAL(65, 2); 65 + 22 = 87 clamps down to
+    // mysql.MaxDecimalWidth (65), per Go SetFlenUnderLimit. Verified against
+    // Go: SUM(DECIMAL(65,2)) does not overflow or error.
+    assert_eq!(
+        aggregate("SELECT SUM(wide_d) FROM sbtest1 WHERE id = ?"),
+        Some((PreparedAggregateKind::Sum, 0, "SUM(wide_d)".to_owned(), 65, 2)),
     );
 }
 

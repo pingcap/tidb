@@ -81,6 +81,11 @@ const UNSIGNED_FLAG: i32 = 1 << 5;
 /// `SUM(<integer>)` is an exact `DECIMAL` whose flen is the argument's flen plus
 /// this extension, per Go `typeInfer4Sum` (`arg.Flen + 21`).
 const SUM_DECIMAL_FLEN_EXTENSION: u32 = 21;
+/// `SUM(<decimal>)` is an exact `DECIMAL` whose flen is the argument's flen
+/// plus this extension (the decimal/scale is unchanged), per Go
+/// `typeInfer4Sum`'s `mysql.TypeNewDecimal` arm:
+/// `RetTp.UpdateFlenAndDecimalUnderLimit(argType, deltaDecimal=0, deltaFlen=22)`.
+const SUM_DECIMAL_ARG_FLEN_EXTENSION: u32 = 22;
 /// MySQL's maximum `DECIMAL` precision; `typeInfer4Sum` clamps the result flen to
 /// it (`SetFlenUnderLimit` -> `mysql.MaxDecimalWidth`).
 const MAX_DECIMAL_WIDTH: u32 = 65;
@@ -1122,7 +1127,8 @@ impl PreparedOrderColumn {
 /// A single-column aggregate the prepared read evaluates over its scan output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PreparedAggregateKind {
-    /// `SUM(<signed integer column>)`, whose result is an exact `DECIMAL`.
+    /// `SUM(<signed integer or decimal column>)`, whose result is an exact
+    /// `DECIMAL`.
     Sum,
 }
 
@@ -1131,9 +1137,11 @@ pub enum PreparedAggregateKind {
 /// The prepared read has no `GROUP BY`, so a `SUM` collapses the whole scan to
 /// one output row. The scan still projects the summed column; the executor folds
 /// that column's values into the single result row (Go `AggFuncSum`: an integer
-/// argument promotes to an exact `DECIMAL`, an empty set yields `NULL`). The
-/// result column metadata is the aggregate's own type — `DECIMAL(flen, 0)` per
-/// Go `typeInfer4Sum` — not the summed column's.
+/// argument promotes to an exact `DECIMAL`, a decimal argument sums exactly in
+/// place, an empty set yields `NULL`). The result column metadata is the
+/// aggregate's own type — `DECIMAL(flen, decimal)` per Go `typeInfer4Sum` (an
+/// integer argument always yields `decimal = 0`; a decimal argument keeps its
+/// own scale) — not the summed column's.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedAggregate {
     kind: PreparedAggregateKind,
@@ -1187,7 +1195,8 @@ impl PreparedAggregate {
         self.result_column_length
     }
 
-    /// Returns the result `DECIMAL` column's scale (`0` for an integer `SUM`).
+    /// Returns the result `DECIMAL` column's scale (`0` for an integer `SUM`,
+    /// the argument's own scale for a decimal `SUM`).
     #[must_use]
     pub const fn result_decimals(&self) -> u8 {
         self.result_decimals
@@ -1883,16 +1892,17 @@ fn validate_select_lock(
     Ok(Some(ReadLockRequest { wait }))
 }
 
-/// Resolves the one supported aggregate shape: a single `SUM(<integer column>)`
-/// field.
+/// Resolves the one supported aggregate shape: a single
+/// `SUM(<integer or decimal column>)` field.
 ///
 /// Returns `None` when no field is an aggregate, so the caller treats the query
 /// as an ordinary column projection. Returns `Some((scan projections, aggregate))`
 /// for the supported shape: the scan projects the summed column, and the
 /// aggregate carries the `DECIMAL` result metadata (Go `typeInfer4Sum`). Any
 /// other aggregate shape — more than one field, `DISTINCT`, a non-column or
-/// non-integer argument, or a function other than `SUM` — fails closed, since a
-/// wrong aggregate is a silent correctness bug rather than a missing feature.
+/// non-integer/non-decimal argument, or a function other than `SUM` — fails
+/// closed, since a wrong aggregate is a silent correctness bug rather than a
+/// missing feature.
 fn resolve_prepared_aggregate(
     select: &SelectStmt,
     table_ref: &TableRef,
@@ -1930,26 +1940,35 @@ fn resolve_prepared_aggregate(
     };
 
     let (column_index, column) = resolve_column_path(path, table_ref, table)?;
-    // Go `typeInfer4Sum` returns a DECIMAL only for an integer (or decimal)
+    // Go `typeInfer4Sum` returns a DECIMAL only for an integer or DECIMAL
     // argument; a string argument would be a DOUBLE result, a type path this
     // narrow read does not own yet.
-    let arg_flen = match column.scalar_type() {
+    let (result_column_length, result_decimals) = match column.scalar_type() {
         ConfiguredScalarType::Int
         | ConfiguredScalarType::BigInt
         | ConfiguredScalarType::UnsignedBigInt => {
-            column.scalar_type().result_column_length() as u32
+            let arg_flen = column.scalar_type().result_column_length() as u32;
+            // `SetFlenUnderLimit(arg.Flen + 21)`, `SetDecimal(0)`.
+            let flen = (arg_flen + SUM_DECIMAL_FLEN_EXTENSION).min(MAX_DECIMAL_WIDTH);
+            (flen, 0)
+        }
+        // A DECIMAL argument keeps `typeInfer4Sum`'s DECIMAL result, widened
+        // per `UpdateFlenAndDecimalUnderLimit(arg, deltaDecimal=0,
+        // deltaFlen=22)`: the scale (decimal) is unchanged from the argument's
+        // own declared scale, and the flen grows by 22 digits, clamped to
+        // `mysql.MaxDecimalWidth` (65). Captured against Go
+        // (`pkg/executor/zz_dump_sumdec_test.go`): SUM(DECIMAL(10,2)) sums
+        // exactly (10.10+20.20+12.34 = 42.64), an empty group is NULL, and
+        // SUM(DECIMAL(65,2)) does not overflow (flen clamps to 65).
+        ConfiguredScalarType::Decimal { precision, scale } => {
+            let flen = (precision + SUM_DECIMAL_ARG_FLEN_EXTENSION).min(MAX_DECIMAL_WIDTH);
+            (flen, scale as u8)
         }
         // Go `typeInfer4Sum` returns a DOUBLE (not DECIMAL) for a floating-point
         // argument, a result shape this DECIMAL-only path does not own yet.
-        //
-        // A `DECIMAL` argument also returns `typeInfer4Sum`'s DECIMAL result,
-        // but with a widened-flen rule this path has not verified against Go
-        // (`unsigned bool` bookkeeping and the flen/decimal widening are both
-        // argument-shape-dependent); refuse rather than guess.
         ConfiguredScalarType::Double
         | ConfiguredScalarType::Char { .. }
-        | ConfiguredScalarType::Varchar { .. }
-        | ConfiguredScalarType::Decimal { .. } => {
+        | ConfiguredScalarType::Varchar { .. } => {
             return unsupported(UnsupportedReadOnlyFeature::Aggregate)
         }
     };
@@ -1957,13 +1976,12 @@ fn resolve_prepared_aggregate(
         .as_deref()
         .filter(|alias| !alias.is_empty())
         .map_or_else(|| format!("{}({})", name, column.name), str::to_owned);
-    let result_column_length = (arg_flen + SUM_DECIMAL_FLEN_EXTENSION).min(MAX_DECIMAL_WIDTH);
     let aggregate = PreparedAggregate::new(
         PreparedAggregateKind::Sum,
         0,
         output_name,
         result_column_length,
-        0,
+        result_decimals,
     );
     let projections = vec![UnboundProjection {
         column_index,
