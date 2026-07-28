@@ -672,10 +672,12 @@ fn view_tables_row(schema: &str, table_name: &str) -> Vec<Datum> {
 
 /// One row per view, in schema then view order.
 ///
-/// DIVERGENCE (documented): `CHECK_OPTION` is always `CASCADED` and
-/// `IS_UPDATABLE` always `NO`, which is what Go reports for every view this
-/// tier can create -- no view here is updatable, and `WITH CHECK OPTION` is
-/// not modelled.
+/// `CHECK_OPTION` is the view's stored mode, `CASCADED` unless `WITH LOCAL
+/// CHECK OPTION` was written -- Go records one on every view, written or not
+/// (captured).
+///
+/// DIVERGENCE (documented): `IS_UPDATABLE` is always `NO`, which is what Go
+/// reports for every view this tier can create -- no view here is updatable.
 fn views_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for schema in catalog.database_names() {
@@ -691,7 +693,7 @@ fn views_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
                 text(&schema),
                 text(&table_name),
                 text(&view.select_sql),
-                text("CASCADED"),
+                text(&view.check_option),
                 text("NO"),
                 text(&format!("{}@{}", view.definer_user, view.definer_host)),
                 text(&view.security),
@@ -730,11 +732,34 @@ fn columns_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
             continue;
         };
         for table_name in tables {
-            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
-                continue;
-            };
-            for (offset, column) in table.columns.iter().enumerate() {
-                rows.push(column_row(&schema, &table_name, table, offset, column));
+            match catalog.table_in(&schema, &table_name) {
+                Some(TableEntry::Kv(table)) => {
+                    for (offset, column) in table.columns.iter().enumerate() {
+                        rows.push(column_row(&schema, &table_name, table, offset, column));
+                    }
+                }
+                // A view's columns are its body's, resolved now rather than
+                // at CREATE (Go fills them the same way here as DESCRIBE
+                // does). A body that no longer resolves drops out of this
+                // table entirely, which is what Go answers (captured: a view
+                // over a dropped column reports no COLUMNS rows at all).
+                Some(TableEntry::View(view)) => {
+                    let ctx = tidb_executor::StmtContext::for_query();
+                    let Ok(columns) = tidb_executor::view_column_list(view, &schema, catalog, &ctx)
+                    else {
+                        continue;
+                    };
+                    for (offset, (name, field_type)) in columns.iter().enumerate() {
+                        rows.push(view_column_row(
+                            &schema,
+                            &table_name,
+                            name,
+                            field_type,
+                            offset,
+                        ));
+                    }
+                }
+                _ => continue,
             }
         }
     }
@@ -750,36 +775,15 @@ fn column_row(
     column: &tidb_executor::KvColumn,
 ) -> Vec<Datum> {
     let field_type = &column.field_type;
-    let is_string = matches!(
-        field_type.code(),
-        FieldTypeCode::VarString | FieldTypeCode::String | FieldTypeCode::Varchar
-    );
     let not_null = field_type.flags() & 1 != 0;
-
-    // A character column reports its length and octet length; a numeric one
-    // reports precision and scale. Captured from TiDB: varchar(8) gives 8 and
-    // 32, bigint gives 19 and 0.
-    let (char_max, char_octet, numeric_precision, numeric_scale) = if is_string {
-        let flen = field_type.flen();
-        (
-            Datum::Int(flen),
-            Datum::Int(flen * 4),
-            Datum::Null,
-            Datum::Null,
-        )
-    } else {
-        (
-            Datum::Null,
-            Datum::Null,
-            Datum::Int(numeric_precision_of(field_type)),
-            Datum::Int(0),
-        )
-    };
-    let (charset_name, collation_name) = if is_string {
-        (text(CHARSET), text(COLLATION))
-    } else {
-        (Datum::Null, Datum::Null)
-    };
+    let TypeCells {
+        char_max,
+        char_octet,
+        numeric_precision,
+        numeric_scale,
+        charset_name,
+        collation_name,
+    } = type_cells(field_type);
 
     vec![
         text(CATALOG),
@@ -808,6 +812,93 @@ fn column_row(
         } else {
             ""
         }),
+        text(PRIVILEGES),
+        text(""),
+        text(""),
+        Datum::Null,
+    ]
+}
+
+/// The `COLUMNS` cells a column's type alone decides.
+struct TypeCells {
+    char_max: Datum,
+    char_octet: Datum,
+    numeric_precision: Datum,
+    numeric_scale: Datum,
+    charset_name: Datum,
+    collation_name: Datum,
+}
+
+/// A character column reports its length and octet length; a numeric one
+/// reports precision and scale. Captured from TiDB: varchar(8) gives 8 and
+/// 32, bigint gives 19 and 0.
+fn type_cells(field_type: &FieldType) -> TypeCells {
+    let is_string = matches!(
+        field_type.code(),
+        FieldTypeCode::VarString | FieldTypeCode::String | FieldTypeCode::Varchar
+    );
+    if is_string {
+        let flen = field_type.flen();
+        TypeCells {
+            char_max: Datum::Int(flen),
+            char_octet: Datum::Int(flen * 4),
+            numeric_precision: Datum::Null,
+            numeric_scale: Datum::Null,
+            charset_name: text(CHARSET),
+            collation_name: text(COLLATION),
+        }
+    } else {
+        TypeCells {
+            char_max: Datum::Null,
+            char_octet: Datum::Null,
+            numeric_precision: Datum::Int(numeric_precision_of(field_type)),
+            numeric_scale: Datum::Int(0),
+            charset_name: Datum::Null,
+            collation_name: Datum::Null,
+        }
+    }
+}
+
+/// One `COLUMNS` row for a view's column.
+///
+/// A view has no storage metadata, so the key, default, extra and comment
+/// cells are all the empty answers Go gives (captured: `COLUMN_KEY` and
+/// `EXTRA` empty, `COLUMN_DEFAULT` NULL, `IS_NULLABLE` YES, and the same
+/// `PRIVILEGES` string a base table's column carries).
+fn view_column_row(
+    schema: &str,
+    table_name: &str,
+    name: &str,
+    field_type: &FieldType,
+    offset: usize,
+) -> Vec<Datum> {
+    let TypeCells {
+        char_max,
+        char_octet,
+        numeric_precision,
+        numeric_scale,
+        charset_name,
+        collation_name,
+    } = type_cells(field_type);
+    vec![
+        text(CATALOG),
+        text(schema),
+        text(table_name),
+        text(name),
+        Datum::Int((offset + 1) as i64),
+        Datum::Null,
+        text("YES"),
+        text(&data_type_of(field_type)),
+        char_max,
+        char_octet,
+        numeric_precision,
+        numeric_scale,
+        Datum::Null,
+        charset_name,
+        collation_name,
+        text(&field_type.compact_str(false)),
+        text(""),
+        text(""),
         text(PRIVILEGES),
         text(""),
         text(""),

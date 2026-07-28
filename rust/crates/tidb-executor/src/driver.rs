@@ -153,15 +153,19 @@ impl Default for Catalog {
 /// A view: Go `model.TableInfo` whose `View` field is set. A view stores no
 /// rows -- its `SELECT` is re-run whenever the name is read.
 ///
-/// DIVERGENCE (documented): Go resolves the view's output columns afresh on
-/// every read, so an incompatible change to a base table surfaces at read
-/// time. Here the columns are resolved once, at `CREATE VIEW`, and cached:
-/// `SHOW CREATE VIEW` and `DESCRIBE` therefore answer from the definition as
-/// it was created. A read still runs the body, so a dropped base table is
-/// still Go's `ErrViewInvalid` (1356).
+/// `columns` holds the names the view reports -- the explicit
+/// `CREATE VIEW v (...)` list when one was written, the body's field names
+/// otherwise -- paired with the types the body had at `CREATE VIEW`. The
+/// names are fixed, but the types are not: Go re-plans the body for every
+/// read and for every metadata answer, so `ALTER TABLE base MODIFY` shows
+/// through immediately (captured: `DESCRIBE` and
+/// `information_schema.columns` both report the new type). Use
+/// [`view_column_list`] rather than these cached types wherever the answer is
+/// user-visible.
 ///
-/// NOT MODELLED (documented): `WITH CHECK OPTION` (this tier refuses writes
-/// through a view outright, which is where the check option would apply).
+/// NOT MODELLED (documented): enforcing `WITH CHECK OPTION` on write-through
+/// -- the mode is recorded and reported, but this tier refuses writes through
+/// a view outright, which is the only place the check would apply.
 #[derive(Clone, Debug)]
 pub struct ViewDef {
     /// The view name as written, for `SHOW CREATE VIEW`.
@@ -181,6 +185,11 @@ pub struct ViewDef {
     pub algorithm: String,
     /// The `SQL SECURITY` mode as written, defaulting to `DEFINER`.
     pub security: String,
+    /// The `WITH CHECK OPTION` mode, `CASCADED` unless `LOCAL` was written.
+    /// Go records it on every view, written or not, and reports it as
+    /// `information_schema.views.CHECK_OPTION`; `SHOW CREATE VIEW` never
+    /// prints it.
+    pub check_option: String,
 }
 
 /// A catalog table's backing store.
@@ -649,6 +658,10 @@ pub enum DriverError {
     /// CONNECTION_ADMIN privilege, not modelled in this tier). Killing one's
     /// own connection is always allowed regardless of privilege.
     KillAccessDenied,
+    /// Go `ErrDerivedMustHaveAlias` (1248): a derived table was written
+    /// without an alias. Captured from Go for both a plain `SELECT` and a
+    /// view body.
+    DerivedMustHaveAlias,
     /// Go `ErrCannotUser` (1396): `CREATE USER` named an account that
     /// already exists. Go quotes the account as `'user'@'host'`.
     CreateUserAlreadyExists {
@@ -4531,10 +4544,81 @@ fn build_from(
             Ok((exec, scope))
         }
         JoinNode::Join(join) => build_join(join, catalog, current_db, ctx),
-        JoinNode::Derived { .. } => Err(DriverError::Unsupported(
-            "derived tables are not supported yet",
-        )),
+        JoinNode::Derived {
+            subquery,
+            alias,
+            lateral,
+            column_names,
+        } => {
+            if *lateral || !column_names.is_empty() {
+                return Err(DriverError::Unsupported(
+                    "a LATERAL derived table is not supported yet",
+                ));
+            }
+            build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx)
+        }
     }
+}
+
+/// Runs a derived table's subquery and presents its rows as a `FROM` source.
+///
+/// Go plans the subquery and wraps it in a `LogicalProjection` the outer query
+/// reads by alias; the rows are materialized here instead, which is the same
+/// result for a reader. The derived table's column names are the subquery's
+/// own result-field names, and only the alias qualifies them -- `db.alias.col`
+/// and a base table's name are both Go's `ErrUnknownColumn` once the subquery
+/// is behind an alias.
+fn build_derived_source(
+    subquery: &QueryStmt,
+    alias: Option<&str>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+    // Captured from Go: an alias-less derived table is ErrDerivedMustHaveAlias
+    // in a plain SELECT and in a view body alike.
+    let alias = alias.filter(|alias| !alias.is_empty());
+    let Some(alias) = alias else {
+        return Err(DriverError::DerivedMustHaveAlias);
+    };
+    let (columns, rows) = match subquery {
+        QueryStmt::Select(select) => run_select_stmt(select, catalog, current_db, ctx)?,
+        QueryStmt::SetOpr(set_opr) => run_set_opr_stmt(set_opr, catalog, current_db, ctx)?,
+    };
+    // A derived table is a named relation, so its columns must be uniquely
+    // named: Go's ErrDupFieldName, which `(SELECT * FROM t JOIN s ...)` hits
+    // whenever the joined tables share a column name.
+    for (index, (name, _)) in columns.iter().enumerate() {
+        if columns[..index]
+            .iter()
+            .any(|(earlier, _)| earlier.eq_ignore_ascii_case(name))
+        {
+            return Err(DriverError::DuplicateColumnName(name.clone()));
+        }
+    }
+    let schema_columns: Vec<Column> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, (_, ft))| {
+            let mut col = Column::new((i + 1) as i64, ft.clone());
+            col.index = i as i64;
+            col
+        })
+        .collect();
+    let exec: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
+        ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+        rows,
+    ));
+    let scope = FromScope {
+        tables: vec![FromTable {
+            name: alias.to_owned(),
+            // An alias is the only qualifier a derived table answers to.
+            database: None,
+            columns,
+            offset: 0,
+        }],
+    };
+    Ok((exec, scope))
 }
 
 /// How deep a view may nest before the reference is called invalid. A view
@@ -9577,6 +9661,12 @@ impl DriverError {
             "In definition of view, derived table or common table expression, SELECT list and \
              column names list have different column counts"
                 .to_owned(),
+        ),
+        // Go: "Every derived table must have its own alias".
+        DriverError::DerivedMustHaveAlias => MysqlError::new(
+            1248,
+            *b"42000",
+            "Every derived table must have its own alias".to_owned(),
         ),
         // Go: "The target table %-.100s of the %s is not updatable".
         DriverError::TableNotUpdatable(name) => MysqlError::new(

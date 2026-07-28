@@ -824,13 +824,18 @@ impl Session {
                                     continue;
                                 }
                             }
-                            let auto_increment = match catalog.table_in(&database, &name) {
+                            let entry = catalog.table_in(&database, &name);
+                            let auto_increment = match entry {
                                 Some(tidb_executor::TableEntry::Kv(table)) => {
                                     table.next_auto_increment()
                                 }
                                 _ => None,
                             };
-                            let row = show_table_status_row(&name, auto_increment);
+                            let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
+                                show_table_status_view_row(&name)
+                            } else {
+                                show_table_status_row(&name, auto_increment)
+                            };
                             if let Some(predicate) = &where_clause {
                                 if !show_row_matches(
                                     predicate,
@@ -1545,6 +1550,7 @@ impl Session {
             [db, name] => (db.clone(), name.clone()),
             _ => return Err(DriverError::Unsupported("empty table name")),
         };
+        let ctx = self.statement_context(false);
         let rows = self.with_catalog_mut(|catalog| {
             let Some(entry) = catalog.table_in(&database, &table_name) else {
                 return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
@@ -1552,8 +1558,13 @@ impl Session {
                 ))));
             };
             if let tidb_executor::TableEntry::View(view) = entry {
-                return Ok(view
-                    .columns
+                // Go re-plans the body here (`tryFillViewColumnType`), so the
+                // types reported are the ones the base tables have now, and a
+                // body that no longer resolves fails the statement with its
+                // own error rather than with ErrViewInvalid.
+                let view = view.clone();
+                let columns = tidb_executor::view_column_list(&view, &database, catalog, &ctx)?;
+                return Ok(columns
                     .iter()
                     .filter(|(candidate, _)| {
                         column.is_none_or(|name| candidate.eq_ignore_ascii_case(name))
@@ -2767,6 +2778,26 @@ fn show_table_status_row(name: &str, auto_increment: Option<i64>) -> Vec<Datum> 
         text(""), // Create_options
         text(""), // Comment
     ]
+}
+
+/// One `SHOW TABLE STATUS` row for a view. Captured from Go: a view answers
+/// its name, NULL for every storage cell -- engine, version, row format,
+/// counts, sizes, collation and create options alike -- an empty `Checksum`,
+/// and the literal `VIEW` as its comment, which is how the two kinds of
+/// object are told apart in this output.
+fn show_table_status_view_row(name: &str) -> Vec<Datum> {
+    let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+    let mut row = vec![text(name)];
+    // Engine through Auto_increment: ten cells a view has no value for.
+    row.extend(std::iter::repeat_n(Datum::Null, 10));
+    // Create_time, which Go fills and this tier has no source for, then
+    // Update_time, Check_time and Collation, which are NULL for a view in Go
+    // too.
+    row.extend(std::iter::repeat_n(Datum::Null, 4));
+    row.push(text("")); // Checksum
+    row.push(Datum::Null); // Create_options
+    row.push(text("VIEW")); // Comment
+    row
 }
 
 /// `SHOW CHARSET` rows: `(Charset, Description, Default collation, Maxlen)`,
@@ -10981,6 +11012,358 @@ mod tests {
                 ["b", "bigint(20)", "YES", "", "<nil>", ""],
             ]
         );
+    }
+
+    /// A view body that is a set operation, asserted against the captured
+    /// `SHOW CREATE VIEW` text and the rows the view reads.
+    #[test]
+    fn a_view_body_may_be_a_set_operation() {
+        let mut session = view_session();
+
+        session
+            .run("CREATE VIEW vu AS SELECT a FROM t UNION SELECT a FROM s")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vu");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vu` (`a`) \
+             AS SELECT `a` AS `a` FROM `test`.`t` UNION SELECT `a` AS `a` FROM `test`.`s`"
+        );
+        let (names, rows) = query_text(&mut session, "SELECT * FROM vu ORDER BY a");
+        assert_eq!(names, ["a"]);
+        assert_eq!(rows, [["1"], ["2"], ["3"]]);
+
+        // A statement-level ORDER BY belongs to the whole set operation and
+        // is stored with it.
+        session
+            .run("CREATE VIEW vua AS SELECT a FROM t UNION ALL SELECT a FROM s ORDER BY 1")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vua");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vua` (`a`) \
+             AS SELECT `a` AS `a` FROM `test`.`t` UNION ALL SELECT `a` AS `a` FROM `test`.`s` \
+             ORDER BY 1"
+        );
+        let (_, rows) = query_text(&mut session, "SELECT * FROM vua");
+        assert_eq!(rows, [["1"], ["1"], ["2"], ["2"], ["3"]]);
+
+        // A nested term keeps its parentheses, and a statement-level LIMIT
+        // its place after the last term.
+        session
+            .run("CREATE VIEW vun AS SELECT a FROM t UNION (SELECT a FROM s UNION ALL SELECT a FROM s)")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vun");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vun` (`a`) \
+             AS SELECT `a` AS `a` FROM `test`.`t` UNION (SELECT `a` AS `a` FROM `test`.`s` \
+             UNION ALL SELECT `a` AS `a` FROM `test`.`s`)"
+        );
+        session
+            .run("CREATE VIEW vus AS SELECT a FROM t UNION SELECT a FROM s LIMIT 2")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vus");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vus` (`a`) \
+             AS SELECT `a` AS `a` FROM `test`.`t` UNION SELECT `a` AS `a` FROM `test`.`s` LIMIT 2"
+        );
+
+        // The explicit column list renames the set operation's output; the
+        // body keeps the first term's own field names.
+        session
+            .run("CREATE VIEW vuc(z) AS SELECT a FROM t UNION SELECT a FROM s")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vuc");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vuc` (`z`) \
+             AS SELECT `a` AS `a` FROM `test`.`t` UNION SELECT `a` AS `a` FROM `test`.`s`"
+        );
+        let (names, _) = query_text(&mut session, "SELECT * FROM vuc");
+        assert_eq!(names, ["z"]);
+
+        // Captured: [planner:1222]The used SELECT statements have a different
+        // number of columns.
+        assert!(matches!(
+            session.run("CREATE VIEW vubad AS SELECT a FROM t UNION SELECT a, c FROM s"),
+            Err(DriverError::WrongNumberOfColumnsInSelect)
+        ));
+    }
+
+    /// A view body containing a derived table, and the derived tables a plain
+    /// `SELECT` may write -- the same code path either way.
+    #[test]
+    fn a_view_body_may_contain_a_derived_table() {
+        let mut session = view_session();
+
+        session
+            .run("CREATE VIEW vd AS SELECT * FROM (SELECT a, b FROM t WHERE b > 10) x")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vd");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vd` \
+             (`a`, `b`) AS SELECT `x`.`a` AS `a`,`x`.`b` AS `b` FROM (SELECT `a` AS `a`,\
+             `b` AS `b` FROM `test`.`t` WHERE `b`>10) AS `x`"
+        );
+        let (_, rows) = query_text(&mut session, "SELECT * FROM vd");
+        assert_eq!(rows, [["2", "20"], ["3", "30"]]);
+
+        // A derived table joined to a base table: the derived side is named
+        // by its alias, the base side stays schema-qualified.
+        session
+            .run("CREATE VIEW vd2 AS SELECT x.a FROM (SELECT a FROM t) AS x JOIN s ON x.a = s.a")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vd2");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vd2` (`a`) \
+             AS SELECT `x`.`a` AS `a` FROM (SELECT `a` AS `a` FROM `test`.`t`) AS `x` \
+             JOIN `test`.`s` ON `x`.`a`=`s`.`a`"
+        );
+        let (_, rows) = query_text(&mut session, "SELECT * FROM vd2");
+        assert_eq!(rows, [["1"], ["2"]]);
+
+        // Captured: [ddl:1248]Every derived table must have its own alias --
+        // in a view body and in a plain SELECT alike.
+        assert!(matches!(
+            session.run("CREATE VIEW vnd AS SELECT * FROM (SELECT a FROM t)"),
+            Err(DriverError::DerivedMustHaveAlias)
+        ));
+        assert!(matches!(
+            session.run("SELECT * FROM (SELECT a FROM t)"),
+            Err(DriverError::DerivedMustHaveAlias)
+        ));
+
+        // Captured: [planner:1060]Duplicate column name 'a' -- a derived
+        // table is a named relation, so its columns must be unique.
+        assert!(matches!(
+            session.run("SELECT * FROM (SELECT * FROM t JOIN s ON t.a = s.a) q"),
+            Err(DriverError::DuplicateColumnName(ref name)) if name == "a"
+        ));
+
+        // Plain derived tables: the alias is the only qualifier they answer
+        // to, an expression field keeps its written name, and a set
+        // operation may sit inside one.
+        let (names, rows) = query_text(&mut session, "SELECT * FROM (SELECT a FROM t) x");
+        assert_eq!(names, ["a"]);
+        assert_eq!(rows, [["1"], ["2"], ["3"]]);
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT x.a FROM (SELECT a, b FROM t) x WHERE x.b > 10",
+        );
+        assert_eq!(rows, [["2"], ["3"]]);
+        let (_, rows) = query_text(&mut session, "SELECT * FROM (SELECT a + 1 FROM t) x");
+        assert_eq!(rows, [["2"], ["3"], ["4"]]);
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT * FROM (SELECT a FROM t UNION SELECT a FROM s) u ORDER BY a",
+        );
+        assert_eq!(rows, [["1"], ["2"], ["3"]]);
+        // Captured: [planner:1054]Unknown column 't.a' in 'field list' -- the
+        // subquery's own tables are not visible outside it.
+        assert!(session.run("SELECT t.a FROM (SELECT a FROM t) x").is_err());
+    }
+
+    /// `WITH CHECK OPTION`: stored and reported, never printed, and never
+    /// reached -- writes through a view are refused before it would apply.
+    #[test]
+    fn a_view_check_option_is_stored_and_reported() {
+        let mut session = view_session();
+        session
+            .run("CREATE VIEW vc AS SELECT a, b FROM t WHERE b > 10 WITH CHECK OPTION")
+            .unwrap();
+        session
+            .run("CREATE VIEW vcl AS SELECT a, b FROM t WHERE b > 10 WITH LOCAL CHECK OPTION")
+            .unwrap();
+        session
+            .run("CREATE VIEW vcc AS SELECT a, b FROM t WHERE b > 10 WITH CASCADED CHECK OPTION")
+            .unwrap();
+
+        // Captured: SHOW CREATE VIEW prints no check option at all, whichever
+        // form was written.
+        for view in ["vc", "vcl", "vcc"] {
+            let (_, rows) = query_text(&mut session, &format!("SHOW CREATE VIEW {view}"));
+            assert_eq!(
+                rows[0][1],
+                format!(
+                    "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `{view}` \
+                     (`a`, `b`) AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t` WHERE `b`>10"
+                )
+            );
+        }
+
+        // information_schema.views is where it surfaces: LOCAL when written,
+        // CASCADED otherwise -- including for a view with no check option at
+        // all, which Go still records as CASCADED.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT table_name, check_option, is_updatable FROM information_schema.views \
+             WHERE table_schema = 'test' AND table_name IN ('v', 'vc', 'vcl', 'vcc') \
+             ORDER BY table_name",
+        );
+        assert_eq!(
+            rows,
+            [
+                ["v", "CASCADED", "NO"],
+                ["vc", "CASCADED", "NO"],
+                ["vcc", "CASCADED", "NO"],
+                ["vcl", "LOCAL", "NO"],
+            ]
+        );
+
+        // The check would apply to a write, and a write never gets that far.
+        assert!(matches!(
+            session.run("INSERT INTO vc VALUES (4, 5)"),
+            Err(DriverError::InsertIntoViewUnsupported(ref name)) if name == "vc"
+        ));
+    }
+
+    /// `information_schema.columns` and `SHOW TABLE STATUS` for a view.
+    #[test]
+    fn a_view_reports_its_columns_and_status() {
+        let mut session = view_session();
+
+        // Captured: a view's columns carry no default, no key and no extra,
+        // are nullable, and report the same PRIVILEGES string a base table's
+        // columns do.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT table_name, column_name, ordinal_position, column_default, is_nullable, \
+             data_type, character_maximum_length, numeric_precision, column_type, column_key, \
+             extra, privileges FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 'v' ORDER BY ordinal_position",
+        );
+        assert_eq!(
+            rows,
+            [
+                [
+                    "v",
+                    "a",
+                    "1",
+                    "<nil>",
+                    "YES",
+                    "bigint",
+                    "<nil>",
+                    "19",
+                    "bigint(20)",
+                    "",
+                    "",
+                    "select,insert,update,references",
+                ],
+                [
+                    "v",
+                    "b",
+                    "2",
+                    "<nil>",
+                    "YES",
+                    "bigint",
+                    "<nil>",
+                    "19",
+                    "bigint(20)",
+                    "",
+                    "",
+                    "select,insert,update,references",
+                ],
+            ]
+        );
+
+        // Captured: SHOW TABLE STATUS answers a view with NULLs and the
+        // literal VIEW as its comment; a base table's row keeps its storage
+        // metadata.
+        let (names, rows) = query_text(&mut session, "SHOW TABLE STATUS LIKE 'v'");
+        assert_eq!(names[0], "Name");
+        assert_eq!(names[names.len() - 1], "Comment");
+        assert_eq!(
+            rows,
+            [[
+                "v", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>",
+                "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "", "<nil>", "VIEW",
+            ]]
+        );
+        let (_, rows) = query_text(&mut session, "SHOW TABLE STATUS LIKE 't'");
+        assert_eq!(rows[0][1], "InnoDB");
+        assert_eq!(rows[0][rows[0].len() - 1], "");
+    }
+
+    /// A view's column types are its base tables' types *now*, not the ones
+    /// they had at `CREATE VIEW`.
+    #[test]
+    fn a_view_column_type_follows_the_base_column() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE bt (x BIGINT, y VARCHAR(10))")
+            .unwrap();
+        session.run("INSERT INTO bt VALUES (1, 'aa')").unwrap();
+        session
+            .run("CREATE VIEW vb AS SELECT x, y FROM bt")
+            .unwrap();
+
+        let columns_query = "SELECT column_name, data_type, column_type \
+                             FROM information_schema.columns \
+                             WHERE table_schema = 'test' AND table_name = 'vb' \
+                             ORDER BY ordinal_position";
+        let (_, rows) = query_text(&mut session, "DESCRIBE vb");
+        assert_eq!(rows[0][1], "bigint(20)");
+        assert_eq!(rows[1][1], "varchar(10)");
+        let (_, rows) = query_text(&mut session, columns_query);
+        assert_eq!(
+            rows,
+            [
+                ["x", "bigint", "bigint(20)"],
+                ["y", "varchar", "varchar(10)"],
+            ]
+        );
+
+        // Captured: altering the base columns shows through immediately, with
+        // no touch to the view -- Go re-plans the body for every answer.
+        session
+            .run("ALTER TABLE bt MODIFY COLUMN y VARCHAR(64)")
+            .unwrap();
+        session
+            .run("ALTER TABLE bt MODIFY COLUMN x VARCHAR(32)")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "DESCRIBE vb");
+        assert_eq!(rows[0][1], "varchar(32)");
+        assert_eq!(rows[1][1], "varchar(64)");
+        let (_, rows) = query_text(&mut session, columns_query);
+        assert_eq!(
+            rows,
+            [
+                ["x", "varchar", "varchar(32)"],
+                ["y", "varchar", "varchar(64)"],
+            ]
+        );
+        let (_, rows) = query_text(&mut session, "SELECT * FROM vb");
+        assert_eq!(rows, [["1", "aa"]]);
+        // The stored definition never changed.
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vb");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vb` (`x`, `y`) \
+             AS SELECT `x` AS `x`,`y` AS `y` FROM `test`.`bt`"
+        );
+
+        // Dropping a base column breaks the view: the read is ErrViewInvalid,
+        // DESCRIBE fails with the body's own error, and the view drops out of
+        // information_schema.columns entirely -- all captured.
+        session.run("ALTER TABLE bt DROP COLUMN y").unwrap();
+        assert!(matches!(
+            session.run("SELECT * FROM vb"),
+            Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(ref name))) if name == "test.vb"
+        ));
+        assert!(session.run("DESCRIBE vb").is_err());
+        let (_, rows) = query_text(&mut session, columns_query);
+        assert_eq!(rows, Vec::<Vec<String>>::new());
+        // information_schema.views still answers from the stored definition.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT view_definition FROM information_schema.views \
+             WHERE table_schema = 'test' AND table_name = 'vb'",
+        );
+        assert_eq!(rows, [["SELECT `x` AS `x`,`y` AS `y` FROM `test`.`bt`"]]);
     }
 
     /// A session with a GLOBAL-scope privilege registry attached, over a

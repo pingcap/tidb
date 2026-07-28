@@ -79,4 +79,4 @@ pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, Columns, EvalError, JsonError, MysqlRng,
     SessionTimeZone,
 };
-pub use view::{run_create_view_in, run_drop_view_in};
+pub use view::{run_create_view_in, run_drop_view_in, view_column_list};

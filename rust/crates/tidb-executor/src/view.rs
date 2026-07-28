@@ -23,16 +23,24 @@
 //! view re-plans. This module reproduces that canonicalization directly from
 //! the parsed statement.
 //!
+//! A body may be a set operation or contain derived tables; both are
+//! canonicalized term by term, exactly as Go does (captured: a `UNION` body
+//! restores each term's fields aliased and each term's tables qualified, and
+//! a derived table's own subquery is canonicalized inside its parentheses).
+//!
 //! NOT MODELLED (documented): privileges (the definer is recorded but never
-//! checked), `WITH CHECK OPTION` (writes through a view are refused outright,
-//! which is the only place it would apply), and `ALGORITHM = MERGE`'s effect
+//! checked), enforcing `WITH CHECK OPTION` on write-through (the mode is
+//! stored and reported, and writes through a view are refused outright, which
+//! is the only place the check would apply), and `ALGORITHM = MERGE`'s effect
 //! on planning -- reading a view always materializes its body here.
 
 use crate::driver::{Catalog, DriverError, ViewDef};
 use crate::SchemaErrorKind;
 use tidb_ast::{
-    CreateViewStmt, Expr, JoinNode, QueryStmt, SelectField, SelectFieldList, SelectStmt, Stmt,
+    CreateViewStmt, Expr, JoinNode, QueryStmt, SelectField, SelectFieldList, SelectStmt,
+    SetOprTermBody, Stmt,
 };
+use tidb_datatype::FieldType;
 
 /// Creates (or replaces) a view.
 ///
@@ -44,11 +52,6 @@ pub fn run_create_view_in(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let QueryStmt::Select(select) = &*create.query else {
-        return Err(DriverError::Unsupported(
-            "a set-operation view body is not supported yet",
-        ));
-    };
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
     // `CREATE VIEW` over an existing name is Go's ErrTableExists whether the
@@ -71,7 +74,7 @@ pub fn run_create_view_in(
     } else {
         &*catalog
     };
-    let select_sql = canonical_view_select(select, resolving, &database)?;
+    let select_sql = canonical_view_query(&create.query, resolving, &database)?;
     // Running the canonical body both validates it and settles the output
     // column types the view reports to DESCRIBE and SHOW CREATE VIEW.
     let (body_columns, _) =
@@ -98,6 +101,10 @@ pub fn run_create_view_in(
         definer_host: create.definer.host.clone(),
         algorithm: create.algorithm.sql().to_owned(),
         security: create.security.sql().to_owned(),
+        // Go records a check option on every view, `CASCADED` by default:
+        // captured, `information_schema.views.CHECK_OPTION` reads CASCADED
+        // for a view written without one at all.
+        check_option: create.check_option.sql().to_owned(),
     };
     catalog.register_view_in(&database, &name, view);
     Ok(())
@@ -146,13 +153,91 @@ struct BodyTable {
     columns: Vec<String>,
 }
 
-/// Canonicalizes a view body the way Go stores it: schema-qualified table
-/// references, `*` expanded to explicit columns, and every field aliased.
-fn canonical_view_select(
-    select: &SelectStmt,
+/// Canonicalizes a view body and restores it to the text Go stores.
+///
+/// A set operation canonicalizes term by term; the statement-level
+/// `ORDER BY`/`LIMIT` and a nested term's parentheses restore unchanged,
+/// which is what Go prints (captured).
+fn canonical_view_query(
+    query: &QueryStmt,
     catalog: &Catalog,
     current_db: &str,
 ) -> Result<String, DriverError> {
+    let canonical = canonical_query(query, catalog, current_db)?;
+    Ok(Stmt::Query(tidb_ast::NodeBox::new(canonical)).restore())
+}
+
+/// The canonical form of a view body, as an AST.
+fn canonical_query(
+    query: &QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<QueryStmt, DriverError> {
+    Ok(match query {
+        QueryStmt::Select(select) => {
+            QueryStmt::Select(Box::new(canonical_select(select, catalog, current_db)?))
+        }
+        QueryStmt::SetOpr(set_opr) => {
+            let mut set_opr = set_opr.clone();
+            for term in &mut set_opr.terms {
+                term.body = match &term.body {
+                    SetOprTermBody::Select(select) => SetOprTermBody::Select(Box::new(
+                        canonical_select(select, catalog, current_db)?,
+                    )),
+                    SetOprTermBody::Nested(nested) => {
+                        let QueryStmt::SetOpr(nested) = canonical_query(
+                            &QueryStmt::SetOpr(nested.clone()),
+                            catalog,
+                            current_db,
+                        )?
+                        else {
+                            unreachable!("a set operation canonicalizes to a set operation");
+                        };
+                        SetOprTermBody::Nested(nested)
+                    }
+                };
+            }
+            QueryStmt::SetOpr(set_opr)
+        }
+    })
+}
+
+/// The output column names of a canonicalized body: every field is aliased by
+/// then, and a set operation takes the names of its first term (Go's
+/// `buildSetOpr`, and what the capture shows a `UNION` view report).
+fn query_output_names(query: &QueryStmt) -> Vec<String> {
+    match query {
+        QueryStmt::Select(select) => select
+            .fields
+            .fields()
+            .iter()
+            .map(|field| match field {
+                SelectField::Expr {
+                    alias: Some(alias), ..
+                } => alias.clone(),
+                _ => String::new(),
+            })
+            .collect(),
+        QueryStmt::SetOpr(set_opr) => match set_opr.terms.first().map(|term| &term.body) {
+            Some(SetOprTermBody::Select(select)) => {
+                query_output_names(&QueryStmt::Select(select.clone()))
+            }
+            Some(SetOprTermBody::Nested(nested)) => {
+                query_output_names(&QueryStmt::SetOpr(nested.clone()))
+            }
+            None => Vec::new(),
+        },
+    }
+}
+
+/// Canonicalizes one `SELECT` of a view body the way Go stores it:
+/// schema-qualified table references, `*` expanded to explicit columns, and
+/// every field aliased.
+fn canonical_select(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<SelectStmt, DriverError> {
     let mut select = select.clone();
     let mut tables = Vec::new();
     if let Some(join) = &mut select.from {
@@ -206,10 +291,7 @@ fn canonical_view_select(
         }
     }
     select.fields = SelectFieldList::from(fields);
-
-    let restored =
-        Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(select)))).restore();
-    Ok(restored)
+    Ok(select)
 }
 
 /// The name a field takes when no `AS` was written: a column reference keeps
@@ -267,8 +349,68 @@ fn qualify_join_node(
             }
             Ok(())
         }
-        JoinNode::Derived { .. } => Err(DriverError::Unsupported(
-            "a derived table in a view body is not supported yet",
-        )),
+        JoinNode::Derived {
+            subquery,
+            alias,
+            lateral,
+            column_names,
+        } => {
+            if *lateral || !column_names.is_empty() {
+                return Err(DriverError::Unsupported(
+                    "a LATERAL derived table is not supported yet",
+                ));
+            }
+            // Captured from Go: an alias-less derived table in a view body is
+            // ErrDerivedMustHaveAlias, the same error a plain SELECT reports.
+            let alias = alias.clone().filter(|alias| !alias.is_empty());
+            let Some(alias) = alias else {
+                return Err(DriverError::DerivedMustHaveAlias);
+            };
+            // The subquery is canonicalized in place, so the stored body
+            // carries the qualified, fully aliased inner SELECT too.
+            let canonical = canonical_query(subquery, catalog, current_db)?;
+            let columns = query_output_names(&canonical);
+            **subquery = canonical;
+            tables.push(BodyTable {
+                qualifier: vec![alias],
+                columns,
+            });
+            Ok(())
+        }
     }
+}
+
+/// The columns a view reports today: its stored names, paired with the types
+/// its body resolves to *now*.
+///
+/// Go re-plans a view's body for every metadata answer (`tryFillViewColumnType`
+/// for `DESCRIBE`/`SHOW COLUMNS`, and the same fill for
+/// `information_schema.columns`), so an `ALTER TABLE base MODIFY COLUMN`
+/// underneath a view shows through on the next read -- captured: a view over
+/// `bigint`/`varchar(10)` reports `varchar(32)`/`varchar(64)` once the base
+/// columns are altered, with no touch to the view itself.
+///
+/// A body that no longer resolves is the caller's error to shape: Go reports
+/// the body's own failure from `DESCRIBE` and omits the view from
+/// `information_schema.columns` entirely (both captured).
+pub fn view_column_list(
+    view: &ViewDef,
+    database: &str,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<(String, FieldType)>, DriverError> {
+    let (body_columns, _) =
+        crate::driver::run_select_meta_in(&view.select_sql, catalog, database, ctx)?;
+    if body_columns.len() != view.columns.len() {
+        return Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(format!(
+            "{database}.{}",
+            view.name
+        ))));
+    }
+    Ok(view
+        .columns
+        .iter()
+        .zip(&body_columns)
+        .map(|((name, _), (_, field_type))| (name.clone(), field_type.clone()))
+        .collect())
 }
