@@ -741,6 +741,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
+	b.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptAlwaysKeepJoinKey)
+
 	// Detect whether the right subtree contains any LATERAL table source.
 	// This is used only to decide whether to push outerSchemas before building
 	// the right side, so that nested LATERAL sources can resolve outer columns.
