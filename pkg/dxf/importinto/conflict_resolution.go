@@ -152,7 +152,6 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	}
 	if needDispatch {
 		eg.Go(func() error {
-			failpoint.InjectCall("beforeResolveMVIndexByHandleDispatch")
 			return dispatchMVIndexKVPairs(egCtx, e.store, pairCh, deleterChs, targetIdx)
 		})
 	}
