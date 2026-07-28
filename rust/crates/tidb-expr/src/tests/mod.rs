@@ -548,6 +548,18 @@ fn make_set_source_vectors_preserve_signed_bit_masks() {
     );
 }
 
+/// Regression: `bits` evaluating to the UNSIGNED domain -- a bitwise OR's
+/// result, confirmed via `gorun` (`MAKE_SET(1|4,'a','b','c')` is `'a,c'`) --
+/// used to fall through `make_set`'s `Datum::Int`-only match and answer
+/// `NULL` instead of reading the same bit pattern. More set bits than
+/// strings (`31` against 3 arguments) simply has nothing to match past the
+/// last one, confirmed via the same run.
+#[test]
+fn make_set_reads_unsigned_bits_too() {
+    assert_eq!(e("make_set(1|4, 'a', 'b', 'c')"), "STR:a,c");
+    assert_eq!(e("make_set(31, 'a', 'b', 'c')"), "STR:a,b,c");
+}
+
 #[test]
 fn field_source_vectors_preserve_numeric_and_string_comparison_modes() {
     // pkg/expression/builtin_string_test.go:1712 TestField

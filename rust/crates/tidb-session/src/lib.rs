@@ -5972,6 +5972,36 @@ mod tests {
         assert!(session.run("SELECT 'abc' REGEXP '('").is_err());
     }
 
+    /// `MAKE_SET` regression, checked against mock TiDB. `1|4` evaluates to
+    /// the UNSIGNED domain, which used to fall through the builtin's
+    /// `Datum::Int`-only match and answer NULL instead of `'a,c'`.
+    #[test]
+    fn make_set_accepts_a_bitwise_or_result() {
+        let mut session = Session::new();
+        assert_eq!(
+            row_text(session.run("SELECT MAKE_SET(1|4,'a','b','c')")),
+            [["a,c"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT MAKE_SET(0,'a','b','c')")),
+            [[""]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT MAKE_SET(NULL,'a','b','c')")),
+            [["NULL"]]
+        );
+        // A NULL string argument is skipped, not propagated.
+        assert_eq!(
+            row_text(session.run("SELECT MAKE_SET(1,'a',NULL,'c')")),
+            [["a"]]
+        );
+        // More set bits than strings simply has nothing left to match.
+        assert_eq!(
+            row_text(session.run("SELECT MAKE_SET(31,'a','b','c')")),
+            [["a,b,c"]]
+        );
+    }
+
     /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is
     /// normalized and checked against the column's own type at DDL time,
     /// checked against captured TiDB output.

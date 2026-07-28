@@ -123,7 +123,7 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // String in, string out.
         "concat" | "concat_ws" | "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim"
         | "rtrim" | "reverse" | "left" | "right" | "substring" | "substr" | "mid" | "replace"
-        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "unhex" | "md5" | "elt"
+        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "unhex" | "md5" | "elt" | "make_set"
         | "substring_index" | "insert_func" | "char_func" | "export_set" | "quote" => text(),
         // The date/time family. Every value this crate produces for them is
         // a formatted string or an integer -- see `time_fn`'s own doc for

@@ -950,10 +950,17 @@ pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// included when bit `i-1` of `bits` is `1`). `NULL` arguments are excluded
 /// even when their bit is set (matching MySQL). `NULL` if `bits` is `NULL`.
 pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Datum::Int(bits) = &vals[0] else {
-        return Ok(Datum::Null);
+    // `bits` is read through Go's ETInt argument conversion, so a value that
+    // evaluated to the unsigned domain -- `1|4`'s bitwise OR, for one -- must
+    // still be read here rather than falling through to NULL: keep its raw
+    // 64-bit pattern, the same way `bit_count` above does, so the bit test
+    // below sees the same bits Go's signed int64 carrier would.
+    let bits = match &vals[0] {
+        Datum::Null => return Ok(Datum::Null),
+        Datum::Int(n) => *n as u64,
+        Datum::UInt(n) => *n,
+        _ => return Ok(Datum::Null),
     };
-    let bits = *bits as u64;
     let mut parts = Vec::new();
     for (i, v) in vals[1..].iter().enumerate() {
         if bits & (1 << i) != 0 {
