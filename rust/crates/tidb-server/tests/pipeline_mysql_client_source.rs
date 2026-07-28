@@ -747,6 +747,56 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     );
     assert_eq!(run_write(&mut client, &mut reader, "DROP VIEW vwire"), 0);
 
+    // A ranking window function computes over the wire: RANK over distinct
+    // values numbers the rows, and the outer ORDER BY runs after the window.
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT a, RANK() OVER (ORDER BY b) FROM t ORDER BY a DESC"
+        ),
+        vec![
+            vec!["4".to_owned(), "4".to_owned()],
+            vec!["3".to_owned(), "3".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+            vec!["1".to_owned(), "1".to_owned()],
+        ]
+    );
+
+    // A composite interval unit: the digit runs assign right-to-left, so
+    // '1:30' HOUR_MINUTE adds one hour and thirty minutes.
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT DATE_ADD('2024-01-31 10:20:30', INTERVAL '1:30' HOUR_MINUTE)"
+        ),
+        vec![vec!["2024-01-31 11:50:30".to_owned()]]
+    );
+
+    // EXPLAIN of a write describes without executing: the plan row comes
+    // back and the table keeps its row count.
+    let explained = run_query(
+        &mut client,
+        &mut reader,
+        "EXPLAIN INSERT INTO t VALUES (9, 90)",
+    );
+    assert_eq!(explained[0][0], "Insert_1", "{explained:?}");
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT COUNT(*) FROM t"),
+        vec![vec!["4".to_owned()]],
+        "EXPLAIN INSERT must not insert"
+    );
+
+    // The processlist virtual table sees this very connection.
+    let processes = run_query(
+        &mut client,
+        &mut reader,
+        "SELECT ID, COMMAND FROM information_schema.PROCESSLIST",
+    );
+    assert_eq!(processes.len(), 1, "{processes:?}");
+    assert_ne!(processes[0][0], "0", "a live connection id");
+
     assert!(run_query(&mut client, &mut reader, "SHOW WARNINGS").is_empty());
     // USE answers with an OK packet, as a client expects when it switches
     // schema.
