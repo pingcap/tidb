@@ -621,6 +621,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildInsert(ctx, x)
 	case *ast.ImportIntoStmt:
 		return b.buildImportInto(ctx, x)
+	case *ast.ExportTableStmt:
+		return b.buildExportTable(ctx, x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
@@ -4744,7 +4746,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
-			if err := checkNextGenS3PathWithSem(u); err != nil {
+			if err := checkNextGenS3PathWithSem("IMPORT INTO", u); err != nil {
 				return nil, err
 			}
 			values := u.Query()
@@ -4875,6 +4877,72 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, ImportIntoSchemaFTypes, []uint{})
 		p.SetSchemaAndNames(outputSchema, outputFields)
 	}
+	return p, nil
+}
+
+var (
+	exportTableSchemaNames = []string{"Task_ID", "Task_Key", "Status"}
+	exportTableSchemaTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString}
+)
+
+func (b *PlanBuilder) buildExportTable(ctx context.Context, st *ast.ExportTableStmt) (base.Plan, error) {
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	u, err := url.Parse(st.Path)
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs("EXPORT TABLE destination", err.Error())
+	}
+	if semv1.IsEnabled() && objstore.IsLocal(u) {
+		return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("EXPORT TABLE to server disk")
+	}
+	// same as IMPORT INTO: on a shared nextgen cluster the external ID
+	// restricts the S3 role access to the current tenant.
+	if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+		if err := checkNextGenS3PathWithSem("EXPORT TABLE", u); err != nil {
+			return nil, err
+		}
+		values := u.Query()
+		values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
+		u.RawQuery = values.Encode()
+		st.Path = u.String()
+	}
+
+	options := make([]*LoadDataOpt, 0, len(st.Options))
+	for _, opt := range st.Options {
+		loadDataOpt := LoadDataOpt{Name: opt.Name}
+		if opt.Value != nil {
+			var err error
+			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		options = append(options, &loadDataOpt)
+	}
+
+	tnW := b.resolveCtx.GetTableName(st.Table)
+	tblInfo := tnW.TableInfo
+	if tblInfo.IsView() || tblInfo.IsSequence() {
+		return nil, errors.Errorf("EXPORT TABLE only supports base table")
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return nil, errors.Errorf("EXPORT TABLE does not support temporary table")
+	}
+	p := ExportTable{
+		Table:   tnW,
+		Path:    st.Path,
+		Format:  st.Format,
+		Options: options,
+		Stmt:    st.Text(),
+	}.Init(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	var selectErr error
+	if user != nil {
+		selectErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.L, p.Table.Name.L, "", selectErr)
+
+	outputSchema, outputFields := convert2OutputSchemasAndNames(exportTableSchemaNames, exportTableSchemaTypes, []uint{})
+	p.SetSchemaAndNames(outputSchema, outputFields)
 	return p, nil
 }
 
@@ -6398,7 +6466,7 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 // For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
 // disallow explicit S3 external ID unless it is the keyspace name. The keyspace
 // name is used as the S3 external ID.
-func checkNextGenS3PathWithSem(u *url.URL) error {
+func checkNextGenS3PathWithSem(cmd string, u *url.URL) error {
 	values := u.Query()
 	expectedExternalID := config.GetGlobalKeyspaceName()
 	hasAccessKey := false
@@ -6410,7 +6478,7 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 		case s3like.S3ExternalID:
 			for _, v := range vs {
 				if v != expectedExternalID {
-					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(cmd + " with explicit external ID")
 				}
 			}
 		case s3like.S3AccessKey:
@@ -6423,7 +6491,7 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	}
 
 	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
-		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(cmd + " from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil

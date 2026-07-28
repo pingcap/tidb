@@ -393,6 +393,7 @@ var tokenMap = map[string]int{
 	"EXPANSION":                      expansion,
 	"EXPIRE":                         expire,
 	"EXPLAIN":                        explain,
+	"EXPORT":                         export,
 	"EXPR_PUSHDOWN_BLACKLIST":        exprPushdownBlacklist,
 	"EXTENDED":                       extended,
 	"EXPLORE":                        explore,
