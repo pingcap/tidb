@@ -1,0 +1,374 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `doDMLWorks`' seed rows: the `root` account and the `mysql.tidb` markers
+//! a later start reads back to know the cluster is bootstrapped.
+//!
+//! Every seeded table here is *non-clustered* — `pk_is_handle` and
+//! `is_common_handle` are both false — so each row needs three things, and this
+//! module writes all three or the row is invisible to half of TiDB:
+//!
+//! 1. the record itself, under an implicit `_tidb_rowid` handle;
+//! 2. one entry per index, since nothing else backfills them;
+//! 3. the row-ID allocator key, so the next writer does not hand out a handle
+//!    this bootstrap already used.
+
+use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+use tidb_codec::{gen_table_record_prefix, Encoder};
+use tidb_datatype::{Collation, Datum, FieldTypeCode, MysqlEnum};
+use tidb_meta::{key, value};
+use tidb_metadef::system::SYSTEM_DATABASE_ID;
+use tidb_model::table_info::TableInfo;
+use tidb_tablecodec::{
+    encode_table_row, generate_index_key, generate_index_value, IndexColumn as CodecIndexColumn,
+    IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn, TableInfo as CodecTableInfo,
+};
+use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::{Handle, IntHandle};
+
+use super::{text, BootstrapError, BOOTSTRAPPED_VAR, TIDB_SERVER_VERSION_VAR, VAR_TRUE};
+
+/// Go `currentBootstrapVersion` as this node writes it.
+///
+/// A real TiDB compares the stored value against its own build's constant and
+/// runs the upgrade steps between them; writing the version whose *schema* this
+/// node actually created is what keeps that comparison honest.
+pub const CURRENT_BOOTSTRAP_VERSION: i64 = 245;
+
+/// One value of a seed row, named by its column so a schema that renames or
+/// reorders columns fails loudly instead of writing into the wrong one.
+#[derive(Clone, Debug)]
+pub struct SeedValue {
+    /// The column name, lowercase.
+    pub column: &'static str,
+    /// The value, in the column's own declared type.
+    pub value: Datum,
+}
+
+/// One row to seed into one `mysql.*` table.
+#[derive(Clone, Debug)]
+pub struct SeedRow {
+    /// The table name, without the `mysql.` qualifier.
+    pub table: &'static str,
+    /// The values, by column name. A column not named here is left unset,
+    /// which reads back as its declared default.
+    pub values: Vec<SeedValue>,
+}
+
+/// Go's own `Y`/`N` privilege spelling.
+const YES: &str = "Y";
+const NO: &str = "N";
+
+/// Writes every seed row Go's `doDMLWorks` writes, with its index entries.
+pub fn seed(
+    tables: &[TableInfo],
+    mutations: &mut Vec<OptimisticMutation>,
+) -> Result<(), BootstrapError> {
+    for row in seed_rows() {
+        let table = tables
+            .iter()
+            .find(|table| table.name.lowercase() == row.table)
+            .ok_or_else(|| {
+                BootstrapError::Encode(format!("mysql.{} was not created", row.table))
+            })?;
+        write_row(table, &row, mutations)?;
+    }
+    // Every seeded table hands out `_tidb_rowid`s from 1, so the allocator has
+    // to record the last one used before another writer asks for the next.
+    for table in tables {
+        let used = seed_rows()
+            .iter()
+            .filter(|row| row.table == table.name.lowercase())
+            .count();
+        if used == 0 {
+            continue;
+        }
+        mutations.push(OptimisticMutation::meta_put(
+            key::auto_table_id_kv_key(SYSTEM_DATABASE_ID, table.id),
+            value::encode_int_value(i64::try_from(used).expect("a seed row count fits in i64")),
+        )?);
+    }
+    Ok(())
+}
+
+/// Go `doDMLWorks`, as data.
+fn seed_rows() -> Vec<SeedRow> {
+    // The non-secure bootstrap account: `root`@`%` with every static privilege
+    // except `Account_locked`, an EMPTY password, and the native-password
+    // plugin. An empty `authentication_string` is what makes a fresh cluster
+    // reachable with no password at all, which is exactly Go's behaviour.
+    let mut root = vec![
+        SeedValue {
+            column: "host",
+            value: text("%"),
+        },
+        SeedValue {
+            column: "user",
+            value: text("root"),
+        },
+        SeedValue {
+            column: "authentication_string",
+            value: text(""),
+        },
+        SeedValue {
+            column: "plugin",
+            value: text("mysql_native_password"),
+        },
+        SeedValue {
+            column: "token_issuer",
+            value: text(""),
+        },
+    ];
+    for column in GRANTED_PRIVILEGE_COLUMNS {
+        root.push(SeedValue {
+            column,
+            value: text(YES),
+        });
+    }
+    root.push(SeedValue {
+        column: "account_locked",
+        value: text(NO),
+    });
+
+    vec![
+        SeedRow {
+            table: "user",
+            values: root,
+        },
+        tidb_variable(BOOTSTRAPPED_VAR, VAR_TRUE, "Bootstrap flag. Do not delete."),
+        tidb_variable(
+            TIDB_SERVER_VERSION_VAR,
+            &CURRENT_BOOTSTRAP_VERSION.to_string(),
+            "Bootstrap version. Do not delete.",
+        ),
+    ]
+}
+
+fn tidb_variable(name: &str, value: &str, comment: &str) -> SeedRow {
+    SeedRow {
+        table: "tidb",
+        values: vec![
+            SeedValue {
+                column: "variable_name",
+                value: Datum::Bytes(name.as_bytes().to_vec()),
+            },
+            SeedValue {
+                column: "variable_value",
+                value: Datum::Bytes(value.as_bytes().to_vec()),
+            },
+            SeedValue {
+                column: "comment",
+                value: Datum::Bytes(comment.as_bytes().to_vec()),
+            },
+        ],
+    }
+}
+
+/// Every `mysql.user` privilege column Go's non-secure bootstrap sets to `Y`,
+/// in the order its own `INSERT` names them.
+const GRANTED_PRIVILEGE_COLUMNS: &[&str] = &[
+    "select_priv",
+    "insert_priv",
+    "update_priv",
+    "delete_priv",
+    "create_priv",
+    "drop_priv",
+    "process_priv",
+    "grant_priv",
+    "references_priv",
+    "alter_priv",
+    "show_db_priv",
+    "super_priv",
+    "create_tmp_table_priv",
+    "lock_tables_priv",
+    "execute_priv",
+    "create_view_priv",
+    "show_view_priv",
+    "create_routine_priv",
+    "alter_routine_priv",
+    "index_priv",
+    "create_user_priv",
+    "event_priv",
+    "repl_slave_priv",
+    "repl_client_priv",
+    "trigger_priv",
+    "create_role_priv",
+    "drop_role_priv",
+    "shutdown_priv",
+    "reload_priv",
+    "file_priv",
+    "config_priv",
+    "create_tablespace_priv",
+];
+
+/// Writes one row's record and every index entry that covers it.
+fn write_row(
+    table: &TableInfo,
+    row: &SeedRow,
+    mutations: &mut Vec<OptimisticMutation>,
+) -> Result<(), BootstrapError> {
+    // Each seeded table's rows are numbered from 1 in the order they appear.
+    let row_id = i64::try_from(
+        mutations
+            .iter()
+            .filter(|mutation| {
+                mutation
+                    .key()
+                    .starts_with(&gen_table_record_prefix(table.id))
+            })
+            .count(),
+    )
+    .expect("a seed row count fits in i64")
+        + 1;
+    let handle = Handle::Int(IntHandle::new(row_id));
+
+    let mut column_ids = Vec::with_capacity(row.values.len());
+    let mut values = Vec::with_capacity(row.values.len());
+    for seed in &row.values {
+        let column = table
+            .cols()
+            .into_iter()
+            .find(|column| column.name.lowercase() == seed.column)
+            .ok_or_else(|| {
+                BootstrapError::Encode(format!(
+                    "mysql.{} has no column `{}` to seed",
+                    row.table, seed.column
+                ))
+            })?;
+        column_ids.push(column.id);
+        values.push(typed_value(&seed.value, column.get_type()));
+    }
+    let encoded = encode_table_row(None, &values, &column_ids, true, None)
+        .map_err(|error| BootstrapError::Encode(error.to_string()))?;
+    mutations.push(OptimisticMutation::insert(
+        encode_row_key_with_handle(table.id, &RecordHandle::Int(row_id)),
+        encoded,
+    )?);
+
+    let codec_table = codec_table_info(table);
+    for (position, index) in table.indices.iter().enumerate() {
+        let codec_index = &codec_table.indices[position];
+        let mut indexed = Vec::with_capacity(index.columns.len());
+        for index_column in &index.columns {
+            let position =
+                usize::try_from(index_column.offset).expect("a column offset is not negative");
+            let column = table.columns.get(position).ok_or_else(|| {
+                BootstrapError::Encode(format!(
+                    "mysql.{}'s index `{}` names an offset the table does not have",
+                    row.table,
+                    index.name.original()
+                ))
+            })?;
+            let value = row
+                .values
+                .iter()
+                .find(|seed| seed.column == column.name.lowercase())
+                .map_or(Datum::Null, |seed| {
+                    typed_value(&seed.value, column.get_type())
+                });
+            indexed.push(value);
+        }
+        let (index_key, distinct) = generate_index_key(
+            Encoder::new(true),
+            None,
+            &codec_table,
+            codec_index,
+            table.id,
+            &mut indexed,
+            Some(&handle),
+        )
+        .map_err(|error| BootstrapError::Encode(error.to_string()))?;
+        let index_value = generate_index_value(
+            true,
+            None,
+            &codec_table,
+            codec_index,
+            false,
+            distinct,
+            false,
+            &indexed,
+            &handle,
+            0,
+            &[],
+        )
+        .map_err(|error| BootstrapError::Encode(error.to_string()))?;
+        mutations.push(OptimisticMutation::index_put(index_key, index_value)?);
+    }
+    Ok(())
+}
+
+/// Re-types a seed value for the column it lands in.
+///
+/// Every seed value is written as text here, because that is how Go's own
+/// `INSERT` spells it; a column whose declared type is `ENUM` needs it as the
+/// member it names, not as a string, or the row decodes as the wrong type.
+fn typed_value(value: &Datum, code: FieldTypeCode) -> Datum {
+    match (value, code) {
+        (Datum::Bytes(bytes), FieldTypeCode::Enum) => {
+            // Go's `mysql.user` privilege enums are `ENUM('N','Y')`, so `N` is
+            // member 1 and `Y` is member 2.
+            let name = String::from_utf8_lossy(bytes).into_owned();
+            let position = if name.eq_ignore_ascii_case(YES) { 2 } else { 1 };
+            Datum::new_enum(MysqlEnum::new(name, position), Collation::Binary)
+        }
+        _ => value.clone(),
+    }
+}
+
+/// The tablecodec view of one stored `TableInfo`.
+///
+/// `tidb-tablecodec` keeps its own minimal metadata shape so it does not depend
+/// on the full catalog model; the index encoders need this projection of it.
+fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
+    CodecTableInfo {
+        columns: table
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(offset, column)| CodecTableColumn {
+                id: column.id,
+                offset,
+                field_type: column.field_type.clone(),
+                primary_key: column
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                changing_field_type: None,
+            })
+            .collect(),
+        indices: table
+            .indices
+            .iter()
+            .map(|index| CodecIndexInfo {
+                id: index.id,
+                columns: index
+                    .columns
+                    .iter()
+                    .map(|column| CodecIndexColumn {
+                        offset: usize::try_from(column.offset)
+                            .expect("a column offset is not negative"),
+                        length: i64::from(column.length),
+                        use_changing_type: false,
+                    })
+                    .collect(),
+                unique: index.unique,
+                global: index.global,
+                global_index_version: 0,
+                primary: index.primary,
+            })
+            .collect(),
+        pk_is_handle: table.pk_is_handle,
+        is_common_handle: table.is_common_handle,
+        common_handle_version: u8::try_from(table.common_handle_version).unwrap_or(0),
+    }
+}

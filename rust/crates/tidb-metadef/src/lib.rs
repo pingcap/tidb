@@ -15,10 +15,12 @@
 //! `pkg/meta/metadef`: TiDB's system database/table identifiers, the
 //! memory/system-database predicates, and the system-table DDL.
 
+pub mod bootstrap_tables;
 pub mod db;
 pub mod system;
 pub mod system_tables_def;
 
+pub use bootstrap_tables::{BootstrapTable, BOOTSTRAP_TABLES};
 pub use db::{
     is_br_related_db, is_mem_db, is_mem_or_sys_db, is_system_db, is_system_related_db,
     CLUSTER_TABLE_INSTANCE_COLUMN_NAME, INFORMATION_SCHEMA_NAME, INFORMATION_SCHEMA_NAME_L,

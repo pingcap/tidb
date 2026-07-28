@@ -43,25 +43,23 @@
 
 use std::fmt;
 
-use tidb_ast::{CiString, ColumnTypeArg, IndexConstraintKind};
-use tidb_ast::{
-    ColumnDef, ColumnOption, CreateTableStmt, DdlStmt, DropTableStmt, IndexPart, InlineKeyKind,
-    PrimaryKeyStorage, Stmt, TableConstraint,
-};
-use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_ast::CiString;
+use tidb_ast::{CreateTableStmt, DdlStmt, DropTableStmt, Stmt};
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
-use tidb_model::column::{ColumnInfo, CURR_LATEST_COLUMN_INFO_VERSION};
 use tidb_model::db::DBInfo;
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
-use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION5};
+use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
 use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
+use crate::table_info_build::{build_table_info, ClusteredIndexDefMode};
+
+pub use crate::table_info_build::DdlAdmissionError;
 
 /// The catalog charset every object this node creates carries.
 ///
@@ -72,121 +70,13 @@ use crate::cluster_catalog::{
 const CATALOG_CHARSET: &str = "utf8mb4";
 /// The catalog collation paired with [`CATALOG_CHARSET`].
 const CATALOG_COLLATION: &str = "utf8mb4_bin";
-/// Go's `binary` charset/collation, used for every non-character column type.
-const BINARY_CHARSET: &str = "binary";
-
-/// Go `mysql.MaxIntWidth`: a `BIGINT`'s display width.
-const BIGINT_DISPLAY_WIDTH: i64 = 20;
-/// Go `mysql.MaxDoubleWidth`: a `DOUBLE`'s display width.
-const DOUBLE_DISPLAY_WIDTH: i64 = 22;
-/// Go `types.UnspecifiedLength`, which a `DOUBLE` carries as its decimal.
-const UNSPECIFIED_LENGTH: i64 = -1;
-
-/// One column shape this node both writes and serves.
-///
-/// The set is exactly [`crate::cluster_catalog::configure_loaded_table`]'s
-/// admitted set, minus the read-only widenings that have no write path: a table
-/// this node creates is one it could also load and read back.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AdmittedColumnType {
-    /// `BIGINT` or `BIGINT UNSIGNED`.
-    BigInt {
-        /// Whether `UNSIGNED` was declared.
-        unsigned: bool,
-    },
-    /// `DOUBLE`.
-    Double,
-    /// `CHAR(n)`, utf8mb4.
-    Char {
-        /// Declared character length.
-        length: u32,
-    },
-    /// `VARCHAR(n)`, utf8mb4.
-    Varchar {
-        /// Declared character length.
-        length: u32,
-    },
-    /// `DECIMAL(p, s)`.
-    Decimal {
-        /// Declared precision.
-        precision: u32,
-        /// Declared scale.
-        scale: u32,
-    },
-}
-
-impl AdmittedColumnType {
-    /// The stored `FieldType`, byte-for-byte what the Go server writes for the
-    /// same declaration (verified against a real cluster's stored `TableInfo`).
-    fn field_type(self, not_null: bool, primary_key: bool) -> FieldType {
-        let mut field_type = FieldType::new(FieldTypeCode::LongLong);
-        match self {
-            Self::BigInt { unsigned } => {
-                field_type.set_code(FieldTypeCode::LongLong);
-                field_type.set_flen(BIGINT_DISPLAY_WIDTH);
-                field_type.set_decimal(0);
-                field_type.set_charset_name(BINARY_CHARSET);
-                field_type.set_collation_name(BINARY_CHARSET);
-                if unsigned {
-                    field_type.add_flags(FieldTypeFlags::UNSIGNED);
-                }
-            }
-            Self::Double => {
-                field_type.set_code(FieldTypeCode::Double);
-                field_type.set_flen(DOUBLE_DISPLAY_WIDTH);
-                field_type.set_decimal(UNSPECIFIED_LENGTH);
-                field_type.set_charset_name(BINARY_CHARSET);
-                field_type.set_collation_name(BINARY_CHARSET);
-            }
-            Self::Char { length } => {
-                field_type.set_code(FieldTypeCode::String);
-                field_type.set_flen(i64::from(length));
-                field_type.set_decimal(0);
-                field_type.set_charset_name(CATALOG_CHARSET);
-                field_type.set_collation_name(CATALOG_COLLATION);
-            }
-            Self::Varchar { length } => {
-                field_type.set_code(FieldTypeCode::Varchar);
-                field_type.set_flen(i64::from(length));
-                field_type.set_decimal(0);
-                field_type.set_charset_name(CATALOG_CHARSET);
-                field_type.set_collation_name(CATALOG_COLLATION);
-            }
-            Self::Decimal { precision, scale } => {
-                field_type.set_code(FieldTypeCode::NewDecimal);
-                field_type.set_flen(i64::from(precision));
-                field_type.set_decimal(i64::from(scale));
-                field_type.set_charset_name(BINARY_CHARSET);
-                field_type.set_collation_name(BINARY_CHARSET);
-            }
-        }
-        if not_null {
-            field_type.add_flags(FieldTypeFlags::NOT_NULL);
-        }
-        if primary_key {
-            field_type.add_flags(FieldTypeFlags::PRI_KEY);
-        }
-        // Go sets `NoDefaultValueFlag` on every column that declares neither a
-        // DEFAULT nor AUTO_INCREMENT (`ddl.setNoDefaultValueFlag`); this node
-        // admits no such option, so every column it writes carries it.
-        field_type.add_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
-        field_type
-    }
-}
-
-/// One admitted column of a `CREATE TABLE` this node will write.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AdmittedColumn {
-    /// The declared column name.
-    pub name: String,
-    /// The declared type.
-    pub column_type: AdmittedColumnType,
-    /// Whether this column is the table's clustered `BIGINT` handle.
-    pub primary_key: bool,
-}
 
 /// One catalog change this node knows how to perform.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// `CreateTable` carries a whole `TableInfo`, which has no equality of its own
+/// (a catalog object is compared by its serialized bytes, not structurally), so
+/// this enum is `Debug`/`Clone` only.
+#[derive(Clone, Debug)]
 pub enum DdlStatement {
     /// `CREATE DATABASE [IF NOT EXISTS] name`.
     CreateDatabase {
@@ -210,8 +100,9 @@ pub enum DdlStatement {
         table: String,
         /// Whether an existing table is a no-op rather than an error.
         if_not_exists: bool,
-        /// The admitted columns, in declaration order.
-        columns: Vec<AdmittedColumn>,
+        /// The `TableInfo` this statement lowers to, complete except for the
+        /// ID and timestamp the publishing transaction assigns.
+        template: Box<TableInfo>,
     },
     /// `DROP TABLE [IF EXISTS] [schema.]table`.
     DropTable {
@@ -223,33 +114,6 @@ pub enum DdlStatement {
         if_exists: bool,
     },
 }
-
-/// Why a statement cannot be performed as written.
-///
-/// Every variant is produced by [`lower_ddl`], which runs before a PD
-/// timestamp is spent and before any snapshot is read, so a refusal never
-/// leaves a partial change behind.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DdlAdmissionError {
-    /// Exact, self-contained explanation naming the offending clause.
-    pub reason: String,
-}
-
-impl DdlAdmissionError {
-    fn new(reason: impl Into<String>) -> Self {
-        Self {
-            reason: reason.into(),
-        }
-    }
-}
-
-impl fmt::Display for DdlAdmissionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.reason)
-    }
-}
-
-impl std::error::Error for DdlAdmissionError {}
 
 /// Admits one parsed statement as a catalog change, or explains why not.
 ///
@@ -334,266 +198,22 @@ fn lower_create_table(
     create: &CreateTableStmt,
     default_schema: &str,
 ) -> Result<DdlStatement, DdlAdmissionError> {
-    let refuse = |what: &str| {
-        Err(DdlAdmissionError::new(format!(
-            "CREATE TABLE {what} is not supported by this node"
-        )))
-    };
-    if create.temporary != tidb_ast::CreateTableTemporary::None {
-        return refuse("TEMPORARY");
-    }
-    if create.like_table.is_some() {
-        return refuse("... LIKE");
-    }
-    if create.ctas.is_some() {
-        return refuse("... AS <query>");
-    }
-    if create.partitioning.is_some() {
-        return refuse("PARTITION BY");
-    }
-    if !create.splits.is_empty() {
-        return refuse("SPLIT REGION");
-    }
-    if !create.table_options.is_empty() {
-        return Err(DdlAdmissionError::new(
-            "CREATE TABLE options are not supported by this node; it writes the \
-             server default ENGINE=InnoDB, utf8mb4 / utf8mb4_bin",
-        ));
-    }
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
-
-    // The primary key may be declared inline on its column or as a table
-    // constraint; both resolve to the same single-column clustered handle.
-    let mut constraint_primary_key: Option<String> = None;
-    for constraint in &create.table_constraints {
-        let TableConstraint::Index(index) = constraint else {
-            return refuse("CHECK and FOREIGN KEY constraints");
-        };
-        if index.kind != IndexConstraintKind::PrimaryKey {
-            return refuse("a secondary index");
-        }
-        if index.options.primary_key_storage == Some(PrimaryKeyStorage::NonClustered) {
-            return refuse("PRIMARY KEY ... NONCLUSTERED");
-        }
-        let [IndexPart::Column {
-            name,
-            prefix_len: None,
-            desc: false,
-        }] = index.parts.as_slice()
-        else {
-            return refuse("a composite, prefixed, descending, or expression PRIMARY KEY");
-        };
-        if constraint_primary_key.replace(name.clone()).is_some() {
-            return refuse("more than one PRIMARY KEY");
-        }
-    }
-
-    let mut columns = Vec::with_capacity(create.columns.len());
-    let mut inline_primary_key = None;
-    for column in &create.columns {
-        let (admitted, inline_pk) = lower_column(column)?;
-        if inline_pk && inline_primary_key.replace(admitted.name.clone()).is_some() {
-            return refuse("more than one PRIMARY KEY");
-        }
-        columns.push(admitted);
-    }
-    if columns.is_empty() {
-        return Err(DdlAdmissionError::new("CREATE TABLE declares no columns"));
-    }
-
-    let primary_key = match (inline_primary_key, constraint_primary_key) {
-        (Some(_), Some(_)) => return refuse("more than one PRIMARY KEY"),
-        (Some(name), None) | (None, Some(name)) => name,
-        (None, None) => {
-            return Err(DdlAdmissionError::new(
-                "CREATE TABLE requires a single-column clustered BIGINT PRIMARY KEY: \
-                 this node stores every row under its primary key as the handle",
-            ))
-        }
-    };
-    let mut marked = false;
-    for column in &mut columns {
-        if column.name.to_lowercase() == primary_key.to_lowercase() {
-            if column.column_type != (AdmittedColumnType::BigInt { unsigned: false }) {
-                return Err(DdlAdmissionError::new(format!(
-                    "PRIMARY KEY column `{}` must be a signed BIGINT to serve as the \
-                     clustered row handle",
-                    column.name
-                )));
-            }
-            column.primary_key = true;
-            marked = true;
-        }
-    }
-    if !marked {
-        return Err(DdlAdmissionError::new(format!(
-            "PRIMARY KEY names column `{primary_key}`, which the table does not declare"
-        )));
-    }
-
-    let mut seen = Vec::with_capacity(columns.len());
-    for column in &columns {
-        let lowered = column.name.to_lowercase();
-        if seen.contains(&lowered) {
-            return Err(DdlAdmissionError::new(format!(
-                "CREATE TABLE declares column `{}` twice",
-                column.name
-            )));
-        }
-        seen.push(lowered);
-    }
-
+    // The server default `tidb_enable_clustered_index = ON`, which is what a
+    // real TiDB builds a user table under. Bootstrap is the one caller that
+    // uses a different mode, and it says so at its own call site.
+    let template = build_table_info(
+        create,
+        CATALOG_CHARSET,
+        CATALOG_COLLATION,
+        ClusteredIndexDefMode::On,
+    )?;
     Ok(DdlStatement::CreateTable {
         schema,
         table,
         if_not_exists: create.if_not_exists,
-        columns,
+        template: Box::new(template),
     })
-}
-
-/// Admits one column definition, returning it and whether it declared the
-/// primary key inline.
-fn lower_column(column: &ColumnDef) -> Result<(AdmittedColumn, bool), DdlAdmissionError> {
-    let name = &column.name;
-    if !column.qualifier.is_empty() {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` carries a qualifier, which CREATE TABLE does not accept here"
-        )));
-    }
-    let mut not_null = false;
-    let mut inline_primary_key = false;
-    for option in &column.options {
-        match option {
-            ColumnOption::NotNull => not_null = true,
-            ColumnOption::InlineKey(inline) => match inline.kind {
-                InlineKeyKind::Primary { storage } => {
-                    if storage == Some(PrimaryKeyStorage::NonClustered) {
-                        return Err(DdlAdmissionError::new(format!(
-                            "column `{name}` declares a NONCLUSTERED PRIMARY KEY, which this \
-                             node cannot store"
-                        )));
-                    }
-                    if inline.global {
-                        return Err(DdlAdmissionError::new(format!(
-                            "column `{name}` declares a GLOBAL PRIMARY KEY, which this node \
-                             cannot store"
-                        )));
-                    }
-                    inline_primary_key = true;
-                    // Go's `PRIMARY KEY` implies `NOT NULL`.
-                    not_null = true;
-                }
-                InlineKeyKind::Unique => {
-                    return Err(DdlAdmissionError::new(format!(
-                        "column `{name}` declares UNIQUE, and this node maintains no unique index"
-                    )))
-                }
-            },
-            other => {
-                return Err(DdlAdmissionError::new(format!(
-                    "column `{name}` carries {}, which this node does not support",
-                    describe_column_option(other)
-                )))
-            }
-        }
-    }
-    if !not_null {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` must be declared NOT NULL: this node decodes only NOT NULL columns"
-        )));
-    }
-    let column_type = lower_column_type(column)?;
-    Ok((
-        AdmittedColumn {
-            name: name.clone(),
-            column_type,
-            primary_key: false,
-        },
-        inline_primary_key,
-    ))
-}
-
-fn describe_column_option(option: &ColumnOption) -> &'static str {
-    match option {
-        ColumnOption::Null => "an explicit NULL",
-        ColumnOption::AutoIncrement => "AUTO_INCREMENT",
-        ColumnOption::Default(_) => "a DEFAULT",
-        ColumnOption::Generated { .. } => "a generated expression",
-        ColumnOption::OnUpdate(_) => "ON UPDATE",
-        ColumnOption::Comment(_) => "a COMMENT",
-        ColumnOption::Collate(_) => "an explicit COLLATE",
-        ColumnOption::Check(_) => "a CHECK constraint",
-        ColumnOption::Reference(_) => "a REFERENCES clause",
-        ColumnOption::ColumnFormat(_) => "COLUMN_FORMAT",
-        ColumnOption::Storage(_) => "STORAGE",
-        ColumnOption::AutoRandom(_) => "AUTO_RANDOM",
-        ColumnOption::SecondaryEngineAttribute(_) => "SECONDARY_ENGINE_ATTRIBUTE",
-        ColumnOption::MariaDbRowStart => "ROW START",
-        ColumnOption::MariaDbRowEnd => "ROW END",
-        // Handled by the caller before it reaches this description.
-        ColumnOption::NotNull | ColumnOption::InlineKey(_) => "a key or nullability option",
-    }
-}
-
-/// One integer argument of a parenthesized type declaration.
-fn type_argument(
-    column_name: &str,
-    type_name: &str,
-    argument: &ColumnTypeArg,
-) -> Result<u32, DdlAdmissionError> {
-    let ColumnTypeArg::Text(text) = argument else {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{column_name}` declares {type_name} with a non-numeric argument"
-        )));
-    };
-    text.parse().map_err(|_| {
-        DdlAdmissionError::new(format!(
-            "column `{column_name}` declares {type_name}({text}), whose argument is not a \
-             non-negative integer this node can store"
-        ))
-    })
-}
-
-fn lower_column_type(column: &ColumnDef) -> Result<AdmittedColumnType, DdlAdmissionError> {
-    let name = &column.name;
-    let declared = &column.ty;
-    if declared.zerofill {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` declares ZEROFILL"
-        )));
-    }
-    if declared.binary || declared.charset.is_some() {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` declares an explicit charset or BINARY modifier; this node \
-             writes utf8mb4 / utf8mb4_bin for character columns"
-        )));
-    }
-    let unsupported = || {
-        DdlAdmissionError::new(format!(
-            "column `{name}` has type {}, which this node cannot store; it accepts \
-             BIGINT [UNSIGNED], DOUBLE, CHAR(n), VARCHAR(n), and DECIMAL(p,s)",
-            declared.name
-        ))
-    };
-    match (declared.name.as_str(), declared.args.as_slice()) {
-        // A written display width (`BIGINT(20)`) is accepted and ignored, as
-        // Go's own deprecation path does: the stored flen is always 20.
-        ("BIGINT", [] | [_]) => Ok(AdmittedColumnType::BigInt {
-            unsigned: declared.unsigned,
-        }),
-        ("DOUBLE", []) if !declared.unsigned => Ok(AdmittedColumnType::Double),
-        ("CHAR", [length]) if !declared.unsigned => Ok(AdmittedColumnType::Char {
-            length: type_argument(name, "CHAR", length)?,
-        }),
-        ("VARCHAR", [length]) if !declared.unsigned => Ok(AdmittedColumnType::Varchar {
-            length: type_argument(name, "VARCHAR", length)?,
-        }),
-        ("DECIMAL", [precision, scale]) if !declared.unsigned => Ok(AdmittedColumnType::Decimal {
-            precision: type_argument(name, "DECIMAL", precision)?,
-            scale: type_argument(name, "DECIMAL", scale)?,
-        }),
-        _ => Err(unsupported()),
-    }
 }
 
 /// Why a planned catalog change cannot be built from the observed snapshot.
@@ -788,7 +408,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
             schema,
             table,
             if_not_exists,
-            columns,
+            template,
         } => {
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
@@ -808,7 +428,10 @@ pub fn plan_ddl<S: MetaSnapshot>(
             let db_id = database.info.id;
             let table_id = allocate(snapshot, &mut writes, 1)?[0];
             created_id = Some(table_id);
-            let info = build_table_info(table_id, table, columns, start_ts);
+            let mut info = TableInfo::clone(template);
+            info.id = table_id;
+            // Go `createTable` stamps the job transaction's own start timestamp.
+            info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
             writes.push(OptimisticMutation::meta_put(
@@ -943,62 +566,4 @@ fn find_table<'database>(
         .tables
         .iter()
         .find(|table| table.name.lowercase() == name)
-}
-
-/// Builds the `TableInfo` a real Go TiDB would have written for the same
-/// declaration.
-///
-/// A clustered signed-`BIGINT` primary key is stored as `pk_is_handle` with NO
-/// `IndexInfo` of its own: the row's key IS the primary key, so Go's
-/// `BuildTableInfo` records the fact in the flag and the column's `PriKeyFlag`
-/// and creates no index. Column IDs start at 1 and `max_col_id` records the
-/// highest one handed out, which is what a later `ADD COLUMN` continues from.
-fn build_table_info(
-    table_id: i64,
-    name: &str,
-    columns: &[AdmittedColumn],
-    start_ts: u64,
-) -> TableInfo {
-    let stored_columns: Vec<ColumnInfo> = columns
-        .iter()
-        .enumerate()
-        .map(|(offset, column)| {
-            let column_id = i64::try_from(offset).expect("a column offset fits in i64") + 1;
-            ColumnInfo {
-                id: column_id,
-                name: CiString::new(column.name.clone()),
-                offset: i32::try_from(offset).expect("a column offset fits in i32"),
-                origin_default_value: None,
-                origin_default_value_bit: None,
-                default_value: None,
-                default_value_bit: None,
-                default_is_expr: false,
-                generated_expr_string: String::new(),
-                generated_stored: false,
-                dependences: std::collections::BTreeSet::new(),
-                field_type: column.column_type.field_type(true, column.primary_key),
-                changing_field_type: None,
-                state: SchemaState::PUBLIC,
-                comment: String::new(),
-                hidden: false,
-                change_state_info: None,
-                version: CURR_LATEST_COLUMN_INFO_VERSION,
-            }
-        })
-        .collect();
-    let max_column_id = i64::try_from(stored_columns.len()).expect("a column count fits in i64");
-    TableInfo {
-        id: table_id,
-        name: CiString::new(name.to_owned()),
-        charset: CATALOG_CHARSET.to_owned(),
-        collate: CATALOG_COLLATION.to_owned(),
-        columns: stored_columns,
-        state: SchemaState::PUBLIC,
-        pk_is_handle: true,
-        max_column_id,
-        // Go `createTable` stamps the job transaction's own start timestamp.
-        update_ts: start_ts,
-        version: TABLE_INFO_VERSION5,
-        ..TableInfo::default()
-    }
 }

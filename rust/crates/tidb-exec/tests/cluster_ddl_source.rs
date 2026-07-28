@@ -204,15 +204,29 @@ fn every_admitted_column_type_is_stored_with_the_go_servers_field_type() {
 
 #[test]
 fn a_table_constraint_primary_key_is_the_same_clustered_handle_as_an_inline_one() {
-    let inline = statement("CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)");
-    let constraint =
-        statement("CREATE TABLE u6.t (id BIGINT NOT NULL, v BIGINT NOT NULL, PRIMARY KEY (id))");
-    assert_eq!(inline, constraint);
-    let DdlStatement::CreateTable { columns, .. } = &inline else {
-        panic!("a CREATE TABLE");
+    let template = |sql: &str| {
+        let DdlStatement::CreateTable { template, .. } = statement(sql) else {
+            panic!("a CREATE TABLE");
+        };
+        template
     };
-    assert!(columns[0].primary_key);
-    assert!(!columns[1].primary_key);
+    let inline = template("CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)");
+    let constraint =
+        template("CREATE TABLE u6.t (id BIGINT NOT NULL, v BIGINT NOT NULL, PRIMARY KEY (id))");
+    assert_eq!(
+        value::serialize_table_info(&inline).unwrap(),
+        value::serialize_table_info(&constraint).unwrap()
+    );
+    assert!(inline.pk_is_handle);
+    // The clustered handle IS the row key, so it is recorded in the flag and
+    // in the column's own PriKeyFlag, and gets no IndexInfo of its own.
+    assert!(inline.indices.is_empty());
+    assert!(inline.columns[0]
+        .field_type
+        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY));
+    assert!(!inline.columns[1]
+        .field_type
+        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY));
 }
 
 #[test]
@@ -398,48 +412,20 @@ fn a_missing_object_without_if_exists_is_named_precisely() {
 fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
     for (sql, expected) in [
         (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT)",
-            "column `v` must be declared NOT NULL",
+            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, CHECK (v > 0))",
+            "CHECK and FOREIGN KEY constraints are not supported",
         ),
         (
-            "CREATE TABLE u6.t (id BIGINT NOT NULL, v BIGINT NOT NULL)",
-            "requires a single-column clustered BIGINT PRIMARY KEY",
+            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT AS (id + 1))",
+            "carries a generated expression, which this node does not support",
         ),
         (
-            "CREATE TABLE u6.t (id VARCHAR(8) PRIMARY KEY, v BIGINT NOT NULL)",
-            "must be a signed BIGINT to serve as the clustered row handle",
+            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, KEY ((v + 1)))",
+            "expression index parts are not supported",
         ),
         (
-            "CREATE TABLE u6.t (id BIGINT UNSIGNED PRIMARY KEY, v BIGINT NOT NULL)",
-            "must be a signed BIGINT to serve as the clustered row handle",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT NOT NULL, v BIGINT NOT NULL, PRIMARY KEY (id) NONCLUSTERED)",
-            "PRIMARY KEY ... NONCLUSTERED is not supported",
-        ),
-        (
-            "CREATE TABLE u6.t (a BIGINT NOT NULL, b BIGINT NOT NULL, PRIMARY KEY (a, b))",
-            "a composite, prefixed, descending, or expression PRIMARY KEY",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, KEY (v))",
-            "a secondary index is not supported",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL UNIQUE)",
-            "declares UNIQUE, and this node maintains no unique index",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v TIMESTAMP NOT NULL)",
-            "has type TIMESTAMP, which this node cannot store",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL DEFAULT 3)",
-            "carries a DEFAULT, which this node does not support",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY AUTO_INCREMENT, v BIGINT NOT NULL)",
-            "carries AUTO_INCREMENT, which this node does not support",
+            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BLOB NOT NULL DEFAULT 'x')",
+            "can't have a default value",
         ),
         (
             "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL) PARTITION BY HASH (id) PARTITIONS 2",
@@ -452,10 +438,6 @@ fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
         (
             "CREATE TABLE u6.t LIKE u6.other",
             "... LIKE is not supported",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL) ENGINE=InnoDB",
-            "CREATE TABLE options are not supported",
         ),
         (
             "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, ID BIGINT NOT NULL)",
@@ -474,6 +456,55 @@ fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
         assert!(
             reason.contains(expected),
             "`{sql}` was refused with `{reason}`, which does not name `{expected}`"
+        );
+    }
+}
+
+#[test]
+fn the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused() {
+    // Each of these was refused before the CREATE surface grew to cover the
+    // `mysql.*` bootstrap DDL. They must build now, and they must build into
+    // exactly the metadata Go builds, which is what
+    // `mysql_bootstrap_tableinfo_source` proves table by table.
+    //
+    // Admitting them does NOT mean this node can serve them: whether a stored
+    // table is readable is `configure_loaded_table`'s single decision, taken at
+    // LOAD time, and it still refuses everything but a clustered signed-BIGINT
+    // handle. Writing the catalog a real TiDB writes and serving it are two
+    // separate questions, and only one of them belongs in DDL admission.
+    for sql in [
+        // A nullable column.
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT)",
+        // No primary key at all.
+        "CREATE TABLE u6.t (id BIGINT NOT NULL, v BIGINT NOT NULL)",
+        // A non-integer and an unsigned clustered handle.
+        "CREATE TABLE u6.t (id VARCHAR(8) PRIMARY KEY, v BIGINT NOT NULL)",
+        "CREATE TABLE u6.t (id BIGINT UNSIGNED PRIMARY KEY, v BIGINT NOT NULL)",
+        // A non-clustered and a composite primary key.
+        "CREATE TABLE u6.t (id BIGINT NOT NULL, v BIGINT NOT NULL, PRIMARY KEY (id) NONCLUSTERED)",
+        "CREATE TABLE u6.t (a BIGINT NOT NULL, b BIGINT NOT NULL, PRIMARY KEY (a, b))",
+        // Secondary and unique indexes.
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, KEY (v))",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL UNIQUE)",
+        // The column types the bootstrap corpus needs.
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v TIMESTAMP NOT NULL)",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v ENUM('N','Y') NOT NULL DEFAULT 'N')",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v SET('a','b'))",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v JSON)",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v LONGTEXT)",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v SMALLINT UNSIGNED)",
+        // Defaults, literal and CURRENT_TIMESTAMP.
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL DEFAULT 3)",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        // AUTO_INCREMENT and table options.
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY AUTO_INCREMENT, v BIGINT NOT NULL)",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL) ENGINE=InnoDB",
+    ] {
+        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
+        assert!(
+            lower_ddl(&parsed, "u6").is_ok(),
+            "`{sql}` was refused: {}",
+            refusal(sql)
         );
     }
 }
