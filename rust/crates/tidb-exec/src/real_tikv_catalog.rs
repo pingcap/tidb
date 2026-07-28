@@ -24,6 +24,7 @@ use tidb_txnkv::transaction::{
     RealOptimisticTransaction, RealOptimisticTransactionOpener, TransactionCommandClient,
 };
 
+use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
 use crate::cluster_catalog::{
     load_cluster_catalog, prefix_scan_end, ClusterCatalog, ClusterCatalogError, MetaPairs,
     MetaSnapshot,
@@ -95,4 +96,28 @@ pub fn load_catalog_from_cluster(
         .finish_without_writes()
         .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
     Ok(catalog)
+}
+
+/// Brings one loaded catalog up to date through one fresh transaction.
+///
+/// One PD timestamp per pass, exactly like the startup load: the version, the
+/// diffs, and any object a diff points at are all read at that one timestamp,
+/// so a pass never publishes a blend of two schema versions. The transaction
+/// is read-only and finished without writes, leaving no locks behind.
+pub fn reload_catalog_from_cluster(
+    opener: &RealOptimisticTransactionOpener,
+    timeout: Duration,
+    current: &ClusterCatalog,
+) -> Result<ReloadedCatalog, ClusterCatalogError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+    let reloaded = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        reload_cluster_catalog(&mut snapshot, current)?
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+    Ok(reloaded)
 }

@@ -566,6 +566,8 @@ pub mod apply_cache;
 pub mod bit_agg;
 pub mod broadcast_query_error;
 mod catalog;
+pub mod catalog_reload;
+pub mod catalog_watch;
 pub mod charset_variable_groups;
 pub mod chunk_alloc_status;
 mod cluster;

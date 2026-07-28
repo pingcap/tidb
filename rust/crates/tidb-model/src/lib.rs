@@ -35,6 +35,7 @@ pub mod partition;
 pub mod placement;
 pub mod reorg;
 pub mod resource_group;
+pub mod schema_diff;
 pub mod schema_state;
 pub mod serde_helpers;
 mod setting_builder;
@@ -65,6 +66,7 @@ pub use resource_group::{
     ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawaySettings,
     ResourceGroupSettings,
 };
+pub use schema_diff::{AffectedOption, SchemaDiff};
 pub use schema_state::SchemaState;
 pub use table::{
     SessionInfo, TableCacheStatusType, TableLockState, TempTableType, TiFlashReplicaInfo,

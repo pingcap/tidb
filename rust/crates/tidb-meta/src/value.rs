@@ -17,6 +17,7 @@
 
 use tidb_model::db::DBInfo;
 use tidb_model::placement::PolicyInfo;
+use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::table_info::TableInfo;
 
 use crate::error::{MetaError, Result};
@@ -96,6 +97,25 @@ pub fn parse_table_info(value: &[u8], db_id: i64) -> Result<TableInfo> {
 /// The write side of [`parse_table_info`]. Go `Mutator.CreateTableOrView`.
 pub fn serialize_table_info(table: &TableInfo) -> Result<Vec<u8>> {
     to_json(table)
+}
+
+/// Go `Mutator.GetSchemaDiff`: plain JSON, no magic byte.
+///
+/// Go answers a nil diff for an absent or empty value rather than an error,
+/// and an empty diff has a meaning of its own: the transaction that bumped the
+/// schema version committed but the one running the DDL job did not, so the
+/// version carries no change. Callers must distinguish that from "not read
+/// yet", so absence is modelled as `None` rather than a default diff.
+pub fn parse_schema_diff(value: &[u8]) -> Result<Option<SchemaDiff>> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    from_json(value).map(Some)
+}
+
+/// The write side of [`parse_schema_diff`]. Go `Mutator.SetSchemaDiff`.
+pub fn serialize_schema_diff(diff: &SchemaDiff) -> Result<Vec<u8>> {
+    to_json(diff)
 }
 
 /// Go `ListPolicies`: JSON behind the magic byte.

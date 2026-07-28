@@ -19,9 +19,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
-use tidb_exec::cluster_catalog::{configure_loaded_table, LoadedTableRefusal};
+use tidb_exec::catalog_reload::ReloadedCatalog;
+use tidb_exec::catalog_watch::{
+    CatalogReloadError, CatalogReloadPass, CatalogReloadStats, CatalogReloader, SharedCatalog,
+};
+use tidb_exec::cluster_catalog::{configure_loaded_table, ClusterCatalog, LoadedTableRefusal};
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
-use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
+use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
 use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -99,6 +103,16 @@ pub struct RealTiKvSessionFactory {
     /// Tables the cluster really has, that this node loaded and cannot serve.
     /// They are not hidden: a query naming one gets the exact reason back.
     table_refusals: Arc<Vec<LoadedTableRefusal>>,
+    /// The cluster catalog this node keeps current, present only for a node
+    /// that read its schema from the cluster rather than the command line.
+    ///
+    /// The catalog is republished whole by [`Self::reloader`]; a reader takes
+    /// one `Arc` and keeps it, so no query ever sees a half-updated catalog.
+    catalog: Option<Arc<SharedCatalog>>,
+    /// The lease-cadence reload thread, stopped and joined when this factory
+    /// is dropped. `None` for a command-line-described node, which has no
+    /// cluster catalog to follow.
+    reloader: Option<CatalogReloader>,
 }
 
 impl RealTiKvSessionFactory {
@@ -117,13 +131,28 @@ impl RealTiKvSessionFactory {
             ));
         }
         let mut refusals = Vec::new();
+        let mut loaded = None;
         let authority = ProductionReadProcessAuthority::connect_with_catalog(
             config.pd_endpoints.clone(),
             PRODUCTION_CONTROL_PLANE_TIMEOUT,
-            |transaction_opener| served_table(config, transaction_opener, &mut refusals),
+            |transaction_opener| {
+                served_table(config, transaction_opener, &mut refusals, &mut loaded)
+            },
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let factory = Self::from_authority(&authority, refusals);
+        let (catalog, reloader) = match loaded {
+            Some(catalog) => {
+                let (catalog, reloader) = spawn_catalog_reloader(
+                    catalog,
+                    authority.transaction_opener(),
+                    config.schema_lease,
+                )
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                (Some(catalog), Some(reloader))
+            }
+            None => (None, None),
+        };
+        let factory = Self::from_authority_with_catalog(&authority, refusals, catalog, reloader);
         Ok((factory, authority))
     }
 
@@ -131,10 +160,20 @@ impl RealTiKvSessionFactory {
     /// has already bootstrapped PD, RegionCache, and the TiKV transport, and
     /// already chose its served table (used both by [`Self::connect`] and by
     /// the catalog-loaded dispatcher that picks the single-table surface only
-    /// after reading the cluster's own catalog).
+    /// after reading the cluster's own catalog). This form follows no catalog
+    /// reload; `connect` wires the lease-cadence reloader itself.
     pub(crate) fn from_authority(
         authority: &ProductionReadProcessAuthority,
         table_refusals: Vec<LoadedTableRefusal>,
+    ) -> Self {
+        Self::from_authority_with_catalog(authority, table_refusals, None, None)
+    }
+
+    fn from_authority_with_catalog(
+        authority: &ProductionReadProcessAuthority,
+        table_refusals: Vec<LoadedTableRefusal>,
+        catalog: Option<Arc<SharedCatalog>>,
+        reloader: Option<CatalogReloader>,
     ) -> Self {
         Self {
             opener: authority.opener(),
@@ -142,6 +181,8 @@ impl RealTiKvSessionFactory {
             query_activity: Arc::new(QueryActivity::default()),
             read_authority_id: authority.read_authority_id(),
             table_refusals: Arc::new(table_refusals),
+            catalog,
+            reloader,
         }
     }
 
@@ -175,6 +216,60 @@ impl RealTiKvSessionFactory {
     pub fn table_refusals(&self) -> &[LoadedTableRefusal] {
         &self.table_refusals
     }
+
+    /// The cluster schema version this node has followed to, `None` for a node
+    /// whose table was described on the command line.
+    #[must_use]
+    pub fn followed_schema_version(&self) -> Option<i64> {
+        self.catalog
+            .as_ref()
+            .map(|catalog| catalog.load().schema_version)
+    }
+
+    /// What the reload thread has done so far, `None` when there is no thread.
+    #[must_use]
+    pub fn catalog_reload_stats(&self) -> Option<CatalogReloadStats> {
+        self.reloader.as_ref().map(CatalogReloader::stats)
+    }
+}
+
+/// Publishes the startup catalog and starts following the cluster's schema.
+///
+/// Go's domain reloads at `schemaLease / 2` so a node is never more than one
+/// lease behind; the same halving is applied here to the configured lease.
+///
+/// A failed pass is not fatal and does not stop the thread: the previously
+/// published catalog stays in force and the next tick tries again, which is
+/// what Go's reload loop does with a failed `Reload`.
+fn spawn_catalog_reloader(
+    startup: ClusterCatalog,
+    transaction_opener: RealOptimisticTransactionOpener,
+    schema_lease: Duration,
+) -> Result<(Arc<SharedCatalog>, CatalogReloader), CatalogReloadError> {
+    let catalog = Arc::new(SharedCatalog::new(startup));
+    let reloader = CatalogReloader::spawn(
+        Arc::clone(&catalog),
+        schema_lease / 2,
+        Box::new(move |current| {
+            match reload_catalog_from_cluster(
+                &transaction_opener,
+                PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                current,
+            ) {
+                Ok(ReloadedCatalog::Unchanged { .. }) => Ok(CatalogReloadPass::Unchanged),
+                Ok(ReloadedCatalog::Diffs { catalog, .. }) => Ok(CatalogReloadPass::Diffs(catalog)),
+                Ok(ReloadedCatalog::Full { catalog, reason }) => {
+                    eprintln!(
+                        "{{\"event\":\"catalog_full_reload\",\"schema_version\":{},\"reason\":\"{reason}\"}}",
+                        catalog.schema_version
+                    );
+                    Ok(CatalogReloadPass::Full(catalog))
+                }
+                Err(error) => Err(error.to_string()),
+            }
+        }),
+    )?;
+    Ok((catalog, reloader))
 }
 
 impl QuerySessionFactory for RealTiKvSessionFactory {
@@ -309,6 +404,7 @@ pub(crate) fn served_tables(
     config: &NodeConfig,
     transaction_opener: &RealOptimisticTransactionOpener,
     refusals: &mut Vec<LoadedTableRefusal>,
+    loaded: &mut Option<ClusterCatalog>,
 ) -> Result<Vec<ConfiguredTable>, String> {
     let mut tables: Vec<ConfiguredTable> =
         config.read_tables.iter().map(configured_table).collect();
@@ -329,6 +425,7 @@ pub(crate) fn served_tables(
                 Err(refusal) => refusals.push(refusal),
             }
         }
+        *loaded = Some(catalog);
     }
     Ok(tables)
 }
@@ -344,8 +441,9 @@ fn served_table(
     config: &NodeConfig,
     transaction_opener: &RealOptimisticTransactionOpener,
     refusals: &mut Vec<LoadedTableRefusal>,
+    loaded: &mut Option<ClusterCatalog>,
 ) -> Result<ConfiguredTable, String> {
-    let mut tables = served_tables(config, transaction_opener, refusals)?;
+    let mut tables = served_tables(config, transaction_opener, refusals, loaded)?;
     match tables.len() {
         1 => Ok(tables.remove(0)),
         0 => Err(match refusals.first() {
@@ -920,7 +1018,11 @@ pub(crate) fn connect_loaded_catalog_authority(
         config.pd_endpoints.clone(),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
         |transaction_opener| {
-            let tables = served_tables(config, transaction_opener, &mut refusals)?;
+            // The multi-relation surface does not follow catalog reloads yet
+            // (the reloader is single-factory-owned); the loaded snapshot is
+            // read and dropped here.
+            let mut loaded = None;
+            let tables = served_tables(config, transaction_opener, &mut refusals, &mut loaded)?;
             let primary = tables
                 .first()
                 .cloned()

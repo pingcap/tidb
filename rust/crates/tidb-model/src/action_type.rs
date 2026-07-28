@@ -19,7 +19,23 @@
 /// Go `ActionType` (a `byte`): the kind of a DDL job. A newtype over `u8` so
 /// any stored value round-trips; [`Display`](std::fmt::Display) yields the
 /// name from [`ACTION_MAP`] or `"none"` for an unknown/absent value.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// `encoding/json` marshals a `byte`-based type as a bare number, so the serde
+/// representation is transparent rather than a wrapper object.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct ActionType(pub u8);
 
 impl ActionType {

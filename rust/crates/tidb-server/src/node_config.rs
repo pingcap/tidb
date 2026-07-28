@@ -35,6 +35,9 @@ const DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 30_000;
 // Keep the first in-memory TopN vertical deliberately small until the executor
 // owns spill and general memory-quota semantics.
 const DEFAULT_MAX_TOPN_ROWS: usize = 1_024;
+/// Go's `tidb-server --lease` default: the DDL schema lease. The catalog
+/// reload thread ticks at half of it, matching Go's domain reload loop.
+const DEFAULT_SCHEMA_LEASE_MS: u64 = 45_000;
 const MAX_CONFIGURED_TOPN_ROWS: usize = 65_536;
 const MAX_CONFIGURED_READ_TABLES: usize = 2;
 const MAX_CONFIGURED_READ_COLUMNS: usize = 4096;
@@ -128,6 +131,10 @@ pub struct NodeConfig {
     pub connection_timeout: Duration,
     /// Process-wide maximum ORDER BY LIMIT heap cardinality for the bounded executor.
     pub max_topn_rows: usize,
+    /// DDL schema lease. A node that loaded its schema from the cluster
+    /// re-reads the catalog every `schema_lease / 2`, so it is never more than
+    /// one lease behind the cluster's schema version.
+    pub schema_lease: Duration,
 }
 
 /// Startup configuration failure.
@@ -209,6 +216,7 @@ impl NodeConfig {
         let mut max_connections = None;
         let mut connection_timeout_ms = None;
         let mut max_topn_rows = None;
+        let mut schema_lease_ms = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -263,6 +271,7 @@ impl NodeConfig {
                 }
                 "--load-table" => load_tables.push(parse_loaded_table_name(&value)?),
                 "--max-topn-rows" => set_once(&mut max_topn_rows, option, value)?,
+                "--lease-ms" => set_once(&mut schema_lease_ms, option, value)?,
                 _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
             }
         }
@@ -302,6 +311,12 @@ impl NodeConfig {
         if max_topn_rows > MAX_CONFIGURED_TOPN_ROWS {
             return Err(invalid("--max-topn-rows", "value must not exceed 65536"));
         }
+        // A zero lease would make the reload thread spin; the parser rejects it
+        // here so the node never has to.
+        let schema_lease = Duration::from_millis(match schema_lease_ms {
+            Some(value) => parse_positive_number("--lease-ms", &value)?,
+            None => DEFAULT_SCHEMA_LEASE_MS,
+        });
 
         Ok(Self {
             host,
@@ -314,6 +329,7 @@ impl NodeConfig {
             max_connections,
             connection_timeout,
             max_topn_rows,
+            schema_lease,
         })
     }
 
@@ -327,7 +343,7 @@ impl NodeConfig {
 [--read-table <database> <table> <table-id> <column-count> <column> ...] \
 [--load-table <database>.<table> ...] \
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
-[--max-topn-rows <rows>] \
+[--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
 --auth-file <mode-0600-tsv> \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>]"
