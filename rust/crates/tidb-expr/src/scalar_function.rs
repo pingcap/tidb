@@ -359,6 +359,45 @@ impl ScalarFunction {
             let matched = crate::regexp_match(&text, &pattern)?;
             return Ok(Datum::Int(i64::from(matched)));
         }
+        // The charset boundary: `to_binary`/`from_binary` are the implicit
+        // calls the rewriter wraps a non-UTF-8 argument in (Go
+        // `HandleBinaryLiteral`), and `convert_using` is `CONVERT(x USING
+        // cs)`. See `crate::convert_charset` for why these are the only
+        // places a string's bytes ever change.
+        if (name == "to_binary" || name == "from_binary") && self.args.len() == 1 {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            // `to_binary` encodes INTO the argument's charset; `from_binary`
+            // decodes OUT of the result's.
+            let typed = if name == "to_binary" {
+                self.args[0].static_type()
+            } else {
+                self.get_static_type()
+            };
+            let charset = typed
+                .map_or("binary", tidb_datatype::FieldType::charset_name)
+                .to_owned();
+            return if name == "to_binary" {
+                crate::convert_charset::to_binary(&value, &charset)
+            } else {
+                crate::convert_charset::from_binary(&value, &charset)
+            };
+        }
+        if name == "convert_using" && self.args.len() == 2 {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            let target = self.args[1].eval(ctx, row)?;
+            let target = crate::coerce::coerce_str_bytes(&target)?.unwrap_or_default();
+            let target = String::from_utf8_lossy(&target).into_owned();
+            let arg_type = self.args[0].static_type().cloned().unwrap_or_else(|| {
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+            });
+            return crate::convert_charset::convert_using(&value, &arg_type, &target);
+        }
         // Go picks one cast signature per target type; the rewriter records
         // that choice in the name, and the width/scale arguments the CHAR,
         // BINARY and DECIMAL casts need come from the result type.

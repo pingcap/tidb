@@ -92,8 +92,13 @@ impl Charset {
             Self::Latin1 => Collation::Latin1Bin,
             Self::Utf8 => Collation::Utf8Bin,
             Self::Utf8Mb4 => Collation::Utf8Mb4Bin,
-            Self::Gbk => Collation::GbkBin,
-            Self::Gb18030 => Collation::Gb18030Bin,
+            // TiDB forces the Unicode/legacy charsets to their `_bin`
+            // collation, but leaves the Chinese ones at the registry default
+            // in `pkg/parser/charset/charset.go` (`charsetInfos`). Captured:
+            // `CREATE TABLE g1(a VARCHAR(20) CHARSET gbk)` then
+            // `SELECT COLLATION(a) FROM g1` answers `gbk_chinese_ci`.
+            Self::Gbk => Collation::GbkChineseCi,
+            Self::Gb18030 => Collation::Gb18030ChineseCi,
         }
     }
 }

@@ -345,6 +345,7 @@ pub mod collation_derive;
 pub mod column;
 pub mod constant;
 mod context;
+pub mod convert_charset;
 pub mod expr_collation;
 pub mod expression;
 mod field_name;
@@ -669,16 +670,28 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             Datum::Null => Ok(Datum::Null),
             v => cast::eval_cast(&cast.cast_type, v),
         },
-        // `CONVERT(expr USING charset)` is a charset conversion, not a
-        // value-type cast — this crate has no charset domain at all, so
-        // evaluation is a plain stringification passthrough (confirmed via
-        // `goeval`: `CONVERT(123 USING utf8)` is the STRING `"123"`, not the
-        // integer `123`).
-        Expr::ConvertUsing { expr, .. } => match eval_in(expr, cols)? {
+        // `CONVERT(expr USING charset)` is a charset RETAG, not a value-type
+        // cast: it stringifies (confirmed via `goeval`: `CONVERT(123 USING
+        // utf8)` is the STRING `"123"`, not the integer `123`) and then
+        // re-tags the UTF-8 bytes with the target charset, replacing an
+        // unrepresentable character with `?`. See `crate::convert_charset`.
+        Expr::ConvertUsing { expr, charset } => match eval_in(expr, cols)? {
             Datum::Null => Ok(Datum::Null),
-            v => Ok(Datum::new_string(v.sql_string().map_err(|_| {
-                EvalError::Unsupported("invalid UTF-8 string coercion")
-            })?)),
+            value => {
+                let text = value
+                    .sql_string()
+                    .map_err(|_| EvalError::Unsupported("invalid UTF-8 string coercion"))?;
+                let collation = value
+                    .collation()
+                    .unwrap_or(tidb_datatype::Collation::DEFAULT);
+                let source = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+                    .with_collation(collation);
+                convert_charset::convert_using(
+                    &Datum::new_collation_string(text.into_bytes(), collation),
+                    &source,
+                    &charset.to_ascii_lowercase(),
+                )
+            }
         },
         // `COLLATE` doesn't change the value at all (unlike `CONVERT ...
         // USING`, which stringifies) — it only affects comparison/sort

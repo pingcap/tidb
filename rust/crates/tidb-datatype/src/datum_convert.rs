@@ -954,15 +954,24 @@ fn value_to_literal_uint(bytes: &[u8], event: &mut Option<ScalarConversionEvent>
     outcome.value()
 }
 
+/// The byte offset `flen` characters into `bytes`, or `None` when the value
+/// is already short enough.
+///
+/// Go `ProduceStrWithSpecifiedTp` measures with `utf8.RuneCountInString`,
+/// which never fails: a byte that starts no valid sequence counts as one
+/// RuneError rune one byte wide. Rejecting such a value instead would refuse
+/// writes TiDB accepts -- captured, `INSERT INTO l1 VALUES (0xE9)` into a
+/// `latin1` column stores the byte `E9` unchanged, because TiDB's `latin1`
+/// is byte-preserving and never validates.
 fn utf8_split_at(bytes: &[u8], flen: usize) -> Result<Option<usize>, DatumValueError> {
-    let text = std::str::from_utf8(bytes)?;
-    let mut chars = text.char_indices();
+    let mut index = 0;
     for _ in 0..flen {
-        if chars.next().is_none() {
+        if index >= bytes.len() {
             return Ok(None);
         }
+        index += crate::collation::rune_width(&bytes[index..]);
     }
-    Ok(chars.next().map(|(index, _)| index))
+    Ok((index < bytes.len()).then_some(index))
 }
 
 fn max_decimal_text(flen: usize, scale: usize) -> String {

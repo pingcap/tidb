@@ -100,7 +100,17 @@ pub(crate) fn eval_func(
         };
         if let Some(function) = function {
             let built = BuildContext::default().build_string_length_for_expr(function, &args[0])?;
-            return built.eval(&eval_in(&args[0], cols)?);
+            let value = eval_in(&args[0], cols)?;
+            // `LENGTH`/`OCTET_LENGTH` are binary-aware and count the ENCODED
+            // bytes; `CHAR_LENGTH` is `funcPropNone` and counts characters of
+            // the UTF-8 form, so only the former transcodes.
+            let value = match function {
+                StringLengthFunction::Length => {
+                    crate::convert_charset::to_binary_by_collation(&value)?
+                }
+                StringLengthFunction::CharLength => value,
+            };
+            return built.eval(&value);
         }
     }
     // `IF` is a lazy control function in Go: `builtinIf*Sig` evaluates the
@@ -132,6 +142,21 @@ pub(crate) fn eval_func(
         .iter()
         .map(|a| eval_in(a, cols))
         .collect::<Result<_, _>>()?;
+    // Go `HandleBinaryLiteral`'s `funcPropBinAware` arm. The chunk path reads
+    // the argument's static charset; this value-only path reads the datum's
+    // own collation, which carries the same charset -- so a `gbk` string
+    // reaching `HEX`/`LENGTH`/`ASCII` transcodes here exactly as it does
+    // there. See `crate::convert_charset` for why this is the only implicit
+    // transcode.
+    let vals: Vec<Datum> = if crate::convert_charset::func_prop(&name.to_ascii_lowercase())
+        == crate::convert_charset::FuncProp::BinAware
+    {
+        vals.iter()
+            .map(crate::convert_charset::to_binary_by_collation)
+            .collect::<Result<_, _>>()?
+    } else {
+        vals
+    };
     if let Some(result) = crate::math_fn::dispatch(name.as_str(), args, &vals, cols, function_key) {
         return result;
     }

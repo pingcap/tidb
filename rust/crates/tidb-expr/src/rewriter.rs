@@ -373,13 +373,59 @@ fn arg_numeric_type(args: &[Expression]) -> Option<FieldType> {
 
 /// A string literal constant, used where Go's builder supplies a default
 /// argument (`TRIM`'s implicit space).
+/// A SQL character-string literal.
+///
+/// The datum is a COLLATION-TAGGED string, never a `Datum::Bytes`: Go's
+/// `ast.NewValueExpr` stamps a string literal with the connection charset, and
+/// `Datum.ConvertTo` reads that collation to decide whether a write into a
+/// column DECODES from binary or merely VALIDATES against the column's
+/// charset. A binary-tagged literal takes the decode branch, which inverts the
+/// non-UTF-8 write path -- a `CHARSET gbk` column would then accept `😉`
+/// (whose UTF-8 bytes happen to form legal GBK pairs) and reject `一列`.
 fn constant_string(text: &str) -> Expression {
-    let mut datum = Datum::Null;
-    datum.set_bytes(text.as_bytes().to_vec());
-    Expression::Constant(Constant::new(
-        datum,
-        FieldType::new(FieldTypeCode::VarString),
-    ))
+    let field_type = FieldType::new(FieldTypeCode::VarString);
+    let datum = Datum::new_collation_string(text.as_bytes().to_vec(), field_type.collation());
+    Expression::Constant(Constant::new(datum, field_type))
+}
+
+/// Go `HandleBinaryLiteral`, applied where Go applies it: as each builtin's
+/// arguments are built.
+///
+/// A non-legacy-charset argument (in practice `gbk` or `gb18030`) of a
+/// binary-aware function, or of any function whose result is the binary
+/// charset, is wrapped with the implicit `to_binary` call that performs the
+/// UTF-8 -> charset transcode. See `crate::convert_charset` for why that is
+/// the only place the bytes ever change.
+fn wrap_binary_literals(
+    name: &str,
+    result_charset: &str,
+    args: Vec<Expression>,
+) -> Vec<Expression> {
+    let prop = crate::convert_charset::func_prop(name);
+    if prop == crate::convert_charset::FuncProp::None {
+        return args;
+    }
+    args.into_iter()
+        .map(|arg| {
+            let Some(arg_type) = arg.static_type() else {
+                return arg;
+            };
+            if !crate::convert_charset::needs_to_binary(
+                prop,
+                arg_type.charset_name(),
+                result_charset,
+            ) {
+                return arg;
+            }
+            let mut ret_type = FieldType::new(FieldTypeCode::VarString);
+            set_binary_charset(&mut ret_type);
+            Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("to_binary"),
+                ret_type,
+                vec![arg],
+            ))
+        })
+        .collect()
 }
 
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
@@ -470,14 +516,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             FieldTypeCode::LongLong,
         )),
         Expr::Null => Ok(constant(Datum::Null, FieldTypeCode::Null)),
-        Expr::String(text) => {
-            let mut datum = Datum::Null;
-            datum.set_bytes(text.clone().into_bytes());
-            Ok(Expression::Constant(Constant::new(
-                datum,
-                FieldType::new(FieldTypeCode::VarString),
-            )))
-        }
+        Expr::String(text) => Ok(constant_string(text)),
         // Go's parser folds a decimal literal into a `*MyDecimal` value whose
         // type `DefaultTypeForValue` derives from the printed literal.
         Expr::Decimal(text) => {
@@ -902,6 +941,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
                 EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
             )?;
+            let rewritten = wrap_binary_literals(&lowered, ret_type.charset_name(), rewritten);
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(&lowered),
                 ret_type,
@@ -921,11 +961,63 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 "this CAST target type has no value domain yet",
             ))?;
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
+            // `CAST(x AS BINARY)` is Go's `funcPropAuto` binary-result arm:
+            // a gbk-charset argument transcodes on the way in, which is why
+            // `HEX(CAST(gbk_col AS BINARY))` reports the GBK bytes.
+            let args = wrap_binary_literals("cast", ret_type.charset_name(), vec![arg]);
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(name),
                 ret_type,
-                vec![arg],
+                args,
             )))
+        }
+        // `CONVERT(expr USING charset)` -- Go `convertFunctionClass`. The
+        // target charset is a build-time keyword, so it becomes a constant
+        // argument of the one-argument `convert_using` signature and the
+        // RESULT type carries the charset the value is retagged with.
+        Expr::ConvertUsing { expr, charset } => {
+            let charset = charset.to_ascii_lowercase();
+            if !tidb_datatype::is_supported_encoding(&charset) {
+                return Err(EvalError::Unsupported("unknown character set"));
+            }
+            let mut ret_type = FieldType::new(FieldTypeCode::VarString);
+            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            if charset == "binary" {
+                set_binary_charset(&mut ret_type);
+            } else {
+                let target = tidb_datatype::Charset::from_name(&charset)
+                    .expect("a supported encoding is a registered charset");
+                ret_type.set_charset_name(target.name());
+                ret_type.set_collation_name(target.default_collation().name());
+            }
+            let args = vec![
+                rewrite_expr_resolved(expr, resolver)?,
+                constant_string(&charset),
+            ];
+            let charset_name = ret_type.charset_name().to_owned();
+            let collation_name = ret_type.collation_name().to_owned();
+            let mut node = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("convert_using"),
+                ret_type,
+                args,
+            ));
+            // Go's `convertFunctionClass.getFunction` STAMPS the target
+            // charset on the result type instead of aggregating it from the
+            // arguments -- `ast.Convert` is not one of `deriveCollation`'s
+            // aggregating arms. Marking the node derived here keeps
+            // `derive_tree_collation` from replacing `gbk` with the
+            // connection charset, which is what makes the following
+            // `HEX`/`LENGTH` wrap see a non-legacy charset at all.
+            crate::collation_derive::apply_derived_collation(
+                &mut node,
+                &crate::expr_collation::ExprCollation {
+                    coer: crate::expr_collation::Coercibility::IMPLICIT,
+                    repe: crate::expr_collation::Repertoire::UNICODE,
+                    charset: charset_name,
+                    collation: collation_name,
+                },
+            );
+            Ok(node)
         }
         // Go `trimFunctionClass`: the direction picks one of the three
         // signatures, and a bare `TRIM(x)` strips spaces from both ends.

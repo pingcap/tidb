@@ -690,12 +690,17 @@ pub(crate) fn go_rune_count(value: &[u8]) -> usize {
     let mut index = 0;
     let mut count = 0;
     while index < value.len() {
-        index += decode_rune(&value[index..])
-            .map(|(_, width)| width)
-            .unwrap_or(1);
+        index += rune_width(&value[index..]);
         count += 1;
     }
     count
+}
+
+/// The width in bytes of the rune starting at `value`, Go's `DecodeRune`
+/// convention: a byte that starts no valid sequence is one RuneError one byte
+/// wide, never an error.
+pub(crate) fn rune_width(value: &[u8]) -> usize {
+    decode_rune(value).map_or(1, |(_, width)| width)
 }
 
 fn general_weight(codepoint: u32) -> u16 {

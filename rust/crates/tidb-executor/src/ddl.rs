@@ -49,15 +49,29 @@
 //! SPACE, the collation-aware string builtins, and the exact 1267/1271
 //! "Illegal mix of collations" and 1253 charset-mismatch texts.
 //!
+//! The non-Unicode charsets are GRADUATED too, and covered by
+//! `tidb-session`'s `tests_charset`. A `gbk`/`gb18030` column validates its
+//! writes against the charset (1366 for an unrepresentable character),
+//! defaults to `gbk_chinese_ci`/`gb18030_chinese_ci` and orders by those
+//! weights, and transcodes at exactly the boundary Go transcodes at -- the
+//! implicit `to_binary` wrap on a binary-aware function's argument, which is
+//! why `HEX`/`LENGTH`/`ASCII`/`CAST(... AS BINARY)` report the GBK form while
+//! the stored bytes stay UTF-8. `CONVERT(x USING cs)` retags and
+//! `?`-replaces. `latin1` and `ascii` need no transcode at all (Go's
+//! `isLegacyCharset`); see `tidb_expr::convert_charset` for the whole seam
+//! and its captured evidence.
+//!
 //! DIVERGENCE (documented, captured, and NOT yet fixed) in what remains:
 //!
-//! * A non-Unicode charset (`latin1`, `gbk`, `gb18030`, `ascii`) is accepted at
-//!   DDL time and reported by every metadata surface, but its VALUES are still
-//!   stored and compared as the bytes the client sent, with no transcoding --
-//!   so `Go safeConvert`'s encoding-validity half of
-//!   `CheckAndDeriveCollationFromExprs` is deferred with it (see that
-//!   function's own doc). Every collation with a real comparer wired here is
-//!   `utf8mb4`- or `binary`-based.
+//! * A `_charset'literal'` introducer (`_gbk'...'`) is a 1064 PARSE error
+//!   here; TiDB answers 1115 "Unsupported character introducer: 'gbk'" from
+//!   its own parser, so both refuse the form but under different codes. An
+//!   unknown collation spelled in `COLLATE` is likewise 1064 here against
+//!   TiDB's `ddl:1273 Unknown collation: '...'`.
+//! * Go's `from_binary` half of `HandleBinaryLiteral` (a binary argument
+//!   flowing into a non-binary string result) is not wired: it needs the
+//!   DERIVED result charset of the whole function, and no captured case
+//!   reaches it.
 //! * `deriveCollation`'s `DATE_FORMAT`/`TIME_FORMAT`, `CASE` (Go's own comment
 //!   marks its aggregation incorrect), `FIELD`, and `CAST`-to-string arms fall
 //!   into the default arm here, which gives them the connection collation
