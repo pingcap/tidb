@@ -210,6 +210,52 @@ func TestGetSet(t *testing.T) {
 	require.EqualValues(t, []byte("bar"), v.Data)
 }
 
+var benchmarkCopCacheResponse *copResponse
+
+func BenchmarkHandleCopCachePagingHit(b *testing.B) {
+	req := &kv.Request{}
+	req.Paging.Enable = true
+	worker := &copIteratorWorker{req: req}
+	cacheValue := &coprCacheValue{
+		Data:      make([]byte, 100<<10),
+		PageStart: make([]byte, 16),
+		PageEnd:   make([]byte, 16),
+	}
+	resp := &copResponse{pbResp: &coprocessor.Response{IsCacheHit: true}}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(cacheValue.Data)))
+	for range b.N {
+		if err := worker.handleCopCache(nil, resp, nil, cacheValue); err != nil {
+			b.Fatal(err)
+		}
+	}
+	benchmarkCopCacheResponse = resp
+}
+
+func TestHandleCopCachePagingHitOwnsRangeKeys(t *testing.T) {
+	req := &kv.Request{}
+	req.Paging.Enable = true
+	worker := &copIteratorWorker{req: req}
+	cacheValue := &coprCacheValue{
+		Data:      []byte{1, 2},
+		PageStart: []byte{3, 4},
+		PageEnd:   []byte{5, 6},
+	}
+	resp := &copResponse{pbResp: &coprocessor.Response{IsCacheHit: true}}
+	require.NoError(t, worker.handleCopCache(nil, resp, nil, cacheValue))
+
+	resp.pbResp.Data[0] = 9
+	resp.pbResp.Range.Start[0] = 8
+	resp.pbResp.Range.End[0] = 7
+	require.Equal(t, []byte{1, 2}, cacheValue.Data)
+	require.Equal(t, []byte{3, 4}, cacheValue.PageStart)
+	require.Equal(t, []byte{5, 6}, cacheValue.PageEnd)
+
+	resp.pbResp.Range.Start = append(resp.pbResp.Range.Start, 10)
+	require.Equal(t, []byte{7, 6}, resp.pbResp.Range.End)
+}
+
 func TestIssue24118(t *testing.T) {
 	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
 	require.EqualError(t, err, "Capacity must be > 0 to enable the cache")
