@@ -45,59 +45,318 @@
 //! * Result type is `LONGLONG(21)` for all four: `NOT NULL` for the three
 //!   ranking functions, `UNSIGNED BINARY` (nullable) for `NTILE`.
 //!
-//! SLICE SCOPE: exactly these four functions, frame-less. Window AGGREGATES
-//! (`SUM(x) OVER ...`), the value family (`LAG`/`LEAD`/`FIRST_VALUE`/...) and
-//! the remaining distribution functions (`PERCENT_RANK`/`CUME_DIST`) are
-//! refused with [`SLICE_MESSAGE`], as is a window function combined with
-//! `GROUP BY`/aggregation. An explicit `ROWS`/`RANGE` frame is ACCEPTED and
-//! ignored, because Go ignores it for every ranking function too -- refusing
-//! it would be a divergence, not a restriction.
+//! Semantics confirmed against Go (`TestZZDumpWindow2` capture, since
+//! removed) for the FRAMED families:
+//!
+//! * The DEFAULT frame (no `ROWS`/`RANGE` written) is `RANGE BETWEEN
+//!   UNBOUNDED PRECEDING AND CURRENT ROW`, and `RANGE`'s `CURRENT ROW` is
+//!   PEER-INCLUSIVE: `SUM(v) OVER (PARTITION BY g ORDER BY v)` over
+//!   `10,20,20,30` yields `10,50,50,80` -- the two tied rows share the sum
+//!   that INCLUDES both of them, not a row-by-row running total. With NO
+//!   window `ORDER BY` every row is a peer, so the frame is the whole
+//!   partition and every row shows the partition total.
+//! * `LAST_VALUE` under the default frame therefore returns the CURRENT PEER
+//!   GROUP's last row, not the partition's last (`10,20,20,30` -> `10,20,20,
+//!   30`); `... ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`
+//!   is what returns the partition's last row (`30,30,30,30`).
+//! * An EMPTY frame (`ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING` at the
+//!   partition's first row, or any `ROWS BETWEEN 2 FOLLOWING AND 1
+//!   FOLLOWING`) yields `SUM`/`AVG`/`MIN`/`MAX`/`FIRST_VALUE`/`LAST_VALUE`/
+//!   `NTH_VALUE` = `NULL` but `COUNT` = `0`.
+//! * `LAG`/`LEAD` IGNORE the frame entirely -- they address the sorted
+//!   partition directly. The offset defaults to 1, `LAG(v, 0)` is the current
+//!   row, and an out-of-range position yields the third argument when written
+//!   and `NULL` otherwise. A written default MERGES into the result type
+//!   (Go `typeInfer4LeadLag` -> `InferType4ControlFuncs`): `LAG(int_col, 2,
+//!   -1)` is `BIGINT`, `LAG(int_col, 1, 'zz')` is a `VARCHAR`.
+//! * `FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE` DO respect the frame;
+//!   `NTH_VALUE(v, n)` is `NULL` when the frame holds fewer than `n` rows,
+//!   and `n` must be a positive integer constant (`NTH_VALUE(v, 0)` is Go's
+//!   `ErrWrongArguments`).
+//! * A window `ORDER BY` sorts NULLs FIRST ascending / LAST descending, and
+//!   all NULL keys are peers of each other.
+//!
+//! Frame VALIDATION is the planner's, so it fires for EVERY function -- a
+//! ranking function with a bad frame errors even though the frame is then
+//! ignored (confirmed: `ROW_NUMBER() OVER (... ROWS BETWEEN CURRENT ROW AND
+//! 1 PRECEDING)` is 3586, `RANK() OVER (PARTITION BY g RANGE BETWEEN 1
+//! PRECEDING AND CURRENT ROW)` is 3587).
+//!
+//! SLICE SCOPE: the four ranking functions (frame-less, as above), the value
+//! family `LAG`/`LEAD`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE`, and the
+//! aggregates `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` as window functions, over the
+//! default frame or an explicit `ROWS BETWEEN`. Still refused: the
+//! distribution functions (`PERCENT_RANK`/`CUME_DIST`), every other
+//! aggregate as a window function, a window function combined with `GROUP
+//! BY`/aggregation, and an explicit `RANGE` frame carrying an `N
+//! PRECEDING`/`N FOLLOWING` VALUE bound ([`RANGE_OFFSET_MESSAGE`]) -- a
+//! `RANGE` frame built only from `UNBOUNDED PRECEDING`/`CURRENT ROW`/
+//! `UNBOUNDED FOLLOWING` needs no value arithmetic and IS implemented, since
+//! it is exactly the peer-based default frame written out.
+//!
+//! Result TYPES follow Go's `baseFuncDesc.TypeInfer`: `COUNT` is a NOT NULL
+//! `BIGINT(21)`, `SUM` a `DECIMAL` (`DOUBLE` for a real argument), `AVG` a
+//! `DECIMAL` scaled by `div_precision_increment` (`DOUBLE` for a real
+//! argument), and `MIN`/`MAX`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE`/`LAG`/
+//! `LEAD` carry the argument's own type. As on the GROUP BY path this stage
+//! shares, the DISPLAY metadata Go derives on top (a `SUM`'s `flen` of
+//! `arg_flen + 21`, an `AVG`'s scale) is a documented deferral: the type
+//! CODE is faithful, the width is not.
 
 use crate::driver::{row_chunk, DriverError, FromScope, FromTable};
+use crate::hash_agg::{aggregate_values, AggKind};
 use crate::StmtContext;
 use std::any::Any;
-use tidb_ast::{Expr, OrderItem, SelectField, SelectStmt, WindowDef, WindowOver, WindowSpec};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_ast::{
+    Expr, FrameBound, FrameKind, OrderItem, SelectField, SelectStmt, WindowDef, WindowFrame,
+    WindowOver, WindowSpec,
+};
+use tidb_datatype::{agg_field_type, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
 /// What this build refuses, naming the slice it does implement.
 pub(crate) const SLICE_MESSAGE: &str =
-    "only the frame-less ranking window functions ROW_NUMBER(), \
-     RANK(), DENSE_RANK() and NTILE(n) are supported";
+    "only the ranking (ROW_NUMBER, RANK, DENSE_RANK, NTILE), value (LAG, LEAD, \
+     FIRST_VALUE, LAST_VALUE, NTH_VALUE) and aggregate (SUM, COUNT, AVG, MIN, MAX) \
+     window functions are supported";
+
+/// What a `LAG`/`LEAD` whose default WIDENS the result type is refused with:
+/// Go casts both the argument and the default to the merged type, and that
+/// cast is a separate unit.
+pub(crate) const LAG_LEAD_CAST_MESSAGE: &str =
+    "LAG/LEAD with a default whose type does not match the argument's is not \
+     yet supported, because the result would need a cast";
+
+/// What a `RANGE` frame with a VALUE offset bound is refused with: those need
+/// Go's per-type range arithmetic over the single `ORDER BY` key, which this
+/// slice does not implement.
+pub(crate) const RANGE_OFFSET_MESSAGE: &str =
+    "a RANGE frame with an N PRECEDING/N FOLLOWING value bound is not yet \
+     supported; use a ROWS frame or the default frame";
 
 /// The prefix of the synthetic column each computed window call is read from.
 const WINDOW_COLUMN_PREFIX: &str = "__window_";
 
 /// One window call to compute: the AST node as written (the key the rewrite
-/// matches on) plus its fully resolved specification.
+/// matches on) plus its classified function and fully resolved specification.
 pub(crate) struct WindowCall {
     /// The `Expr::Window` node exactly as it appears in the query.
     node: Expr,
-    /// The uppercase function name.
-    name: String,
-    /// `NTILE`'s bucket count, already validated; `None` for the others and
-    /// for `NTILE(NULL)`, whose result is `NULL` for every row.
-    buckets: Option<u64>,
-    /// Whether the call is `NTILE` (which `buckets == None` alone cannot say).
-    is_ntile: bool,
+    /// Which function, with each constant argument already folded.
+    kind: WindowKind,
     /// The specification after named-window resolution.
     spec: WindowSpec,
+    /// The frame every non-ranking function evaluates over, already validated
+    /// and defaulted.
+    frame: Frame,
 }
 
-impl WindowCall {
-    /// The result type Go's `NewWindowFuncDesc` infers for this function.
-    fn result_type(&self) -> FieldType {
-        let mut field_type = FieldType::new(FieldTypeCode::LongLong);
-        field_type.set_flen(21);
-        field_type.set_decimal(0);
-        if self.is_ntile {
-            // Go's `typeInfer4Ntile`: binary charset plus UNSIGNED, and
-            // deliberately no NOT NULL (`NTILE(NULL)` is all NULLs).
-            field_type.add_flags(FieldTypeFlags::BINARY | FieldTypeFlags::UNSIGNED);
-        } else {
-            field_type.add_flags(FieldTypeFlags::NOT_NULL);
+/// The window function itself, with each constant argument already folded.
+enum WindowKind {
+    /// `ROW_NUMBER()`.
+    RowNumber,
+    /// `RANK()`.
+    Rank,
+    /// `DENSE_RANK()`.
+    DenseRank,
+    /// `NTILE(n)`; `None` is `NTILE(NULL)`, whose result is `NULL` everywhere.
+    Ntile(Option<u64>),
+    /// `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` over the frame. `arg` is the argument
+    /// as written -- `COUNT(*)`'s is the literal `1` the parser substitutes,
+    /// so no absent-argument case survives here.
+    Agg {
+        /// The uppercase aggregate name.
+        name: String,
+        /// The argument expression.
+        arg: Expr,
+    },
+    /// `FIRST_VALUE(v)` / `LAST_VALUE(v)` / `NTH_VALUE(v, n)` over the frame.
+    Value {
+        /// The value expression.
+        arg: Expr,
+        /// Which row of the frame to read.
+        pick: Pick,
+    },
+    /// `LAG(v[, n[, default]])` / `LEAD(...)`, which ignore the frame.
+    LagLead {
+        /// The value expression.
+        arg: Expr,
+        /// `true` for `LAG` (look backwards), `false` for `LEAD`.
+        is_lag: bool,
+        /// The row offset; Go defaults it to 1, and `0` is the current row.
+        offset: u64,
+        /// The out-of-range default expression, `None` when unwritten (which
+        /// makes an out-of-range position `NULL`).
+        default: Option<Expr>,
+    },
+}
+
+/// Which row of the frame a value function reads.
+enum Pick {
+    /// The `n`th row counting from the frame's start, 1-based --
+    /// `FIRST_VALUE` is `Nth(1)`.
+    Nth(u64),
+    /// The frame's last row.
+    Last,
+}
+
+/// One frame boundary with its offset already folded to a constant.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bound {
+    /// The partition's first row.
+    UnboundedPreceding,
+    /// `N` positions (or, under `RANGE`, `N` of value) before the current row.
+    Preceding(u64),
+    /// The current row -- under `RANGE`, its whole PEER GROUP.
+    CurrentRow,
+    /// `N` positions after the current row.
+    Following(u64),
+    /// The partition's last row.
+    UnboundedFollowing,
+}
+
+impl Bound {
+    /// The bound's place in Go's `UNBOUNDED PRECEDING < N PRECEDING < CURRENT
+    /// ROW < N FOLLOWING < UNBOUNDED FOLLOWING` order, which decides whether a
+    /// frame's `start` may precede its `end` REGARDLESS of the offsets' own
+    /// values.
+    fn rank(self) -> u8 {
+        match self {
+            Bound::UnboundedPreceding => 0,
+            Bound::Preceding(_) => 1,
+            Bound::CurrentRow => 2,
+            Bound::Following(_) => 3,
+            Bound::UnboundedFollowing => 4,
         }
-        field_type
+    }
+
+    /// Whether this bound carries a VALUE offset, which is what makes a
+    /// `RANGE` frame need the sort key's own arithmetic.
+    fn has_offset(self) -> bool {
+        matches!(self, Bound::Preceding(_) | Bound::Following(_))
+    }
+}
+
+/// The resolved frame a non-ranking window function evaluates over.
+///
+/// The two variants are the two ways a boundary is measured: `Rows` counts
+/// physical positions in the sorted partition, `Peers` counts PEER GROUPS --
+/// which is what `RANGE`'s `CURRENT ROW` means, and therefore what the
+/// implicit default frame means.
+enum Frame {
+    /// `ROWS BETWEEN start AND end`.
+    Rows {
+        /// The starting boundary.
+        start: Bound,
+        /// The ending boundary.
+        end: Bound,
+    },
+    /// `RANGE BETWEEN start AND end` built only from peer-based bounds, and
+    /// the implicit default frame (`UNBOUNDED PRECEDING` .. `CURRENT ROW`).
+    Peers {
+        /// The starting boundary.
+        start: Bound,
+        /// The ending boundary.
+        end: Bound,
+    },
+}
+
+impl Frame {
+    /// The half-open `[start, end)` position range this frame covers for the
+    /// row at `position` of a partition of `total` rows, whose own peer group
+    /// spans the half-open range `peers`.
+    ///
+    /// An empty frame comes back as an empty range; every out-of-partition
+    /// offset is clamped, so `ROWS BETWEEN 1 PRECEDING AND CURRENT ROW` at the
+    /// partition's first row is `[0, 1)` rather than an error.
+    fn range(&self, position: usize, total: usize, peers: (usize, usize)) -> (usize, usize) {
+        let total_i = total as i128;
+        let (low, high) = match self {
+            Frame::Rows { start, end } => {
+                let position = position as i128;
+                // Each bound names a row; the half-open end is one past the
+                // row the END bound names.
+                let at = |bound: &Bound, unbounded_low: i128, unbounded_high: i128| match bound {
+                    Bound::UnboundedPreceding => unbounded_low,
+                    Bound::Preceding(n) => position - i128::from(*n),
+                    Bound::CurrentRow => position,
+                    Bound::Following(n) => position + i128::from(*n),
+                    Bound::UnboundedFollowing => unbounded_high,
+                };
+                (at(start, 0, total_i), at(end, -1, total_i - 1) + 1)
+            }
+            Frame::Peers { start, end } => {
+                let at = |bound: &Bound, current: usize| match bound {
+                    Bound::UnboundedPreceding => 0,
+                    Bound::CurrentRow => current,
+                    Bound::UnboundedFollowing => total,
+                    // `build_frame` refuses an offset bound under RANGE.
+                    Bound::Preceding(_) | Bound::Following(_) => {
+                        unreachable!("a peer frame carries no offset bound")
+                    }
+                };
+                (at(start, peers.0) as i128, at(end, peers.1) as i128)
+            }
+        };
+        let low = low.clamp(0, total_i) as usize;
+        let high = high.clamp(0, total_i) as usize;
+        (low, high.max(low))
+    }
+}
+
+/// Folds one frame bound's offset, which Go requires to be a non-negative
+/// integer constant (`ErrWindowFrameIllegal`, 3586 -- a fractional or NULL
+/// offset lands here; a negative one is already a parse error).
+fn build_bound(bound: &FrameBound) -> Result<Bound, DriverError> {
+    let offset = |expr: &Expr| match expr {
+        Expr::Int(text) => text.parse::<u64>().ok(),
+        _ => None,
+    };
+    Ok(match bound {
+        FrameBound::UnboundedPreceding => Bound::UnboundedPreceding,
+        FrameBound::CurrentRow => Bound::CurrentRow,
+        FrameBound::UnboundedFollowing => Bound::UnboundedFollowing,
+        FrameBound::Preceding(expr) => {
+            Bound::Preceding(offset(expr).ok_or(DriverError::WindowFrameIllegal)?)
+        }
+        FrameBound::Following(expr) => {
+            Bound::Following(offset(expr).ok_or(DriverError::WindowFrameIllegal)?)
+        }
+    })
+}
+
+/// Validates a window's frame clause and resolves it, defaulting an unwritten
+/// one to `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.
+///
+/// This runs for EVERY window function, ranking ones included: Go validates
+/// the spec in the planner, so a bad frame is an error even where the frame is
+/// then ignored.
+fn build_frame(spec: &WindowSpec) -> Result<Frame, DriverError> {
+    let Some(WindowFrame { kind, start, end }) = &spec.frame else {
+        return Ok(Frame::Peers {
+            start: Bound::UnboundedPreceding,
+            end: Bound::CurrentRow,
+        });
+    };
+    let start = build_bound(start)?;
+    let end = build_bound(end)?;
+    if start.rank() > end.rank() {
+        return Err(DriverError::WindowFrameIllegal);
+    }
+    match kind {
+        FrameKind::Rows => Ok(Frame::Rows { start, end }),
+        FrameKind::Range if !start.has_offset() && !end.has_offset() => {
+            // Only peer-based bounds: the default frame, written out.
+            Ok(Frame::Peers { start, end })
+        }
+        FrameKind::Range => {
+            // Go checks the ORDER BY shape before anything else about a value
+            // bound, so this error wins over the refusal below.
+            if spec.order_by.len() != 1 {
+                return Err(DriverError::WindowRangeFrameOrderType);
+            }
+            Err(DriverError::Unsupported(RANGE_OFFSET_MESSAGE))
+        }
     }
 }
 
@@ -231,8 +490,8 @@ fn resolve_def(
         } else {
             def.spec.order_by.clone()
         },
-        // A frame is inert for every function this slice implements, so the
-        // base's and the extension's are equally ignored.
+        // An extension's own frame overrides the base's; Go's own restriction
+        // on redefining a base's frame is not modelled here.
         frame: def.spec.frame.clone().or(base.frame),
     })
 }
@@ -271,41 +530,90 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
     if *distinct || *ignore_nulls || *from_last {
         return Err(DriverError::Unsupported(SLICE_MESSAGE));
     }
+    // A ranking function takes no arguments; Go's parser already enforces
+    // that, so a stray one here is out of this slice.
+    let no_args = |kind: WindowKind| {
+        if args.is_empty() {
+            Ok(kind)
+        } else {
+            Err(DriverError::Unsupported(SLICE_MESSAGE))
+        }
+    };
     let upper = name.to_uppercase();
-    let is_ntile = upper == "NTILE";
-    if !matches!(
-        upper.as_str(),
-        "ROW_NUMBER" | "RANK" | "DENSE_RANK" | "NTILE"
-    ) {
-        return Err(DriverError::Unsupported(SLICE_MESSAGE));
-    }
-    // Go's `NewWindowFuncDesc` validates NTILE's bucket count in the planner:
-    // it must be a constant, NULL or a positive integer -- anything else
-    // (`0`, a negative, a column reference) is `ErrWrongArguments` (1210).
-    let buckets = if is_ntile {
-        if args.len() != 1 {
-            return Err(DriverError::WrongArguments("ntile"));
+    let kind = match upper.as_str() {
+        "ROW_NUMBER" => no_args(WindowKind::RowNumber)?,
+        "RANK" => no_args(WindowKind::Rank)?,
+        "DENSE_RANK" => no_args(WindowKind::DenseRank)?,
+        // Go's `NewWindowFuncDesc` validates NTILE's bucket count in the
+        // planner: it must be a constant, NULL or a positive integer --
+        // anything else (`0`, a negative, a column) is `ErrWrongArguments`.
+        "NTILE" => {
+            if args.len() != 1 {
+                return Err(DriverError::WrongArguments("ntile"));
+            }
+            match constant_bucket_count(&args[0]) {
+                Some(BucketCount::Null) => WindowKind::Ntile(None),
+                Some(BucketCount::Positive(count)) => WindowKind::Ntile(Some(count)),
+                None => return Err(DriverError::WrongArguments("ntile")),
+            }
         }
-        match constant_bucket_count(&args[0]) {
-            Some(BucketCount::Null) => None,
-            Some(BucketCount::Positive(count)) => Some(count),
-            None => return Err(DriverError::WrongArguments("ntile")),
+        "SUM" | "COUNT" | "AVG" | "MIN" | "MAX" => {
+            // `COUNT(*)` reaches here as `COUNT(1)`, so one argument is the
+            // only shape; `COUNT(DISTINCT a, b)` already failed on `distinct`.
+            let [arg] = args.as_slice() else {
+                return Err(DriverError::Unsupported(SLICE_MESSAGE));
+            };
+            WindowKind::Agg {
+                name: upper.clone(),
+                arg: arg.clone(),
+            }
         }
-    } else {
-        // The ranking functions take no arguments; Go's parser already
-        // enforces that, so anything else here is out of this slice.
-        if !args.is_empty() {
-            return Err(DriverError::Unsupported(SLICE_MESSAGE));
+        "FIRST_VALUE" | "LAST_VALUE" | "NTH_VALUE" => {
+            let (arg, pick) = match (upper.as_str(), args.as_slice()) {
+                ("FIRST_VALUE", [arg]) => (arg, Pick::Nth(1)),
+                ("LAST_VALUE", [arg]) => (arg, Pick::Last),
+                // Go validates NTH_VALUE's position like NTILE's bucket
+                // count: a positive integer constant, or `ErrWrongArguments`.
+                ("NTH_VALUE", [arg, position]) => match constant_bucket_count(position) {
+                    Some(BucketCount::Positive(n)) => (arg, Pick::Nth(n)),
+                    _ => return Err(DriverError::WrongArguments("nth_value")),
+                },
+                _ => return Err(DriverError::Unsupported(SLICE_MESSAGE)),
+            };
+            WindowKind::Value {
+                arg: arg.clone(),
+                pick,
+            }
         }
-        None
+        "LAG" | "LEAD" => {
+            let (arg, rest) = args
+                .split_first()
+                .ok_or(DriverError::Unsupported(SLICE_MESSAGE))?;
+            // Go's `NewWindowFuncDesc` requires a non-negative integer
+            // constant offset; the parser has already rejected a negative one.
+            let offset = match rest.first() {
+                None => 1,
+                Some(Expr::Int(text)) => text
+                    .parse::<u64>()
+                    .map_err(|_| DriverError::WrongArguments("lag/lead"))?,
+                Some(_) => return Err(DriverError::WrongArguments("lag/lead")),
+            };
+            WindowKind::LagLead {
+                arg: arg.clone(),
+                is_lag: upper == "LAG",
+                offset,
+                default: rest.get(1).cloned(),
+            }
+        }
+        _ => return Err(DriverError::Unsupported(SLICE_MESSAGE)),
     };
     let spec = resolve_over(over, &select.windows)?;
+    let frame = build_frame(&spec)?;
     Ok(WindowCall {
         node,
-        name: upper,
-        buckets,
-        is_ntile,
+        kind,
         spec,
+        frame,
     })
 }
 
@@ -348,8 +656,11 @@ pub(crate) fn compute_windows(
         .map(|(_, field_type)| field_type)
         .collect();
     let mut computed: Vec<Vec<Datum>> = Vec::with_capacity(calls.len());
-    for call in calls {
-        computed.push(compute_one(call, &rows, &field_types, &resolver, ctx)?);
+    let mut columns: Vec<(String, FieldType)> = Vec::with_capacity(calls.len());
+    for (index, call) in calls.iter().enumerate() {
+        let (values, result_type) = compute_one(call, &rows, &field_types, &resolver, ctx)?;
+        computed.push(values);
+        columns.push((window_column_name(index), result_type));
     }
     let mut out_rows = rows;
     for (row_index, row) in out_rows.iter_mut().enumerate() {
@@ -362,11 +673,7 @@ pub(crate) fn compute_windows(
     out_scope.tables.push(FromTable {
         name: String::new(),
         database: None,
-        columns: calls
-            .iter()
-            .enumerate()
-            .map(|(i, call)| (window_column_name(i), call.result_type()))
-            .collect(),
+        columns,
         offset,
     });
     Ok((out_rows, out_scope))
@@ -377,14 +684,22 @@ fn window_column_name(index: usize) -> String {
     format!("{WINDOW_COLUMN_PREFIX}{index}")
 }
 
-/// Computes one call's value for every row, in source-row order.
+/// Computes one call's value for every row, in source-row order, together
+/// with the result type Go's `NewWindowFuncDesc` infers for it.
 fn compute_one(
     call: &WindowCall,
     rows: &[Vec<Datum>],
     field_types: &[FieldType],
     resolver: &impl ColumnResolver,
     ctx: &StmtContext,
-) -> Result<Vec<Datum>, DriverError> {
+) -> Result<(Vec<Datum>, FieldType), DriverError> {
+    // The function's own argument (and LAG/LEAD's default) is evaluated per
+    // row up front, against the SOURCE row -- the same scope the partition and
+    // order keys resolve in.
+    let arg_exprs: Vec<Expr> = call.kind.value_args().into_iter().cloned().collect();
+    let (arg_values, arg_types) = eval_args(&arg_exprs, rows, field_types, resolver, ctx)?;
+    let result_type = call.kind.result_type(&arg_types)?;
+
     let partition_keys = eval_keys(&call.spec.partition_by, rows, field_types, resolver, ctx)?;
     let order_exprs: Vec<Expr> = call
         .spec
@@ -410,9 +725,188 @@ fn compute_one(
     let mut values = vec![Datum::Null; rows.len()];
     for indices in partitions.values_mut() {
         sort_partition(indices, &order_keys, &call.spec.order_by)?;
-        rank_partition(call, indices, &order_keys, &mut values);
+        match &call.kind {
+            WindowKind::RowNumber
+            | WindowKind::Rank
+            | WindowKind::DenseRank
+            | WindowKind::Ntile(_) => rank_partition(&call.kind, indices, &order_keys, &mut values),
+            _ => evaluate_partition(call, indices, &order_keys, &arg_values, &mut values)?,
+        }
     }
-    Ok(values)
+    Ok((values, result_type))
+}
+
+impl WindowKind {
+    /// The argument expressions this function evaluates per row: the value
+    /// argument first, then `LAG`/`LEAD`'s out-of-range default. The ranking
+    /// functions have none (`NTILE`'s and `NTH_VALUE`'s counts are constants
+    /// already folded at build time, so they are not row expressions).
+    fn value_args(&self) -> Vec<&Expr> {
+        match self {
+            WindowKind::RowNumber
+            | WindowKind::Rank
+            | WindowKind::DenseRank
+            | WindowKind::Ntile(_) => Vec::new(),
+            WindowKind::Agg { arg, .. } | WindowKind::Value { arg, .. } => vec![arg],
+            WindowKind::LagLead { arg, default, .. } => match default {
+                Some(default) => vec![arg, default],
+                None => vec![arg],
+            },
+        }
+    }
+
+    /// Go `baseFuncDesc.TypeInfer` for this function, given its already
+    /// resolved argument types.
+    fn result_type(&self, arg_types: &[Option<FieldType>]) -> Result<FieldType, DriverError> {
+        // The argument's own type, which every value function carries through
+        // (Go's `typeInfer4MaxMin` tail: clone it and drop NOT NULL, since an
+        // out-of-frame or out-of-range position is NULL).
+        let carried = |index: usize| {
+            let mut field_type = arg_types
+                .get(index)
+                .cloned()
+                .flatten()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            field_type.del_flags(FieldTypeFlags::NOT_NULL);
+            field_type
+        };
+        Ok(match self {
+            WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank => {
+                let mut field_type = FieldType::new(FieldTypeCode::LongLong);
+                field_type.set_flen(21);
+                field_type.set_decimal(0);
+                field_type.add_flags(FieldTypeFlags::NOT_NULL);
+                field_type
+            }
+            WindowKind::Ntile(_) => {
+                // Go's `typeInfer4Ntile`: binary charset plus UNSIGNED, and
+                // deliberately no NOT NULL (`NTILE(NULL)` is all NULLs).
+                let mut field_type = FieldType::new(FieldTypeCode::LongLong);
+                field_type.set_flen(21);
+                field_type.set_decimal(0);
+                field_type.add_flags(FieldTypeFlags::BINARY | FieldTypeFlags::UNSIGNED);
+                field_type
+            }
+            // The aggregates share the GROUP BY path's inference, and with it
+            // that path's documented deferral of Go's display metadata.
+            WindowKind::Agg { name, .. } => {
+                let placeholder = tidb_expr::expression::Expression::Constant(
+                    tidb_expr::constant::Constant::new(Datum::Null, carried(0)),
+                );
+                crate::driver::agg_kind_and_type(name, &placeholder)?.1
+            }
+            WindowKind::Value { .. } => carried(0),
+            // Go `typeInfer4LeadLag`: the argument's own type without a
+            // written default, and the MERGE of the argument's and the
+            // default's types with one.
+            WindowKind::LagLead { default: None, .. } => carried(0),
+            WindowKind::LagLead {
+                default: Some(_), ..
+            } => {
+                let argument = carried(0);
+                let merged = agg_field_type(&[argument.clone(), carried(1)]);
+                // When the merge WIDENS past the argument's own type Go casts
+                // both the argument and the default to it (`LAG(int_col, 1,
+                // 'zz')` returns strings, not integers). That cast is a
+                // separate unit, so the widening case is refused rather than
+                // silently answered in the argument's own domain.
+                if merged.code() != argument.code() {
+                    return Err(DriverError::Unsupported(LAG_LEAD_CAST_MESSAGE));
+                }
+                merged
+            }
+        })
+    }
+}
+
+/// Writes one partition's FRAMED (or, for `LAG`/`LEAD`, position-addressed)
+/// values into `values`, at each row's own source position.
+///
+/// `indices` is the partition in window `ORDER BY` order; `arg_values` holds
+/// each argument's per-row value indexed by SOURCE position.
+fn evaluate_partition(
+    call: &WindowCall,
+    indices: &[usize],
+    order_keys: &[Vec<Datum>],
+    arg_values: &[Vec<Datum>],
+    values: &mut [Datum],
+) -> Result<(), DriverError> {
+    let total = indices.len();
+    // The peer group each position belongs to, as a half-open range. With no
+    // window ORDER BY every key is empty, so the whole partition is one peer
+    // group -- which is exactly why an unordered window frames the partition.
+    let mut peers = vec![(0usize, total); total];
+    let mut group_start = 0;
+    for position in 1..=total {
+        let ends =
+            position == total || order_keys[indices[position]] != order_keys[indices[position - 1]];
+        if ends {
+            for entry in &mut peers[group_start..position] {
+                *entry = (group_start, position);
+            }
+            group_start = position;
+        }
+    }
+
+    let arg_at = |slot: usize, position: usize| arg_values[slot][indices[position]].clone();
+    for position in 0..total {
+        let target = indices[position];
+        values[target] = match &call.kind {
+            WindowKind::LagLead {
+                is_lag,
+                offset,
+                default,
+                ..
+            } => {
+                // LAG/LEAD address the sorted partition directly, ignoring the
+                // frame entirely (confirmed against Go).
+                let offset = i128::from(*offset);
+                let signed = position as i128 + if *is_lag { -offset } else { offset };
+                match usize::try_from(signed).ok().filter(|at| *at < total) {
+                    Some(at) => arg_at(0, at),
+                    // The default is a constant, so any row carries its value.
+                    None if default.is_some() => arg_at(1, position),
+                    None => Datum::Null,
+                }
+            }
+            WindowKind::Agg { name, arg: _ } => {
+                let (low, high) = call.frame.range(position, total, peers[position]);
+                let kind = agg_kind(name);
+                aggregate_values(&kind, (low..high).map(|at| Some(arg_at(0, at))))
+                    .map_err(DriverError::Exec)?
+            }
+            WindowKind::Value { pick, .. } => {
+                let (low, high) = call.frame.range(position, total, peers[position]);
+                let at = match pick {
+                    Pick::Last => high.checked_sub(1).filter(|at| *at >= low),
+                    Pick::Nth(n) => usize::try_from(low as u128 + u128::from(*n) - 1)
+                        .ok()
+                        .filter(|at| *at < high),
+                };
+                // An empty frame, or a frame shorter than NTH_VALUE's
+                // position, is NULL.
+                at.map_or(Datum::Null, |at| arg_at(0, at))
+            }
+            WindowKind::RowNumber
+            | WindowKind::Rank
+            | WindowKind::DenseRank
+            | WindowKind::Ntile(_) => unreachable!("the ranking functions take `rank_partition`"),
+        };
+    }
+    Ok(())
+}
+
+/// The [`AggKind`] one aggregate name folds its frame with. `build_call` has
+/// already refused every other name.
+fn agg_kind(name: &str) -> AggKind {
+    match name {
+        "COUNT" => AggKind::Count,
+        "SUM" => AggKind::Sum,
+        "AVG" => AggKind::Avg,
+        "MIN" => AggKind::Min,
+        "MAX" => AggKind::Max,
+        _ => unreachable!("build_call rejects every other aggregate name"),
+    }
 }
 
 /// Evaluates one key expression list for every row.
@@ -443,6 +937,41 @@ fn eval_keys(
         keys.push(key);
     }
     Ok(keys)
+}
+
+/// Evaluates a window function's own argument expressions for every row.
+///
+/// Unlike [`eval_keys`], which is indexed by row, the result is indexed by
+/// ARGUMENT then row -- the shape the frame evaluator reads, since it walks
+/// one argument across many rows rather than one row across many keys. The
+/// second half is each argument's static type, which the result-type
+/// inference needs.
+#[allow(clippy::type_complexity)]
+fn eval_args(
+    exprs: &[Expr],
+    rows: &[Vec<Datum>],
+    field_types: &[FieldType],
+    resolver: &impl ColumnResolver,
+    ctx: &StmtContext,
+) -> Result<(Vec<Vec<Datum>>, Vec<Option<FieldType>>), DriverError> {
+    let mut values = Vec::with_capacity(exprs.len());
+    let mut types = Vec::with_capacity(exprs.len());
+    for expr in exprs {
+        let rewritten = rewrite_expr_resolved(expr, resolver)
+            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+        types.push(rewritten.static_type().cloned());
+        let mut column = Vec::with_capacity(rows.len());
+        for row in rows {
+            let chunk = row_chunk(row, field_types)?;
+            column.push(
+                rewritten
+                    .eval(ctx, chunk.get_row(0))
+                    .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
+            );
+        }
+        values.push(column);
+    }
+    Ok((values, types))
 }
 
 /// Stable-sorts one partition's row indices by the window's `ORDER BY`.
@@ -489,7 +1018,7 @@ fn sort_partition(
 /// Writes one partition's ranking values into `values`, at each row's own
 /// source position.
 fn rank_partition(
-    call: &WindowCall,
+    kind: &WindowKind,
     indices: &[usize],
     order_keys: &[Vec<Datum>],
     values: &mut [Datum],
@@ -497,13 +1026,13 @@ fn rank_partition(
     // Rows with no window `ORDER BY` are all peers of each other, which is
     // exactly what an empty key compares as.
     let peers = |left: usize, right: usize| order_keys[left] == order_keys[right];
-    match call.name.as_str() {
-        "ROW_NUMBER" => {
+    match kind {
+        WindowKind::RowNumber => {
             for (position, index) in indices.iter().enumerate() {
                 values[*index] = Datum::Int(position as i64 + 1);
             }
         }
-        "RANK" => {
+        WindowKind::Rank => {
             let mut rank = 1i64;
             for (position, index) in indices.iter().enumerate() {
                 if position > 0 && !peers(indices[position - 1], *index) {
@@ -512,7 +1041,7 @@ fn rank_partition(
                 values[*index] = Datum::Int(rank);
             }
         }
-        "DENSE_RANK" => {
+        WindowKind::DenseRank => {
             let mut rank = 1i64;
             for (position, index) in indices.iter().enumerate() {
                 if position > 0 && !peers(indices[position - 1], *index) {
@@ -521,8 +1050,8 @@ fn rank_partition(
                 values[*index] = Datum::Int(rank);
             }
         }
-        "NTILE" => {
-            let Some(buckets) = call.buckets else {
+        WindowKind::Ntile(buckets) => {
+            let Some(buckets) = *buckets else {
                 // NTILE(NULL): every row is NULL, and `values` already is.
                 return;
             };
@@ -547,7 +1076,9 @@ fn rank_partition(
                 }
             }
         }
-        _ => unreachable!("build_call rejects every other function name"),
+        WindowKind::Agg { .. } | WindowKind::Value { .. } | WindowKind::LagLead { .. } => {
+            unreachable!("the framed functions take `evaluate_partition`")
+        }
     }
 }
 

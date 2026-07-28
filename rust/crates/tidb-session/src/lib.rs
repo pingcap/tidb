@@ -8766,6 +8766,54 @@ mod tests {
             }
             other => panic!("expected rows, got {other:?}"),
         }
+
+        // The framed families' result TYPE CODES, captured over a `BIGINT v`:
+        // an aggregate follows Go's `TypeInfer` (SUM/AVG are DECIMAL, COUNT a
+        // NOT NULL BIGINT, MIN the argument's own type), and the value family
+        // plus a defaultless LAG carry the argument's type. Go's display
+        // WIDTHS on top (`DECIMAL(41,0)`, `DECIMAL(24,4)`) are the same
+        // documented deferral the GROUP BY path this stage shares already has.
+        use tidb_datatype::FieldTypeCode;
+        for (sql, code) in [
+            ("SELECT SUM(v) OVER () FROM t", FieldTypeCode::NewDecimal),
+            ("SELECT AVG(v) OVER () FROM t", FieldTypeCode::NewDecimal),
+            ("SELECT COUNT(v) OVER () FROM t", FieldTypeCode::LongLong),
+            ("SELECT MIN(v) OVER () FROM t", FieldTypeCode::LongLong),
+            (
+                "SELECT FIRST_VALUE(v) OVER () FROM t",
+                FieldTypeCode::LongLong,
+            ),
+            ("SELECT LAG(v) OVER () FROM t", FieldTypeCode::LongLong),
+            // A default of the SAME type merges to that type (captured
+            // `BIGINT`); a WIDENING default is refused, see
+            // `window_errors_and_refusals`.
+            (
+                "SELECT LAG(v, 1, -1) OVER () FROM t",
+                FieldTypeCode::LongLong,
+            ),
+        ] {
+            match session.run_with_columns(sql).unwrap() {
+                StmtOutput::Rows { columns, .. } => {
+                    assert_eq!(columns[0].1.code(), code, "result type of {sql}");
+                }
+                other => panic!("expected rows for {sql}, got {other:?}"),
+            }
+        }
+
+        // COUNT is the one framed function that is NOT NULL (an empty frame
+        // counts 0 rather than yielding NULL).
+        match session
+            .run_with_columns("SELECT COUNT(v) OVER () FROM t")
+            .unwrap()
+        {
+            StmtOutput::Rows { columns, .. } => {
+                assert_ne!(
+                    columns[0].1.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL,
+                    0
+                );
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
     }
 
     /// Every window error this slice reproduces, checked against captured
@@ -8824,13 +8872,11 @@ mod tests {
             Err(DriverError::WindowNoRedefineOrderBy(ref base)) if base == "w"
         ));
 
-        // Outside this slice: window aggregates, the value family, and a
-        // window combined with GROUP BY -- all refused by naming the slice.
+        // Outside this slice: the distribution functions, every other
+        // aggregate, and a window combined with GROUP BY.
         for sql in [
-            "SELECT g, SUM(v) OVER (PARTITION BY g) FROM t",
-            "SELECT g, LAG(v) OVER (ORDER BY v) FROM t",
-            "SELECT g, FIRST_VALUE(v) OVER (ORDER BY v) FROM t",
             "SELECT g, PERCENT_RANK() OVER (ORDER BY v) FROM t",
+            "SELECT g, CUME_DIST() OVER (ORDER BY v) FROM t",
             "SELECT g, ROW_NUMBER() OVER (ORDER BY v) FROM t GROUP BY g",
         ] {
             match session.run(sql) {
@@ -8843,6 +8889,561 @@ mod tests {
                 other => panic!("expected a slice refusal for {sql}, got {other:?}"),
             }
         }
+
+        // A RANGE frame with a VALUE offset bound is the one frame shape this
+        // slice defers, and it says so precisely rather than naming the whole
+        // slice. Captured TiDB DOES answer it (`RANGE BETWEEN 5 PRECEDING AND
+        // CURRENT ROW` over `10,20,20,30,40` is `10,40,40,30,40`), so this is
+        // a deferral, not a divergence.
+        match session.run("SELECT SUM(v) OVER (PARTITION BY g ORDER BY v RANGE BETWEEN 5 PRECEDING AND CURRENT ROW) FROM t") {
+            Err(DriverError::Unsupported(message)) => {
+                assert!(
+                    message.contains("RANGE frame"),
+                    "expected the RANGE-offset refusal, got {message}"
+                );
+            }
+            other => panic!("expected the RANGE-offset refusal, got {other:?}"),
+        }
+
+        // Frame validation is the PLANNER's, so it fires for every function
+        // -- including the ranking ones, whose frame is then ignored.
+        // Captured: "[planner:3586]Window '<unnamed window>': frame start or
+        // end is negative, NULL or of non-integral type".
+        for sql in [
+            "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN CURRENT ROW AND 1 PRECEDING) FROM t",
+            "SELECT ROW_NUMBER() OVER (PARTITION BY g ORDER BY v ROWS BETWEEN CURRENT ROW AND 1 PRECEDING) FROM t",
+            "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 1.5 PRECEDING AND CURRENT ROW) FROM t",
+        ] {
+            assert!(
+                matches!(session.run(sql), Err(DriverError::WindowFrameIllegal)),
+                "expected 3586 for {sql}"
+            );
+        }
+
+        // Captured: "[planner:3587]Window '<unnamed window>' with RANGE N
+        // PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression,
+        // of numeric or temporal type" -- and it OUTRANKS the RANGE-offset
+        // deferral above, because Go checks the ORDER BY shape first.
+        assert!(matches!(
+            session.run("SELECT SUM(v) OVER (PARTITION BY g RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t"),
+            Err(DriverError::WindowRangeFrameOrderType)
+        ));
+
+        // A LAG/LEAD default that WIDENS the result type is deferred: Go
+        // merges the two into a VARCHAR here and casts BOTH the argument and
+        // the default into it (captured: `LAG(v, 1, 'zz')` over a BIGINT
+        // column returns the strings `zz`, `10`, ...), and that cast is a
+        // separate unit. A same-type default (`LAG(v, 1, -1)`) is fine.
+        match session.run("SELECT LAG(v, 1, 'zz') OVER (ORDER BY v) FROM t") {
+            Err(DriverError::Unsupported(message)) => {
+                assert!(
+                    message.contains("LAG/LEAD"),
+                    "expected the LAG/LEAD cast refusal, got {message}"
+                );
+            }
+            other => panic!("expected the LAG/LEAD cast refusal, got {other:?}"),
+        }
+
+        // Captured: "[planner:1210]Incorrect arguments to nth_value" -- the
+        // position must be a POSITIVE integer constant, like NTILE's count.
+        assert!(matches!(
+            session.run("SELECT NTH_VALUE(v, 0) OVER (PARTITION BY g ORDER BY v) FROM t"),
+            Err(DriverError::WrongArguments("nth_value"))
+        ));
+    }
+
+    /// The DEFAULT frame, which is the single biggest divergence trap in
+    /// window functions: `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`,
+    /// whose `CURRENT ROW` is PEER-INCLUSIVE.
+    ///
+    /// Every expectation is captured TiDB output over the fixture.
+    #[test]
+    fn window_default_frame_includes_every_peer() {
+        let mut session = window_session();
+
+        // The tied 20s BOTH show 50 -- the running sum that already includes
+        // both of them -- and neither shows 30. A row-by-row running total
+        // would print 30 then 50, which is the classic wrong answer.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, SUM(v) OVER (PARTITION BY g ORDER BY v) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "10"],
+                ["1", "20", "50"],
+                ["1", "20", "50"],
+                ["1", "30", "80"],
+                ["1", "40", "120"],
+                ["2", "5", "10"],
+                ["2", "5", "10"],
+                ["2", "7", "17"],
+            ]
+        );
+
+        // COUNT and AVG see the same peer-inclusive frame.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, COUNT(v) OVER (PARTITION BY g ORDER BY v) AS c FROM t ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "1"],
+                ["1", "20", "3"],
+                ["1", "20", "3"],
+                ["1", "30", "4"],
+                ["1", "40", "5"],
+                ["2", "5", "2"],
+                ["2", "5", "2"],
+                ["2", "7", "3"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, AVG(v) OVER (PARTITION BY g ORDER BY v) AS a FROM t ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "10.0000"],
+                ["1", "20", "16.6667"],
+                ["1", "20", "16.6667"],
+                ["1", "30", "20.0000"],
+                ["1", "40", "24.0000"],
+                ["2", "5", "5.0000"],
+                ["2", "5", "5.0000"],
+                ["2", "7", "5.6667"],
+            ]
+        );
+
+        // Writing the default frame out by hand is the same frame.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v RANGE BETWEEN UNBOUNDED PRECEDING \
+                 AND CURRENT ROW) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["10"],
+                ["50"],
+                ["50"],
+                ["80"],
+                ["120"],
+                ["10"],
+                ["10"],
+                ["17"]
+            ]
+        );
+        // ... and its mirror image runs the peers the other way.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v RANGE BETWEEN CURRENT ROW AND \
+                 UNBOUNDED FOLLOWING) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["120"],
+                ["110"],
+                ["110"],
+                ["70"],
+                ["40"],
+                ["17"],
+                ["17"],
+                ["7"]
+            ]
+        );
+
+        // DESC only reverses the order the peers are walked in.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v DESC) AS s FROM t \
+                 ORDER BY g, v DESC"
+            )),
+            [
+                ["40"],
+                ["70"],
+                ["110"],
+                ["110"],
+                ["120"],
+                ["7"],
+                ["17"],
+                ["17"]
+            ]
+        );
+
+        // With NO window ORDER BY every row is a peer, so the frame is the
+        // whole partition and every row shows the partition total.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, SUM(v) OVER (PARTITION BY g) AS s, COUNT(*) OVER (PARTITION BY g) AS c \
+                 FROM t ORDER BY g, v"
+            )),
+            [
+                ["1", "120", "5"],
+                ["1", "120", "5"],
+                ["1", "120", "5"],
+                ["1", "120", "5"],
+                ["1", "120", "5"],
+                ["2", "17", "3"],
+                ["2", "17", "3"],
+                ["2", "17", "3"],
+            ]
+        );
+        // No PARTITION BY either: the whole result set is one frame.
+        assert_eq!(
+            row_text(session.run("SELECT SUM(v) OVER () AS s FROM t ORDER BY g, v"))[0],
+            ["137"]
+        );
+    }
+
+    /// Explicit `ROWS BETWEEN` frames, including the ones that EXCLUDE the
+    /// current row and so leave some rows with an empty frame.
+    #[test]
+    fn window_rows_frames_and_the_empty_frame() {
+        let mut session = window_session();
+
+        // A sliding window: unlike the default RANGE frame, ROWS gives the
+        // two tied 20s DIFFERENT sums (30 and 40), because it counts physical
+        // positions rather than peers.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 1 PRECEDING AND \
+                 CURRENT ROW) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["10"],
+                ["30"],
+                ["40"],
+                ["50"],
+                ["70"],
+                ["5"],
+                ["10"],
+                ["12"]
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN CURRENT ROW AND \
+                 1 FOLLOWING) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["30"],
+                ["40"],
+                ["50"],
+                ["70"],
+                ["40"],
+                ["10"],
+                ["12"],
+                ["7"]
+            ]
+        );
+        // The unbounded ends, which clamp rather than error at the edges.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING \
+                 AND UNBOUNDED FOLLOWING) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["120"],
+                ["120"],
+                ["120"],
+                ["120"],
+                ["120"],
+                ["17"],
+                ["17"],
+                ["17"]
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN CURRENT ROW AND \
+                 UNBOUNDED FOLLOWING) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["120"],
+                ["110"],
+                ["90"],
+                ["70"],
+                ["40"],
+                ["17"],
+                ["12"],
+                ["7"]
+            ]
+        );
+
+        // A frame that EXCLUDES the current row. The first row of each
+        // partition has an EMPTY frame, and an empty frame is NULL for SUM
+        // but ZERO for COUNT -- captured, and the trap this test exists for.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 2 PRECEDING AND \
+                 1 PRECEDING) AS s FROM t ORDER BY g, v"
+            )),
+            [
+                ["NULL"],
+                ["10"],
+                ["30"],
+                ["40"],
+                ["50"],
+                ["NULL"],
+                ["5"],
+                ["10"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT COUNT(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 2 PRECEDING AND \
+                 1 PRECEDING) AS c FROM t ORDER BY g, v"
+            )),
+            [["0"], ["1"], ["2"], ["2"], ["2"], ["0"], ["1"], ["2"]]
+        );
+
+        // `2 FOLLOWING AND 1 FOLLOWING` is empty for EVERY row -- not a
+        // static error, just an all-NULL column (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 2 FOLLOWING AND \
+                 1 FOLLOWING) AS s FROM t ORDER BY g, v"
+            )),
+            [["NULL"]; 8]
+        );
+    }
+
+    /// `FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE`, which DO read the frame -- so
+    /// `LAST_VALUE` under the default frame famously returns the current PEER
+    /// GROUP's last row, not the partition's.
+    #[test]
+    fn window_value_functions_read_the_frame() {
+        let mut session = window_session();
+
+        assert_eq!(
+            row_text(session.run(
+                "SELECT FIRST_VALUE(v) OVER (PARTITION BY g ORDER BY v) AS f FROM t ORDER BY g, v"
+            )),
+            [["10"], ["10"], ["10"], ["10"], ["10"], ["5"], ["5"], ["5"]]
+        );
+
+        // The default frame ends at the current PEER GROUP, so LAST_VALUE is
+        // the row's own peer-group maximum -- 40 appears only on the last row.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LAST_VALUE(v) OVER (PARTITION BY g ORDER BY v) AS l FROM t ORDER BY g, v"
+            )),
+            [["10"], ["20"], ["20"], ["30"], ["40"], ["5"], ["5"], ["7"]]
+        );
+        // Spelling out the whole partition is what returns the partition's
+        // last row on EVERY row.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LAST_VALUE(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN UNBOUNDED \
+                 PRECEDING AND UNBOUNDED FOLLOWING) AS l FROM t ORDER BY g, v"
+            )),
+            [["40"], ["40"], ["40"], ["40"], ["40"], ["7"], ["7"], ["7"]]
+        );
+
+        // NTH_VALUE is NULL while the frame holds fewer than n rows.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT NTH_VALUE(v, 3) OVER (PARTITION BY g ORDER BY v) AS n FROM t ORDER BY g, v"
+            )),
+            [
+                ["NULL"],
+                ["20"],
+                ["20"],
+                ["20"],
+                ["20"],
+                ["NULL"],
+                ["NULL"],
+                ["7"],
+            ]
+        );
+        // Counted from the FRAME's start, not the partition's.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT NTH_VALUE(v, 2) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 1 PRECEDING \
+                 AND CURRENT ROW) AS n FROM t ORDER BY g, v"
+            )),
+            [
+                ["NULL"],
+                ["20"],
+                ["20"],
+                ["30"],
+                ["40"],
+                ["NULL"],
+                ["5"],
+                ["7"],
+            ]
+        );
+    }
+
+    /// `LAG`/`LEAD`, which address the sorted partition directly and IGNORE
+    /// the frame entirely.
+    #[test]
+    fn window_lag_and_lead() {
+        let mut session = window_session();
+
+        // The default offset is 1, and the partition's first row is NULL.
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT LAG(v) OVER (PARTITION BY g ORDER BY v) AS l FROM t ORDER BY g, v"
+                )
+            ),
+            [
+                ["NULL"],
+                ["10"],
+                ["20"],
+                ["20"],
+                ["30"],
+                ["NULL"],
+                ["5"],
+                ["5"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LAG(v, 2) OVER (PARTITION BY g ORDER BY v) AS l FROM t ORDER BY g, v"
+            )),
+            [
+                ["NULL"],
+                ["NULL"],
+                ["10"],
+                ["20"],
+                ["20"],
+                ["NULL"],
+                ["NULL"],
+                ["5"],
+            ]
+        );
+        // The third argument fills EVERY out-of-range position.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LAG(v, 2, -1) OVER (PARTITION BY g ORDER BY v) AS l FROM t ORDER BY g, v"
+            )),
+            [
+                ["-1"],
+                ["-1"],
+                ["10"],
+                ["20"],
+                ["20"],
+                ["-1"],
+                ["-1"],
+                ["5"]
+            ]
+        );
+        // Offset 0 is the current row.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LAG(v, 0) OVER (PARTITION BY g ORDER BY v) AS l FROM t ORDER BY g, v"
+            )),
+            [["10"], ["20"], ["20"], ["30"], ["40"], ["5"], ["5"], ["7"]]
+        );
+
+        // LEAD runs off the partition's END instead.
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT LEAD(v) OVER (PARTITION BY g ORDER BY v) AS l FROM t ORDER BY g, v"
+                )
+            ),
+            [
+                ["20"],
+                ["20"],
+                ["30"],
+                ["40"],
+                ["NULL"],
+                ["5"],
+                ["7"],
+                ["NULL"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LEAD(v, 2, -7) OVER (PARTITION BY g ORDER BY v) AS l FROM t ORDER BY g, v"
+            )),
+            [
+                ["20"],
+                ["30"],
+                ["40"],
+                ["-7"],
+                ["-7"],
+                ["7"],
+                ["-7"],
+                ["-7"]
+            ]
+        );
+
+        // A frame is written but IGNORED: the result is identical to the
+        // frame-less LAG above (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LAG(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 2 PRECEDING AND \
+                 1 PRECEDING) AS l FROM t ORDER BY g, v"
+            )),
+            [
+                ["NULL"],
+                ["10"],
+                ["20"],
+                ["20"],
+                ["30"],
+                ["NULL"],
+                ["5"],
+                ["5"],
+            ]
+        );
+    }
+
+    /// NULL inputs and string arguments across the framed families.
+    ///
+    /// A window `ORDER BY` sorts NULLs FIRST ascending, and all NULL keys are
+    /// peers -- so the NULL row's own default frame holds only itself.
+    #[test]
+    fn window_frames_over_nulls_and_strings() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE u (g BIGINT, v BIGINT, s VARCHAR(20))")
+            .unwrap();
+        session
+            .run("INSERT INTO u VALUES (1,10,'a'),(1,NULL,'b'),(1,20,NULL),(2,5,'x')")
+            .unwrap();
+
+        // The NULL row sorts first; SUM over its lone-NULL frame is NULL,
+        // COUNT(v) is 0 while COUNT(*) is 1.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, SUM(v) OVER (PARTITION BY g ORDER BY v) AS s, \
+                 COUNT(v) OVER (PARTITION BY g ORDER BY v) AS c, \
+                 COUNT(*) OVER (PARTITION BY g ORDER BY v) AS ca \
+                 FROM u ORDER BY g, v"
+            )),
+            [
+                ["NULL", "NULL", "0", "1"],
+                ["10", "10", "1", "2"],
+                ["20", "30", "2", "3"],
+                ["5", "5", "1", "1"],
+            ]
+        );
+
+        // FIRST_VALUE reads the frame's first ROW, NULL included -- it does
+        // not skip to the first non-NULL value.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT FIRST_VALUE(v) OVER (PARTITION BY g ORDER BY v) AS f FROM u ORDER BY g, v"
+            )),
+            [["NULL"], ["NULL"], ["NULL"], ["5"]]
+        );
+
+        // MIN/MAX over strings SKIP NULLs, as in ordinary aggregation.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT MIN(s) OVER (PARTITION BY g) AS lo, MAX(s) OVER (PARTITION BY g) AS hi \
+                 FROM u ORDER BY g, v"
+            )),
+            [["a", "b"], ["a", "b"], ["a", "b"], ["x", "x"]]
+        );
+
+        // A string LAG default lands on the partition's first row.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT LAG(s, 1, 'zz') OVER (PARTITION BY g ORDER BY v) AS l FROM u \
+                 ORDER BY g, v"
+            )),
+            [["zz"], ["b"], ["a"], ["zz"]]
+        );
     }
 
     /// The pipeline ABOVE the window stage -- an `ORDER BY`-only window,

@@ -403,6 +403,26 @@ impl Partial {
     }
 }
 
+/// Folds one aggregate over an explicit value list, returning its result.
+///
+/// This is the same accumulate-then-finish path a GROUP BY group takes, reached
+/// without a group key so a WINDOW FRAME can aggregate an arbitrary slice of a
+/// partition (see `crate::window`). Reusing it is what keeps SUM's
+/// integers-summed-in-the-decimal-domain rule, AVG's `div_precision_increment`
+/// division and MIN/MAX's datum comparison identical between the two callers.
+/// `None` stands for `COUNT(*)`'s absent argument; every other aggregate takes
+/// `Some(value)`, with `Some(Datum::Null)` for a NULL input.
+pub(crate) fn aggregate_values(
+    kind: &AggKind,
+    values: impl IntoIterator<Item = Option<Datum>>,
+) -> Result<Datum, ExecError> {
+    let mut partial = Partial::new(kind);
+    for value in values {
+        partial.update(value, Vec::new())?;
+    }
+    Ok(partial.finish(&[]))
+}
+
 /// Go's default `div_precision_increment`, the scale AVG's division adds over
 /// its sum (`typeInfer4Avg` sets the result's decimals to it).
 const DIV_PRECISION_INCREMENT: u32 = 4;

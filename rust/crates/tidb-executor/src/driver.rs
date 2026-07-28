@@ -544,6 +544,14 @@ pub enum DriverError {
     /// extends another added an `ORDER BY` the base already has, carrying the
     /// base's name.
     WindowNoRedefineOrderBy(String),
+    /// Go `plannererrors.ErrWindowFrameStartIllegal` / `ErrWindowFrameIllegal`
+    /// (3586): a frame bound whose offset is negative, NULL or non-integral,
+    /// or a `start` bound that ranks AFTER its `end` bound.
+    WindowFrameIllegal,
+    /// Go `plannererrors.ErrWindowRangeFrameOrderType` (3587): a `RANGE` frame
+    /// with an `N PRECEDING`/`N FOLLOWING` bound needs exactly one `ORDER BY`
+    /// expression of numeric or temporal type.
+    WindowRangeFrameOrderType,
     /// Go `ErrUnknownColumn` (1054) naming the clause it was written in.
     UnknownColumnInClause {
         /// The name as written.
@@ -2536,9 +2544,22 @@ fn unknown_order_column(name: &str) -> DriverError {
 
 /// Go `aggregation.NewAggFuncDesc` + `baseFuncDesc.TypeInfer`: the aggregate
 /// kind and the result type inferred for its argument.
-fn agg_kind_and_type(name: &str, arg: &Expression) -> Result<(AggKind, FieldType), DriverError> {
+pub(crate) fn agg_kind_and_type(
+    name: &str,
+    arg: &Expression,
+) -> Result<(AggKind, FieldType), DriverError> {
     Ok(match name {
-        "COUNT" => (AggKind::Count, FieldType::new(FieldTypeCode::LongLong)),
+        // Go `typeInfer4Count`: a binary `BIGINT(21)` that never returns NULL
+        // -- an empty group (and an empty window frame) counts 0.
+        "COUNT" => {
+            let mut t = FieldType::new(FieldTypeCode::LongLong);
+            t.set_flen(21);
+            t.set_decimal(0);
+            t.add_flags(
+                tidb_datatype::FieldTypeFlags::BINARY | tidb_datatype::FieldTypeFlags::NOT_NULL,
+            );
+            (AggKind::Count, t)
+        }
         // Go `typeInfer4Sum`: DOUBLE for a real argument, DECIMAL for every
         // other numeric one -- `SUM` over a BIGINT column is a DECIMAL in
         // MySQL, not a BIGINT (captured: `sum(a)` reports type 246).
@@ -8731,6 +8752,24 @@ impl DriverError {
                 "Window '<unnamed window>' cannot inherit '{base}' since both contain an \
                  ORDER BY clause."
             ),
+        ),
+        // Go: "Window '%s': frame start or end is negative, NULL or of
+        // non-integral type" -- an inline `OVER (...)` is `<unnamed window>`.
+        DriverError::WindowFrameIllegal => MysqlError::new(
+            3586,
+            *b"HY000",
+            "Window '<unnamed window>': frame start or end is negative, NULL or of \
+             non-integral type"
+                .to_owned(),
+        ),
+        // Go: "Window '%s' with RANGE N PRECEDING/FOLLOWING frame requires
+        // exactly one ORDER BY expression, of numeric or temporal type".
+        DriverError::WindowRangeFrameOrderType => MysqlError::new(
+            3587,
+            *b"HY000",
+            "Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires \
+             exactly one ORDER BY expression, of numeric or temporal type"
+                .to_owned(),
         ),
         // Go: "Invalid use of group function".
         DriverError::InvalidGroupFuncUse => MysqlError::new(
