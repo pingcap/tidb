@@ -663,7 +663,9 @@ pub(crate) fn to_seconds(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// FINAL target month, not iteratively re-clamped one month at a time —
 /// confirmed via `goeval`: `2021-01-31 + 2 MONTH` = `2021-03-31`, the full
 /// 31 days, not `2021-03-28` from clamping through February first. `QUARTER`
-/// still parses but is `Unsupported`.
+/// shares the same `add_months` path, scaled by `×3` months (confirmed via
+/// `goeval`: `2024-01-31 + 1 QUARTER` = `2024-04-30`, `2024-11-30 + 1
+/// QUARTER` = `2025-02-28`).
 ///
 /// The COMPOSITE units (`HOUR_MINUTE`, `DAY_HOUR`, `DAY_MINUTE`,
 /// `DAY_SECOND`, `MINUTE_SECOND`, `HOUR_SECOND`, `YEAR_MONTH`, and their
@@ -692,8 +694,12 @@ pub(crate) fn to_seconds(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// half-unit, matching this crate's one existing decimal-to-integer
 /// rounding rule rather than a newly invented one — BEFORE any per-unit
 /// multiplication like `WEEK`'s `×7` or `YEAR`'s `×12`, per the note
-/// above); a `Str` amount would need MySQL's general string-to-number
-/// coercion, out of scope like `FROM_DAYS`'s argument.
+/// above), or a `String`/`Bytes` amount — see
+/// [`parse_single_string_amount`]'s own doc for the `intervalReformatString`
+/// port (a `Str`-typed `Datum` still needs MySQL's general string-to-number
+/// coercion first, out of scope like `FROM_DAYS`'s argument, but a
+/// `String`/`Bytes` `Datum` — what an `INTERVAL '5' DAY` string literal
+/// actually evaluates to — does not).
 ///
 /// The resulting year is validated against `DATE`'s real `0001`-`9999`
 /// range (see [`format_ymd_result`]) — a real bug in an earlier increment's
@@ -716,7 +722,13 @@ pub(crate) fn date_add(
         Datum::Int(i) => *i,
         Datum::UInt(i) => *i as i64,
         Datum::Decimal(d) => d.round_to_i64().ok_or(EvalError::IntOverflow)?,
-        Datum::String(_) | Datum::Bytes(_) | Datum::Real(_) => {
+        Datum::String(_) | Datum::Bytes(_) => {
+            let Some(s) = coerce_str(amount)? else {
+                return Ok(Datum::Null);
+            };
+            parse_single_string_amount(unit, &s)
+        }
+        Datum::Real(_) => {
             return Err(EvalError::Unsupported("INTERVAL amount"));
         }
         Datum::MinNotNull | Datum::MaxValue => {
@@ -766,10 +778,59 @@ pub(crate) fn date_add(
         add_months(y, m, d, sign * n)
     } else if unit.eq_ignore_ascii_case("YEAR") {
         add_months(y, m, d, sign * n * 12)
+    } else if unit.eq_ignore_ascii_case("QUARTER") {
+        // `parseSingleTimeValue`'s `QUARTER` case is `3 * riv` MONTHs
+        // (`pkg/types/time.go`), so it shares `MONTH`/`YEAR`'s calendar-field
+        // clamping through the same `add_months`: `2024-01-31 + 1 QUARTER` =
+        // `2024-04-30` (April has 30 days, not an overflow into May), and
+        // `2024-11-30 + 1 QUARTER` = `2025-02-28` (clamped into a
+        // non-leap February) — both confirmed via `goeval`.
+        add_months(y, m, d, sign * n * 3)
     } else {
         return Err(EvalError::Unsupported("INTERVAL unit"));
     };
     Ok(format_ymd_result(y2, m2, d2, time_suffix))
+}
+
+/// Parses a STRING `INTERVAL` amount for a non-composite unit, porting
+/// `intervalReformatString`'s two branches (`pkg/expression/builtin_time.go`):
+///
+/// - Every unit EXCEPT `SECOND` keeps only the LEADING `[+-]?[0-9]+` digit
+///   run (Go's `intervalRegexp`) and throws the fractional part away
+///   entirely — not a round, a hard truncation of the string itself before
+///   any numeric parsing happens. `'5.9' DAY` and `'5.4' DAY` both become
+///   `5` (confirmed via `goeval`: `DATE_ADD('2024-01-01', INTERVAL '5.9'
+///   DAY)` = `'2024-01-06'`, same as `'5.4'` and `'5'` — `'5.99'` doesn't
+///   round to `6` either). A string with no leading digit run (e.g. `''` or
+///   `'abc'`) becomes `0`, matching Go's `interval = "0"` fallback.
+/// - `SECOND` is parsed as a full decimal (Go routes it through
+///   `MyDecimal.FromString`, preserving the fraction so the real engine can
+///   render e.g. `+5.5` as a sub-second time-of-day). This crate's
+///   `date_add_time` has no fractional-second representation (the same
+///   documented limitation the numeric `Decimal` INTERVAL amount already
+///   has, see `date_add`'s own doc comment), so the closest amount this
+///   tier can still act on is the nearest whole second — reusing
+///   `Decimal::round_to_i64_saturating`'s ties-away-from-zero rule rather
+///   than inventing a second rounding convention.
+fn parse_single_string_amount(unit: &str, s: &str) -> i64 {
+    let trimmed = s.trim();
+    if unit.eq_ignore_ascii_case("SECOND") {
+        let (decimal, _) = crate::Decimal::parse_mysql(trimmed);
+        return decimal.round_to_i64_saturating();
+    }
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        i += 1;
+    }
+    let digits_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == digits_start {
+        return 0;
+    }
+    trimmed[..i].parse::<i64>().unwrap_or(i64::MAX)
 }
 
 /// Composite-unit field indices, mirroring `pkg/types/time.go`'s

@@ -2320,6 +2320,69 @@ fn date_parts() {
         e(&format!("date_sub({dt}, interval '30' hour_minute)")),
         "STR:2024-01-31 09:50:30"
     );
+
+    // `QUARTER`: `parseSingleTimeValue`'s `3 * riv` MONTHs, so it shares
+    // MONTH/YEAR's calendar-field clamp through the same code path
+    // (confirmed via `goeval`): `2024-01-31 + 1 QUARTER` clamps into
+    // April's 30 days, and `2024-11-30 + 1 QUARTER` clamps into a
+    // non-leap February.
+    assert_eq!(
+        e("date_add('2024-01-31', interval 1 quarter)"),
+        "STR:2024-04-30"
+    );
+    assert_eq!(
+        e("date_add('2024-11-30', interval 1 quarter)"),
+        "STR:2025-02-28"
+    );
+    assert_eq!(
+        e("date_add('2024-01-31', interval 2 quarter)"),
+        "STR:2024-07-31"
+    );
+
+    // A STRING `INTERVAL` amount for a non-composite unit is NOT the same
+    // as a numeric `Decimal` amount: `intervalReformatString`
+    // (`pkg/expression/builtin_time.go`) keeps only the string's LEADING
+    // `[+-]?[0-9]+` digit run and throws the fraction away entirely --
+    // this is a hard truncation of the STRING before any rounding could
+    // happen, not a round. `'5.9' DAY` and `'5.4' DAY` both become `5`
+    // (confirmed via `goeval`: `'5.99' DAY` doesn't round to `6` either),
+    // unlike a NUMERIC `5.5 DAY`, which rounds to `6` (ties away from
+    // zero, tested above) -- the string and numeric paths take genuinely
+    // different rules for the exact same interval unit.
+    assert_eq!(
+        e("date_add('2024-01-01', interval '5.9' day)"),
+        "STR:2024-01-06"
+    );
+    assert_eq!(
+        e("date_add('2024-01-01', interval '5.4' day)"),
+        "STR:2024-01-06"
+    );
+    assert_eq!(
+        e("date_add('2024-01-01', interval '-5.5' day)"),
+        "STR:2023-12-27"
+    );
+    assert_eq!(
+        e("date_add('2024-01-01', interval '' day)"),
+        "STR:2024-01-01"
+    ); // no leading digit run: Go's "0" fallback.
+       // `SECOND` is the one single unit whose STRING amount is parsed as a
+       // full decimal (Go routes it through `MyDecimal.FromString`,
+       // preserving the fraction so the real engine can render a sub-second
+       // time-of-day) -- captured via `goeval`:
+       // `DATE_ADD('...10:00:00', INTERVAL '-5.5' SECOND)` is
+       // `...09:59:54.500000`, the fraction kept exactly, not rounded and not
+       // truncated like `DAY`'s string amount above. This tier's
+       // `date_add_time` has no fractional-second representation at all
+       // (the same limitation the numeric `Decimal` amount already has), so
+       // the closest amount it can still act on is the nearest whole second.
+    assert_eq!(
+        e("date_add('2024-01-15 10:00:00', interval '5' second)"),
+        "STR:2024-01-15 10:00:05"
+    );
+    assert_eq!(
+        e("date_add('2024-01-15 10:00:00', interval '5.5' second)"),
+        "STR:2024-01-15 10:00:06"
+    );
 }
 
 #[test]
