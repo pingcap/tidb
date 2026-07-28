@@ -1523,6 +1523,7 @@ dependencies = [
  "tidb-executor",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-planner",
  "tidb-util",
 ]
 

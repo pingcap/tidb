@@ -15,6 +15,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-planner = { path = "../tidb-planner" }
 tidb-util = { path = "../tidb-util" }
 sha1 = { workspace = true }
 sha2 = { workspace = true }

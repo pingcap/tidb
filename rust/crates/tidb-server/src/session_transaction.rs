@@ -22,6 +22,15 @@
 //! observes the same consistent snapshot instead of a fresh timestamp per
 //! statement. Buffered writes and their commit-time two-phase commit are a
 //! later slice; a write inside a transaction fails closed until then.
+//!
+//! The transaction's mode (`BEGIN PESSIMISTIC` / `BEGIN OPTIMISTIC` /
+//! `@@tidb_txn_mode`) is resolved and recorded here, because it is what the
+//! client asked for. It changes nothing yet: the only statements this slice
+//! admits inside a transaction are reads at the pinned snapshot, which take no
+//! pessimistic locks in either mode, and every locking or writing statement
+//! fails closed rather than silently dropping a lock.
+
+use tidb_planner::txn_mode::{txn_mode_for_begin, SessionTxnMode, TransactionMode};
 
 /// The explicit-transaction state of one session.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -32,6 +41,9 @@ pub struct SessionTransaction {
     /// read. `None` while no transaction is open, or before the open
     /// transaction's first read.
     snapshot_ts: Option<u64>,
+    /// The mode the open transaction was opened in. `None` while no
+    /// transaction is open.
+    mode: Option<SessionTxnMode>,
 }
 
 impl SessionTransaction {
@@ -41,6 +53,7 @@ impl SessionTransaction {
         Self {
             active: false,
             snapshot_ts: None,
+            mode: None,
         }
     }
 
@@ -49,9 +62,16 @@ impl SessionTransaction {
     /// Re-issuing `BEGIN` while a transaction is already open implicitly ends
     /// the current one and starts a fresh transaction, matching MySQL — so any
     /// pinned snapshot is dropped and re-acquired on the next read.
-    pub const fn begin(&mut self) {
+    /// `mode` is the `BEGIN` statement's own keyword. This node has no
+    /// `SET`-able session-variable store, so a bare `BEGIN` resolves against
+    /// the registry default of `@@tidb_txn_mode`, which is `pessimistic`.
+    pub fn begin(&mut self, mode: TransactionMode) {
         self.active = true;
         self.snapshot_ts = None;
+        self.mode = Some(txn_mode_for_begin(
+            mode,
+            tidb_planner::txn_mode::PESSIMISTIC_TXN_MODE,
+        ));
     }
 
     /// Ends the open transaction for `COMMIT` or `ROLLBACK`.
@@ -63,6 +83,13 @@ impl SessionTransaction {
     pub const fn end(&mut self) {
         self.active = false;
         self.snapshot_ts = None;
+        self.mode = None;
+    }
+
+    /// The mode the open transaction runs in, if one is open.
+    #[must_use]
+    pub const fn mode(&self) -> Option<SessionTxnMode> {
+        self.mode
     }
 
     /// Whether an explicit transaction is open, i.e. the connection should
@@ -97,7 +124,7 @@ impl SessionTransaction {
 
 #[cfg(test)]
 mod tests {
-    use super::SessionTransaction;
+    use super::{SessionTransaction, SessionTxnMode, TransactionMode};
     use std::cell::Cell;
 
     /// A test timestamp source that hands out increasing values and counts how
@@ -139,7 +166,7 @@ mod tests {
     fn every_read_in_a_transaction_shares_one_lazily_pinned_snapshot() {
         let clock = FakeClock::new();
         let mut txn = SessionTransaction::new();
-        txn.begin();
+        txn.begin(TransactionMode::Default);
         assert!(txn.is_active());
         // The first read pins the snapshot; later reads reuse it verbatim.
         let first = txn.read_snapshot(|| clock.acquire()).unwrap();
@@ -157,7 +184,7 @@ mod tests {
     fn ending_a_transaction_returns_to_fresh_per_read_snapshots() {
         let clock = FakeClock::new();
         let mut txn = SessionTransaction::new();
-        txn.begin();
+        txn.begin(TransactionMode::Default);
         txn.read_snapshot(|| clock.acquire()).unwrap();
         txn.end();
         assert!(!txn.is_active());
@@ -168,19 +195,35 @@ mod tests {
     fn re_beginning_a_transaction_repins_a_new_snapshot() {
         let clock = FakeClock::new();
         let mut txn = SessionTransaction::new();
-        txn.begin();
+        txn.begin(TransactionMode::Default);
         assert_eq!(txn.read_snapshot(|| clock.acquire()).unwrap(), Some(1000));
         // A second BEGIN implicitly ends the first transaction and starts a new
         // one, so the next read pins a fresh snapshot.
-        txn.begin();
+        txn.begin(TransactionMode::Default);
         assert_eq!(txn.read_snapshot(|| clock.acquire()).unwrap(), Some(1001));
         assert_eq!(clock.issued.get(), 2);
     }
 
     #[test]
+    fn the_begin_keyword_decides_the_mode_and_ending_clears_it() {
+        let mut txn = SessionTransaction::new();
+        assert_eq!(txn.mode(), None);
+        // No SET-able variable store here, so a bare BEGIN takes the registry
+        // default of @@tidb_txn_mode.
+        txn.begin(TransactionMode::Default);
+        assert_eq!(txn.mode(), Some(SessionTxnMode::Pessimistic));
+        txn.begin(TransactionMode::Optimistic);
+        assert_eq!(txn.mode(), Some(SessionTxnMode::Optimistic));
+        txn.begin(TransactionMode::Pessimistic);
+        assert_eq!(txn.mode(), Some(SessionTxnMode::Pessimistic));
+        txn.end();
+        assert_eq!(txn.mode(), None);
+    }
+
+    #[test]
     fn a_snapshot_acquisition_failure_leaves_the_transaction_unpinned() {
         let mut txn = SessionTransaction::new();
-        txn.begin();
+        txn.begin(TransactionMode::Default);
         // A failed acquisition surfaces and pins nothing, so a later read retries.
         assert_eq!(
             txn.read_snapshot(|| Err::<u64, _>("pd unavailable")),

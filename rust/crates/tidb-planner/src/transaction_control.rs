@@ -14,13 +14,21 @@
 
 //! Recognizing a session's transaction-control statements.
 
-use tidb_ast::{SessionStmt, Stmt};
+use tidb_ast::{SessionStmt, Stmt, TransactionMode};
 
 /// One recognized transaction-control statement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransactionControl {
-    /// `BEGIN` / `START TRANSACTION` opening a plain transaction.
-    Begin,
+    /// `BEGIN` / `START TRANSACTION` opening a transaction.
+    ///
+    /// `mode` is the statement's own `OPTIMISTIC`/`PESSIMISTIC` keyword, which
+    /// outranks `@@tidb_txn_mode`; `TransactionMode::Default` means the
+    /// variable decides. Resolve it with
+    /// [`crate::txn_mode::txn_mode_for_begin`].
+    Begin {
+        /// The mode named by the statement itself.
+        mode: TransactionMode,
+    },
     /// `COMMIT` or `ROLLBACK` ending the current transaction.
     End,
     /// A transaction-control statement the bounded node cannot honor yet (named
@@ -53,7 +61,7 @@ pub fn classify_transaction_control(sql: &str) -> Option<TransactionControl> {
                     "START TRANSACTION ... AS OF TIMESTAMP",
                 ))
             } else {
-                Some(TransactionControl::Begin)
+                Some(TransactionControl::Begin { mode: begin.mode })
             }
         }
         SessionStmt::Commit(tidb_ast::CompletionType::Default)
@@ -80,25 +88,40 @@ pub fn classify_transaction_control(sql: &str) -> Option<TransactionControl> {
 #[cfg(test)]
 mod tests {
     use super::{classify_transaction_control, TransactionControl};
+    use tidb_ast::TransactionMode;
 
     #[test]
     fn begin_and_start_transaction_open_a_transaction() {
         assert_eq!(
             classify_transaction_control("BEGIN"),
-            Some(TransactionControl::Begin)
+            Some(TransactionControl::Begin {
+                mode: TransactionMode::Default
+            })
         );
         assert_eq!(
             classify_transaction_control("start transaction"),
-            Some(TransactionControl::Begin)
+            Some(TransactionControl::Begin {
+                mode: TransactionMode::Default
+            })
         );
         assert_eq!(
             classify_transaction_control("START TRANSACTION READ ONLY"),
-            Some(TransactionControl::Begin)
+            Some(TransactionControl::Begin {
+                mode: TransactionMode::Default
+            })
         );
-        // The BEGIN spelling admits an isolation mode without changing the shape.
+        // The BEGIN spelling carries the mode the transaction opens in.
         assert_eq!(
             classify_transaction_control("BEGIN PESSIMISTIC"),
-            Some(TransactionControl::Begin)
+            Some(TransactionControl::Begin {
+                mode: TransactionMode::Pessimistic
+            })
+        );
+        assert_eq!(
+            classify_transaction_control("begin optimistic"),
+            Some(TransactionControl::Begin {
+                mode: TransactionMode::Optimistic
+            })
         );
     }
 

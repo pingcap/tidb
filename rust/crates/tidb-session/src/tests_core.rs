@@ -3285,3 +3285,58 @@ fn unsupported_kinds_error() {
         StmtResult::Affected(1)
     );
 }
+
+/// `BEGIN PESSIMISTIC` / `BEGIN OPTIMISTIC` and `@@tidb_txn_mode` decide the
+/// mode a transaction opens in, exactly as Go's `newProviderWithRequest`
+/// does. This tier takes no row locks in either mode -- its store is one
+/// shared catalog behind a mutex -- so the mode is recorded, not acted on.
+///
+/// Captured from TiDB's mock store: `@@tidb_txn_mode` defaults to
+/// `pessimistic`, `SET tidb_txn_mode = ''` is accepted and reads back empty
+/// (the variable is `AllowEmptyAll`), `'bogus'` is rejected with 1231, and
+/// `BEGIN PESSIMISTIC` still locks rows with the variable set to `optimistic`.
+#[test]
+fn a_begin_resolves_its_transaction_mode_from_the_keyword_then_the_variable() {
+    let mut session = Session::new();
+    assert_eq!(session.txn_mode(), None, "no transaction is open");
+    assert_eq!(
+        session.run("SELECT @@tidb_txn_mode").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string("pessimistic")]])
+    );
+
+    session.control_transaction("BEGIN").unwrap();
+    assert_eq!(session.txn_mode(), Some(SessionTxnMode::Pessimistic));
+    session.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    assert_eq!(session.txn_mode(), Some(SessionTxnMode::Optimistic));
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(session.txn_mode(), None);
+
+    // The variable decides a bare BEGIN; the keyword outranks it.
+    session
+        .apply_set("SET tidb_txn_mode = 'optimistic'")
+        .unwrap();
+    session.control_transaction("START TRANSACTION").unwrap();
+    assert_eq!(session.txn_mode(), Some(SessionTxnMode::Optimistic));
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(session.txn_mode(), Some(SessionTxnMode::Pessimistic));
+    session.control_transaction("COMMIT").unwrap();
+
+    // The empty string is a value this variable really can hold, and Go reads
+    // anything other than `pessimistic` as optimistic.
+    session.apply_set("SET tidb_txn_mode = ''").unwrap();
+    assert_eq!(
+        session.run("SELECT @@tidb_txn_mode").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string("")]])
+    );
+    session.control_transaction("BEGIN").unwrap();
+    assert_eq!(session.txn_mode(), Some(SessionTxnMode::Optimistic));
+    session.control_transaction("ROLLBACK").unwrap();
+
+    // A value outside the enum is still rejected: Go's 1231.
+    assert!(matches!(
+        session.apply_set("SET tidb_txn_mode = 'bogus'"),
+        Err(DriverError::Var(
+            tidb_executor::VarErrorKind::WrongValueForVar(_, _)
+        ))
+    ));
+}

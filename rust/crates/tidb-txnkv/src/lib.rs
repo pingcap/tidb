@@ -25,10 +25,14 @@
 //!
 //! Async commit, 1PC, fair (aggressive) locking's `WakeUpModeForceLock`,
 //! pessimistic value caching (`return_values`/`check_existence`), and TLS
-//! remain outside this boundary. So does the SQL seam: `BEGIN PESSIMISTIC` and
-//! `@@tidb_txn_mode` are not wired to [`transaction::RealPessimisticTransaction`]
-//! yet — the txnkv API is complete and tested, and the executor-side binding is
-//! a separate unit.
+//! remain outside this boundary. So does most of the SQL seam. `BEGIN
+//! PESSIMISTIC` / `BEGIN OPTIMISTIC` / `@@tidb_txn_mode` now resolve to a mode
+//! the session records (`tidb-planner`'s `txn_mode`), and a lock failure maps
+//! to the SQL error TiDB reports for it (`tidb-exec`'s
+//! `pessimistic_lock_error`), but no SQL statement drives
+//! [`transaction::RealPessimisticTransaction`] yet: the real-TiKV node still
+//! refuses writes inside an explicit transaction, so there is no statement to
+//! take a lock for. That binding waits on multi-statement transactions there.
 
 mod assertion;
 mod batch_getter;

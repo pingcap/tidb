@@ -45,7 +45,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::sysvar::{get_sys_var, ValidationError};
+use crate::sysvar::{get_sys_var, ValidationError, SCOPE_GLOBAL, SCOPE_SESSION};
 
 /// The shared GLOBAL-scope value table every session of one
 /// [`crate::Session`] factory holds a clone of. In-memory only: Go persists
@@ -89,12 +89,16 @@ impl GlobalSysvars {
         if !def.has_global_scope() {
             return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
         }
-        let validated = def.validate(&value).map_err(|error| match error {
-            ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
-            ValidationError::WrongValue => {
-                VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
-            }
-        })?;
+        let validated =
+            def.validate_in_scope(&value, SCOPE_GLOBAL)
+                .map_err(|error| match error {
+                    ValidationError::WrongType => {
+                        VarError::WrongTypeForVar(name.to_ascii_lowercase())
+                    }
+                    ValidationError::WrongValue => {
+                        VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
+                    }
+                })?;
         self.values
             .lock()
             .expect("global sysvar lock poisoned")
@@ -228,12 +232,16 @@ impl SessionVars {
         if !def.has_session_scope() {
             return Err(VarError::GlobalOnlyVariable(name.to_ascii_lowercase()));
         }
-        let validated = def.validate(&value).map_err(|error| match error {
-            ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
-            ValidationError::WrongValue => {
-                VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
-            }
-        })?;
+        let validated =
+            def.validate_in_scope(&value, SCOPE_SESSION)
+                .map_err(|error| match error {
+                    ValidationError::WrongType => {
+                        VarError::WrongTypeForVar(name.to_ascii_lowercase())
+                    }
+                    ValidationError::WrongValue => {
+                        VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
+                    }
+                })?;
         self.systems
             .insert(name.to_ascii_lowercase(), validated.value);
         Ok(())

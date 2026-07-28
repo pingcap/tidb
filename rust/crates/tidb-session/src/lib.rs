@@ -35,6 +35,10 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_datatype::{Datum, FieldType};
 use tidb_executor::{Catalog, DriverError, MysqlRng};
 use tidb_executor::{SchemaErrorKind, DEFAULT_DATABASE};
+pub use tidb_planner::txn_mode::{
+    txn_mode_for_begin, txn_mode_for_statement, SessionTxnMode, StatementTxnModeInputs,
+    OPTIMISTIC_TXN_MODE, PESSIMISTIC_TXN_MODE,
+};
 
 /// The result of running one statement.
 #[derive(Debug, PartialEq)]
@@ -209,6 +213,14 @@ fn new_time_seeded_rand() -> Rc<RefCell<MysqlRng>> {
 struct Transaction {
     working: Catalog,
     base_version: u64,
+    /// The mode this transaction opened in, resolved from the `BEGIN` keyword
+    /// and `@@tidb_txn_mode` exactly as Go resolves it.
+    ///
+    /// This tier's store is a catalog behind a mutex, not TiKV, so there is no
+    /// lock to take and the mode changes nothing about how a statement runs
+    /// here. It is still resolved and kept, because it is what the client
+    /// asked for and what the real-TiKV tier consumes.
+    mode: SessionTxnMode,
 }
 
 pub use tidb_executor::TxnErrorKind;
@@ -751,6 +763,29 @@ impl Session {
         self.txn.is_some()
     }
 
+    /// The mode the open transaction runs in, if one is open.
+    ///
+    /// `BEGIN PESSIMISTIC` and `BEGIN OPTIMISTIC` are accepted here and their
+    /// mode is reported faithfully, but this tier takes no row locks in either
+    /// mode: its store is one shared catalog behind a mutex, so concurrent
+    /// sessions already serialize and a committing session that lost the race
+    /// is refused with a write conflict. `SELECT ... FOR UPDATE` returns the
+    /// same rows it would under a real pessimistic lock; what is missing is
+    /// the lock, not the result (see [`Self::check_query_clauses`]).
+    #[must_use]
+    pub fn txn_mode(&self) -> Option<SessionTxnMode> {
+        self.txn.as_ref().map(|txn| txn.mode)
+    }
+
+    /// Go `newProviderWithRequest`: `BEGIN <mode>` wins over `@@tidb_txn_mode`.
+    fn resolve_begin_txn_mode(&self, mode: tidb_ast::TransactionMode) -> SessionTxnMode {
+        let variable = self
+            .vars
+            .get_system("tidb_txn_mode")
+            .unwrap_or_else(|_| PESSIMISTIC_TXN_MODE.to_owned());
+        txn_mode_for_begin(mode, &variable)
+    }
+
     /// Applies `BEGIN`/`START TRANSACTION`, `COMMIT`, or `ROLLBACK`.
     ///
     /// Returns `Some(in_transaction)` for those statements and `None` for
@@ -766,11 +801,12 @@ impl Session {
             return Ok(None);
         };
         match &**session_stmt {
-            SessionStmt::Begin(_) => {
+            SessionStmt::Begin(begin) => {
                 // An open transaction is committed first (Go's implicit commit).
                 if self.txn.is_some() {
                     self.commit()?;
                 }
+                let mode = self.resolve_begin_txn_mode(begin.mode);
                 let (working, base_version) = {
                     let catalog = self.lock_catalog()?;
                     (catalog.clone(), catalog.version())
@@ -778,6 +814,7 @@ impl Session {
                 self.txn = Some(Transaction {
                     working,
                     base_version,
+                    mode,
                 });
                 Ok(Some(true))
             }

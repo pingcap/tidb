@@ -103,6 +103,7 @@ pub mod push_down_sequence;
 pub mod range_detacher;
 pub mod read_only_scan;
 pub mod transaction_control;
+pub mod txn_mode;
 pub use read_only_scan::configured_catalog;
 pub mod residual_condition;
 pub mod resolve_grouping_expand;

@@ -816,8 +816,8 @@ impl QuerySession for TransactionSession {
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
         match classify_transaction_control(sql) {
             None => Ok(None),
-            Some(TransactionControl::Begin) => {
-                self.transaction.begin();
+            Some(TransactionControl::Begin { mode }) => {
+                self.transaction.begin(mode);
                 Ok(Some(true))
             }
             Some(TransactionControl::End) => {

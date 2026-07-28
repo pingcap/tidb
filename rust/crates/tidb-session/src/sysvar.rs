@@ -11509,6 +11509,38 @@ pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
         .map(|index| &SYS_VARS[index])
 }
 
+/// Go `SysVar.AllowEmpty`: the empty string means "read the value from the
+/// config file", and is accepted only for `SET SESSION`.
+///
+/// HAND-MAINTAINED, NOT GENERATED: the table above was captured from a running
+/// registry through `GetSysVars()`, which does not expose these two flags, so
+/// the exact `AllowEmpty: true` / `AllowEmptyAll: true` name sets are
+/// transcribed from `pkg/sessionctx/variable/sysvar.go`.
+const ALLOW_EMPTY_VARS: &[&str] = &[
+    "enable_resource_metering",
+    "identity",
+    "last_insert_id",
+    "tidb_current_ts",
+    "tidb_enable_stmt_summary",
+    "tidb_read_staleness",
+    "tidb_schema_version_cache_limit",
+    "tidb_stmt_summary_history_size",
+    "tidb_stmt_summary_internal_query",
+    "tidb_stmt_summary_max_sql_length",
+    "tidb_stmt_summary_max_stmt_count",
+    "tidb_stmt_summary_refresh_interval",
+    "tidb_stmt_summary_persist_evicted",
+    "tidb_stmt_summary_group_by_user",
+];
+
+/// Go `SysVar.AllowEmptyAll`: the empty string is accepted in every scope.
+///
+/// Go's own comment names exactly these two variables. `tidb_txn_mode = ''`
+/// is the one that matters for transactions: an empty mode is neither
+/// `pessimistic` nor a rejected enum value -- Go's `decideTxnMode` reads
+/// anything other than `pessimistic` as optimistic.
+const ALLOW_EMPTY_ALL_VARS: &[&str] = &["tidb_capture_plan_baseline", "tidb_txn_mode"];
+
 /// Why a value was rejected.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
@@ -11535,7 +11567,22 @@ impl SysVarDef {
     ///
     /// Go's per-variable `Validation` closure runs after this and is not
     /// modelled (see the module doc).
+    ///
+    /// Validates as `SET SESSION` does; [`Self::validate_in_scope`] is the
+    /// form that distinguishes the scopes.
     pub fn validate(&self, value: &str) -> Result<Validated, ValidationError> {
+        self.validate_in_scope(value, SCOPE_SESSION)
+    }
+
+    /// Go `SysVar.ValidateFromType` including its `scope` argument, which only
+    /// the empty-value escape hatch reads.
+    pub fn validate_in_scope(&self, value: &str, scope: u8) -> Result<Validated, ValidationError> {
+        if value.is_empty() && self.allows_empty_value(scope) {
+            return Ok(Validated {
+                value: String::new(),
+                truncated: false,
+            });
+        }
         match self.var_type {
             VarType::Unsigned => self.check_uint64(value),
             VarType::Int => self.check_int64(value),
@@ -11550,6 +11597,14 @@ impl SysVarDef {
                 truncated: false,
             }),
         }
+    }
+
+    /// Go's `value == "" && ((AllowEmpty && scope == ScopeSession) ||
+    /// AllowEmptyAll)`: the empty string bypasses type validation entirely.
+    #[must_use]
+    pub fn allows_empty_value(&self, scope: u8) -> bool {
+        (scope == SCOPE_SESSION && ALLOW_EMPTY_VARS.contains(&self.name))
+            || ALLOW_EMPTY_ALL_VARS.contains(&self.name)
     }
 
     /// Go `checkUInt64SystemVar`.
