@@ -186,25 +186,11 @@ impl RealTiKvSessionFactory {
 
     /// Builds the cloneable single-table session opener over an authority that
     /// has already bootstrapped PD, RegionCache, and the TiKV transport, and
-    /// already chose its served table (used both by [`Self::connect`] and by
-    /// the catalog-loaded dispatcher that picks the single-table surface only
-    /// after reading the cluster's own catalog). This form follows no catalog
-    /// reload; `connect` wires the lease-cadence reloader itself.
-    pub(crate) fn from_authority(
-        authority: &ProductionReadProcessAuthority,
-        table_refusals: Vec<LoadedTableRefusal>,
-        schema_notifier: Option<Arc<EtcdClient>>,
-    ) -> Self {
-        Self::from_authority_with_catalog(
-            authority,
-            table_refusals,
-            None,
-            None,
-            None,
-            schema_notifier,
-        )
-    }
-
+    /// already chose its served table. Both [`Self::connect`] and the
+    /// catalog-loaded dispatcher (which picks the single-table surface only
+    /// after reading the cluster's own catalog) call this with their own
+    /// catalog/watcher/reloader, `None` when the served table came only from
+    /// `--read-table` with no cluster catalog to follow.
     fn from_authority_with_catalog(
         authority: &ProductionReadProcessAuthority,
         table_refusals: Vec<LoadedTableRefusal>,
@@ -1431,7 +1417,7 @@ pub(crate) fn node_accounts(
         .collect::<Vec<_>>()
         .join(",");
     eprintln!(
-        "{{\"event\":\"privileges_loaded\",\"bootstrap\":{:?},\"accounts\":{},\"db_grants\":{},\"table_grants\":{},\"column_grants\":{},\"dynamic_grants\":{},\"role_edges\":{},\"skipped\":[{skipped}]}}",
+        "{{\"event\":\"privileges_loaded\",\"bootstrap\":{:?},\"accounts\":{},\"db_grants\":{},\"table_grants\":{},\"column_grants\":{},\"dynamic_grants\":{},\"role_edges\":{},\"sysvars\":{},\"skipped\":[{skipped}]}}",
         accounts.bootstrap.to_string(),
         loaded.account_count,
         accounts.privileges.db_grants.len(),
@@ -1439,8 +1425,23 @@ pub(crate) fn node_accounts(
         accounts.privileges.column_grants.len(),
         accounts.privileges.dynamic_grants.len(),
         accounts.privileges.role_edges.len(),
+        accounts.sysvars.len(),
     );
-    let users = Arc::new(ConfiguredUserStore::from_accounts(loaded.registry));
+    let users = ConfiguredUserStore::from_accounts(loaded.registry);
+    // `--load-privileges` implies loading `mysql.global_variables` too,
+    // rather than adding a second flag for it: both read the same
+    // already-bootstrapped `mysql.*` at the same snapshot
+    // (`load_accounts_from_cluster` took both in one transaction), and a
+    // node that trusts the cluster for its accounts has no principled reason
+    // to keep trusting only its own sysvar defaults. `load_from_cluster`
+    // writes straight into the store's shared `GlobalSysvars`, so every
+    // session this node opens sees the loaded overrides as their defaults --
+    // this is a one-shot load, not a write-through: a `SET GLOBAL` a Go node
+    // runs after this point is invisible here until this node restarts, and a
+    // `SET GLOBAL` run through this node's own wide session updates only this
+    // in-memory table, not `mysql.global_variables` itself.
+    users.global_vars().load_from_cluster(accounts.sysvars);
+    let users = Arc::new(users);
     // Ticks at the same `schema_lease / 2` cadence as the catalog reloader,
     // so a node is never more than one lease behind the cluster's accounts
     // either. A failed spawn (only a zero lease can cause it, and the parser
@@ -1485,17 +1486,18 @@ pub(crate) fn connect_loaded_catalog_authority(
     let schema_notifier = connect_schema_notifier(config);
     let mut refusals = Vec::new();
     let mut resolved: Option<Vec<ConfiguredTable>> = None;
+    // Captured out of the closure so the `Single` route below can hand the
+    // one loaded snapshot to `spawn_catalog_reloader`, the same way
+    // `RealTiKvSessionFactory::connect` does. The `Multi` route still has no
+    // `SharedCatalog`/reloader concept of its own (its dispatcher is built
+    // over a static `ConfiguredCatalog`, not `ClusterCatalog`), so for that
+    // route this snapshot is still read once and dropped -- documented, not
+    // silently gapped.
+    let mut loaded = None;
     let authority = ProductionReadProcessAuthority::connect_with_catalog(
         config.pd_endpoints.clone(),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
         |transaction_opener| {
-            // Neither loaded-catalog surface follows catalog reloads yet (the
-            // reloader is single-factory-owned); the loaded snapshot is read
-            // and dropped here. Both still *announce* their own catalog
-            // changes through `schema_notifier`, so peers that do follow are
-            // not held back by this node's own gap. The watch side has
-            // nothing to nudge here, which is why only the notifier is wired.
-            let mut loaded = None;
             let tables = served_tables(config, transaction_opener, &mut refusals, &mut loaded)?;
             let primary = tables
                 .first()
@@ -1523,14 +1525,38 @@ pub(crate) fn connect_loaded_catalog_authority(
             ),
             authority,
         )),
-        Err(tables) if tables.len() == 1 => Ok(LoadedCatalogAuthority::Single(
-            Box::new(RealTiKvSessionFactory::from_authority(
-                &authority,
-                refusals,
-                schema_notifier,
-            )),
-            authority,
-        )),
+        Err(tables) if tables.len() == 1 => {
+            // Threads the loaded snapshot into a `SharedCatalog` + reloader
+            // exactly as `RealTiKvSessionFactory::connect` does, so a
+            // `--load-table` node with one servable table follows the
+            // cluster's schema instead of running forever on its startup
+            // read. `loaded` is `None` only when every table came from
+            // `--read-table` (no `--load-table` was given at all).
+            let (catalog, watcher, reloader) = match loaded {
+                Some(catalog) => {
+                    let (catalog, reloader) = spawn_catalog_reloader(
+                        catalog,
+                        authority.transaction_opener(),
+                        config.schema_lease,
+                    )
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                    let watcher = spawn_schema_version_watch(config, &reloader);
+                    (Some(catalog), watcher, Some(reloader))
+                }
+                None => (None, None, None),
+            };
+            Ok(LoadedCatalogAuthority::Single(
+                Box::new(RealTiKvSessionFactory::from_authority_with_catalog(
+                    &authority,
+                    refusals,
+                    catalog,
+                    watcher,
+                    reloader,
+                    schema_notifier,
+                )),
+                authority,
+            ))
+        }
         Err(tables) => Err(SqlQueryError::unknown(format!(
             "configured SQL node requires one or two servable tables, got {}",
             tables.len()

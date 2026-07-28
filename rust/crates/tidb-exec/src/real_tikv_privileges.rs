@@ -29,6 +29,7 @@ use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, ClusterBootstrapState, ClusterPrivileges,
 };
+use crate::cluster_sysvar_load::load_cluster_sysvars;
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 
@@ -39,6 +40,10 @@ pub struct ClusterAccounts {
     pub bootstrap: ClusterBootstrapState,
     /// Every account and grant `mysql.*` held at that snapshot.
     pub privileges: ClusterPrivileges,
+    /// Every `SET GLOBAL` override `mysql.global_variables` held at that same
+    /// snapshot, as `(name, value)` pairs ready for
+    /// `tidb_session::GlobalSysvars::load_from_cluster`.
+    pub sysvars: Vec<(String, String)>,
 }
 
 /// Reads the bootstrap flag and every `mysql.*` account through one fresh
@@ -62,14 +67,18 @@ pub fn load_accounts_from_cluster(
         // and reading one anyway would report a missing table as if it were a
         // corrupt one. The empty account set is the honest answer, and its
         // caller already has `bootstrap` to tell the two apart.
-        let privileges = if matches!(bootstrap, ClusterBootstrapState::NotBootstrapped) {
-            ClusterPrivileges::default()
+        let (privileges, sysvars) = if matches!(bootstrap, ClusterBootstrapState::NotBootstrapped) {
+            (ClusterPrivileges::default(), Vec::new())
         } else {
-            load_cluster_privileges(&mut snapshot, &catalog)?
+            (
+                load_cluster_privileges(&mut snapshot, &catalog)?,
+                load_cluster_sysvars(&mut snapshot, &catalog)?,
+            )
         };
         ClusterAccounts {
             bootstrap,
             privileges,
+            sysvars,
         }
     };
     transaction

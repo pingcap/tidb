@@ -723,6 +723,7 @@ mod tests {
         ClusterAccounts {
             bootstrap: ClusterBootstrapState::Bootstrapped { version: Some(1) },
             privileges,
+            sysvars: Vec::new(),
         }
     }
 
@@ -799,6 +800,7 @@ mod tests {
                 Ok(ClusterAccounts {
                     bootstrap: ClusterBootstrapState::Unflagged,
                     privileges: ClusterPrivileges::default(),
+                    sysvars: Vec::new(),
                 })
             }),
         )

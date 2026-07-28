@@ -120,6 +120,27 @@ impl GlobalSysvars {
         Ok(())
     }
 
+    /// Overwrites this table's values from a cluster's stored
+    /// `mysql.global_variables` rows, ahead of any session opening.
+    ///
+    /// Unlike [`Self::set`], this does not validate: a stored row already
+    /// passed that validation when some earlier `SET GLOBAL` (Go's or this
+    /// node's own) wrote it, so re-validating it here could only reject a
+    /// value this node's own registry has since drifted from. A name this
+    /// registry does not recognize is skipped rather than refused, the same
+    /// forward/backward-compatibility stance `tidb_exec::cluster_privilege_load`
+    /// takes on a column or privilege name the running version does not
+    /// know.
+    pub fn load_from_cluster<I: IntoIterator<Item = (String, String)>>(&self, rows: I) {
+        let mut values = self.values.lock().expect("global sysvar lock poisoned");
+        for (name, value) in rows {
+            let key = name.to_ascii_lowercase();
+            if get_sys_var(&key).is_some() {
+                values.insert(key, value);
+            }
+        }
+    }
+
     /// Every variable this table currently overrides from its default, for
     /// [`SessionVars::seed_from_globals`] and `SHOW GLOBAL VARIABLES`.
     fn overrides(&self) -> HashMap<String, String> {
@@ -332,6 +353,37 @@ mod tests {
             vars.set_system("nope", "1".to_owned()),
             Err(VarError::UnknownSystemVariable("nope".to_owned()))
         );
+    }
+
+    #[test]
+    fn a_loaded_row_overrides_and_an_absent_one_still_falls_back_to_default() {
+        let globals = GlobalSysvars::new();
+        globals.load_from_cluster([("AUTOCOMMIT".to_owned(), "OFF".to_owned())]);
+        // The seeded row overrides, case-insensitively, exactly like `set`.
+        assert_eq!(globals.get("autocommit").unwrap(), "OFF");
+        // A variable the fixture never mentioned still falls back to the
+        // registry default -- `load_from_cluster` only overwrites names it is
+        // given.
+        assert_eq!(globals.get("max_allowed_packet").unwrap(), "67108864");
+    }
+
+    #[test]
+    fn a_loaded_row_naming_an_unknown_variable_is_skipped_not_refused() {
+        let globals = GlobalSysvars::new();
+        // Bypasses `set`'s validation on purpose (a stored row already passed
+        // it once), but an unrecognized name from an older/newer cluster must
+        // still not panic or poison every other loaded row.
+        globals.load_from_cluster([
+            ("not_a_real_variable".to_owned(), "x".to_owned()),
+            ("autocommit".to_owned(), "OFF".to_owned()),
+        ]);
+        assert_eq!(
+            globals.get("not_a_real_variable"),
+            Err(VarError::UnknownSystemVariable(
+                "not_a_real_variable".to_owned()
+            ))
+        );
+        assert_eq!(globals.get("autocommit").unwrap(), "OFF");
     }
 
     #[test]
