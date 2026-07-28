@@ -77,9 +77,10 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, code
 	localEncoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
 	require.NoError(t, err)
 
-	// total 3 * 2 conflicted data KVs, and 3 conflicted index KVs, they will be
-	// taken as 9 conflicted rows.
-	dupDataKVs := make([]*simplesst.KVPair, 0, 6)
+	// Write each KV only once per row to avoid concurrent deleters in
+	// resolveConflictsOfKVGroup hitting optimistic write conflicts when they
+	// re-encode the same row and try to delete the overlapping keys.
+	dupDataKVs := make([]*simplesst.KVPair, 0, 3)
 	dupIndexKVs := make([]*simplesst.KVPair, 0, 3)
 	for i := range 3 {
 		dupID := i + 1
@@ -89,7 +90,7 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, code
 		for _, pair := range dupPairs.Pairs {
 			if tablecodec.IsRecordKey(pair.Key) {
 				kv := &simplesst.KVPair{Key: pair.Key, Value: pair.Val}
-				dupDataKVs = append(dupDataKVs, kv, kv)
+				dupDataKVs = append(dupDataKVs, kv)
 			} else {
 				indexID, err := tablecodec.DecodeIndexID(pair.Key)
 				require.NoError(t, err)
