@@ -294,6 +294,12 @@ func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
 		require.Equal(t, ca.start, extractor.CoarseTimeRange.StartTime, ca.sql)
 		require.Equal(t, ca.end, extractor.CoarseTimeRange.EndTime, ca.sql)
 	}
+
+	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
+		"end_time: 9999-12-31 23:59:59.999999",
+	})
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {

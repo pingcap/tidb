@@ -1602,10 +1602,8 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	}
 	if e.CoarseTimeRange != nil && p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone())
-		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone())
-		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
-		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		startTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.StartTime, stmtCtx.TimeZone())
+		endTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.EndTime, stmtCtx.TimeZone())
 		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
 	}
 	// remove the last ", " in the message info
@@ -1614,6 +1612,19 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 		return s[:len(s)-2]
 	}
 	return s
+}
+
+func formatStatementsSummaryTime(t time.Time, timezone *time.Location) string {
+	minDatetime, _ := types.MinDatetime.GoTime(time.UTC)
+	if t.Equal(minDatetime) {
+		return types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	maxDatetime, _ := types.MaxDatetime.GoTime(time.UTC)
+	if t.Equal(maxDatetime) {
+		return types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	t = t.In(timezone)
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp).String()
 }
 
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(
