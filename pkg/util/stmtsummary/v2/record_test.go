@@ -134,3 +134,19 @@ func TestStmtRecordTableNamesSkipEmptyTables(t *testing.T) {
 	record := NewStmtRecord(info)
 	require.Equal(t, "db1.table1", record.TableNames)
 }
+
+func TestStmtRecordFormatsDigestText(t *testing.T) {
+	oldSummary := GlobalStmtSummary
+	testSummary := NewStmtSummary4Test(10)
+	GlobalStmtSummary = testSummary
+	defer func() {
+		testSummary.Close()
+		GlobalStmtSummary = oldSummary
+	}()
+	require.NoError(t, testSummary.SetMaxSQLLength(4))
+
+	info := GenerateStmtExecInfo4Test("digest1")
+	info.NormalizedSQL = "select"
+	record := NewStmtRecord(info)
+	require.Equal(t, "sele(len:6)", record.NormalizedSQL)
+}

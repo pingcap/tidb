@@ -208,7 +208,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		Digest:        info.Digest,
 		PlanDigest:    planDigest,
 		StmtType:      info.StmtCtx.StmtType,
-		NormalizedSQL: info.NormalizedSQL,
+		NormalizedSQL: formatSQL(info.NormalizedSQL),
 		TableNames:    strings.Join(tableNames, ","),
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
