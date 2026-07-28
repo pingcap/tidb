@@ -44,6 +44,18 @@ func BenchmarkNewResultEncoder(b *testing.B) {
 	}
 }
 
+func BenchmarkUpdateDataEncodingWideRows(b *testing.B) {
+	encoder := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
+	b.ReportAllocs()
+	for range b.N {
+		for range 510 {
+			encoder.UpdateDataEncoding(mysql.DefaultCollationID)
+			encoder.UpdateDataEncoding(mysql.DefaultCollationID)
+		}
+	}
+	benchmarkResultEncoderSink = encoder
+}
+
 func TestResultEncoder(t *testing.T) {
 	// Encode bytes to utf-8.
 	d := textrow.NewResultEncoder("utf-8")

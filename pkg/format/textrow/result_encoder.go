@@ -62,6 +62,8 @@ type ResultEncoder struct {
 	isBinary     bool
 	isNull       bool
 	dataIsBinary bool
+	dataChsID    uint16
+	dataChsValid bool
 }
 
 // NewResultEncoder creates a new ResultEncoder.
@@ -86,12 +88,20 @@ func (d *ResultEncoder) Clean() {
 
 // UpdateDataEncoding updates the data encoding.
 func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
+	if d.dataChsValid && d.dataChsID == chsID {
+		return
+	}
+	d.dataChsValid = false
 	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
 	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
 	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
+	if err == nil {
+		d.dataChsID = chsID
+		d.dataChsValid = true
+	}
 }
 
 // ColumnCharsetID returns the charset ID to advertise for a column in the
