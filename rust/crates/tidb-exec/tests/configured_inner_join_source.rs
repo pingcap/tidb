@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use prost::Message;
-use tidb_datatype::{Datum, DatumKind};
+use tidb_datatype::Datum;
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     CancelHandle, QueryDispatch, QueryTransport, TimestampSource, TransportRequest,
@@ -566,26 +566,23 @@ fn caller_cancellation_stops_consumption_and_closes_both_children() {
     assert_eq!(fixture.probes[1].close_calls(), 1);
 }
 
+/// A `NULL` join key makes `=` UNKNOWN, and an inner join emits a row only when
+/// its condition is TRUE, so the `NULL`-keyed left row matches nothing — the
+/// stream ends empty rather than erroring or pairing `NULL` with `NULL`.
 #[test]
-fn null_join_key_fails_closed_at_the_nonnull_signed_bigint_boundary() {
+fn null_join_key_matches_nothing_including_another_null() {
     let mut fixture = execute(
         "SELECT a.Balance, o.Amount FROM Accounts a JOIN Orders o \
          ON a.AccountID = o.AccountID",
         null_key_response(&[None, Some(10)]),
-        response(&[&[100, 1, 1000]]),
+        // The right relation's key is `NULL` too: `NULL = NULL` is still
+        // UNKNOWN, so even this pair is not emitted.
+        null_key_response(&[None, Some(1), Some(1000)]),
     );
 
-    assert!(matches!(
-        fixture.result.next_batch(1),
-        Err(ConfiguredInnerJoinError::InvalidJoinKey {
-            relation: 0,
-            offset: 0,
-            kind: DatumKind::Null,
-        })
-    ));
-    assert!(fixture.cancellation.is_cancelled());
-    assert_eq!(fixture.probes[0].close_calls(), 1);
-    assert_eq!(fixture.probes[1].close_calls(), 1);
+    assert!(fixture.result.next_batch(1).expect("empty join stream").is_empty());
+    fixture.result.finish().expect("stream finishes cleanly");
+    assert!(!fixture.cancellation.is_cancelled());
 }
 
 /// Row-based (`Chunk.rows_data`) encoding of an arbitrary datum row, used to

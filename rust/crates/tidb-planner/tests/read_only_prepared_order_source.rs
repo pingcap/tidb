@@ -302,3 +302,30 @@ fn unsupported_aggregate_shapes_fail_closed() {
         );
     }
 }
+
+/// The resolved order key carries its source column's nullability, which the
+/// executor needs to admit a `NULL` key datum rather than treat it as a decode
+/// contract violation.
+#[test]
+fn prepared_order_key_carries_its_column_nullability() {
+    let catalog = ConfiguredCatalog::new([ConfiguredTable::new(
+        "sbtest",
+        "sbtest1",
+        100,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 1),
+            ConfiguredColumn::stored_int_not_null("k", 2).nullable(),
+            ConfiguredColumn::stored_char_not_null("c", 3, 120),
+        ],
+    )])
+    .expect("test catalog is valid");
+
+    let template =
+        lower_prepared_point_read(&select("SELECT k, c FROM sbtest1 ORDER BY k, c"), &catalog)
+            .expect("ORDER BY over a nullable column is readable");
+    let [nullable_key, not_null_key] = template.order_by() else {
+        panic!("two order keys");
+    };
+    assert!(nullable_key.is_nullable());
+    assert!(!not_null_key.is_nullable());
+}

@@ -470,13 +470,14 @@ impl ConfiguredScalarType {
     }
 }
 
-/// The two signed-`BIGINT` storage roles admitted by the read-only catalog.
+/// The two storage roles admitted by the read-only catalog.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfiguredColumnKind {
-    /// The table's sole signed integer row handle.
+    /// The table's sole signed integer row handle, which is never `NULL`.
     ClusteredPrimaryKey,
-    /// A signed stored value that cannot be `NULL`.
-    StoredNotNull,
+    /// A value stored in the row, whose nullability is
+    /// [`ConfiguredColumn::is_nullable`].
+    Stored,
 }
 
 /// One source-ordered column in the configured read-only catalog.
@@ -486,6 +487,7 @@ pub struct ConfiguredColumn {
     id: i64,
     kind: ConfiguredColumnKind,
     scalar_type: ConfiguredScalarType,
+    nullable: bool,
 }
 
 impl ConfiguredColumn {
@@ -497,6 +499,7 @@ impl ConfiguredColumn {
             id,
             kind: ConfiguredColumnKind::ClusteredPrimaryKey,
             scalar_type: ConfiguredScalarType::BigInt,
+            nullable: false,
         }
     }
 
@@ -506,8 +509,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::BigInt,
+            nullable: false,
         }
     }
 
@@ -520,8 +524,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Int,
+            nullable: false,
         }
     }
 
@@ -532,8 +537,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Char { max_length },
+            nullable: false,
         }
     }
 
@@ -550,8 +556,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Varchar { max_length, binary },
+            nullable: false,
         }
     }
 
@@ -561,8 +568,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::UnsignedBigInt,
+            nullable: false,
         }
     }
 
@@ -572,8 +580,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Double,
+            nullable: false,
         }
     }
 
@@ -588,8 +597,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Decimal { precision, scale },
+            nullable: false,
         }
     }
 
@@ -599,8 +609,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Date,
+            nullable: false,
         }
     }
 
@@ -610,8 +621,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Datetime { fsp },
+            nullable: false,
         }
     }
 
@@ -621,8 +633,9 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Timestamp { fsp },
+            nullable: false,
         }
     }
 
@@ -632,9 +645,29 @@ impl ConfiguredColumn {
         Self {
             name: name.into(),
             id,
-            kind: ConfiguredColumnKind::StoredNotNull,
+            kind: ConfiguredColumnKind::Stored,
             scalar_type: ConfiguredScalarType::Duration { fsp },
+            nullable: false,
         }
+    }
+
+    /// Marks this stored column `NULL`-able, returning the adjusted column.
+    ///
+    /// A builder rather than a parameter on each `stored_*` constructor: only
+    /// the catalog loader knows a column's `NOT NULL` flag, and every existing
+    /// call site describes a `NOT NULL` column. The clustered handle is never
+    /// nullable (it *is* the record key), so marking it has no effect on the
+    /// emitted `NOT_NULL_FLAG`.
+    #[must_use]
+    pub fn nullable(mut self) -> Self {
+        self.nullable = self.kind != ConfiguredColumnKind::ClusteredPrimaryKey;
+        self
+    }
+
+    /// Returns whether a decoded value of this column may be `NULL`.
+    #[must_use]
+    pub const fn is_nullable(&self) -> bool {
+        self.nullable
     }
 
     /// Returns the source catalog name.
@@ -664,7 +697,8 @@ impl ConfiguredColumn {
     fn scan_column(&self) -> ScanColumnInfo {
         let (flag, pk_handle) = match self.kind {
             ConfiguredColumnKind::ClusteredPrimaryKey => (NOT_NULL_FLAG | PRI_KEY_FLAG, true),
-            ConfiguredColumnKind::StoredNotNull => (NOT_NULL_FLAG, false),
+            ConfiguredColumnKind::Stored if self.nullable => (0, false),
+            ConfiguredColumnKind::Stored => (NOT_NULL_FLAG, false),
         };
         let flag = flag | self.scalar_type.extra_flag();
         ScanColumnInfo {
@@ -853,6 +887,7 @@ pub struct ResolvedProjectionColumn {
     scan_column: ScanColumnInfo,
     kind: ConfiguredColumnKind,
     scalar_type: ConfiguredScalarType,
+    nullable: bool,
 }
 
 impl ResolvedProjectionColumn {
@@ -863,6 +898,7 @@ impl ResolvedProjectionColumn {
             scan_column: column.scan_column(),
             kind: column.kind,
             scalar_type: column.scalar_type,
+            nullable: column.nullable,
         }
     }
 
@@ -894,6 +930,12 @@ impl ResolvedProjectionColumn {
     #[must_use]
     pub const fn scalar_type(&self) -> ConfiguredScalarType {
         self.scalar_type
+    }
+
+    /// Returns whether this projected column may decode to `NULL`.
+    #[must_use]
+    pub const fn is_nullable(&self) -> bool {
+        self.nullable
     }
 }
 
@@ -1246,21 +1288,24 @@ pub struct PreparedOrderColumn {
     output_offset: usize,
     direction: ConfiguredOrderDirection,
     scalar_type: ConfiguredScalarType,
+    nullable: bool,
 }
 
 impl PreparedOrderColumn {
     /// Creates a resolved order column from an output-row offset, its direction,
-    /// and the projected column's scalar type.
+    /// the projected column's scalar type, and whether it admits `NULL`.
     #[must_use]
     pub const fn new(
         output_offset: usize,
         direction: ConfiguredOrderDirection,
         scalar_type: ConfiguredScalarType,
+        nullable: bool,
     ) -> Self {
         Self {
             output_offset,
             direction,
             scalar_type,
+            nullable,
         }
     }
 
@@ -1280,6 +1325,12 @@ impl PreparedOrderColumn {
     #[must_use]
     pub const fn scalar_type(&self) -> ConfiguredScalarType {
         self.scalar_type
+    }
+
+    /// Returns whether this key column admits `NULL` values.
+    #[must_use]
+    pub const fn is_nullable(&self) -> bool {
+        self.nullable
     }
 }
 
@@ -2185,6 +2236,7 @@ fn resolve_prepared_order_by(
                 output_offset,
                 ConfiguredOrderDirection::from_descending(item.desc),
                 column.scalar_type(),
+                column.is_nullable(),
             ))
         })
         .collect()

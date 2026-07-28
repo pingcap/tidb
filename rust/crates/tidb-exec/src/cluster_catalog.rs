@@ -190,8 +190,10 @@ impl fmt::Display for LoadedTableRefusal {
 ///
 /// The admitted shape is exactly what the read path decodes today: a
 /// non-partitioned base table with a signed `BIGINT` clustered handle and
-/// `NOT NULL` columns of the widened scalar set (`BIGINT`, `BIGINT UNSIGNED`,
-/// `INT`, `DOUBLE`, `CHAR`, `DECIMAL`).
+/// columns of the widened scalar set (`BIGINT`, `BIGINT UNSIGNED`, `INT`,
+/// `DOUBLE`, `CHAR`, `VARCHAR`, `DECIMAL`), each either `NOT NULL` or
+/// nullable. A nullable column is read-only: the write path refuses the whole
+/// table at plan time (`resolve_write_table`).
 pub fn configure_loaded_table(
     schema: &str,
     table: &TableInfo,
@@ -265,9 +267,12 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
     let flags = column.get_flag();
     let unsigned = flags & FieldTypeFlags::UNSIGNED != 0;
     let handle = flags & FieldTypeFlags::PRI_KEY != 0;
-    if flags & FieldTypeFlags::NOT_NULL == 0 {
+    let nullable = flags & FieldTypeFlags::NOT_NULL == 0;
+    if handle && nullable {
+        // The clustered handle *is* the record key, so Go always stamps it
+        // NOT NULL; a stored descriptor that says otherwise is malformed.
         return Err(format!(
-            "column `{name}` is nullable, and this node decodes only NOT NULL columns"
+            "column `{name}` is the row handle but is not NOT NULL"
         ));
     }
     if flags & FieldTypeFlags::GENERATED_COLUMN != 0 {
@@ -283,7 +288,7 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
         }
         return Ok(ConfiguredColumn::clustered_primary_key(name, column.id));
     }
-    match code {
+    let column = match code {
         FieldTypeCode::LongLong if unsigned => Ok(
             ConfiguredColumn::stored_unsigned_bigint_not_null(name, column.id),
         ),
@@ -362,7 +367,8 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
             "column `{name}` has type {}, which this node cannot decode yet",
             describe_type(column)
         )),
-    }
+    }?;
+    Ok(if nullable { column.nullable() } else { column })
 }
 
 /// Names a column's stored type the way an operator wrote it, so a refusal can

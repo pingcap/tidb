@@ -16,7 +16,7 @@
 //! `pkg/util/chunk/codec.go`.
 
 use tidb_codec::{decode_column_datums, decode_columns, ColumnLayout, TypedColumnError};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 
 fn fixed_column(values: &[u64], null_bitmap: Option<u8>) -> Vec<u8> {
     let mut encoded = Vec::new();
@@ -118,4 +118,119 @@ fn typed_chunk_rejects_opaque_types_and_wrong_physical_layout() {
         decode_column_datums(&columns[0], FieldType::new(FieldTypeCode::Long)),
         Err(TypedColumnError::InvalidFixedDataLength { .. })
     ));
+}
+
+/// Go byte vectors from `pkg/util/chunk` (`Codec.Encode` over a 3-row chunk of
+/// `BIGINT`, `VARCHAR`, `DOUBLE`, `DECIMAL(10,2)` whose row 1 is entirely
+/// `NULL` and whose row 2 is `NULL` only in the variable-width and decimal
+/// columns).
+///
+/// The layout the vectors pin down:
+///   * A column header is `length` then `nullCount`, both `uint32` LE, and the
+///     null bitmap is present only when `nullCount > 0`. Bit `1` means
+///     NON-null, matching Go `Column.IsNull`.
+///   * A fixed-width column still reserves a full element slot for a `NULL`
+///     row, and Go leaves the previous row's `elemBuf` content there — row 1's
+///     `BIGINT` slot holds a stale `7`, not a zero. A decoder must consult the
+///     bitmap first and never interpret those bytes.
+///   * A variable-width column gives a `NULL` row a zero-width offset span
+///     (offsets `0,3,3,3` for `"abc"`, NULL, NULL), so its data region carries
+///     nothing for the null rows.
+const GO_CHUNK_WITH_NULLS: [u8; 239] = [
+    0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x05, 0x07, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0xf7, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0x00, 0x00,
+    0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x61, 0x62, 0x63, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x3f, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xf8, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xd0, 0xbf, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x02,
+    0x02, 0x02, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0xfd, 0x43, 0x14, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x02, 0x02, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00,
+    0xfd, 0x43, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x02, 0x00, 0x0c,
+    0x00, 0x00, 0x00, 0x00, 0xfd, 0x43, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+#[test]
+fn typed_chunk_nulls_decode_across_fixed_and_variable_columns() {
+    let layouts = [
+        ColumnLayout::fixed(8),
+        ColumnLayout::variable(),
+        ColumnLayout::fixed(8),
+        ColumnLayout::fixed(40),
+    ];
+    let (remainder, columns) = decode_columns(&GO_CHUNK_WITH_NULLS, &layouts).unwrap();
+    assert!(remainder.is_empty(), "the Go chunk is fully consumed");
+
+    // Bitmap bit 1 means non-null, so the encoded counts and the per-row
+    // answers must agree with the Go chunk that produced them.
+    assert_eq!(columns[0].null_count, 1);
+    assert_eq!(columns[1].null_count, 2);
+    assert_eq!(columns[3].null_count, 2);
+    assert!(!columns[0].is_null(0).unwrap());
+    assert!(columns[0].is_null(1).unwrap());
+    assert!(!columns[0].is_null(2).unwrap());
+
+    assert_eq!(
+        decode_column_datums(&columns[0], FieldType::new(FieldTypeCode::LongLong)).unwrap(),
+        vec![Datum::new_int(7), Datum::Null, Datum::new_int(-9)],
+        "the stale `7` in the null row's fixed slot must not be read as a value"
+    );
+    assert_eq!(
+        decode_column_datums(
+            &columns[1],
+            FieldType::new(FieldTypeCode::VarString).with_collation(Collation::Utf8Mb4Bin),
+        )
+        .unwrap(),
+        vec![
+            Datum::new_collation_string(b"abc".to_vec(), Collation::Utf8Mb4Bin),
+            Datum::Null,
+            Datum::Null,
+        ],
+        "a zero-width offset span for a null row decodes as NULL, not as an empty string"
+    );
+    assert_eq!(
+        decode_column_datums(&columns[2], FieldType::new(FieldTypeCode::Double)).unwrap(),
+        vec![Datum::new_real(1.5), Datum::Null, Datum::new_real(-0.25)]
+    );
+    let decimals =
+        decode_column_datums(&columns[3], FieldType::new(FieldTypeCode::NewDecimal)).unwrap();
+    assert_eq!(decimals[1], Datum::Null);
+    assert_eq!(decimals[2], Datum::Null);
+    assert_eq!(decimals[0].to_bytes().unwrap(), b"12.34");
+}
+
+/// Go byte vector from `codec.EncodeValue(7, NULL, "abc", NULL)`, the other
+/// read layout: the datum row carried in `Chunk.rows_data`. A `NULL` cell is
+/// the bare `NilFlag` byte with no payload, so it costs one byte and cannot be
+/// confused with a zero-length string (flag `0x02`, length `0`).
+const GO_DATUM_ROW_WITH_NULLS: [u8; 9] = [
+    0x08, 0x0e, 0x00, 0x02, 0x06, 0x61, 0x62, 0x63, 0x00,
+];
+
+#[test]
+fn datum_row_nulls_decode_as_the_bare_nil_flag() {
+    let (remainder, row) = tidb_codec::decode_default_row(&GO_DATUM_ROW_WITH_NULLS, 4).unwrap();
+    assert!(remainder.is_empty(), "the Go datum row is fully consumed");
+    let decoded = row
+        .into_iter()
+        .map(|value| value.decode_datum().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        decoded,
+        vec![
+            Datum::new_int(7),
+            Datum::Null,
+            Datum::new_bytes(b"abc".to_vec()),
+            Datum::Null,
+        ]
+    );
 }

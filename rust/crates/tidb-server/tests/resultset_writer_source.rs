@@ -260,3 +260,30 @@ fn finish_error_suppresses_terminal_eof_and_write_failure_is_nonretryable() {
     assert!(!error.retryable);
     assert!(error.bytes_escaped);
 }
+
+/// A `NULL` cell is the one-byte `0xfb` sentinel in a text-protocol row, per
+/// MySQL's `ProtocolText::ResultsetRow`. It is distinct from the empty string,
+/// which is a zero-length-encoded string (`0x00`), so a client can tell them
+/// apart.
+#[test]
+fn a_null_cell_is_the_text_protocol_0xfb_sentinel() {
+    let mut source = Source {
+        events: [Ok(vec![
+            vec![Datum::Null],
+            vec![Datum::new_bytes(Vec::new())],
+            vec![Datum::new_int(7)],
+        ])]
+        .into(),
+        ..Source::default()
+    };
+    let mut sink = Sink::default();
+    let outcome = write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 8)
+        .expect("rows write");
+    assert_eq!(outcome.rows_written, 3);
+
+    // Column count, one column definition, EOF, then the three row packets.
+    let rows = &sink.payloads[sink.payloads.len() - 4..sink.payloads.len() - 1];
+    assert_eq!(rows[0], vec![0xfb], "NULL is the bare 0xfb sentinel");
+    assert_eq!(rows[1], vec![0x00], "an empty string is a zero-length string");
+    assert_eq!(rows[2], vec![0x01, b'7']);
+}

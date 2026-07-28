@@ -32,7 +32,7 @@ use tidb_codec::{
 use tidb_datatype::Datum;
 use tidb_exec::real_tikv_dml::{
     plan_configured_write, plan_delete, plan_insert, plan_update, planned_publication_bounds,
-    prepare_text_write,
+    prepare_configured_write, prepare_text_write,
     ConfiguredWriteError, ConfiguredWritePlan, NoWriteReason, WritePlanningSnapshot,
 };
 use tidb_planner::{
@@ -1340,4 +1340,43 @@ fn a_text_dml_statement_outside_the_write_boundary_is_refused_not_ignored() {
         matches!(error, ConfiguredWriteError::Plan(_)),
         "expected a plan refusal, found {error}"
     );
+}
+
+/// A nullable column is readable but not writable: the write path has no
+/// encoding for a `NULL` cell yet. The refusal has to land in lowering, before
+/// any row is encoded or any stored row is decoded, so it can never surface as
+/// a decode failure in the middle of a statement.
+#[test]
+fn a_nullable_column_refuses_every_write_shape_at_lowering_time() {
+    let catalog = ConfiguredCatalog::new([ConfiguredTable::new(
+        "bench",
+        "accounts",
+        TABLE_ID,
+        [
+            ConfiguredColumn::clustered_primary_key("id", ID_COLUMN),
+            ConfiguredColumn::stored_not_null("balance", BALANCE_COLUMN).nullable(),
+        ],
+    )])
+    .expect("catalog is valid");
+
+    for sql in [
+        "INSERT INTO accounts (id, balance) VALUES (?, ?)",
+        "UPDATE accounts SET balance = ? WHERE id = ?",
+        "DELETE FROM accounts WHERE id = ?",
+    ] {
+        let error = prepare_configured_write(sql, &catalog).expect_err("write must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("`balance`") && message.contains("nullable"),
+            "{sql} must be refused by naming the nullable column: {message}"
+        );
+    }
+
+    // The same table stays fully readable.
+    let read = tidb_planner::read_only_scan::ReadOnlyScanPlan::lower(
+        "SELECT id, balance FROM accounts",
+        catalog.resolve_table(None, "accounts").expect("table"),
+    )
+    .expect("a nullable column is readable");
+    assert!(read.projected_columns()[1].is_nullable());
 }

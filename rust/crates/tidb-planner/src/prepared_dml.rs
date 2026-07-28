@@ -61,6 +61,14 @@ pub enum PreparedWritePlanError {
     Unsupported(UnsupportedPreparedWrite),
     /// The statement names a column outside the configured table.
     UnknownColumn(String),
+    /// The write target has a nullable column, which the read path decodes but
+    /// the write path cannot encode yet.
+    NullableColumn {
+        /// Resolved `schema.table` of the write target.
+        table: String,
+        /// The first nullable column, in configured source order.
+        column: String,
+    },
     /// An INSERT column list must name every configured column exactly once.
     InsertColumnCoverage {
         /// Number of configured columns on the resolved table.
@@ -122,6 +130,11 @@ impl fmt::Display for PreparedWritePlanError {
                 write!(formatter, "unsupported write feature: {feature:?}")
             }
             Self::UnknownColumn(column) => write!(formatter, "unknown column: {column}"),
+            Self::NullableColumn { table, column } => write!(
+                formatter,
+                "table {table} cannot be written by this node: column `{column}` is nullable, \
+                 and the write path encodes only NOT NULL columns"
+            ),
             Self::InsertColumnCoverage { configured, named } => write!(
                 formatter,
                 "INSERT must name all {configured} configured columns, found {named}"
@@ -972,9 +985,23 @@ fn resolve_write_table<'a>(
             return Err(PreparedWritePlanError::MalformedTableName(name.join(".")));
         }
     };
-    catalog
+    let resolved = catalog
         .resolve_table(schema, table)
-        .map_err(PreparedWritePlanError::Catalog)
+        .map_err(PreparedWritePlanError::Catalog)?;
+    // Every write shape resolves its target here, so refusing a nullable table
+    // once keeps INSERT, UPDATE, and DELETE from ever reaching the row encoder
+    // or the stored-row decoder with a column that has no encodable value.
+    if let Some(column) = resolved
+        .columns()
+        .iter()
+        .find(|column| column.is_nullable())
+    {
+        return Err(PreparedWritePlanError::NullableColumn {
+            table: format!("{}.{}", resolved.schema(), resolved.table()),
+            column: column.name().to_owned(),
+        });
+    }
+    Ok(resolved)
 }
 
 fn validate_write_table_ref(table_ref: &TableRef) -> Result<(), PreparedWritePlanError> {

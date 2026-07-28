@@ -589,9 +589,12 @@ impl JoinLayout {
     }
 }
 
-/// Evaluates one non-null SQL `=` join key comparison, or `None` if neither
-/// operand decoded as a scalar kind this milestone's key comparison
-/// understands.
+/// Evaluates one SQL `=` join key comparison, or `None` if neither operand
+/// decoded as a scalar kind this milestone's key comparison understands.
+///
+/// A `NULL` on either side makes `=` UNKNOWN, and an inner join emits a row
+/// only when its condition is TRUE, so a `NULL` key never matches — not even
+/// another `NULL`.
 ///
 /// Per Go `types.CompareInt` (`pkg/types/compare.go`), a signed and an
 /// unsigned integer are never compared by reinterpreting one side's bit
@@ -602,6 +605,7 @@ impl JoinLayout {
 /// pattern.
 fn join_key_eq(left: &Datum, right: &Datum) -> Option<bool> {
     match (left, right) {
+        (Datum::Null, _) | (_, Datum::Null) => Some(false),
         (Datum::Int(left), Datum::Int(right)) => Some(left == right),
         (Datum::UInt(left), Datum::UInt(right)) => Some(left == right),
         (Datum::Int(signed), Datum::UInt(unsigned))
@@ -684,7 +688,10 @@ fn protocol_column(
         charset: scalar.result_charset_id() as u16,
         flag: match configured_column.kind() {
             ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
-            ConfiguredColumnKind::StoredNotNull => 0x0001,
+            // A nullable column carries neither `NotNullFlag` nor
+            // `PriKeyFlag`, so a client renders its `NULL` cells as NULL.
+            ConfiguredColumnKind::Stored if configured_column.is_nullable() => 0x0000,
+            ConfiguredColumnKind::Stored => 0x0001,
         } | if scalar.is_unsigned() { 0x0020 } else { 0 },
         decimal: scalar.result_decimal(),
         type_code: scalar.result_type_code() as u8,

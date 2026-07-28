@@ -606,9 +606,18 @@ impl Error for PreparedOrderError {}
 /// decodes to [`Datum::UInt`]; a `DOUBLE` decodes to [`Datum::Real`]; a `CHAR`
 /// column decodes to [`Datum::Bytes`] (its `utf8mb4` bytes); `DATE`/`DATETIME`/
 /// `TIMESTAMP` decode to [`Datum::Time`]; `TIME` decodes to
-/// [`Datum::Duration`]. Any other pairing is a decode contract violation the
-/// ordering must not silently reorder.
-const fn scalar_type_admits(scalar_type: ConfiguredScalarType, datum: &Datum) -> bool {
+/// [`Datum::Duration`]. A nullable column additionally decodes to
+/// [`Datum::Null`]; a `NOT NULL` one never may, so a `NULL` there stays a
+/// decode contract violation. Any other pairing is a decode contract violation
+/// the ordering must not silently reorder.
+const fn scalar_type_admits(
+    scalar_type: ConfiguredScalarType,
+    nullable: bool,
+    datum: &Datum,
+) -> bool {
+    if matches!(datum, Datum::Null) {
+        return nullable;
+    }
     match scalar_type {
         ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => matches!(datum, Datum::Int(_)),
         ConfiguredScalarType::UnsignedBigInt => matches!(datum, Datum::UInt(_)),
@@ -653,7 +662,7 @@ pub fn validate_prepared_order_rows(
         }
         for key in keys {
             let datum = &row[key.output_offset()];
-            if !scalar_type_admits(key.scalar_type(), datum) {
+            if !scalar_type_admits(key.scalar_type(), key.is_nullable(), datum) {
                 return Err(PreparedOrderError::KeyDatum {
                     row_index,
                     offset: key.output_offset(),
@@ -667,18 +676,18 @@ pub fn validate_prepared_order_rows(
 
 /// Compares two already validated prepared-read rows by their resolved keys.
 ///
-/// Signed integers compare numerically; `CHAR` columns compare under their
-/// `utf8mb4_bin` collation through the crate-shared [`Collation`] authority,
-/// which trims trailing spaces exactly as TiDB's Go collator does. Callers must
-/// first run [`validate_prepared_order_rows`], so the final unreachable arm
-/// never fabricates an order for mistyped data.
+/// String columns compare under their `utf8mb4_bin` collation through the
+/// crate-shared [`Collation`] authority, which trims trailing spaces exactly as
+/// TiDB's Go collator does. Every other pairing — including `NULL`, which sorts
+/// before all non-`NULL` values ascending — defers to [`sort_value_cmp`], the
+/// same total order the in-process sort executor applies, so the two sorts
+/// cannot disagree. Callers must first run [`validate_prepared_order_rows`].
 fn compare_prepared_rows(left: &Row, right: &Row, keys: &[PreparedOrderColumn]) -> Ordering {
     for key in keys {
         let offset = key.output_offset();
         let ordering = match (&left[offset], &right[offset]) {
-            (Datum::Int(a), Datum::Int(b)) => a.cmp(b),
             (Datum::Bytes(a), Datum::Bytes(b)) => Collation::Utf8Mb4Bin.compare(a, b),
-            _ => Ordering::Equal,
+            (a, b) => sort_value_cmp(a, b),
         };
         if ordering != Ordering::Equal {
             return if key.direction().is_descending() {
@@ -846,6 +855,7 @@ mod tests {
             0,
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::Char { max_length: 120 },
+            false,
         );
         let mut rows = vec![bytes_row("banana"), bytes_row("apple"), bytes_row("cherry")];
         stable_order_prepared_rows(&mut rows, 1, &[key]).expect("utf8mb4_bin char rows");
@@ -861,6 +871,7 @@ mod tests {
             0,
             ConfiguredOrderDirection::Descending,
             ConfiguredScalarType::Char { max_length: 8 },
+            false,
         );
         let mut rows = vec![bytes_row("a"), bytes_row("c"), bytes_row("b")];
         stable_order_prepared_rows(&mut rows, 1, &[descending]).expect("descending char rows");
@@ -873,6 +884,7 @@ mod tests {
             0,
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::Char { max_length: 8 },
+            false,
         );
         let mut padded = vec![bytes_row("a "), bytes_row("a"), bytes_row("a  ")];
         stable_order_prepared_rows(&mut padded, 1, &[ascending]).expect("padded char rows");
@@ -889,6 +901,7 @@ mod tests {
             0,
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::BigInt,
+            false,
         );
         let mut rows = vec![
             vec![Datum::Int(30)],
@@ -913,6 +926,7 @@ mod tests {
             0,
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::Char { max_length: 4 },
+            false,
         );
         let mut mistyped = vec![bytes_row("b"), vec![Datum::Int(1)]];
         assert_eq!(
@@ -929,6 +943,7 @@ mod tests {
             1,
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::BigInt,
+            false,
         );
         let mut rows = vec![vec![Datum::Int(1)]];
         assert_eq!(
@@ -944,6 +959,7 @@ mod tests {
             0,
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::BigInt,
+            false,
         );
         assert_eq!(
             stable_order_prepared_rows(&mut narrow, 2, &[offset_zero]),
@@ -953,5 +969,147 @@ mod tests {
                 actual: 1,
             })
         );
+    }
+
+    /// MySQL's `ORDER BY` treats `NULL` as smaller than every non-`NULL`
+    /// value, so it sorts first ascending and last descending. This is the
+    /// same rule the in-process sort executor applies through
+    /// `sort_value_cmp`, verified here on the prepared-read comparator so the
+    /// two sorts cannot disagree.
+    #[test]
+    fn prepared_order_sorts_nulls_first_ascending_and_last_descending() {
+        let rows = || -> Vec<Row> {
+            vec![
+                vec![Datum::Int(2)],
+                vec![Datum::Null],
+                vec![Datum::Int(-1)],
+                vec![Datum::Null],
+            ]
+        };
+
+        let mut ascending = rows();
+        stable_order_prepared_rows(
+            &mut ascending,
+            1,
+            &[PreparedOrderColumn::new(
+                0,
+                ConfiguredOrderDirection::Ascending,
+                ConfiguredScalarType::BigInt,
+                true,
+            )],
+        )
+        .expect("a nullable key admits NULL");
+        assert_eq!(
+            ascending,
+            vec![
+                vec![Datum::Null],
+                vec![Datum::Null],
+                vec![Datum::Int(-1)],
+                vec![Datum::Int(2)],
+            ]
+        );
+
+        let mut descending = rows();
+        stable_order_prepared_rows(
+            &mut descending,
+            1,
+            &[PreparedOrderColumn::new(
+                0,
+                ConfiguredOrderDirection::Descending,
+                ConfiguredScalarType::BigInt,
+                true,
+            )],
+        )
+        .expect("a nullable key admits NULL");
+        assert_eq!(
+            descending,
+            vec![
+                vec![Datum::Int(2)],
+                vec![Datum::Int(-1)],
+                vec![Datum::Null],
+                vec![Datum::Null],
+            ]
+        );
+    }
+
+    /// A `NOT NULL` column that decoded to `NULL` is a decode contract
+    /// violation, not an orderable value; the sort must refuse it rather than
+    /// place it anywhere.
+    #[test]
+    fn a_null_in_a_not_null_order_key_still_fails_closed() {
+        let mut rows: Vec<Row> = vec![vec![Datum::Int(1)], vec![Datum::Null]];
+        assert_eq!(
+            stable_order_prepared_rows(
+                &mut rows,
+                1,
+                &[PreparedOrderColumn::new(
+                    0,
+                    ConfiguredOrderDirection::Ascending,
+                    ConfiguredScalarType::BigInt,
+                    false,
+                )],
+            ),
+            Err(PreparedOrderError::KeyDatum {
+                row_index: 1,
+                offset: 0,
+                kind: DatumKind::Null,
+            })
+        );
+    }
+
+    /// Every widened scalar type orders by its own value domain. Before the
+    /// comparator delegated to `sort_value_cmp`, an unsigned, floating-point,
+    /// or decimal key compared as `Equal` and the sort silently kept source
+    /// order.
+    #[test]
+    fn prepared_order_compares_every_widened_scalar_domain() {
+        let cases: [(ConfiguredScalarType, [Datum; 3]); 3] = [
+            (
+                ConfiguredScalarType::UnsignedBigInt,
+                [Datum::UInt(u64::MAX), Datum::UInt(0), Datum::UInt(1 << 63)],
+            ),
+            (
+                ConfiguredScalarType::Double,
+                [
+                    Datum::new_real(2.5),
+                    Datum::new_real(-1.0),
+                    Datum::new_real(0.0),
+                ],
+            ),
+            (
+                ConfiguredScalarType::Decimal {
+                    precision: 10,
+                    scale: 2,
+                },
+                [
+                    Datum::new_decimal(tidb_datatype::Decimal::from_int(12)),
+                    Datum::new_decimal(tidb_datatype::Decimal::from_int(-3)),
+                    Datum::new_decimal(tidb_datatype::Decimal::from_int(0)),
+                ],
+            ),
+        ];
+        for (scalar_type, values) in cases {
+            let mut rows: Vec<Row> = values.iter().map(|v| vec![v.clone()]).collect();
+            stable_order_prepared_rows(
+                &mut rows,
+                1,
+                &[PreparedOrderColumn::new(
+                    0,
+                    ConfiguredOrderDirection::Ascending,
+                    scalar_type,
+                    false,
+                )],
+            )
+            .expect("widened scalar rows are orderable");
+            assert_eq!(
+                rows,
+                vec![
+                    vec![values[1].clone()],
+                    vec![values[2].clone()],
+                    vec![values[0].clone()],
+                ],
+                "{scalar_type:?} must order by value"
+            );
+        }
     }
 }

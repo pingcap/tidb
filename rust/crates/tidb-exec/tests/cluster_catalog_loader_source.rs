@@ -67,8 +67,8 @@ const GO_SUPPORTED_TABLE: &str = r#"{"id":77,"name":{"O":"Rows","L":"rows"},"cha
 ],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":5,"version":5}"#;
 
 /// The same shape with one nullable `VARCHAR(64)` column, which the read path
-/// cannot decode yet.
-const GO_UNSUPPORTED_TABLE: &str = r#"{"id":78,"name":{"O":"Notes","L":"notes"},"charset":"utf8mb4","collate":"utf8mb4_bin","cols":[
+/// admits and decodes as a `NULL`-able column.
+const GO_NULLABLE_TABLE: &str = r#"{"id":78,"name":{"O":"Notes","L":"notes"},"charset":"utf8mb4","collate":"utf8mb4_bin","cols":[
 {"id":1,"name":{"O":"id","L":"id"},"offset":0,"type":{"Tp":8,"Flag":3,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2},
 {"id":2,"name":{"O":"note","L":"note"},"offset":1,"type":{"Tp":15,"Flag":0,"Flen":64,"Decimal":-1,"Charset":"utf8mb4","Collate":"utf8mb4_bin","Elems":null,"Array":false},"state":5,"version":2}
 ],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":2,"version":5}"#;
@@ -101,7 +101,7 @@ fn recorded_cluster() -> RecordedSnapshot {
     snapshot.put(key::schema_version_kv_key(), value::encode_int_value(412));
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
     snapshot.put(key::table_kv_key(3, 77), GO_SUPPORTED_TABLE);
-    snapshot.put(key::table_kv_key(3, 78), GO_UNSUPPORTED_TABLE);
+    snapshot.put(key::table_kv_key(3, 78), GO_NULLABLE_TABLE);
     snapshot.put(key::table_kv_key(3, 79), GO_UNSUPPORTED_TYPE_TABLE);
     snapshot.put(key::table_kv_key(3, 80), GO_DECIMAL_TABLE);
     snapshot.put(key::table_kv_key(3, 81), GO_VARCHAR_TABLE);
@@ -172,24 +172,20 @@ fn supported_loaded_table_becomes_a_configured_table() {
 }
 
 #[test]
-fn unsupported_column_is_refused_by_name_and_type() {
+fn nullable_column_is_admitted_and_marked_nullable() {
     let mut snapshot = recorded_cluster();
     let catalog = load_cluster_catalog(&mut snapshot).expect("catalog loads");
     let (database, table) = catalog.find_table("campaign", "notes").expect("table found");
 
-    let refusal =
-        configure_loaded_table(database.name.original(), table).expect_err("table must be refused");
-    assert_eq!(refusal.name, "Campaign.Notes");
-    assert!(
-        refusal.reason.contains("`note`"),
-        "refusal must name the column: {}",
-        refusal.reason
-    );
-    assert!(
-        refusal.reason.contains("nullable"),
-        "refusal must name the reason: {}",
-        refusal.reason
-    );
+    let configured =
+        configure_loaded_table(database.name.original(), table).expect("table admitted");
+    configured.validate().expect("configured table is valid");
+    // The stored `ColumnInfo` flag word for `note` is 0: no `NotNullFlag`.
+    let note = &configured.columns()[1];
+    assert_eq!(note.name(), "note");
+    assert!(note.is_nullable());
+    // The clustered handle is never nullable, whatever else the table holds.
+    assert!(!configured.columns()[0].is_nullable());
 }
 
 #[test]

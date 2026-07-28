@@ -54,7 +54,7 @@ fn direct_projection_preserves_alias_source_identity_and_scan_order() {
     };
     assert_eq!(balance.output_name(), "amount");
     assert_eq!(balance.source_name(), "balance");
-    assert_eq!(balance.kind(), ConfiguredColumnKind::StoredNotNull);
+    assert_eq!(balance.kind(), ConfiguredColumnKind::Stored);
     assert_eq!(balance.scan_column().column_id, 9);
     assert_eq!(balance.scan_column().flag, 1);
     assert!(!balance.scan_column().pk_handle);
@@ -517,4 +517,37 @@ fn a_locking_read_this_node_cannot_honor_fails_closed() {
             "{sql} must fail closed rather than skip its lock"
         );
     }
+}
+
+/// A nullable column drops `NOT_NULL_FLAG` from both the coprocessor scan
+/// descriptor and the projected column, while the clustered handle -- which
+/// *is* the record key -- can never be marked nullable.
+#[test]
+fn nullable_columns_drop_the_not_null_flag_and_never_apply_to_the_handle() {
+    let table = ConfiguredTable::new(
+        "test",
+        "accounts",
+        42,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 7).nullable(),
+            ConfiguredColumn::stored_not_null("balance", 9).nullable(),
+            ConfiguredColumn::stored_char_not_null("label", 11, 16),
+        ],
+    );
+    table.validate().expect("nullable columns are a valid table");
+    assert!(!table.columns()[0].is_nullable());
+    assert!(table.columns()[1].is_nullable());
+    assert!(!table.columns()[2].is_nullable());
+
+    let plan = ReadOnlyScanPlan::lower("SELECT id, balance, label FROM accounts", &table)
+        .expect("a nullable column is readable");
+    let [id, balance, label] = plan.projected_columns() else {
+        panic!("three projections");
+    };
+    assert_eq!(id.scan_column().flag, 3, "the handle keeps NOT_NULL|PRI_KEY");
+    assert!(!id.is_nullable());
+    assert_eq!(balance.scan_column().flag, 0, "nullable drops NOT_NULL");
+    assert!(balance.is_nullable());
+    assert_eq!(label.scan_column().flag, 1);
+    assert!(!label.is_nullable());
 }

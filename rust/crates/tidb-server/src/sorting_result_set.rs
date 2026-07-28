@@ -139,7 +139,7 @@ mod tests {
     }
 
     fn int_key(direction: ConfiguredOrderDirection) -> PreparedOrderColumn {
-        PreparedOrderColumn::new(0, direction, ConfiguredScalarType::BigInt)
+        PreparedOrderColumn::new(0, direction, ConfiguredScalarType::BigInt, false)
     }
 
     #[test]
@@ -193,6 +193,7 @@ mod tests {
             0,
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::Char { max_length: 120 },
+            false,
         );
         let mut sorted = SortingResultSetSource::new(inner, vec![key], 1);
         assert_eq!(

@@ -1367,7 +1367,10 @@ fn protocol_columns(table: &ConfiguredTable, plan: &ReadOnlyScanPlan) -> Vec<Col
                 charset: scalar.result_charset_id() as u16,
                 flag: match column.kind() {
                     ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
-                    ConfiguredColumnKind::StoredNotNull => 0x0001,
+                    // A nullable column carries neither `NotNullFlag` nor
+                    // `PriKeyFlag`, so a client renders its `NULL` cells as NULL.
+                    ConfiguredColumnKind::Stored if column.is_nullable() => 0x0000,
+                    ConfiguredColumnKind::Stored => 0x0001,
                 } | if scalar.is_unsigned() {
                     // `mysql.UnsignedFlag`, per Go `column.ConvertColumnInfo`:
                     // the client result column carries it so a MySQL driver

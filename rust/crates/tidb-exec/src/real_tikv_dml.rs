@@ -657,7 +657,7 @@ fn split_row(
             ConfiguredColumnKind::ClusteredPrimaryKey => {
                 handle = expect_integer_column_value(column, value)?;
             }
-            ConfiguredColumnKind::StoredNotNull => {
+            ConfiguredColumnKind::Stored => {
                 columns.push((column.id(), configured_stored_value(column, value)?));
             }
         }
@@ -811,7 +811,7 @@ fn max_configured_row_value_len(table: &ConfiguredTable) -> usize {
     table
         .columns()
         .iter()
-        .filter(|column| column.kind() == ConfiguredColumnKind::StoredNotNull)
+        .filter(|column| column.kind() == ConfiguredColumnKind::Stored)
         .fold(ROW_HEADER_LEN, |total, column| {
             let payload = match column.scalar_type() {
                 ConfiguredScalarType::BigInt

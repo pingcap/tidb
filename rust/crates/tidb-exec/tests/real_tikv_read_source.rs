@@ -718,3 +718,135 @@ fn one_transport_is_retained_across_two_queries() {
     assert_eq!(first_close.get(), 1);
     assert_eq!(second_close.get(), 1);
 }
+
+/// Encodes one fixed-width `chunk.Column` whose row 1 of 2 is `NULL`.
+///
+/// The header carries `nullCount = 1` and a one-byte bitmap where bit `1`
+/// means NON-null, so `0b01` marks row 0 present and row 1 null. Go still
+/// reserves a full element slot for the null row and leaves the previous
+/// row's `elemBuf` bytes there (verified against `pkg/util/chunk`'s own
+/// `Codec.Encode` output), so this fixture repeats the live value in the null
+/// slot -- a decoder that ignores the bitmap would return it.
+fn chunk_fixed_column_with_trailing_null(live: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&2_u32.to_le_bytes());
+    encoded.extend_from_slice(&1_u32.to_le_bytes());
+    encoded.push(0b0000_0001);
+    encoded.extend_from_slice(live);
+    encoded.extend_from_slice(live);
+    encoded
+}
+
+/// Encodes one variable-width `chunk.Column` whose row 1 of 2 is `NULL`. Go
+/// gives a null row a zero-width offset span, so the data region holds only
+/// the live row's bytes.
+fn chunk_variable_column_with_trailing_null(live: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&2_u32.to_le_bytes());
+    encoded.extend_from_slice(&1_u32.to_le_bytes());
+    encoded.push(0b0000_0001);
+    for offset in [0_i64, live.len() as i64, live.len() as i64] {
+        encoded.extend_from_slice(&offset.to_le_bytes());
+    }
+    encoded.extend_from_slice(live);
+    encoded
+}
+
+/// Every scalar type this node admits decodes a `NULL` cell from the real
+/// coprocessor chunk layout, and each nullable result column drops
+/// `NotNullFlag` so a client renders the cell as NULL rather than as the
+/// stale bytes the null slot still carries.
+#[test]
+fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
+    let timestamps = ScriptedTimestampSource::new([9_101]);
+    let state = Rc::new(SharedTransportState::default());
+    let next_count = Rc::new(Cell::new(0));
+    let close_count = Rc::new(Cell::new(0));
+
+    // A `DECIMAL(10,2)` cell is the fixed 40-byte `MyDecimal` binary form; the
+    // live row is `12.34`, taken from `pkg/util/chunk`'s own encoder output.
+    let mut decimal_live = vec![0_u8; 40];
+    decimal_live[..8].copy_from_slice(&[0x02, 0x02, 0x02, 0x00, 0x0c, 0x00, 0x00, 0x00]);
+    decimal_live[8..12].copy_from_slice(&[0x00, 0xfd, 0x43, 0x14]);
+
+    let columns = vec![
+        chunk_fixed_column(&[7_i64.to_le_bytes().to_vec(), 8_i64.to_le_bytes().to_vec()]),
+        chunk_fixed_column_with_trailing_null(&11_i64.to_le_bytes()),
+        chunk_fixed_column_with_trailing_null(&12_i64.to_le_bytes()),
+        chunk_fixed_column_with_trailing_null(&u64::MAX.to_le_bytes()),
+        chunk_fixed_column_with_trailing_null(&3.5_f64.to_le_bytes()),
+        chunk_variable_column_with_trailing_null(b"ab"),
+        chunk_variable_column_with_trailing_null(b"cd"),
+        chunk_fixed_column_with_trailing_null(&decimal_live),
+    ];
+    let scripted_response =
+        chunk_response_result(&columns, Rc::clone(&next_count), Rc::clone(&close_count));
+
+    let table = ConfiguredTable::new(
+        "test",
+        "wide",
+        99,
+        vec![
+            ConfiguredColumn::clustered_primary_key("id", 1),
+            ConfiguredColumn::stored_not_null("big", 2).nullable(),
+            ConfiguredColumn::stored_int_not_null("small", 3).nullable(),
+            ConfiguredColumn::stored_unsigned_bigint_not_null("visits", 4).nullable(),
+            ConfiguredColumn::stored_double_not_null("score", 5).nullable(),
+            ConfiguredColumn::stored_char_not_null("name", 6, 8).nullable(),
+            ConfiguredColumn::stored_varchar_not_null("tag", 7, 8, false).nullable(),
+            ConfiguredColumn::stored_decimal_not_null("amount", 8, 10, 2).nullable(),
+        ],
+    );
+    let mut engine = RealTiKvReadSession::new(
+        table,
+        transport([scripted_response], Rc::clone(&state)),
+        timestamps,
+    );
+
+    let query = engine
+        .execute("SELECT id, big, small, visits, score, name, tag, amount FROM test.wide")
+        .expect("a nullable projection must reach the transport");
+    // The handle keeps `NotNullFlag | PriKeyFlag`; every nullable column
+    // reports no flag at all.
+    let mut record_set = query.into_record_set();
+    assert_eq!(
+        record_set
+            .columns()
+            .iter()
+            .map(|column| column.flag)
+            .collect::<Vec<_>>(),
+        [3, 0, 0, 0x0020, 0, 0, 0, 0],
+        "only the handle keeps NotNullFlag; UnsignedFlag is independent of it"
+    );
+
+    let rows = record_set.next_batch(2).unwrap();
+    assert_eq!(
+        rows[0],
+        vec![
+            Datum::Int(7),
+            Datum::Int(11),
+            Datum::Int(12),
+            Datum::UInt(u64::MAX),
+            Datum::Real(3.5),
+            Datum::new_collation_string(b"ab".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
+            Datum::new_collation_string(b"cd".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
+            rows[0][7].clone(),
+        ]
+    );
+    assert_eq!(rows[0][7].to_bytes().unwrap(), b"12.34");
+    assert_eq!(
+        rows[1],
+        vec![
+            Datum::Int(8),
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+        ],
+        "every nullable type decodes its null row as NULL, not as the stale slot bytes"
+    );
+    record_set.close().unwrap();
+}
