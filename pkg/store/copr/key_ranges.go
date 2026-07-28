@@ -119,6 +119,22 @@ func (r *KeyRanges) Do(f func(ran *kv.KeyRange)) {
 
 // Split ranges into (left, right) by key.
 func (r *KeyRanges) Split(key []byte) (*KeyRanges, *KeyRanges) {
+	return r.split(key, true, true)
+}
+
+// SplitLeft returns only the ranges to the left of key.
+func (r *KeyRanges) SplitLeft(key []byte) *KeyRanges {
+	left, _ := r.split(key, true, false)
+	return left
+}
+
+// SplitRight returns only the ranges to the right of key.
+func (r *KeyRanges) SplitRight(key []byte) *KeyRanges {
+	_, right := r.split(key, false, true)
+	return right
+}
+
+func (r *KeyRanges) split(key []byte, needLeft, needRight bool) (left, right *KeyRanges) {
 	n := sort.Search(r.Len(), func(i int) bool {
 		cur := r.At(i)
 		return len(cur.EndKey) == 0 || bytes.Compare(cur.EndKey, key) > 0
@@ -127,14 +143,24 @@ func (r *KeyRanges) Split(key []byte) (*KeyRanges, *KeyRanges) {
 	if n < r.Len() {
 		p := r.At(n)
 		if bytes.Compare(key, p.StartKey) > 0 {
-			left := r.Slice(0, n)
-			left.last = &kv.KeyRange{StartKey: p.StartKey, EndKey: key}
-			right := r.Slice(n+1, r.Len())
-			right.first = &kv.KeyRange{StartKey: key, EndKey: p.EndKey}
+			if needLeft {
+				left = r.Slice(0, n)
+				left.last = &kv.KeyRange{StartKey: p.StartKey, EndKey: key}
+			}
+			if needRight {
+				right = r.Slice(n+1, r.Len())
+				right.first = &kv.KeyRange{StartKey: key, EndKey: p.EndKey}
+			}
 			return left, right
 		}
 	}
-	return r.Slice(0, n), r.Slice(n, r.Len())
+	if needLeft {
+		left = r.Slice(0, n)
+	}
+	if needRight {
+		right = r.Slice(n, r.Len())
+	}
+	return left, right
 }
 
 // ToRanges converts ranges to []kv.KeyRange.

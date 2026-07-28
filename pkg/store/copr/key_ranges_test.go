@@ -116,6 +116,10 @@ type splitCase struct {
 func testSplit(t *testing.T, ranges *KeyRanges, checkLeft bool, cases ...splitCase) {
 	for _, tt := range cases {
 		left, right := ranges.Split([]byte(tt.key))
+		leftOnly := ranges.SplitLeft([]byte(tt.key))
+		rightOnly := ranges.SplitRight([]byte(tt.key))
+		checkEqual(t, leftOnly, left.ToRanges(), false)
+		checkEqual(t, rightOnly, right.ToRanges(), false)
 		expect := tt.KeyRanges
 		if checkLeft {
 			checkEqual(t, left, expect.mid, false)
