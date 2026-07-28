@@ -111,7 +111,7 @@ impl QuerySessionFactory for PipelineSessionFactory {
             format!("{}@{}", identity.username(), identity.host()),
             format!("{}@{}", identity.username(), context.peer_addr.ip()),
         );
-// Go sets `SessionVars.ConnectionID` from the connection the front
+        // Go sets `SessionVars.ConnectionID` from the connection the front
         // end accepted; `CONNECTION_ID()` reads it back. This was once
         // dropped entirely when `SessionContext` was threaded through here --
         // double-check it actually arrives (see the TCP-level test below).
