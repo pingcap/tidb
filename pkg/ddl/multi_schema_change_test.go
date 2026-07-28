@@ -16,8 +16,12 @@ package ddl_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -25,9 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,7 +120,6 @@ func TestMultiSchemaChangeWhiteList(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	tk.MustExec("drop table if exists test_multi_schema_change_white_list")
 	tk.MustExec("create table test_multi_schema_change_white_list(a int)")
 	tk.MustGetErrCode(
@@ -123,6 +129,33 @@ func TestMultiSchemaChangeWhiteList(t *testing.T) {
 	tk.MustQuery("show create table test_multi_schema_change_white_list").Check(testkit.RowsWithSep("|",
 		"test_multi_schema_change_white_list|CREATE TABLE `test_multi_schema_change_white_list` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
+func TestMultiSchemaChangeReplaceNonclusteredPrimaryKeyDropCoveredAutoIncrementColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_enable_clustered_index = off")
+	tk.MustExec("set session tidb_allow_remove_auto_inc = 1")
+	tk.MustExec("drop table if exists tmp_test_covered_primary_key")
+	tk.MustExec("create table tmp_test_covered_primary_key (" +
+		"id bigint(20) NOT NULL," +
+		"sortId int(20) NOT NULL AUTO_INCREMENT," +
+		"tenant_key varchar(255)," +
+		"PRIMARY KEY (sortId,id) NONCLUSTERED)")
+
+	tk.MustExec("alter table tmp_test_covered_primary_key " +
+		"drop column sortId, " +
+		"drop primary key, " +
+		"add primary key (id)")
+
+	tk.MustQuery("show create table tmp_test_covered_primary_key").Check(testkit.RowsWithSep("|",
+		"tmp_test_covered_primary_key|CREATE TABLE `tmp_test_covered_primary_key` (\n"+
+			"  `id` bigint(20) NOT NULL,\n"+
+			"  `tenant_key` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 }
@@ -154,12 +187,11 @@ add primary key (id)`)
 }
 
 func TestMultiSchemaChangeIfExistsIfNotExistsWithTableTracker(t *testing.T) {
+	// ignoreColumnNotExistsIfExists: the missing MODIFY COLUMN should be skipped,
+	// and the following ADD COLUMN should see the tracked table state correctly.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
-	// ignoreColumnNotExistsIfExists: the missing MODIFY COLUMN should be skipped,
-	// and the following ADD COLUMN should see the tracked table state correctly.
 	tk.MustExec("drop table if exists test_column_if_exists")
 	tk.MustExec("create table test_column_if_exists(a int, b int)")
 	tk.MustExec("alter table test_column_if_exists modify column if exists c int, add column c int")
@@ -202,6 +234,47 @@ func TestMultiSchemaChangeIfExistsIfNotExistsWithTableTracker(t *testing.T) {
 	))
 }
 
+func TestMultiSchemaChangeReplaceNonclusteredPrimaryKeyPrerequisites(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_enable_clustered_index = off")
+	tk.MustExec("create table t_replace_allow_auto_inc (" +
+		"id bigint not null, sort_id int not null auto_increment, " +
+		"primary key (sort_id, id) nonclustered)")
+	err := tk.ExecToErr("alter table t_replace_allow_auto_inc " +
+		"drop column sort_id, drop primary key, add primary key (id)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled")
+
+	tk.MustExec("set session tidb_allow_remove_auto_inc = on")
+	tk.MustExec("set session tidb_enable_clustered_index = on")
+	tk.MustExec("create table t_replace_clustered_default (" +
+		"id bigint not null, sort_id int not null auto_increment, " +
+		"primary key (sort_id, id) nonclustered)")
+	err = tk.ExecToErr("alter table t_replace_clustered_default " +
+		"drop column sort_id, drop primary key, add primary key (id)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Set tidb_enable_clustered_index=OFF or specify NONCLUSTERED")
+
+	tk.MustExec("alter table t_replace_clustered_default " +
+		"drop column sort_id, drop primary key, add primary key (id) nonclustered")
+	tk.MustQuery("show create table t_replace_clustered_default").Check(testkit.RowsWithSep("|",
+		"t_replace_clustered_default|CREATE TABLE `t_replace_clustered_default` (\n"+
+			"  `id` bigint(20) NOT NULL,\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec("create table t_replace_common_handle (" +
+		"part varchar(20) not null, id varchar(20) not null, " +
+		"primary key (part, id) clustered)")
+	err = tk.ExecToErr("alter table t_replace_common_handle drop primary key, " +
+		"add primary key (id) nonclustered")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Unsupported drop primary key when the table is using clustered index")
+}
+
 func TestMultiSchemaChangeUsesUpdatedTableTracker(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -214,6 +287,210 @@ func TestMultiSchemaChangeUsesUpdatedTableTracker(t *testing.T) {
 	tk.MustExec("drop table if exists test_updated_tracker_change")
 	tk.MustExec("create table test_updated_tracker_change(a int, b int)")
 	tk.MustGetErrCode("alter table test_updated_tracker_change add primary key(a), change column a a int null", errno.ErrPrimaryCantHaveNull)
+}
+
+func TestMultiSchemaChangeReplacePrimaryKeyRejectsQueuedCompositeIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_allow_remove_auto_inc = 1")
+	tk.MustExec("create table t_replace_queued (" +
+		"id bigint not null, sort_id int not null auto_increment, tenant_id int, " +
+		"primary key (sort_id, id) nonclustered)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set session tidb_allow_remove_auto_inc = 1")
+	var replaceErr error
+	var wg sync.WaitGroup
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.TableName != "t_replace_queued" || job.SchemaState != model.StateNone {
+			return
+		}
+		once.Do(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				replaceErr = tk2.ExecToErr("alter table t_replace_queued " +
+					"drop column sort_id, drop primary key, add primary key (id) nonclustered")
+			}()
+
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				queueTK := testkit.NewTestKit(t, store)
+				queueTK.MustExec("begin")
+				jobs, err := ddl.GetAllDDLJobs(context.Background(), queueTK.Session())
+				queueTK.MustExec("rollback")
+				require.NoError(t, err)
+				for _, queuedJob := range jobs {
+					if queuedJob.Type == model.ActionMultiSchemaChange && queuedJob.TableName == "t_replace_queued" {
+						return
+					}
+				}
+				time.Sleep(time.Millisecond)
+			}
+			require.FailNow(t, "replacement DDL was not queued")
+		})
+	})
+
+	tk.MustExec("alter table t_replace_queued add index idx_sort_tenant(sort_id, tenant_id)")
+	wg.Wait()
+	require.Error(t, replaceErr)
+	require.Contains(t, replaceErr.Error(), "can't drop column sort_id with composite index covered")
+	require.NotEmpty(t, tk.MustQuery("show index from t_replace_queued where key_name = 'idx_sort_tenant'").Rows())
+	require.NotEmpty(t, tk.MustQuery("show columns from t_replace_queued like 'sort_id'").Rows())
+}
+
+func TestMultiSchemaChangeReplacePrimaryKeyDuplicateRollbackRestoresFlags(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_replace_duplicate (" +
+		"old_part int not null, shared_id int not null, " +
+		"primary key (old_part, shared_id) nonclustered)")
+	tk.MustExec("insert into t_replace_duplicate values (1, 7), (2, 7)")
+	oldPrimaryKeyID := external.GetTableByName(t, tk, "test", "t_replace_duplicate").Meta().GetPrimaryKey().ID
+
+	tk.MustGetErrCode("alter table t_replace_duplicate drop primary key, "+
+		"add primary key (shared_id) nonclustered", errno.ErrDupEntry)
+	assertReplacementRollbackMetadata(t, tk, "t_replace_duplicate", oldPrimaryKeyID, "old_part", "shared_id")
+	tk.MustQuery("select * from t_replace_duplicate order by old_part").Check(testkit.Rows("1 7", "2 7"))
+}
+
+func TestMultiSchemaChangeReplacePrimaryKeyOwnerTransfer(t *testing.T) {
+	t.Run("candidate reorganization", func(t *testing.T) {
+		testReplacementOwnerTransfer(t, false)
+	})
+	t.Run("after cutover before old primary key cleanup", func(t *testing.T) {
+		testReplacementOwnerTransfer(t, true)
+	})
+}
+
+func testReplacementOwnerTransfer(t *testing.T, afterCutover bool) {
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, testLease)
+	defer distCtx.Close()
+	store := distCtx.Store
+	ownerDomain := distCtx.GetDomain(0)
+	nextOwnerDomain := distCtx.GetDomain(1)
+	if !ownerDomain.DDL().OwnerManager().IsOwner() {
+		ownerDomain, nextOwnerDomain = nextOwnerDomain, ownerDomain
+	}
+	require.True(t, ownerDomain.DDL().OwnerManager().IsOwner())
+	require.False(t, nextOwnerDomain.DDL().OwnerManager().IsOwner())
+
+	se, err := session.CreateSessionWithDomain(store, ownerDomain)
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
+	tk.MustExec("set session tidb_enable_clustered_index = off")
+	tk.MustExec("set session tidb_allow_remove_auto_inc = on")
+	tableName := "t_replace_owner_reorg"
+	if afterCutover {
+		tableName = "t_replace_owner_cutover"
+	}
+	tk.MustExec("create table " + tableName + " (" +
+		"id bigint not null, sort_id int not null auto_increment, payload int, " +
+		"primary key (sort_id, id) nonclustered)")
+	tk.MustExec("insert into " + tableName + " (id, payload) values (1, 10), (2, 20)")
+	oldPrimaryKeyID := external.GetTableByName(t, tk, "test", tableName).Meta().GetPrimaryKey().ID
+
+	resigned := false
+	var resignErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		if resigned || job.Type != model.ActionMultiSchemaChange || job.TableName != tableName || job.MultiSchemaInfo == nil {
+			return
+		}
+		var dropPrimaryKeyState, addPrimaryKeyState model.SchemaState
+		var addPrimaryKeyDone bool
+		for _, subJob := range job.MultiSchemaInfo.SubJobs {
+			switch subJob.Type {
+			case model.ActionDropPrimaryKey:
+				dropPrimaryKeyState = subJob.SchemaState
+			case model.ActionAddPrimaryKey:
+				addPrimaryKeyState = subJob.SchemaState
+				addPrimaryKeyDone = subJob.State == model.JobStateDone
+			}
+		}
+		atCandidateReorg := !afterCutover && addPrimaryKeyState == model.StateWriteReorganization
+		atPostCutover := afterCutover && addPrimaryKeyDone && addPrimaryKeyState == model.StatePublic &&
+			dropPrimaryKeyState == model.StateWriteOnly
+		if atCandidateReorg || atPostCutover {
+			resigned = true
+			resignErr = ownerDomain.DDL().OwnerManager().ResignOwner(context.Background())
+			if resignErr != nil {
+				return
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if nextOwnerDomain.DDL().OwnerManager().IsOwner() {
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+			resignErr = errors.New("replacement DDL was not transferred to the second owner")
+		}
+	})
+
+	tk.MustExec("alter table " + tableName + " drop column sort_id, " +
+		"drop primary key, add primary key (id)")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	require.True(t, resigned)
+	require.NoError(t, resignErr)
+	require.False(t, ownerDomain.DDL().OwnerManager().IsOwner())
+	require.True(t, nextOwnerDomain.DDL().OwnerManager().IsOwner())
+	assertReplacementSuccessMetadata(t, tk, tableName, oldPrimaryKeyID)
+
+	tk.MustExec("insert into " + tableName + " values (3, 30)")
+	tk.MustExec("update " + tableName + " set id = 4 where id = 3")
+	tk.MustGetErrCode("insert into "+tableName+" values (4, 40)", errno.ErrDupEntry)
+	tk.MustExec("delete from " + tableName + " where id = 4")
+	tk.MustQuery("select id, payload from " + tableName + " order by id").Check(testkit.Rows("1 10", "2 20"))
+	tk.MustExec("admin check table " + tableName)
+}
+
+func assertReplacementSuccessMetadata(t *testing.T, tk *testkit.TestKit, tableName string, oldPrimaryKeyID int64) {
+	tblInfo := external.GetTableByName(t, tk, "test", tableName).Meta()
+	require.Len(t, tblInfo.Indices, 1)
+	primaryKey := tblInfo.Indices[0]
+	require.NotEqual(t, oldPrimaryKeyID, primaryKey.ID)
+	require.Greater(t, primaryKey.ID, oldPrimaryKeyID)
+	require.Equal(t, "primary", primaryKey.Name.L)
+	require.True(t, primaryKey.Primary)
+	require.Equal(t, model.StatePublic, primaryKey.State)
+	require.False(t, primaryKey.IsRemoving())
+	require.False(t, strings.HasPrefix(primaryKey.Name.L, strings.ToLower("_PkReplace$_")))
+	idColumn := model.FindColumnInfo(tblInfo.Columns, "id")
+	payloadColumn := model.FindColumnInfo(tblInfo.Columns, "payload")
+	require.NotNil(t, idColumn)
+	require.NotNil(t, payloadColumn)
+	require.True(t, mysql.HasPriKeyFlag(idColumn.GetFlag()))
+	require.False(t, mysql.HasPriKeyFlag(payloadColumn.GetFlag()))
+}
+
+func assertReplacementRollbackMetadata(
+	t *testing.T,
+	tk *testkit.TestKit,
+	tableName string,
+	oldPrimaryKeyID int64,
+	primaryKeyColumns ...string,
+) {
+	tblInfo := external.GetTableByName(t, tk, "test", tableName).Meta()
+	require.Len(t, tblInfo.Indices, 1)
+	primaryKey := tblInfo.Indices[0]
+	require.Equal(t, oldPrimaryKeyID, primaryKey.ID)
+	require.Equal(t, "primary", primaryKey.Name.L)
+	require.True(t, primaryKey.Primary)
+	require.Equal(t, model.StatePublic, primaryKey.State)
+	require.False(t, primaryKey.IsRemoving())
+	require.False(t, strings.HasPrefix(primaryKey.Name.L, strings.ToLower("_PkReplace$_")))
+	for _, columnName := range primaryKeyColumns {
+		column := model.FindColumnInfo(tblInfo.Columns, columnName)
+		require.NotNil(t, column)
+		require.True(t, mysql.HasPriKeyFlag(column.GetFlag()), columnName)
+	}
 }
 
 func TestMultiSchemaChangeAddColumnsAfterNewColumn(t *testing.T) {

@@ -199,3 +199,30 @@ drop table if exists t;
 create table t (id bigint not null, k bigint not null, v int, primary key (id, k) clustered);
 -- error 8200
 alter table t modify column id bigint not null auto_increment;
+
+# Replace a nonclustered composite primary key and keep the table writable
+set @@tidb_enable_clustered_index = off;
+set @@tidb_allow_remove_auto_inc = on;
+drop table if exists t;
+create table t (
+  id bigint not null,
+  sort_id int not null auto_increment,
+  payload varchar(20),
+  primary key (sort_id, id) nonclustered
+);
+insert into t (id, payload) values (1, 'one'), (2, 'two');
+alter table t drop column sort_id, drop primary key, add primary key (id);
+show create table t;
+select index_name, seq_in_index, column_name
+from information_schema.statistics
+where table_schema = database() and table_name = 't'
+order by index_name, seq_in_index;
+insert into t values (3, 'three');
+update t set id = 4, payload = 'four' where id = 3;
+-- error 1062
+insert into t values (4, 'duplicate');
+delete from t where id = 4;
+select * from t order by id;
+admin check table t;
+set @@tidb_enable_clustered_index = default;
+set @@tidb_allow_remove_auto_inc = default;

@@ -139,6 +139,13 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 }
 
 func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	if pkdbShouldDeferReplacementDropColumnValidation(job) {
+		// The old primary key is still public while sub-jobs are only advancing to
+		// their last revertible point. Defer owner validation until the coordinated
+		// transition has moved that exact index to write-only.
+		job.MarkNonRevertible()
+		return ver, nil
+	}
 	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
@@ -264,7 +271,10 @@ func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *mod
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
+	policy := dropColumnValidationPolicy{
+		allowedReplacementOldPrimaryKeyID: pkdbOldPrimaryKeyIDForDropColumn(job),
+	}
+	if err = isDroppableColumn(tblInfo, colName, policy); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
@@ -278,7 +288,7 @@ func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *mod
 	return tblInfo, colInfo, idxInfos, false, nil
 }
 
-func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr) error {
+func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr, policy dropColumnValidationPolicy) error {
 	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
 		if isHidden {
 			return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(dep)
@@ -287,7 +297,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr) error {
 	}
 
 	// We only support dropping column with single-value none Primary Key index covered now.
-	err := isColumnCanDropWithIndex(colName.L, tblInfo.Indices)
+	err := isColumnCanDropWithIndex(colName.L, tblInfo, policy)
 	if err != nil {
 		return err
 	}
@@ -1183,17 +1193,21 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
-func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) error {
-	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.VectorInfo != nil {
-			for _, col := range indexInfo.Columns {
-				if col.Name.L == colName {
-					errMsg := "with composite index covered or Primary Key covered now"
-					if indexInfo.VectorInfo != nil {
-						errMsg = "with Vector Key covered now"
-					}
-					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)
+func isColumnCanDropWithIndex(colName string, tblInfo *model.TableInfo, policy dropColumnValidationPolicy) error {
+	for _, indexInfo := range tblInfo.Indices {
+		for _, col := range indexInfo.Columns {
+			if col.Name.L != colName {
+				continue
+			}
+			if policy.allowsReplacementPrimaryKey(tblInfo, indexInfo) {
+				continue
+			}
+			if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.VectorInfo != nil {
+				errMsg := "with composite index covered or Primary Key covered now"
+				if indexInfo.VectorInfo != nil {
+					errMsg = "with Vector Key covered now"
 				}
+				return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)
 			}
 		}
 	}

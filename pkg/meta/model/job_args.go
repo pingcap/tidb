@@ -1347,7 +1347,7 @@ const (
 // Below lists used fields for each type (listed in order of the layout in v1)
 //
 //	Adding NonPK: Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning(not stored, always nil), Global
-//	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
+//	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, SQLMode, Unused(nil), Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist, IndexID
 //	Rollback add index: IndexName, IfExist, IsVector
@@ -1399,15 +1399,17 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 	// Drop index
 	if job.Type == ActionDropIndex || job.Type == ActionDropPrimaryKey {
 		if len(a.IndexArgs) == 1 {
-			return []any{a.IndexArgs[0].IndexName, a.IndexArgs[0].IfExist}
+			return []any{a.IndexArgs[0].IndexName, a.IndexArgs[0].IfExist, a.IndexArgs[0].IndexID}
 		}
 		indexNames := make([]pmodel.CIStr, len(a.IndexArgs))
 		ifExists := make([]bool, len(a.IndexArgs))
+		indexIDs := make([]int64, len(a.IndexArgs))
 		for i, idxArg := range a.IndexArgs {
 			indexNames[i] = idxArg.IndexName
 			ifExists[i] = idxArg.IfExist
+			indexIDs[i] = idxArg.IndexID
 		}
-		return []any{indexNames, ifExists}
+		return []any{indexNames, ifExists, indexIDs}
 	}
 
 	// Add vector index
@@ -1420,8 +1422,8 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionAddPrimaryKey {
 		arg := a.IndexArgs[0]
 
-		// The sixth argument is set and never used.
-		// Leave it as nil to make it compatible with history job.
+		// The sixth argument is a historical unused slot kept for v1 compatibility.
+		// Append new fields to the tail instead of reusing existing positions.
 		return []any{
 			arg.Unique, arg.IndexName, arg.IndexPartSpecifications,
 			arg.IndexOption, arg.SQLMode, nil, arg.Global,
@@ -1486,17 +1488,28 @@ func (a *ModifyIndexArgs) decodeRenameIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) decodeDropIndexV1(job *Job) error {
 	indexNames := make([]pmodel.CIStr, 1)
 	ifExists := make([]bool, 1)
-	if err := job.decodeArgs(&indexNames[0], &ifExists[0]); err != nil {
-		if err = job.decodeArgs(&indexNames, &ifExists); err != nil {
-			return errors.Trace(err)
+	indexIDs := make([]int64, 1)
+	if err := job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0]); err != nil {
+		if err = job.decodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
+			indexIDs = indexIDs[:0]
+			if err = job.decodeArgs(&indexNames[0], &ifExists[0]); err != nil {
+				if err = job.decodeArgs(&indexNames, &ifExists); err != nil {
+					return errors.Trace(err)
+				}
+			}
 		}
 	}
 
 	a.IndexArgs = make([]*IndexArg, len(indexNames))
 	for i, indexName := range indexNames {
+		var indexID int64
+		if i < len(indexIDs) {
+			indexID = indexIDs[i]
+		}
 		a.IndexArgs[i] = &IndexArg{
 			IndexName: indexName,
 			IfExist:   ifExists[i],
+			IndexID:   indexID,
 		}
 	}
 	return nil

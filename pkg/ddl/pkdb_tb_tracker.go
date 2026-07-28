@@ -5,6 +5,7 @@ package ddl
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -285,7 +286,7 @@ func (tracker *TableTracker) addPrimaryKey(spec *ast.AlterTableSpec) error {
 	if spec.Constraint == nil {
 		return nil
 	}
-	if indexInfo := tracker.tableInfo.FindIndexByName(mysql.PrimaryKeyName); indexInfo != nil || tracker.tableInfo.PKIsHandle {
+	if indexInfo := tracker.tableInfo.FindIndexByName(strings.ToLower(mysql.PrimaryKeyName)); indexInfo != nil || tracker.tableInfo.PKIsHandle {
 		return infoschema.ErrMultiplePriKey
 	}
 	if _, err := CheckPKOnGeneratedColumn(tracker.tableInfo, spec.Constraint.Keys); err != nil {
@@ -637,7 +638,7 @@ func (tracker *TableTracker) dropColumn(spec *ast.AlterTableSpec) error {
 	if colInfo == nil {
 		return dbterror.ErrCantDropFieldOrKey.GenWithStackByArgs(colName)
 	}
-	if err := isDroppableColumn(tracker.tableInfo, colName); err != nil {
+	if err := isDroppableColumn(tracker.tableInfo, colName, dropColumnValidationPolicy{}); err != nil {
 		return err
 	}
 	if err := checkDropColumnWithTTLConfig(tracker.tableInfo, colName.L); err != nil {
@@ -661,10 +662,6 @@ func (tracker *TableTracker) dropColumn(spec *ast.AlterTableSpec) error {
 	for _, idx := range tracker.tableInfo.Indices {
 		if i, _ := model.FindIndexColumnByName(idx.Columns, colName.L); i != -1 {
 			droppedIndexes = append(droppedIndexes, idx)
-			if idx.Primary {
-				tracker.tableInfo.IsCommonHandle = false
-				tracker.tableInfo.CommonHandleVersion = 0
-			}
 			continue
 		}
 		remainIndexes = append(remainIndexes, idx)

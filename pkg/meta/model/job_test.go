@@ -322,6 +322,23 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
 }
 
+func TestPrimaryKeyReplaceInfoPersistsInProxyJob(t *testing.T) {
+	parentJob := &Job{
+		ID: 100,
+		MultiSchemaInfo: &MultiSchemaInfo{
+			PKDBPrimaryKeyReplaceInfo: &PKDBPrimaryKeyReplaceInfo{OldPrimaryKeyID: 42},
+		},
+	}
+	subJob := &SubJob{Type: ActionDropColumn, State: JobStateQueueing}
+
+	clone := parentJob.Clone()
+	require.NotNil(t, clone)
+	require.Equal(t, int64(42), clone.MultiSchemaInfo.PKDBPrimaryKeyReplaceInfo.OldPrimaryKeyID)
+
+	proxyJob := subJob.ToProxyJob(clone, 1)
+	require.Equal(t, int64(42), proxyJob.MultiSchemaInfo.PKDBPrimaryKeyReplaceInfo.OldPrimaryKeyID)
+}
+
 func TestJobSize(t *testing.T) {
 	msg := `Please make sure that the following methods work as expected:
 - SubJob.FromProxyJob()

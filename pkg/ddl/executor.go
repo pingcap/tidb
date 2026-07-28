@@ -1945,15 +1945,16 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 	// Maintain a temporary TableInfo to perform prechecks/job construction.
 	var tbTracker *TableTracker
 	if isMultiSchemaChanges(validSpecs) {
-		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
-		// MultiSchemaInfo and skip running them. Then we will run them in
-		// d.multiSchemaChange all at once.
-		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 		schema, ok := is.SchemaByName(ident.Schema)
 		if !ok {
 			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 		}
 		tbTracker = NewTableTracker(tb.Meta(), schema, sctx)
+		validSpecs = pkdbReorderMultiSchemaSpecsForDropPrimaryKey(validSpecs, tbTracker.TableInfo())
+		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
+		// MultiSchemaInfo and skip running them. Then we will run them in
+		// d.multiSchemaChange all at once.
+		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	}
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
@@ -3519,7 +3520,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 		return false, err
 	}
 
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
+	if err = isDroppableColumn(tblInfo, colName, dropColumnValidationPolicy{}); err != nil {
 		return false, errors.Trace(err)
 	}
 	if err = checkDropColumnWithPartitionConstraint(t, colName); err != nil {
@@ -3541,11 +3542,6 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	}
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
-	}
-	// Check the partial index condition
-	err = checkColumnReferencedByPartialCondition(t.Meta(), col.ColumnInfo.Name)
-	if err != nil {
-		return false, errors.Trace(err)
 	}
 	return true, nil
 }
@@ -5948,6 +5944,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			IndexName: indexName,
+			IndexID:   indexInfo.ID,
 			IfExist:   ifExist,
 		}},
 		OpType: model.OpDropIndex,

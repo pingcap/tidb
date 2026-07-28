@@ -275,6 +275,12 @@ Other sharp edges (review hotspots):
 - Expression/generated-key indexes may introduce hidden columns; these must be published early enough to keep multi-version reads/writes correct.
 - Partial indexes are only supported with fast reorg; do not relax this without reasoning about the backfill type and online write rules.
 - Optional index `SPLIT` options pre-split index regions; keep it idempotent and ordered so retries do not double-apply side effects.
+- Replace nonclustered primary key in multi-schema change cannot publish the new PK directly under the `PRIMARY` name.
+  The add-PK sub-job must reorg a temporary candidate name first, then cut over by renaming the old PK to a removing name,
+  renaming the candidate to `PRIMARY`, and keeping the old PK tracked by ID for the later drop sub-job.
+  This workflow intentionally does not support clustered/common-handle primary keys. Sessions using it must set
+  `tidb_enable_clustered_index=OFF` or declare the new key `NONCLUSTERED`; dropping an `AUTO_INCREMENT` source column
+  also requires `tidb_allow_remove_auto_inc=ON`.
 
 Fast reorg pipelines use a persisted backfill-merge state machine on the index:
 - `IndexInfo.BackfillState` (`pkg/meta/model/reorg.go`) is persisted and MUST be monotonic:
