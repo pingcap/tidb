@@ -1661,11 +1661,18 @@ fn datum_error_text(value: &Datum) -> String {
 fn agg_kind_and_type(name: &str, arg: &Expression) -> Result<(AggKind, FieldType), DriverError> {
     Ok(match name {
         "COUNT" => (AggKind::Count, FieldType::new(FieldTypeCode::LongLong)),
+        // Go `typeInfer4Sum`: DOUBLE for a real argument, DECIMAL for every
+        // other numeric one -- `SUM` over a BIGINT column is a DECIMAL in
+        // MySQL, not a BIGINT (captured: `sum(a)` reports type 246).
         "SUM" => {
-            let t = arg
+            let real = arg
                 .static_type()
-                .cloned()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                .is_some_and(|t| t.eval_type() == tidb_datatype::EvalType::Real);
+            let t = if real {
+                FieldType::new(FieldTypeCode::Double)
+            } else {
+                FieldType::new(FieldTypeCode::NewDecimal)
+            };
             (AggKind::Sum, t)
         }
         // Go `typeInfer4MaxMin`: the result carries the argument's
@@ -4062,7 +4069,11 @@ mod tests {
                 &crate::StmtContext::for_query()
             )
             .unwrap(),
-            vec![vec![Datum::Int(3), Datum::Int(6)]]
+            // SUM is a DECIMAL in MySQL even over a BIGINT column.
+            vec![vec![
+                Datum::Int(3),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(6))
+            ]]
         );
         // GROUP BY with a carried key column, WHERE below the agg.
         assert_eq!(
@@ -4201,7 +4212,10 @@ mod tests {
                 &crate::StmtContext::for_query()
             )
             .unwrap(),
-            vec![vec![Datum::Int(3), Datum::Int(15)]]
+            vec![vec![
+                Datum::Int(3),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(15))
+            ]]
         );
         // ORDER BY a selected alias.
         assert_eq!(
@@ -4212,9 +4226,18 @@ mod tests {
             )
             .unwrap(),
             vec![
-                vec![Datum::Int(2), Datum::Int(5)],
-                vec![Datum::Int(3), Datum::Int(15)],
-                vec![Datum::Int(1), Datum::Int(30)],
+                vec![
+                    Datum::Int(2),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(5))
+                ],
+                vec![
+                    Datum::Int(3),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(15))
+                ],
+                vec![
+                    Datum::Int(1),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(30))
+                ],
             ]
         );
         // A grouped column that is not selected is still visible to HAVING
@@ -6364,7 +6387,10 @@ mod tests {
                 &crate::StmtContext::for_query()
             )
             .unwrap(),
-            vec![vec![Datum::Int(5)], vec![Datum::Int(9)]]
+            vec![
+                vec![Datum::Decimal(tidb_datatype::Decimal::from_int(5))],
+                vec![Datum::Decimal(tidb_datatype::Decimal::from_int(9))],
+            ]
         );
     }
 
@@ -6399,7 +6425,7 @@ mod tests {
                 &crate::StmtContext::for_query()
             )
             .unwrap(),
-            vec![vec![Datum::Int(50)]]
+            vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(50))]]
         );
         // A column list renames the CTE's columns.
         assert_eq!(

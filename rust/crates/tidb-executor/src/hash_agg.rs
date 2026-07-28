@@ -47,7 +47,7 @@ use tidb_datatype::{Datum, Decimal, FieldType};
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::{Columns, EvalError};
+use tidb_expr::Columns;
 
 /// The aggregate function kinds this seed supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,8 +94,10 @@ impl AggFunc {
 /// One group's partial results, in agg-func order.
 enum Partial {
     Count(i64),
-    /// `None` until the first non-NULL input (an empty sum is NULL).
-    SumInt(Option<i64>),
+    /// `None` until the first non-NULL input (an empty sum is NULL). Go
+    /// sums an integer or decimal argument exactly, in the decimal domain --
+    /// `SUM` over a BIGINT column is a DECIMAL in MySQL.
+    SumDecimal(Option<Decimal>),
     SumReal(Option<f64>),
     /// `None` until the first row is seen.
     FirstRow(Option<Datum>),
@@ -159,7 +161,7 @@ impl Partial {
         match kind {
             AggKind::Count => Partial::Count(0),
             // The sum's domain is chosen lazily from the first non-NULL input.
-            AggKind::Sum => Partial::SumInt(None),
+            AggKind::Sum => Partial::SumDecimal(None),
             AggKind::FirstRow => Partial::FirstRow(None),
             AggKind::Min => Partial::MaxMin {
                 value: None,
@@ -185,23 +187,29 @@ impl Partial {
             (Partial::Count(n), None) => *n += 1,
             (Partial::Count(_), Some(Datum::Null)) => {}
             (Partial::Count(n), Some(_)) => *n += 1,
-            (Partial::SumInt(_) | Partial::SumReal(_), None) => {
+            (Partial::SumDecimal(_) | Partial::SumReal(_), None) => {
                 return Err(ExecError::Unsupported("SUM requires an argument"))
             }
-            (Partial::SumInt(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
-            (this @ Partial::SumInt(_), Some(Datum::Int(v))) => {
-                let Partial::SumInt(acc) = this else {
-                    unreachable!()
-                };
-                let base = acc.unwrap_or(0);
-                *acc = Some(
-                    base.checked_add(v)
-                        .ok_or(ExecError::Eval(EvalError::IntOverflow))?,
-                );
-            }
-            (this @ Partial::SumInt(None), Some(Datum::Real(v))) => {
+            (Partial::SumDecimal(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
+            (this @ Partial::SumDecimal(None), Some(Datum::Real(v))) => {
                 // First non-NULL input is real: the sum's domain is real.
                 *this = Partial::SumReal(Some(v));
+            }
+            (Partial::SumDecimal(acc), Some(input)) => {
+                let addend = match input {
+                    Datum::Int(v) => Decimal::from_int(v),
+                    Datum::UInt(v) => Decimal::from_uint(v),
+                    Datum::Decimal(d) => d,
+                    _ => {
+                        return Err(ExecError::Unsupported(
+                            "SUM over this datum kind is not yet supported",
+                        ))
+                    }
+                };
+                *acc = Some(match acc.take() {
+                    Some(sum) => sum.add(&addend),
+                    None => addend,
+                });
             }
             (Partial::SumReal(acc), Some(Datum::Real(v))) => {
                 *acc = Some(acc.unwrap_or(0.0) + v);
@@ -209,7 +217,7 @@ impl Partial {
             (Partial::SumReal(acc), Some(Datum::Int(v))) => {
                 *acc = Some(acc.unwrap_or(0.0) + v as f64);
             }
-            (Partial::SumInt(_) | Partial::SumReal(_), Some(_)) => {
+            (Partial::SumReal(_), Some(_)) => {
                 return Err(ExecError::Unsupported(
                     "SUM over this datum kind is not yet supported",
                 ))
@@ -280,8 +288,8 @@ impl Partial {
     fn finish(&self) -> Datum {
         match self {
             Partial::Count(n) => Datum::Int(*n),
-            Partial::SumInt(None) | Partial::SumReal(None) => Datum::Null,
-            Partial::SumInt(Some(v)) => Datum::Int(*v),
+            Partial::SumDecimal(None) | Partial::SumReal(None) => Datum::Null,
+            Partial::SumDecimal(Some(v)) => Datum::Decimal(v.clone()),
             Partial::SumReal(Some(v)) => Datum::Real(*v),
             Partial::FirstRow(v) => v.clone().unwrap_or(Datum::Null),
             Partial::MaxMin { value, .. } => value.clone().unwrap_or(Datum::Null),
@@ -631,8 +639,9 @@ mod tests {
         count.distinct = true;
         let mut sum = AggFunc::new(AggKind::Sum, Some(col(1)));
         sum.distinct = true;
+        // SUM lands in a decimal cell, which is the domain Go sums in.
         let agg = HashAggExec::new(
-            out_meta(3),
+            out_meta_typed(&[long(), long(), decimal()]),
             vec![col(0)],
             vec![AggFunc::new(AggKind::FirstRow, Some(col(0))), count, sum],
             source(&[
@@ -645,12 +654,20 @@ mod tests {
             NoColumns,
         );
         assert_eq!(
-            run(agg),
+            run_typed(agg, &[long(), long(), decimal()]),
             vec![
                 // Group 1 sees 5,5,7,NULL: two distinct non-NULL values.
-                vec![Datum::Int(1), Datum::Int(2), Datum::Int(12)],
+                vec![
+                    Datum::Int(1),
+                    Datum::Int(2),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(12))
+                ],
                 // Group 2's own 5 is not folded into group 1's.
-                vec![Datum::Int(2), Datum::Int(1), Datum::Int(5)],
+                vec![
+                    Datum::Int(2),
+                    Datum::Int(1),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(5))
+                ],
             ]
         );
     }
@@ -681,7 +698,7 @@ mod tests {
     fn global_count_and_sum_with_nulls() {
         // Values: 10, NULL, 30 -> COUNT(v)=2 (NULL skipped), COUNT(*)=3, SUM=40.
         let agg = HashAggExec::new(
-            out_meta(3),
+            out_meta_typed(&[long(), long(), decimal()]),
             vec![],
             vec![
                 AggFunc::new(AggKind::Count, Some(col(1))),
@@ -692,8 +709,12 @@ mod tests {
             NoColumns,
         );
         assert_eq!(
-            run(agg),
-            vec![vec![Datum::Int(2), Datum::Int(3), Datum::Int(40)]]
+            run_typed(agg, &[long(), long(), decimal()]),
+            vec![vec![
+                Datum::Int(2),
+                Datum::Int(3),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(40))
+            ]]
         );
     }
 
@@ -701,7 +722,7 @@ mod tests {
     fn group_by_emits_first_seen_order() {
         // Groups 2, 1 in first-seen order; FIRST_ROW carries the key.
         let agg = HashAggExec::new(
-            out_meta(2),
+            out_meta_typed(&[long(), decimal()]),
             vec![col(0)],
             vec![
                 AggFunc::new(AggKind::FirstRow, Some(col(0))),
@@ -711,10 +732,16 @@ mod tests {
             NoColumns,
         );
         assert_eq!(
-            run(agg),
+            run_typed(agg, &[long(), decimal()]),
             vec![
-                vec![Datum::Int(2), Datum::Int(11)],
-                vec![Datum::Int(1), Datum::Int(7)],
+                vec![
+                    Datum::Int(2),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(11))
+                ],
+                vec![
+                    Datum::Int(1),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(7))
+                ],
             ]
         );
     }

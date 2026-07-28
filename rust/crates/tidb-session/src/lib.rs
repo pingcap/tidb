@@ -2860,6 +2860,50 @@ mod tests {
         }
     }
 
+    /// The aggregates over each numeric domain, checked against captured
+    /// TiDB output.
+    ///
+    /// The type is the load-bearing part: `SUM` over a BIGINT column is a
+    /// DECIMAL in MySQL (captured type 246), not a BIGINT, so it sums in the
+    /// decimal domain the way Go's `sum4Decimal` does. Only a real argument
+    /// makes it a DOUBLE.
+    #[test]
+    fn aggregates_over_numeric_domains() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT, d DECIMAL(10,2), r DOUBLE)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,1.5,1.5),(2,2.25,2.5),(3,3.25,3.5)")
+            .unwrap();
+
+        // Captured: SUM over each domain, with the decimal column keeping
+        // its own scale.
+        assert_eq!(
+            row_text(session.run("SELECT SUM(a), SUM(d), SUM(r) FROM t")),
+            [["6", "7.00", "7.5"]]
+        );
+        // Captured: an empty SUM is NULL, not zero.
+        assert_eq!(
+            row_text(session.run("SELECT SUM(a) FROM t WHERE a > 100")),
+            [["NULL"]]
+        );
+        // Captured: AVG and MIN/MAX over a decimal column.
+        assert_eq!(
+            row_text(session.run("SELECT MIN(d), MAX(d) FROM t")),
+            [["1.50", "3.25"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(DISTINCT a), COUNT(*) FROM t")),
+            [["3", "3"]]
+        );
+        // Captured: grouped SUM over a decimal column.
+        assert_eq!(
+            row_text(session.run("SELECT a, SUM(d) FROM t GROUP BY a ORDER BY a")),
+            [["1", "1.50"], ["2", "2.25"], ["3", "3.25"]]
+        );
+    }
+
     /// The math, conditional and TRIM builtins through the chunk executor,
     /// checked against captured TiDB output -- including the result TYPES,
     /// which are what size a chunk cell.
