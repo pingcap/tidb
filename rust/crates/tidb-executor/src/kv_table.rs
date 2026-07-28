@@ -214,6 +214,26 @@ pub enum KvTableError {
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
 
+impl KvColumn {
+    /// The value a row written before this column existed reads back.
+    ///
+    /// Go stores the written DEFAULT as given and casts it to the column's
+    /// own type when a row reads it (`GetColOriginDefaultValue` ->
+    /// `CastValue`), which is why `DECIMAL(6,2) DEFAULT 3.14159` reports
+    /// `'3.14159'` in SHOW CREATE but reads back as `3.14`.
+    fn origin_default_value(&self) -> Datum {
+        let Some(value) = self.origin_default.clone() else {
+            return Datum::Null;
+        };
+        match value.convert_to(&self.field_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
+            Ok(converted) => converted.value,
+            // A default the column cannot hold is refused at DDL time, so
+            // this is unreachable for a table this tier built.
+            Err(_) => value,
+        }
+    }
+}
+
 impl KvTable {
     /// Builds an empty table.
     #[must_use]
@@ -744,7 +764,7 @@ impl KvTable {
                         .remove(&column.id)
                         // A row written before this column existed reads back
                         // its origin default.
-                        .unwrap_or_else(|| column.origin_default.clone().unwrap_or(Datum::Null))
+                        .unwrap_or_else(|| column.origin_default_value())
                 })
                 .collect();
             self.fill_handle_columns(&mut row, &handle)?;
@@ -921,7 +941,7 @@ impl KvTable {
             .map(|column| {
                 decoded
                     .remove(&column.id)
-                    .unwrap_or_else(|| column.origin_default.clone().unwrap_or(Datum::Null))
+                    .unwrap_or_else(|| column.origin_default_value())
             })
             .collect();
         // The handle columns are not in the value; Go reads them from the

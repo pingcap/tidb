@@ -433,6 +433,51 @@ pub fn run_alter_table_in(
 }
 
 /// One `ADD COLUMN`.
+/// Go `getDefaultValue` + `checkDefaultValue`: normalizes a column's written
+/// DEFAULT and rejects one the column cannot hold.
+///
+/// Go converts the value to a "standard format" only for the integer and
+/// float/double types -- which is why `INT DEFAULT 7.6` reports `DEFAULT '8'`
+/// while `DECIMAL(10,3) DEFAULT 1.23456` keeps `'1.23456'` and only rounds
+/// when a row reads it. It then evaluates the stored default with truncation
+/// at error level, so a value the column cannot hold is
+/// `ErrInvalidDefault` (1067) at DDL time rather than a surprise per row.
+fn normalize_column_default(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+) -> Result<Datum, DriverError> {
+    let invalid = || DriverError::InvalidDefault(column.to_owned());
+    let normalized = match field_type.code() {
+        tidb_datatype::FieldTypeCode::Tiny
+        | tidb_datatype::FieldTypeCode::Short
+        | tidb_datatype::FieldTypeCode::Int24
+        | tidb_datatype::FieldTypeCode::Long
+        | tidb_datatype::FieldTypeCode::LongLong
+        | tidb_datatype::FieldTypeCode::Float
+        | tidb_datatype::FieldTypeCode::Double => {
+            // Go adopts the converted value only when the conversion itself
+            // succeeded (`if temp, err := v.ConvertTo(...); err == nil`), and
+            // otherwise keeps the original for the check below to report.
+            match value.convert_to(field_type, tidb_datatype::STRICT_FLAGS) {
+                Ok(converted) if converted.event.is_none() => converted.value,
+                _ => value.clone(),
+            }
+        }
+        _ => value.clone(),
+    };
+    // The check phase: strict conversion of what will be stored.
+    let checked = normalized
+        .convert_to(field_type, tidb_datatype::STRICT_FLAGS)
+        .map_err(|_| invalid())?;
+    if checked.event.as_ref().is_some_and(|event| {
+        !crate::driver::conversion_event_is_silent(&normalized, field_type, event)
+    }) {
+        return Err(invalid());
+    }
+    Ok(normalized)
+}
+
 /// `ALTER TABLE ... MODIFY COLUMN` and `... CHANGE COLUMN`, which differ only
 /// in whether the column is also renamed.
 ///
@@ -574,6 +619,10 @@ fn modify_column_action(
             Some(if target > offset { target } else { target + 1 })
         }
     };
+    let default_value = match default_value {
+        Some(value) => Some(normalize_column_default(value, &field_type, &def.name)?),
+        None => None,
+    };
     let column = KvColumn {
         name: def.name.clone(),
         id: table.columns[offset].id,
@@ -668,6 +717,10 @@ fn add_column_action(
     if not_null {
         field_type.add_flags(NOT_NULL_FLAG);
     }
+    let default_value = match default_value {
+        Some(value) => Some(normalize_column_default(value, &field_type, &def.name)?),
+        None => None,
+    };
     let id = table.next_column_id();
     table.add_column(
         index,
@@ -1180,7 +1233,13 @@ pub fn run_create_table_in(
                     let value = constant
                         .eval()
                         .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
-                    default_value = Some(value);
+                    // Go normalizes and checks the written default against
+                    // the column's own type at DDL time.
+                    default_value = Some(normalize_column_default(
+                        value,
+                        &columns[defaults.len()].field_type,
+                        &def.name,
+                    )?);
                 }
                 // AUTO_INCREMENT is its own value source, handled below.
                 tidb_ast::ColumnOption::AutoIncrement => {}

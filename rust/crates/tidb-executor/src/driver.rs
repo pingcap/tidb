@@ -467,6 +467,8 @@ pub enum DriverError {
         /// The value that does not fit.
         value: String,
     },
+    /// Go `types.ErrInvalidDefault` (1067).
+    InvalidDefault(String),
     /// Go `ErrDataTooLong` (1406).
     DataTooLong {
         /// The column written.
@@ -1556,6 +1558,29 @@ pub fn run_insert_reporting(
     Ok((inserted, first_allocated))
 }
 
+/// Whether a conversion event is one TiDB reports nothing for.
+///
+/// Rounding a NUMBER into a narrower decimal is the case: captured, both
+/// `INSERT INTO t(d DECIMAL(10,3)) VALUES (1.23456)` and
+/// `ALTER TABLE t ADD COLUMN e DECIMAL(6,2) DEFAULT 3.14159` are accepted in
+/// silence, storing 1.235 and 3.14. Go reaches that through
+/// `ProduceDecWithSpecifiedTp`, whose rounding notice never becomes a
+/// statement error. A STRING source is a different case -- it may not be a
+/// number at all -- so it is never silent.
+pub(crate) fn conversion_event_is_silent(
+    value: &Datum,
+    field_type: &FieldType,
+    event: &tidb_datatype::ScalarConversionEvent,
+) -> bool {
+    let numeric_source = matches!(
+        value,
+        Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) | Datum::Float32(_) | Datum::Decimal(_)
+    );
+    numeric_source
+        && matches!(field_type.eval_type(), tidb_datatype::EvalType::Decimal)
+        && matches!(event, tidb_datatype::ScalarConversionEvent::Truncated)
+}
+
 /// Go `table.CastValue` + `completeInsertErr`: converts one written value into
 /// the column's own type, and names the failure the way the insert path does.
 ///
@@ -1583,20 +1608,7 @@ fn cast_value_for_column(
     let Some(event) = converted.event else {
         return Ok(converted.value);
     };
-    // Rounding a NUMBER into a narrower decimal column is silent in TiDB:
-    // captured, `INSERT INTO t(d DECIMAL(10,3)) VALUES (1.23456)` stores
-    // 1.235 and raises nothing at all. Go reaches that through
-    // `ProduceDecWithSpecifiedTp`, whose rounding notice never becomes a
-    // statement error. A STRING source is a different case -- it may not be
-    // a number at all -- so it keeps the report below.
-    let numeric_source = matches!(
-        value,
-        Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) | Datum::Float32(_) | Datum::Decimal(_)
-    );
-    if numeric_source
-        && matches!(field_type.eval_type(), tidb_datatype::EvalType::Decimal)
-        && matches!(event, tidb_datatype::ScalarConversionEvent::Truncated)
-    {
+    if conversion_event_is_silent(&value, field_type, &event) {
         return Ok(converted.value);
     }
     // Go picks the message from the conversion's own error kind: a string
@@ -6858,6 +6870,12 @@ impl DriverError {
             ER_SUBQUERY_NO_1_ROW,
             *b"21000",
             "Subquery returns more than 1 row".to_owned(),
+        ),
+        // Go: "Invalid default value for '%-.192s'".
+        DriverError::InvalidDefault(column) => MysqlError::new(
+            1067,
+            *b"42000",
+            format!("Invalid default value for '{column}'"),
         ),
         // Go: "Data too long for column '%s' at row %d".
         DriverError::DataTooLong { column, row } => MysqlError::new(

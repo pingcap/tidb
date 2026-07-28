@@ -2781,6 +2781,100 @@ mod tests {
         }
     }
 
+    /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is
+    /// normalized and checked against the column's own type at DDL time,
+    /// checked against captured TiDB output.
+    ///
+    /// NOT PORTED: the function-call defaults (`CURRENT_TIMESTAMP`), the
+    /// ENUM/SET forms with their own index rules, and BIT columns -- each is
+    /// its own arm of Go's `getDefaultValue` and none of those column types
+    /// reaches this tier yet.
+    #[test]
+    fn column_default_is_normalized_and_checked() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE t (a BIGINT, d DECIMAL(10,3) DEFAULT 1.5, \
+                 i INT DEFAULT 7.6, v VARCHAR(4) DEFAULT 'ab')",
+            )
+            .unwrap();
+
+        // Captured: only the integer and float/double types normalize their
+        // stored default, so SHOW CREATE reports 8 for the INT column while
+        // the DECIMAL column keeps the literal as written.
+        let created = show_create(&mut session, "t");
+        assert!(
+            created.contains("`d` decimal(10,3) DEFAULT '1.5'"),
+            "{created}"
+        );
+        assert!(created.contains("`i` int(11) DEFAULT '8'"), "{created}");
+        assert!(created.contains("`v` varchar(4) DEFAULT 'ab'"), "{created}");
+
+        // Captured: a row that takes the defaults casts them to the column,
+        // so the decimal reaches the column's own scale here.
+        session.run("INSERT INTO t (a) VALUES (1)").unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT a, d, i, v FROM t")),
+            [["1", "1.500", "8", "ab"]]
+        );
+
+        // Captured: a default the column cannot hold is 1067 at DDL time.
+        for sql in [
+            "CREATE TABLE w (v VARCHAR(4) DEFAULT 'abcdefg')",
+            "CREATE TABLE x (i INT DEFAULT 'zz')",
+        ] {
+            match session.run(sql) {
+                Err(error) => {
+                    let reported = error.to_mysql_error();
+                    assert_eq!(reported.code, 1067, "{sql}");
+                    assert!(
+                        reported.message.starts_with("Invalid default value for "),
+                        "{sql}: {}",
+                        reported.message
+                    );
+                }
+                Ok(other) => panic!("expected 1067 from {sql}, got {other:?}"),
+            }
+        }
+        // A numeric string a column CAN hold is accepted and kept.
+        session.run("CREATE TABLE y (i INT DEFAULT '12')").unwrap();
+        session
+            .run("INSERT INTO y (i) VALUES (DEFAULT)")
+            .unwrap_or_else(|_| {
+                // `VALUES (DEFAULT)` is not parsed at this tier; an omitted
+                // column takes the same path.
+                session.run("INSERT INTO y () VALUES ()").unwrap()
+            });
+        assert_eq!(row_text(session.run("SELECT i FROM y")), [["12"]]);
+
+        // Captured: ALTER TABLE ADD COLUMN runs the same normalization and
+        // check, and existing rows read the cast default.
+        session
+            .run("ALTER TABLE t ADD COLUMN e DECIMAL(6,2) DEFAULT 3.14159")
+            .unwrap();
+        let created = show_create(&mut session, "t");
+        assert!(
+            created.contains("`e` decimal(6,2) DEFAULT '3.14159'"),
+            "{created}"
+        );
+        assert_eq!(row_text(session.run("SELECT e FROM t")), [["3.14"]]);
+        assert!(matches!(
+            session.run("ALTER TABLE t ADD COLUMN f VARCHAR(2) DEFAULT 'toolong'"),
+            Err(DriverError::InvalidDefault(_))
+        ));
+    }
+
+    /// The `Create Table` text of one table.
+    fn show_create(session: &mut Session, table: &str) -> String {
+        match session
+            .run_with_columns(&format!("SHOW CREATE TABLE {table}"))
+            .unwrap()
+        {
+            StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+            other => panic!("expected rows, got {other:?}"),
+        }
+    }
+
     /// Go `table.CastValue`: a written value takes its column's type, checked
     /// against captured TiDB output.
     ///
