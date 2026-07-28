@@ -55,20 +55,28 @@ const (
 // same region layout.
 func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCnt int) ([][]byte, error) {
 	var chunks []Chunk
+	var totalSize int64
 	for tableIdx := range meta.Tables {
 		tableChunks, err := chunkTable(ctx, store, meta, tableIdx)
 		if err != nil {
 			return nil, err
 		}
+		for _, c := range tableChunks {
+			totalSize += c.Size
+		}
 		chunks = append(chunks, tableChunks...)
 	}
-	return packSubtasks(chunks, nodeCnt)
+	return packSubtasks(chunks, totalSize, nodeCnt)
 }
 
 // chunkTable carves one table into key-ordered chunks of ≈ chunkSize each,
 // stamping a running table-local Ordinal across all of its partitions so file
-// names never collide within the table. The sort + continuity check runs per
-// physical table (cross-partition key gaps are expected).
+// names never collide within the table, and estimating each chunk's byte size.
+// The sort + continuity check runs per physical table (cross-partition key gaps
+// are expected).
+//
+// Chunk size is currently estimated as region count × defaultRegionSize; a
+// follow-up replaces this with PD region approximate sizes.
 func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
 	tblInfo := meta.Tables[tableIdx].TableInfo
 	perChunk := regionsPerChunk()
@@ -88,6 +96,7 @@ func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 				PhysicalID: pid,
 				Start:      g[0],
 				End:        g[len(g)-1],
+				Size:       int64(len(g)-1) * defaultRegionSize,
 				Ordinal:    ordinal,
 			})
 			ordinal++
@@ -96,24 +105,44 @@ func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 	return chunks, nil
 }
 
-// packSubtasks distributes the chunks across subtasks in key order. It aims for
-// about one subtask per node while capping chunks per subtask, so both a few
-// big tables and a schema of many small tables spread reasonably.
-func packSubtasks(chunks []Chunk, nodeCnt int) ([][]byte, error) {
+// packSubtasks groups the chunks into subtasks in key order so each subtask
+// holds a similar amount of data, following IMPORT INTO's adjusted-engine-size
+// approach: aim for about one subtask per node, target engineSize =
+// ceil(totalSize/subtaskCnt), and accumulate chunks until a subtask reaches it.
+func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error) {
 	if len(chunks) == 0 {
 		return nil, nil
 	}
 	subtaskCnt := subtaskCntFor(len(chunks), nodeCnt)
-	sizes := mathutil.Divide2Batches(len(chunks), subtaskCnt)
-	subtasks := make([][]byte, 0, len(sizes))
-	lo := 0
-	for _, sz := range sizes {
-		bs, err := json.Marshal(&SubtaskMeta{Chunks: chunks[lo : lo+sz]})
+	engineSize := (totalSize + int64(subtaskCnt) - 1) / int64(subtaskCnt)
+
+	var subtasks [][]byte
+	emit := func(batch []Chunk) error {
+		bs, err := json.Marshal(&SubtaskMeta{Chunks: batch})
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		subtasks = append(subtasks, bs)
-		lo += sz
+		return nil
+	}
+	var batch []Chunk
+	var acc int64
+	for _, c := range chunks {
+		batch = append(batch, c)
+		acc += c.Size
+		// Cap the chunk count too, so a schema of many zero/small chunks still
+		// spreads instead of collapsing into one subtask.
+		if (engineSize > 0 && acc >= engineSize) || len(batch) >= maxChunksPerSubtask {
+			if err := emit(batch); err != nil {
+				return nil, err
+			}
+			batch, acc = nil, 0
+		}
+	}
+	if len(batch) > 0 {
+		if err := emit(batch); err != nil {
+			return nil, err
+		}
 	}
 	return subtasks, nil
 }

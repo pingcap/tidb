@@ -70,26 +70,41 @@ func TestSubtaskCntFor(t *testing.T) {
 }
 
 func TestPackSubtasks(t *testing.T) {
-	chunks := make([]Chunk, 10)
+	// 8 equal-sized chunks (1 GiB each), 4 nodes → engineSize = 8GiB/4 = 2GiB →
+	// each subtask accumulates 2 chunks; covers all chunks in order once.
+	const oneGiB = 1024 * 1024 * 1024
+	chunks := make([]Chunk, 8)
+	var total int64
 	for i := range chunks {
-		chunks[i] = Chunk{TableIdx: 0, Ordinal: i}
+		chunks[i] = Chunk{TableIdx: 0, Ordinal: i, Size: oneGiB}
+		total += oneGiB
 	}
-	// 10 chunks across 4 nodes → 4 subtasks, covering all chunks in order once.
-	metas, err := packSubtasks(chunks, 4)
+	metas, err := packSubtasks(chunks, total, 4)
 	require.NoError(t, err)
 	require.Len(t, metas, 4)
 	var seen []int
 	for _, bs := range metas {
 		st := &SubtaskMeta{}
 		require.NoError(t, json.Unmarshal(bs, st))
-		require.NotEmpty(t, st.Chunks) // no empty subtask
+		require.NotEmpty(t, st.Chunks)
+		require.Len(t, st.Chunks, 2) // balanced by size
 		for _, c := range st.Chunks {
 			seen = append(seen, c.Ordinal)
 		}
 	}
-	require.Equal(t, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, seen)
+	require.Equal(t, []int{0, 1, 2, 3, 4, 5, 6, 7}, seen)
 
-	empty, err := packSubtasks(nil, 4)
+	// Uneven sizes: one big chunk forms its own subtask.
+	uneven := []Chunk{
+		{Ordinal: 0, Size: 4 * oneGiB},
+		{Ordinal: 1, Size: oneGiB},
+		{Ordinal: 2, Size: oneGiB},
+	}
+	m2, err := packSubtasks(uneven, 6*oneGiB, 2) // engineSize = 3GiB
+	require.NoError(t, err)
+	require.Len(t, m2, 2)
+
+	empty, err := packSubtasks(nil, 0, 4)
 	require.NoError(t, err)
 	require.Nil(t, empty)
 }
