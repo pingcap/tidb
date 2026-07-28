@@ -1051,13 +1051,8 @@ def go_deps():
         name = "com_github_cncf_xds_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cncf/xds/go",
-<<<<<<< HEAD
-        sum = "h1:aQ3y1lwWyqYPiWZThqv1aFbZMiM9vblcSArJRf2Irls=",
-        version = "v0.0.0-20250501225837-2ac532fd4443",
-=======
         sum = "h1:aBangftG7EVZoUb69Os8IaYg++6uMOdKK83QtkkvJik=",
         version = "v0.0.0-20260202195803-dba9d589def2",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "com_github_cockroachdb_apd_v3",
@@ -1420,20 +1415,15 @@ def go_deps():
         name = "com_github_envoyproxy_go_control_plane",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/envoyproxy/go-control-plane",
-        sum = "h1:zEqyPVyku6IvWCFwux4x9RxkLOMUL+1vC9xUFv5l2/M=",
-        version = "v0.13.4",
+        sum = "h1:hbG2kr4RuFj222B6+7T83thSPqLjwBIfQawTkC++2HA=",
+        version = "v0.14.0",
     )
     go_repository(
         name = "com_github_envoyproxy_go_control_plane_envoy",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/envoyproxy/go-control-plane/envoy",
-<<<<<<< HEAD
-        sum = "h1:jb83lalDRZSpPWW2Z7Mck/8kXZ5CQAFYVjQcdVIr83A=",
-        version = "v1.32.4",
-=======
         sum = "h1:u3riX6BoYRfF4Dr7dwSOroNfdSbEPe9Yyl09/B6wBrQ=",
         version = "v1.37.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "com_github_envoyproxy_go_control_plane_ratelimit",
@@ -1446,13 +1436,8 @@ def go_deps():
         name = "com_github_envoyproxy_protoc_gen_validate",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/envoyproxy/protoc-gen-validate",
-<<<<<<< HEAD
-        sum = "h1:DEo3O99U8j4hBFwbJfrz9VtgcDfUKS7KJ7spH3d86P8=",
-        version = "v1.2.1",
-=======
         sum = "h1:MVQghNeW+LZcmXe7SY1V36Z+WFMDjpqGAGacLe2T0ds=",
         version = "v1.3.3",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "com_github_etcd_io_gofail",
@@ -1675,13 +1660,8 @@ def go_deps():
         name = "com_github_go_jose_go_jose_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-jose/go-jose/v4",
-<<<<<<< HEAD
-        sum = "h1:JYhSgy4mXXzAdF3nUx3ygx347LRXJRrpgyU3adRmkAI=",
-        version = "v4.1.1",
-=======
         sum = "h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=",
         version = "v4.1.4",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "com_github_go_kit_kit",
@@ -2304,10 +2284,6 @@ def go_deps():
         name = "com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp",
-<<<<<<< HEAD
-        sum = "h1:UQUsRi8WTzhZntp5313l+CHIAT95ojUI2lpP/ExlZa4=",
-        version = "v1.29.0",
-=======
         sum = "h1:rIkQfkCOVKc1OiRCNcSDD8ml5RJlZbH/Xsq7lbpynwc=",
         version = "v1.32.0",
     )
@@ -2324,7 +2300,6 @@ def go_deps():
         importpath = "github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping",
         sum = "h1:6/0iUd0xrnX7qt+mLNRwg5c0PGv8wpE8K90ryANQwMI=",
         version = "v0.51.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "com_github_gookit_color",
@@ -4355,8 +4330,8 @@ def go_deps():
         name = "com_github_spiffe_go_spiffe_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/spiffe/go-spiffe/v2",
-        sum = "h1:N2I01KCUkv1FAjZXJMwh95KK1ZIQLYbPfhaxw8WS0hE=",
-        version = "v2.5.0",
+        sum = "h1:l+DolpxNWYgruGQVV0xsfeya3CsC7m8iBzDnMpsbLuo=",
+        version = "v2.6.0",
     )
     go_repository(
         name = "com_github_spkg_bom",
@@ -5064,8 +5039,8 @@ def go_deps():
         name = "com_google_cloud_go_compute_metadata",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/compute/metadata",
-        sum = "h1:PBWF+iiAerVNe8UCHxdOt6eHLVc3ydFeOCw78U8ytSU=",
-        version = "v0.7.0",
+        sum = "h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=",
+        version = "v0.9.0",
     )
     go_repository(
         name = "com_google_cloud_go_contactcenterinsights",
@@ -5823,8 +5798,8 @@ def go_deps():
         name = "dev_cel_expr",
         build_file_proto_mode = "disable_global",
         importpath = "cel.dev/expr",
-        sum = "h1:56OvJKSH3hDGL0ml5uSxZmz3/3Pq4tJ+fb1unVLAFcY=",
-        version = "v0.24.0",
+        sum = "h1:1KrZg61W6TWSxuNZ37Xy49ps13NUovb66QLprthtwi4=",
+        version = "v0.25.1",
     )
     go_repository(
         name = "ht_sr_git_~sbinet_gg",
@@ -6103,8 +6078,8 @@ def go_deps():
         name = "io_opentelemetry_go_auto_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/auto/sdk",
-        sum = "h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=",
-        version = "v1.1.0",
+        sum = "h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=",
+        version = "v1.2.1",
     )
     go_repository(
         name = "io_opentelemetry_go_collector_featuregate",
@@ -6131,13 +6106,8 @@ def go_deps():
         name = "io_opentelemetry_go_contrib_detectors_gcp",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/contrib/detectors/gcp",
-<<<<<<< HEAD
-        sum = "h1:F7q2tNlCaHY9nMKHR6XH9/qkp8FktLnIcy6jJNyOCQw=",
-        version = "v1.36.0",
-=======
         sum = "h1:62yY3dT7/ShwOxzA0RsKRgshBmfElKI4d/Myu2OxDFU=",
         version = "v1.43.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "io_opentelemetry_go_contrib_instrumentation_google_golang_org_grpc_otelgrpc",
@@ -6157,13 +6127,8 @@ def go_deps():
         name = "io_opentelemetry_go_otel",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel",
-<<<<<<< HEAD
-        sum = "h1:9zhNfelUvx0KBfu/gb+ZgeAfAgtWrfHJZcAqFC228wQ=",
-        version = "v1.37.0",
-=======
         sum = "h1:mYIM03dnh5zfN7HautFE4ieIig9amkNANT+xcVxAj9I=",
         version = "v1.43.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "io_opentelemetry_go_otel_exporters_otlp_otlptrace",
@@ -6197,49 +6162,29 @@ def go_deps():
         name = "io_opentelemetry_go_otel_metric",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/metric",
-<<<<<<< HEAD
-        sum = "h1:mvwbQS5m0tbmqML4NqK+e3aDiO02vsf/WgbsdpcPoZE=",
-        version = "v1.37.0",
-=======
         sum = "h1:d7638QeInOnuwOONPp4JAOGfbCEpYb+K6DVWvdxGzgM=",
         version = "v1.43.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "io_opentelemetry_go_otel_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/sdk",
-<<<<<<< HEAD
-        sum = "h1:ItB0QUqnjesGRvNcmAcU0LyvkVyGJ2xftD29bWdDvKI=",
-        version = "v1.37.0",
-=======
         sum = "h1:pi5mE86i5rTeLXqoF/hhiBtUNcrAGHLKQdhg4h4V9Dg=",
         version = "v1.43.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "io_opentelemetry_go_otel_sdk_metric",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/sdk/metric",
-<<<<<<< HEAD
-        sum = "h1:90lI228XrB9jCMuSdA0673aubgRobVZFhbjxHHspCPc=",
-        version = "v1.37.0",
-=======
         sum = "h1:S88dyqXjJkuBNLeMcVPRFXpRw2fuwdvfCGLEo89fDkw=",
         version = "v1.43.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "io_opentelemetry_go_otel_trace",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/trace",
-<<<<<<< HEAD
-        sum = "h1:HLdcFNbRQBE2imdSEgm/kwqmQj1Or1l/7bW6mxVK7z4=",
-        version = "v1.37.0",
-=======
         sum = "h1:BkNrHpup+4k4w+ZZ86CZoHHEkohws8AY+WTX09nk+3A=",
         version = "v1.43.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "io_opentelemetry_go_proto_otlp",
@@ -6343,13 +6288,8 @@ def go_deps():
         name = "org_golang_google_genproto_googleapis_api",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/api",
-<<<<<<< HEAD
-        sum = "h1:FiusG7LWj+4byqhbvmB+Q93B/mOxJLN2DTozDuZm4EU=",
-        version = "v0.0.0-20250707201910-8d1bb00bc6a7",
-=======
         sum = "h1:yQugLulqltosq0B/f8l4w9VryjV+N/5gcW0jQ3N8Qec=",
         version = "v0.0.0-20260414002931-afd174a4e478",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_google_genproto_googleapis_bytestream",
@@ -6362,22 +6302,13 @@ def go_deps():
         name = "org_golang_google_genproto_googleapis_rpc",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/rpc",
-<<<<<<< HEAD
-        sum = "h1:pFyd6EwwL2TqFf8emdthzeX+gZE1ElRq3iM8pui4KBY=",
-        version = "v0.0.0-20250707201910-8d1bb00bc6a7",
-=======
         sum = "h1:RmoJA1ujG+/lRGNfUnOMfhCy5EipVMyvUE+KNbPbTlw=",
         version = "v0.0.0-20260414002931-afd174a4e478",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_google_grpc",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/grpc",
-<<<<<<< HEAD
-        sum = "h1:/ODCNEuf9VghjgO3rqLcfg8fiOP0nSluljWFlDxELLI=",
-        version = "v1.75.1",
-=======
         sum = "h1:vguDnZUPjE26w09A63VoxZPnvPjB5Riyc0mkXPFmAIU=",
         version = "v1.82.0",
     )
@@ -6387,7 +6318,6 @@ def go_deps():
         importpath = "google.golang.org/grpc/cmd/protoc-gen-go-grpc",
         sum = "h1:M1YKkFIboKNieVO5DLUEVzQfGwJD30Nv2jfUgzb5UcE=",
         version = "v1.1.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_google_grpc_examples",
@@ -6428,8 +6358,8 @@ def go_deps():
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
-        sum = "h1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts=",
-        version = "v0.48.0",
+        sum = "h1:IBPXwPfKxY7cWQZ38ZCIRPI50YLeevDLlLnyC5wRGTI=",
+        version = "v0.51.0",
     )
     go_repository(
         name = "org_golang_x_exp",
@@ -6470,37 +6400,22 @@ def go_deps():
         name = "org_golang_x_mod",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/mod",
-<<<<<<< HEAD
-        sum = "h1:tHFzIWbBifEmbwtGz65eaWyGiGZatSrT9prnU8DbVL8=",
-        version = "v0.33.0",
-=======
         sum = "h1:JJjpVx6myfUsUdAzZuOSTTmRE0PfZeNWzzvKrP7amb4=",
         version = "v0.36.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_x_net",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/net",
-<<<<<<< HEAD
-        sum = "h1:94R/GTO7mt3/4wIKpcR5gkGmRLOuE/2hNGeWq/GBIFo=",
-        version = "v0.51.0",
-=======
         sum = "h1:bcvxaJn3e1U6InsFWt1JUq1aSjnRxLzT2rtD2KfkDF8=",
         version = "v0.55.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_x_oauth2",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/oauth2",
-<<<<<<< HEAD
-        sum = "h1:4Q+qn+E5z8gPRJfmRy7C2gGG3T4jIprK6aSYgTXGRpo=",
-        version = "v0.33.0",
-=======
         sum = "h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=",
         version = "v0.36.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_x_perf",
@@ -6520,39 +6435,29 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-<<<<<<< HEAD
-        sum = "h1:Ivj+2Cp/ylzLiEU89QhWblYnOE9zerudt9Ftecq2C6k=",
-        version = "v0.41.0",
-=======
         sum = "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
         version = "v0.47.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_x_telemetry",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/telemetry",
-<<<<<<< HEAD
-        sum = "h1:bTLqdHv7xrGlFbvf5/TXNxy/iUwwdkjhqQTJDjW7aj0=",
-        version = "v0.0.0-20260209163413-e7419c687ee4",
-=======
         sum = "h1:HjU6IWBiAgRIdAJ9/y1rwCn+UELEmwV+VsTLzj/W4sE=",
         version = "v0.0.0-20260508192327-42602be52be6",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_x_term",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/term",
-        sum = "h1:36e4zGLqU4yhjlmxEaagx2KuYbJq3EwY8K943ZsHcvg=",
-        version = "v0.40.0",
+        sum = "h1:S4RLU2sB31O/NCl+zFN9Aru9A/Cq2aqKpTZJ6B+DwT4=",
+        version = "v0.43.0",
     )
     go_repository(
         name = "org_golang_x_text",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/text",
-        sum = "h1:oL/Qq0Kdaqxa1KbNeMKwQq0reLCCaFtqu2eNuSeNHbk=",
-        version = "v0.34.0",
+        sum = "h1:Cqjiwd9eSg8e0QAkyCaQTNHFIIzWtidPahFWR83rTrc=",
+        version = "v0.37.0",
     )
     go_repository(
         name = "org_golang_x_time",
@@ -6565,13 +6470,8 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
-<<<<<<< HEAD
-        sum = "h1:uNgphsn75Tdz5Ji2q36v/nsFSfR/9BRFvqhGBaJGd5k=",
-        version = "v0.42.0",
-=======
         sum = "h1:18qN3FAooORvApf5XjCXgsuayZOEtXf6JK18I3+ONa8=",
         version = "v0.45.0",
->>>>>>> 61dae402777 (*: bump arrow-go and update replacement (#69461))
     )
     go_repository(
         name = "org_golang_x_tools_go_expect",
@@ -6598,8 +6498,8 @@ def go_deps():
         name = "org_golang_x_xerrors",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/xerrors",
-        sum = "h1:+cNy6SZtPcJQH3LJVLOSmiC7MMxXNOb3PU/VUEz+EhU=",
-        version = "v0.0.0-20231012003039-104605ab7028",
+        sum = "h1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY=",
+        version = "v0.0.0-20240903120638-7835f813f4da",
     )
     go_repository(
         name = "org_gonum_v1_gonum",

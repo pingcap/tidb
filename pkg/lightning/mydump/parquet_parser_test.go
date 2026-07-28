@@ -1362,7 +1362,7 @@ func TestParquetParserLargePagePeakMemory(t *testing.T) {
 
 	dir := t.TempDir()
 	const fileName = "large-page.parquet"
-	columns := []testutils.ParquetColumn{{
+	columns := []ParquetColumn{{
 		Name:      "data",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.UTF8,
@@ -1376,14 +1376,14 @@ func TestParquetParserLargePagePeakMemory(t *testing.T) {
 			return data, definitionLevels
 		},
 	}}
-	require.NoError(t, testutils.WriteParquetFile(dir, fileName, columns, rows,
+	require.NoError(t, WriteParquetFile(dir, fileName, columns, rows,
 		parquet.WithDictionaryFor("data", false),
 		parquet.WithCompressionFor("data", compress.Codecs.Uncompressed),
 		parquet.WithDataPageSize(int64(rows)*valueSize*2),
 	))
 
 	allocator := &trackingAllocator{}
-	reader := newParquetParserForTest(context.Background(), t, dir, fileName, FileMeta{allocator: allocator})
+	reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{allocator: allocator})
 	require.True(t, reader.prop.BufferedStreamEnabled)
 	require.True(t, reader.prop.PageStreamingEnabled)
 	require.Equal(t, int64(1024), reader.prop.BufferSize)
