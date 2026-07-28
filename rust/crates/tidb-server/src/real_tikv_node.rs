@@ -41,7 +41,9 @@ use tidb_exec::real_tikv_read::{
     ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadSession,
     RealTiKvReadSessionOpener,
 };
-use tidb_pd_client::{EtcdClient, EtcdWatchStats, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY};
+use tidb_pd_client::{
+    EtcdClient, EtcdWatchStats, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY, PRIVILEGE_UPDATE_KEY,
+};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::{
@@ -312,6 +314,39 @@ pub(crate) fn spawn_schema_version_watch(
         Ok(watcher) => Some(watcher),
         Err(error) => {
             emit_warning("schema_version_watch_unavailable", &error.to_string());
+            None
+        }
+    }
+}
+
+/// Starts the watch on the key TiDB announces account changes under, so this
+/// node's privilege reloader runs within a round trip of a Go TiDB's `GRANT`
+/// instead of waiting out its interval.
+///
+/// This is the same division [`spawn_schema_version_watch`] keeps, on the
+/// other key: the watch is an optimisation, the reloader's own tick is the
+/// guarantee, and a node whose etcd is unreachable simply loses the promptness.
+pub(crate) fn spawn_privilege_watch(
+    config: &NodeConfig,
+    reloader: Option<&PrivilegeReloader>,
+) -> Option<EtcdWatcher> {
+    let waker = reloader?.waker();
+    match EtcdWatcher::spawn(
+        config.pd_endpoints.iter().map(String::as_str),
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        PRIVILEGE_UPDATE_KEY,
+        move |event| {
+            eprintln!(
+                "{{\"event\":\"privilege_watch_fired\",\"mod_revision\":{},\"value\":{}}}",
+                event.mod_revision,
+                json_string(&String::from_utf8_lossy(&event.value))
+            );
+            waker.nudge();
+        },
+    ) {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            emit_warning("privilege_watch_unavailable", &error.to_string());
             None
         }
     }

@@ -2162,6 +2162,215 @@ impl PrivilegeRegistry {
     pub fn accounts_with_dynamic_privs(&self) -> Vec<(String, String)> {
         self.lock_dynamic().keys().cloned().collect()
     }
+
+    /// This whole account table, row by row -- the exact inverse of the
+    /// [`Self::replace_from`] a cluster load publishes.
+    ///
+    /// A node whose registry is a *read* of somebody else's `mysql.*` needs
+    /// this to write a change back: the statement handlers above have already
+    /// validated and applied it here, and the persist step's whole job is
+    /// making the stored rows say the same thing. Exporting the table rather
+    /// than each statement's delta is what keeps the two halves from becoming
+    /// two implementations of `GRANT`.
+    ///
+    /// Every row shape mirrors the `mysql.*` table it came from, so a caller
+    /// can map it back one-to-one without re-deciding anything.
+    #[must_use]
+    pub fn export(&self) -> RegistryExport {
+        let mut users: Vec<ExportedUser> = self
+            .lock()
+            .iter()
+            .map(|((user, host), record)| ExportedUser {
+                user: user.clone(),
+                host: host.clone(),
+                auth_string: record.auth_string.clone(),
+                plugin: record.plugin.clone(),
+                account_locked: record.is_role,
+                password_expired: record.password_expired,
+                privileges: printed_privileges(record.privs),
+            })
+            .collect();
+        users.sort_by(|left, right| (&left.host, &left.user).cmp(&(&right.host, &right.user)));
+
+        let mut db_grants: Vec<ExportedScopedGrant> = self
+            .lock_db()
+            .iter()
+            .map(|((user, host, database), mask)| ExportedScopedGrant {
+                user: user.clone(),
+                host: host.clone(),
+                database: database.clone(),
+                table: String::new(),
+                column: String::new(),
+                privileges: printed_privileges(*mask),
+            })
+            .collect();
+        db_grants.sort();
+
+        let mut table_grants: Vec<ExportedScopedGrant> = self
+            .lock_table()
+            .iter()
+            .map(
+                |((user, host, database, table), mask)| ExportedScopedGrant {
+                    user: user.clone(),
+                    host: host.clone(),
+                    database: database.clone(),
+                    table: table.clone(),
+                    column: String::new(),
+                    privileges: printed_privileges(*mask),
+                },
+            )
+            .collect();
+        table_grants.sort();
+
+        let mut column_grants: Vec<ExportedScopedGrant> = self
+            .lock_column()
+            .iter()
+            .map(|record| ExportedScopedGrant {
+                user: record.user.clone(),
+                host: record.host.clone(),
+                database: record.database.clone(),
+                table: record.table.clone(),
+                column: record.column.clone(),
+                privileges: printed_privileges(record.privs),
+            })
+            .collect();
+        column_grants.sort();
+
+        let mut dynamic_grants: Vec<ExportedDynamicGrant> = self
+            .lock_dynamic()
+            .iter()
+            .flat_map(|((user, host), privs)| {
+                privs
+                    .iter()
+                    .map(|(name, grantable)| ExportedDynamicGrant {
+                        user: user.clone(),
+                        host: host.clone(),
+                        privilege: name.clone(),
+                        with_grant_option: *grantable,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        dynamic_grants.sort();
+
+        let mut role_edges: Vec<(Account, Account)> = self
+            .lock_role_edges()
+            .iter()
+            .flat_map(|(grantee, roles)| {
+                roles
+                    .iter()
+                    .map(|role| (role.clone(), grantee.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        role_edges.sort();
+
+        let mut default_roles: Vec<(Account, Account)> = self
+            .lock_default_roles()
+            .iter()
+            .flat_map(|(account, roles)| {
+                roles
+                    .iter()
+                    .map(|role| (account.clone(), role.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        default_roles.sort();
+
+        RegistryExport {
+            users,
+            db_grants,
+            table_grants,
+            column_grants,
+            dynamic_grants,
+            role_edges,
+            default_roles,
+        }
+    }
+}
+
+/// The printed names of every static privilege a mask carries, in the order
+/// `SHOW GRANTS` prints them -- the same spelling
+/// [`GlobalPriv::from_grant_name`] resolves, so the export round-trips
+/// through a `mysql.*` row.
+fn printed_privileges(mask: u64) -> Vec<&'static str> {
+    ALL_GLOBAL_PRIVS
+        .iter()
+        .chain(std::iter::once(&GlobalPriv::GrantOption))
+        .filter(|privilege| mask & privilege.bit() != 0)
+        .map(|privilege| privilege.print_name())
+        .collect()
+}
+
+/// One `mysql.user` row as this registry holds it.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ExportedUser {
+    /// `User`.
+    pub user: String,
+    /// `Host`.
+    pub host: String,
+    /// `authentication_string`.
+    pub auth_string: String,
+    /// `plugin`.
+    pub plugin: String,
+    /// `Account_locked = 'Y'`, which is how Go stores a ROLE.
+    pub account_locked: bool,
+    /// `Password_expired = 'Y'`.
+    pub password_expired: bool,
+    /// Printed names of the global privileges this account holds.
+    pub privileges: Vec<&'static str>,
+}
+
+/// One `mysql.db` / `mysql.tables_priv` / `mysql.columns_priv` row. The
+/// unused scope columns are empty, which is how the three tables share one
+/// shape without an enum whose variants nobody matches on.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ExportedScopedGrant {
+    /// `User`.
+    pub user: String,
+    /// `Host`.
+    pub host: String,
+    /// `DB`.
+    pub database: String,
+    /// `Table_name`, empty for a database-scoped grant.
+    pub table: String,
+    /// `Column_name`, empty above column scope.
+    pub column: String,
+    /// Printed names of the privileges the row grants.
+    pub privileges: Vec<&'static str>,
+}
+
+/// One `mysql.global_grants` row.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ExportedDynamicGrant {
+    /// `User`.
+    pub user: String,
+    /// `Host`.
+    pub host: String,
+    /// `PRIV`, uppercase.
+    pub privilege: String,
+    /// `WITH_GRANT_OPTION = 'Y'`.
+    pub with_grant_option: bool,
+}
+
+/// This registry's whole account table, as rows.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RegistryExport {
+    /// `mysql.user`.
+    pub users: Vec<ExportedUser>,
+    /// `mysql.db`.
+    pub db_grants: Vec<ExportedScopedGrant>,
+    /// `mysql.tables_priv`.
+    pub table_grants: Vec<ExportedScopedGrant>,
+    /// `mysql.columns_priv`.
+    pub column_grants: Vec<ExportedScopedGrant>,
+    /// `mysql.global_grants`.
+    pub dynamic_grants: Vec<ExportedDynamicGrant>,
+    /// `mysql.role_edges`, as `(role, grantee)` -- the `FROM`/`TO` pair in
+    /// the column order the stored table uses.
+    pub role_edges: Vec<(Account, Account)>,
+    /// `mysql.default_roles`, as `(account, role)`.
+    pub default_roles: Vec<(Account, Account)>,
 }
 
 /// The ` WITH GRANT OPTION` suffix `SHOW GRANTS` appends to a line whose

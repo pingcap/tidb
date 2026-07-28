@@ -1066,6 +1066,22 @@ impl Session {
         self.privileges = Some(registry);
     }
 
+    /// Points this session at a different account table for one statement,
+    /// answering the one it was using.
+    ///
+    /// Unlike [`Self::attach_privileges`] this touches nothing else: the
+    /// session's active roles are its own state, and a front end that runs an
+    /// account statement against a scratch copy of the table -- which is how
+    /// a node whose registry is a read of somebody else's `mysql.*` validates
+    /// the statement before persisting it -- must be able to put the live
+    /// table back without a `SET ROLE` silently reverting to the defaults.
+    pub fn swap_privileges(
+        &mut self,
+        registry: privilege::PrivilegeRegistry,
+    ) -> Option<privilege::PrivilegeRegistry> {
+        self.privileges.replace(registry)
+    }
+
     /// Joins this session to the server's shared GLOBAL-scope sysvar table
     /// and snapshots its current overrides into this session's own copy --
     /// see [`vars::SessionVars::seed_from_globals`] for why that snapshot

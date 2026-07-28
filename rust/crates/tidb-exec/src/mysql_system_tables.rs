@@ -52,7 +52,7 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::decode_table_row_to_map;
 
-use crate::cluster_catalog::{ClusterCatalog, ClusterCatalogError, MetaSnapshot};
+use crate::cluster_catalog::{ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 /// Go `mysql.SystemDB`: the schema every table in this module lives in.
 pub const SYSTEM_DB: &str = "mysql";
@@ -240,6 +240,21 @@ pub fn scan_system_table<S: MetaSnapshot>(
     let prefix = gen_table_record_prefix(view.table_id);
     let pairs = snapshot.scan_prefix(&prefix)?;
     Ok(pairs.into_iter().map(|(_, value)| value).collect())
+}
+
+/// Reads every row in one `mysql.*` table's record range, keeping each row's
+/// record key.
+///
+/// The read half of the loader drops the key ([`scan_system_table`]) because
+/// it carries no column data; a *writer* needs it, because the key is what an
+/// UPDATE rewrites and a DELETE removes, and it is the only place the row's
+/// `_tidb_rowid` handle survives.
+pub fn scan_system_table_keyed<S: MetaSnapshot>(
+    snapshot: &mut S,
+    view: &SystemTableView,
+) -> Result<MetaPairs, SystemTableError> {
+    let prefix = gen_table_record_prefix(view.table_id);
+    Ok(snapshot.scan_prefix(&prefix)?)
 }
 
 /// One stored row, decoded to the projected columns.

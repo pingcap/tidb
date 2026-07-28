@@ -81,13 +81,27 @@
 //!   inside an explicit transaction: its statements keep the schema its
 //!   `BEGIN` saw, exactly as they keep its snapshot.
 //!
+//! # Accounts: the other stored state this node writes
+//!
+//! `CREATE USER`, `DROP USER`, `GRANT`, `REVOKE` and `SET PASSWORD` are the
+//! same shape of problem as the DDL above -- the account table is a *read* of
+//! the cluster's `mysql.*` rows -- and take the same shape of answer: the
+//! [`ClusterAccountWriter`] seam. What differs is that the statement's meaning
+//! is not re-derived from the AST at all; the session driver runs it against a
+//! scratch account table read from the cluster inside the change's own
+//! transaction, and the seam writes back whatever that table now says.
+//! [`crate::cluster_account_seam`] states why, and what a failure leaves
+//! behind.
+//!
 //! # What this mode refuses, and why
 //!
-//! * Every statement that changes stored accounts (`CREATE USER`, `GRANT`,
-//!   `REVOKE`, `SET PASSWORD`, ...). The privilege registry here is a read of
-//!   the cluster's `mysql.*` rows, and writing those rows through the session
-//!   is a separate unit of work from the catalog DDL above; until it lands,
-//!   such a statement is refused by name.
+//! * A table- or column-scoped `GRANT`/`REVOKE`. Every other account change
+//!   (`CREATE USER`, `DROP USER`, a global or database-scoped `GRANT`, a
+//!   `SET PASSWORD`, a role) is routed to the [`ClusterAccountWriter`] seam
+//!   and written into the cluster's own `mysql.*` rows; `mysql.tables_priv`
+//!   and `mysql.columns_priv` store their privileges in a `SET` column that
+//!   writer does not encode, so it refuses them at persist time rather than
+//!   dropping them.
 //! * Every stored-schema change the cluster DDL path cannot express: `ALTER`,
 //!   `TRUNCATE`, `RENAME`, `CREATE VIEW`/`INDEX`/`SEQUENCE`, and the
 //!   `CREATE TABLE` clauses [`tidb_exec::table_info_build`] refuses (foreign
@@ -130,12 +144,13 @@ use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
 
+use crate::cluster_account_seam::{ClusterAccountWriter, RealClusterAccountWriter};
 use crate::cluster_session::{cluster_session_catalog, SkippedTable};
 use crate::node_config::NodeConfig;
 use crate::pipeline_session::MaterializedResultSetSource;
 use crate::real_tikv_node::{
-    node_accounts, run_with_process_shutdown, spawn_catalog_reloader, spawn_schema_version_watch,
-    RunConfiguredNodeError,
+    node_accounts, run_with_process_shutdown, spawn_catalog_reloader, spawn_privilege_watch,
+    spawn_schema_version_watch, RunConfiguredNodeError,
 };
 use crate::sql_node::{
     ConcurrentSqlNode, ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult,
@@ -327,6 +342,22 @@ impl ClusterDdl for RealClusterDdl {
     }
 }
 
+/// Which of this node's three paths one statement takes.
+///
+/// The two stored-state changes are named apart rather than lumped into a
+/// boolean because they publish through different tiers -- the catalog through
+/// [`ClusterDdl`], the accounts through
+/// [`crate::cluster_account_seam::ClusterAccountWriter`] -- and each has its
+/// own refusals.
+enum StatementRoute {
+    /// Changes nothing stored outside this process.
+    Ordinary,
+    /// One catalog change this node can express.
+    Ddl(DdlStatement),
+    /// One `mysql.*` account change.
+    Accounts,
+}
+
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
 pub struct ClusterSessionFactory {
     /// The write/read capability every connection's statements open their
@@ -334,6 +365,9 @@ pub struct ClusterSessionFactory {
     transactions: Arc<dyn ClusterTransactions>,
     /// The route a stored-schema change this node can express takes.
     ddl: Arc<dyn ClusterDdl>,
+    /// The route a stored-account change takes; see
+    /// [`crate::cluster_account_seam`].
+    accounts: Arc<dyn ClusterAccountWriter>,
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
@@ -358,6 +392,7 @@ impl ClusterSessionFactory {
     pub fn new(
         transactions: Arc<dyn ClusterTransactions>,
         ddl: Arc<dyn ClusterDdl>,
+        accounts: Arc<dyn ClusterAccountWriter>,
         catalog: Arc<SharedClusterCatalog>,
         privileges: PrivilegeRegistry,
     ) -> Self {
@@ -365,6 +400,7 @@ impl ClusterSessionFactory {
         Self {
             transactions,
             ddl,
+            accounts,
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
@@ -436,6 +472,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             storage,
             transactions: Arc::clone(&self.transactions),
             ddl: Arc::clone(&self.ddl),
+            accounts: Arc::clone(&self.accounts),
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
             explicit: None,
@@ -459,6 +496,9 @@ pub struct ClusterServerSession {
     transactions: Arc<dyn ClusterTransactions>,
     /// The route a stored-schema change takes; see [`ClusterDdl`].
     ddl: Arc<dyn ClusterDdl>,
+    /// The route a stored-account change takes; see
+    /// [`crate::cluster_account_seam`].
+    accounts: Arc<dyn ClusterAccountWriter>,
     /// The node's catalog, which this connection follows.
     catalog: Arc<SharedClusterCatalog>,
     /// The schema version `session`'s tables were built from. A move in
@@ -633,25 +673,23 @@ impl ClusterServerSession {
     /// Decides what this mode does with a statement that changes stored state:
     /// run it as a cluster catalog change, or refuse it with its own reason.
     ///
-    /// `None` means the statement changes nothing stored and takes its
-    /// ordinary path. Every refusal is specific, because the reasons are: an
-    /// account statement has no write path here at all, an `ALTER` is a DDL
-    /// shape the cluster path cannot express, and a `CREATE TABLE` with a
-    /// foreign key is a clause it refuses by name.
-    fn schema_route(&self, sql: &str) -> Result<Option<DdlStatement>, SqlQueryError> {
+    /// [`StatementRoute::Ordinary`] means the statement changes nothing stored
+    /// and takes its ordinary path. Every refusal is specific, because the
+    /// reasons are: an `ALTER` is a DDL shape the cluster path cannot express,
+    /// a `CREATE TABLE` with a foreign key is a clause it refuses by name, and
+    /// a table-scoped `GRANT` is a `mysql.*` row shape the account writer does
+    /// not encode (which it reports at persist time, where it knows).
+    fn schema_route(&self, sql: &str) -> Result<StatementRoute, SqlQueryError> {
         match self
             .session
             .statement_stored_state_change(sql)
             .map_err(map_error)?
         {
-            StoredStateChange::None => Ok(None),
-            StoredStateChange::Accounts => Err(SqlQueryError::unknown(
-                "this node reads the cluster's accounts and cannot write them; run CREATE USER, \
-                 GRANT, REVOKE or SET PASSWORD on a TiDB server",
-            )),
+            StoredStateChange::None => Ok(StatementRoute::Ordinary),
+            StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
             StoredStateChange::Schema => {
                 match prepare_cluster_ddl(sql, self.session.current_database()) {
-                    Ok(Some(statement)) => Ok(Some(statement)),
+                    Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
                          CREATE DATABASE and DROP DATABASE only; run this statement on a TiDB \
@@ -661,6 +699,47 @@ impl ClusterServerSession {
                 }
             }
         }
+    }
+
+    /// Performs one cluster account change.
+    ///
+    /// The statement itself is run by the session driver, against a *scratch*
+    /// account table read from the cluster inside this change's own
+    /// transaction -- so the driver's own validation and error messages are
+    /// what the client sees, and a statement that fails never reaches storage
+    /// nor the node's live table. See [`crate::cluster_account_seam`] for why
+    /// that ordering is the whole failure story.
+    ///
+    /// An open transaction is committed first, for the same reason a DDL
+    /// commits one: MySQL and Go both commit implicitly before a statement
+    /// that changes stored state outside it.
+    fn run_account_statement(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
+        if self.explicit.is_some() || self.session.in_transaction() {
+            self.control_transaction("COMMIT")?;
+        }
+        let pending = self.accounts.begin().map_err(SqlQueryError::unknown)?;
+        let scratch = pending.registry();
+        let live = self.session.swap_privileges(scratch);
+        let applied = self.session.run(sql).map_err(map_error);
+        // Restoring the live table is unconditional: a statement that failed
+        // must not leave the connection reading the scratch copy.
+        if let Some(live) = live {
+            self.session.swap_privileges(live);
+        }
+        applied?;
+        let changed = pending.commit().map_err(SqlQueryError::unknown)?;
+        if !changed.is_empty() {
+            eprintln!(
+                "{{\"event\":\"cluster_accounts_changed\",\"users\":{}}}",
+                serde_json::to_string(&changed).unwrap_or_else(|_| "[]".to_owned())
+            );
+        }
+        // Go answers an account statement with an OK packet carrying no rows,
+        // whether it changed anything or was an `IF [NOT] EXISTS` no-op.
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
     }
 
     /// Performs one cluster catalog change.
@@ -721,8 +800,10 @@ impl QuerySession for ClusterServerSession {
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
-        if let Some(statement) = self.schema_route(sql)? {
-            return self.run_ddl(&statement).map(Some);
+        match self.schema_route(sql)? {
+            StatementRoute::Ddl(statement) => return self.run_ddl(&statement).map(Some),
+            StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
+            StatementRoute::Ordinary => {}
         }
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
             return Ok(Some(WriteOutcome {
@@ -794,8 +875,16 @@ impl QuerySession for ClusterServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
-        if let Some(ddl) = self.schema_route(statement.sql())? {
-            return self.run_ddl(&ddl).map(GeneralExecuteOutcome::Write);
+        match self.schema_route(statement.sql())? {
+            StatementRoute::Ddl(ddl) => {
+                return self.run_ddl(&ddl).map(GeneralExecuteOutcome::Write)
+            }
+            StatementRoute::Accounts => {
+                return self
+                    .run_account_statement(statement.sql())
+                    .map(GeneralExecuteOutcome::Write)
+            }
+            StatementRoute::Ordinary => {}
         }
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
@@ -824,11 +913,20 @@ impl QuerySession for ClusterServerSession {
         // The text protocol reaches DDL through `execute_write`; this covers a
         // front end that goes straight to the result-set path, so a routed
         // statement runs exactly once either way.
-        if let Some(statement) = self.schema_route(sql)? {
-            self.run_ddl(&statement)?;
-            return Ok(QueryResult::new(Box::new(
-                crate::pipeline_session::affected_rows_source(0),
-            )));
+        match self.schema_route(sql)? {
+            StatementRoute::Ddl(statement) => {
+                self.run_ddl(&statement)?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::Accounts => {
+                self.run_account_statement(sql)?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::Ordinary => {}
         }
         let owned = sql.to_owned();
         // The rows are materialized inside the statement's snapshot, because
@@ -897,6 +995,10 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     // it correct. It is listed before the reloader in the tuple below so it is
     // dropped first: a watch may not outlive the thread it nudges.
     let watcher = spawn_schema_version_watch(&config, &reloader);
+    // The account half of the same division: the reloader's tick is what makes
+    // a peer's `GRANT` reach this node at all, and this watch is what makes it
+    // arrive in a round trip instead of an interval.
+    let privilege_watcher = spawn_privilege_watch(&config, privilege_reloader.as_ref());
     let factory = Arc::new(ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             authority.transaction_opener(),
@@ -908,15 +1010,27 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             CONTROL_PLANE_TIMEOUT,
             crate::real_tikv_node::connect_schema_notifier(&config),
         )),
+        Arc::new(RealClusterAccountWriter::new(
+            Arc::new(authority.transaction_opener()),
+            users.accounts(),
+            CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
+        )),
         catalog,
         users.accounts(),
     ));
     let skipped = render_skipped(factory.boot_skipped_tables());
 
     run_with_process_shutdown(
-        (factory, watcher, reloader, privilege_reloader),
+        (
+            factory,
+            watcher,
+            reloader,
+            privilege_watcher,
+            privilege_reloader,
+        ),
         authority,
-        move |(factory, watcher, reloader, privilege_reloader)| {
+        move |(factory, watcher, reloader, privilege_watcher, privilege_reloader)| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                     crate::real_tikv_node::emit_connections_startup_failure(&error);
@@ -943,6 +1057,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             // so it must not outlive it.
             drop(watcher);
             drop(reloader);
+            drop(privilege_watcher);
             drop(privilege_reloader);
             outcome
         },
@@ -973,6 +1088,7 @@ fn render_skipped(skipped: &[SkippedTable]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster_account_seam::PendingAccountChange;
     use crate::configured_user_store::ConfiguredUserStore;
     use crate::resultset_source::ResultSetSource;
     use crate::sql_node::{ConnectionCancellation, ConnectionClose};
@@ -1391,6 +1507,100 @@ mod tests {
         cluster: Arc<MockCluster>,
         catalog: Arc<SharedClusterCatalog>,
         ddl: Arc<MockDdl>,
+        accounts: Arc<MockAccountWriter>,
+    }
+
+    /// The account seam without a cluster: the "stored" accounts are one
+    /// registry, and a change is persisted by publishing the scratch copy into
+    /// it. That is the whole routing contract -- read the stored table, run
+    /// the statement against a scratch copy, publish only on a successful
+    /// persist -- with the 2PC replaced by a switch a test can flip.
+    struct MockAccountWriter {
+        /// What the "cluster" stores.
+        stored: PrivilegeRegistry,
+        /// The node's live table, which only a committed change reaches.
+        live: PrivilegeRegistry,
+        /// Whether the persist step succeeds, so a test can prove that a
+        /// failed persist changes neither side.
+        persists: Arc<AtomicBool>,
+    }
+
+    impl MockAccountWriter {
+        fn new() -> Self {
+            let stored = PrivilegeRegistry::default();
+            let live = PrivilegeRegistry::default();
+            Self {
+                stored,
+                live,
+                persists: Arc::new(AtomicBool::new(true)),
+            }
+        }
+    }
+
+    impl ClusterAccountWriter for MockAccountWriter {
+        fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
+            // The scratch table starts as a copy of what the cluster stores,
+            // which is what makes the statement validate against the cluster's
+            // truth rather than this node's.
+            let scratch = PrivilegeRegistry::default();
+            scratch.replace_from(&clone_registry(&self.stored));
+            Ok(Box::new(MockPendingChange {
+                scratch,
+                stored: self.stored.clone(),
+                live: self.live.clone(),
+                persists: Arc::clone(&self.persists),
+            }))
+        }
+    }
+
+    struct MockPendingChange {
+        scratch: PrivilegeRegistry,
+        stored: PrivilegeRegistry,
+        live: PrivilegeRegistry,
+        persists: Arc<AtomicBool>,
+    }
+
+    impl PendingAccountChange for MockPendingChange {
+        fn registry(&self) -> PrivilegeRegistry {
+            self.scratch.clone()
+        }
+
+        fn commit(self: Box<Self>) -> Result<Vec<String>, String> {
+            if !self.persists.load(Ordering::Acquire) {
+                return Err("the persist was rejected".to_owned());
+            }
+            let changed: Vec<String> = self
+                .scratch
+                .accounts()
+                .into_iter()
+                .map(|(user, host)| format!("'{user}'@'{host}'"))
+                .collect();
+            self.stored.replace_from(&clone_registry(&self.scratch));
+            self.live.replace_from(&clone_registry(&self.scratch));
+            Ok(changed)
+        }
+    }
+
+    /// A detached copy of one registry's rows, since
+    /// [`PrivilegeRegistry::replace_from`] empties its source.
+    fn clone_registry(source: &PrivilegeRegistry) -> PrivilegeRegistry {
+        let copy = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        for (user, host) in source.accounts() {
+            if source.is_role(&user, &host) {
+                copy.create_role(&user, &host);
+            } else {
+                copy.create_user_with_plugin(
+                    &user,
+                    &host,
+                    &source.auth_string(&user, &host).unwrap_or_default(),
+                    &source.plugin(&user, &host).unwrap_or_default(),
+                );
+            }
+        }
+        for ((user, host), mask) in source.global_priv_masks() {
+            copy.grant(&user, &host, mask);
+        }
+        copy
     }
 
     /// The node IS its committed store as far as an assertion is concerned, so
@@ -1409,6 +1619,7 @@ mod tests {
             Self {
                 cluster: Arc::new(MockCluster::default()),
                 ddl: Arc::new(MockDdl::new(Arc::clone(&catalog))),
+                accounts: Arc::new(MockAccountWriter::new()),
                 catalog,
             }
         }
@@ -1430,8 +1641,9 @@ mod tests {
         let factory = ClusterSessionFactory::new(
             Arc::new(MockTransactions(cluster)),
             Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+            Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
             Arc::clone(&node.catalog),
-            PrivilegeRegistry::default(),
+            node.accounts.live.clone(),
         );
         let users =
             ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
@@ -1793,37 +2005,60 @@ mod tests {
         );
     }
 
-    /// The account statements stay refused: the privilege registry here is a
-    /// read of the cluster's `mysql.*` rows, and writing those rows through
-    /// the session is a separate piece of work from the catalog DDL below.
+    /// An account statement reaches the account seam -- not the catalog
+    /// writer, and not the session's own in-memory table alone -- and what it
+    /// did becomes the cluster's stored accounts.
     #[test]
-    fn account_changes_are_refused_by_name() {
-        let (mut session, _) = open_session();
-        for sql in [
-            "CREATE USER 'bob'@'%'",
-            "GRANT SELECT ON app.t TO 'bob'@'%'",
-            "SET PASSWORD FOR 'bob'@'%' = 'x'",
-        ] {
-            let error = session
-                .execute_write(sql)
-                .expect_err("an account change must be refused");
-            let message = error.message.clone();
-            assert!(
-                message.contains("cannot write them"),
-                "unexpected refusal for {sql}: {message}"
-            );
-        }
-        // A GRANT parses as an administrative statement, so it would otherwise
-        // take the result-set path; the refusal covers that one too.
-        assert!(session
-            .execute("GRANT SELECT ON app.t TO 'bob'@'%'")
-            .is_err());
+    fn an_account_statement_is_persisted_and_then_published() {
+        let (mut session, node) = open_session();
+        session
+            .execute_write("CREATE USER 'bob'@'%' IDENTIFIED BY 'pw'")
+            .expect("the account statement is routed rather than refused");
+        // The cluster stores it, which is the whole point: a node that only
+        // changed its own copy would answer OK about an account nowhere else
+        // has.
+        assert!(
+            node.accounts.stored.user_exists("bob", "%"),
+            "the cluster did not gain the account"
+        );
+        // And the node's live table has it too, so the next connection can log
+        // in as it without waiting for a reload.
+        assert!(node.accounts.live.user_exists("bob", "%"));
         // `CREATE USER` is a DDL node in the parser, so it would otherwise
         // reach the catalog writer; it must not.
+        assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+    }
+
+    /// The failure invariant: a persist that fails leaves neither the cluster
+    /// nor the node's live table changed, and the client is told.
+    #[test]
+    fn a_failed_persist_changes_neither_the_cluster_nor_the_live_table() {
+        let (mut session, node) = open_session();
+        node.accounts.persists.store(false, Ordering::Release);
         let error = session
             .execute_write("CREATE USER 'bob'@'%'")
-            .expect_err("CREATE USER is an account change, not a catalog change");
-        assert!(error.message.contains("CREATE USER"), "{}", error.message);
+            .expect_err("a failed persist must fail the statement");
+        assert!(error.message.contains("rejected"), "{}", error.message);
+        assert!(!node.accounts.stored.user_exists("bob", "%"));
+        assert!(!node.accounts.live.user_exists("bob", "%"));
+        // The connection is left reading the live table, not the scratch copy
+        // the failed statement mutated -- otherwise this session would keep
+        // answering as if the account existed.
+        assert!(session.execute("SHOW GRANTS FOR 'bob'@'%'").is_err());
+    }
+
+    /// A statement the driver itself rejects never reaches storage, and leaves
+    /// the connection reading the live table.
+    #[test]
+    fn a_statement_the_driver_rejects_never_reaches_the_cluster() {
+        let (mut session, node) = open_session();
+        session
+            .execute_write("CREATE USER 'bob'@'%'")
+            .expect("the first CREATE USER succeeds");
+        session
+            .execute_write("CREATE USER 'bob'@'%'")
+            .expect_err("a duplicate account must be refused by the driver");
+        assert!(node.accounts.stored.user_exists("bob", "%"));
     }
 
     /// A stored-schema change the cluster DDL path cannot express keeps a

@@ -33,7 +33,10 @@ use std::sync::{Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use tidb_exec::cluster_privilege_load::{ClusterPrivileges, LoadedUser};
+use tidb_exec::cluster_privilege_load::{
+    ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant,
+    LoadedRoleEdge, LoadedTableGrant, LoadedUser,
+};
 use tidb_exec::real_tikv_privileges::{load_accounts_from_cluster, ClusterAccounts};
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
@@ -208,6 +211,169 @@ pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
     }
 }
 
+/// The cluster rows a registry built by [`registry_from_cluster`] would not
+/// carry, as sentences.
+///
+/// A node that writes its account table BACK into `mysql.*` writes what the
+/// registry holds, so anything the load dropped would be dropped from the
+/// cluster too. That is a silent privilege loss, and the only safe answer is
+/// to refuse the write: this reports every reason to, and an empty answer is
+/// the licence to proceed.
+#[must_use]
+pub fn unwritable_account_rows(loaded: &ClusterPrivileges) -> Vec<String> {
+    let mut reasons: Vec<String> = registry_from_cluster(loaded)
+        .skipped
+        .into_iter()
+        .map(|grant| {
+            format!(
+                "{} grants {} to {}, which this node does not model",
+                grant.source, grant.privilege, grant.account
+            )
+        })
+        .collect();
+    // Go's anonymous-user row is not created at all by the load (this node's
+    // host-matching login path cannot select it), so writing the table back
+    // would delete it from the cluster.
+    if loaded.users.iter().any(|user| user.user.is_empty()) {
+        reasons.push(
+            "mysql.user holds an anonymous ''@'host' row, which this node does not model"
+                .to_owned(),
+        );
+    }
+    reasons
+}
+
+/// Turns a live account table back into the `mysql.*` rows that hold it --
+/// the exact inverse of [`registry_from_cluster`].
+///
+/// Two normalisations are deliberate, because they are what the registry
+/// itself stores rather than what any statement asked for:
+///
+/// * a row whose `plugin` was empty comes back as
+///   [`DEFAULT_AUTH_PLUGIN`], which is the plugin TiDB already treats such a
+///   row as using;
+/// * a `SET`-valued privilege comes back in the element spelling
+///   `mysql.tables_priv` declares, so it round-trips through the loader.
+///
+/// Everything else is the registry's own state, spelled as the loader reads
+/// it. [`unwritable_account_rows`] is the guard that keeps this from being
+/// asked to write a table it could not have loaded faithfully.
+#[must_use]
+pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivileges {
+    let exported = registry.export();
+    ClusterPrivileges {
+        users: exported
+            .users
+            .into_iter()
+            .map(|user| LoadedUser {
+                host: user.host,
+                user: user.user,
+                authentication_string: user.auth_string,
+                plugin: if user.plugin.is_empty() {
+                    DEFAULT_AUTH_PLUGIN.to_owned()
+                } else {
+                    user.plugin
+                },
+                account_locked: user.account_locked,
+                password_expired: user.password_expired,
+                privileges: user.privileges,
+            })
+            .collect(),
+        db_grants: exported
+            .db_grants
+            .into_iter()
+            .map(|grant| LoadedDbGrant {
+                host: grant.host,
+                user: grant.user,
+                database: grant.database,
+                privileges: grant.privileges,
+            })
+            .collect(),
+        table_grants: exported
+            .table_grants
+            .into_iter()
+            .map(|grant| LoadedTableGrant {
+                host: grant.host,
+                user: grant.user,
+                database: grant.database,
+                table: grant.table,
+                privileges: grant
+                    .privileges
+                    .iter()
+                    .map(|name| set_element(name))
+                    .collect(),
+            })
+            .collect(),
+        column_grants: exported
+            .column_grants
+            .into_iter()
+            .map(|grant| LoadedColumnGrant {
+                host: grant.host,
+                user: grant.user,
+                database: grant.database,
+                table: grant.table,
+                column: grant.column,
+                privileges: grant
+                    .privileges
+                    .iter()
+                    .map(|name| set_element(name))
+                    .collect(),
+            })
+            .collect(),
+        dynamic_grants: exported
+            .dynamic_grants
+            .into_iter()
+            .map(|grant| LoadedDynamicGrant {
+                host: grant.host,
+                user: grant.user,
+                privilege: grant.privilege,
+                with_grant_option: grant.with_grant_option,
+            })
+            .collect(),
+        role_edges: exported
+            .role_edges
+            .into_iter()
+            .map(|(role, grantee)| LoadedRoleEdge {
+                role_user: role.0,
+                role_host: role.1,
+                grantee_user: grantee.0,
+                grantee_host: grantee.1,
+            })
+            .collect(),
+        default_roles: exported
+            .default_roles
+            .into_iter()
+            .map(|(owner, role)| LoadedDefaultRole {
+                user: owner.0,
+                host: owner.1,
+                role_user: role.0,
+                role_host: role.1,
+            })
+            .collect(),
+    }
+}
+
+/// The `SET` element spelling one printed privilege takes in
+/// `mysql.tables_priv`/`mysql.columns_priv` -- the inverse of
+/// [`set_element_grant_name`], and the only spelling the loader reads back.
+fn set_element(printed: &str) -> String {
+    if printed == "GRANT OPTION" {
+        return "Grant".to_owned();
+    }
+    let mut element = String::with_capacity(printed.len());
+    for (position, word) in printed.split(' ').enumerate() {
+        if position > 0 {
+            element.push(' ');
+        }
+        let mut characters = word.chars();
+        if let Some(first) = characters.next() {
+            element.push(first);
+            element.extend(characters.map(|character| character.to_ascii_lowercase()));
+        }
+    }
+    element
+}
+
 /// Creates one account row, preserving the distinction Go encodes in
 /// `Account_locked`: a locked, passwordless row IS a role.
 fn create_account(registry: &PrivilegeRegistry, user: &LoadedUser) {
@@ -271,13 +437,14 @@ fn account(user: &str, host: &str) -> Account {
 /// `mysql.*` on a cadence, so a `GRANT`/`CREATE USER`/`DROP USER` a Go node
 /// commits reaches this node without a restart.
 ///
-/// Go source of truth: `pkg/domain/domain.go`'s privilege-reload goroutine,
-/// which re-reads `mysql.*` on a `notifyupdateprivilege` etcd event and on its
-/// own interval. This tier has no etcd notification wired up (the same
-/// documented gap [`tidb_exec::catalog_watch`] states for the schema
-/// catalog), so this is the lease-cadence backstop alone: a re-scan every
-/// `interval`, diffed against nothing and simply applied whole via
-/// [`PrivilegeRegistry::replace_from`].
+/// Go source of truth: `pkg/domain/domain.go`'s `LoadPrivilegeLoop`, which
+/// re-reads `mysql.*` on a `/tidb/privilege` etcd event and on its own
+/// interval. Both halves are here: the tick is what makes the reload
+/// *correct* (it runs whether or not any watch is connected), and
+/// [`Self::waker`] -- driven by [`crate::real_tikv_node::spawn_privilege_watch`]
+/// -- is what makes it *prompt*. Either way the pass re-scans and applies the
+/// cluster's table whole via [`PrivilegeRegistry::replace_from`], diffed
+/// against nothing, exactly as Go's reload rebuilds its handle.
 ///
 /// One-shot loading (`--load-privileges`'s startup read,
 /// [`crate::real_tikv_node::node_accounts`]) already reuses
@@ -293,6 +460,36 @@ pub struct PrivilegeReloader {
 #[derive(Debug, Default)]
 struct PrivilegeReloadSignal {
     shutdown: bool,
+    /// Set by a [`PrivilegeReloadWaker`] so the next wait returns at once and
+    /// runs a pass, instead of sitting out the rest of the interval.
+    nudged: bool,
+}
+
+/// A handle the etcd privilege watch uses to wake the reload thread before its
+/// tick.
+///
+/// Go's `LoadPrivilegeLoop` selects between its `/tidb/privilege` watch channel
+/// and its own timer, and reloads on whichever fires; this is the same
+/// division, with the watch thread doing the nudging and the tick guaranteeing
+/// progress while the watch is disconnected.
+#[derive(Clone, Debug)]
+pub struct PrivilegeReloadWaker {
+    signal: Arc<(Mutex<PrivilegeReloadSignal>, Condvar)>,
+}
+
+impl PrivilegeReloadWaker {
+    /// Asks for one reload pass as soon as the thread can run it.
+    pub fn nudge(&self) {
+        let (lock, condvar) = &*self.signal;
+        {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.nudged = true;
+        }
+        condvar.notify_all();
+    }
 }
 
 #[derive(Debug, Default)]
@@ -399,13 +596,18 @@ impl PrivilegeReloader {
                         Ok(state) => state,
                         Err(poisoned) => poisoned.into_inner(),
                     };
-                    if !state.shutdown {
+                    if !state.shutdown && !state.nudged {
                         state = match condvar.wait_timeout(state, interval) {
                             Ok((state, _)) => state,
                             Err(poisoned) => poisoned.into_inner().0,
                         };
                     }
                     let stopping = state.shutdown;
+                    // Taking the flag here is what makes one nudge one pass:
+                    // a burst of events collapses into the single reload the
+                    // thread is about to run, exactly as Go's own loop batches
+                    // the watch responses it drains before reloading.
+                    state.nudged = false;
                     drop(state);
                     if stopping {
                         return;
@@ -419,6 +621,14 @@ impl PrivilegeReloader {
             stats,
             worker: Some(worker),
         })
+    }
+
+    /// A handle the etcd privilege watch uses to wake this thread.
+    #[must_use]
+    pub fn waker(&self) -> PrivilegeReloadWaker {
+        PrivilegeReloadWaker {
+            signal: Arc::clone(&self.signal),
+        }
     }
 
     /// What the thread has done so far.
@@ -786,6 +996,35 @@ mod tests {
         let stats = reloader.stats();
         assert_eq!(stats.reloads, 2);
         assert_eq!(stats.failures, 0);
+    }
+
+    /// A nudge from the etcd watch runs a pass without waiting out the tick,
+    /// which is the whole reason the watch exists: a `GRANT` a Go TiDB commits
+    /// must reach this node in a round trip, not in an interval.
+    #[test]
+    fn a_nudge_runs_a_reload_pass_without_waiting_for_the_tick() {
+        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        let (sender, receiver) = mpsc::channel();
+        // An interval far longer than this test's patience: only a nudge can
+        // make the pass happen in time, so a waker that did nothing would
+        // fail here rather than pass slowly.
+        let mut reloader = PrivilegeReloader::spawn_with_read(
+            registry.clone(),
+            Duration::from_secs(600),
+            Box::new(move || {
+                let snapshot =
+                    snapshot_with_users(vec![user("granted", "%", "", false, vec!["SELECT"])]);
+                sender.send(()).unwrap();
+                Ok(snapshot)
+            }),
+        )
+        .unwrap();
+        reloader.waker().nudge();
+        receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the nudge must run a pass");
+        reloader.shutdown().unwrap();
+        assert!(registry.has_global_priv("granted", "%", GlobalPriv::Select));
     }
 
     #[test]

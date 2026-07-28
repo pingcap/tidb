@@ -248,7 +248,7 @@ wait_for_go_table rust_made_two ""
 echo "  ok  Go TiDB no longer sees the table the Rust node dropped"
 
 # What this mode still refuses, on purpose: a stored-schema change the cluster
-# DDL path cannot express, and every account change.
+# DDL path cannot express, and a table-scoped GRANT.
 if rust_sql -e "USE conv; ALTER TABLE rust_made ADD COLUMN extra BIGINT;" \
   >"${WORK_DIR}/ddl.out" 2>&1; then
   echo "ALTER was accepted, but this mode must refuse it" >&2
@@ -258,12 +258,87 @@ grep -Fq "CREATE TABLE, DROP TABLE" "${WORK_DIR}/ddl.out" \
   || { echo "ALTER failed for the wrong reason:"; cat "${WORK_DIR}/ddl.out"; exit 1; }
 echo "  ok  ALTER refused by name: $(tail -1 "${WORK_DIR}/ddl.out")"
 
-if rust_sql -e "CREATE USER 'refused'@'%';" >"${WORK_DIR}/account.out" 2>&1; then
-  echo "CREATE USER was accepted, but this mode must refuse it" >&2
+# A table-scoped GRANT still is refused, by name: `mysql.tables_priv` stores
+# its privileges in a SET column the account writer does not encode, and
+# dropping such a grant silently would be far worse than refusing it.
+if rust_sql -e "GRANT SELECT ON conv.orders TO 'appuser'@'%';" \
+  >"${WORK_DIR}/scoped.out" 2>&1; then
+  echo "a table-scoped GRANT was accepted, but this mode must refuse it" >&2
   exit 1
 fi
-grep -Fq "cannot write them" "${WORK_DIR}/account.out" \
-  || { echo "CREATE USER failed for the wrong reason:"; cat "${WORK_DIR}/account.out"; exit 1; }
-echo "  ok  account change refused by name: $(tail -1 "${WORK_DIR}/account.out")"
+grep -Fq "mysql.tables_priv" "${WORK_DIR}/scoped.out" \
+  || { echo "the table-scoped GRANT failed for the wrong reason:"; cat "${WORK_DIR}/scoped.out"; exit 1; }
+echo "  ok  table-scoped GRANT refused by name: $(tail -1 "${WORK_DIR}/scoped.out")"
+
+echo "accounts through the Rust node: the client creates one, the Go TiDB sees it"
+
+# The client CREATEs an account and GRANTs it, through the RUST node. Both go
+# into the cluster's own mysql.* rows through the same 2PC the catalog and the
+# rows use -- so this is a real account, not a copy in one process's memory.
+rust_sql -e "
+  CREATE USER 'rustmade'@'%' IDENTIFIED WITH mysql_native_password BY 'rustpw';
+  GRANT SELECT, INSERT ON *.* TO 'rustmade'@'%';
+"
+
+# The GO TiDB sees it PROMPTLY: the Rust node PUT the privilege-update event on
+# /tidb/privilege, so Go's LoadPrivilegeLoop watch fires rather than waiting out
+# its own 10-minute interval. A minute of patience is generous for a round trip
+# and still far inside that interval, so a pass here cannot be the interval.
+wait_for_go_grant() {
+  local want=$1 started=${SECONDS} deadline=$((SECONDS + 60)) seen
+  while ((SECONDS < deadline)); do
+    seen=$(go_sql -N -B -e "SHOW GRANTS FOR 'rustmade'@'%';" 2>/dev/null | tr '\n' ';')
+    if [[ "${seen}" == *"${want}"* ]]; then
+      echo "  ok  Go TiDB sees the Rust-made grant after $((SECONDS - started))s: ${seen}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "the Go TiDB never saw the Rust-made grant; last saw [${seen}]" >&2
+  return 1
+}
+wait_for_go_grant "GRANT SELECT,INSERT ON *.* TO 'rustmade'@'%'"
+
+# A NEW connection to the Rust node logs in as the account the Rust node just
+# created, which only works if the row is real and the node's live table has it.
+NEW_LOGIN=$("${MYSQL_CLIENT}" "${MYSQL_PLUGIN_ARGS[@]}" -h 127.0.0.1 -P "${RUST_SQL_PORT}" \
+  -u rustmade -prustpw --protocol=TCP -N -B -e "SELECT CURRENT_USER();" | tr '\n' ';')
+expect "a new connection logs in as the Rust-created account" "rustmade@%;" "${NEW_LOGIN}"
+
+# And the Go TiDB accepts the same credential, which is the real proof that the
+# stored authentication_string is the one a Go TiDB computes.
+GO_LOGIN=$("${MYSQL_CLIENT}" "${MYSQL_PLUGIN_ARGS[@]}" -h 127.0.0.1 -P "${GO_SQL_PORT}" \
+  -u rustmade -prustpw --protocol=TCP -N -B -e "SELECT CURRENT_USER();" | tr '\n' ';')
+expect "the Go TiDB accepts the Rust-created account's password" "rustmade@%;" "${GO_LOGIN}"
+
+echo "and the other direction: the Go TiDB grants, the Rust node's watch fires"
+
+# The GO TiDB grants a privilege the Rust node must pick up. Go PUTs the same
+# /tidb/privilege key, and the Rust node's own privilege watch nudges its
+# reloader -- so this must land well inside the reloader's tick, without a
+# restart.
+go_sql -e "GRANT UPDATE ON *.* TO 'rustmade'@'%';"
+wait_for_rust_grant() {
+  local want=$1 started=${SECONDS} deadline=$((SECONDS + 60)) seen
+  while ((SECONDS < deadline)); do
+    seen=$(rust_sql -N -B -e "SHOW GRANTS FOR 'rustmade'@'%';" 2>/dev/null | tr '\n' ';')
+    if [[ "${seen}" == *"${want}"* ]]; then
+      echo "  ok  Rust node's privilege watch fired after $((SECONDS - started))s: ${seen}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "the Rust node never saw the Go-made grant; last saw [${seen}]" >&2
+  return 1
+}
+wait_for_rust_grant "UPDATE"
+grep -F '"event":"privilege_watch_fired"' "${RUST_LOG_FILE}" >/dev/null \
+  || { echo "the Rust node's privilege watch never fired; it only ticked" >&2; exit 1; }
+
+# DROP USER through the Rust node removes the row and every grant row with it.
+rust_sql -e "DROP USER 'rustmade'@'%';"
+DROPPED=$(go_sql -N -B -e \
+  "SELECT COUNT(*) FROM mysql.user WHERE User = 'rustmade';" | tr '\n' ';')
+expect "the Go TiDB no longer stores the dropped account" "0;" "${DROPPED}"
 
 echo "convergence proven: wide SQL, cluster storage, cluster accounts, one node"

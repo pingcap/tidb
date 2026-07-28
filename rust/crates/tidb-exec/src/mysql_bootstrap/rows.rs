@@ -25,19 +25,14 @@
 //!    this bootstrap already used.
 
 use chrono::{Datelike, Timelike};
-use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
-use tidb_codec::{gen_table_record_prefix, Encoder};
-use tidb_datatype::{Collation, Datum, FieldTypeCode, MysqlEnum, Time, TimeType};
+use tidb_codec::gen_table_record_prefix;
+use tidb_datatype::{Datum, Time, TimeType};
 use tidb_meta::{key, value};
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
-use tidb_model::column::ColumnDefaultValue;
 use tidb_model::table_info::TableInfo;
-use tidb_tablecodec::{
-    encode_table_row, generate_index_key, generate_index_value, IndexColumn as CodecIndexColumn,
-    IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn, TableInfo as CodecTableInfo,
-};
 use tidb_txnkv::transaction::OptimisticMutation;
-use tidb_txnkv::{Handle, IntHandle};
+
+use crate::system_row_write::{defaults_row, insert_row, RowEncodeError, NO, YES};
 
 use super::{
     text, BootstrapError, BOOTSTRAPPED_VAR, CLUSTER_ID_VAR, DDL_TABLE_VERSION_VAR,
@@ -73,13 +68,6 @@ pub struct SeedRow {
     /// which reads back as its declared default.
     pub values: Vec<SeedValue>,
 }
-
-/// Go `ast.CurrentTimestamp`, as a column default stores it.
-const CURRENT_TIMESTAMP: &str = "CURRENT_TIMESTAMP";
-
-/// Go's own `Y`/`N` privilege spelling.
-const YES: &str = "Y";
-const NO: &str = "N";
 
 /// The facts about *this* cluster and host that Go's `doDMLWorks` reads out of
 /// its environment rather than out of any constant.
@@ -327,6 +315,7 @@ const GRANTED_PRIVILEGE_COLUMNS: &[&str] = &[
 ];
 
 /// Writes one row's record and every index entry that covers it.
+/// Writes one row's record and every index entry that covers it.
 fn write_row(
     table: &TableInfo,
     row: &SeedRow,
@@ -346,104 +335,35 @@ fn write_row(
     )
     .expect("a seed row count fits in i64")
         + 1;
-    let handle = Handle::Int(IntHandle::new(row_id));
 
     // A seed row names only the columns it cares about, but the stored row
-    // carries *every* column, because that is what an `INSERT` — the statement
-    // Go bootstraps with — produces: each unnamed column is materialised from
+    // carries *every* column, because that is what an `INSERT` -- the statement
+    // Go bootstraps with -- produces: each unnamed column is materialised from
     // its declared default, `CURRENT_TIMESTAMP` included. Leaving a column out
     // instead is what a real TiDB trips on, either as TiKV's "missing data for
     // NOT NULL column" or as a zero time it refuses to convert.
-    let mut column_ids = Vec::with_capacity(table.columns.len());
-    let mut values = Vec::with_capacity(table.columns.len());
-    for column in table.cols() {
-        let named = row
-            .values
-            .iter()
-            .find(|seed| seed.column == column.name.lowercase());
-        let value = match named {
-            Some(seed) => typed_value(&seed.value, column.get_type()),
-            None => declared_default(column, row.table, current_timestamp)?,
-        };
-        column_ids.push(column.id);
-        values.push(value);
-    }
+    let mut values = defaults_row(table, current_timestamp).map_err(encode)?;
     for seed in &row.values {
-        if !table
+        let column = table
             .columns
             .iter()
-            .any(|column| column.name.lowercase() == seed.column)
-        {
-            return Err(BootstrapError::Encode(format!(
-                "mysql.{} has no column `{}` to seed",
-                row.table, seed.column
-            )));
-        }
-    }
-    let encoded = encode_table_row(None, &values, &column_ids, true, None)
-        .map_err(|error| BootstrapError::Encode(error.to_string()))?;
-    mutations.push(OptimisticMutation::insert(
-        encode_row_key_with_handle(table.id, &RecordHandle::Int(row_id)),
-        encoded,
-    )?);
-
-    let codec_table = codec_table_info(table);
-    for (position, index) in table.indices.iter().enumerate() {
-        let codec_index = &codec_table.indices[position];
-        let mut indexed = Vec::with_capacity(index.columns.len());
-        for index_column in &index.columns {
-            let position =
-                usize::try_from(index_column.offset).expect("a column offset is not negative");
-            let column = table.columns.get(position).ok_or_else(|| {
+            .find(|column| column.name.lowercase() == seed.column)
+            .ok_or_else(|| {
                 BootstrapError::Encode(format!(
-                    "mysql.{}'s index `{}` names an offset the table does not have",
-                    row.table,
-                    index.name.original()
+                    "mysql.{} has no column `{}` to seed",
+                    row.table, seed.column
                 ))
             })?;
-            let value = row
-                .values
-                .iter()
-                .find(|seed| seed.column == column.name.lowercase())
-                .map_or(Datum::Null, |seed| {
-                    typed_value(&seed.value, column.get_type())
-                });
-            indexed.push(value);
-        }
-        let (index_key, distinct) = generate_index_key(
-            Encoder::new(true),
-            None,
-            &codec_table,
-            codec_index,
-            table.id,
-            &mut indexed,
-            Some(&handle),
-        )
-        .map_err(|error| BootstrapError::Encode(error.to_string()))?;
-        let index_value = generate_index_value(
-            true,
-            None,
-            &codec_table,
-            codec_index,
-            false,
-            distinct,
-            false,
-            &indexed,
-            &handle,
-            0,
-            &[],
-        )
-        .map_err(|error| BootstrapError::Encode(error.to_string()))?;
-        mutations.push(OptimisticMutation::index_put(index_key, index_value)?);
+        values.insert(column.id, seed.value.clone());
     }
+    mutations.extend(insert_row(table, row_id, &values).map_err(encode)?);
     Ok(())
 }
 
-/// Re-types a seed value for the column it lands in.
-///
-/// Every seed value is written as text here, because that is how Go's own
-/// `INSERT` spells it; a column whose declared type is `ENUM` needs it as the
-/// member it names, not as a string, or the row decodes as the wrong type.
+fn encode(error: RowEncodeError) -> BootstrapError {
+    BootstrapError::Encode(error.to_string())
+}
+
 /// The UTC wall clock as one `TIMESTAMP` value, for
 /// [`BootstrapEnvironment::current_timestamp`].
 ///
@@ -466,132 +386,4 @@ pub fn utc_now_timestamp() -> Time {
         0,
     )
     .expect("the current UTC calendar date is a valid timestamp")
-}
-
-/// The datum one column's declared `DEFAULT` materialises to.
-///
-/// This is what an `INSERT` stores for a column the statement does not name: a
-/// literal default as itself, `CURRENT_TIMESTAMP` as this bootstrap's own
-/// timestamp, and no default at all as `NULL`. An expression default is
-/// refused, because evaluating one is not this bootstrap's job and silently
-/// storing its unevaluated text writes a row a real TiDB rejects.
-fn declared_default(
-    column: &tidb_model::column::ColumnInfo,
-    table: &str,
-    current_timestamp: Time,
-) -> Result<Datum, BootstrapError> {
-    let refuse = || {
-        BootstrapError::Encode(format!(
-            "mysql.{table}.{} declares a default this bootstrap cannot materialise",
-            column.name.original()
-        ))
-    };
-    if column.default_is_expr {
-        return Err(refuse());
-    }
-    // A `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` column stores that very word as
-    // its default: an `INSERT` evaluates it, so a bootstrap that stores the
-    // word instead writes a row TiDB rejects as an `Incorrect time value`.
-    if let Some(ColumnDefaultValue::Str(bytes)) = column.default_value.as_ref() {
-        if String::from_utf8_lossy(bytes).eq_ignore_ascii_case(CURRENT_TIMESTAMP) {
-            return Ok(Datum::new_time(current_timestamp));
-        }
-    }
-    let Some(default) = column.default_value.as_ref() else {
-        // No declared default: an `INSERT` stores NULL, and the column is
-        // nullable or the schema would not have parsed.
-        return Ok(Datum::Null);
-    };
-    let datum = match default {
-        ColumnDefaultValue::Int(value) => Datum::Int(*value),
-        ColumnDefaultValue::Uint(value) => Datum::UInt(*value),
-        ColumnDefaultValue::Bool(value) => Datum::Int(i64::from(*value)),
-        ColumnDefaultValue::Float(value) => Datum::Real(*value),
-        ColumnDefaultValue::Str(bytes) => {
-            let text = Datum::Bytes(bytes.clone());
-            // A numeric column's default is stored as its printed form, so it
-            // has to be read back as a number before it is encoded as one.
-            match column.get_type() {
-                FieldTypeCode::Tiny
-                | FieldTypeCode::Short
-                | FieldTypeCode::Int24
-                | FieldTypeCode::Long
-                | FieldTypeCode::LongLong
-                | FieldTypeCode::Year => {
-                    let printed = String::from_utf8_lossy(bytes);
-                    let parsed = printed.trim().parse::<i64>().map_err(|_| refuse())?;
-                    if column
-                        .field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
-                    {
-                        Datum::UInt(u64::try_from(parsed).map_err(|_| refuse())?)
-                    } else {
-                        Datum::Int(parsed)
-                    }
-                }
-                code => typed_value(&text, code),
-            }
-        }
-    };
-    Ok(datum)
-}
-
-fn typed_value(value: &Datum, code: FieldTypeCode) -> Datum {
-    match (value, code) {
-        (Datum::Bytes(bytes), FieldTypeCode::Enum) => {
-            // Go's `mysql.user` privilege enums are `ENUM('N','Y')`, so `N` is
-            // member 1 and `Y` is member 2.
-            let name = String::from_utf8_lossy(bytes).into_owned();
-            let position = if name.eq_ignore_ascii_case(YES) { 2 } else { 1 };
-            Datum::new_enum(MysqlEnum::new(name, position), Collation::Binary)
-        }
-        _ => value.clone(),
-    }
-}
-
-/// The tablecodec view of one stored `TableInfo`.
-///
-/// `tidb-tablecodec` keeps its own minimal metadata shape so it does not depend
-/// on the full catalog model; the index encoders need this projection of it.
-fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
-    CodecTableInfo {
-        columns: table
-            .columns
-            .iter()
-            .enumerate()
-            .map(|(offset, column)| CodecTableColumn {
-                id: column.id,
-                offset,
-                field_type: column.field_type.clone(),
-                primary_key: column
-                    .field_type
-                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                changing_field_type: None,
-            })
-            .collect(),
-        indices: table
-            .indices
-            .iter()
-            .map(|index| CodecIndexInfo {
-                id: index.id,
-                columns: index
-                    .columns
-                    .iter()
-                    .map(|column| CodecIndexColumn {
-                        offset: usize::try_from(column.offset)
-                            .expect("a column offset is not negative"),
-                        length: i64::from(column.length),
-                        use_changing_type: false,
-                    })
-                    .collect(),
-                unique: index.unique,
-                global: index.global,
-                global_index_version: 0,
-                primary: index.primary,
-            })
-            .collect(),
-        pk_is_handle: table.pk_is_handle,
-        is_common_handle: table.is_common_handle,
-        common_handle_version: u8::try_from(table.common_handle_version).unwrap_or(0),
-    }
 }
