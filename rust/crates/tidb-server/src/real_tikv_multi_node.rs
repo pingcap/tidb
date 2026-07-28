@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
+use tidb_exec::cluster_catalog::LoadedTableRefusal;
 use tidb_exec::{
     configured_inner_join::ConfiguredInnerJoinRecordSet,
     configured_ordered_query::{
@@ -46,8 +47,8 @@ use crate::configured_user_store::ConfiguredUserStore;
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
     configured_catalog, emit_connections_startup_failure, install_remote_publication_observer,
-    observe_real_tikv_query, run_with_process_shutdown, QueryActivity, QueryCompletion,
-    RunConfiguredNodeError,
+    observe_real_tikv_query, refusal_aware_error, run_with_process_shutdown,
+    served_table_descriptor, QueryActivity, QueryCompletion, RunConfiguredNodeError,
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -67,6 +68,11 @@ pub struct RealTiKvMultiSessionFactory {
     activity: Arc<QueryActivity>,
     read_authority_id: u64,
     max_topn_rows: usize,
+    /// Loaded tables the cluster really has, at the same schema-version
+    /// snapshot as `tables`, that this node could not decode. Empty for the
+    /// command-line-only two-table shape, which has no cluster catalog to
+    /// refuse anything from.
+    table_refusals: Arc<Vec<LoadedTableRefusal>>,
 }
 
 impl RealTiKvMultiSessionFactory {
@@ -87,17 +93,51 @@ impl RealTiKvMultiSessionFactory {
             left.clone(),
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok((
-            Self {
-                opener: authority.opener(),
-                transaction_opener: authority.transaction_opener(),
-                tables: [left.clone(), right.clone()],
-                activity: Arc::new(QueryActivity::default()),
-                read_authority_id: authority.read_authority_id(),
-                max_topn_rows: config.max_topn_rows,
-            },
-            authority,
-        ))
+        let factory = Self::from_authority(
+            &authority,
+            [left.clone(), right.clone()],
+            config.max_topn_rows,
+            Vec::new(),
+        );
+        Ok((factory, authority))
+    }
+
+    /// Builds the cloneable two-table session opener over an authority that
+    /// has already bootstrapped PD, RegionCache, and the TiKV transport.
+    ///
+    /// Used both by [`Self::connect`] (the command-line two-table shape, which
+    /// has no cluster catalog and so no refusals) and by the catalog-loaded
+    /// dispatcher, which resolves `tables` and `table_refusals` from the
+    /// cluster's own stored schema before this node is known to be the
+    /// two-table surface.
+    pub(crate) fn from_authority(
+        authority: &ProductionReadProcessAuthority,
+        tables: [tidb_planner::read_only_scan::ConfiguredTable; 2],
+        max_topn_rows: usize,
+        table_refusals: Vec<LoadedTableRefusal>,
+    ) -> Self {
+        Self {
+            opener: authority.opener(),
+            transaction_opener: authority.transaction_opener(),
+            tables,
+            activity: Arc::new(QueryActivity::default()),
+            read_authority_id: authority.read_authority_id(),
+            max_topn_rows,
+            table_refusals: Arc::new(table_refusals),
+        }
+    }
+
+    /// The two tables this node serves, whether described on the command line
+    /// or loaded from the cluster's own catalog.
+    #[must_use]
+    pub fn served_tables(&self) -> &[tidb_planner::read_only_scan::ConfiguredTable; 2] {
+        &self.tables
+    }
+
+    /// Loaded tables this node refuses to serve, with their exact reasons.
+    #[must_use]
+    pub fn table_refusals(&self) -> &[LoadedTableRefusal] {
+        &self.table_refusals
     }
 
     /// Returns the PD cluster identity validated during process bootstrap.
@@ -136,6 +176,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
         Ok(RealTiKvMultiServerSession {
             reader,
             transaction_opener: self.transaction_opener.clone(),
+            table_refusals: Arc::clone(&self.table_refusals),
             context,
             activity: Arc::clone(&self.activity),
             next_query_id: 1,
@@ -148,6 +189,8 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
 pub struct RealTiKvMultiServerSession {
     reader: RealTiKvMultiReadSession<ProductionReadTransport, PdTimestampSource>,
     transaction_opener: RealOptimisticTransactionOpener,
+    /// Loaded-but-unservable tables, consulted when a statement names one.
+    table_refusals: Arc<Vec<LoadedTableRefusal>>,
     context: SessionContext,
     activity: Arc<QueryActivity>,
     next_query_id: u64,
@@ -166,7 +209,8 @@ impl QuerySession for RealTiKvMultiServerSession {
         let cancellation_registration: Arc<dyn ActiveQueryCancellation> = cancellation.clone();
         let cancellation_lease = self.context.cancellation.install(cancellation_registration);
         let catalog = configured_catalog_from_tables(&self.reader)?;
-        let route = prepare_configured_query(sql, &catalog, self.max_topn_rows)?;
+        let route = prepare_configured_query(sql, &catalog, self.max_topn_rows)
+            .map_err(|error| refusal_aware_error(&self.table_refusals, error.message))?;
         if let Some((receipt, input_required)) = route.ordered_plan() {
             emit_ordered_query_plan(
                 self.context.connection_id,
@@ -273,7 +317,7 @@ impl QuerySession for RealTiKvMultiServerSession {
     fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_point_read(sql, &catalog)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
         // Bind placeholder handles only to resolve the result-column metadata;
         // a range template needs one placeholder per marker.
         let metadata_plan = template
@@ -334,7 +378,7 @@ impl QuerySession for RealTiKvMultiServerSession {
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_write(sql, &catalog)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
         Ok(PreparedWrite::new(template))
     }
 
@@ -876,10 +920,38 @@ pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfigured
     );
     let (factory, authority) =
         RealTiKvMultiSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
+    run_bound_multi_node(config, factory, authority, users)
+}
+
+/// Starts the same listener/lifecycle over an already-connected two-table
+/// factory and process authority.
+///
+/// Used both by [`run_configured_multi_node`] (which connects for itself from
+/// the command-line two-table shape) and by the catalog-loaded dispatcher in
+/// the crate root, which must connect once to read the cluster catalog before
+/// it can even know two of its loaded tables are servable.
+pub(crate) fn run_bound_multi_node(
+    config: NodeConfig,
+    factory: RealTiKvMultiSessionFactory,
+    authority: ProductionReadProcessAuthority,
+    users: Arc<ConfiguredUserStore>,
+) -> Result<(), RunConfiguredNodeError> {
     let factory = Arc::new(factory);
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
     let read_authority_id = factory.read_authority_id();
+    let served_tables = factory.served_tables().clone();
+    let refused_descriptors = factory
+        .table_refusals()
+        .iter()
+        .map(|refusal| {
+            format!(
+                "{{\"table\":{:?},\"reason\":{:?}}}",
+                refusal.name, refusal.reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     run_with_process_shutdown(factory, authority, move |factory| {
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
@@ -896,31 +968,13 @@ pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfigured
             emit_connections_startup_failure(&error);
             RunConfiguredNodeError::Signal(error)
         })?;
-        let table_descriptors = config
-            .read_tables
+        let table_descriptors = served_tables
             .iter()
-            .map(|table| {
-                let columns = table
-                    .columns
-                    .iter()
-                    .map(|column| {
-                        format!(
-                            "{}:{}:{}",
-                            column.name,
-                            column.id,
-                            column.kind.descriptor_name()
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                format!(
-                    "{{\"database\":{:?},\"table\":{:?},\"table_id\":{},\"columns\":{:?}}}",
-                    table.database, table.table, table.table_id, columns
-                )
-            })
+            .map(served_table_descriptor)
             .collect::<Vec<_>>()
             .join(",");
         eprintln!(
-            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"tables\":[{table_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
+            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"tables\":[{table_descriptors}],\"refused_tables\":[{refused_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
             config.pd_endpoints.len(),
             config.max_connections,
             users.len(),

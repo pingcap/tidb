@@ -119,9 +119,11 @@ pub use node_config::{
 pub use pipeline_session::{
     MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
+use real_tikv_multi_node::run_bound_multi_node;
 pub use real_tikv_multi_node::{
     run_configured_multi_node, RealTiKvMultiServerSession, RealTiKvMultiSessionFactory,
 };
+use real_tikv_node::{connect_loaded_catalog_authority, run_bound_node, LoadedCatalogAuthority};
 pub use real_tikv_node::{
     run_configured_node as run_single_configured_node, run_with_process_shutdown,
     ProcessReadAuthority, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
@@ -141,15 +143,30 @@ pub use sql_node::{
 
 /// Starts the one configured SQL-node authority for its admitted table shape.
 ///
-/// One table keeps the established single-reader path. Exactly two tables use
-/// the connected same-snapshot join path; no fallback can silently execute a
-/// multi-table query against an in-memory or single-table authority.
+/// One servable table keeps the established single-reader path. Exactly two
+/// servable tables use the connected same-snapshot join path; no fallback can
+/// silently execute a multi-table query against an in-memory or single-table
+/// authority. A command-line-only shape (`--read-table` with no
+/// `--load-table`) still routes purely from its local table count, with no PD
+/// side effect needed to make that decision. A `--load-table` shape cannot be
+/// routed until its schema is read from the cluster's own catalog, so it
+/// connects once and then serves whichever of the single-reader or
+/// connected-join surfaces its servable table count reaches.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    // A `--load-table` schema is not known until the cluster's catalog is read,
-    // which happens inside the single-reader authority's bootstrap; the
-    // two-table join path takes only command-line-described tables.
     if !config.load_tables.is_empty() {
-        return run_single_configured_node(config);
+        let users = std::sync::Arc::new(
+            ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?,
+        );
+        return match connect_loaded_catalog_authority(&config)
+            .map_err(RunConfiguredNodeError::Engine)?
+        {
+            LoadedCatalogAuthority::Single(factory, authority) => {
+                run_bound_node(config, *factory, authority, users)
+            }
+            LoadedCatalogAuthority::Multi(factory, authority) => {
+                run_bound_multi_node(config, *factory, authority, users)
+            }
+        };
     }
     match config.read_tables.len() {
         1 => run_single_configured_node(config),

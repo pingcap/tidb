@@ -123,14 +123,26 @@ impl RealTiKvSessionFactory {
             |transaction_opener| served_table(config, transaction_opener, &mut refusals),
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let factory = Self {
+        let factory = Self::from_authority(&authority, refusals);
+        Ok((factory, authority))
+    }
+
+    /// Builds the cloneable single-table session opener over an authority that
+    /// has already bootstrapped PD, RegionCache, and the TiKV transport, and
+    /// already chose its served table (used both by [`Self::connect`] and by
+    /// the catalog-loaded dispatcher that picks the single-table surface only
+    /// after reading the cluster's own catalog).
+    pub(crate) fn from_authority(
+        authority: &ProductionReadProcessAuthority,
+        table_refusals: Vec<LoadedTableRefusal>,
+    ) -> Self {
+        Self {
             opener: authority.opener(),
             transaction_opener: authority.transaction_opener(),
             query_activity: Arc::new(QueryActivity::default()),
             read_authority_id: authority.read_authority_id(),
-            table_refusals: Arc::new(refusals),
-        };
-        Ok((factory, authority))
+            table_refusals: Arc::new(table_refusals),
+        }
     }
 
     /// Returns the PD cluster identity validated during process bootstrap.
@@ -285,17 +297,19 @@ impl RealTiKvServerSession {
     }
 }
 
-/// Chooses the one table this node serves, reading any `--load-table` schema
-/// from the cluster's own catalog.
+/// Resolves every table this node serves: every command-line `--read-table`
+/// in order, followed by every `--load-table` whose cluster-stored schema
+/// this node can decode, in command-line order.
 ///
 /// A loaded table this node cannot decode is not silently dropped: it is
 /// recorded in `refusals` so a statement naming it is answered with the exact
-/// column and type that blocked it.
-fn served_table(
+/// column and type that blocked it. The cluster catalog is read once, at one
+/// snapshot, even when multiple tables are loaded from it.
+pub(crate) fn served_tables(
     config: &NodeConfig,
     transaction_opener: &RealOptimisticTransactionOpener,
     refusals: &mut Vec<LoadedTableRefusal>,
-) -> Result<ConfiguredTable, String> {
+) -> Result<Vec<ConfiguredTable>, String> {
     let mut tables: Vec<ConfiguredTable> =
         config.read_tables.iter().map(configured_table).collect();
     if !config.load_tables.is_empty() {
@@ -316,6 +330,22 @@ fn served_table(
             }
         }
     }
+    Ok(tables)
+}
+
+/// Chooses the one table this node serves, reading any `--load-table` schema
+/// from the cluster's own catalog.
+///
+/// Kept for the single-table-only connect path: a shape that resolves to more
+/// than one servable table is rejected here with the same message the
+/// pre-flight guard in [`RealTiKvSessionFactory::connect`] gives for a
+/// command-line shape it can already see is wrong.
+fn served_table(
+    config: &NodeConfig,
+    transaction_opener: &RealOptimisticTransactionOpener,
+    refusals: &mut Vec<LoadedTableRefusal>,
+) -> Result<ConfiguredTable, String> {
+    let mut tables = served_tables(config, transaction_opener, refusals)?;
     match tables.len() {
         1 => Ok(tables.remove(0)),
         0 => Err(match refusals.first() {
@@ -328,7 +358,10 @@ fn served_table(
 
 /// Reports a statement that named a loaded-but-unservable table with the exact
 /// reason, instead of the generic unknown-table failure.
-fn refusal_aware_error(refusals: &[LoadedTableRefusal], message: String) -> SqlQueryError {
+pub(crate) fn refusal_aware_error(
+    refusals: &[LoadedTableRefusal],
+    message: String,
+) -> SqlQueryError {
     let lowered = message.to_lowercase();
     for refusal in refusals {
         if lowered.contains(&refusal.name.to_lowercase()) {
@@ -757,7 +790,7 @@ pub(crate) fn configured_catalog(config: &NodeConfig) -> Result<ConfiguredCatalo
 /// the schema comes from the cluster rather than from the command line, and it
 /// can carry scalar types (`BIGINT UNSIGNED`, `DOUBLE`) the command-line
 /// descriptor grammar cannot even express.
-fn served_table_descriptor(table: &ConfiguredTable) -> String {
+pub(crate) fn served_table_descriptor(table: &ConfiguredTable) -> String {
     let columns = table
         .columns()
         .iter()
@@ -796,6 +829,22 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     );
     let (factory, authority) =
         RealTiKvSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
+    run_bound_node(config, factory, authority, users)
+}
+
+/// Starts the same listener/lifecycle over an already-connected factory and
+/// process authority.
+///
+/// Used both by [`run_configured_node`] (which connects for itself) and by the
+/// catalog-loaded dispatcher in the crate root, which must connect once to
+/// read the cluster catalog before it can even know this is the single-table
+/// surface it should serve.
+pub(crate) fn run_bound_node(
+    config: NodeConfig,
+    factory: RealTiKvSessionFactory,
+    authority: ProductionReadProcessAuthority,
+    users: Arc<ConfiguredUserStore>,
+) -> Result<(), RunConfiguredNodeError> {
     let factory = Arc::new(factory);
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
@@ -837,6 +886,75 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         );
         node.run().map_err(RunConfiguredNodeError::Node)
     })
+}
+
+/// Every servable-table outcome a `--load-table` node can settle on, once its
+/// one cluster-catalog snapshot is in hand.
+pub(crate) enum LoadedCatalogAuthority {
+    /// Exactly one servable table: the same single-reader surface a
+    /// command-line one-table node serves.
+    Single(Box<RealTiKvSessionFactory>, ProductionReadProcessAuthority),
+    /// Exactly two servable tables: the same connected-join surface a
+    /// command-line two-table node serves.
+    Multi(
+        Box<crate::real_tikv_multi_node::RealTiKvMultiSessionFactory>,
+        ProductionReadProcessAuthority,
+    ),
+}
+
+/// Connects the one process authority for a `--load-table` node, then routes
+/// on however many of its command-line and loaded tables turned out to be
+/// servable: one table keeps the single-reader surface, two reach the
+/// connected-join surface, and any other count is a startup error.
+///
+/// The route cannot be decided before this connects, because a loaded table's
+/// schema — and therefore whether it is servable at all — is only known after
+/// reading the cluster's own catalog, which this same authority connection
+/// performs.
+pub(crate) fn connect_loaded_catalog_authority(
+    config: &NodeConfig,
+) -> Result<LoadedCatalogAuthority, SqlQueryError> {
+    let mut refusals = Vec::new();
+    let mut resolved: Option<Vec<ConfiguredTable>> = None;
+    let authority = ProductionReadProcessAuthority::connect_with_catalog(
+        config.pd_endpoints.clone(),
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        |transaction_opener| {
+            let tables = served_tables(config, transaction_opener, &mut refusals)?;
+            let primary = tables
+                .first()
+                .cloned()
+                .ok_or_else(|| match refusals.first() {
+                    Some(refusal) => refusal.to_string(),
+                    None => "no table is configured or loaded".to_owned(),
+                })?;
+            resolved = Some(tables);
+            Ok(primary)
+        },
+    )
+    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    let tables = resolved.expect("choose_table ran exactly once and set resolved");
+    match <[ConfiguredTable; 2]>::try_from(tables) {
+        Ok([left, right]) => Ok(LoadedCatalogAuthority::Multi(
+            Box::new(
+                crate::real_tikv_multi_node::RealTiKvMultiSessionFactory::from_authority(
+                    &authority,
+                    [left, right],
+                    config.max_topn_rows,
+                    refusals,
+                ),
+            ),
+            authority,
+        )),
+        Err(tables) if tables.len() == 1 => Ok(LoadedCatalogAuthority::Single(
+            Box::new(RealTiKvSessionFactory::from_authority(&authority, refusals)),
+            authority,
+        )),
+        Err(tables) => Err(SqlQueryError::unknown(format!(
+            "configured SQL node requires one or two servable tables, got {}",
+            tables.len()
+        ))),
+    }
 }
 
 pub(crate) fn emit_connections_startup_failure(error: &impl std::fmt::Display) {

@@ -341,6 +341,71 @@ fn inner_equality_preserves_duplicate_multiplicity_projection_and_metadata_order
     assert!(fixture.result.next_batch(1).unwrap().is_empty());
 }
 
+/// The same `Accounts`/`Orders` shape `tables()` builds by hand, but produced
+/// through the exact path a `--load-table` node uses at startup: Go-shaped
+/// stored `TableInfo` JSON (the same fixture family
+/// `cluster_catalog_loader_source.rs` pins) decoded by
+/// `tidb_meta::value::parse_table_info` and then admitted by
+/// `configure_loaded_table`. This is the evidence that the join dispatcher
+/// runs unchanged over catalog-loaded tables, not only over command-line ones.
+const GO_LOADED_ACCOUNTS_TABLE: &str = r#"{"id":101,"name":{"O":"Accounts","L":"accounts"},"charset":"utf8mb4","collate":"utf8mb4_bin","cols":[
+{"id":11,"name":{"O":"AccountID","L":"accountid"},"offset":0,"type":{"Tp":8,"Flag":3,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2},
+{"id":19,"name":{"O":"Balance","L":"balance"},"offset":1,"type":{"Tp":8,"Flag":1,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2}
+],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":19,"version":5}"#;
+
+const GO_LOADED_ORDERS_TABLE: &str = r#"{"id":202,"name":{"O":"Orders","L":"orders"},"charset":"utf8mb4","collate":"utf8mb4_bin","cols":[
+{"id":7,"name":{"O":"OrderID","L":"orderid"},"offset":0,"type":{"Tp":8,"Flag":3,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2},
+{"id":23,"name":{"O":"AccountID","L":"accountid"},"offset":1,"type":{"Tp":8,"Flag":1,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2},
+{"id":31,"name":{"O":"Amount","L":"amount"},"offset":2,"type":{"Tp":8,"Flag":1,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2}
+],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":31,"version":5}"#;
+
+fn loaded_tables() -> [ConfiguredTable; 2] {
+    let accounts = tidb_meta::value::parse_table_info(GO_LOADED_ACCOUNTS_TABLE.as_bytes(), 9)
+        .expect("Accounts TableInfo decodes");
+    let orders = tidb_meta::value::parse_table_info(GO_LOADED_ORDERS_TABLE.as_bytes(), 9)
+        .expect("Orders TableInfo decodes");
+    [
+        tidb_exec::cluster_catalog::configure_loaded_table("Sales", &accounts)
+            .expect("Accounts is inside the widened read domain"),
+        tidb_exec::cluster_catalog::configure_loaded_table("Sales", &orders)
+            .expect("Orders is inside the widened read domain"),
+    ]
+}
+
+#[test]
+fn inner_equality_join_runs_unchanged_over_catalog_loaded_tables() {
+    // Same assertions as
+    // `inner_equality_preserves_duplicate_multiplicity_projection_and_metadata_order`,
+    // but over `loaded_tables()` instead of the hand-built `tables()`: proof
+    // that the join dispatcher does not care whether its two `ConfiguredTable`s
+    // came from `--read-table` or from a cluster catalog load.
+    let mut fixture = execute_with_tables(
+        loaded_tables(),
+        "SELECT a.Balance AS balance, o.Amount, a.AccountID \
+         FROM Accounts a JOIN Orders o ON o.AccountID = a.AccountID",
+        response(&[&[1, 10], &[2, 20], &[1, 11]]),
+        response(&[&[100, 1, 1000], &[101, 2, 2000], &[102, 1, 1001]]),
+    );
+
+    assert_eq!(fixture.result.snapshot_ts(), Some(6_001));
+    assert_eq!(
+        fixture.result.next_batch(2).unwrap(),
+        vec![
+            vec![Datum::Int(10), Datum::Int(1000), Datum::Int(1)],
+            vec![Datum::Int(10), Datum::Int(1001), Datum::Int(1)],
+        ]
+    );
+    assert_eq!(
+        fixture.result.next_batch(8).unwrap(),
+        vec![
+            vec![Datum::Int(20), Datum::Int(2000), Datum::Int(2)],
+            vec![Datum::Int(11), Datum::Int(1000), Datum::Int(1)],
+            vec![Datum::Int(11), Datum::Int(1001), Datum::Int(1)],
+        ]
+    );
+    assert!(fixture.result.next_batch(1).unwrap().is_empty());
+}
+
 #[test]
 fn required_rows_resume_inside_one_multi_match_left_row_without_overreading() {
     // pkg/executor/join/joiner_test.go:93 TestRequiredRows

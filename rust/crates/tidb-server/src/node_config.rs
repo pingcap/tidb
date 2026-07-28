@@ -56,21 +56,6 @@ pub enum ConfiguredReadColumnKind {
     },
 }
 
-impl ConfiguredReadColumnKind {
-    /// Reconstructs the command-line descriptor field for this kind. A
-    /// `CHAR(N)` column round-trips its length as a fourth `:N` field.
-    pub(crate) fn descriptor_name(self) -> String {
-        match self {
-            Self::ClusteredPrimaryKey => "clustered-pk".to_owned(),
-            Self::StoredNotNull => "stored-not-null".to_owned(),
-            Self::StoredIntNotNull => "stored-int-not-null".to_owned(),
-            Self::StoredCharNotNull { max_length } => {
-                format!("stored-char-not-null:{max_length}")
-            }
-        }
-    }
-}
-
 /// One atomic configured column descriptor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredReadColumn {
@@ -722,21 +707,38 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
 mod tests {
     use super::{parse_column_descriptor, ConfiguredReadColumnKind};
 
-    /// The status-publication descriptor (`descriptor_name`) must round-trip
-    /// back through `parse_column_descriptor` — including the CHAR length —
-    /// so a published node's shape re-parses to the same columns.
+    /// The command-line descriptor field must parse back to the same typed
+    /// kind for every admitted shape, including the CHAR length as a fourth
+    /// `:N` field — the same descriptor strings
+    /// `real_tikv_node::served_table_descriptor` renders for the readiness
+    /// event.
     #[test]
-    fn descriptor_name_round_trips_through_parse() {
-        let kinds = [
-            ConfiguredReadColumnKind::ClusteredPrimaryKey,
-            ConfiguredReadColumnKind::StoredNotNull,
-            ConfiguredReadColumnKind::StoredIntNotNull,
-            ConfiguredReadColumnKind::StoredCharNotNull { max_length: 120 },
-            ConfiguredReadColumnKind::StoredCharNotNull { max_length: 1 },
-            ConfiguredReadColumnKind::StoredCharNotNull { max_length: 255 },
+    fn column_descriptor_strings_round_trip_through_parse() {
+        let cases = [
+            (
+                "clustered-pk",
+                ConfiguredReadColumnKind::ClusteredPrimaryKey,
+            ),
+            ("stored-not-null", ConfiguredReadColumnKind::StoredNotNull),
+            (
+                "stored-int-not-null",
+                ConfiguredReadColumnKind::StoredIntNotNull,
+            ),
+            (
+                "stored-char-not-null:120",
+                ConfiguredReadColumnKind::StoredCharNotNull { max_length: 120 },
+            ),
+            (
+                "stored-char-not-null:1",
+                ConfiguredReadColumnKind::StoredCharNotNull { max_length: 1 },
+            ),
+            (
+                "stored-char-not-null:255",
+                ConfiguredReadColumnKind::StoredCharNotNull { max_length: 255 },
+            ),
         ];
-        for kind in kinds {
-            let descriptor = format!("c:3:{}", kind.descriptor_name());
+        for (descriptor_name, kind) in cases {
+            let descriptor = format!("c:3:{descriptor_name}");
             let parsed = parse_column_descriptor("--read-table", descriptor).unwrap();
             assert_eq!(parsed.name, "c");
             assert_eq!(parsed.id, 3);
