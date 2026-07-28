@@ -4796,6 +4796,151 @@ mod tests {
     /// crate's date/time builtins produce formatted STRINGS, so the reported
     /// column type is `VarString` where TiDB says `DATETIME`. The values
     /// match.
+    /// `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`, `EXTRACT` and
+    /// `TIMESTAMPDIFF` through the CHUNK path, checked against captured TiDB
+    /// output with `time_zone = '+00:00'` (`pkg/executor`, a table holding
+    /// `('2024-01-31 10:20:30', '2024-01-31')` and
+    /// `('2025-03-15 23:59:59', '2025-03-15')` plus an all-NULL row).
+    ///
+    /// The INTERVAL unit is a build-time keyword, not a value, so the
+    /// rewriter records it in the function NAME and the chunk evaluator
+    /// reuses the same `date_add` implementation the row path calls.
+    ///
+    /// DOCUMENTED DIVERGENCE, the same one every other date/time builtin
+    /// here carries: the result is a formatted STRING (`VarString`) where
+    /// TiDB reports `DATE`/`DATETIME`. The values match.
+    #[test]
+    fn date_interval_extract_and_timestampdiff() {
+        let mut session = Session::new();
+        session.apply_set("SET time_zone = '+00:00'").unwrap();
+        session
+            .run("CREATE TABLE t (created VARCHAR(30), d VARCHAR(30))")
+            .unwrap();
+        session
+            .run(
+                "INSERT INTO t VALUES ('2024-01-31 10:20:30', '2024-01-31'), \
+                 ('2025-03-15 23:59:59', '2025-03-15'), (NULL, NULL)",
+            )
+            .unwrap();
+
+        // Captured: DAY arithmetic keeps the time-of-day, HOUR recomputes it
+        // (and rolls the date over), and NULL propagates.
+        assert_eq!(
+            row_text(session.run("SELECT DATE_ADD(created, INTERVAL 1 DAY) FROM t")),
+            [["2024-02-01 10:20:30"], ["2025-03-16 23:59:59"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT DATE_ADD(created, INTERVAL 2 HOUR) FROM t")),
+            [["2024-01-31 12:20:30"], ["2025-03-16 01:59:59"], ["NULL"]]
+        );
+        // Captured: the month-end CLAMP -- January 31 plus one month is
+        // February 29 in a leap year, not March 3.
+        assert_eq!(
+            row_text(session.run("SELECT DATE_ADD(created, INTERVAL 1 MONTH) FROM t")),
+            [["2024-02-29 10:20:30"], ["2025-04-15 23:59:59"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT DATE_SUB(created, INTERVAL 1 DAY) FROM t")),
+            [["2024-01-30 10:20:30"], ["2025-03-14 23:59:59"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT DATE_SUB(created, INTERVAL 1 MONTH) FROM t")),
+            [["2023-12-31 10:20:30"], ["2025-02-15 23:59:59"], ["NULL"]]
+        );
+        // Captured: a date-only column keeps no time component at all.
+        assert_eq!(
+            row_text(session.run("SELECT DATE_SUB(d, INTERVAL 1 MONTH) FROM t")),
+            [["2023-12-31"], ["2025-02-15"], ["NULL"]]
+        );
+
+        // Captured: ADDDATE/SUBDATE's bare-number form is exactly the DAY
+        // interval, and their explicit INTERVAL form agrees with it.
+        assert_eq!(
+            row_text(session.run("SELECT ADDDATE(d, 5), SUBDATE(d, 5) FROM t")),
+            [
+                ["2024-02-05", "2024-01-26"],
+                ["2025-03-20", "2025-03-10"],
+                ["NULL", "NULL"]
+            ]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT ADDDATE(d, INTERVAL 5 DAY) FROM t")),
+            [["2024-02-05"], ["2025-03-20"], ["NULL"]]
+        );
+
+        // Captured: EXTRACT of a simple unit is the same function that unit
+        // already names.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT EXTRACT(YEAR FROM created), EXTRACT(MONTH FROM created), \
+                 EXTRACT(DAY FROM d), EXTRACT(HOUR FROM created) FROM t"
+            )),
+            [
+                ["2024", "1", "31", "10"],
+                ["2025", "3", "15", "23"],
+                ["NULL", "NULL", "NULL", "NULL"]
+            ]
+        );
+
+        // Captured: TIMESTAMPDIFF counts WHOLE units -- January 31 to March 1
+        // is 30 days but only 1 whole month, and a month whose day-of-month
+        // is reached but whose clock time is not counts as 0.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT TIMESTAMPDIFF(DAY, '2024-01-31', '2024-03-01'), \
+                 TIMESTAMPDIFF(MONTH, '2024-01-31', '2024-03-01')"
+            )),
+            [["30", "1"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT TIMESTAMPDIFF(MONTH, '2024-01-31 10:00:00', '2024-02-29 09:00:00'), \
+                 TIMESTAMPDIFF(HOUR, '2024-01-31 10:00:00', '2024-02-01 09:00:00')"
+            )),
+            [["0", "23"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT TIMESTAMPDIFF(YEAR, d, created) FROM t")),
+            [["0"], ["0"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT TIMESTAMPDIFF(DAY, NULL, '2024-01-01')")),
+            [["NULL"]]
+        );
+
+        // Captured: a filter is the same expression in predicate position.
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT d FROM t WHERE created >= DATE_SUB('2025-01-01', INTERVAL 1 MONTH)"
+                )
+            ),
+            [["2025-03-15"]]
+        );
+
+        // Captured: an unparseable calendar date and a NULL amount are both
+        // NULL, not an error.
+        assert_eq!(
+            row_text(session.run("SELECT DATE_ADD('2024-02-30', INTERVAL 1 DAY)")),
+            [["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT DATE_ADD(created, INTERVAL NULL DAY) FROM t LIMIT 1")),
+            [["NULL"]]
+        );
+
+        // REFUSED, not silently wrong: the composite units. Real TiDB reads
+        // `INTERVAL '1:30' HOUR_MINUTE` as +1:30 and `EXTRACT(HOUR_MINUTE
+        // FROM '2024-01-31 10:20:30')` as 1020; neither the row path nor this
+        // one implements a composite unit, so both refuse at build time.
+        assert!(session
+            .run("SELECT DATE_ADD(created, INTERVAL '1:30' HOUR_MINUTE) FROM t")
+            .is_err());
+        assert!(session
+            .run("SELECT EXTRACT(HOUR_MINUTE FROM created) FROM t")
+            .is_err());
+    }
+
     #[test]
     fn date_time_builtins() {
         let mut session = Session::new();

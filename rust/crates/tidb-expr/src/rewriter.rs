@@ -111,6 +111,14 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         ft
     };
     let int = || FieldType::new(FieldTypeCode::LongLong);
+    // `date_add_<unit>`/`date_sub_<unit>` carry the INTERVAL unit in the name
+    // (see the `Expr::Func` arm of `rewrite_expr_resolved`). Real TiDB types
+    // these from the date argument (DATE in, DATE out; DATETIME in, DATETIME
+    // out), which this tier renders as the same formatted string the row path
+    // produces — the documented temporal-as-string divergence.
+    if name.starts_with("date_add_") || name.starts_with("date_sub_") {
+        return Some(text());
+    }
     Some(match name {
         // String in, string out.
         "concat" | "concat_ws" | "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim"
@@ -649,10 +657,90 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 args,
             )))
         }
+        // `EXTRACT(unit FROM value)` is sugar for the SAME single-argument
+        // function `unit` already names, exactly as the AST evaluator treats
+        // it (see `crate::eval_in`'s own `Expr::Extract` arm) — so it is
+        // rewritten into that builtin call and needs no chunk machinery of
+        // its own. A composite unit (`HOUR_MINUTE`, `DAY_SECOND`, ...) names
+        // no such function and is refused by `builtin_return_type` below,
+        // the same refusal the row path makes.
+        Expr::Extract { unit, value } => rewrite_expr_resolved(
+            &Expr::Func {
+                name: unit.clone(),
+                args: vec![(**value).clone()],
+                origin_position: 0,
+            },
+            resolver,
+        ),
+        // `TIMESTAMPDIFF(unit, a, b)`'s unit is a dedicated AST field rather
+        // than an argument expression (see `tidb_ast::Expr::TimestampDiff`),
+        // but the shared implementation `time_fn::dispatch` already takes the
+        // unit as its first VALUE — so the unit becomes a constant argument
+        // and the one implementation runs unchanged.
+        Expr::TimestampDiff { unit, expr1, expr2 } => {
+            let args = vec![
+                constant_string(unit),
+                rewrite_expr_resolved(expr1, resolver)?,
+                rewrite_expr_resolved(expr2, resolver)?,
+            ];
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("timestampdiff"),
+                FieldType::new(FieldTypeCode::LongLong),
+                args,
+            )))
+        }
         // An ordinary builtin call: every argument is evaluated eagerly and
         // the shared `eval_func_values` implementation runs it.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
+            // The `DATE_ADD` family's second argument is an `Expr::Interval`
+            // — a value AND a unit keyword — not an expression the generic
+            // argument loop below can rewrite. The unit is a build-time
+            // choice exactly like a cast's target type, so it travels in the
+            // FUNCTION NAME (`date_add_month`) and the node keeps two
+            // ordinary child expressions; `ScalarFunction::eval` then calls
+            // the same `time_fn::calendar::date_add` the row path uses.
+            // `ADDDATE`/`SUBDATE` are the same shape and the same evaluation
+            // (the parser already normalized their bare-number form to an
+            // `INTERVAL n DAY`), so they map onto the same two names.
+            if matches!(
+                lowered.as_str(),
+                "date_add" | "date_sub" | "adddate" | "subdate"
+            ) {
+                if let [date, Expr::Interval { value, unit }] = args.as_slice() {
+                    let subtract = lowered == "date_sub" || lowered == "subdate";
+                    let unit = unit.to_ascii_uppercase();
+                    // Only the units `date_add` itself implements are built;
+                    // any other (`QUARTER`, the composite `HOUR_MINUTE`, ...)
+                    // is refused here rather than deferred to a runtime error.
+                    if !matches!(
+                        unit.as_str(),
+                        "DAY" | "WEEK" | "MONTH" | "YEAR" | "HOUR" | "MINUTE" | "SECOND"
+                    ) {
+                        return Err(EvalError::Unsupported(
+                            "this INTERVAL unit is not yet built for chunk evaluation",
+                        ));
+                    }
+                    let name = format!(
+                        "{}_{}",
+                        if subtract { "date_sub" } else { "date_add" },
+                        unit.to_ascii_lowercase()
+                    );
+                    let args = vec![
+                        rewrite_expr_resolved(date, resolver)?,
+                        rewrite_expr_resolved(value, resolver)?,
+                    ];
+                    let ret_type =
+                        builtin_return_type(&name, &args).ok_or(EvalError::Unsupported(
+                            "this builtin is not yet built for chunk evaluation",
+                        ))?;
+                    return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(&name),
+                        ret_type,
+                        args,
+                    )));
+                }
+            }
             let rewritten: Vec<Expression> = args
                 .iter()
                 .map(|arg| rewrite_expr_resolved(arg, resolver))

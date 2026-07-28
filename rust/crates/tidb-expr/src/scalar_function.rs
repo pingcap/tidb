@@ -345,6 +345,26 @@ impl ScalarFunction {
                 return crate::cast::eval_cast(&cast_type_of(target, ret_type)?, value);
             }
         }
+        // The `DATE_ADD`/`DATE_SUB` family: the rewriter recorded the INTERVAL
+        // unit in the name (it is a build-time keyword, not a value), so the
+        // two remaining children are ordinary expressions and the shared
+        // `time_fn::calendar::date_add` — the very implementation the AST
+        // evaluator uses — runs them. `ADDDATE`/`SUBDATE` were normalized onto
+        // these same names by the rewriter.
+        if self.args.len() == 2 {
+            let subtract = name.starts_with("date_sub_");
+            if subtract || name.starts_with("date_add_") {
+                let unit = &name["date_add_".len()..];
+                let date = self.args[0].eval(ctx, row)?;
+                let amount = self.args[1].eval(ctx, row)?;
+                return crate::time_fn::calendar::date_add(
+                    unit,
+                    &date,
+                    &amount,
+                    if subtract { -1 } else { 1 },
+                );
+            }
+        }
         // Go `builtinDatabaseSig`/`builtinVersionSig` read session state
         // rather than arguments: the current database (NULL when none is
         // selected) and the same string `@@version` reports.
