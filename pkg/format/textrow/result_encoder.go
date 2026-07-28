@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-<<<<<<<< HEAD:pkg/format/textrow/result_encoder.go
 // Copyright 2013 The Go-MySQL-Driver Authors. All rights reserved.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -35,16 +34,16 @@
 // copies or substantial portions of the Software.
 
 package textrow
-========
-package column
->>>>>>>> f047401745 (format: extract text-protocol value serializer into pkg/format/textrow):pkg/server/internal/column/result_encoder.go
 
 import (
-	"github.com/pingcap/tidb/pkg/format/textrow"
+	"bytes"
+
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
-<<<<<<<< HEAD:pkg/format/textrow/result_encoder.go
 // ResultEncoder encodes a column value to a byte slice.
 type ResultEncoder struct {
 	encoding charset.Encoding
@@ -115,31 +114,6 @@ func (d *ResultEncoder) ColumnCharsetID(dumpCharset uint16, isStringCol bool) ui
 // IsStringColumnType reports whether tp is a non-binary string-like type for
 // text-protocol metadata charset rewriting.
 func IsStringColumnType(tp byte) bool {
-========
-// ResultEncoder encodes a column value to a byte slice. The implementation lives
-// in pkg/format/textrow so it can be shared with the distributed exporter.
-type ResultEncoder = textrow.ResultEncoder
-
-// NewResultEncoder creates a new ResultEncoder.
-var NewResultEncoder = textrow.NewResultEncoder
-
-// columnTypeInfoCharsetID returns the charset ID for the column type info. It
-// stays in the server package because it depends on the server-only Info type.
-func columnTypeInfoCharsetID(d *ResultEncoder, info *Info) uint16 {
-	// Only replace the charset when @@character_set_results is valid and
-	// the target column is a non-binary string.
-	cs := info.dumpCharset()
-	if d.IsResultCharsetNull() || !isStringColumnType(info.Type) {
-		return cs
-	}
-	if cs == mysql.BinaryDefaultCollationID {
-		return mysql.BinaryDefaultCollationID
-	}
-	return uint16(mysql.CharsetNameToID(d.ResultCharsetName()))
-}
-
-func isStringColumnType(tp byte) bool {
->>>>>>>> f047401745 (format: extract text-protocol value serializer into pkg/format/textrow):pkg/server/internal/column/result_encoder.go
 	switch tp {
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,

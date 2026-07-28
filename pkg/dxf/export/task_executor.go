@@ -73,7 +73,7 @@ func (e *exportTaskExecutor) GetStepExecutor(task *proto.Task) (execute.StepExec
 		taskID := strconv.FormatInt(task.ID, 10)
 		return &dumpStepExecutor{
 			taskMeta: taskMeta,
-			store:    e.TaskStore,
+			store:    e.TaskRuntime.Store(),
 			logger:   logutil.BgLogger().With(zap.Int64("task-id", task.ID), zap.String("step", "dump")),
 			// rate() of these counters gives the per-task export speed.
 			rowsCounter:  metrics.ExportRowsCounter.WithLabelValues(taskID),

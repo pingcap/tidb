@@ -60,7 +60,7 @@ func NewExportScheduler(ctx context.Context, task *proto.Task, param scheduler.P
 	return &exportScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
 		ctx:           ctx,
-		store:         param.TaskStore,
+		store:         param.TaskRuntime.Store(),
 		logger:        logutil.BgLogger().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(proto.Export))),
 	}
 }

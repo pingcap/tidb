@@ -64,7 +64,6 @@ type csvEncoder struct {
 	cols   []textrow.ColumnInfo
 	quoted []bool
 	enc    *textrow.ResultEncoder
-	valBuf []byte
 }
 
 func newCSVEncoder(tblName string, colInfos []*model.ColumnInfo) *csvEncoder {
@@ -118,11 +117,10 @@ func (e *csvEncoder) encodeChunk(chk *chunk.Chunk, buf []byte) ([]byte, error) {
 				buf = append(buf, csvNullToken...)
 				continue
 			}
-			val, err := textrow.AppendValueText(e.valBuf[:0], row, i, e.cols[i], e.enc)
+			val, err := textrow.FormatValueText(row, i, e.cols[i], e.enc)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			e.valBuf = val
 			if e.quoted[i] {
 				buf = appendEscaped(buf, val)
 			} else {
