@@ -752,6 +752,21 @@ fn chunk_variable_column_with_trailing_null(live: &[u8]) -> Vec<u8> {
     encoded
 }
 
+/// Encodes one fixed-width `chunk.Column` whose two rows are both `NULL`.
+///
+/// Used for the temporal types, whose live payload is an opaque Go raw value
+/// this fixture has no vector for; the null path never reads those bytes, so
+/// an all-null column proves the bitmap is consulted before any typed decode
+/// is attempted.
+fn chunk_all_null_fixed_column(width: usize) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&2_u32.to_le_bytes());
+    encoded.extend_from_slice(&2_u32.to_le_bytes());
+    encoded.push(0b0000_0000);
+    encoded.extend(std::iter::repeat_n(0xAB_u8, width * 2));
+    encoded
+}
+
 /// Every scalar type this node admits decodes a `NULL` cell from the real
 /// coprocessor chunk layout, and each nullable result column drops
 /// `NotNullFlag` so a client renders the cell as NULL rather than as the
@@ -778,6 +793,12 @@ fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
         chunk_variable_column_with_trailing_null(b"ab"),
         chunk_variable_column_with_trailing_null(b"cd"),
         chunk_fixed_column_with_trailing_null(&decimal_live),
+        // `DATE`/`DATETIME`/`TIMESTAMP` are the 8-byte Go raw time; `TIME` is
+        // 8 bytes of nanoseconds. The 0xAB filler must never be decoded.
+        chunk_all_null_fixed_column(8),
+        chunk_all_null_fixed_column(8),
+        chunk_all_null_fixed_column(8),
+        chunk_all_null_fixed_column(8),
     ];
     let scripted_response =
         chunk_response_result(&columns, Rc::clone(&next_count), Rc::clone(&close_count));
@@ -795,6 +816,10 @@ fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
             ConfiguredColumn::stored_char_not_null("name", 6, 8).nullable(),
             ConfiguredColumn::stored_varchar_not_null("tag", 7, 8, false).nullable(),
             ConfiguredColumn::stored_decimal_not_null("amount", 8, 10, 2).nullable(),
+            ConfiguredColumn::stored_date_not_null("day", 9).nullable(),
+            ConfiguredColumn::stored_datetime_not_null("seen", 10, 0).nullable(),
+            ConfiguredColumn::stored_timestamp_not_null("stamp", 11, 0).nullable(),
+            ConfiguredColumn::stored_duration_not_null("span", 12, 0).nullable(),
         ],
     );
     let mut engine = RealTiKvReadSession::new(
@@ -804,7 +829,10 @@ fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
     );
 
     let query = engine
-        .execute("SELECT id, big, small, visits, score, name, tag, amount FROM test.wide")
+        .execute(
+            "SELECT id, big, small, visits, score, name, tag, amount, day, seen, stamp, span \
+             FROM test.wide",
+        )
         .expect("a nullable projection must reach the transport");
     // The handle keeps `NotNullFlag | PriKeyFlag`; every nullable column
     // reports no flag at all.
@@ -815,7 +843,7 @@ fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
             .iter()
             .map(|column| column.flag)
             .collect::<Vec<_>>(),
-        [3, 0, 0, 0x0020, 0, 0, 0, 0],
+        [3, 0, 0, 0x0020, 0, 0, 0, 0, 0, 0, 0, 0],
         "only the handle keeps NotNullFlag; UnsignedFlag is independent of it"
     );
 
@@ -831,6 +859,10 @@ fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
             Datum::new_collation_string(b"ab".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
             Datum::new_collation_string(b"cd".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
             rows[0][7].clone(),
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
         ]
     );
     assert_eq!(rows[0][7].to_bytes().unwrap(), b"12.34");
@@ -838,6 +870,10 @@ fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
         rows[1],
         vec![
             Datum::Int(8),
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
             Datum::Null,
             Datum::Null,
             Datum::Null,
