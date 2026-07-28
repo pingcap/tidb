@@ -216,7 +216,13 @@ pub struct OptimisticTransactionReceipt {
 }
 
 impl OptimisticTransactionReceipt {
-    pub(super) fn new(
+    /// Starts one transaction's evidence from the facts known at Prewrite: who
+    /// opened it, at which timestamp, under which primary key, and how many
+    /// mutations it admitted. Every physical publication is appended as it
+    /// happens, so a fresh receipt records an attempt that has published
+    /// nothing yet.
+    #[must_use]
+    pub fn new(
         authority_id: u64,
         start_ts: u64,
         primary_key: Vec<u8>,

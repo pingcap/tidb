@@ -29,9 +29,16 @@
 //! optimistic node actually produces and that is verified against the Go source.
 //! Every other same-key transition fails closed ([`MutationBufferError::
 //! UnsupportedCoalesce`]) rather than silently committing a possibly-clobbering
-//! value — read-your-own-writes across two updates of one row, the memdb flag
-//! bookkeeping for insert-then-delete (`Op_CheckNotExists`), and same-key index
-//! rewrites are later slices, not silently-wrong behavior here.
+//! value — the memdb flag bookkeeping for insert-then-delete
+//! (`Op_CheckNotExists`) and same-key index rewrites are later slices, not
+//! silently-wrong behavior here.
+//!
+//! The buffer is also the transaction's own read source: [`Self::staged`] hands
+//! back the entry a key currently carries, which is what makes read-your-own-
+//! writes possible. TiDB reads exactly this way — `txn.Get` consults the
+//! `MemBuffer` before the snapshot — and it is what makes the repeated-update
+//! coalescing below correct rather than clobbering: the second update computed
+//! its new row from the first one's staged value.
 
 use std::collections::BTreeMap;
 
@@ -91,6 +98,16 @@ impl TransactionMutationBuffer {
         self.staged.len()
     }
 
+    /// The entry this transaction currently has staged for `key`, if any.
+    ///
+    /// This is the membuffer half of TiDB's `txn.Get`: a reader inside the
+    /// transaction consults it before falling back to the snapshot at
+    /// `start_ts`, so the transaction observes its own uncommitted writes.
+    #[must_use]
+    pub fn staged(&self, key: &[u8]) -> Option<&OptimisticMutation> {
+        self.staged.get(key)
+    }
+
     /// Stages one mutation, coalescing it with any mutation already staged for
     /// the same key.
     ///
@@ -114,6 +131,15 @@ impl TransactionMutationBuffer {
         }
     }
 
+    /// Every staged entry in ascending key order.
+    ///
+    /// A reader inside the transaction uses this to find which of its own
+    /// uncommitted rows fall in the range it is about to scan, the way Go's
+    /// `UnionScanExec` walks the `MemBuffer` over the scanned key range.
+    pub fn staged_entries(&self) -> impl Iterator<Item = &OptimisticMutation> {
+        self.staged.values()
+    }
+
     /// The coalesced mutations in ascending key order, ready for `commit`.
     #[must_use]
     pub fn into_mutations(self) -> Vec<OptimisticMutation> {
@@ -124,14 +150,30 @@ impl TransactionMutationBuffer {
 /// Coalesces `next` onto the `existing` staged mutation for one key, returning
 /// `None` for a combination this bounded buffer does not model.
 ///
-/// The only modeled combination is a row `DELETE` then `INSERT` of the same key.
-/// TiDB's `AddRecord` checks the key through `GetMemBuffer().GetLocal`/`txn.Get`,
-/// finds the in-transaction delete, and so does **not** set
-/// `flagPresumeKeyNotExists`; `initKeysAndMutations` then emits `Op_Put`, not
-/// `Op_Insert`. The delete already set `kv.AssertExist`, and "only the first
-/// assertion takes effect", so the committed assertion stays `Exist` — which
-/// holds, because the key existed at `start_ts` before the in-transaction delete.
-/// That is exactly [`OptimisticMutationKind::PutExisting`] (`Op_Put` + `Exist`).
+/// Every modeled combination follows one rule of TiDB's `MemBuffer`: the newest
+/// `Set`/`Delete` decides the key's final *value*, while the *assertion* is the
+/// one the first staged entry established ("only the first assertion takes
+/// effect", `memBuffer.UpdateFlags`). The four cases below are exactly the ones
+/// this node's statements can produce.
+///
+/// * `DELETE` then `INSERT` — sysbench's delete-and-reinsert of one id. TiDB's
+///   `AddRecord` checks the key through `GetMemBuffer().GetLocal`/`txn.Get`,
+///   finds the in-transaction delete, and so does **not** set
+///   `flagPresumeKeyNotExists`; `initKeysAndMutations` then emits `Op_Put`, not
+///   `Op_Insert`. The delete already set `kv.AssertExist`, which holds because
+///   the key existed at `start_ts`. That is [`OptimisticMutationKind::
+///   PutExisting`] (`Op_Put` + `Exist`).
+/// * `UPDATE` then `UPDATE` — the later value wins outright. This is safe
+///   precisely because the second statement read the first one's staged row
+///   through [`TransactionMutationBuffer::staged`], so its replacement row was
+///   computed from the value it is overwriting rather than from the stale
+///   snapshot.
+/// * `INSERT` then `UPDATE` — the row is still new to the cluster, so
+///   `flagPresumeKeyNotExists` survives and the committed mutation stays
+///   `Op_Insert` (`AssertNotExist`), carrying the updated value.
+/// * `UPDATE` then `DELETE` — the row existed at `start_ts`, so the final entry
+///   is the plain row delete (`Op_Del` + `Exist`), discarding the intermediate
+///   value that was never published.
 fn coalesce(
     existing: &OptimisticMutation,
     next: &OptimisticMutation,
@@ -142,6 +184,13 @@ fn coalesce(
             // PutExisting; a validation error here can only mean an unmodeled
             // input, which fails closed like any other unsupported combination.
             OptimisticMutation::put_existing(next.key().to_vec(), next.value().to_vec()).ok()
+        }
+        (OptimisticMutationKind::PutExisting, OptimisticMutationKind::PutExisting)
+        | (OptimisticMutationKind::PutExisting, OptimisticMutationKind::Delete) => {
+            Some(next.clone())
+        }
+        (OptimisticMutationKind::Insert, OptimisticMutationKind::PutExisting) => {
+            OptimisticMutation::insert(next.key().to_vec(), next.value().to_vec()).ok()
         }
         _ => None,
     }
@@ -212,20 +261,79 @@ mod tests {
     }
 
     #[test]
-    fn repeated_updates_of_one_key_fail_closed() {
-        // Two updates of one row would need read-your-own-writes (the second
-        // update must observe the first's buffered value). Until that is modeled,
-        // coalescing them silently would risk clobbering, so it fails closed.
+    fn repeated_updates_of_one_key_keep_the_last_value() {
+        // Two UPDATEs of one row in one transaction. The second read the first's
+        // staged row (read-your-own-writes), so its value is the transaction's
+        // final one and one Op_Put carries it.
         let mut buffer = TransactionMutationBuffer::new();
         buffer
             .stage(OptimisticMutation::put_existing(b"row".to_vec(), b"v1".to_vec()).unwrap())
             .unwrap();
+        buffer
+            .stage(OptimisticMutation::put_existing(b"row".to_vec(), b"v2".to_vec()).unwrap())
+            .unwrap();
+        assert_eq!(buffer.staged(b"row").unwrap().value(), b"v2");
+
+        let mutations = buffer.into_mutations();
+        assert_eq!(mutations.len(), 1);
+        assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+        assert_eq!(mutations[0].value(), b"v2");
+    }
+
+    #[test]
+    fn a_new_rows_later_update_still_commits_as_an_insert() {
+        // INSERT then UPDATE of the same new row: the key is still absent in the
+        // cluster, so flagPresumeKeyNotExists survives and the committed
+        // mutation stays Op_Insert while carrying the updated value.
+        let mut buffer = TransactionMutationBuffer::new();
+        buffer
+            .stage(OptimisticMutation::insert(b"row".to_vec(), b"fresh".to_vec()).unwrap())
+            .unwrap();
+        buffer
+            .stage(OptimisticMutation::put_existing(b"row".to_vec(), b"updated".to_vec()).unwrap())
+            .unwrap();
+
+        let mutations = buffer.into_mutations();
+        assert_eq!(mutations.len(), 1);
+        assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
+        assert_eq!(mutations[0].value(), b"updated");
         assert_eq!(
-            buffer
-                .stage(OptimisticMutation::put_existing(b"row".to_vec(), b"v2".to_vec()).unwrap()),
-            Err(MutationBufferError::UnsupportedCoalesce {
-                key: b"row".to_vec()
-            })
+            mutations[0].to_proto().assertion,
+            KvrpcAssertion::NotExist as i32,
+            "the row is still new to the cluster"
+        );
+    }
+
+    #[test]
+    fn updating_then_deleting_an_existing_row_commits_only_the_delete() {
+        let mut buffer = TransactionMutationBuffer::new();
+        buffer
+            .stage(OptimisticMutation::put_existing(b"row".to_vec(), b"v1".to_vec()).unwrap())
+            .unwrap();
+        buffer
+            .stage(OptimisticMutation::delete(b"row".to_vec()).unwrap())
+            .unwrap();
+
+        let mutations = buffer.into_mutations();
+        assert_eq!(mutations.len(), 1);
+        assert_eq!(mutations[0].kind(), OptimisticMutationKind::Delete);
+        assert!(
+            mutations[0].value().is_empty(),
+            "the intermediate value was never published"
+        );
+    }
+
+    #[test]
+    fn an_unstaged_key_reads_as_absent_from_the_buffer() {
+        let mut buffer = TransactionMutationBuffer::new();
+        assert!(buffer.staged(b"row").is_none());
+        buffer
+            .stage(OptimisticMutation::delete(b"row".to_vec()).unwrap())
+            .unwrap();
+        assert_eq!(
+            buffer.staged(b"row").map(OptimisticMutation::kind),
+            Some(OptimisticMutationKind::Delete),
+            "a staged delete is visible to the transaction's own reads"
         );
     }
 

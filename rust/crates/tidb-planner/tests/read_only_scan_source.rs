@@ -8,7 +8,8 @@ use tidb_planner::{
     physical_selection::{ComparisonOp, ComparisonOperand},
     read_only_scan::{
         BoundBigIntComparison, ConfiguredColumn, ConfiguredColumnKind, ConfiguredScalarType,
-        ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
+        ConfiguredTable, ReadLockRequest, ReadLockWait, ReadOnlyScanError, ReadOnlyScanPlan,
+        UnsupportedReadOnlyFeature,
     },
 };
 
@@ -447,4 +448,73 @@ fn chunk_field_type_drives_real_tikv_coprocessor_chunk_decode_per_column() {
     }
     .chunk_field_type();
     assert_eq!(decimal_field.code(), FieldTypeCode::NewDecimal);
+}
+
+#[test]
+fn a_point_select_for_update_carries_its_lock_and_wait_budget() {
+    // `FOR UPDATE` over an exact handle: the plan keeps the clause, and the one
+    // key the statement locks is the point range it already resolved.
+    let plan = ReadOnlyScanPlan::lower(
+        "SELECT balance FROM test.accounts WHERE id = 7 FOR UPDATE",
+        &table(),
+    )
+    .expect("a point locking read is admitted");
+    assert_eq!(
+        plan.lock(),
+        Some(ReadLockRequest {
+            wait: ReadLockWait::Blocking
+        })
+    );
+    let [range] = plan.handle_ranges() else {
+        panic!("an equality on the clustered handle is one point range");
+    };
+    assert_eq!((range.start(), range.end()), (7, 7));
+
+    for (sql, wait) in [
+        (
+            "SELECT balance FROM test.accounts WHERE id = 7 FOR UPDATE NOWAIT",
+            ReadLockWait::NoWait,
+        ),
+        (
+            "SELECT balance FROM test.accounts WHERE id = 7 FOR UPDATE WAIT 3",
+            ReadLockWait::Seconds(3),
+        ),
+    ] {
+        let plan = ReadOnlyScanPlan::lower(sql, &table()).expect("wait budgets are admitted");
+        assert_eq!(plan.lock(), Some(ReadLockRequest { wait }));
+    }
+}
+
+#[test]
+fn an_ordinary_read_carries_no_lock() {
+    let plan = ReadOnlyScanPlan::lower("SELECT balance FROM test.accounts WHERE id = 7", &table())
+        .expect("a plain point read lowers");
+    assert_eq!(plan.lock(), None);
+}
+
+#[test]
+fn a_locking_read_this_node_cannot_honor_fails_closed() {
+    // Every shape below would return rows without the lock the client asked
+    // for, so each is refused rather than silently downgraded.
+    for sql in [
+        // A range would have to lock whatever the scan returned.
+        "SELECT balance FROM test.accounts WHERE id >= 7 FOR UPDATE",
+        // No WHERE at all is the widest range of them all.
+        "SELECT balance FROM test.accounts FOR UPDATE",
+        // A shared lock is a different TiKV lock than PessimisticLock's.
+        "SELECT balance FROM test.accounts WHERE id = 7 FOR SHARE",
+        "SELECT balance FROM test.accounts WHERE id = 7 LOCK IN SHARE MODE",
+        // SKIP LOCKED changes which rows the scan returns.
+        "SELECT balance FROM test.accounts WHERE id = 7 FOR UPDATE SKIP LOCKED",
+        // OF names lock targets this single-relation read cannot resolve.
+        "SELECT balance FROM test.accounts WHERE id = 7 FOR UPDATE OF accounts",
+    ] {
+        assert_eq!(
+            ReadOnlyScanPlan::lower(sql, &table()),
+            Err(ReadOnlyScanError::Unsupported(
+                UnsupportedReadOnlyFeature::LockingRead
+            )),
+            "{sql} must fail closed rather than skip its lock"
+        );
+    }
 }

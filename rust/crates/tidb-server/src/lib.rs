@@ -51,6 +51,7 @@ mod secure_transport;
 mod session_transaction;
 mod sorting_result_set;
 mod sql_node;
+mod transaction_overlay_result_set;
 
 use std::io::Cursor;
 

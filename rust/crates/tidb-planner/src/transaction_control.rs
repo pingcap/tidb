@@ -29,8 +29,14 @@ pub enum TransactionControl {
         /// The mode named by the statement itself.
         mode: TransactionMode,
     },
-    /// `COMMIT` or `ROLLBACK` ending the current transaction.
-    End,
+    /// `COMMIT`: publish the transaction's buffered writes.
+    Commit,
+    /// `ROLLBACK`: discard them, releasing anything the transaction holds.
+    ///
+    /// Kept apart from [`Self::Commit`] because a transaction that buffered
+    /// writes does opposite things for the two, and a read-only transaction
+    /// only *looks* like it does the same thing for both.
+    Rollback,
     /// A transaction-control statement the bounded node cannot honor yet (named
     /// for its diagnostic), e.g. `START TRANSACTION ... AS OF TIMESTAMP`.
     Unsupported(&'static str),
@@ -64,11 +70,11 @@ pub fn classify_transaction_control(sql: &str) -> Option<TransactionControl> {
                 Some(TransactionControl::Begin { mode: begin.mode })
             }
         }
-        SessionStmt::Commit(tidb_ast::CompletionType::Default)
-        | SessionStmt::Rollback {
+        SessionStmt::Commit(tidb_ast::CompletionType::Default) => Some(TransactionControl::Commit),
+        SessionStmt::Rollback {
             savepoint: None,
             completion: tidb_ast::CompletionType::Default,
-        } => Some(TransactionControl::End),
+        } => Some(TransactionControl::Rollback),
         SessionStmt::Commit(completion) if completion != tidb_ast::CompletionType::Default => Some(
             TransactionControl::Unsupported("transaction completion mode"),
         ),
@@ -129,11 +135,11 @@ mod tests {
     fn commit_and_rollback_end_a_transaction() {
         assert_eq!(
             classify_transaction_control("COMMIT"),
-            Some(TransactionControl::End)
+            Some(TransactionControl::Commit)
         );
         assert_eq!(
             classify_transaction_control("rollback"),
-            Some(TransactionControl::End)
+            Some(TransactionControl::Rollback)
         );
     }
 

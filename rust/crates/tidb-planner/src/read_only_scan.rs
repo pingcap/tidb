@@ -889,6 +889,32 @@ pub struct ReadOnlyScanPlan {
     projection_output_offsets: Vec<u32>,
     handle_ranges: Vec<SignedBigIntRange>,
     selection: Option<PhysicalSelectionPlan>,
+    lock: Option<ReadLockRequest>,
+}
+
+/// The row lock a `SELECT ... FOR UPDATE` demands before it returns its rows.
+///
+/// Go plans this as a `PhysicalLock` above the reader, and `SelectLockExec`
+/// locks the handles the scan produced. This bounded node admits the clause
+/// only when every handle it would lock is already fixed by the plan's own
+/// point ranges (see [`UnsupportedReadOnlyFeature::LockingRead`]), so the key
+/// set is known before the scan runs and a `NOWAIT` answer is decided by the
+/// lock attempt rather than by how many rows happened to come back.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadLockRequest {
+    /// How long the statement waits for a conflicting lock owner.
+    pub wait: ReadLockWait,
+}
+
+/// The wait budget a locking read carries, in the SQL clause's own terms.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadLockWait {
+    /// No `NOWAIT`/`WAIT`: block for as long as the statement is allowed to.
+    Blocking,
+    /// `NOWAIT`: fail the statement immediately rather than queue.
+    NoWait,
+    /// `WAIT n`: wait at most `n` seconds.
+    Seconds(u64),
 }
 
 /// One already-bound signed-`BIGINT` column-versus-literal comparison.
@@ -969,6 +995,7 @@ struct ValidatedReadOnlySelect {
     order_by: Vec<PreparedOrderColumn>,
     distinct: bool,
     aggregate: Option<PreparedAggregate>,
+    lock: Option<ReadLockRequest>,
 }
 
 /// One planner-resolved `ORDER BY` column for a prepared read.
@@ -1114,6 +1141,7 @@ pub struct ConfiguredPreparedPointReadTemplate {
     order_by: Vec<PreparedOrderColumn>,
     distinct: bool,
     aggregate: Option<PreparedAggregate>,
+    lock: Option<ReadLockRequest>,
 }
 
 /// One clustered-handle comparison against a parameter marker, retaining the
@@ -1202,6 +1230,10 @@ impl ConfiguredPreparedPointReadTemplate {
                 order_by: Vec::new(),
                 distinct: false,
                 aggregate: None,
+                // The locking clause is parameter-independent but not
+                // executor-side: it belongs to the bound plan, because the
+                // handles it locks are the ones the bound parameters produced.
+                lock: self.lock,
             },
         )
         .map_err(PreparedBindError::ReadOnly)
@@ -1235,6 +1267,7 @@ pub fn lower_prepared_point_read(
         order_by: validated.order_by,
         distinct: validated.distinct,
         aggregate: validated.aggregate,
+        lock: validated.lock,
     })
 }
 
@@ -1371,6 +1404,9 @@ impl ReadOnlyScanPlan {
             order_by: Vec::new(),
             distinct: false,
             aggregate: None,
+            // A join input is one already-bound relation of a larger statement;
+            // the locking clause belongs to the statement, not to this input.
+            lock: None,
         };
         Self::lower_validated(table, validated)
     }
@@ -1500,13 +1536,34 @@ impl ReadOnlyScanPlan {
                 return Err(ReadOnlyScanError::UnexpectedPlannerTask);
             }
         };
+        // A locking read must name every key it locks before it runs, so the
+        // clause is admitted only over exact point handles. A wider range would
+        // have to lock whatever the scan happened to return, which neither the
+        // NOWAIT contract nor the fail-closed boundary here can vouch for.
+        if validated.lock.is_some()
+            && !handle_ranges
+                .iter()
+                .all(|range| range.start() == range.end())
+        {
+            return unsupported(UnsupportedReadOnlyFeature::LockingRead);
+        }
         Ok(Self {
             reader,
             projected_columns,
             projection_output_offsets,
             handle_ranges,
             selection,
+            lock: validated.lock,
         })
+    }
+
+    /// The row lock this statement demands, if it is a `SELECT ... FOR UPDATE`.
+    ///
+    /// The keys to lock are exactly this plan's point [`Self::handle_ranges`],
+    /// which lowering has already restricted to single handles.
+    #[must_use]
+    pub const fn lock(&self) -> Option<ReadLockRequest> {
+        self.lock
     }
 
     /// Returns the exact physical table scan accepted by DAG lowering.
@@ -1655,9 +1712,7 @@ fn validate_select(
     if select.limit.is_some() {
         return unsupported(UnsupportedReadOnlyFeature::Limit);
     }
-    if select.lock.is_some() {
-        return unsupported(UnsupportedReadOnlyFeature::LockingRead);
-    }
+    let lock = validate_select_lock(select.lock.as_ref())?;
     if select.into_outfile.is_some() {
         return unsupported(UnsupportedReadOnlyFeature::IntoOutfile);
     }
@@ -1675,6 +1730,7 @@ fn validate_select(
             order_by: Vec::new(),
             distinct: false,
             aggregate: Some(aggregate),
+            lock,
         });
     }
 
@@ -1720,7 +1776,40 @@ fn validate_select(
         order_by,
         distinct: select.distinct,
         aggregate: None,
+        lock,
     })
+}
+
+/// Admits the locking clause this bounded read can actually honor.
+///
+/// `FOR UPDATE` is the exclusive row lock a pessimistic transaction takes
+/// through `PessimisticLock`, which is the only lock this node can issue.
+/// `FOR SHARE` needs a shared lock TiKV models differently, `SKIP LOCKED`
+/// needs the scan to drop rows it could not lock, and `OF <table>` needs
+/// multi-relation lock targeting — all fail closed rather than silently
+/// returning rows without the lock the client asked for.
+fn validate_select_lock(
+    lock: Option<&tidb_ast::SelectLock>,
+) -> Result<Option<ReadLockRequest>, ReadOnlyScanError> {
+    let Some(lock) = lock else {
+        return Ok(None);
+    };
+    if lock.kind != tidb_ast::LockKind::Update || !lock.of.is_empty() {
+        return Err(ReadOnlyScanError::Unsupported(
+            UnsupportedReadOnlyFeature::LockingRead,
+        ));
+    }
+    let wait = match lock.wait {
+        tidb_ast::LockWait::Default => ReadLockWait::Blocking,
+        tidb_ast::LockWait::NoWait => ReadLockWait::NoWait,
+        tidb_ast::LockWait::Wait(seconds) => ReadLockWait::Seconds(seconds),
+        tidb_ast::LockWait::SkipLocked => {
+            return Err(ReadOnlyScanError::Unsupported(
+                UnsupportedReadOnlyFeature::LockingRead,
+            ));
+        }
+    };
+    Ok(Some(ReadLockRequest { wait }))
 }
 
 /// Resolves the one supported aggregate shape: a single `SUM(<integer column>)`

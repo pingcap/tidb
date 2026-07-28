@@ -611,6 +611,7 @@ pub mod lead_lag;
 mod literal;
 pub mod minmax_deque;
 pub mod mock_global_accessor;
+pub mod multi_statement_transaction;
 pub mod next_io_acc;
 pub mod nextgen_readonly_vars;
 pub mod nontransactional;

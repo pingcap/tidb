@@ -451,6 +451,18 @@ where
         &mut self.two_pc
     }
 
+    /// Surrenders the two-phase commit transaction without committing.
+    ///
+    /// A pessimistic transaction that reaches `COMMIT` or `ROLLBACK` having
+    /// staged no mutation still has to terminate its coordinator truthfully —
+    /// [`RealOptimisticTransaction::finish_without_writes`] is the only state
+    /// transition that says "this transaction published nothing". Release any
+    /// held locks with [`Self::pessimistic_rollback`] first; nothing here does
+    /// it implicitly, because a drop cannot report a failure.
+    pub fn into_two_pc(self) -> RealOptimisticTransaction<C, L, T> {
+        self.two_pc
+    }
+
     fn group(&self, keys: &[Vec<u8>]) -> Result<Vec<RegionKeyBatch>, PessimisticLockFailure> {
         group_keys(self.two_pc.runtime(), keys).map_err(|error| {
             PessimisticLockFailure::Transaction(TransactionCause::Region {

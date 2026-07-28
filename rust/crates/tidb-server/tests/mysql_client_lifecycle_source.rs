@@ -791,11 +791,11 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
     assert_eq!(tracker.failed(), 0);
 }
 
-/// A session that owns only the read-only transaction state machine, faithfully
-/// mirroring `RealTiKvServerSession`: `control_transaction` delegates to the same
-/// classifier plus [`SessionTransaction`], and a text `execute` fails closed
-/// while a transaction is open — proving BEGIN/COMMIT change real session state
-/// rather than merely painting an OK packet.
+/// A session that owns only the transaction state machine, faithfully mirroring
+/// `RealTiKvServerSession`: `control_transaction` delegates to the same
+/// classifier plus [`SessionTransaction`], and a text `execute` reports whether
+/// a transaction is open — proving BEGIN/COMMIT change real session state rather
+/// than merely painting an OK packet.
 #[derive(Default)]
 struct TransactionSession {
     transaction: SessionTransaction,
@@ -805,7 +805,7 @@ impl QuerySession for TransactionSession {
     fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         if self.transaction.is_active() {
             return Err(SqlQueryError::unknown(
-                "COM_QUERY statements inside an explicit transaction are not yet supported",
+                "this test session runs no statement inside a transaction",
             ));
         }
         Err(SqlQueryError::unknown(
@@ -817,11 +817,15 @@ impl QuerySession for TransactionSession {
         match classify_transaction_control(sql) {
             None => Ok(None),
             Some(TransactionControl::Begin { mode }) => {
-                self.transaction.begin(mode);
+                self.transaction
+                    .begin(mode)
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 Ok(Some(true))
             }
-            Some(TransactionControl::End) => {
-                self.transaction.end();
+            Some(control @ (TransactionControl::Commit | TransactionControl::Rollback)) => {
+                self.transaction
+                    .end(control == TransactionControl::Commit)
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 Ok(Some(false))
             }
             Some(TransactionControl::Unsupported(feature)) => Err(SqlQueryError::unknown(format!(

@@ -16,34 +16,30 @@
 //!
 //! Models the `BEGIN`/`START TRANSACTION` ... `COMMIT`/`ROLLBACK` lifecycle a
 //! session carries across statements (Go `pkg/session` `LazyTxn`/`TxnState`).
-//! The bounded read-only slice this owns pins ONE read snapshot for the whole
-//! transaction — acquired lazily on the first read, exactly as TiDB defers the
-//! transaction's `start_ts` to first use — so every read in the transaction
-//! observes the same consistent snapshot instead of a fresh timestamp per
-//! statement. Buffered writes and their commit-time two-phase commit are a
-//! later slice; a write inside a transaction fails closed until then.
+//! The state here is deliberately thin: which mode the client asked for, and —
+//! once a statement actually needs it — the one real transaction every statement
+//! in between runs through, which is owned by
+//! [`MultiStatementTransaction`] in the executor.
 //!
-//! The transaction's mode (`BEGIN PESSIMISTIC` / `BEGIN OPTIMISTIC` /
-//! `@@tidb_txn_mode`) is resolved and recorded here, because it is what the
-//! client asked for. It changes nothing yet: the only statements this slice
-//! admits inside a transaction are reads at the pinned snapshot, which take no
-//! pessimistic locks in either mode, and every locking or writing statement
-//! fails closed rather than silently dropping a lock.
+//! The transaction is opened **lazily**, on the first statement after `BEGIN`
+//! rather than by `BEGIN` itself, exactly as TiDB defers a transaction's
+//! `start_ts` to first use. A `BEGIN; COMMIT;` pair therefore spends no PD
+//! timestamp at all, and every statement in a real transaction shares the one
+//! `start_ts` the first of them took.
 
+use tidb_exec::multi_statement_transaction::{
+    MultiStatementTransaction, TransactionEnd, TransactionStatementError,
+};
 use tidb_planner::txn_mode::{txn_mode_for_begin, SessionTxnMode, TransactionMode};
 
 /// The explicit-transaction state of one session.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Default)]
 pub struct SessionTransaction {
-    /// Whether an explicit transaction is currently open.
-    active: bool,
-    /// The transaction's pinned read snapshot, acquired lazily on its first
-    /// read. `None` while no transaction is open, or before the open
-    /// transaction's first read.
-    snapshot_ts: Option<u64>,
-    /// The mode the open transaction was opened in. `None` while no
-    /// transaction is open.
+    /// The mode the open transaction was opened in. `None` while no transaction
+    /// is open, so it doubles as "is a transaction open".
     mode: Option<SessionTxnMode>,
+    /// The real transaction, present once a statement has needed it.
+    open: Option<MultiStatementTransaction>,
 }
 
 impl SessionTransaction {
@@ -51,39 +47,66 @@ impl SessionTransaction {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            active: false,
-            snapshot_ts: None,
             mode: None,
+            open: None,
         }
     }
 
     /// Opens an explicit transaction for `BEGIN` / `START TRANSACTION`.
     ///
-    /// Re-issuing `BEGIN` while a transaction is already open implicitly ends
-    /// the current one and starts a fresh transaction, matching MySQL — so any
-    /// pinned snapshot is dropped and re-acquired on the next read.
+    /// Re-issuing `BEGIN` while a transaction is already open implicitly
+    /// **commits** the current one and starts a fresh transaction, matching
+    /// MySQL and Go `pkg/session.Session.NewTxn`. The commit is reported, so a
+    /// client whose implicit commit failed is never told the new transaction
+    /// started cleanly.
+    ///
     /// `mode` is the `BEGIN` statement's own keyword. This node has no
     /// `SET`-able session-variable store, so a bare `BEGIN` resolves against
     /// the registry default of `@@tidb_txn_mode`, which is `pessimistic`.
-    pub fn begin(&mut self, mode: TransactionMode) {
-        self.active = true;
-        self.snapshot_ts = None;
+    pub fn begin(&mut self, mode: TransactionMode) -> Result<(), TransactionStatementError> {
+        let previous = self.open.take();
         self.mode = Some(txn_mode_for_begin(
             mode,
             tidb_planner::txn_mode::PESSIMISTIC_TXN_MODE,
         ));
+        match previous {
+            Some(transaction) => transaction.commit().map(|_| ()),
+            None => Ok(()),
+        }
     }
 
     /// Ends the open transaction for `COMMIT` or `ROLLBACK`.
     ///
-    /// A read-only transaction has nothing to publish, so commit and rollback
-    /// are identical here: both release the pinned snapshot and return the
-    /// session to autocommit. `COMMIT`/`ROLLBACK` with no open transaction is a
-    /// no-op, which this expresses by simply clearing already-clear state.
-    pub const fn end(&mut self) {
-        self.active = false;
-        self.snapshot_ts = None;
+    /// The session returns to autocommit either way, including when the
+    /// transaction failed to commit: the transaction is over regardless, and
+    /// leaving it "open" would make the next statement run against a coordinator
+    /// that has already terminated. `COMMIT`/`ROLLBACK` outside a transaction is
+    /// a no-op, which this expresses by simply clearing already-clear state.
+    pub fn end(&mut self, commit: bool) -> Result<TransactionEnd, TransactionStatementError> {
         self.mode = None;
+        let Some(transaction) = self.open.take() else {
+            return Ok(if commit {
+                TransactionEnd::Committed
+            } else {
+                TransactionEnd::RolledBack
+            });
+        };
+        if commit {
+            transaction.commit()
+        } else {
+            transaction.rollback()
+        }
+    }
+
+    /// Abandons the open transaction after a failure that ended it.
+    ///
+    /// A [`TransactionStatementError::Transaction`] means the coordinator is
+    /// finished; keeping it would let the next statement run through a dead
+    /// transaction. The session returns to autocommit, exactly as it would after
+    /// an explicit `ROLLBACK`.
+    pub fn abandon(&mut self) {
+        self.mode = None;
+        self.open = None;
     }
 
     /// The mode the open transaction runs in, if one is open.
@@ -96,140 +119,107 @@ impl SessionTransaction {
     /// advertise `SERVER_STATUS_IN_TRANS`.
     #[must_use]
     pub const fn is_active(&self) -> bool {
-        self.active
+        self.mode.is_some()
     }
 
-    /// Returns the snapshot a read must execute at.
+    /// The already-open real transaction, if a statement has needed one yet.
+    #[must_use]
+    pub const fn opened(&self) -> Option<&MultiStatementTransaction> {
+        self.open.as_ref()
+    }
+
+    /// The already-open real transaction, for a statement that acts on it.
+    pub const fn opened_mut(&mut self) -> Option<&mut MultiStatementTransaction> {
+        self.open.as_mut()
+    }
+
+    /// The real transaction every statement in this session runs through,
+    /// opening it on first use.
     ///
-    /// Inside an explicit transaction this is the pinned transaction snapshot,
-    /// acquired via `acquire` on the first read and reused verbatim for every
-    /// later read so the transaction is snapshot-consistent. Outside a
-    /// transaction it is `None`: each autocommit read takes its own fresh
-    /// snapshot, exactly as before.
-    pub fn read_snapshot<E>(
+    /// Returns `None` outside an explicit transaction, where each statement is
+    /// its own autocommit transaction and takes its own fresh snapshot exactly
+    /// as before.
+    pub fn opened_or_begin<E>(
         &mut self,
-        acquire: impl FnOnce() -> Result<u64, E>,
-    ) -> Result<Option<u64>, E> {
-        if !self.active {
+        begin: impl FnOnce(SessionTxnMode) -> Result<MultiStatementTransaction, E>,
+    ) -> Result<Option<&mut MultiStatementTransaction>, E> {
+        let Some(mode) = self.mode else {
             return Ok(None);
+        };
+        if self.open.is_none() {
+            self.open = Some(begin(mode)?);
         }
-        if let Some(pinned) = self.snapshot_ts {
-            return Ok(Some(pinned));
-        }
-        let acquired = acquire()?;
-        self.snapshot_ts = Some(acquired);
-        Ok(Some(acquired))
+        Ok(self.open.as_mut())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{SessionTransaction, SessionTxnMode, TransactionMode};
-    use std::cell::Cell;
+    use tidb_exec::multi_statement_transaction::MultiStatementTransaction;
 
-    /// A test timestamp source that hands out increasing values and counts how
-    /// many timestamps it issued.
-    struct FakeClock {
-        next: Cell<u64>,
-        issued: Cell<usize>,
-    }
-
-    impl FakeClock {
-        fn new() -> Self {
-            Self {
-                next: Cell::new(1000),
-                issued: Cell::new(0),
-            }
-        }
-
-        fn acquire(&self) -> Result<u64, ()> {
-            self.issued.set(self.issued.get() + 1);
-            let ts = self.next.get();
-            self.next.set(ts + 1);
-            Ok(ts)
-        }
+    /// A begin that must never run, for the paths that take no transaction.
+    fn unreachable_begin(_: SessionTxnMode) -> Result<MultiStatementTransaction, &'static str> {
+        panic!("no transaction may be opened outside an explicit transaction")
     }
 
     #[test]
-    fn a_fresh_session_is_not_in_a_transaction_and_reads_take_fresh_snapshots() {
-        let clock = FakeClock::new();
+    fn a_fresh_session_is_not_in_a_transaction_and_opens_none() {
         let mut txn = SessionTransaction::new();
         assert!(!txn.is_active());
-        // Outside a transaction, every read reports "no pinned snapshot" (take a
-        // fresh one) and none is issued from the pin.
-        assert_eq!(txn.read_snapshot(|| clock.acquire()), Ok(None));
-        assert_eq!(txn.read_snapshot(|| clock.acquire()), Ok(None));
-        assert_eq!(clock.issued.get(), 0);
-    }
-
-    #[test]
-    fn every_read_in_a_transaction_shares_one_lazily_pinned_snapshot() {
-        let clock = FakeClock::new();
-        let mut txn = SessionTransaction::new();
-        txn.begin(TransactionMode::Default);
-        assert!(txn.is_active());
-        // The first read pins the snapshot; later reads reuse it verbatim.
-        let first = txn.read_snapshot(|| clock.acquire()).unwrap();
-        let second = txn.read_snapshot(|| clock.acquire()).unwrap();
-        assert_eq!(first, Some(1000));
-        assert_eq!(second, Some(1000), "reads share one transaction snapshot");
-        assert_eq!(
-            clock.issued.get(),
-            1,
-            "the snapshot is acquired exactly once"
-        );
-    }
-
-    #[test]
-    fn ending_a_transaction_returns_to_fresh_per_read_snapshots() {
-        let clock = FakeClock::new();
-        let mut txn = SessionTransaction::new();
-        txn.begin(TransactionMode::Default);
-        txn.read_snapshot(|| clock.acquire()).unwrap();
-        txn.end();
-        assert!(!txn.is_active());
-        assert_eq!(txn.read_snapshot(|| clock.acquire()), Ok(None));
-    }
-
-    #[test]
-    fn re_beginning_a_transaction_repins_a_new_snapshot() {
-        let clock = FakeClock::new();
-        let mut txn = SessionTransaction::new();
-        txn.begin(TransactionMode::Default);
-        assert_eq!(txn.read_snapshot(|| clock.acquire()).unwrap(), Some(1000));
-        // A second BEGIN implicitly ends the first transaction and starts a new
-        // one, so the next read pins a fresh snapshot.
-        txn.begin(TransactionMode::Default);
-        assert_eq!(txn.read_snapshot(|| clock.acquire()).unwrap(), Some(1001));
-        assert_eq!(clock.issued.get(), 2);
+        assert_eq!(txn.mode(), None);
+        assert!(txn
+            .opened_or_begin(unreachable_begin)
+            .expect("autocommit needs no transaction")
+            .is_none());
     }
 
     #[test]
     fn the_begin_keyword_decides_the_mode_and_ending_clears_it() {
         let mut txn = SessionTransaction::new();
-        assert_eq!(txn.mode(), None);
         // No SET-able variable store here, so a bare BEGIN takes the registry
         // default of @@tidb_txn_mode.
-        txn.begin(TransactionMode::Default);
+        txn.begin(TransactionMode::Default).unwrap();
         assert_eq!(txn.mode(), Some(SessionTxnMode::Pessimistic));
-        txn.begin(TransactionMode::Optimistic);
+        txn.begin(TransactionMode::Optimistic).unwrap();
         assert_eq!(txn.mode(), Some(SessionTxnMode::Optimistic));
-        txn.begin(TransactionMode::Pessimistic);
+        txn.begin(TransactionMode::Pessimistic).unwrap();
         assert_eq!(txn.mode(), Some(SessionTxnMode::Pessimistic));
-        txn.end();
+        txn.end(true).unwrap();
         assert_eq!(txn.mode(), None);
+        assert!(!txn.is_active());
     }
 
     #[test]
-    fn a_snapshot_acquisition_failure_leaves_the_transaction_unpinned() {
+    fn a_transaction_that_never_ran_a_statement_costs_no_timestamp() {
+        // BEGIN alone opens nothing: the coordinator (and its PD timestamp)
+        // appears only when a statement needs it.
         let mut txn = SessionTransaction::new();
-        txn.begin(TransactionMode::Default);
-        // A failed acquisition surfaces and pins nothing, so a later read retries.
-        assert_eq!(
-            txn.read_snapshot(|| Err::<u64, _>("pd unavailable")),
-            Err("pd unavailable")
-        );
-        let clock = FakeClock::new();
-        assert_eq!(txn.read_snapshot(|| clock.acquire()).unwrap(), Some(1000));
+        txn.begin(TransactionMode::Optimistic).unwrap();
+        assert!(txn.is_active());
+        assert!(txn.opened().is_none());
+        txn.end(true)
+            .expect("committing a transaction that never opened is trivial");
+        assert!(!txn.is_active());
+    }
+
+    #[test]
+    fn commit_and_rollback_outside_a_transaction_are_no_ops() {
+        let mut txn = SessionTransaction::new();
+        assert!(txn.end(true).is_ok());
+        assert!(txn.end(false).is_ok());
+        assert!(!txn.is_active());
+    }
+
+    #[test]
+    fn abandoning_a_failed_transaction_returns_the_session_to_autocommit() {
+        let mut txn = SessionTransaction::new();
+        txn.begin(TransactionMode::Pessimistic).unwrap();
+        txn.abandon();
+        assert!(!txn.is_active());
+        assert!(txn
+            .opened_or_begin(unreachable_begin)
+            .expect("an abandoned transaction leaves the session in autocommit")
+            .is_none());
     }
 }

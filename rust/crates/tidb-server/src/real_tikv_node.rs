@@ -25,13 +25,16 @@ use tidb_exec::catalog_watch::{
 };
 use tidb_exec::cluster_catalog::{configure_loaded_table, ClusterCatalog, LoadedTableRefusal};
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
+use tidb_exec::multi_statement_transaction::{
+    MultiStatementTransaction, StagedRowOverlay, TransactionStatementError,
+};
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
 use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
     ProductionReadSessionFactory, ProductionReadTransport, ReadProcessShutdownError,
-    ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadError,
-    RealTiKvReadSession, RealTiKvReadSessionOpener,
+    ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadSession,
+    RealTiKvReadSessionOpener,
 };
 use tidb_planner::aggregation_descriptor::AggregateKind;
 use tidb_planner::prepared_dml::PreparedBindValue;
@@ -55,6 +58,7 @@ use crate::sql_node::{
     QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
     SqlNodeError, SqlQueryError, WriteOutcome,
 };
+use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -359,37 +363,212 @@ impl Drop for QueryActivityLease {
 }
 
 impl RealTiKvServerSession {
-    /// Starts one read at the snapshot its session transaction requires.
-    ///
-    /// Inside an explicit transaction every read runs at the one pinned
-    /// transaction snapshot, so the transaction is snapshot-consistent; a
-    /// contradiction plan is empty at any snapshot and keeps the plain path.
-    /// Outside a transaction each read takes its own fresh snapshot exactly as
-    /// before.
-    fn read_at_transaction_snapshot(
+    /// Opens this session's explicit transaction on first use, if one is open.
+    fn transaction_for_statement(
         &mut self,
+    ) -> Result<Option<&mut MultiStatementTransaction>, SqlQueryError> {
+        // Cloned before the borrow because opening the transaction needs the
+        // session's own opener and table while the transaction state is
+        // mutably borrowed.
+        let opener = self.transaction_opener.clone();
+        let table = self.inner.configured_table().clone();
+        self.transaction
+            .opened_or_begin(|mode| {
+                MultiStatementTransaction::begin(
+                    &opener,
+                    mode,
+                    table,
+                    PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                )
+            })
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))
+    }
+
+    /// Reports one statement failure, ending the transaction when the failure
+    /// ended it.
+    ///
+    /// A pessimistic lock failure (3572 / 1205 / 1213) costs only the statement:
+    /// the transaction stays open and the client may run the next statement in
+    /// it. Anything that ended the transaction leaves the session in autocommit
+    /// rather than pointing at a coordinator that has already terminated.
+    fn report(&mut self, error: &TransactionStatementError) -> SqlQueryError {
+        if !error.keeps_transaction_open() {
+            self.transaction.abandon();
+        }
+        Self::transaction_error(self, error)
+    }
+
+    /// Renders a transaction failure for the client, leaving the session state
+    /// alone — used where the transaction is already known to be over, so that
+    /// `COMMIT`'s own failure still returns the session to autocommit.
+    fn transaction_error(&self, error: &TransactionStatementError) -> SqlQueryError {
+        let sql_error = error.sql_error();
+        SqlQueryError::new(sql_error.code, sql_error.state, sql_error.message.clone())
+    }
+
+    /// Runs one already-lowered read, inside or outside an explicit transaction.
+    ///
+    /// Inside a transaction the read runs at the transaction's own `start_ts`,
+    /// so every statement in it observes one consistent snapshot; a
+    /// `SELECT ... FOR UPDATE` locks its rows first; and a transaction that has
+    /// staged writes reads them back through the union-scan overlay. Outside a
+    /// transaction each read takes its own fresh snapshot exactly as before.
+    fn execute_read<'a>(
+        &'a mut self,
         plan: ReadOnlyScanPlan,
         cancellation: Arc<CancelHandle>,
-    ) -> Result<RealTiKvQuery, RealTiKvReadError> {
+        query_id: u64,
+        cancellation_lease: QueryCancellationLease,
+        query_activity: QueryActivityLease,
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
+        // A contradiction returns no rows at any snapshot and locks nothing, so
+        // it never opens a transaction or touches storage.
         if plan.is_contradiction() {
-            return self
+            let query = self
                 .inner
-                .execute_lowered_plan_with_cancellation(plan, cancellation);
+                .execute_lowered_plan_with_cancellation(plan, cancellation)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            return self.observe(query, query_id, cancellation_lease, query_activity);
         }
-        let snapshot = {
-            let inner = &self.inner;
-            self.transaction
-                .read_snapshot(|| inner.acquire_snapshot_ts())?
+        let lock = plan.lock();
+        let handles = point_handles(&plan);
+        let overlay = if self.transaction_for_statement()?.is_some() {
+            if let Some(lock) = lock {
+                // Lowering admits `FOR UPDATE` only over point handles, so this
+                // key set is the complete one the statement locks.
+                let locked = self
+                    .transaction
+                    .opened_mut()
+                    .expect("the statement's transaction was just opened")
+                    .lock_handles(&handles, lock.wait);
+                if let Err(error) = locked {
+                    return Err(self.report(&error));
+                }
+            }
+            let transaction = self
+                .transaction
+                .opened()
+                .expect("the statement's transaction was just opened");
+            resolve_overlay(transaction, &plan, &handles)?
+        } else {
+            if lock.is_some() {
+                return Err(SqlQueryError::unknown(
+                    "a locking read requires an explicit transaction; an autocommit \
+                     statement releases its locks before the client can use them",
+                ));
+            }
+            None
         };
-        match snapshot {
-            Some(pinned) => self
+        let snapshot = self
+            .transaction
+            .opened()
+            .map(MultiStatementTransaction::start_ts);
+        let query = match snapshot {
+            Some(start_ts) => self
                 .inner
-                .execute_plan_at_snapshot(plan, pinned, cancellation),
+                .execute_plan_at_snapshot(plan, start_ts, cancellation),
             None => self
                 .inner
                 .execute_lowered_plan_with_cancellation(plan, cancellation),
         }
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let result = self.observe(query, query_id, cancellation_lease, query_activity)?;
+        let Some((rows, handles)) = overlay else {
+            return Ok(result);
+        };
+        Ok(QueryResult::new(Box::new(
+            TransactionOverlayResultSet::new(result.into_source(), rows, handles),
+        )))
     }
+
+    fn observe<'a>(
+        &'a mut self,
+        query: RealTiKvQuery,
+        query_id: u64,
+        cancellation_lease: QueryCancellationLease,
+        query_activity: QueryActivityLease,
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
+        let cluster_id = self.inner.cluster_id();
+        let evidence = self.inner.transport_evidence_handle();
+        observe_real_tikv_query(
+            &self.context,
+            query,
+            query_id,
+            cancellation_lease,
+            query_activity,
+            cluster_id,
+            evidence,
+        )
+    }
+
+    /// Allocates this session's next query identity and its activity lease.
+    fn begin_query(&mut self) -> Result<(u64, QueryActivityLease), SqlQueryError> {
+        let query_id = self.next_query_id;
+        self.next_query_id = self
+            .next_query_id
+            .checked_add(1)
+            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
+        let activity = self
+            .query_activity
+            .begin(self.context.connection_id, query_id);
+        Ok((query_id, activity))
+    }
+}
+
+/// The exact clustered handles a plan's point ranges name, empty when any range
+/// covers more than one handle.
+fn point_handles(plan: &ReadOnlyScanPlan) -> Vec<i64> {
+    let ranges = plan.handle_ranges();
+    if ranges.iter().all(|range| range.start() == range.end()) {
+        ranges.iter().map(|range| range.start()).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Builds the read-your-own-writes overlay a read inside a transaction needs,
+/// or `None` when the transaction has staged nothing this read could observe.
+///
+/// A read whose staged rows exist but whose rows cannot be identified — because
+/// neither the clustered key nor a single point handle pins them down — or whose
+/// predicate TiKV evaluates for us and this node cannot evaluate over a staged
+/// row, is refused. Returning the snapshot's pre-transaction rows instead would
+/// silently break read-your-own-writes.
+fn resolve_overlay(
+    transaction: &MultiStatementTransaction,
+    plan: &ReadOnlyScanPlan,
+    point_handles: &[i64],
+) -> Result<Option<(StagedRowOverlay, OverlayHandleSource)>, SqlQueryError> {
+    if !transaction.has_staged_writes() {
+        return Ok(None);
+    }
+    let rows = transaction
+        .read_overlay(plan.projected_columns(), plan.handle_ranges())
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    if plan.selection().is_some() {
+        return Err(SqlQueryError::unknown(
+            "a read inside a transaction that wrote rows cannot apply a pushed-down \
+             predicate to its own uncommitted rows yet",
+        ));
+    }
+    let projected_key = plan
+        .projected_columns()
+        .iter()
+        .position(|column| column.kind() == ConfiguredColumnKind::ClusteredPrimaryKey);
+    let handles = match (projected_key, point_handles) {
+        (Some(offset), _) => OverlayHandleSource::ProjectedAt(offset),
+        (None, [handle]) => OverlayHandleSource::SinglePoint(*handle),
+        (None, _) => {
+            return Err(SqlQueryError::unknown(
+                "a read inside a transaction that wrote rows must project the clustered \
+                 primary key, or name exactly one row, so its own writes can be matched",
+            ));
+        }
+    };
+    Ok(Some((rows, handles)))
 }
 
 /// Resolves every table this node serves: every command-line `--read-table`
@@ -476,40 +655,20 @@ pub(crate) fn refusal_aware_error(
 
 impl QuerySession for RealTiKvServerSession {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        // Text statements inside an explicit transaction are a later slice: the
-        // read-only transaction path pins snapshots for the prepared statements
-        // sysbench uses, and a text data statement here fails closed rather than
-        // silently running at a fresh, non-transactional snapshot.
-        if self.transaction.is_active() {
-            return Err(SqlQueryError::unknown(
-                "COM_QUERY statements inside an explicit transaction are not yet supported",
-            ));
-        }
-        let query_id = self.next_query_id;
-        self.next_query_id = self
-            .next_query_id
-            .checked_add(1)
-            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
-        let query_activity = self
-            .query_activity
-            .begin(self.context.connection_id, query_id);
+        let (query_id, query_activity) = self.begin_query()?;
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
-        let cluster_id = self.inner.cluster_id();
-        let evidence = self.inner.transport_evidence_handle();
-        let refusals = Arc::clone(&self.table_refusals);
-        let query = self
-            .inner
-            .execute_with_cancellation(sql, cancellation)
-            .map_err(|error| refusal_aware_error(&refusals, error.to_string()))?;
-        observe_real_tikv_query(
-            &self.context,
-            query,
+        // Text and prepared reads share one lowering and one execution seam, so
+        // a transaction's snapshot, locks, and read-your-own-writes overlay
+        // apply identically to both.
+        let plan = ReadOnlyScanPlan::lower(sql, self.inner.configured_table())
+            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
+        self.execute_read(
+            plan,
+            cancellation,
             query_id,
             cancellation_lease,
             query_activity,
-            cluster_id,
-            evidence,
         )
     }
 
@@ -544,29 +703,15 @@ impl QuerySession for RealTiKvServerSession {
             .template()
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let query_id = self.next_query_id;
-        self.next_query_id = self
-            .next_query_id
-            .checked_add(1)
-            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
-        let query_activity = self
-            .query_activity
-            .begin(self.context.connection_id, query_id);
+        let (query_id, query_activity) = self.begin_query()?;
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
-        let cluster_id = self.inner.cluster_id();
-        let evidence = self.inner.transport_evidence_handle();
-        let query = self
-            .read_at_transaction_snapshot(plan, cancellation)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let result = observe_real_tikv_query(
-            &self.context,
-            query,
+        let result = self.execute_read(
+            plan,
+            cancellation,
             query_id,
             cancellation_lease,
             query_activity,
-            cluster_id,
-            evidence,
         )?;
         // A SUM has no GROUP BY, so it collapses the whole scan to one row; wrap
         // the observed scan so the fold runs outside the storage-facing observer.
@@ -623,25 +768,26 @@ impl QuerySession for RealTiKvServerSession {
         statement: &PreparedWrite,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
-        // A write commits its own single-statement transaction. Buffering writes
-        // into the session's open transaction and committing them together at
-        // COMMIT is a later slice, so a write inside an explicit transaction
-        // fails closed rather than auto-committing behind the transaction's back.
-        if self.transaction.is_active() {
-            return Err(SqlQueryError::unknown(
-                "writes inside an explicit transaction are not yet supported",
-            ));
-        }
         let bound = statement
             .template()
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let report = commit_configured_write(
-            &self.transaction_opener,
-            &bound,
-            PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        )
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        // Inside an explicit transaction the write is buffered into it and
+        // published only by COMMIT; outside one it commits its own
+        // single-statement transaction exactly as before.
+        let buffered = self
+            .transaction_for_statement()?
+            .map(|transaction| transaction.execute_write(&bound));
+        let report = match buffered {
+            Some(Ok(report)) => report,
+            Some(Err(error)) => return Err(self.report(&error)),
+            None => commit_configured_write(
+                &self.transaction_opener,
+                &bound,
+                PRODUCTION_CONTROL_PLANE_TIMEOUT,
+            )
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+        };
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
             // This node has no auto-increment allocator.
@@ -653,11 +799,19 @@ impl QuerySession for RealTiKvServerSession {
         match classify_transaction_control(sql) {
             None => Ok(None),
             Some(TransactionControl::Begin { mode }) => {
-                self.transaction.begin(mode);
+                // A BEGIN that implicitly commits a previous transaction reports
+                // that commit's failure: the client must not be told the new
+                // transaction started while the old one's writes were lost.
+                self.transaction
+                    .begin(mode)
+                    .map_err(|error| self.transaction_error(&error))?;
                 Ok(Some(true))
             }
-            Some(TransactionControl::End) => {
-                self.transaction.end();
+            Some(control @ (TransactionControl::Commit | TransactionControl::Rollback)) => {
+                let commit = control == TransactionControl::Commit;
+                self.transaction
+                    .end(commit)
+                    .map_err(|error| self.transaction_error(&error))?;
                 Ok(Some(false))
             }
             Some(TransactionControl::Unsupported(feature)) => Err(SqlQueryError::unknown(format!(
