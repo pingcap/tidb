@@ -2399,6 +2399,7 @@ fn substitute_aggregates(
                 kind: AggKind::FirstRow,
                 arg: Some(carrier),
                 distinct: false,
+                order_by: Vec::new(),
             });
             names.push(name.clone());
             types.push(ftype);
@@ -2473,11 +2474,6 @@ fn build_agg_func(
         separator,
     } = expr
     {
-        if !order_by.is_empty() {
-            return Err(DriverError::Unsupported(
-                "GROUP_CONCAT ... ORDER BY is not supported yet",
-            ));
-        }
         let [arg] = args.as_slice() else {
             return Err(DriverError::Unsupported(
                 "multi-argument GROUP_CONCAT is not supported yet",
@@ -2485,6 +2481,14 @@ fn build_agg_func(
         };
         let arg = rewrite_expr_resolved(arg, resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        // The aggregate's own ORDER BY items resolve against the SOURCE row,
+        // the same scope the concatenated argument does.
+        let mut order_items = Vec::with_capacity(order_by.len());
+        for item in order_by {
+            let expr = rewrite_expr_resolved(&item.expr, resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            order_items.push((expr, item.desc));
+        }
         let mut ret_type = FieldType::new(FieldTypeCode::VarString);
         ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
         return Ok((
@@ -2494,6 +2498,7 @@ fn build_agg_func(
                 },
                 arg: Some(arg),
                 distinct: *distinct,
+                order_by: order_items,
             },
             ret_type,
         ));
@@ -2519,6 +2524,7 @@ fn build_agg_func(
             kind,
             arg: Some(arg),
             distinct: *distinct,
+            order_by: Vec::new(),
         },
         ftype,
     ))
@@ -4204,6 +4210,7 @@ fn run_aggregate_select(
                     kind: AggKind::FirstRow,
                     arg: Some(rewritten),
                     distinct: false,
+                    order_by: Vec::new(),
                 });
                 names.push(match other {
                     tidb_ast::Expr::Column(path) => {

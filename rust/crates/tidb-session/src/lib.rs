@@ -3347,10 +3347,8 @@ mod tests {
 
     /// `GROUP_CONCAT`, checked against captured TiDB output.
     ///
-    /// NOT SUPPORTED YET, and refused rather than ignored: the aggregate's
-    /// own `ORDER BY` (which orders rows WITHIN the concatenation, a
-    /// separate scope from the query's own ORDER BY) and the multi-argument
-    /// form that concatenates several values per row.
+    /// NOT SUPPORTED YET, and refused rather than ignored: the
+    /// multi-argument form that concatenates several values per row.
     #[test]
     fn group_concat() {
         let mut session = Session::new();
@@ -3399,10 +3397,26 @@ mod tests {
             [["NULL"]]
         );
 
-        // The refusals are refusals, not wrong answers.
-        assert!(session
-            .run("SELECT GROUP_CONCAT(v ORDER BY v) FROM t")
-            .is_err());
+        // Captured: the aggregate's own ORDER BY orders the rows WITHIN the
+        // concatenation -- a separate scope from the query's ORDER BY.
+        assert_eq!(
+            row_text(
+                session.run("SELECT g, GROUP_CONCAT(v ORDER BY v) FROM t GROUP BY g ORDER BY g")
+            ),
+            [["1", "a,a,b"], ["2", "c"]]
+        );
+        // Captured: it may order by a column the concatenation does not
+        // contain, descending, with its own separator.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, GROUP_CONCAT(v ORDER BY n DESC SEPARATOR '|') FROM t \
+                 GROUP BY g ORDER BY g"
+            )),
+            [["1", "a|b|a"], ["2", "c"]]
+        );
+
+        // The multi-argument form is what is still refused.
+        assert!(session.run("SELECT GROUP_CONCAT(v, n) FROM t").is_err());
     }
 
     /// Prepared-statement parameters: the marker count a PREPARE reports and
@@ -4477,11 +4491,9 @@ mod tests {
         );
 
         // The refusals above are refusals, not wrong answers. (CAST,
-        // GROUP_CONCAT and CURRENT_USER were each this example in turn; all
-        // three work now. GROUP_CONCAT's inner ORDER BY is what is left.)
-        assert!(session
-            .run("SELECT GROUP_CONCAT(b ORDER BY b) FROM t")
-            .is_err());
+        // GROUP_CONCAT, CURRENT_USER and GROUP_CONCAT's inner ORDER BY were
+        // each this example in turn; all of them work now.)
+        assert!(session.run("SELECT GROUP_CONCAT(b, a) FROM t").is_err());
     }
 
     /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is

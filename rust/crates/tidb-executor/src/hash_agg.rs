@@ -84,6 +84,10 @@ pub struct AggFunc {
     /// Go `AggFuncDesc.HasDistinct`: whether repeated input values are counted
     /// once per group.
     pub distinct: bool,
+    /// `GROUP_CONCAT`'s own `ORDER BY`, which orders the rows WITHIN the
+    /// concatenation -- a separate scope from the query's `ORDER BY`. Each
+    /// entry is an expression over the source row and its descending flag.
+    pub order_by: Vec<(Expression, bool)>,
 }
 
 impl AggFunc {
@@ -93,6 +97,7 @@ impl AggFunc {
         AggFunc {
             kind,
             arg,
+            order_by: Vec::new(),
             distinct: false,
         }
     }
@@ -126,7 +131,9 @@ enum Partial {
     /// `GROUP_CONCAT`: the values seen so far, in row order. Go keeps the
     /// same buffer and joins it when the group is finalized.
     GroupConcat {
-        values: Vec<Vec<u8>>,
+        /// Each contributed value with the sort key its row produced; the
+        /// key is empty when the aggregate has no ORDER BY of its own.
+        values: Vec<(Vec<u8>, Vec<Datum>)>,
         separator: String,
     },
 }
@@ -153,7 +160,7 @@ impl AggState {
     /// the datum hash key is that same encoding. A datum with no hash key
     /// (Go's encode error) fails the statement rather than silently counting
     /// twice.
-    fn update(&mut self, value: Option<Datum>) -> Result<(), ExecError> {
+    fn update(&mut self, value: Option<Datum>, sort_key: Vec<Datum>) -> Result<(), ExecError> {
         if let Some(seen) = &mut self.seen {
             let datum = value.clone().unwrap_or(Datum::Null);
             if datum != Datum::Null {
@@ -165,7 +172,7 @@ impl AggState {
                 }
             }
         }
-        self.partial.update(value)
+        self.partial.update(value, sort_key)
     }
 }
 
@@ -216,7 +223,7 @@ impl Partial {
         }
     }
 
-    fn update(&mut self, value: Option<Datum>) -> Result<(), ExecError> {
+    fn update(&mut self, value: Option<Datum>, sort_key: Vec<Datum>) -> Result<(), ExecError> {
         match (self, value) {
             // COUNT(*): every row counts; COUNT(expr): NULL skipped.
             (Partial::Count(n), None) => *n += 1,
@@ -264,7 +271,7 @@ impl Partial {
             }
             (Partial::GroupConcat { .. }, Some(Datum::Null)) => {}
             (Partial::GroupConcat { values, .. }, Some(input)) => {
-                values.push(group_concat_bytes(&input)?);
+                values.push((group_concat_bytes(&input)?, sort_key));
             }
             (Partial::FirstRow(slot), value) => {
                 if slot.is_none() {
@@ -329,14 +336,34 @@ impl Partial {
         Ok(())
     }
 
-    fn finish(&self) -> Datum {
+    fn finish(&self, order_by: &[(Expression, bool)]) -> Datum {
         match self {
             Partial::Count(n) => Datum::Int(*n),
             // An empty group concatenates to NULL, not an empty string.
             Partial::GroupConcat { values, .. } if values.is_empty() => Datum::Null,
             Partial::GroupConcat { values, separator } => {
+                // Go sorts the collected rows by the aggregate's own ORDER BY
+                // before joining them; without one the rows keep arrival
+                // order, which MySQL documents as undefined.
+                let mut values = values.clone();
+                if !order_by.is_empty() {
+                    values.sort_by(|left, right| {
+                        for (position, (_, desc)) in order_by.iter().enumerate() {
+                            let (Some(a), Some(b)) = (left.1.get(position), right.1.get(position))
+                            else {
+                                continue;
+                            };
+                            let ordering =
+                                tidb_expr::compare_datums(a, b).unwrap_or(Ordering::Equal);
+                            if ordering != Ordering::Equal {
+                                return if *desc { ordering.reverse() } else { ordering };
+                            }
+                        }
+                        Ordering::Equal
+                    });
+                }
                 let mut joined = Vec::new();
-                for (index, value) in values.iter().enumerate() {
+                for (index, (value, _)) in values.iter().enumerate() {
                     if index > 0 {
                         joined.extend_from_slice(separator.as_bytes());
                     }
@@ -449,7 +476,14 @@ impl<C: Columns> Executor for HashAggExec<C> {
                         Some(expr) => Some(expr.eval(&self.ctx, row)?),
                         None => None,
                     };
-                    state.update(value)?;
+                    // GROUP_CONCAT's own ORDER BY is evaluated over the same
+                    // source row that produced the value, so the key travels
+                    // with it into the group.
+                    let mut sort_key = Vec::with_capacity(f.order_by.len());
+                    for (expr, _) in &f.order_by {
+                        sort_key.push(expr.eval(&self.ctx, row)?);
+                    }
+                    state.update(value, sort_key)?;
                 }
             }
         }
@@ -459,7 +493,11 @@ impl<C: Columns> Executor for HashAggExec<C> {
         }
         for states in &ordered {
             for (c, state) in states.iter().enumerate() {
-                req.append_datum(c, &state.partial.finish());
+                let order_by = self
+                    .agg_funcs
+                    .get(c)
+                    .map_or(&[][..], |func| func.order_by.as_slice());
+                req.append_datum(c, &state.partial.finish(order_by));
             }
         }
         self.emitted = true;
