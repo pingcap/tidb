@@ -37,6 +37,25 @@ func BenchmarkPacketIOWrite(b *testing.B) {
 	}
 }
 
+func BenchmarkPacketIOWriteRows(b *testing.B) {
+	const rows = 510
+	packet := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	pkt := &PacketIO{bufWriter: bufio.NewWriterSize(io.Discard, defaultWriterSize)}
+	b.ReportAllocs()
+	b.SetBytes(rows * int64(len(packet)))
+	b.ResetTimer()
+	for b.Loop() {
+		for range rows {
+			if err := pkt.WritePacket(packet); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if err := pkt.Flush(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestPacketIOWrite(t *testing.T) {
 	// Test write one packet
 	var outBuffer bytes.Buffer

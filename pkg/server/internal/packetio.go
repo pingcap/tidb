@@ -65,11 +65,12 @@ type PacketIO struct {
 	// maxAllowedPacket is the maximum size of one packet in ReadPacket.
 	maxAllowedPacket uint64
 	// accumulatedLength count the length of totally received 'payload' in ReadPacket.
-	accumulatedLength    uint64
-	compressionAlgorithm int
-	zstdLevel            zstd.EncoderLevel
-	sequence             uint8
-	compressedSequence   uint8
+	accumulatedLength     uint64
+	compressionAlgorithm  int
+	zstdLevel             zstd.EncoderLevel
+	sequence              uint8
+	compressedSequence    uint8
+	pendingOutPacketBytes int
 }
 
 // NewPacketIO creates a new PacketIO with given net.Conn.
@@ -243,7 +244,11 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 // WritePacket writes data that already have header
 func (p *PacketIO) WritePacket(data []byte) error {
 	length := len(data) - 4
-	server_metrics.OutPacketBytes.Add(float64(len(data)))
+	if p.compressionAlgorithm == mysql.CompressionNone {
+		p.pendingOutPacketBytes += len(data)
+	} else {
+		server_metrics.OutPacketBytes.Add(float64(len(data)))
+	}
 
 	maxPayloadLen := mysql.MaxPayloadLen
 
@@ -261,8 +266,10 @@ func (p *PacketIO) WritePacket(data []byte) error {
 			}
 		} else {
 			if n, err := p.bufWriter.Write(data[:4+maxPayloadLen]); err != nil {
+				p.flushOutPacketBytesMetric()
 				return errors.Trace(mysql.ErrBadConn)
 			} else if n != (4 + maxPayloadLen) {
+				p.flushOutPacketBytesMetric()
 				return errors.Trace(mysql.ErrBadConn)
 			}
 		}
@@ -286,9 +293,11 @@ func (p *PacketIO) WritePacket(data []byte) error {
 		return nil
 	}
 	if n, err := p.bufWriter.Write(data); err != nil {
+		p.flushOutPacketBytesMetric()
 		terror.Log(errors.Trace(err))
 		return errors.Trace(mysql.ErrBadConn)
 	} else if n != len(data) {
+		p.flushOutPacketBytesMetric()
 		return errors.Trace(mysql.ErrBadConn)
 	}
 	p.sequence++
@@ -297,6 +306,7 @@ func (p *PacketIO) WritePacket(data []byte) error {
 
 // Flush flushes buffered data to network.
 func (p *PacketIO) Flush() error {
+	p.flushOutPacketBytesMetric()
 	var err error
 	if p.compressionAlgorithm != mysql.CompressionNone {
 		err = p.compressedWriter.Flush()
@@ -311,6 +321,14 @@ func (p *PacketIO) Flush() error {
 		p.sequence = p.compressedSequence
 	}
 	return err
+}
+
+func (p *PacketIO) flushOutPacketBytesMetric() {
+	if p.pendingOutPacketBytes == 0 {
+		return
+	}
+	server_metrics.OutPacketBytes.Add(float64(p.pendingOutPacketBytes))
+	p.pendingOutPacketBytes = 0
 }
 
 func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
