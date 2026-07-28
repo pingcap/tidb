@@ -654,6 +654,72 @@ impl Session {
                         rows,
                     }))
                 }
+                // Go `fetchShowStatus`: one `Variable_name | Value` row per
+                // status variable that `variable.GetStatusVars` collects from
+                // the registered `Statistics` providers, with `GLOBAL` scope
+                // skipping session-only variables.
+                //
+                // This tier serves only `SHOW_STATUS_VARS` (see its doc
+                // comment for what is not modelled). As with the
+                // `ShowVariables` arm above, GLOBAL and SESSION read the same
+                // values here because this tier keeps no persisted global
+                // tier; GLOBAL still drops session-only rows, which the Go
+                // capture confirms (`SHOW GLOBAL STATUS` omits the
+                // `Compression*` family).
+                tidb_ast::AdminStmt::ShowStatus(show) => {
+                    let pattern = match &show.filter {
+                        Some(tidb_ast::ShowStatusFilter::Like(tidb_ast::Expr::String(text))) => {
+                            Some(text.clone())
+                        }
+                        Some(tidb_ast::ShowStatusFilter::Like(_)) => {
+                            return Err(DriverError::Unsupported(
+                                "SHOW STATUS LIKE takes a string pattern",
+                            ))
+                        }
+                        _ => None,
+                    };
+                    let predicate = match &show.filter {
+                        Some(tidb_ast::ShowStatusFilter::Where(expr)) => Some(expr),
+                        _ => None,
+                    };
+                    let text =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    let mut rows = Vec::new();
+                    for &(name, value, session_only) in SHOW_STATUS_VARS {
+                        if show.global && session_only {
+                            continue;
+                        }
+                        if let Some(pattern) = &pattern {
+                            if !tidb_executor::like_match_with_collation(
+                                name,
+                                pattern,
+                                None,
+                                tidb_datatype::Collation::Utf8Mb4Bin,
+                            ) {
+                                continue;
+                            }
+                        }
+                        let row = vec![
+                            Datum::Bytes(name.as_bytes().to_vec()),
+                            Datum::Bytes(value.as_bytes().to_vec()),
+                        ];
+                        // Go plans the WHERE as a selection over the same
+                        // virtual rows, which is what this filter is.
+                        if let Some(predicate) = predicate {
+                            if !show_row_matches(predicate, SHOW_VARIABLE_COLUMNS, &row)? {
+                                continue;
+                            }
+                        }
+                        rows.push(row);
+                    }
+                    Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
+                            (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
+                        ],
+                        rows,
+                    }))
+                }
                 // Go `ShowExec` with `ShowWarnings`/`ShowErrors`: the rows are
                 // the statement-context warnings, whose `Level` column is
                 // `Warning` or `Error`.
@@ -1636,6 +1702,29 @@ fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<
 /// The column names a `SHOW VARIABLES` row carries, which its `WHERE` filter
 /// resolves against.
 const SHOW_VARIABLE_COLUMNS: &[&str; 2] = &["Variable_name", "Value"];
+
+/// The status variables this tier truthfully reports for `SHOW STATUS`, as
+/// `(name, value, session_only)`, in row order.
+///
+/// The values are Go's captured defaults for a plain (no-TLS, no-compression)
+/// connection, which is exactly what this tier is: no wire compression, so
+/// `Compression` is `OFF`, and no TLS, so the `Ssl_*` family is empty/`0`.
+/// The `session_only` flag mirrors Go's `vardef.ScopeSession`, which
+/// `fetchShowStatus` uses to drop rows from `SHOW GLOBAL STATUS`.
+///
+/// NOT modelled (this tier has no metrics/server tier to read them from):
+/// the `Performance_schema_session_connect_attrs_*` counters,
+/// `ddl_schema_version`, `server_id`, `last_plan_binding_update_time`, and
+/// `tidb_keys_examined`.
+const SHOW_STATUS_VARS: &[(&str, &str, bool)] = &[
+    ("Compression", "OFF", true),
+    ("Compression_algorithm", "", true),
+    ("Compression_level", "0", true),
+    ("Ssl_cipher", "", false),
+    ("Ssl_cipher_list", "", false),
+    ("Ssl_verify_mode", "0", false),
+    ("Ssl_version", "", false),
+];
 
 /// A resolver over one row of a virtual `SHOW` result, so the statement's own
 /// `WHERE` can be evaluated against it.
@@ -3810,6 +3899,73 @@ mod tests {
             session.run("SHOW VARIABLES WHERE value = 'ON' AND variable_name LIKE 'auto%'"),
         );
         assert!(both.iter().any(|row| row[0] == "autocommit"), "{both:?}");
+    }
+
+    /// `SHOW STATUS`, checked against captured TiDB output: the columns are
+    /// `Variable_name` and `Value`, `Ssl_cipher` is empty, `Compression` is
+    /// `OFF`, LIKE and WHERE filter the rows, and GLOBAL scope drops the
+    /// session-only `Compression*` family.
+    #[test]
+    fn show_status() {
+        let mut session = Session::new();
+
+        // Captured: COLUMNS [Variable_name Value], ROW [Ssl_cipher ].
+        match session
+            .run_with_columns("SHOW STATUS LIKE 'Ssl_cipher'")
+            .unwrap()
+        {
+            StmtOutput::Rows { columns, rows } => {
+                assert_eq!(
+                    columns
+                        .iter()
+                        .map(|(name, _)| name.as_str())
+                        .collect::<Vec<_>>(),
+                    ["Variable_name", "Value"]
+                );
+                assert_eq!(rows.len(), 1);
+                assert_eq!(datum_text(&rows[0][0]).unwrap(), "Ssl_cipher");
+                assert_eq!(datum_text(&rows[0][1]).unwrap(), "");
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+        // Captured: ROW [Compression OFF].
+        assert_eq!(
+            row_text(session.run("SHOW STATUS LIKE 'Compression'")),
+            [["Compression", "OFF"]]
+        );
+        // Captured: SHOW GLOBAL STATUS LIKE 'Ssl%' lists the whole family.
+        assert_eq!(
+            row_text(session.run("SHOW GLOBAL STATUS LIKE 'Ssl%'")),
+            [
+                ["Ssl_cipher", ""],
+                ["Ssl_cipher_list", ""],
+                ["Ssl_verify_mode", "0"],
+                ["Ssl_version", ""],
+            ]
+        );
+        // Captured: the WHERE form filters the same virtual rows.
+        assert_eq!(
+            row_text(session.run("SHOW STATUS WHERE Variable_name = 'Compression'")),
+            [["Compression", "OFF"]]
+        );
+        // Captured: GLOBAL scope drops the session-only Compression* rows,
+        // and SESSION is the unscoped spelling.
+        let session_rows = row_text(session.run("SHOW SESSION STATUS"));
+        assert!(
+            session_rows.iter().any(|row| row[0] == "Compression"),
+            "{session_rows:?}"
+        );
+        let global_rows = row_text(session.run("SHOW GLOBAL STATUS"));
+        assert!(
+            global_rows
+                .iter()
+                .all(|row| !row[0].starts_with("Compression")),
+            "{global_rows:?}"
+        );
+        assert!(
+            global_rows.iter().any(|row| row[0] == "Ssl_version"),
+            "{global_rows:?}"
+        );
     }
 
     /// The three conflict policies -- `REPLACE`, `INSERT IGNORE` and
