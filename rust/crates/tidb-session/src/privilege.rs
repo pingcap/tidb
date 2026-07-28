@@ -1682,16 +1682,15 @@ pub enum PluginCredential<'a> {
 /// [`DriverError::PasswordFormat`] for an `AS` hash that does not match the
 /// plugin's expected shape (Go's `ErrPasswordFormat`, 1827).
 ///
-/// DEFERRED (documented): `tidb_sm3_password`'s `BY` form, which needs an
-/// SM3 hasher this crate does not have and is refused outright rather than
-/// stored under a fabricated hash. Every other plugin's `BY`/`AS` form,
-/// including `tidb_sm3_password`'s `AS` form (a length check only, no
-/// hashing needed), is captured and implemented exactly -- ORDER matters: an
-/// LDAP plugin's `AS` form stores the `dn` verbatim before the general
-/// empty/length rules apply, but an LDAP plugin's `BY` form is NOT special
-/// (Go's `switch` only special-cases it in the `AS`/plugin-only arm) and
-/// falls to the same native SHA1 hash every other unlisted plugin's `BY`
-/// form does.
+/// Every plugin's `BY`/`AS` form is captured and implemented exactly,
+/// including `tidb_sm3_password`'s `BY` form (hashed with
+/// [`hash_tidb_sm3`], the same SHA-crypt envelope as `caching_sha2_password`
+/// driven by SM3 instead of SHA-256) and its `AS` form (a length check
+/// only, no hashing needed) -- ORDER matters: an LDAP plugin's `AS` form
+/// stores the `dn` verbatim before the general empty/length rules apply,
+/// but an LDAP plugin's `BY` form is NOT special (Go's `switch` only
+/// special-cases it in the `AS`/plugin-only arm) and falls to the same
+/// native SHA1 hash every other unlisted plugin's `BY` form does.
 pub fn encode_password_for_plugin(
     plugin: &str,
     credential: &PluginCredential<'_>,
@@ -1701,10 +1700,7 @@ pub fn encode_password_for_plugin(
             if plugin == AuthCachingSha2Password {
                 Ok(hash_caching_sha2(password))
             } else if plugin == AuthTiDBSM3Password {
-                Err(DriverError::Unsupported(
-                    "IDENTIFIED WITH tidb_sm3_password BY '<password>' needs SM3 hashing, \
-                     not supported yet",
-                ))
+                Ok(hash_tidb_sm3(password))
             } else if plugin == AuthSocket {
                 Ok(String::new())
             } else {
@@ -1778,12 +1774,26 @@ fn hash_caching_sha2(password: &str) -> String {
     )
 }
 
+/// `tidb_sm3_password`'s `IDENTIFIED WITH ... BY '<password>'` hash: the
+/// same SHA-crypt-shaped envelope as `hash_caching_sha2`, but driven by
+/// `tidb_parser::auth::sm3_hash` (Go drives the identical `hashCrypt` with
+/// SM3 instead of SHA-256 for this plugin; see
+/// `pkg/parser/auth/caching_sha2.go`'s `NewHashPassword`).
+fn hash_tidb_sm3(password: &str) -> String {
+    let salt = tidb_util::fastrand::buf(SHA_CRYPT_SALT_LEN as isize);
+    sha_crypt(
+        password,
+        &salt,
+        5 * SHA_CRYPT_ITERATION_MULTIPLIER,
+        tidb_parser::auth::sm3_hash,
+    )
+}
+
 /// Go `pkg/parser/auth.hashCrypt`, ported 1:1 (see the numbered steps in
 /// Go's own comment referencing the akkadia.org SHA-crypt description).
-/// `hash` must be a 32-byte digest function (SHA-256 for
-/// `caching_sha2_password`; Go also drives this with SM3 for
-/// `tidb_sm3_password`, which this port does not implement -- see
-/// [`encode_password_for_plugin`]'s deferral note).
+/// `hash` must be a 32-byte digest function: SHA-256 for
+/// `caching_sha2_password` ([`hash_caching_sha2`]), SM3 for
+/// `tidb_sm3_password` ([`hash_tidb_sm3`]).
 fn sha_crypt(
     plaintext: &str,
     salt: &[u8],
@@ -2202,11 +2212,22 @@ mod tests {
     }
 
     #[test]
-    fn sm3_by_form_is_deferred_rather_than_fabricated() {
-        assert!(matches!(
-            encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("pw")),
-            Err(DriverError::Unsupported(_))
-        ));
+    fn sm3_by_form_hashes_and_verifies() {
+        let stored =
+            encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("pw")).unwrap();
+        assert!(tidb_parser::auth::check_hashing_password_bytes(
+            stored.as_bytes(),
+            b"pw",
+            AuthTiDBSM3Password,
+        )
+        .unwrap());
+        assert!(!tidb_parser::auth::check_hashing_password_bytes(
+            stored.as_bytes(),
+            b"not-pw",
+            AuthTiDBSM3Password,
+        )
+        .unwrap());
+
         // The AS form needs no hashing, only a length check, so it works.
         let hash70 = "y".repeat(70);
         assert_eq!(
@@ -2214,6 +2235,27 @@ mod tests {
                 .unwrap(),
             hash70
         );
+    }
+
+    /// Go's `CREATE USER ... IDENTIFIED WITH tidb_sm3_password BY 'foobar'`
+    /// stores an authentication string that Go's own `CheckHashingPassword`
+    /// verifies; a captured golden hash (`pkg/parser/auth/tidb_sm3_test.go`'s
+    /// `foobarPwdSM3Hash`) must verify identically through this crate's
+    /// check function, proving the format (not just this crate's own round
+    /// trip) matches Go.
+    #[test]
+    fn sm3_password_hash_captured_from_go_verifies_here() {
+        let hex = "24412430303524031a69251c34295c4b35167c7f1e5a7b63091349536c72627066426a635061762e556e6c63533159414d7762317261324a5a3047756b4244664177434e3043";
+        let stored: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        assert!(tidb_parser::auth::check_hashing_password_bytes(
+            &stored,
+            b"foobar",
+            AuthTiDBSM3Password
+        )
+        .unwrap());
     }
 
     #[test]

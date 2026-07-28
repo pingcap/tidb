@@ -605,4 +605,50 @@ mod tests {
         assert_eq!(hasher.sum(b"abc"), sm3_hash(b"abc"));
         assert_eq!(hasher.sum(&[]), sm3_hash(b"abc"));
     }
+
+    /// Go's `TestSM3` (`pkg/parser/auth/tidb_sm3_test.go`) golden digest
+    /// vectors, transcreated byte for byte.
+    #[test]
+    fn sm3_digest_matches_go_test_vectors() {
+        let cases: [(&[u8], &str); 2] = [
+            (
+                b"abc",
+                "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0",
+            ),
+            (
+                b"abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+                "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732",
+            ),
+        ];
+        for (input, expected_hex) in cases {
+            let digest = sm3_hash(input);
+            let actual_hex = digest
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>();
+            assert_eq!(actual_hex, expected_hex);
+        }
+    }
+
+    /// Go's `TestCheckSM3PasswordGood`: a `tidb_sm3_password` authentication
+    /// string captured from Go's own `CREATE USER ... IDENTIFIED WITH
+    /// tidb_sm3_password BY 'foobar'` must verify through this crate's
+    /// `check_hashing_password_bytes`, proving the SHA-crypt-with-SM3-
+    /// primitives path (not just the SM3 digest) matches Go exactly.
+    #[test]
+    fn sm3_password_hash_from_go_verifies() {
+        let stored: Vec<u8> = (0..foobar_pwd_sm3_hash_hex().len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&foobar_pwd_sm3_hash_hex()[i..i + 2], 16).unwrap())
+            .collect();
+        assert!(check_hashing_password_bytes(&stored, b"foobar", AuthTiDBSM3Password).unwrap());
+        assert!(
+            !check_hashing_password_bytes(&stored, b"not_foobar", AuthTiDBSM3Password).unwrap()
+        );
+    }
+
+    /// Hex from Go's `foobarPwdSM3Hash` in `pkg/parser/auth/tidb_sm3_test.go`.
+    fn foobar_pwd_sm3_hash_hex() -> &'static str {
+        "24412430303524031a69251c34295c4b35167c7f1e5a7b63091349536c72627066426a635061762e556e6c63533159414d7762317261324a5a3047756b4244664177434e3043"
+    }
 }
