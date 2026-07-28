@@ -699,11 +699,12 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		return base.InvalidTask
 	}
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 	var innerTask base.Task
 	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 	} else {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
 	if innerTask == nil {
@@ -748,12 +749,13 @@ func buildDataSource2TableScanByIndexJoinProp(
 		}
 		// prepare the range info with outer join keys, it shows like: [xxx] decided by:
 		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+		accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -772,9 +774,11 @@ func buildDataSource2TableScanByIndexJoinProp(
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			// The int handle is a single-column unique key, so the join key fully decides the range
+			// and no rows-after-access floor applies.
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -820,6 +824,44 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 	innerTask.IndexJoinInfo = info
 }
 
+// indexJoinProbeAccessRowsFloor returns a lower bound on the rows-after-access of an index join
+// probe-side scan, or 0 when no adjustment applies. The row count passed to the inner scan tasks
+// is derived from the join output cardinality, which accounts for ALL equality join conditions.
+// When the chosen path builds ranges from only a subset of the join keys, the remaining equality
+// conditions are evaluated at the join rather than at the scan, so each probe still reads every
+// row matching the used key prefix: approximately (total row count / NDV of the used EQ columns).
+// See #69974.
+func indexJoinProbeAccessRowsFloor(ds *logicalop.DataSource, indexJoinProp *property.IndexJoinRuntimeProp, indexJoinResult *indexJoinPathResult) float64 {
+	if indexJoinResult == nil || ds.TableStats == nil || indexJoinResult.eqUsedColsNDV <= 0 {
+		return 0
+	}
+	// A range on the last used column narrows the scan beyond the EQ prefix, so the EQ-prefix NDV
+	// would overestimate the scanned rows. Skip the adjustment in that case.
+	if indexJoinResult.lastColIsRange || indexJoinResult.lastColManager != nil {
+		return 0
+	}
+	usedKeys := make(map[int]struct{}, len(indexJoinProp.InnerJoinKeys))
+	for idxOff, keyOff := range indexJoinResult.idxOff2KeyOff {
+		if idxOff >= indexJoinResult.usedColsLen {
+			break
+		}
+		if keyOff >= 0 {
+			usedKeys[keyOff] = struct{}{}
+		}
+	}
+	if len(usedKeys) >= len(indexJoinProp.InnerJoinKeys) {
+		return 0
+	}
+	// This adjustment shares the Fix44855 switch with the NDV-based upper bound in
+	// constructDS2IndexScanTask, but defaults to ON: setting 44855:OFF disables both.
+	enabled := fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, true)
+	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix44855)
+	if !enabled {
+		return 0
+	}
+	return ds.TableStats.RowCount / indexJoinResult.eqUsedColsNDV
+}
+
 // constructDS2TableScanTask constructs the inner table scan task for index join.
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
@@ -830,6 +872,7 @@ func constructDS2TableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -870,6 +913,9 @@ func constructDS2TableScanTask(
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
 		countAfterAccess = rowCount / selectivity
 	}
+	// The ranges only encode the join keys this path can use; equality conditions on the remaining
+	// join keys are evaluated at the join, so the scan reads at least the rows matching the used prefix.
+	countAfterAccess = math.Max(countAfterAccess, accessRowsFloor)
 	// Only apply the 1-row limit when we can guarantee at most one row per outer row.
 	// For CommonHandle, this requires matching ALL primary key columns with equality conditions.
 	// For prefix scans (e.g., only matching first column of a composite PK), we trust the statistical estimation.
@@ -1027,6 +1073,7 @@ func constructDS2IndexScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -1191,6 +1238,16 @@ func constructDS2IndexScanTask(
 			cnt = math.Min(cnt, 1.0)
 		}
 		tmpPath.CountAfterAccess = cnt
+	}
+	// The ranges only encode the join keys this path can use; equality conditions on the remaining
+	// join keys are evaluated at the join, so the scan reads at least the rows matching the used prefix.
+	if !maxOneRow && accessRowsFloor > tmpPath.CountAfterAccess {
+		scale := 1.0
+		if tmpPath.CountAfterAccess > 0 {
+			scale = tmpPath.CountAfterIndex / tmpPath.CountAfterAccess
+		}
+		tmpPath.CountAfterAccess = accessRowsFloor
+		tmpPath.CountAfterIndex = accessRowsFloor * scale
 	}
 	is.SetStats(ds.TableStats.ScaleByExpectCnt(is.SCtx().GetSessionVars(), tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)

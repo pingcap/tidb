@@ -93,6 +93,7 @@ type indexJoinPathResult struct {
 	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
 	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
 	eqUsedColsNDV  float64                 // the estimated NDV of the EQ used columns on this index, the NDV of `t1(a, b)`, a,b are in EQ constraint.
+	lastColIsRange bool                    // whether the last used column is accessed by a range (non-EQ) condition, which is excluded from eqUsedColsNDV
 	idxOff2KeyOff  []int
 	lastColManager *physicalop.ColWithCmpFuncManager
 }
@@ -427,6 +428,7 @@ func indexJoinPathConstructResult(
 		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		eqUsedColsNDV:  innerNDV,
+		lastColIsRange: lastColIsRange,
 		chosenRanges:   ranges,
 		chosenAccess:   accesses,
 		chosenRemained: remained,
