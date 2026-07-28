@@ -58,6 +58,29 @@
 //!   copies bytes; a real backend clones a *handle* to shared storage, which
 //!   is why the method is on the trait rather than a `Clone` bound.
 //!
+//! # What is threaded, and what is still concrete
+//!
+//! Every byte-level read and write in this tier is inside
+//! [`KvTable`], and all of them now go through [`TableStorage`]: the point
+//! reads (`read_row`, `row_exists`, `lookup_unique`, the unique-index probes
+//! in `conflicting_handles`/`duplicate_entry_error`/`write_index_entries`),
+//! the two range scans (`scan_rows_with_handles`, `scan_index_range`), and the
+//! writes (`insert_row`, `update_row`, `delete_row`, `create_index`,
+//! `drop_index`, `modify_column`, `truncate`). The read path and the write
+//! path are both complete; nothing is half-threaded.
+//!
+//! The driver never touches keys or bytes -- it calls the row-level table API
+//! (`insert_row`/`update_row`/`delete_row`/`scan_rows_with_handles`/
+//! `get_row_by_handle`/`lookup_unique`/`scan_index_range`, plus `truncate`
+//! from DDL), which is the counterpart of Go's `table.Table`, so a backend
+//! swap is invisible to it.
+//!
+//! What stays concrete is *which* backend a table gets: `KvTable::new`
+//! installs [`MemTableStorage`], and each table owns its own instance rather
+//! than sharing one storage handle. `KvTable::with_storage` is the seam for
+//! that choice; the two construction sites (`crate::driver` and `crate::ddl`)
+//! are the only places a real tier has to change.
+//!
 //! # What a TiKV-backed implementation still needs
 //!
 //! Nothing in this module reaches for it, and this round deliberately does not

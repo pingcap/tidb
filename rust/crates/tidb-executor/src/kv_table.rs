@@ -267,14 +267,29 @@ impl KvColumn {
 }
 
 impl KvTable {
-    /// Builds an empty table.
+    /// Builds an empty table over the in-process backend.
     #[must_use]
     pub fn new(table_id: i64, columns: Vec<KvColumn>) -> Self {
+        KvTable::with_storage(table_id, columns, Box::new(MemTableStorage::new()))
+    }
+
+    /// Builds an empty table over the given backend.
+    ///
+    /// This is the one place a table's storage is chosen. A TiKV-backed tier
+    /// hands every table a handle to the same transactional backend here; the
+    /// table's own code is already written against the trait, so nothing else
+    /// changes.
+    #[must_use]
+    pub fn with_storage(
+        table_id: i64,
+        columns: Vec<KvColumn>,
+        store: Box<dyn TableStorage>,
+    ) -> Self {
         KvTable {
             table_id,
             name: String::new(),
             columns,
-            store: Box::new(MemTableStorage::new()),
+            store,
             next_handle: 1,
             pk_handle_offset: None,
             indexes: Vec::new(),
