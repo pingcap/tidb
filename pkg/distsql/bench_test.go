@@ -18,9 +18,58 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 )
+
+type fixedFetchResponse struct {
+	subsets []kv.ResultSubset
+	index   int
+}
+
+func (r *fixedFetchResponse) Next(context.Context) (kv.ResultSubset, error) {
+	if r.index == len(r.subsets) {
+		return nil, nil
+	}
+	subset := r.subsets[r.index]
+	r.index++
+	return subset, nil
+}
+
+func (*fixedFetchResponse) Close() error { return nil }
+
+func BenchmarkSelectResultFetchRespReuse(b *testing.B) {
+	data, err := (&tipb.SelectResponse{
+		Chunks: []tipb.Chunk{{RowsData: []byte{1, 2, 3, 4}}},
+	}).Marshal()
+	if err != nil {
+		b.Fatal(err)
+	}
+	response := &fixedFetchResponse{
+		subsets: []kv.ResultSubset{&mockResultSubset{data}, &mockResultSubset{data}},
+	}
+	result := selectResult{
+		label:   "dag",
+		sqlType: "general",
+		resp:    response,
+		ctx:     newMockSessionContext().GetDistSQLCtx(),
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		response.index = 0
+		result.selectResp = nil
+		result.selectRespSize = 0
+		for range 2 {
+			if err := result.fetchResp(context.Background()); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
 
 func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
 	for i := 0; i < b.N; i++ {
