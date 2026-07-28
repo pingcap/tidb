@@ -82,6 +82,19 @@ pub trait Columns {
         None
     }
 
+    /// Go `SessionVars.User`, in the two spellings its builtins report:
+    /// `CURRENT_USER()` is the matched grant identity (`String()`) and
+    /// `USER()` is the login identity (`LoginString()`). `None` is a session
+    /// with no authenticated user at all.
+    fn current_user(&self) -> Option<String> {
+        None
+    }
+
+    /// The login identity `USER()`/`SESSION_USER()` report.
+    fn login_user(&self) -> Option<String> {
+        None
+    }
+
     /// Reads a supported system variable.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);

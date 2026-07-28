@@ -714,6 +714,25 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     close.extend_from_slice(&statement_id.to_le_bytes());
     write_packet(&mut client, 0, &close);
 
+    // The identity the handshake matched reaches the session: CURRENT_USER()
+    // reports the matched grant identity and USER() the host the client
+    // connected from. This plumbing did not exist -- the factory discarded
+    // the session context.
+    let identities = run_query(
+        &mut client,
+        &mut reader,
+        "SELECT CURRENT_USER(), USER(), SESSION_USER()",
+    );
+    // The configured grant is `alice@%`, and the client connects from
+    // loopback -- so the matched identity keeps the grant's host pattern
+    // while the login identity carries the real peer address.
+    assert_eq!(identities[0][0], "alice@%", "current user: {identities:?}");
+    assert_eq!(
+        identities[0][1], "alice@127.0.0.1",
+        "login user: {identities:?}"
+    );
+    assert_eq!(identities[0][2], identities[0][1], "SESSION_USER is USER");
+
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);
     drop(client);

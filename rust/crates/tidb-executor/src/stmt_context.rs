@@ -39,6 +39,8 @@ pub struct StmtContext {
     strict: bool,
     current_db: Option<String>,
     version: Option<String>,
+    current_user: Option<String>,
+    login_user: Option<String>,
     /// Go `StatementContext`'s fixed statement time as
     /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
     /// statement reads the same instant.
@@ -56,6 +58,8 @@ impl StmtContext {
             strict: true,
             current_db: None,
             version: None,
+            current_user: None,
+            login_user: None,
             now: None,
             time_zone: None,
         }
@@ -72,6 +76,15 @@ impl StmtContext {
     ) -> Self {
         self.current_db = current_db;
         self.version = version;
+        self
+    }
+
+    /// Attaches the authenticated identity, which Go keeps on
+    /// `SessionVars.User` in the two spellings its builtins report.
+    #[must_use]
+    pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
+        self.current_user = current_user;
+        self.login_user = login_user;
         self
     }
 
@@ -107,6 +120,8 @@ impl StmtContext {
             strict,
             current_db: None,
             version: None,
+            current_user: None,
+            login_user: None,
             now: None,
             time_zone: None,
         }
@@ -158,6 +173,14 @@ impl Columns for StmtContext {
                 name: "UTC".to_owned(),
                 offset_secs: 0,
             })
+    }
+
+    fn current_user(&self) -> Option<String> {
+        self.current_user.clone()
+    }
+
+    fn login_user(&self) -> Option<String> {
+        self.login_user.clone()
     }
 
     fn current_database(&self) -> Option<String> {

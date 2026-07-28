@@ -88,10 +88,17 @@ pub struct PipelineSessionFactory {
 impl QuerySessionFactory for PipelineSessionFactory {
     type Session = PipelineServerSession;
 
-    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
-        Ok(PipelineServerSession::with_catalog(Arc::clone(
-            &self.catalog,
-        )))
+    fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        let mut session = PipelineServerSession::with_catalog(Arc::clone(&self.catalog));
+        // Go sets `SessionVars.User` from the identity the handshake matched:
+        // `CURRENT_USER()` reports that matched grant identity and `USER()`
+        // the host the client actually connected from.
+        let identity = &context.identity;
+        session.session.set_user(
+            format!("{}@{}", identity.username(), identity.host()),
+            format!("{}@{}", identity.username(), context.peer_addr.ip()),
+        );
+        Ok(session)
     }
 }
 

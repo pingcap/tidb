@@ -99,6 +99,11 @@ pub struct Session {
     /// The warnings the last statement produced, which Go keeps in
     /// `StmtCtx.warnings` and `SHOW WARNINGS` reads.
     warnings: Vec<SqlWarning>,
+    /// Go `SessionVars.User` in its two spellings: the matched grant
+    /// identity `CURRENT_USER()` reports and the login identity `USER()`
+    /// reports. Empty until a front end authenticates one.
+    current_user: Option<String>,
+    login_user: Option<String>,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     last_insert_id: u64,
@@ -119,6 +124,8 @@ impl Default for Session {
             txn: None,
             vars: SessionVars::new(),
             warnings: Vec::new(),
+            current_user: None,
+            login_user: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
@@ -1107,6 +1114,8 @@ impl Session {
             txn: None,
             vars: SessionVars::new(),
             warnings: Vec::new(),
+            current_user: None,
+            login_user: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
@@ -1166,6 +1175,16 @@ impl Session {
             // packet, the same shape a write uses.
             Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Session(_) => StmtKind::Write,
         })
+    }
+
+    /// Records the authenticated identity, which the builtins report.
+    ///
+    /// Go sets `SessionVars.User` once the connection authenticates; a
+    /// front end that has no user leaves it unset and the builtins answer
+    /// NULL, which is what Go does for a session without one.
+    pub fn set_user(&mut self, current_user: String, login_user: String) {
+        self.current_user = Some(current_user);
+        self.login_user = Some(login_user);
     }
 
     /// The number of `?` markers a statement carries, which
@@ -1701,6 +1720,7 @@ impl Session {
         if !is_dml {
             return tidb_executor::StmtContext::for_query()
                 .with_session_state(current_db, version)
+                .with_user(self.current_user.clone(), self.login_user.clone())
                 .with_clock(clock, zone);
         }
         let mode = self
@@ -1714,6 +1734,7 @@ impl Session {
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
         )
         .with_session_state(current_db, version)
+        .with_user(self.current_user.clone(), self.login_user.clone())
         .with_clock(clock, zone)
     }
 
@@ -4165,16 +4186,25 @@ mod tests {
         fresh.run("DROP DATABASE test").unwrap();
         assert_eq!(row_text(fresh.run("SELECT DATABASE()")), [["NULL"]]);
 
-        // The refusals above are refusals, not wrong answers. (CAST used to
-        // be this example; it is built now -- see `cast_and_convert`.)
-        // (GROUP_CONCAT used to be this example; it is built now -- see
-        // `group_concat`. Its inner ORDER BY is the part still refused.)
-        for sql in [
-            "SELECT CURRENT_USER()",
-            "SELECT GROUP_CONCAT(b ORDER BY b) FROM t",
-        ] {
-            assert!(session.run(sql).is_err(), "{sql} should still be refused");
-        }
+        // A session with no authenticated user answers NULL for the identity
+        // builtins, which is what Go does for a session without one; a front
+        // end that authenticates sets it (see the server's client test).
+        assert_eq!(
+            row_text(session.run("SELECT CURRENT_USER(), USER()")),
+            [["NULL", "NULL"]]
+        );
+        session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
+        assert_eq!(
+            row_text(session.run("SELECT CURRENT_USER(), USER(), SESSION_USER()")),
+            [["bob@%", "bob@10.0.0.1", "bob@10.0.0.1"]]
+        );
+
+        // The refusals above are refusals, not wrong answers. (CAST,
+        // GROUP_CONCAT and CURRENT_USER were each this example in turn; all
+        // three work now. GROUP_CONCAT's inner ORDER BY is what is left.)
+        assert!(session
+            .run("SELECT GROUP_CONCAT(b ORDER BY b) FROM t")
+            .is_err());
     }
 
     /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is

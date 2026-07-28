@@ -101,9 +101,6 @@ fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType {
 /// this table; the deferred names are listed with it.
 ///
 /// NOT BUILT here, and refused (each needs more than a fixed result type):
-/// `CURRENT_USER`/`USER` need a session user, which this tier's session does
-/// not carry; `NOW` needs the statement clock the resolver does not supply
-/// in the chunk path yet;
 /// `CAST`/`CONVERT` take a target type, not a value, argument;
 /// `GROUP_CONCAT` is an aggregate; `DATE_ADD`-family take an `Expr::Interval`
 /// argument that is not an expression at all.
@@ -160,7 +157,8 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // whether the result is NULL.
         "nullif" => args.first()?.static_type()?.clone(),
         // Go reads these from `SessionVars`; each returns a string.
-        "database" | "schema" | "version" => text(),
+        "database" | "schema" | "version" | "current_user" | "user" | "session_user"
+        | "system_user" => text(),
         // String in, number out.
         "length" | "octet_length" | "char_length" | "character_length" | "bit_length" | "ascii"
         | "instr" | "locate" | "position" | "find_in_set" | "strcmp" | "field" => int(),

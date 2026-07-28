@@ -359,6 +359,21 @@ impl ScalarFunction {
                 "version" => {
                     return Ok(ctx.sysvar(None, "version").unwrap_or(Datum::Null));
                 }
+                // Go `builtinCurrentUserSig` reports the MATCHED grant
+                // identity and `builtinUserSig` the LOGIN identity; MySQL
+                // makes SESSION_USER a synonym of USER.
+                "current_user" | "system_user" => {
+                    return Ok(match ctx.current_user() {
+                        Some(user) => Datum::Bytes(user.into_bytes()),
+                        None => Datum::Null,
+                    })
+                }
+                "user" | "session_user" => {
+                    return Ok(match ctx.login_user() {
+                        Some(user) => Datum::Bytes(user.into_bytes()),
+                        None => Datum::Null,
+                    })
+                }
                 _ => {}
             }
         }
