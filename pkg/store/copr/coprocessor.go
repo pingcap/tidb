@@ -2822,11 +2822,9 @@ func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coproc
 		return ranges
 	}
 	if desc {
-		left, _ := ranges.Split(split.End)
-		return left
+		return ranges.splitLeft(split.End)
 	}
-	_, right := ranges.Split(split.Start)
-	return right
+	return ranges.splitRight(split.Start)
 }
 
 // calculateRemain calculates the remain ranges to be processed, it's used in paging API.
@@ -2840,11 +2838,9 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 		return ranges
 	}
 	if desc {
-		left, _ := ranges.Split(split.Start)
-		return left
+		return ranges.splitLeft(split.Start)
 	}
-	_, right := ranges.Split(split.End)
-	return right
+	return ranges.splitRight(split.End)
 }
 
 // finished checks the flags and finished channel, it tells whether the worker is finished.
