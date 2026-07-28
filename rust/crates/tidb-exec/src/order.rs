@@ -602,12 +602,15 @@ impl Error for PreparedOrderError {}
 
 /// The datum kind a projected column's scalar type stores in an output row.
 ///
-/// A signed integer column decodes to [`Datum::Int`]; a `CHAR` column decodes
-/// to [`Datum::Bytes`] (its `utf8mb4` bytes). Any other pairing is a decode
-/// contract violation the ordering must not silently reorder.
+/// A signed integer column decodes to [`Datum::Int`]; an unsigned `BIGINT`
+/// decodes to [`Datum::UInt`]; a `DOUBLE` decodes to [`Datum::Real`]; a `CHAR`
+/// column decodes to [`Datum::Bytes`] (its `utf8mb4` bytes). Any other pairing
+/// is a decode contract violation the ordering must not silently reorder.
 const fn scalar_type_admits(scalar_type: ConfiguredScalarType, datum: &Datum) -> bool {
     match scalar_type {
         ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => matches!(datum, Datum::Int(_)),
+        ConfiguredScalarType::UnsignedBigInt => matches!(datum, Datum::UInt(_)),
+        ConfiguredScalarType::Double => matches!(datum, Datum::Real(_)),
         ConfiguredScalarType::Char { .. } => matches!(datum, Datum::Bytes(_)),
     }
 }

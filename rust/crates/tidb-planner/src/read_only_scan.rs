@@ -37,6 +37,7 @@ use tidb_ast::{
     BinaryOp, Expr, JoinNode, JoinType, OrderItem, QueryStmt, SelectField, SelectStatementKind,
     SelectStmt, Stmt, TableRef, UnaryOp,
 };
+use tidb_datatype::{Collation, FieldType, FieldTypeCode};
 
 use crate::{
     access_path::{
@@ -66,6 +67,11 @@ const PRI_KEY_FLAG: i32 = 1 << 1;
 const PHYSICAL_PLAN_ID: i32 = 1;
 
 const MYSQL_TYPE_STRING: i32 = 254;
+/// MySQL `TypeDouble`, per Go `mysql.TypeDouble`.
+const MYSQL_TYPE_DOUBLE: i32 = 5;
+/// `mysql.UnsignedFlag`, set on the coprocessor/result `ColumnInfo.Flag` for an
+/// unsigned integer column so both TiKV and the client decode it unsigned.
+const UNSIGNED_FLAG: i32 = 1 << 5;
 /// `SUM(<integer>)` is an exact `DECIMAL` whose flen is the argument's flen plus
 /// this extension, per Go `typeInfer4Sum` (`arg.Flen + 21`).
 const SUM_DECIMAL_FLEN_EXTENSION: u32 = 21;
@@ -84,16 +90,26 @@ const UTF8MB4_MAX_BYTES_PER_CHAR: i32 = 4;
 
 /// The stored type of a configured column.
 ///
-/// For the two integer types, the persisted rowcodec bytes are chosen by the
+/// For the integer types, the persisted rowcodec bytes are chosen by the
 /// value's own compact width, not the column type, so an `Int` and a `BigInt`
 /// holding the same value store identically. `Char` stores raw string bytes
-/// (no restored-collation data at the default `utf8mb4_bin`).
+/// (no restored-collation data at the default `utf8mb4_bin`). `UnsignedBigInt`
+/// and `Double` widen the read path beyond signed integers to the other
+/// scalar shapes the coprocessor chunk decoder
+/// (`tidb_codec::decode_column_datums`) and `tidb-tablecodec`'s row/index
+/// codec both already support end to end; any type outside this set (decimal,
+/// temporal, JSON, enum/set, vector) must stay refused at config time rather
+/// than admitted with a guessed decode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfiguredScalarType {
     /// Signed 64-bit `BIGINT`.
     BigInt,
+    /// Unsigned 64-bit `BIGINT UNSIGNED`.
+    UnsignedBigInt,
     /// Signed 32-bit `INT`.
     Int,
+    /// 64-bit `DOUBLE`.
+    Double,
     /// Fixed-length `CHAR(max_length)` at the default `utf8mb4_bin` collation.
     Char {
         /// Declared character length.
@@ -103,7 +119,7 @@ pub enum ConfiguredScalarType {
 
 impl ConfiguredScalarType {
     /// Inclusive signed value range an integer column admits, or `None` for a
-    /// non-integer type.
+    /// non-integer, unsigned, or floating-point type.
     ///
     /// The integer ranges are exactly Go's `ConvertIntToInt` bounds
     /// (`pkg/types/convert.go`): a value outside the range is an overflow, not
@@ -113,28 +129,39 @@ impl ConfiguredScalarType {
         match self {
             Self::BigInt => Some((i64::MIN, i64::MAX)),
             Self::Int => Some((i32::MIN as i64, i32::MAX as i64)),
-            Self::Char { .. } => None,
+            Self::UnsignedBigInt | Self::Double | Self::Char { .. } => None,
         }
     }
 
     /// MySQL protocol/coprocessor type code.
     const fn type_code(self) -> i32 {
         match self {
-            Self::BigInt => MYSQL_TYPE_LONGLONG,
+            Self::BigInt | Self::UnsignedBigInt => MYSQL_TYPE_LONGLONG,
             Self::Int => MYSQL_TYPE_LONG,
+            Self::Double => MYSQL_TYPE_DOUBLE,
             Self::Char { .. } => MYSQL_TYPE_STRING,
+        }
+    }
+
+    /// Coprocessor `ColumnInfo.Flag` bits beyond not-null/primary-key, per Go
+    /// `mysql.UnsignedFlag`.
+    const fn extra_flag(self) -> i32 {
+        match self {
+            Self::UnsignedBigInt => UNSIGNED_FLAG,
+            Self::BigInt | Self::Int | Self::Double | Self::Char { .. } => 0,
         }
     }
 
     /// Coprocessor/protocol collation id for this column.
     ///
-    /// Integer columns carry the binary collation; a `Char` carries the negated
-    /// `utf8mb4_bin` id per TiDB's new-collation sign convention. The `Char`
-    /// sign is taken from the Go source and is not yet exercised against real
-    /// TiKV — the string read path that would send it is not wired.
+    /// Integer and floating-point columns carry the binary collation; a
+    /// `Char` carries the negated `utf8mb4_bin` id per TiDB's new-collation
+    /// sign convention. The `Char` sign is taken from the Go source and is
+    /// not yet exercised against real TiKV — the string read path that would
+    /// send it is not wired.
     const fn collation_id(self) -> i32 {
         match self {
-            Self::BigInt | Self::Int => BINARY_COLLATION_ID,
+            Self::BigInt | Self::UnsignedBigInt | Self::Int | Self::Double => BINARY_COLLATION_ID,
             Self::Char { .. } => UTF8MB4_BIN_COPROCESSOR_COLLATION_ID,
         }
     }
@@ -142,24 +169,22 @@ impl ConfiguredScalarType {
     /// Displayed column length.
     const fn column_len(self) -> i32 {
         match self {
-            Self::BigInt => 20,
+            Self::BigInt | Self::UnsignedBigInt => 20,
             Self::Int => 11,
+            Self::Double => 22,
             Self::Char { max_length } => max_length as i32,
         }
     }
 
     /// MySQL type code sent to the client in the result column definition.
     ///
-    /// `BIGINT` is `LONGLONG`, `INT` is `LONG`, `CHAR` is `STRING` — each with a
-    /// matching cell in the binary result encoder, so the value is type-faithful
-    /// (`DumpBinaryRow` dumps `TypeLong` as a 4-byte `Uint32`).
+    /// `BIGINT`/`BIGINT UNSIGNED` are `LONGLONG`, `INT` is `LONG`, `DOUBLE` is
+    /// `DOUBLE`, `CHAR` is `STRING` — each with a matching cell in the binary
+    /// result encoder, so the value is type-faithful (`DumpBinaryRow` dumps
+    /// `TypeLong` as a 4-byte `Uint32`, `TypeDouble` as 8 raw bytes).
     #[must_use]
     pub const fn result_type_code(self) -> i32 {
-        match self {
-            Self::BigInt => MYSQL_TYPE_LONGLONG,
-            Self::Int => MYSQL_TYPE_LONG,
-            Self::Char { .. } => MYSQL_TYPE_STRING,
-        }
+        self.type_code()
     }
 
     /// Positive result-column charset id, per Go `mysql.CharsetNameToID`
@@ -171,7 +196,7 @@ impl ConfiguredScalarType {
     #[must_use]
     pub const fn result_charset_id(self) -> i32 {
         match self {
-            Self::BigInt | Self::Int => BINARY_COLLATION_ID,
+            Self::BigInt | Self::UnsignedBigInt | Self::Int | Self::Double => BINARY_COLLATION_ID,
             Self::Char { .. } => UTF8MB4_BIN_RESULT_COLLATION_ID,
         }
     }
@@ -182,9 +207,39 @@ impl ConfiguredScalarType {
     #[must_use]
     pub const fn result_column_length(self) -> i32 {
         match self {
-            Self::BigInt => 20,
+            Self::BigInt | Self::UnsignedBigInt => 20,
             Self::Int => 11,
+            Self::Double => 22,
             Self::Char { max_length } => max_length as i32 * UTF8MB4_MAX_BYTES_PER_CHAR,
+        }
+    }
+
+    /// Returns whether this column stores its bytes as an unsigned MySQL
+    /// integer, per Go `mysql.HasUnsignedFlag`.
+    #[must_use]
+    pub const fn is_unsigned(self) -> bool {
+        matches!(self, Self::UnsignedBigInt)
+    }
+
+    /// Returns the [`FieldType`] the real-TiKV coprocessor chunk decoder
+    /// (`tidb_codec::decode_column_datums`) must use to decode this column's
+    /// result bytes.
+    ///
+    /// This is the single source of truth the executor boundary
+    /// (`RealTiKvReadSession::execute_plan`) consults instead of assuming
+    /// every projected column is a signed `BIGINT`: driving decode from the
+    /// wrong `FieldTypeCode` either corrupts a `Char`/`Double`/unsigned
+    /// column's value or, for a width mismatch, fails the row outright.
+    #[must_use]
+    pub fn chunk_field_type(self) -> FieldType {
+        match self {
+            Self::BigInt => FieldType::new(FieldTypeCode::LongLong),
+            Self::UnsignedBigInt => FieldType::new(FieldTypeCode::LongLong).with_unsigned(true),
+            Self::Int => FieldType::new(FieldTypeCode::Long),
+            Self::Double => FieldType::new(FieldTypeCode::Double),
+            Self::Char { max_length } => FieldType::new(FieldTypeCode::String)
+                .with_collation(Collation::Utf8Mb4Bin)
+                .with_flen(i64::from(max_length)),
         }
     }
 }
@@ -256,6 +311,28 @@ impl ConfiguredColumn {
         }
     }
 
+    /// Configures one unsigned stored `BIGINT UNSIGNED NOT NULL` column.
+    #[must_use]
+    pub fn stored_unsigned_bigint_not_null(name: impl Into<String>, id: i64) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::UnsignedBigInt,
+        }
+    }
+
+    /// Configures one stored `DOUBLE NOT NULL` column.
+    #[must_use]
+    pub fn stored_double_not_null(name: impl Into<String>, id: i64) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::Double,
+        }
+    }
+
     /// Returns the source catalog name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -285,6 +362,7 @@ impl ConfiguredColumn {
             ConfiguredColumnKind::ClusteredPrimaryKey => (NOT_NULL_FLAG | PRI_KEY_FLAG, true),
             ConfiguredColumnKind::StoredNotNull => (NOT_NULL_FLAG, false),
         };
+        let flag = flag | self.scalar_type.extra_flag();
         ScanColumnInfo {
             column_id: self.id,
             tp: self.scalar_type.type_code(),
@@ -1627,10 +1705,14 @@ fn resolve_prepared_aggregate(
     // argument; a string argument would be a DOUBLE result, a type path this
     // narrow read does not own yet.
     let arg_flen = match column.scalar_type() {
-        ConfiguredScalarType::Int | ConfiguredScalarType::BigInt => {
+        ConfiguredScalarType::Int
+        | ConfiguredScalarType::BigInt
+        | ConfiguredScalarType::UnsignedBigInt => {
             column.scalar_type().result_column_length() as u32
         }
-        ConfiguredScalarType::Char { .. } => {
+        // Go `typeInfer4Sum` returns a DOUBLE (not DECIMAL) for a floating-point
+        // argument, a result shape this DECIMAL-only path does not own yet.
+        ConfiguredScalarType::Double | ConfiguredScalarType::Char { .. } => {
             return unsupported(UnsupportedReadOnlyFeature::Aggregate)
         }
     };

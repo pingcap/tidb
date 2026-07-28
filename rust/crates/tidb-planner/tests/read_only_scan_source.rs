@@ -374,4 +374,47 @@ fn result_column_metadata_follows_go_convert_column_info() {
     for integer in [ConfiguredScalarType::BigInt, ConfiguredScalarType::Int] {
         assert_eq!(integer.result_charset_id(), 63); // binary
     }
+
+    // `BIGINT UNSIGNED` and `DOUBLE` widen the read path beyond signed
+    // integers; both round-trip through the same binary/client metadata shape
+    // as the existing integer types, with UNSIGNED carrying the client
+    // unsigned flag bit.
+    assert_eq!(
+        ConfiguredScalarType::UnsignedBigInt.result_type_code(),
+        8 // TypeLonglong
+    );
+    assert_eq!(ConfiguredScalarType::UnsignedBigInt.result_charset_id(), 63);
+    assert!(ConfiguredScalarType::UnsignedBigInt.is_unsigned());
+    assert!(!ConfiguredScalarType::BigInt.is_unsigned());
+    assert_eq!(ConfiguredScalarType::Double.result_type_code(), 5); // TypeDouble
+    assert_eq!(ConfiguredScalarType::Double.result_charset_id(), 63);
+    assert!(!ConfiguredScalarType::Double.is_unsigned());
+}
+
+#[test]
+fn chunk_field_type_drives_real_tikv_coprocessor_chunk_decode_per_column() {
+    // `RealTiKvReadSession::execute_plan` derives its coprocessor response
+    // `FieldType`s from this method instead of assuming every projected
+    // column is a signed `BIGINT`; a wrong `FieldTypeCode` here corrupts or
+    // fails the decode of any non-`BIGINT` configured column.
+    use tidb_datatype::{Collation, FieldTypeCode};
+
+    let bigint = ConfiguredScalarType::BigInt.chunk_field_type();
+    assert_eq!(bigint.code(), FieldTypeCode::LongLong);
+    assert!(!bigint.is_unsigned());
+
+    let unsigned = ConfiguredScalarType::UnsignedBigInt.chunk_field_type();
+    assert_eq!(unsigned.code(), FieldTypeCode::LongLong);
+    assert!(unsigned.is_unsigned());
+
+    let int = ConfiguredScalarType::Int.chunk_field_type();
+    assert_eq!(int.code(), FieldTypeCode::Long);
+
+    let double = ConfiguredScalarType::Double.chunk_field_type();
+    assert_eq!(double.code(), FieldTypeCode::Double);
+
+    let char_field = ConfiguredScalarType::Char { max_length: 30 }.chunk_field_type();
+    assert_eq!(char_field.code(), FieldTypeCode::String);
+    assert_eq!(char_field.collation(), Collation::Utf8Mb4Bin);
+    assert_eq!(char_field.flen(), 30);
 }

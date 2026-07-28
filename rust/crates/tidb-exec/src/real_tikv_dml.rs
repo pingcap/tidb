@@ -133,6 +133,20 @@ pub enum ConfiguredWriteError {
         /// The value's actual character length.
         char_length: usize,
     },
+    /// A configured column's scalar type has no write-path encode/decode yet.
+    ///
+    /// `ConfiguredScalarType::UnsignedBigInt` and `ConfiguredScalarType::Double`
+    /// widen only the read path (real-TiKV chunk decode); this executable does
+    /// not admit either kind through `--read-table` yet, so production
+    /// configuration can never reach this arm. It exists so the write path's
+    /// column-type matches stay exhaustive without guessing an encoding for a
+    /// type this boundary does not own.
+    UnsupportedScalarType {
+        /// Configured column whose type the write path cannot handle.
+        column: String,
+        /// The unsupported scalar type.
+        scalar_type: ConfiguredScalarType,
+    },
 }
 
 impl fmt::Display for ConfiguredWriteError {
@@ -157,7 +171,9 @@ impl fmt::Display for ConfiguredWriteError {
                 // no-op for others), but the name stays exhaustive.
                 let type_name = match scalar_type {
                     ConfiguredScalarType::BigInt => "BIGINT",
+                    ConfiguredScalarType::UnsignedBigInt => "BIGINT UNSIGNED",
                     ConfiguredScalarType::Int => "INT",
+                    ConfiguredScalarType::Double => "DOUBLE",
                     ConfiguredScalarType::Char { .. } => "CHAR",
                 };
                 write!(
@@ -184,7 +200,9 @@ impl fmt::Display for ConfiguredWriteError {
                 let supplied = if *value_is_bytes { "string" } else { "integer" };
                 let type_name = match scalar_type {
                     ConfiguredScalarType::BigInt => "BIGINT",
+                    ConfiguredScalarType::UnsignedBigInt => "BIGINT UNSIGNED",
                     ConfiguredScalarType::Int => "INT",
+                    ConfiguredScalarType::Double => "DOUBLE",
                     ConfiguredScalarType::Char { .. } => "CHAR",
                 };
                 write!(
@@ -202,6 +220,10 @@ impl fmt::Display for ConfiguredWriteError {
             } => write!(
                 formatter,
                 "Data too long for column '{column}' (field len {max_length}, data len {char_length})"
+            ),
+            Self::UnsupportedScalarType { column, scalar_type } => write!(
+                formatter,
+                "configured write does not support column '{column}' of type {scalar_type:?}"
             ),
         }
     }
@@ -222,7 +244,8 @@ impl std::error::Error for ConfiguredWriteError {
             | Self::NotCommitted(_)
             | Self::ColumnTypeMismatch { .. }
             | Self::UnsupportedIndex { .. }
-            | Self::DataTooLong { .. } => None,
+            | Self::DataTooLong { .. }
+            | Self::UnsupportedScalarType { .. } => None,
         }
     }
 }
@@ -515,6 +538,13 @@ fn decode_stored_column_value(
         ConfiguredScalarType::Char { .. } => Ok(ConfiguredValue::Bytes(
             decode_configured_row_bytes(stored, column.id())?,
         )),
+        // Read-path-only scalar types (see `ConfiguredWriteError::UnsupportedScalarType`).
+        scalar_type @ (ConfiguredScalarType::UnsignedBigInt | ConfiguredScalarType::Double) => {
+            Err(ConfiguredWriteError::UnsupportedScalarType {
+                column: column.name().to_owned(),
+                scalar_type,
+            })
+        }
     }
 }
 
@@ -764,7 +794,10 @@ fn max_configured_row_value_len(table: &ConfiguredTable) -> usize {
         .filter(|column| column.kind() == ConfiguredColumnKind::StoredNotNull)
         .fold(ROW_HEADER_LEN, |total, column| {
             let payload = match column.scalar_type() {
-                ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => MAX_INT_PAYLOAD_LEN,
+                ConfiguredScalarType::BigInt
+                | ConfiguredScalarType::Int
+                | ConfiguredScalarType::UnsignedBigInt
+                | ConfiguredScalarType::Double => MAX_INT_PAYLOAD_LEN,
                 ConfiguredScalarType::Char { max_length } => {
                     (max_length as usize).saturating_mul(UTF8MB4_MAX_BYTES_PER_CHAR)
                 }

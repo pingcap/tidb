@@ -30,7 +30,6 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_ast::{QueryStmt, Stmt};
-use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
     signed_handle_ranges_to_kv_ranges, CancelHandle, DirectUnaryQueryTransport,
@@ -1236,10 +1235,16 @@ where
         cancellation: Arc<CancelHandle>,
     ) -> Result<RealTiKvQuery, RealTiKvReadError> {
         let plan_evidence = RealTiKvQueryPlanEvidence::from_plan(&plan);
+        // Drives coprocessor chunk decode from each projected column's actual
+        // configured scalar type instead of assuming every result column is a
+        // signed `BIGINT`. A `Char`/`Double`/unsigned-`BIGINT` column decoded
+        // with the wrong `FieldTypeCode` either corrupts its value or fails
+        // outright on a fixed-width layout mismatch (see
+        // `ConfiguredScalarType::chunk_field_type`).
         let field_types = plan
             .projected_columns()
             .iter()
-            .map(|_| FieldType::new(FieldTypeCode::LongLong))
+            .map(|column| column.scalar_type().chunk_field_type())
             .collect::<Vec<_>>();
         let protocol_columns = protocol_columns(self.table.as_ref(), &plan);
 
@@ -1340,6 +1345,14 @@ fn protocol_columns(table: &ConfiguredTable, plan: &ReadOnlyScanPlan) -> Vec<Col
                 flag: match column.kind() {
                     ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
                     ConfiguredColumnKind::StoredNotNull => 0x0001,
+                } | if scalar.is_unsigned() {
+                    // `mysql.UnsignedFlag`, per Go `column.ConvertColumnInfo`:
+                    // the client result column carries it so a MySQL driver
+                    // decodes the `LONGLONG` cell as unsigned instead of
+                    // reinterpreting its sign bit.
+                    0x0020
+                } else {
+                    0
                 },
                 decimal: 0,
                 type_code: scalar.result_type_code() as u8,

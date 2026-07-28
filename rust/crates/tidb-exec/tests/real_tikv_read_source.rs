@@ -31,7 +31,7 @@ use tidb_planner::read_only_scan::{
     ConfiguredColumn, ConfiguredTable, ReadOnlyScanError, UnsupportedReadOnlyFeature,
     UnsupportedReadOnlyPredicate,
 };
-use tidb_proto::tipb::{Chunk, DagRequest, SelectResponse};
+use tidb_proto::tipb::{Chunk, DagRequest, EncodeType, SelectResponse};
 
 #[derive(Clone, Debug)]
 struct ScriptedTimestampSource {
@@ -289,6 +289,137 @@ fn transport(
         responses: responses.into_iter().collect(),
         state,
     }
+}
+
+/// Encodes one fixed-width `chunk.Column` (Go `Column.AppendInt64Vec`/
+/// `Column.AppendFloat64` shape): a `(row_count, null_count)` header, no null
+/// bitmap since every configured column is `NOT NULL`, then each row's native
+/// little-endian bytes.
+fn chunk_fixed_column(values_le_bytes: &[Vec<u8>]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&(values_le_bytes.len() as u32).to_le_bytes());
+    encoded.extend_from_slice(&0_u32.to_le_bytes());
+    for value in values_le_bytes {
+        encoded.extend_from_slice(value);
+    }
+    encoded
+}
+
+/// Encodes one variable-width `chunk.Column` (Go `Column.AppendString` shape):
+/// a `(row_count, null_count)` header, a leading-zero offset table, then the
+/// concatenated row bytes.
+fn chunk_variable_column(rows: &[&[u8]]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+    encoded.extend_from_slice(&0_u32.to_le_bytes());
+    let mut offset = 0_i64;
+    encoded.extend_from_slice(&offset.to_le_bytes());
+    for row in rows {
+        offset += row.len() as i64;
+        encoded.extend_from_slice(&offset.to_le_bytes());
+    }
+    for row in rows {
+        encoded.extend_from_slice(row);
+    }
+    encoded
+}
+
+/// Builds one `TypeChunk`-encoded `SelectResponse` over the given already-
+/// encoded per-column byte regions, in declared column order (Go
+/// `chunk.Codec.Encode` lays every requested column's region out back to
+/// back inside one `Chunk.rows_data`).
+fn chunk_response(columns: &[Vec<u8>]) -> Vec<u8> {
+    let mut rows_data = Vec::new();
+    for column in columns {
+        rows_data.extend_from_slice(column);
+    }
+    SelectResponse {
+        encode_type: Some(EncodeType::TypeChunk as i32),
+        chunks: vec![Chunk {
+            rows_data: Some(rows_data),
+            rows_meta: Vec::new(),
+        }],
+        ..SelectResponse::default()
+    }
+    .encode_to_vec()
+}
+
+fn chunk_response_result(
+    columns: &[Vec<u8>],
+    next_count: Rc<Cell<usize>>,
+    close_count: Rc<Cell<usize>>,
+) -> ScriptedResponse {
+    ScriptedResponse {
+        subsets: VecDeque::from([QueryResultSubset {
+            data: chunk_response(columns),
+            runtime: None,
+        }]),
+        next_count,
+        close_count,
+    }
+}
+
+/// Regression test for the real-TiKV read path hardcoding every projected
+/// column's coprocessor `FieldType` to signed `LONGLONG`
+/// (`RealTiKvReadSession::execute_plan`'s former
+/// `field_types = ... .map(|_| FieldType::new(FieldTypeCode::LongLong))`).
+///
+/// A real TiKV coprocessor commonly answers with `TypeChunk` (columnar)
+/// encoding, whose physical layout — fixed 8-byte values versus an offset
+/// table plus variable bytes — is chosen from the requested `FieldType`, not
+/// discovered from the wire. Before the fix, an `UnsignedBigInt` column's high
+/// bit was reinterpreted as a sign, and a `Double`/`CHAR` column's variable or
+/// differently-shaped bytes were parsed as if they were a fixed 8-byte signed
+/// integer. This proves every configured scalar type this milestone admits
+/// now decodes through its own real coprocessor byte layout.
+#[test]
+fn configured_scalar_types_decode_their_own_coprocessor_chunk_layout() {
+    let timestamps = ScriptedTimestampSource::new([9_001]);
+    let state = Rc::new(SharedTransportState::default());
+    let next_count = Rc::new(Cell::new(0));
+    let close_count = Rc::new(Cell::new(0));
+
+    let id_column = chunk_fixed_column(&[7_i64.to_le_bytes().to_vec()]);
+    let unsigned_column = chunk_fixed_column(&[u64::MAX.to_le_bytes().to_vec()]);
+    let double_column = chunk_fixed_column(&[3.5_f64.to_le_bytes().to_vec()]);
+    let name_column = chunk_variable_column(&[b"ab"]);
+    let scripted_response = chunk_response_result(
+        &[id_column, unsigned_column, double_column, name_column],
+        Rc::clone(&next_count),
+        Rc::clone(&close_count),
+    );
+
+    let table = ConfiguredTable::new(
+        "test",
+        "wide",
+        99,
+        vec![
+            ConfiguredColumn::clustered_primary_key("id", 1),
+            ConfiguredColumn::stored_unsigned_bigint_not_null("visits", 2),
+            ConfiguredColumn::stored_double_not_null("score", 3),
+            ConfiguredColumn::stored_char_not_null("name", 4, 8),
+        ],
+    );
+    let mut engine = RealTiKvReadSession::new(
+        table,
+        transport([scripted_response], Rc::clone(&state)),
+        timestamps,
+    );
+
+    let query = engine
+        .execute("SELECT id, visits, score, name FROM test.wide")
+        .expect("a wide configured projection must reach the transport");
+    let mut record_set = query.into_record_set();
+    assert_eq!(
+        record_set.next_batch(1).unwrap(),
+        vec![vec![
+            Datum::Int(7),
+            Datum::UInt(u64::MAX),
+            Datum::Real(3.5),
+            Datum::new_collation_string(b"ab".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
+        ]]
+    );
+    record_set.close().unwrap();
 }
 
 #[test]
