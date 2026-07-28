@@ -191,7 +191,7 @@ impl fmt::Display for LoadedTableRefusal {
 /// The admitted shape is exactly what the read path decodes today: a
 /// non-partitioned base table with a signed `BIGINT` clustered handle and
 /// `NOT NULL` columns of the widened scalar set (`BIGINT`, `BIGINT UNSIGNED`,
-/// `INT`, `DOUBLE`, `CHAR`).
+/// `INT`, `DOUBLE`, `CHAR`, `DECIMAL`).
 pub fn configure_loaded_table(
     schema: &str,
     table: &TableInfo,
@@ -285,6 +285,19 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
             })?;
             Ok(ConfiguredColumn::stored_char_not_null(
                 name, column.id, max_length,
+            ))
+        }
+        FieldTypeCode::NewDecimal if !unsigned => {
+            let flen = column.get_flen();
+            let decimal = column.get_decimal();
+            let precision = u32::try_from(flen).map_err(|_| {
+                format!("column `{name}` is DECIMAL with an unusable declared precision {flen}")
+            })?;
+            let scale = u32::try_from(decimal).map_err(|_| {
+                format!("column `{name}` is DECIMAL with an unusable declared scale {decimal}")
+            })?;
+            Ok(ConfiguredColumn::stored_decimal_not_null(
+                name, column.id, precision, scale,
             ))
         }
         _ => Err(format!(

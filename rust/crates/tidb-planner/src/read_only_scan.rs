@@ -67,6 +67,7 @@ const PRI_KEY_FLAG: i32 = 1 << 1;
 const PHYSICAL_PLAN_ID: i32 = 1;
 
 const MYSQL_TYPE_STRING: i32 = 254;
+const MYSQL_TYPE_NEWDECIMAL: i32 = 246;
 /// MySQL `TypeDouble`, per Go `mysql.TypeDouble`.
 const MYSQL_TYPE_DOUBLE: i32 = 5;
 /// `mysql.UnsignedFlag`, set on the coprocessor/result `ColumnInfo.Flag` for an
@@ -97,9 +98,12 @@ const UTF8MB4_MAX_BYTES_PER_CHAR: i32 = 4;
 /// and `Double` widen the read path beyond signed integers to the other
 /// scalar shapes the coprocessor chunk decoder
 /// (`tidb_codec::decode_column_datums`) and `tidb-tablecodec`'s row/index
-/// codec both already support end to end; any type outside this set (decimal,
-/// temporal, JSON, enum/set, vector) must stay refused at config time rather
-/// than admitted with a guessed decode.
+/// codec both already support end to end. `Decimal` is decoded the same way
+/// from the self-describing `MyDecimal` binary encoding, but is read-only:
+/// the write path (`tidb-exec::real_tikv_dml`) fails closed on it. Any type
+/// outside this set (temporal, JSON, enum/set, vector, or a nullable column)
+/// must stay refused at config time rather than admitted with a guessed
+/// decode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfiguredScalarType {
     /// Signed 64-bit `BIGINT`.
@@ -115,6 +119,18 @@ pub enum ConfiguredScalarType {
         /// Declared character length.
         max_length: u32,
     },
+    /// Signed `DECIMAL(precision, scale)`.
+    ///
+    /// The persisted and coprocessor-chunk bytes are the self-describing
+    /// `MyDecimal` binary encoding (`tidb_codec::decode_column_datums`
+    /// already decodes it for every admitted precision/scale), so only the
+    /// wire-facing display metadata needs the declared shape.
+    Decimal {
+        /// Declared total number of digits (`M` in `DECIMAL(M, D)`).
+        precision: u32,
+        /// Declared number of digits after the decimal point (`D`).
+        scale: u32,
+    },
 }
 
 impl ConfiguredScalarType {
@@ -129,7 +145,7 @@ impl ConfiguredScalarType {
         match self {
             Self::BigInt => Some((i64::MIN, i64::MAX)),
             Self::Int => Some((i32::MIN as i64, i32::MAX as i64)),
-            Self::UnsignedBigInt | Self::Double | Self::Char { .. } => None,
+            Self::UnsignedBigInt | Self::Double | Self::Char { .. } | Self::Decimal { .. } => None,
         }
     }
 
@@ -140,6 +156,7 @@ impl ConfiguredScalarType {
             Self::Int => MYSQL_TYPE_LONG,
             Self::Double => MYSQL_TYPE_DOUBLE,
             Self::Char { .. } => MYSQL_TYPE_STRING,
+            Self::Decimal { .. } => MYSQL_TYPE_NEWDECIMAL,
         }
     }
 
@@ -148,7 +165,7 @@ impl ConfiguredScalarType {
     const fn extra_flag(self) -> i32 {
         match self {
             Self::UnsignedBigInt => UNSIGNED_FLAG,
-            Self::BigInt | Self::Int | Self::Double | Self::Char { .. } => 0,
+            Self::BigInt | Self::Int | Self::Double | Self::Char { .. } | Self::Decimal { .. } => 0,
         }
     }
 
@@ -161,7 +178,11 @@ impl ConfiguredScalarType {
     /// send it is not wired.
     const fn collation_id(self) -> i32 {
         match self {
-            Self::BigInt | Self::UnsignedBigInt | Self::Int | Self::Double => BINARY_COLLATION_ID,
+            Self::BigInt
+            | Self::UnsignedBigInt
+            | Self::Int
+            | Self::Double
+            | Self::Decimal { .. } => BINARY_COLLATION_ID,
             Self::Char { .. } => UTF8MB4_BIN_COPROCESSOR_COLLATION_ID,
         }
     }
@@ -173,6 +194,7 @@ impl ConfiguredScalarType {
             Self::Int => 11,
             Self::Double => 22,
             Self::Char { max_length } => max_length as i32,
+            Self::Decimal { precision, .. } => precision as i32,
         }
     }
 
@@ -196,7 +218,11 @@ impl ConfiguredScalarType {
     #[must_use]
     pub const fn result_charset_id(self) -> i32 {
         match self {
-            Self::BigInt | Self::UnsignedBigInt | Self::Int | Self::Double => BINARY_COLLATION_ID,
+            Self::BigInt
+            | Self::UnsignedBigInt
+            | Self::Int
+            | Self::Double
+            | Self::Decimal { .. } => BINARY_COLLATION_ID,
             Self::Char { .. } => UTF8MB4_BIN_RESULT_COLLATION_ID,
         }
     }
@@ -211,6 +237,29 @@ impl ConfiguredScalarType {
             Self::Int => 11,
             Self::Double => 22,
             Self::Char { max_length } => max_length as i32 * UTF8MB4_MAX_BYTES_PER_CHAR,
+            // Go `column.ConvertColumnInfo`: a DECIMAL column length adds one
+            // byte for the sign, plus one more for the decimal point when the
+            // scale is nonzero.
+            Self::Decimal { precision, scale } => {
+                precision as i32 + 1 + if scale > 0 { 1 } else { 0 }
+            }
+        }
+    }
+
+    /// MySQL protocol result-column `decimals` field: the declared scale for
+    /// `DECIMAL`, `0` for every other admitted type.
+    ///
+    /// Go `column.ConvertColumnInfo` sends `mysql.NotFixedDec` (31) for a
+    /// column whose `GetDecimal()` is unspecified (every non-`DECIMAL` type
+    /// this node admits); the existing wire-building call sites already hard
+    /// code `0` there rather than `NotFixedDec`, so this method preserves
+    /// that established (if not byte-for-byte Go-faithful) behavior for
+    /// those types and only makes `DECIMAL` report its real scale.
+    #[must_use]
+    pub const fn result_decimal(self) -> u8 {
+        match self {
+            Self::BigInt | Self::UnsignedBigInt | Self::Int | Self::Double | Self::Char { .. } => 0,
+            Self::Decimal { scale, .. } => scale as u8,
         }
     }
 
@@ -240,6 +289,10 @@ impl ConfiguredScalarType {
             Self::Char { max_length } => FieldType::new(FieldTypeCode::String)
                 .with_collation(Collation::Utf8Mb4Bin)
                 .with_flen(i64::from(max_length)),
+            // The chunk decoder reads `NewDecimal` from the self-describing
+            // `MyDecimal` binary encoding (`tidb_codec::column::decode_column_datums`);
+            // it needs no flen/decimal to do so.
+            Self::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
         }
     }
 }
@@ -330,6 +383,22 @@ impl ConfiguredColumn {
             id,
             kind: ConfiguredColumnKind::StoredNotNull,
             scalar_type: ConfiguredScalarType::Double,
+        }
+    }
+
+    /// Configures one stored `DECIMAL(precision, scale) NOT NULL` column.
+    #[must_use]
+    pub fn stored_decimal_not_null(
+        name: impl Into<String>,
+        id: i64,
+        precision: u32,
+        scale: u32,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::Decimal { precision, scale },
         }
     }
 
@@ -1712,7 +1781,14 @@ fn resolve_prepared_aggregate(
         }
         // Go `typeInfer4Sum` returns a DOUBLE (not DECIMAL) for a floating-point
         // argument, a result shape this DECIMAL-only path does not own yet.
-        ConfiguredScalarType::Double | ConfiguredScalarType::Char { .. } => {
+        //
+        // A `DECIMAL` argument also returns `typeInfer4Sum`'s DECIMAL result,
+        // but with a widened-flen rule this path has not verified against Go
+        // (`unsigned bool` bookkeeping and the flen/decimal widening are both
+        // argument-shape-dependent); refuse rather than guess.
+        ConfiguredScalarType::Double
+        | ConfiguredScalarType::Char { .. }
+        | ConfiguredScalarType::Decimal { .. } => {
             return unsupported(UnsupportedReadOnlyFeature::Aggregate)
         }
     };

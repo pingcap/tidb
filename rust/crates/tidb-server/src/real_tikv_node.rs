@@ -773,6 +773,9 @@ fn served_table_descriptor(table: &ConfiguredTable) -> String {
                 (_, ConfiguredScalarType::Char { max_length }) => {
                     format!("stored-char-not-null:{max_length}")
                 }
+                (_, ConfiguredScalarType::Decimal { precision, scale }) => {
+                    format!("stored-decimal-not-null:{precision}:{scale}")
+                }
             };
             format!("{}:{}:{}", column.name(), column.id(), kind)
         })

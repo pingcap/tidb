@@ -80,6 +80,13 @@ const GO_UNSUPPORTED_TYPE_TABLE: &str = r#"{"id":79,"name":{"O":"Tags","L":"tags
 {"id":2,"name":{"O":"tag","L":"tag"},"offset":1,"type":{"Tp":15,"Flag":1,"Flen":64,"Decimal":-1,"Charset":"utf8mb4","Collate":"utf8mb4_bin","Elems":null,"Array":false},"state":5,"version":2}
 ],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":2,"version":5}"#;
 
+/// A base table with a signed `DECIMAL(10,2) NOT NULL` column, widening the
+/// admitted read domain beyond `GO_SUPPORTED_TABLE`'s original set.
+const GO_DECIMAL_TABLE: &str = r#"{"id":80,"name":{"O":"Ledger","L":"ledger"},"charset":"utf8mb4","collate":"utf8mb4_bin","cols":[
+{"id":1,"name":{"O":"id","L":"id"},"offset":0,"type":{"Tp":8,"Flag":3,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2},
+{"id":2,"name":{"O":"amount","L":"amount"},"offset":1,"type":{"Tp":246,"Flag":1,"Flen":10,"Decimal":2,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2}
+],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":2,"version":5}"#;
+
 fn recorded_cluster() -> RecordedSnapshot {
     let mut snapshot = RecordedSnapshot::default();
     snapshot.put(key::schema_version_kv_key(), value::encode_int_value(412));
@@ -87,6 +94,7 @@ fn recorded_cluster() -> RecordedSnapshot {
     snapshot.put(key::table_kv_key(3, 77), GO_SUPPORTED_TABLE);
     snapshot.put(key::table_kv_key(3, 78), GO_UNSUPPORTED_TABLE);
     snapshot.put(key::table_kv_key(3, 79), GO_UNSUPPORTED_TYPE_TABLE);
+    snapshot.put(key::table_kv_key(3, 80), GO_DECIMAL_TABLE);
     // The same database hash also holds allocator fields, which are not tables.
     snapshot.put(
         key::auto_table_id_kv_key(3, 77),
@@ -110,7 +118,7 @@ fn loads_databases_tables_and_schema_version_from_stored_bytes() {
     assert_eq!(database.info.id, 3);
     assert_eq!(database.info.name.original(), "Campaign");
     // Allocator fields in the same hash must not be mistaken for tables.
-    assert_eq!(database.tables.len(), 3);
+    assert_eq!(database.tables.len(), 4);
     assert_eq!(database.tables[0].id, 77);
     assert_eq!(database.tables[0].db_id, 3);
     assert_eq!(database.tables[1].id, 78);
@@ -190,6 +198,25 @@ fn unsupported_not_null_column_is_refused_by_its_stored_type() {
         refusal.to_string(),
         "table Campaign.Tags is present in the cluster catalog but cannot be read by this node: \
          column `tag` has type VARCHAR(64), which this node cannot decode yet"
+    );
+}
+
+#[test]
+fn decimal_column_is_admitted_with_its_declared_precision_and_scale() {
+    let mut snapshot = recorded_cluster();
+    let catalog = load_cluster_catalog(&mut snapshot).expect("catalog loads");
+    let (database, table) = catalog.find_table("campaign", "ledger").expect("table found");
+
+    let configured = configure_loaded_table(database.name.original(), table).expect("table admitted");
+    configured.validate().expect("configured table is valid");
+    let amount = &configured.columns()[1];
+    assert_eq!(amount.name(), "amount");
+    assert_eq!(
+        amount.scalar_type(),
+        tidb_planner::read_only_scan::ConfiguredScalarType::Decimal {
+            precision: 10,
+            scale: 2
+        }
     );
 }
 

@@ -389,6 +389,27 @@ fn result_column_metadata_follows_go_convert_column_info() {
     assert_eq!(ConfiguredScalarType::Double.result_type_code(), 5); // TypeDouble
     assert_eq!(ConfiguredScalarType::Double.result_charset_id(), 63);
     assert!(!ConfiguredScalarType::Double.is_unsigned());
+
+    // `DECIMAL(precision, scale)` per Go `column.ConvertColumnInfo`: the
+    // client column length adds one byte for the sign, plus one more for the
+    // decimal point when the scale is nonzero, and the `decimals` field
+    // reports the declared scale.
+    let decimal = ConfiguredScalarType::Decimal {
+        precision: 10,
+        scale: 2,
+    };
+    assert_eq!(decimal.result_type_code(), 246); // TypeNewDecimal
+    assert_eq!(decimal.result_charset_id(), 63); // binary
+    assert_eq!(decimal.result_column_length(), 12); // 10 + sign + point
+    assert_eq!(decimal.result_decimal(), 2);
+    assert!(!decimal.is_unsigned());
+
+    let zero_scale_decimal = ConfiguredScalarType::Decimal {
+        precision: 10,
+        scale: 0,
+    };
+    assert_eq!(zero_scale_decimal.result_column_length(), 11); // 10 + sign, no point
+    assert_eq!(zero_scale_decimal.result_decimal(), 0);
 }
 
 #[test]
@@ -417,4 +438,13 @@ fn chunk_field_type_drives_real_tikv_coprocessor_chunk_decode_per_column() {
     assert_eq!(char_field.code(), FieldTypeCode::String);
     assert_eq!(char_field.collation(), Collation::Utf8Mb4Bin);
     assert_eq!(char_field.flen(), 30);
+
+    // `DECIMAL` decodes from the self-describing `MyDecimal` binary
+    // encoding, so the chunk `FieldType` needs only the type code.
+    let decimal_field = ConfiguredScalarType::Decimal {
+        precision: 10,
+        scale: 2,
+    }
+    .chunk_field_type();
+    assert_eq!(decimal_field.code(), FieldTypeCode::NewDecimal);
 }

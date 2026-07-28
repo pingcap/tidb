@@ -175,6 +175,7 @@ impl fmt::Display for ConfiguredWriteError {
                     ConfiguredScalarType::Int => "INT",
                     ConfiguredScalarType::Double => "DOUBLE",
                     ConfiguredScalarType::Char { .. } => "CHAR",
+                    ConfiguredScalarType::Decimal { .. } => "DECIMAL",
                 };
                 write!(
                     formatter,
@@ -204,6 +205,7 @@ impl fmt::Display for ConfiguredWriteError {
                     ConfiguredScalarType::Int => "INT",
                     ConfiguredScalarType::Double => "DOUBLE",
                     ConfiguredScalarType::Char { .. } => "CHAR",
+                    ConfiguredScalarType::Decimal { .. } => "DECIMAL",
                 };
                 write!(
                     formatter,
@@ -539,7 +541,9 @@ fn decode_stored_column_value(
             decode_configured_row_bytes(stored, column.id())?,
         )),
         // Read-path-only scalar types (see `ConfiguredWriteError::UnsupportedScalarType`).
-        scalar_type @ (ConfiguredScalarType::UnsignedBigInt | ConfiguredScalarType::Double) => {
+        scalar_type @ (ConfiguredScalarType::UnsignedBigInt
+        | ConfiguredScalarType::Double
+        | ConfiguredScalarType::Decimal { .. }) => {
             Err(ConfiguredWriteError::UnsupportedScalarType {
                 column: column.name().to_owned(),
                 scalar_type,
@@ -801,6 +805,9 @@ fn max_configured_row_value_len(table: &ConfiguredTable) -> usize {
                 ConfiguredScalarType::Char { max_length } => {
                     (max_length as usize).saturating_mul(UTF8MB4_MAX_BYTES_PER_CHAR)
                 }
+                // Fixed-width `MyDecimal` binary encoding
+                // (`tidb_codec::column::MY_DECIMAL_BYTES`).
+                ConfiguredScalarType::Decimal { .. } => 40,
             };
             total
                 .saturating_add(MAX_COLUMN_METADATA_LEN)

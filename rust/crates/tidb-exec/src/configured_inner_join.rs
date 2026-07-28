@@ -686,7 +686,7 @@ fn protocol_column(
             ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
             ConfiguredColumnKind::StoredNotNull => 0x0001,
         } | if scalar.is_unsigned() { 0x0020 } else { 0 },
-        decimal: 0,
+        decimal: scalar.result_decimal(),
         type_code: scalar.result_type_code() as u8,
         default_value: None,
     }
