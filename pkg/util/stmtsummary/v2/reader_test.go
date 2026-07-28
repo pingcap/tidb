@@ -19,9 +19,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -550,4 +552,72 @@ func writeStmtFile(name string, begin, end int64) error {
 		return err
 	}
 	return nil
+}
+
+// TestStmtFileParseEndTsAbsoluteConfiguredFilename closes V2-19 of the
+// statement-summary audit: when tidb_stmt_summary_filename is configured as an
+// absolute path, parseEndTs built the rotated-name prefix from the *full*
+// configured path (e.g. "/tmp/x/tidb-statements") and then compared it against
+// the rotated file's basename (e.g. "tidb-statements-2022-12-27T16-21-20.245").
+// The HasPrefix check never matched, so parseEndTs silently returned 0, which
+// downstream treated as MaxInt64 in timeRangeOverlap - effectively disabling
+// time-range filtering for the absolute-path configuration.
+//
+// The regression test pinpoints the broken operation: with the configured
+// filename set to an absolute path, opening the rotated sibling file MUST yield
+// an `end` timestamp parsed from the filename suffix (not 0). The buggy code
+// leaves end == 0 and the test fails.
+func TestStmtFileParseEndTsAbsoluteConfiguredFilename(t *testing.T) {
+	dir := t.TempDir()
+	const shortName = "tidb-statements"
+	endTime := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+
+	// Configure the *absolute* filename so the bug surface triggers.
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, shortName+".log")
+	})
+
+	// Create a rotated sibling with the timestamp suffix; lumberjack format.
+	rotated := filepath.Join(dir, shortName+"-2022-12-27T16-21-20.245.log")
+	require.NoError(t, writeStmtFile(rotated, endTime.Unix()-10, endTime.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+
+	f, err := openStmtFile(rotated)
+	require.NoError(t, err)
+	defer func() { _ = f.close() }()
+	require.Equal(t, endTime.Unix(), f.end, "V2-19: end timestamp from rotated filename must parse under absolute-path config")
+}
+
+// TestStmtFilesTimeRangeFiltersWithAbsoluteConfiguredFilename asserts that with
+// an absolute configured filename, newStmtFiles' time-range filtering actually
+// prunes rotated siblings outside the range. Under the V2-19 bug, every rotated
+// file's end was 0 (MaxInt64+) and the exclusion did not take effect.
+func TestStmtFilesTimeRangeFiltersWithAbsoluteConfiguredFilename(t *testing.T) {
+	dir := t.TempDir()
+	const shortName = "tidb-statements"
+	endTime := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, shortName+".log")
+	})
+
+	rotated := filepath.Join(dir, shortName+"-2022-12-27T16-21-20.245.log")
+	require.NoError(t, writeStmtFile(rotated, endTime.Unix()-10, endTime.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+
+	// Request a range that sits strictly AFTER the rotated file's real end.
+	// With the V2-19 bug the file's end parsed as 0, which timeRangeOverlap
+	// treats as MaxInt64, so the file's effective range becomes [begin, +inf)
+	// and it would be wrongly included by this query. After the fix, the file's
+	// real end is used and the file is excluded as expected.
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: endTime.Unix() + 100, End: endTime.Unix() + 200},
+	})
+	require.NoError(t, err)
+	defer files.close()
+	require.Empty(t, files.files, "V2-19: rotated file fully after the requested range must be filtered when config is absolute")
 }

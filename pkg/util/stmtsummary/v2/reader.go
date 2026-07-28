@@ -514,15 +514,22 @@ func parseBeginTsAndReseek(file *os.File) (int64, error) {
 }
 
 func parseEndTs(file *os.File) (int64, error) {
-	// tidb-statements.log
-	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
-	// .log
-	ext := filepath.Ext(filename)
-	// tidb-statements
-	prefix := filename[:len(filename)-len(ext)]
+	// The configured filename may be an absolute path; only its basename is
+	// meaningful for the rotated-name prefix. Computing the prefix from the
+	// full configured path made HasPrefix compare against paths like
+	// "/tmp/x/tidb-statements" while the rotated base name is
+	// "tidb-statements-2022-...". The check never matched and parseEndTs
+	// silently returned 0, which downstream behaves like MaxInt64 in
+	// timeRangeOverlap and effectively disables file-level time-range pruning
+	// (V2-19). Compute everything against the basename so absolute-path and
+	// relative-path configurations behave identically.
+	configured := config.GetGlobalConfig().Instance.StmtSummaryFilename
+	base := filepath.Base(configured)
+	ext := filepath.Ext(base)
+	prefix := base[:len(base)-len(ext)]
 
 	// tidb-statements-2022-12-27T16-21-20.245.log
-	filename = filepath.Base(file.Name())
+	filename := filepath.Base(file.Name())
 	// .log
 	ext = filepath.Ext(file.Name())
 	// tidb-statements-2022-12-27T16-21-20.245
