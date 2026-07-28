@@ -122,6 +122,35 @@ func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 	return (EmptyRangeSize+16)*int64(len(rangePoints))/2 + getPointsTotalDatumSize(rangePoints)
 }
 
+type singleColumnRangeStorage struct {
+	ran       Range
+	lowVal    [1]types.Datum
+	highVal   [1]types.Datum
+	collators [1]collate.Collator
+}
+
+func newSingleColumnRange(
+	lowVal types.Datum,
+	lowExclude bool,
+	highVal types.Datum,
+	highExclude bool,
+	collator collate.Collator,
+) *Range {
+	storage := &singleColumnRangeStorage{
+		ran: Range{
+			LowExclude:  lowExclude,
+			HighExclude: highExclude,
+		},
+		lowVal:    [1]types.Datum{lowVal},
+		highVal:   [1]types.Datum{highVal},
+		collators: [1]collate.Collator{collator},
+	}
+	storage.ran.LowVal = storage.lowVal[:]
+	storage.ran.HighVal = storage.highVal[:]
+	storage.ran.Collators = storage.collators[:]
+	return &storage.ran
+}
+
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
@@ -144,13 +173,13 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 	ranges := make(Ranges, 0, len(convertedPoints)/2)
 	for i := 0; i < len(convertedPoints); i += 2 {
 		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
-		ran := &Range{
-			LowVal:      []types.Datum{startPoint.value},
-			LowExclude:  startPoint.excl,
-			HighVal:     []types.Datum{endPoint.value},
-			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
-		}
+		ran := newSingleColumnRange(
+			startPoint.value,
+			startPoint.excl,
+			endPoint.value,
+			endPoint.excl,
+			collate.GetCollator(newTp.GetCollate()),
+		)
 		ranges = append(ranges, ran)
 	}
 	return ranges, false, nil
