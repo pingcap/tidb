@@ -2777,6 +2777,73 @@ mod tests {
         }
     }
 
+    /// Decimal, hex and bit literals through the whole session path, checked
+    /// against captured TiDB output.
+    ///
+    /// NOT PORTED: `-2.750` is one literal token in Go's parser, so its type
+    /// carries the sign in its flen; this AST keeps the sign as a unary minus
+    /// over the literal, so the sign shapes the value but not the literal's
+    /// own flen. The printed value is the same.
+    #[test]
+    fn numeric_literals() {
+        let mut session = Session::new();
+
+        // Captured: a decimal literal keeps its written scale.
+        assert_eq!(row_text(session.run("SELECT 1.5")), [["1.5"]]);
+        assert_eq!(row_text(session.run("SELECT 0.10")), [["0.10"]]);
+        assert_eq!(row_text(session.run("SELECT -2.750")), [["-2.750"]]);
+
+        // Captured: decimal arithmetic keeps the wider scale, and division by
+        // zero is still NULL plus a warning.
+        assert_eq!(row_text(session.run("SELECT 1.5 + 1")), [["2.5"]]);
+        assert_eq!(row_text(session.run("SELECT 1.5 * 2")), [["3.0"]]);
+        assert_eq!(
+            session.run("SELECT 1.5 / 0").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Null]])
+        );
+        assert_eq!(session.warnings().len(), 1);
+        assert_eq!(session.warnings()[0].code, 1365);
+
+        // Captured: a decimal comparison against an integer.
+        assert_eq!(row_text(session.run("SELECT 1.5 > 1")), [["1"]]);
+
+        // Captured: DIV and MOD truncate toward zero.
+        assert_eq!(
+            row_text(session.run("SELECT 7 DIV 2, 7 MOD 2, -7 DIV 2")),
+            [["3", "1", "-3"]]
+        );
+
+        // Captured: a hex or bit literal prints as its bytes.
+        assert_eq!(row_text(session.run("SELECT 0x41")), [["A"]]);
+        assert_eq!(row_text(session.run("SELECT x'4142'")), [["AB"]]);
+        assert_eq!(row_text(session.run("SELECT b'1010'")), [["\n"]]);
+
+        // Captured: and reads as a number in arithmetic.
+        assert_eq!(row_text(session.run("SELECT 0x41 + 0")), [["65"]]);
+        assert_eq!(row_text(session.run("SELECT b'1010' + 0")), [["10"]]);
+
+        // A decimal literal reaches a stored decimal column and compares
+        // against it.
+        session.run("CREATE TABLE t (d DECIMAL(10,3))").unwrap();
+        session.run("INSERT INTO t VALUES (1.5), (2.25)").unwrap();
+        assert_eq!(
+            session.run("SELECT d FROM t WHERE d > 1.4").unwrap(),
+            StmtResult::Rows(vec![
+                vec![Datum::Decimal(tidb_datatype::Decimal::from_literal("1.5"))],
+                vec![Datum::Decimal(tidb_datatype::Decimal::from_literal("2.25"))],
+            ])
+        );
+        // KNOWN DIVERGENCE (next target, recorded in the frontier memory):
+        // TiDB prints these as `1.500` and `2.250`, because `INSERT` casts
+        // each value to the column's own type (Go `table.CastValue`) and a
+        // DECIMAL(10,3) column carries scale 3. This tier stores the literal
+        // as written, so the value is right but the scale is the literal's.
+        assert_eq!(
+            row_text(session.run("SELECT d FROM t")),
+            [["1.5"], ["2.25"]]
+        );
+    }
+
     /// Division by zero, checked against captured TiDB output.
     ///
     /// The value is `NULL` in every case; what the SQL mode decides is whether

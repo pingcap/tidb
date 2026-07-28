@@ -56,6 +56,41 @@ impl ColumnResolver for NoResolver {
     }
 }
 
+/// Go `types.SetBinChsClnFlag`: the binary charset/collation plus the binary
+/// flag every non-string literal type carries.
+fn set_binary_charset(ft: &mut FieldType) {
+    ft.set_charset_name("binary");
+    ft.set_collation_name("binary");
+    ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+}
+
+/// Go `types.DefaultTypeForValue` for a `*MyDecimal`: the printed length plus
+/// one for the decimal point, and the literal's own fractional digits.
+fn decimal_literal_type(value: &tidb_datatype::Decimal) -> FieldType {
+    let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+    ft.set_flen_under_limit(value.to_string().chars().count() as i64);
+    ft.set_decimal_under_limit(i64::from(value.scale()));
+    ft.set_flen_under_limit(ft.flen() + 1);
+    set_binary_charset(&mut ft);
+    ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    ft
+}
+
+/// Go `types.DefaultTypeForValue` for a `BitLiteral`/`HexLiteral`: a binary
+/// `VarString` three bytes wide per literal byte. Only the hex form is
+/// unsigned, which is what makes `0x41 + 0` read the bytes as a number.
+fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType {
+    let mut ft = FieldType::new(FieldTypeCode::VarString);
+    ft.set_flen(byte_len as i64 * 3);
+    ft.set_decimal(0);
+    set_binary_charset(&mut ft);
+    ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    if unsigned {
+        ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+    }
+    ft
+}
+
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
     Expression::Constant(Constant::new(datum, FieldType::new(code)))
 }
@@ -117,6 +152,37 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             Ok(Expression::Constant(Constant::new(
                 datum,
                 FieldType::new(FieldTypeCode::VarString),
+            )))
+        }
+        // Go's parser folds a decimal literal into a `*MyDecimal` value whose
+        // type `DefaultTypeForValue` derives from the printed literal.
+        Expr::Decimal(text) => {
+            let value = tidb_datatype::Decimal::from_literal(text);
+            let ft = decimal_literal_type(&value);
+            Ok(Expression::Constant(Constant::new(
+                Datum::Decimal(value),
+                ft,
+            )))
+        }
+        // `0x41` / `x'4142'`: Go keeps the raw bytes as a `HexLiteral`, which
+        // prints as a string but converts to a number by its byte value.
+        Expr::Hex(digits) => {
+            let literal = tidb_datatype::parse_hex_str(&format!("0x{digits}"))
+                .map_err(|_| EvalError::Unsupported("malformed hexadecimal literal"))?;
+            let ft = binary_literal_type(literal.as_bytes().len(), true);
+            Ok(Expression::Constant(Constant::new(
+                Datum::BinaryLiteral(literal),
+                ft,
+            )))
+        }
+        // `b'1010'`: the same shape as a hex literal, but signed.
+        Expr::Bit(digits) => {
+            let literal = tidb_datatype::parse_bit_str(&format!("0b{digits}"))
+                .map_err(|_| EvalError::Unsupported("malformed bit literal"))?;
+            let ft = binary_literal_type(literal.as_bytes().len(), false);
+            Ok(Expression::Constant(Constant::new(
+                Datum::BinaryLiteral(literal),
+                ft,
             )))
         }
         Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
@@ -392,5 +458,87 @@ mod tests {
         // A column reference is not yet handled.
         let col = Expr::Column(vec!["a".to_owned()]);
         assert!(rewrite_expr(&col).is_err());
+    }
+}
+
+#[cfg(test)]
+mod literal_tests {
+    use super::*;
+
+    fn rewrite(sql_expr: &str) -> Expression {
+        let stmt = tidb_parser::parse(&format!("SELECT {sql_expr}")).expect("parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("expected a query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected a SELECT")
+        };
+        let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+            panic!("expected an expression field")
+        };
+        rewrite_expr_resolved(expr, &NoResolver).expect("rewrites")
+    }
+
+    fn constant_of(expr: &Expression) -> (&Datum, &FieldType) {
+        let Expression::Constant(constant) = expr else {
+            panic!("expected a constant, got {expr:?}")
+        };
+        (
+            &constant.value,
+            constant.ret_type.as_ref().expect("a literal has a type"),
+        )
+    }
+
+    /// Captured from TiDB (`SELECT 1.5` etc., reading the result field's own
+    /// type/flen/decimal/flag): a decimal literal is a `NewDecimal` whose
+    /// flen is the printed length plus one, with the binary charset and the
+    /// not-null flag.
+    #[test]
+    fn decimal_literal_type_matches_tidb() {
+        for (text, flen, decimal, printed) in [
+            ("1.5", 4, 1, "1.5"),
+            ("0.10", 5, 2, "0.10"),
+            ("2.750", 6, 3, "2.750"),
+        ] {
+            let expr = rewrite(text);
+            let (value, ft) = constant_of(&expr);
+            assert_eq!(ft.code(), FieldTypeCode::NewDecimal, "{text}");
+            assert_eq!(ft.flen(), flen, "{text} flen");
+            assert_eq!(ft.decimal(), decimal, "{text} decimal");
+            assert_eq!(ft.charset_name(), "binary", "{text} charset");
+            assert!(ft.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL != 0);
+            assert!(ft.flags() & tidb_datatype::FieldTypeFlags::BINARY != 0);
+            let Datum::Decimal(value) = value else {
+                panic!("expected a decimal datum for {text}")
+            };
+            assert_eq!(value.to_string(), printed, "{text} value");
+        }
+    }
+
+    /// Captured from TiDB: `0x41` and `x'4142'` are unsigned binary
+    /// `VarString`s three bytes wide per literal byte, printing as the bytes
+    /// themselves; `b'1010'` is the same but signed.
+    #[test]
+    fn binary_literal_types_match_tidb() {
+        for (text, bytes, flen, unsigned) in [
+            ("0x41", &b"A"[..], 3, true),
+            ("x'4142'", &b"AB"[..], 6, true),
+            ("b'1010'", &b"\n"[..], 3, false),
+        ] {
+            let expr = rewrite(text);
+            let (value, ft) = constant_of(&expr);
+            assert_eq!(ft.code(), FieldTypeCode::VarString, "{text}");
+            assert_eq!(ft.flen(), flen, "{text} flen");
+            assert_eq!(ft.decimal(), 0, "{text} decimal");
+            assert_eq!(
+                ft.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED != 0,
+                unsigned,
+                "{text} unsigned"
+            );
+            let Datum::BinaryLiteral(literal) = value else {
+                panic!("expected a binary literal datum for {text}")
+            };
+            assert_eq!(literal.as_bytes(), bytes, "{text} bytes");
+        }
     }
 }

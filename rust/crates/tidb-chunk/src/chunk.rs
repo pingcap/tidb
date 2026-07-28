@@ -225,7 +225,8 @@ impl Chunk {
     /// already should use the exact [`Chunk::append_my_decimal`].
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
-    /// float32, string/bytes, time, duration, decimal). Other kinds panic,
+    /// float32, string/bytes, binary literal, time, duration, decimal). Other
+    /// kinds panic,
     /// pending their column support.
     pub fn append_datum(&mut self, col_idx: usize, datum: &Datum) {
         match datum {
@@ -239,6 +240,12 @@ impl Chunk {
             }
             Datum::String(s) => self.append_bytes(col_idx, s.bytes()),
             Datum::Bytes(b) => self.append_bytes(col_idx, b),
+            // A hex or bit literal lives in a binary `VarString` column, so
+            // its cell is the literal's own bytes -- which is how Go stores
+            // `KindBinaryLiteral`/`KindMysqlBit` in a chunk too.
+            Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
+                self.append_bytes(col_idx, literal.as_bytes());
+            }
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
             Datum::Decimal(dec) => {

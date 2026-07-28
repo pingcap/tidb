@@ -97,7 +97,8 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
         }
         "unaryminus" => {
             let arg_ft = arg.static_type()?;
-            let mut ret = match arg_ft.eval_type() {
+            let eval_type = arg_ft.eval_type();
+            let mut ret = match eval_type {
                 // DEFERRED: the constant `intOverflow` check (typeInfer) that
                 // promotes `-(literal beyond max int64)` to decimal.
                 EvalType::Int => {
@@ -106,13 +107,41 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
                     ret
                 }
                 EvalType::Real => new_return_field_type(EvalType::Real),
-                // DEFERRED: decimal and temporal/duration arguments.
-                _ => return None,
+                // Go's default arm: a decimal argument -- and a temporal one,
+                // which it converts through decimal -- keeps the decimal
+                // domain with the argument's own scale; everything else
+                // (a string, JSON) negates as a real.
+                other => {
+                    let as_decimal = other == EvalType::Decimal
+                        || matches!(
+                            arg_ft.code(),
+                            tidb_datatype::FieldTypeCode::Date
+                                | tidb_datatype::FieldTypeCode::NewDate
+                                | tidb_datatype::FieldTypeCode::Datetime
+                                | tidb_datatype::FieldTypeCode::Timestamp
+                                | tidb_datatype::FieldTypeCode::Duration
+                        );
+                    if as_decimal {
+                        let mut ret = new_return_field_type(EvalType::Decimal);
+                        ret.set_decimal_under_limit(arg_ft.decimal());
+                        ret
+                    } else {
+                        new_return_field_type(EvalType::Real)
+                    }
+                }
             };
-            // Non-column argument: reserve the sign digit
-            // (`SetFlenUnderLimit(argFlen + 1)`). The column-arg reservation
-            // shortcut is deferred with column support itself.
-            ret.set_flen_under_limit(arg_ft.flen() + 1);
+            // Go reserves a digit for the sign, except over a column whose
+            // declared width already covers it.
+            let is_column = matches!(arg, Expression::Column(_) | Expression::CorrelatedColumn(_));
+            let column_keeps_width = is_column
+                && (eval_type == EvalType::Decimal
+                    || (eval_type == EvalType::Int
+                        && arg_ft.flags() & FieldTypeFlags::UNSIGNED == 0));
+            if column_keeps_width {
+                ret.set_flen_under_limit(arg_ft.flen());
+            } else {
+                ret.set_flen_under_limit(arg_ft.flen() + 1);
+            }
             Some(ret)
         }
         _ => None,
