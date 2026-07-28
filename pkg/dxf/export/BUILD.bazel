@@ -29,6 +29,7 @@ go_library(
         "//pkg/format/textrow",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
@@ -53,6 +54,7 @@ go_library(
         "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
@@ -68,7 +70,9 @@ go_test(
     flaky = True,
     shard_count = 2,
     deps = [
+        "//pkg/metrics",
         "//pkg/testkit",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",
     ],
 )
