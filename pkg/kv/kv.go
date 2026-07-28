@@ -53,6 +53,9 @@ import (
 // Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
 const UnCommitIndexKVFlag byte = '1'
 
+// ReleaseNextGenCICacheProbe invalidates compiled package artifacts for the release branch CI probe.
+const ReleaseNextGenCICacheProbe = "release-nextgen-202603"
+
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
