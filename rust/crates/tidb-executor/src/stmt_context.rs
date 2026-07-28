@@ -39,6 +39,11 @@ pub struct StmtContext {
     strict: bool,
     current_db: Option<String>,
     version: Option<String>,
+    /// Go `StatementContext`'s fixed statement time as
+    /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
+    /// statement reads the same instant.
+    now: Option<(i64, u32, i32)>,
+    time_zone: Option<tidb_expr::SessionTimeZone>,
 }
 
 impl StmtContext {
@@ -51,6 +56,8 @@ impl StmtContext {
             strict: true,
             current_db: None,
             version: None,
+            now: None,
+            time_zone: None,
         }
     }
 
@@ -65,6 +72,19 @@ impl StmtContext {
     ) -> Self {
         self.current_db = current_db;
         self.version = version;
+        self
+    }
+
+    /// Fixes the statement's clock, which Go does once per statement so
+    /// every `NOW()` in it agrees.
+    #[must_use]
+    pub fn with_clock(
+        mut self,
+        now: (i64, u32, i32),
+        time_zone: tidb_expr::SessionTimeZone,
+    ) -> Self {
+        self.now = Some(now);
+        self.time_zone = Some(time_zone);
         self
     }
 
@@ -87,6 +107,8 @@ impl StmtContext {
             strict,
             current_db: None,
             version: None,
+            now: None,
+            time_zone: None,
         }
     }
 
@@ -123,6 +145,19 @@ impl StmtContext {
 impl Columns for StmtContext {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
+    }
+
+    fn now(&self) -> Option<(i64, u32, i32)> {
+        self.now
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        self.time_zone
+            .clone()
+            .unwrap_or(tidb_expr::SessionTimeZone::Fixed {
+                name: "UTC".to_owned(),
+                offset_secs: 0,
+            })
     }
 
     fn current_database(&self) -> Option<String> {

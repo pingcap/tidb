@@ -9,6 +9,8 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-parser = { path = "../tidb-parser" }

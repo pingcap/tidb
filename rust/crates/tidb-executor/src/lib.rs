@@ -67,4 +67,4 @@ pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::StmtContext;
 pub use table_dual::TableDualExec;
-pub use tidb_expr::EvalError;
+pub use tidb_expr::{EvalError, SessionTimeZone};

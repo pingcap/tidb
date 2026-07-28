@@ -1335,6 +1335,8 @@ dependencies = [
 name = "tidb-executor"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",
@@ -1501,6 +1503,8 @@ dependencies = [
 name = "tidb-session"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "tidb-ast",
  "tidb-datatype",
  "tidb-executor",

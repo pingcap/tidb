@@ -1348,6 +1348,71 @@ impl Session {
         }
     }
 
+    /// Go `timeutil.ParseTimeZone`: `SYSTEM` is the host zone, a named zone
+    /// comes from the zone database, and a `+HH:MM`/`-HH:MM` string is a
+    /// fixed offset bounded to `[-12:59, +14:00]`.
+    ///
+    /// An unparseable value falls back to the host zone rather than failing
+    /// the statement, because this tier accepts the variable without
+    /// validating it at SET time -- Go validates there instead, and that
+    /// check is the deferred half of this port.
+    fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
+        use tidb_executor::SessionTimeZone;
+        let written = self
+            .vars
+            .get_system("time_zone")
+            .unwrap_or_else(|_| "SYSTEM".to_owned());
+        if !written.eq_ignore_ascii_case("SYSTEM") {
+            if let Ok(zone) = written.parse::<chrono_tz::Tz>() {
+                return SessionTimeZone::Named(zone);
+            }
+            if let Some(rest) = written.strip_prefix(['+', '-']) {
+                let negative = written.starts_with('-');
+                let mut parts = rest.split(':');
+                let hours: i32 = parts.next().unwrap_or_default().parse().unwrap_or(-1);
+                let minutes: i32 = parts.next().unwrap_or("0").parse().unwrap_or(-1);
+                if hours >= 0 && (0..60).contains(&minutes) {
+                    let offset = hours * 3600 + minutes * 60;
+                    let bounded = if negative {
+                        offset <= 12 * 3600 + 59 * 60
+                    } else {
+                        offset <= 14 * 3600
+                    };
+                    if bounded {
+                        return SessionTimeZone::Fixed {
+                            name: written.clone(),
+                            offset_secs: if negative { -offset } else { offset },
+                        };
+                    }
+                }
+            }
+        }
+        // SYSTEM: the host's own zone, which is what Go's SystemLocation is.
+        let local = chrono::Local::now();
+        SessionTimeZone::Fixed {
+            name: "System".to_owned(),
+            offset_secs: chrono::Offset::fix(local.offset()).local_minus_utc(),
+        }
+    }
+
+    /// The instant every `NOW()` in one statement shares, which Go fixes on
+    /// the statement context.
+    fn statement_clock(&self, zone: &tidb_executor::SessionTimeZone) -> (i64, u32, i32) {
+        use tidb_executor::SessionTimeZone;
+        let utc = chrono::Utc::now();
+        let seconds = utc.timestamp();
+        let nanos = utc.timestamp_subsec_nanos();
+        let offset = match zone {
+            SessionTimeZone::Fixed { offset_secs, .. } => *offset_secs,
+            SessionTimeZone::Named(zone) => {
+                use chrono::TimeZone;
+                chrono::Offset::fix(&zone.offset_from_utc_datetime(&utc.naive_utc()))
+                    .local_minus_utc()
+            }
+        };
+        (seconds, nanos, offset)
+    }
+
     /// The evaluation context for one statement, which is Go's
     /// `StatementContext`.
     ///
@@ -1364,8 +1429,12 @@ impl Session {
             Some(self.current_db.clone())
         };
         let version = self.vars.get_system("version").ok();
+        let zone = self.session_time_zone();
+        let clock = self.statement_clock(&zone);
         if !is_dml {
-            return tidb_executor::StmtContext::for_query().with_session_state(current_db, version);
+            return tidb_executor::StmtContext::for_query()
+                .with_session_state(current_db, version)
+                .with_clock(clock, zone);
         }
         let mode = self
             .vars
@@ -1378,6 +1447,7 @@ impl Session {
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
         )
         .with_session_state(current_db, version)
+        .with_clock(clock, zone)
     }
 
     /// Moves what evaluation recorded into the statement's warning buffer.
@@ -2788,6 +2858,79 @@ mod tests {
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
         }
+    }
+
+    /// The date/time family through the chunk executor, checked against
+    /// captured TiDB output with `time_zone = '+00:00'`.
+    ///
+    /// Go fixes the statement clock once, so every `NOW()` in one statement
+    /// agrees; the context carries that instant and the resolved session
+    /// zone (Go `timeutil.ParseTimeZone`).
+    ///
+    /// DOCUMENTED DIVERGENCE, the same one the temporal casts carry: this
+    /// crate's date/time builtins produce formatted STRINGS, so the reported
+    /// column type is `VarString` where TiDB says `DATETIME`. The values
+    /// match.
+    #[test]
+    fn date_time_builtins() {
+        let mut session = Session::new();
+        session.apply_set("SET time_zone = '+00:00'").unwrap();
+        session.run("CREATE TABLE t (d VARCHAR(30))").unwrap();
+        session
+            .run("INSERT INTO t VALUES ('2020-03-05 06:07:08')")
+            .unwrap();
+
+        // Captured: the field extractors.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT MONTH(d), DAY(d), YEAR(d), DAYOFWEEK(d), DAYOFYEAR(d), WEEKDAY(d), QUARTER(d) FROM t"
+            )),
+            [["3", "5", "2020", "5", "65", "3", "1"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT MONTHNAME(d), DAYNAME(d), LAST_DAY(d), TO_DAYS(d), TIME_TO_SEC(d) FROM t"
+            )),
+            [["March", "Thursday", "2020-03-31", "737854", "22028"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT WEEK(d), WEEKOFYEAR(d), YEARWEEK(d) FROM t")),
+            [["9", "10", "202009"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT SEC_TO_TIME(3661), MAKEDATE(2020,10), MAKETIME(1,2,3)")),
+            [["01:01:01", "2020-01-10", "01:02:03"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT PERIOD_ADD(202001, 2), PERIOD_DIFF(202003, 202001)")),
+            [["202003", "2"]]
+        );
+
+        // Captured: the statement clock is fixed, so NOW() agrees with
+        // itself and prints a full second-resolution datetime.
+        assert_eq!(
+            row_text(session.run("SELECT NOW() = NOW(), LENGTH(NOW()) = 19")),
+            [["1", "1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CURDATE() = CURDATE(), LENGTH(CURDATE()) = 10")),
+            [["1", "1"]]
+        );
+
+        // The session zone reaches the clock: UTC and a +10 offset differ by
+        // ten hours in the hour NOW() reports for the same instant.
+        let hour_at = |session: &mut Session, zone: &str| -> i64 {
+            session
+                .apply_set(&format!("SET time_zone = '{zone}'"))
+                .unwrap();
+            match session.run("SELECT HOUR(NOW())").unwrap() {
+                StmtResult::Rows(rows) => datum_text(&rows[0][0]).unwrap().parse().unwrap(),
+                other => panic!("expected rows, got {other:?}"),
+            }
+        };
+        let utc = hour_at(&mut session, "+00:00");
+        let plus_ten = hour_at(&mut session, "+10:00");
+        assert_eq!((utc + 10) % 24, plus_ten);
     }
 
     /// `CAST(expr AS type)` and its `CONVERT`/`BINARY` spellings through the

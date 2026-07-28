@@ -356,7 +356,13 @@ impl ScalarFunction {
             .iter()
             .map(|a| a.eval(ctx, row))
             .collect::<Result<_, _>>()?;
-        if let Some(result) = crate::func::eval_func_values(&name.to_ascii_uppercase(), &vals) {
+        let upper = name.to_ascii_uppercase();
+        if let Some(result) = crate::func::eval_func_values(&upper, &vals) {
+            return result;
+        }
+        // The date/time family reads the statement clock and the session
+        // zone, so it takes the context rather than values alone.
+        if let Some(result) = crate::time_fn::dispatch(&upper, &vals, ctx) {
             return result;
         }
         Err(EvalError::Unsupported(
