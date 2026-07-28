@@ -824,7 +824,7 @@ fn column_row(
         charset_name,
         collation_name,
         text(&field_type.compact_str(false)),
-        text(&crate::column_key_flag(table, offset)),
+        text(&crate::show::column_key_flag(table, offset)),
         text(if table.auto_increment_offset() == Some(offset) {
             "auto_increment"
         } else {
