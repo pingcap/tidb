@@ -166,6 +166,8 @@ type SnapFileImporter struct {
 	mergeSst bool
 	// retainLatestMVCCVersion means compacted SSTs are downloaded with newest MVCC versions only.
 	retainLatestMVCCVersion bool
+	// peerDownloadRetry means TiKV can safely deduplicate same-uuid download retries inside one peer.
+	peerDownloadRetry bool
 }
 
 type SnapFileImporterOptions struct {
@@ -361,7 +363,32 @@ func (importer *SnapFileImporter) CheckBatchDownloadLatestMVCCSupport(ctx contex
 		}
 		storeIDs = append(storeIDs, s.Id)
 	}
-	return errors.Trace(importer.importClient.CheckBatchDownloadLatestMVCCSupport(ctx, storeIDs))
+	if err := importer.importClient.CheckBatchDownloadLatestMVCCSupport(ctx, storeIDs); err != nil {
+		return errors.Trace(err)
+	}
+	importer.peerDownloadRetry = true
+	return nil
+}
+
+// CheckPeerDownloadRetrySupport checks whether same-uuid peer download retry can be used.
+// The TiKV-side deduplication was released together with BatchDownloadLatestMVCC,
+// so BR uses that RPC as the compatibility signal.
+func (importer *SnapFileImporter) CheckPeerDownloadRetrySupport(ctx context.Context, tikvStores []*metapb.Store) error {
+	storeIDs := make([]uint64, 0, len(tikvStores))
+	for _, s := range tikvStores {
+		if s.State != metapb.StoreState_Up {
+			continue
+		}
+		storeIDs = append(storeIDs, s.Id)
+	}
+	support, err := importer.importClient.IsBatchDownloadLatestMVCCSupported(ctx, storeIDs)
+	if err != nil {
+		log.Warn("failed to check peer download retry support, fallback to legacy download retry", zap.Error(err))
+		importer.peerDownloadRetry = false
+		return nil
+	}
+	importer.peerDownloadRetry = support
+	return nil
 }
 
 // CheckMultiIngestSupport checks whether all stores support multi-ingest
@@ -669,6 +696,21 @@ func (importer *SnapFileImporter) download(
 	return downloadMetas, errDownload
 }
 
+func (importer *SnapFileImporter) downloadWithOptionalPeerRetry(
+	ctx context.Context,
+	logger *zap.Logger,
+	fn func(context.Context) (*import_sstpb.DownloadResponse, error),
+) (*import_sstpb.DownloadResponse, error) {
+	backoff := utils.NewDownloadSSTBackoffStrategy()
+	if importer.peerDownloadRetry {
+		backoff = utils.NewPeerDownloadSSTBackoffStrategy()
+	}
+	if logger != nil {
+		backoff = utils.VerboseRetry(backoff, logger)
+	}
+	return utils.WithRetryV2(ctx, backoff, fn)
+}
+
 // Notice that the KvMode must be TiDB.
 func (importer *SnapFileImporter) buildDownloadRequest(
 	file *backuppb.File,
@@ -811,7 +853,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 					var err error
 					var resp *import_sstpb.DownloadResponse
 					logger := logger0.With(zap.String("reqName", j))
-					resp, err = utils.WithRetryV2(ectx, utils.VerboseRetry(utils.NewDownloadSSTBackoffStrategy(), logger), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+					resp, err = importer.downloadWithOptionalPeerRetry(ectx, logger, func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 						dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 						defer cancel()
 						if len(req.Ssts) == 0 {
@@ -934,7 +976,7 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 				logger := logutil.CL(ectx).With(zap.Int("filegroup#", i), zap.Int("filegroup.total#", len(downloadReqs)))
 				var err error
 				var resp *import_sstpb.DownloadResponse
-				resp, err = utils.WithRetryV2(ectx, utils.VerboseRetry(utils.NewDownloadSSTBackoffStrategy(), logger), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+				resp, err = importer.downloadWithOptionalPeerRetry(ectx, logger, func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
 					logger.Info("Sending batch download latest MVCC SST request.",
@@ -1037,7 +1079,7 @@ func (importer *SnapFileImporter) downloadSST(
 			for fileName, req := range downloadReqsMap {
 				var err error
 				var resp *import_sstpb.DownloadResponse
-				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+				resp, err = importer.downloadWithOptionalPeerRetry(ectx, nil, func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
 					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)

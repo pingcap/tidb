@@ -2721,6 +2721,12 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
 			copStats.ScanDetail.MergeFromScanDetailV2(scanDetailV2)
 		}
+		if readPoolTaskDetails := pbDetails.GetReadPoolTaskDetails(); readPoolTaskDetails != nil {
+			if copStats.ReadPoolTaskDetails == nil {
+				copStats.ReadPoolTaskDetails = &util.PoolTaskDetails{}
+			}
+			copStats.ReadPoolTaskDetails.MergeFromPB(readPoolTaskDetails)
+		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
 			copStats.TimeDetail.MergeFromTimeDetail(nil, timeDetail)
@@ -2809,7 +2815,8 @@ func (s LimiterWaitStats) IsZero() bool {
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
 	execdetails.CopExecDetails
-	ReqStats *tikv.RegionRequestRuntimeStats
+	ReqStats            *tikv.RegionRequestRuntimeStats
+	ReadPoolTaskDetails *util.PoolTaskDetails
 
 	CoprCacheHit bool
 }

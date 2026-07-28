@@ -122,7 +122,7 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260708122311-01bd8f99f4da
+	github.com/tikv/client-go/v2 v2.0.8-0.20260724023932-61ecd7c11416
 	github.com/tikv/pd/client v0.0.0-20260708075407-4e05b9d2c2d3
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
