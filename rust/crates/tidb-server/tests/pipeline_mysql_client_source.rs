@@ -849,6 +849,20 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         ]
     );
 
+    // EXPLAIN ANALYZE really executes and reports the actual row count in
+    // the 9-column shape, actRows exact for the full-scan read.
+    let analyzed = run_query(
+        &mut client,
+        &mut reader,
+        "EXPLAIN ANALYZE SELECT a FROM t WHERE a > 1",
+    );
+    assert_eq!(analyzed[0].len(), 9, "{analyzed:?}");
+    let scan_row = analyzed
+        .iter()
+        .find(|row| row[0].contains("TableFullScan"))
+        .expect("scan operator present");
+    assert_eq!(scan_row[2], "4", "actRows counts the real scanned rows");
+
     // The processlist virtual table sees this very connection.
     let processes = run_query(
         &mut client,
