@@ -295,6 +295,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		w.tryRegisterTTLTableToExternalWorkload(jobCtx.ctx, tbInfo)
 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil

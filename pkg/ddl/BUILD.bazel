@@ -272,6 +272,7 @@ go_test(
         "executor_nokit_test.go",
         "executor_test.go",
         "export_test.go",
+        "external_workload_ttl_test.go",
         "fail_test.go",
         "foreign_key_test.go",
         "index_change_test.go",
