@@ -39,12 +39,12 @@
 
 use std::time::Duration;
 
-use tidb_codec::{decode_configured_row_int, encode_configured_row, ConfiguredRowColumn};
+use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, RealOptimisticTransactionOpener};
 use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::read_only_scan::{
-    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
+    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredScalarType, ConfiguredTable,
 };
 use tidb_txnkv::rpc::UnaryCallContext;
 
@@ -82,21 +82,28 @@ fn configured_catalog() -> ConfiguredCatalog {
 /// given opener. A new transaction takes a new PD start timestamp greater than
 /// any prior commit, so the value it observes is what TiKV durably stored.
 fn read_balance(opener: &RealOptimisticTransactionOpener, handle: i64) -> Option<i64> {
-    let (row_key, _) = encode_configured_row(
-        TABLE_ID,
-        handle,
-        &[ConfiguredRowColumn::new(BALANCE_COLUMN, 0)],
-    )
-    .expect("configured row key must encode");
+    let row_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(handle));
     let mut transaction = opener
         .begin(1, 128)
         .expect("allocate a real readback snapshot");
     let observed = transaction
         .snapshot_get(&row_key, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("real BatchCommands Get must succeed");
-    observed
-        .value
-        .map(|value| decode_configured_row_int(&value, BALANCE_COLUMN).expect("row decodes"))
+    observed.value.map(|value| {
+        // Decodes through the same shared row codec production reads with
+        // (`tidb_tablecodec::decode_table_row_to_map`), rather than a second,
+        // bespoke row decoder of this test's own.
+        let field_types = std::collections::BTreeMap::from([(
+            BALANCE_COLUMN,
+            ConfiguredScalarType::BigInt.chunk_field_type(),
+        )]);
+        tidb_tablecodec::decode_table_row_to_map(&value, &field_types, None)
+            .expect("row decodes")
+            .remove(&BALANCE_COLUMN)
+            .expect("balance column must be present")
+            .as_int()
+            .expect("balance column must be a signed integer")
+    })
 }
 
 fn insert_sql() -> &'static str {

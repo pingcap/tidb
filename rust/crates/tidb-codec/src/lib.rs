@@ -19,7 +19,6 @@
 
 mod bytes;
 mod column;
-mod configured_row_write;
 mod datum;
 mod decimal;
 mod duration;
@@ -44,11 +43,6 @@ pub use bytes::{
 pub use column::{
     decode_column_datums, decode_columns, ColumnCodecError, ColumnLayout, RawColumn,
     TypedColumnError,
-};
-pub use configured_row_write::{
-    decode_configured_row_bytes, decode_configured_row_int, encode_configured_mixed_row,
-    encode_configured_row, encode_configured_row_value, encode_configured_row_value_typed,
-    ConfiguredRowColumn, ConfiguredRowReadError, ConfiguredRowWriteError, ConfiguredValue,
 };
 pub use datum::{
     cut_one, decode, decode_one, decode_range, encode_key, encode_key_in_timezone, encode_value,
