@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 type autoPresplitStatsProvider interface {
@@ -230,10 +229,6 @@ func planAutoPresplitIndexRegions(
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "NullCount", err)
 		} else {
-			logutil.DDLLogger().Info("loaded auto presplit NULL event",
-				zap.String("table", tblInfo.Name.L),
-				zap.String("index", idxInfo.Name.L),
-				zap.Object("nullEvent", nullEvent))
 			events = append(events, nullEvent)
 		}
 	}
@@ -249,10 +244,6 @@ func planAutoPresplitIndexRegions(
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "TopN", err)
 		} else {
-			logutil.DDLLogger().Info("loaded auto presplit TopN events",
-				zap.String("table", tblInfo.Name.L),
-				zap.String("index", idxInfo.Name.L),
-				zap.Objects("topNEvents", topNEvents))
 			events = append(events, topNEvents...)
 		}
 	}
@@ -268,10 +259,6 @@ func planAutoPresplitIndexRegions(
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", err)
 		} else {
-			logutil.DDLLogger().Info("loaded auto presplit Histogram events",
-				zap.String("table", tblInfo.Name.L),
-				zap.String("index", idxInfo.Name.L),
-				zap.Objects("histogramEvents", histogramEvents))
 			events = append(events, histogramEvents...)
 		}
 	}
@@ -299,13 +286,6 @@ type autoPresplitEvent struct {
 	value   types.Datum
 	encoded []byte
 	count   uint64
-}
-
-func (event autoPresplitEvent) MarshalLogObject(enc zapcore.ObjectEncoder) error {
-	enc.AddString("value", event.value.String())
-	enc.AddString("encoded", fmt.Sprintf("%x", event.encoded))
-	enc.AddUint64("count", event.count)
-	return nil
 }
 
 func newAutoPresplitEvent(
