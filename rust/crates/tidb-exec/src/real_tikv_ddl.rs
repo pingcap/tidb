@@ -19,6 +19,15 @@
 //! two-phase commit the DML path uses. There is no second transaction and no
 //! ordering between transactions to get wrong: the object, the schema-version
 //! bump, and the diff that makes the version readable are one atom.
+//!
+//! [`commit_cluster_ddl`] publishes no schema-change notification: Go PUTs
+//! the new version to etcd here (`OwnerUpdateGlobalVersion`) so every other
+//! node's watch fires immediately, but this function holds only a TiKV
+//! transaction opener, no PD/etcd client. A peer Rust node — and a real
+//! TiDB, until its next lease tick — only notices this commit on its own
+//! next reload pass. See [`crate::catalog_watch`]'s module doc for the full
+//! investigation (etcd key, value encoding, and why the wiring is deferred
+//! rather than guessed at).
 
 use std::fmt;
 use std::time::Duration;

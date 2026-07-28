@@ -38,6 +38,49 @@
 //! snapshot's catalog. That is safe for the read path (the snapshot's data
 //! matches the snapshot's schema) and is a real gap for writes, which is why
 //! error 8027 is deliberately deferred rather than approximated.
+//!
+//! # No etcd watch-triggered reload (investigated, deferred)
+//!
+//! Go does not rely on the lease tick alone: after a DDL owner commits, it
+//! also PUTs the new version to etcd so every follower's watch fires
+//! immediately, instead of waiting up to `lease/2`. Source of truth:
+//!
+//! * `pkg/ddl/util/util.go`: `DDLGlobalSchemaVersion =
+//!   "/tidb/ddl/global_schema_version"` is the etcd key. The value is the
+//!   decimal ASCII text of the `int64` version
+//!   (`strconv.FormatInt(version, 10)`; see `pkg/ddl/schemaver/syncer.go`
+//!   `OwnerUpdateGlobalVersion`, a plain `etcdCli.Put` with no lease
+//!   attached to that key).
+//! * `pkg/infoschema/issyncer/syncer.go` `Syncer.SyncLoop` selects on
+//!   `syncer.GlobalVersionCh()` (an etcd `Watch` on that same key) *and* the
+//!   `lease/2` ticker; either one triggers `s.Reload()`. The watch is the
+//!   promptness path, the ticker is the backstop this tier already has.
+//!
+//! Reachability was checked, not assumed: TiDB's etcd client dials PD's own
+//! client port (`pkg/store/etcd.go` `NewEtcdCli` takes `store.EtcdAddrs()`,
+//! which are PD addresses) — PD embeds a real etcd server and exposes its
+//! full v3 KV/Watch gRPC surface on that same port. `tidb-pd-client`
+//! already dials that exact endpoint for `pdpb.PD`
+//! (`crates/tidb-pd-client/src/client.rs`), so an `etcdserverpb.KV/Put` and
+//! `etcdserverpb.Watch/Watch` call are wire-reachable in principle with no
+//! new crate dependency (proto files only). The message shapes were
+//! cross-checked against the vendored source at
+//! `go.etcd.io/etcd/api/v3@v3.5.15` (`etcdserverpb/rpc.proto`,
+//! `mvccpb/kv.proto`) rather than reconstructed from memory.
+//!
+//! What blocks wiring it up now is not the wire protocol, it is the call
+//! path: [`crate::real_tikv_ddl::commit_cluster_ddl`] is a plain
+//! synchronous function that only holds a TiKV transaction opener, and its
+//! caller (`RealTikvNode` in `tidb-server`) holds no PD/etcd client at all
+//! — this reload loop is driven purely by [`CatalogReloader`]'s tick, with
+//! nothing upstream of it able to nudge it early. Adding the etcd leg means
+//! plumbing a new PD/etcd client handle through `RealTikvNode`
+//! construction and through `commit_cluster_ddl`'s call site, then proving
+//! the `Watch` stream behaves against a real PD, which needs a live
+//! playground this investigation did not have exclusive access to. Rather
+//! than land that wiring unverified, it stays a documented divergence: this
+//! tier notices another node's DDL only on its next `lease/2` tick, never
+//! sooner.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
