@@ -109,11 +109,17 @@ impl ColumnResolver for ScopeResolver<'_> {
 ///
 /// DEFERRED (documented): `USING`, `NATURAL`, and `STRAIGHT_JOIN`'s ordering
 /// guarantee.
+///
+/// `trace` records the operator each branch commits to, so `EXPLAIN` prints
+/// the FROM clause the driver actually built rather than a second guess at
+/// it. A shape the recorder has never printed (a derived table, a lateral
+/// join) marks the trace refused instead of inventing a node for it.
 pub(crate) fn build_from(
     node: &JoinNode,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     match node {
         JoinNode::Table(table_ref) => {
@@ -125,8 +131,14 @@ pub(crate) fn build_from(
                 .ok_or(DriverError::Unsupported("table not found in catalog"))?;
             // A table alias replaces the name for qualification, as in Go.
             let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+            // Every base-table read starts as a whole-table scan; the fast
+            // paths in `run_select_stmt` REPLACE this node at the same
+            // moment they replace the executor it describes.
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.table_full_scan(&visible);
+            }
             if let TableEntry::View(view) = entry {
-                return build_view_source(
+                let (exec, scope) = build_view_source(
                     view,
                     database,
                     name,
@@ -134,7 +146,8 @@ pub(crate) fn build_from(
                     table_ref.alias.is_none(),
                     catalog,
                     ctx,
-                );
+                )?;
+                return Ok((meter(exec, trace), scope));
             }
             let columns = entry.column_list();
             let schema_columns: Vec<Column> = columns
@@ -169,9 +182,9 @@ pub(crate) fn build_from(
                     offset: 0,
                 }],
             };
-            Ok((exec, scope))
+            Ok((meter(exec, trace), scope))
         }
-        JoinNode::Join(join) => build_join(join, catalog, current_db, ctx),
+        JoinNode::Join(join) => build_join(join, catalog, current_db, ctx, trace),
         JoinNode::Derived {
             subquery,
             alias,
@@ -184,6 +197,12 @@ pub(crate) fn build_from(
             // schema (captured: `SELECT * FROM LATERAL (SELECT 1) x` runs).
             // Its alias column list still renames positionally.
             let _ = lateral;
+            // EXPLAIN has never described a derived table (its plan is a
+            // subtree this recorder does not enter), and this refactor does
+            // not widen that surface.
+            if let Some(trace) = trace {
+                trace.refuse("derived tables are not supported yet");
+            }
             let (exec, mut scope) =
                 build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx)?;
             rename_derived_columns(&mut scope.tables[0].columns, column_names)?;
@@ -613,8 +632,10 @@ pub(crate) fn build_join(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
-    let (left_exec, left_scope) = build_from(&join.left, catalog, current_db, ctx)?;
+    let (left_exec, left_scope) =
+        build_from(&join.left, catalog, current_db, ctx, trace.as_deref_mut())?;
     let Some(right_node) = &join.right else {
         // The single-table wrapper the parser always produces.
         return Ok((left_exec, left_scope));
@@ -626,6 +647,10 @@ pub(crate) fn build_join(
         column_names,
     } = right_node
     {
+        // An Apply, not a join: a shape the plan recorder does not print.
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.refuse("LATERAL derived tables are not supported yet");
+        }
         return build_lateral_join(
             join,
             left_exec,
@@ -643,7 +668,8 @@ pub(crate) fn build_join(
             "NATURAL and USING joins are not supported yet",
         ));
     }
-    let (right_exec, right_scope) = build_from(right_node, catalog, current_db, ctx)?;
+    let (right_exec, right_scope) =
+        build_from(right_node, catalog, current_db, ctx, trace.as_deref_mut())?;
 
     // The joined scope: the right tables' columns follow the left's.
     let left_width = left_scope.width();
@@ -690,7 +716,20 @@ pub(crate) fn build_join(
         right_exec,
         ctx.clone(),
     ));
-    Ok((exec, scope))
+    if let Some(trace) = trace.as_deref_mut() {
+        if trace.join(join, &scope, current_db).is_err() {
+            trace.refuse("this join's plan is not supported yet");
+        }
+    }
+    Ok((meter(exec, trace), scope))
+}
+
+/// Meters `exec` for the node the trace just recorded, when there is one.
+fn meter(exec: Box<dyn Executor>, trace: Option<&mut PlanTrace>) -> Box<dyn Executor> {
+    match trace {
+        Some(trace) => trace.meter(exec),
+        None => exec,
+    }
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.

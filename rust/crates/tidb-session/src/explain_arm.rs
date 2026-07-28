@@ -50,8 +50,13 @@ impl Session {
             ));
         };
         let current_db = self.current_db.clone();
+        // Both forms plan through the driver's own build path (see
+        // `tidb_executor::explain`), which needs the statement context every
+        // executor it builds evaluates against -- plain EXPLAIN builds the
+        // pipeline without draining it, so no row is produced and no write
+        // runs.
+        let ctx = self.statement_context(true);
         if explain.analyze {
-            let ctx = self.statement_context(true);
             let (columns, rows) = match target {
                 Stmt::Query(query) => {
                     let tidb_ast::QueryStmt::Select(select) = &**query else {
@@ -122,7 +127,7 @@ impl Session {
                     ));
                 };
                 self.with_catalog_mut(|catalog| {
-                    tidb_executor::explain_select_stmt(select, catalog, &current_db, format)
+                    tidb_executor::explain_select_stmt(select, catalog, &current_db, &ctx, format)
                 })?
             }
             // A write's plan is the same plan recorder run over the read path
@@ -131,13 +136,13 @@ impl Session {
             // INSERT` inserts no row, captured).
             Stmt::Dml(dml) => match &**dml {
                 tidb_ast::DmlStmt::Insert(insert) => self.with_catalog_mut(|catalog| {
-                    tidb_executor::explain_insert_stmt(insert, catalog, &current_db, format)
+                    tidb_executor::explain_insert_stmt(insert, catalog, &current_db, &ctx, format)
                 })?,
                 tidb_ast::DmlStmt::Update(update) => self.with_catalog_mut(|catalog| {
-                    tidb_executor::explain_update_stmt(update, catalog, &current_db, format)
+                    tidb_executor::explain_update_stmt(update, catalog, &current_db, &ctx, format)
                 })?,
                 tidb_ast::DmlStmt::Delete(delete) => self.with_catalog_mut(|catalog| {
-                    tidb_executor::explain_delete_stmt(delete, catalog, &current_db, format)
+                    tidb_executor::explain_delete_stmt(delete, catalog, &current_db, &ctx, format)
                 })?,
                 _ => {
                     return Err(DriverError::Unsupported(

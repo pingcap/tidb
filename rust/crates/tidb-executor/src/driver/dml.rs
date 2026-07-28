@@ -86,6 +86,22 @@ pub(crate) fn run_insert_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(u64, Option<i64>), DriverError> {
+    run_insert_traced(insert, catalog, current_db, ctx, None)
+}
+
+/// [`run_insert_stmt`], recording the plan it builds into `trace`.
+///
+/// An `INSERT ... SELECT`'s source is traced by the very run that feeds the
+/// insert, so its `actRows` are the rows this statement really read -- there
+/// is no second, mirrored execution of the source to count them, and so no
+/// way for a source reading the target table to be counted twice.
+pub(crate) fn run_insert_traced(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
+) -> Result<(u64, Option<i64>), DriverError> {
     if !insert.partitions.is_empty() || (insert.replace && !insert.on_duplicate.is_empty()) {
         return Err(DriverError::Unsupported("partitions are not supported yet"));
     }
@@ -98,14 +114,26 @@ pub(crate) fn run_insert_stmt(
     let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
         Some(query) => Some(match &**query {
             tidb_ast::QueryStmt::Select(select) => {
-                run_select_stmt(select, catalog, current_db, ctx)?.1
+                run_select_traced(select, catalog, current_db, ctx, trace.as_deref_mut())?.1
             }
             tidb_ast::QueryStmt::SetOpr(set_opr) => {
+                // EXPLAIN has never described a set-operation source.
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.refuse("EXPLAIN of a set-operation INSERT source is not supported yet");
+                }
                 run_set_opr_stmt(set_opr, catalog, current_db, ctx)?.1
             }
         }),
         None => None,
     };
+    if let Some(trace) = trace {
+        trace.write("Insert", insert.source.is_some());
+        // Plain `EXPLAIN INSERT` plans the write without performing it, as
+        // Go's does (captured: the row is not there afterward).
+        if trace.is_plan_only() {
+            return Ok((0, None));
+        }
+    }
 
     let (database, table_name) = split_table_path(&insert.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
@@ -791,6 +819,22 @@ pub(crate) fn run_update_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
+    run_update_traced(update, catalog, current_db, ctx, None)
+}
+
+/// [`run_update_stmt`], recording the plan it builds into `trace`.
+///
+/// The read plan is the one this function performs, which is why it is always
+/// a `TableFullScan` (+ a `Selection` for the `WHERE`): the write path takes
+/// no point-get/index fast path at all -- see `explain`'s divergence 8. Its
+/// `actRows` are counted off the very scan and predicate the update runs.
+pub(crate) fn run_update_traced(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
+) -> Result<u64, DriverError> {
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
     // planner and executor never read `UpdateStmt.Returning`.
     if update.ignore {
@@ -849,6 +893,25 @@ pub(crate) fn run_update_stmt(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&update.limit)?;
+    if let Some(trace) = trace.as_deref_mut() {
+        trace_dml_source(
+            trace,
+            table_ref,
+            &database,
+            &name,
+            &column_list,
+            &update.where_clause,
+            current_db,
+        );
+        trace.write("Update", true);
+        if trace.is_plan_only() {
+            return Ok(0);
+        }
+    }
+    // Assigned by every arm that reaches the loops below (a view returns
+    // before them), so a write's read plan always reports a real count.
+    let scanned;
+    let mut matched = 0u64;
     let entry = catalog
         .get_mut_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?;
@@ -859,6 +922,7 @@ pub(crate) fn run_update_stmt(
         TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
         TableEntry::Mem(mem) => {
             let mut updates = Vec::new();
+            scanned = mem.rows.len() as u64;
             for (index, row) in mem.rows.iter().enumerate() {
                 if let Some(new_row) = compute_updated_row(
                     row,
@@ -867,6 +931,7 @@ pub(crate) fn run_update_stmt(
                     &predicate,
                     &set_exprs,
                     ctx,
+                    &mut matched,
                 )? {
                     updates.push((index, new_row));
                 }
@@ -888,6 +953,7 @@ pub(crate) fn run_update_stmt(
                 &column_names,
                 ctx,
             )?;
+            scanned = rows.len() as u64;
             for (handle, row) in rows {
                 if row_limit.is_some_and(|cap| changed >= cap) {
                     break;
@@ -899,6 +965,7 @@ pub(crate) fn run_update_stmt(
                     &predicate,
                     &set_exprs,
                     ctx,
+                    &mut matched,
                 )? {
                     kv.update_row(&handle, &new_row).map_err(|e| match e {
                         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
@@ -910,6 +977,9 @@ pub(crate) fn run_update_stmt(
                 }
             }
         }
+    }
+    if let Some(trace) = trace {
+        trace.set_dml_source_act_rows(scanned, matched, update.where_clause.is_some());
     }
     Ok(changed)
 }
@@ -923,6 +993,7 @@ pub(crate) fn compute_updated_row(
     predicate: &Option<Expression>,
     set_exprs: &[(usize, Expression)],
     ctx: &crate::StmtContext,
+    matched: &mut u64,
 ) -> Result<Option<Vec<Datum>>, DriverError> {
     let chunk = row_chunk(row, field_types)?;
     if let Some(predicate) = predicate {
@@ -933,6 +1004,10 @@ pub(crate) fn compute_updated_row(
             return Ok(None);
         }
     }
+    // The `WHERE` selected this row. That is what a `Selection`'s `actRows`
+    // counts -- not the narrower `changed` below, which Go reports as
+    // `affected` rather than as rows the filter passed.
+    *matched += 1;
     let mut new_row = row.to_vec();
     for (offset, expr) in set_exprs {
         // Go evaluates each assignment over the row as the previous
@@ -998,6 +1073,19 @@ pub(crate) fn run_delete_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
+    run_delete_traced(delete, catalog, current_db, ctx, None)
+}
+
+/// [`run_delete_stmt`], recording the plan it builds into `trace` -- see
+/// [`run_update_traced`] for the read plan's shape and where its `actRows`
+/// come from.
+pub(crate) fn run_delete_traced(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
+) -> Result<u64, DriverError> {
     if delete.ignore || delete.quick {
         return Err(DriverError::Unsupported(
             "only plain DELETE FROM t [WHERE ...] is supported",
@@ -1030,6 +1118,22 @@ pub(crate) fn run_delete_stmt(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&delete.limit)?;
+    if let Some(trace) = trace.as_deref_mut() {
+        trace_dml_source(
+            trace,
+            table_ref,
+            &database,
+            &name,
+            &column_list,
+            &delete.where_clause,
+            current_db,
+        );
+        trace.write("Delete", true);
+        if trace.is_plan_only() {
+            return Ok(0);
+        }
+    }
+    let scanned;
     let entry = catalog
         .get_mut_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?;
@@ -1039,6 +1143,7 @@ pub(crate) fn run_delete_stmt(
         TableEntry::View(_) => return Err(DriverError::DeleteViewUnsupported(name.clone())),
         TableEntry::Mem(mem) => {
             let mut kept = Vec::with_capacity(mem.rows.len());
+            scanned = mem.rows.len() as u64;
             for row in std::mem::take(&mut mem.rows) {
                 if row_is_selected(&row, &field_types, &predicate, ctx)? {
                     deleted += 1;
@@ -1060,6 +1165,7 @@ pub(crate) fn run_delete_stmt(
                 &column_names,
                 ctx,
             )?;
+            scanned = rows.len() as u64;
             for (handle, row) in rows {
                 // Go's LIMIT caps the rows DELETED, not the rows examined.
                 if row_limit.is_some_and(|cap| deleted >= cap) {
@@ -1073,7 +1179,43 @@ pub(crate) fn run_delete_stmt(
             }
         }
     }
+    if let Some(trace) = trace {
+        // Every selected row IS deleted, so the delete count is also the
+        // number of rows the `WHERE` passed.
+        trace.set_dml_source_act_rows(scanned, deleted, delete.where_clause.is_some());
+    }
     Ok(deleted)
+}
+
+/// Records the read plan a single-table write performs to find its target
+/// rows: always a whole-table scan, with a `Selection` above it for the
+/// `WHERE` (`explain`'s divergence 8).
+fn trace_dml_source(
+    trace: &mut PlanTrace,
+    table_ref: &tidb_ast::TableRef,
+    database: &str,
+    name: &str,
+    columns: &[(String, FieldType)],
+    where_clause: &Option<tidb_ast::Expr>,
+    current_db: &str,
+) {
+    let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+    trace.table_full_scan(&visible);
+    let Some(predicate) = where_clause else {
+        return;
+    };
+    let scope = PlanTrace::single_table_scope(
+        &visible,
+        table_ref.alias.is_none().then(|| database.to_owned()),
+        columns.to_vec(),
+    );
+    trace.selection(
+        predicate,
+        &Qualifier {
+            db: current_db,
+            scope: &scope,
+        },
+    );
 }
 
 /// Whether the `WHERE` predicate (absent = every row) selects this row.

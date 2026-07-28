@@ -93,13 +93,23 @@ fn agg_output_resolver(state: &AggPipelineState) -> AggOutputResolver {
 /// column and trimmed by a final projection. `GROUPING()` rides the same
 /// hidden-column path ([`add_grouping_column`]) but is filled in by the
 /// rollup pass rather than aggregated.
+///
+/// `traced_select` is the statement as written (this pipeline rewrites the
+/// one it executes), and `trace` records the two operators EXPLAIN reports
+/// for an aggregate query -- the `HashAgg` this chain is built around and the
+/// `LIMIT` above it. The stages between them (Apply, HAVING, Window, the
+/// final projection) are executors the plan recorder has never printed, so
+/// they stay out of the trace rather than widening what EXPLAIN reports.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_aggregate_select(
     select: &tidb_ast::SelectStmt,
+    traced_select: &tidb_ast::SelectStmt,
     from_source: Option<Box<dyn Executor>>,
     resolver: &ScopeResolver<'_>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
     let mut state = AggPipelineState {
         group_by_names: group_by_display_names(select),
@@ -122,7 +132,16 @@ pub(crate) fn run_aggregate_select(
     carry_apply_columns(&mut state, resolver)?;
 
     // Stage 5: Source -> Selection(WHERE) -> Aggregation.
-    let root = build_aggregation(select, from_source, &mut state, resolver, ctx)?;
+    let root = build_aggregation(
+        select,
+        traced_select,
+        from_source,
+        &mut state,
+        resolver,
+        current_db,
+        ctx,
+        trace.as_deref_mut(),
+    )?;
 
     // Stage 6: the Apply chain above the aggregation.
     let root = build_apply_chain(root, &mut state, catalog, current_db, ctx)?;
@@ -139,13 +158,21 @@ pub(crate) fn run_aggregate_select(
     let agg_resolver = agg_output_resolver(&state);
 
     // Stage 9: ORDER BY, then LIMIT.
-    let root = build_order_and_limit(root, &out_schema, &agg_resolver, select, &state, ctx)?;
+    let root = build_order_and_limit(
+        root,
+        &out_schema,
+        &agg_resolver,
+        select,
+        &state,
+        ctx,
+        trace.as_deref_mut(),
+    )?;
 
     // Stage 10: the select list's own columns.
     let root = build_final_projection(root, select, &agg_resolver, &mut state, ctx)?;
 
     // Stage 11: DISTINCT, then drain the plan.
-    distinct_and_drain(root, select, &mut state, ctx)
+    distinct_and_drain(root, select, &mut state, ctx, trace)
 }
 
 /// Stage 0: the grouped column names.
@@ -561,13 +588,21 @@ fn carry_apply_columns(
 ///
 /// Mirrors Go's `buildSelection` + `buildAggregation` operator construction,
 /// including the `WITH ROLLUP` Expand path ([`run_rollup_aggregate`]).
+#[allow(clippy::too_many_arguments)]
 fn build_aggregation(
     select: &tidb_ast::SelectStmt,
+    traced_select: &tidb_ast::SelectStmt,
     from_source: Option<Box<dyn Executor>>,
     state: &mut AggPipelineState,
     resolver: &ScopeResolver<'_>,
+    current_db: &str,
     ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    let qualify = Qualifier {
+        db: current_db,
+        scope: resolver.scope,
+    };
     // GROUP BY expressions (legacy ASC/DESC direction ignored, as in MySQL 8).
     // A bare integer is a 1-based output position, resolved against the
     // SELECT list the same way ORDER BY's is -- see
@@ -604,6 +639,12 @@ fn build_aggregation(
             source,
             ctx.clone(),
         ));
+        if let Some(trace) = trace.as_deref_mut() {
+            if let Some(written) = &traced_select.where_clause {
+                trace.selection(written, &qualify);
+                source = trace.meter(source);
+            }
+        }
     }
 
     // The aggregation output schema.
@@ -637,6 +678,13 @@ fn build_aggregation(
             source,
             ctx.clone(),
         ))
+    };
+    let root = match trace {
+        Some(trace) => {
+            trace.hash_agg(traced_select, &qualify);
+            trace.meter(root)
+        }
+        None => root,
     };
     Ok(root)
 }
@@ -823,6 +871,7 @@ fn build_order_and_limit(
     select: &tidb_ast::SelectStmt,
     state: &AggPipelineState,
     ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let mut root = root;
     let out_schema = out_schema.clone();
@@ -855,6 +904,10 @@ fn build_order_and_limit(
             count,
             root,
         ));
+        if let Some(trace) = trace {
+            trace.limit(offset, count);
+            root = trace.meter(root);
+        }
     }
     Ok(root)
 }
@@ -1010,6 +1063,7 @@ fn distinct_and_drain(
     select: &tidb_ast::SelectStmt,
     state: &mut AggPipelineState,
     ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
     let mut root = root;
     let ret_types: Vec<FieldType> = state.types.clone();
@@ -1028,6 +1082,17 @@ fn distinct_and_drain(
             .collect();
         let schema = Schema::new(columns);
         root = Box::new(distinct_over(root, &schema, ctx));
+    }
+
+    // Plain `EXPLAIN`: the pipeline is recorded, then dropped undrained.
+    if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
+        return Ok((
+            std::mem::take(&mut state.names)
+                .into_iter()
+                .zip(ret_types)
+                .collect(),
+            Vec::new(),
+        ));
     }
 
     root.open()?;

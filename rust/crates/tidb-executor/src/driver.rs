@@ -35,6 +35,7 @@ use crate::join::{JoinExec, JoinKind};
 use crate::kv_table::{IndexRange, KvTable, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
+use crate::plan_trace::{PlanTrace, Qualifier};
 use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
@@ -844,6 +845,15 @@ pub fn run_select_meta_stmt(
     run_select_stmt(select, catalog, current_db, ctx)
 }
 
+/// The name a source operator's `access object` prints: the alias the FROM
+/// clause gave the table, which is what Go prints too.
+fn source_table_name<'a>(scope: &'a FromScope, table: &'a str) -> &'a str {
+    match scope.tables.first() {
+        Some(first) => &first.name,
+        None => table,
+    }
+}
+
 /// Runs one parsed `SELECT` against the catalog.
 fn run_select_stmt(
     select: &tidb_ast::SelectStmt,
@@ -851,6 +861,28 @@ fn run_select_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
+    run_select_traced(select, catalog, current_db, ctx, None)
+}
+
+/// [`run_select_stmt`], recording the plan it builds into `trace`.
+///
+/// This is the one control flow that decides a `SELECT`'s shape, so it is
+/// also the only place that describes one: each site that commits to an
+/// executor records the matching node (see [`crate::plan_trace`]), and in
+/// `EXPLAIN ANALYZE` mode the executor is metered so the node's `actRows` is
+/// the count that operator really produced. A plan-only trace stops before
+/// the drain below, so plain `EXPLAIN` yields no result row.
+pub(crate) fn run_select_traced(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
+) -> Result<SelectMeta, DriverError> {
+    // The statement as written, which the plan text is rendered from: the
+    // rewrites below (CTE materialization, subquery folding, window
+    // hoisting) change what is EXECUTED, not what the user asked for.
+    let traced_select = select;
     // A WITH clause's CTEs are materialized first, then the query runs against
     // a catalog that contains them.
     let with_catalog;
@@ -875,9 +907,14 @@ fn run_select_stmt(
 
     // Resolve FROM: none -> table-dual; otherwise the (possibly joined) tables.
     let (mut from_source, scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
-        None => (None, FromScope::default()),
+        None => {
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.table_dual();
+            }
+            (None, FromScope::default())
+        }
         Some(join) => {
-            let (exec, scope) = build_join(join, catalog, current_db, ctx)?;
+            let (exec, scope) = build_join(join, catalog, current_db, ctx, trace.as_deref_mut())?;
             (Some(exec), scope)
         }
     };
@@ -900,6 +937,12 @@ fn run_select_stmt(
                 {
                     rows.push(row);
                 }
+            }
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.batch_point_get(source_table_name(&scope, &table.name), &handles);
+                // The rows are already in hand: this operator produced every
+                // one of them, so its real count is known here.
+                trace.set_act_rows(rows.len() as u64);
             }
             let schema_columns: Vec<Column> = columns
                 .iter()
@@ -935,6 +978,25 @@ fn run_select_stmt(
                         }
                     }
                 }
+                if let Some(trace) = trace.as_deref_mut() {
+                    let index = table
+                        .indexes()
+                        .iter()
+                        .find(|index| index.id == index_id)
+                        .expect("try_index_ranges returns an index of this table");
+                    let index_columns: Vec<&str> = index
+                        .column_offsets
+                        .iter()
+                        .map(|offset| columns[*offset].0.as_str())
+                        .collect();
+                    trace.index_range_scan(
+                        source_table_name(&scope, &table.name),
+                        &index.name,
+                        &index_columns,
+                        &ranges,
+                    );
+                    trace.set_act_rows(rows.len() as u64);
+                }
                 let schema_columns: Vec<Column> = columns
                     .iter()
                     .enumerate()
@@ -952,14 +1014,18 @@ fn run_select_stmt(
         }
         if let Some(handle) = try_point_get(select, &table, &columns)? {
             let mut table = table;
-            let rows = match handle {
+            let rows = match &handle {
                 Some(handle) => table
-                    .get_row_by_handle(&handle)
+                    .get_row_by_handle(handle)
                     .map_err(|e| DriverError::Parse(format!("point get failed: {e:?}")))?
                     .map(|row| vec![row])
                     .unwrap_or_default(),
                 None => Vec::new(),
             };
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.point_get(source_table_name(&scope, &table.name), handle.as_ref());
+                trace.set_act_rows(rows.len() as u64);
+            }
             let schema_columns: Vec<Column> = columns
                 .iter()
                 .enumerate()
@@ -1002,7 +1068,16 @@ fn run_select_stmt(
             )
         });
     if is_aggregate {
-        return run_aggregate_select(select, from_source, &resolver, catalog, current_db, ctx);
+        return run_aggregate_select(
+            select,
+            traced_select,
+            from_source,
+            &resolver,
+            catalog,
+            current_db,
+            ctx,
+            trace,
+        );
     }
 
     // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
@@ -1012,13 +1087,23 @@ fn run_select_stmt(
             let schema = exec.schema().clone();
             (exec, schema)
         }
-        None => (
-            Box::new(TableDualExec::new(
+        None => {
+            let exec: Box<dyn Executor> = Box::new(TableDualExec::new(
                 ExecutorMeta::new(Schema::new(vec![]), 0, INIT_CAP, MAX_CHUNK_SIZE),
                 1,
-            )),
-            Schema::new(vec![]),
-        ),
+            ));
+            let exec = match trace.as_deref_mut() {
+                Some(trace) => trace.meter(exec),
+                None => exec,
+            };
+            (exec, Schema::new(vec![]))
+        }
+    };
+    // The plan text quotes the statement as written, against the FROM scope
+    // the driver just built.
+    let qualify = Qualifier {
+        db: current_db,
+        scope: &scope,
     };
 
     // Optional WHERE: a selection over the source rows. A correlated
@@ -1113,6 +1198,16 @@ fn run_select_stmt(
             source,
             ctx.clone(),
         ));
+        if let Some(trace) = trace.as_deref_mut() {
+            // An Apply below this selection (a correlated subquery in the
+            // WHERE) adds an executor the recorder has never printed, so it
+            // stays out of the trace rather than changing the shape EXPLAIN
+            // reports.
+            if let Some(written) = &traced_select.where_clause {
+                trace.selection(written, &qualify);
+                source = trace.meter(source);
+            }
+        }
     }
 
     // Window functions: the source rows are materialized here, each window
@@ -1343,6 +1438,10 @@ fn run_select_stmt(
             source,
             ctx.clone(),
         ));
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.sort(&traced_select.order_by, &qualify);
+            source = trace.meter(source);
+        }
     }
 
     // Projection of the rewritten fields.
@@ -1352,12 +1451,20 @@ fn run_select_stmt(
         source,
         ctx.clone(),
     ));
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.projection(traced_select.fields.fields(), &qualify);
+        root = trace.meter(root);
+    }
 
     // SELECT DISTINCT: Go `buildDistinct` builds an aggregation grouping by
     // every projected column, with a FIRST_ROW aggregate per column, which is
     // exactly a deduplication. It sits above the projection and below LIMIT.
     if select.distinct {
         root = Box::new(distinct_over(root, &out_schema, ctx));
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.distinct(traced_select.fields.fields(), &qualify);
+            root = trace.meter(root);
+        }
     }
 
     // LIMIT [offset,] count: both bounds must be non-negative integer literals
@@ -1375,6 +1482,16 @@ fn run_select_stmt(
             count,
             root,
         ));
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.limit(offset, count);
+            root = trace.meter(root);
+        }
+    }
+
+    // Plain `EXPLAIN`: the pipeline is built and recorded, then dropped
+    // undrained -- no row of the result is ever produced.
+    if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
+        return Ok((names.into_iter().zip(ret_types).collect(), Vec::new()));
     }
 
     root.open()?;
@@ -2488,7 +2605,7 @@ fn collect_correlated_columns(
 ) {
     let inner = match &select.from {
         None => FromScope::default(),
-        Some(join) => match build_join(join, catalog, current_db, ctx) {
+        Some(join) => match build_join(join, catalog, current_db, ctx, None) {
             Ok((_, scope)) => scope,
             // An unresolvable inner FROM is reported by the inner run itself.
             Err(_) => FromScope::default(),
@@ -2966,7 +3083,7 @@ fn select_outer_scope(
 ) -> FromScope {
     match &select.from {
         None => FromScope::default(),
-        Some(join) => match build_join(join, catalog, current_db, ctx) {
+        Some(join) => match build_join(join, catalog, current_db, ctx, None) {
             Ok((_, scope)) => scope,
             Err(_) => FromScope::default(),
         },

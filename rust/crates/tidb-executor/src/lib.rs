@@ -40,6 +40,7 @@ pub mod join;
 pub mod kv_table;
 pub mod limit;
 pub mod mem_table;
+mod plan_trace;
 pub mod projection;
 pub mod selection;
 pub mod sort;
