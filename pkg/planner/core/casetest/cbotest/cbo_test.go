@@ -937,6 +937,32 @@ func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
 			}
 		}
 		require.True(t, foundTableRangeScan)
+
+		// issue:69974: a prefix-index join key is lossy even when it covers every join key.
+		testKit.MustExec("drop table if exists prefix_join_outer, prefix_join_inner")
+		testKit.MustExec("create table prefix_join_outer (a varchar(10) not null)")
+		testKit.MustExec("create table prefix_join_inner (a varchar(10) not null, key idx_a (a(1)))")
+		testKit.MustExec("insert into prefix_join_outer values ('a0001'), ('a0999')")
+		testKit.MustExec(`insert into prefix_join_inner
+			with recursive numbers as (
+				select 0 as n
+				union all
+				select n + 1 from numbers where n < 999
+			)
+			select concat('a', lpad(n, 4, '0')) from numbers`)
+		testKit.MustExec("analyze table prefix_join_outer, prefix_join_inner")
+		prefixIndexPlan := testKit.MustQuery(`explain
+			select /*+ inl_hash_join(i) use_index(i, idx_a) */ i.a
+			from prefix_join_outer o join prefix_join_inner i on o.a = i.a`).Rows()
+		foundIndexRangeScan := false
+		for _, row := range prefixIndexPlan {
+			if strings.Contains(fmt.Sprint(row[0]), "IndexRangeScan") {
+				foundIndexRangeScan = true
+				// The prefix lookup matches all 1000 inner rows for each of the 2 outer probes.
+				require.Equal(t, "2000.00", fmt.Sprint(row[1]))
+			}
+		}
+		require.True(t, foundIndexRangeScan)
 	})
 }
 

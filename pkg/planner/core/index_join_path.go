@@ -505,12 +505,18 @@ func estimateIndexJoinProbeCountAfterAccess(
 		return 0, false
 	}
 	usedJoinKeyCount := 0
-	for _, keyOff := range result.idxOff2KeyOff {
+	allUsedJoinKeysFullLength := true
+	for idxOff, keyOff := range result.idxOff2KeyOff {
 		if keyOff >= 0 {
 			usedJoinKeyCount++
+			allUsedJoinKeysFullLength = allUsedJoinKeysFullLength &&
+				result.chosenPath.IdxColLens[idxOff] == types.UnspecifiedLength
 		}
 	}
-	if usedJoinKeyCount >= innerJoinKeyCount {
+	// The join-level row count represents the access rows only when every join key is used exactly.
+	// A prefix index is lossy even when it uses all join keys, so estimate its matched rows from the
+	// truncated index NDV below and leave the full equality as a residual condition.
+	if usedJoinKeyCount >= innerJoinKeyCount && allUsedJoinKeysFullLength {
 		return 0, false
 	}
 	ranges := result.chosenRanges.Range()
