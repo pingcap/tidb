@@ -2030,11 +2030,19 @@ impl Parser {
         Ok(FrameBound::Following(Box::new(n)))
     }
 
-    /// Parses `GROUP_CONCAT([DISTINCT] expr [, expr ...] [SEPARATOR 'str'])`.
-    /// An `ORDER BY` before `SEPARATOR` is a real MySQL construct but is not
-    /// modelled — an honest `ParseError` (the closing `)` won't match), not a
-    /// silent skip. `separator` defaults to `,` and is always restored
-    /// explicitly, matching the Go AST's normalization.
+    /// Parses `GROUP_CONCAT([DISTINCT] expr [, expr ...] [SEPARATOR 'str'])`,
+    /// with an optional trailing `OVER (...)`. Go's grammar accepts
+    /// `GROUP_CONCAT(...) OVER (...)` unconditionally at parse time (any
+    /// aggregate name may take an `OVER` suffix — `pkg/parser`'s
+    /// `parseFuncCall`) and rejects it later at plan time with 1235 `This
+    /// version of TiDB doesn't yet support 'group_concat as window
+    /// function'` (see `tidb_exec::window`'s `build_call`, which raises the
+    /// same 1235 by name). So this parses the `OVER` clause too rather than
+    /// erroring on the stray token, and returns `Expr::Window` instead of
+    /// `Expr::GroupConcat` — the `ORDER BY`/`SEPARATOR` already consumed
+    /// above that clause are then dropped, mirroring Go's
+    /// `parseWindowFuncExpr`, which copies only `Args`/`Distinct` from the
+    /// aggregate node into the window node, never `Order`.
     fn parse_group_concat(&mut self) -> PResult<Expr> {
         self.bump(); // GROUP_CONCAT
         self.expect_op("(")?;
@@ -2073,6 +2081,23 @@ impl Parser {
             ",".to_string()
         };
         self.expect_op(")")?;
+        if self.is_kw("OVER") {
+            self.bump();
+            let over = self.parse_over_clause()?;
+            // `order_by`/`separator` were consumed above to stay on-grammar
+            // (Go's own hand-written parser parses them into the aggregate
+            // node before converting it), but neither survives the
+            // aggregate-to-window conversion — see this function's own doc.
+            let _ = (order_by, separator);
+            return Ok(Expr::Window {
+                name: "GROUP_CONCAT".to_string(),
+                args,
+                distinct,
+                ignore_nulls: false,
+                from_last: false,
+                over,
+            });
+        }
         Ok(Expr::GroupConcat {
             distinct,
             args,

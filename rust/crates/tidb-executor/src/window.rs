@@ -181,10 +181,11 @@
 //! `GROUP BY`, or over a `GROUP BY ... WITH ROLLUP`. Still refused: the
 //! aggregates Go allows `OVER` but this build does not compute --
 //! `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `APPROX_COUNT_DISTINCT`,
-//! `APPROX_PERCENTILE` ([`SLICE_MESSAGE`]). `GROUP_CONCAT(...) OVER (...)`,
-//! which Go answers with 1235, does not reach this stage at all: the
-//! parser's `GROUP_CONCAT` node carries no window spec, so it is a parse
-//! error -- a parser-side deferral.
+//! `APPROX_PERCENTILE` ([`SLICE_MESSAGE`]). `GROUP_CONCAT(...) OVER (...)`
+//! parses (the parser accepts an optional `OVER` on `GROUP_CONCAT` just as
+//! Go's grammar does) and is refused HERE, in `build_call`, with the same
+//! 1235 `'group_concat as window function'` Go answers -- a plan-time
+//! rejection, not a parser-side one.
 //!
 //! Result TYPES follow Go's `baseFuncDesc.TypeInfer`: `COUNT` is a NOT NULL
 //! `BIGINT(21)`, `SUM` a `DECIMAL` (`DOUBLE` for a real argument), `AVG` a
@@ -1021,6 +1022,17 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
     else {
         unreachable!("collect_window_calls only yields Expr::Window");
     };
+    // Go `checkWindowFuncArgs`: `GROUP_CONCAT` is the one aggregate its
+    // window allowlist never accepts, checked by NAME before the DISTINCT
+    // check below (captured: "[planner:1235]This version of TiDB doesn't
+    // yet support 'group_concat as window function'"). The parser accepts
+    // `GROUP_CONCAT(...) OVER (...)` -- this is a plan-time rejection, not
+    // a parse error, matching Go exactly.
+    if name.eq_ignore_ascii_case("GROUP_CONCAT") {
+        return Err(DriverError::NotSupportedYet(
+            "group_concat as window function",
+        ));
+    }
     // Go `checkOriginWindowFuncs`: DISTINCT inside a window call is refused
     // outright, whatever the function (captured: "[planner:1235]This version
     // of TiDB doesn't yet support '<window function>(DISTINCT ..)'").

@@ -10383,15 +10383,15 @@ mod tests {
         // Captured: "[planner:1235]This version of TiDB doesn't yet support
         // 'group_concat as window function'" -- Go refuses GROUP_CONCAT
         // before it looks at any argument, and DISTINCT inside any window
-        // call the same way.
-        // GROUP_CONCAT: captured "[planner:1235]This version of TiDB doesn't
-        // yet support 'group_concat as window function'", but this build's
-        // parser does not accept an `OVER` clause on GROUP_CONCAT at all
-        // (its AST node carries no window spec), so the statement fails
-        // earlier, at parse time -- a documented parser-side deferral.
+        // call the same way. The parser accepts `GROUP_CONCAT(...) OVER
+        // (...)` exactly like Go's grammar does (any aggregate name may
+        // take an `OVER` suffix); the rejection happens at plan/exec time
+        // in `tidb_exec::window::build_call`, not at parse time.
         assert!(matches!(
             session.run("SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t"),
-            Err(DriverError::Parse(_))
+            Err(DriverError::NotSupportedYet(
+                "group_concat as window function"
+            ))
         ));
         assert!(matches!(
             session.run("SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t"),
