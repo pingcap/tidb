@@ -84,7 +84,7 @@ func NewDeleter(
 		snapshot:   NewLazyRefreshedSnapshot(store, trafficRec),
 		trafficRec: trafficRec,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, progressCollector, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, store.GetCodec(), encoder, deleter, progressCollector, logger)
 	var h Handler
 	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)

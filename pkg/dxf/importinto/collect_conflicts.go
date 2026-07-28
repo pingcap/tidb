@@ -270,11 +270,14 @@ func createConflictHandlerChannels(
 	targetIdx *model.IndexInfo,
 ) ([]chan *simplesst.KVPair, bool) {
 	handlerChs := make([]chan *simplesst.KVPair, concurrency)
+	// there might be multiple UK KV for MV index for a single row, when they
+	// are handled concurrently, we want to make sure UK KVs for some row route
+	// to the same handler to properly handle them.
 	needDispatch := concurrency > 1 && targetIdx != nil && targetIdx.MVIndex
 	for i := range handlerChs {
 		handlerChs[i] = pairCh
 		if needDispatch {
-			handlerChs[i] = make(chan *simplesst.KVPair, conflictedkv.BufferedHandleLimit)
+			handlerChs[i] = make(chan *simplesst.KVPair)
 		}
 	}
 	return handlerChs, needDispatch

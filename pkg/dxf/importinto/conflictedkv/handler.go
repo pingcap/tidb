@@ -19,8 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -85,9 +83,15 @@ var _ Handler = (*BaseHandler)(nil)
 type BaseHandler struct {
 	targetTable table.Table
 	kvGroup     string
-	encoder     *importer.TableKVEncoder
-	collector   execute.Collector
-	logger      *zap.Logger
+	// the codec used to decoded encoded keys.
+	// in next-gen, the encoded key is prepended with keyspace prefix before
+	// store to object store to make later ingest step easier to process. but
+	// when resolving conflicts, we need to use transaction to access those keys,
+	// and the keys must not have the keyspace prefix.
+	codec     tikv.Codec
+	encoder   *importer.TableKVEncoder
+	collector execute.Collector
+	logger    *zap.Logger
 	EncodedRowHandler
 
 	KVHandler
@@ -97,6 +101,7 @@ type BaseHandler struct {
 func NewBaseHandler(
 	targetTable table.Table,
 	kvGroup string,
+	codec tikv.Codec,
 	encoder *importer.TableKVEncoder,
 	encodedRowHdl EncodedRowHandler,
 	collector execute.Collector,
@@ -108,6 +113,7 @@ func NewBaseHandler(
 	return &BaseHandler{
 		targetTable:       targetTable,
 		kvGroup:           kvGroup,
+		codec:             codec,
 		encoder:           encoder,
 		collector:         collector,
 		logger:            logger,
@@ -187,7 +193,7 @@ func NewDataKVHandler(base *BaseHandler) *DataKVHandler {
 
 // Handle implements KVHandler interface.
 func (h *DataKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
-	key, err := stripKeyspacePrefix(kv.Key)
+	key, err := h.codec.DecodeKey(kv.Key)
 	if err != nil {
 		return err
 	}
@@ -259,7 +265,7 @@ func (h *IndexKVHandler) PreRun() error {
 
 // Handle implements KVHandler interface.
 func (h *IndexKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
-	key, err := stripKeyspacePrefix(kv.Key)
+	key, err := h.codec.DecodeKey(kv.Key)
 	if err != nil {
 		return err
 	}
@@ -394,19 +400,4 @@ func (s *LazyRefreshedSnapshot) BatchGet(
 		s.trafficRec.IncClusterReadBytes(readBytes)
 	}
 	return res, nil
-}
-
-// the encoded key is prepended with keyspace prefix before store to object
-// store to make later ingest step easier to process. but when resolving
-// conflicts, we need to use transaction to access those keys, and the keys must
-// not have the keyspace prefix.
-func stripKeyspacePrefix(key tidbkv.Key) (tidbkv.Key, error) {
-	if kerneltype.IsClassic() {
-		return key, nil
-	}
-	_, decodedKey, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return decodedKey, nil
 }

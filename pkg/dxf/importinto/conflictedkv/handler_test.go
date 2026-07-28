@@ -111,7 +111,9 @@ func TestHandler(t *testing.T) {
 				return nil
 			})
 			progressCollector := &execute.TestCollector{}
-			baseHdl := conflictedkv.NewBaseHandler(tbl, globalsort.DataKVGroup, encoder, mockEncodedKVHdl, progressCollector, logger)
+			baseHdl := conflictedkv.NewBaseHandler(
+				tbl, globalsort.DataKVGroup, store.GetCodec(), encoder, mockEncodedKVHdl, progressCollector, logger,
+			)
 			dataKVHdl := conflictedkv.NewDataKVHandler(baseHdl)
 			t.Cleanup(func() {
 				require.NoError(t, dataKVHdl.Close(ctx))
@@ -190,7 +192,10 @@ func TestHandler(t *testing.T) {
 			})
 			var targetIndexID int64 = 2
 			progressCollector := &execute.TestCollector{}
-			baseHdl := conflictedkv.NewBaseHandler(tbl, globalsort.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, progressCollector, logger)
+			baseHdl := conflictedkv.NewBaseHandler(
+				tbl, globalsort.IndexID2KVGroup(targetIndexID), store.GetCodec(),
+				encoder, mockEncodedKVHdl, progressCollector, logger,
+			)
 			trafficRec := &mockTrafficRecorder{}
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
@@ -293,6 +298,7 @@ func TestHandler(t *testing.T) {
 			conflictedkv.NewBaseHandler(
 				tbl,
 				globalsort.IndexID2KVGroup(targetIdx.ID),
+				store.GetCodec(),
 				getEncoder(t, tbl),
 				mockEncodedKVHdl,
 				progressCollector,
@@ -384,6 +390,7 @@ func TestHandler(t *testing.T) {
 			conflictedkv.NewBaseHandler(
 				tbl,
 				globalsort.IndexID2KVGroup(targetIdx.ID),
+				store.GetCodec(),
 				getEncoder(t, tbl),
 				mockEncodedKVHdl,
 				nil,

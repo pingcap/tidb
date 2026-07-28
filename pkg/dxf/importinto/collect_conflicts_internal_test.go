@@ -158,6 +158,7 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 				for i, handlerCh := range handlerChs {
 					if testCase.needDispatch {
 						require.NotEqual(t, pairCh, handlerCh)
+						require.Zero(t, cap(handlerCh))
 						for j := range i {
 							require.NotEqual(t, handlerChs[j], handlerCh)
 						}
@@ -287,7 +288,8 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 		pairCh := make(chan *simplesst.KVPair, 1)
 		pairCh <- makeUniqueIndexKVPair(t, store, 1, tidbkv.IntHandle(1))
 		close(pairCh)
-		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair)}
+		handlerChs, needDispatch := createConflictHandlerChannels(pairCh, 2, targetIdx)
+		require.True(t, needDispatch)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		errCh := make(chan error, 1)
@@ -307,6 +309,8 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("dispatcher did not exit after cancellation")
 		}
-		requireKVPairChannelClosed(t, handlerChs[0])
+		for _, handlerCh := range handlerChs {
+			requireKVPairChannelClosed(t, handlerCh)
+		}
 	})
 }

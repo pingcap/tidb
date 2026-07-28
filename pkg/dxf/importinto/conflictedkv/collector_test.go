@@ -16,6 +16,7 @@ package conflictedkv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -91,6 +93,7 @@ func TestCollectResultMerge(t *testing.T) {
 
 type mockKVStore struct {
 	tidbkv.Storage
+	codec tikv.Codec
 }
 
 type mockWriter struct {
@@ -108,6 +111,9 @@ func (w *mockWriter) Close(context.Context) error {
 }
 
 func (s *mockKVStore) GetCodec() tikv.Codec {
+	if s.codec != nil {
+		return s.codec
+	}
 	if kerneltype.IsClassic() {
 		return tikv.NewCodecV1(tikv.ModeTxn)
 	}
@@ -115,9 +121,40 @@ func (s *mockKVStore) GetCodec() tikv.Codec {
 	return codec
 }
 
+type decodeErrorCodec struct {
+	tikv.Codec
+	err error
+}
+
+func (c *decodeErrorCodec) DecodeKey([]byte) ([]byte, error) {
+	return nil, c.err
+}
+
 func TestCollectorHandleEncodedRow(t *testing.T) {
 	logger := zap.Must(zap.NewDevelopment())
 	ctx := context.Background()
+
+	t.Run("uses storage codec to decode conflict keys", func(t *testing.T) {
+		objStore := objstore.NewMemStorage()
+		t.Cleanup(func() {
+			objStore.Close()
+		})
+		decodeErr := errors.New("decode key")
+		store := &mockKVStore{codec: &decodeErrorCodec{
+			Codec: tikv.NewCodecV1(tikv.ModeTxn),
+			err:   decodeErr,
+		}}
+		coll := NewCollector(
+			nil, logger, objStore, store, "test",
+			globalsort.DataKVGroup, nil, nil, nil, nil, nil, nil,
+		)
+		ch := make(chan *simplesst.KVPair, 1)
+		ch <- &simplesst.KVPair{Key: []byte("encoded-key")}
+		close(ch)
+
+		require.ErrorIs(t, coll.Run(ctx, ch), decodeErr)
+		require.NoError(t, coll.Close(ctx))
+	})
 
 	doTestFn := func(t *testing.T, kvGroup string, maxSize int64, outFileCnt int) {
 		objStore := objstore.NewMemStorage()

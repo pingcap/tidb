@@ -21,9 +21,11 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
@@ -32,8 +34,18 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
+
+type storageWithCodec struct {
+	tidbkv.Storage
+	codec tikv.Codec
+}
+
+func (s *storageWithCodec) GetCodec() tikv.Codec {
+	return s.codec
+}
 
 func TestDeleter(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -44,6 +56,15 @@ func TestDeleter(t *testing.T) {
 	ctx := context.Background()
 	logger := zap.Must(zap.NewDevelopment())
 	tableName := "tc"
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1})
+	require.NoError(t, err)
+	codecs := []struct {
+		name  string
+		codec tikv.Codec
+	}{
+		{name: "api v1", codec: tikv.NewCodecV1(tikv.ModeTxn)},
+		{name: "api v2", codec: codecV2},
+	}
 
 	cleanUpEnvFn := func(t *testing.T) table.Table {
 		tk2 := testkit.NewTestKit(t, store)
@@ -104,14 +125,15 @@ func TestDeleter(t *testing.T) {
 		require.ErrorContains(t, tk2.ExecToErr("admin check table tc"), "data inconsistency in table")
 	}
 
-	runDeleterFn := func(t *testing.T, kvGroup string, conflictedRowCnt int) {
+	runDeleterFn := func(t *testing.T, kvGroup string, conflictedRowCnt int, codec tikv.Codec) {
 		tbl := cleanUpEnvFn(t)
 		simulateConflictedKVFn(t, tbl, kvGroup, conflictedRowCnt)
 		conflictedKVs := gatherTargetKVFn(t, tbl, kvGroup, conflictedRowCnt)
 
 		encoder := getEncoder(t, tbl)
 		trafficRec := &mockTrafficRecorder{}
-		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder, nil, trafficRec)
+		codecStore := &storageWithCodec{Storage: store, codec: codec}
+		deleter := conflictedkv.NewDeleter(tbl, logger, codecStore, kvGroup, encoder, nil, trafficRec)
 		eg := util.NewErrorGroupWithRecover()
 		ch := make(chan *simplesst.KVPair)
 		eg.Go(func() error {
@@ -123,7 +145,7 @@ func TestDeleter(t *testing.T) {
 				conflictedKVs[i], conflictedKVs[j] = conflictedKVs[j], conflictedKVs[i]
 			})
 			for _, kv := range conflictedKVs {
-				encodedKey := store.GetCodec().EncodeKey(kv.Key)
+				encodedKey := codec.EncodeKey(kv.Key)
 				encodedKV := simplesst.KVPair{Key: encodedKey, Value: kv.Value}
 				// sending the conflicted KV twice
 				for range 2 {
@@ -146,20 +168,28 @@ func TestDeleter(t *testing.T) {
 	conflictedkv.BufferedKeyCountLimit = 2
 
 	t.Run("data kv conflicts", func(t *testing.T) {
-		runDeleterFn(t, globalsort.DataKVGroup, 7)
-		tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
-			"8 8 8", "9 9 9", "10 10 10",
-		))
-		tk.MustExec("admin check table tc")
+		for _, testCase := range codecs {
+			t.Run(testCase.name, func(t *testing.T) {
+				runDeleterFn(t, globalsort.DataKVGroup, 7, testCase.codec)
+				tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
+					"8 8 8", "9 9 9", "10 10 10",
+				))
+				tk.MustExec("admin check table tc")
+			})
+		}
 	})
 
 	t.Run("index kv conflicts", func(t *testing.T) {
 		// 2 is the unique index ID for index c
 		kvGroup := globalsort.IndexID2KVGroup(2)
-		runDeleterFn(t, kvGroup, 5)
-		tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
-			"6 6 6", "7 7 7", "8 8 8", "9 9 9", "10 10 10",
-		))
-		tk.MustExec("admin check table tc")
+		for _, testCase := range codecs {
+			t.Run(testCase.name, func(t *testing.T) {
+				runDeleterFn(t, kvGroup, 5, testCase.codec)
+				tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
+					"6 6 6", "7 7 7", "8 8 8", "9 9 9", "10 10 10",
+				))
+				tk.MustExec("admin check table tc")
+			})
+		}
 	})
 }

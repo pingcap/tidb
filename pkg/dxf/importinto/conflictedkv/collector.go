@@ -122,15 +122,16 @@ func NewCollector(
 	if sharedTotalFileSize == nil {
 		sharedTotalFileSize = &atomic.Int64{}
 	}
+	codec := store.GetCodec()
 	collector := &Collector{
 		logger:              logger,
 		store:               objStore,
 		filenamePrefix:      filenamePrefix,
 		kvGroup:             kvGroup,
-		result:              NewCollectResult(store.GetCodec().GetKeyspace()),
+		result:              NewCollectResult(codec.GetKeyspace()),
 		sharedTotalFileSize: sharedTotalFileSize,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, progressCollector, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, codec, encoder, collector, progressCollector, logger)
 	var h Handler
 	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
