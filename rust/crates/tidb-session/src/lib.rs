@@ -464,17 +464,10 @@ impl Session {
                 // Go `ShowExec` with `ShowVariables`: one row per variable,
                 // as `Variable_name` and `Value`, filtered by LIKE.
                 //
-                // DEFERRED (documented, and refused rather than ignored): the
-                // `WHERE` filter form, which Go plans as a selection over the
-                // same virtual rows; and the GLOBAL/SESSION distinction,
+                // DEFERRED (documented): the GLOBAL/SESSION distinction,
                 // which reads the same value here because this tier keeps no
                 // persisted global tier (`SET GLOBAL` already documents it).
                 tidb_ast::AdminStmt::ShowVariables(show) => {
-                    if show.where_clause.is_some() {
-                        return Err(DriverError::Unsupported(
-                            "SHOW VARIABLES ... WHERE is not supported yet",
-                        ));
-                    }
                     let pattern = match &show.like {
                         Some(tidb_ast::Expr::String(text)) => Some(text.clone()),
                         Some(_) => {
@@ -504,15 +497,23 @@ impl Session {
                             .vars
                             .get_system(definition.name)
                             .unwrap_or_else(|_| definition.value.to_owned());
-                        rows.push(vec![
+                        let row = vec![
                             Datum::Bytes(definition.name.as_bytes().to_vec()),
                             Datum::Bytes(value.into_bytes()),
-                        ]);
+                        ];
+                        // Go plans the WHERE as a selection over the same
+                        // virtual rows, which is what this filter is.
+                        if let Some(predicate) = &show.where_clause {
+                            if !show_row_matches(predicate, SHOW_VARIABLE_COLUMNS, &row)? {
+                                continue;
+                            }
+                        }
+                        rows.push(row);
                     }
                     Ok(Some(StmtOutput::Rows {
                         columns: vec![
-                            ("Variable_name".to_owned(), text()),
-                            ("Value".to_owned(), text()),
+                            (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
+                            (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
                         ],
                         rows,
                     }))
@@ -1318,6 +1319,46 @@ impl Session {
             )),
         }
     }
+}
+
+/// The column names a `SHOW VARIABLES` row carries, which its `WHERE` filter
+/// resolves against.
+const SHOW_VARIABLE_COLUMNS: &[&str; 2] = &["Variable_name", "Value"];
+
+/// A resolver over one row of a virtual `SHOW` result, so the statement's own
+/// `WHERE` can be evaluated against it.
+///
+/// Go builds the same thing as a real selection over the show output; this
+/// tier evaluates the predicate per row instead, which is the same filter
+/// without a plan to carry it.
+struct ShowRowResolver<'a> {
+    columns: &'a [&'a str],
+    row: &'a [Datum],
+}
+
+impl tidb_executor::Columns for ShowRowResolver<'_> {
+    fn get(&self, path: &[String]) -> Option<Datum> {
+        let name = path.last()?;
+        let index = self
+            .columns
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))?;
+        self.row.get(index).cloned()
+    }
+}
+
+/// Whether one virtual `SHOW` row satisfies the statement's `WHERE`.
+fn show_row_matches(
+    predicate: &tidb_ast::Expr,
+    columns: &[&str],
+    row: &[Datum],
+) -> Result<bool, DriverError> {
+    let resolver = ShowRowResolver { columns, row };
+    let value = tidb_executor::eval_in(predicate, &resolver)
+        .map_err(|e| DriverError::Exec(tidb_executor::ExecError::Eval(e)))?;
+    let truthy = tidb_executor::truthy_of(&value)
+        .map_err(|e| DriverError::Exec(tidb_executor::ExecError::Eval(e)))?;
+    Ok(truthy.unwrap_or(false))
 }
 
 /// A statement warning, which Go keeps in `StmtCtx` and `SHOW WARNINGS`
@@ -2990,10 +3031,29 @@ mod tests {
             session.vars().get_system("autocommit").unwrap()
         );
 
-        // The WHERE form is refused rather than answered unfiltered.
-        assert!(session
-            .run("SHOW VARIABLES WHERE variable_name = 'autocommit'")
-            .is_err());
+        // Captured: the scoped spellings a JDBC client sends read the same
+        // session value here.
+        assert_eq!(
+            row_text(session.run("SELECT @@session.autocommit, @@global.autocommit")).len(),
+            1
+        );
+
+        // Captured: the WHERE form filters the same virtual rows, including
+        // over the Value column and with a case-insensitive column name.
+        assert_eq!(
+            row_text(session.run("SHOW VARIABLES WHERE variable_name = 'autocommit'"))[0][0],
+            "autocommit"
+        );
+        let pair = row_text(
+            session.run("SHOW VARIABLES WHERE Variable_name IN ('autocommit','sql_mode')"),
+        );
+        assert_eq!(pair.len(), 2, "{pair:?}");
+        assert_eq!(pair[0][0], "autocommit");
+        assert_eq!(pair[1][0], "sql_mode");
+        let both = row_text(
+            session.run("SHOW VARIABLES WHERE value = 'ON' AND variable_name LIKE 'auto%'"),
+        );
+        assert!(both.iter().any(|row| row[0] == "autocommit"), "{both:?}");
     }
 
     /// The three conflict policies -- `REPLACE`, `INSERT IGNORE` and
