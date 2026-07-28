@@ -30,8 +30,8 @@ import (
 	"github.com/twmb/murmur3"
 )
 
-// SpillChunkSizeThreshold describes the threshold that a chunk needs to be spilled
-const SpillChunkSizeThreshold = 64 * 1024 // 64 KiB
+// SpillChunkSizeThreshold describes the threshold that a chunk needs to be spilled.
+const SpillChunkSizeThreshold = 1 * 1024 * 1024 // 1 MiB
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
@@ -63,11 +63,12 @@ type HashAggPartialWorker struct {
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
 
-	isSpillPrepared  bool
-	spillHelper      *parallelHashAggSpillHelper
-	tmpChksForSpill  []*chunk.Chunk
-	serializeHelpers *aggfuncs.SerializeHelper
-	spilledChunksIO  []*chunk.DataInDiskByChunks
+	isSpillPrepared    bool
+	spillHelper        *parallelHashAggSpillHelper
+	tmpChkForSpill     *chunk.Chunk
+	partitionedKeysBuf [][]string
+	serializeHelpers   *aggfuncs.SerializeHelper
+	spilledChunksIO    []*chunk.DataInDiskByChunks
 
 	// It's useful when spill is triggered and the fetcher could know when partial workers finish their works.
 	inflightChunkSync *sync.WaitGroup
@@ -295,10 +296,10 @@ func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
 
 func (w *HashAggPartialWorker) prepareForSpill() {
 	if !w.isSpillPrepared {
-		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
+		w.tmpChkForSpill = w.spillHelper.getNewSpillChunkFunc()
+		w.partitionedKeysBuf = make([][]string, spilledPartitionNum)
 		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
 		for i := range spilledPartitionNum {
-			w.tmpChksForSpill[i] = w.spillHelper.getNewSpillChunkFunc()
 			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillHelper.spillChunkFieldTypes, w.fileNamePrefixForTest)
 			if w.spillHelper.diskTracker != nil {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
@@ -325,6 +326,10 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
+		for i := range w.partitionedKeysBuf {
+			clear(w.partitionedKeysBuf[i])
+			w.partitionedKeysBuf[i] = w.partitionedKeysBuf[i][:0]
+		}
 
 		// Clear the partialResultsMap
 		w.partialResultsMap = make([]aggfuncs.AggPartialResultMapper, len(w.partialResultsMap))
@@ -338,46 +343,50 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 
 	w.prepareForSpill()
 	for _, partialResultsMap := range w.partialResultsMap {
-		for key, partialResults := range partialResultsMap.M {
+		for key := range partialResultsMap.M {
 			partitionNum := int(murmur3.Sum32(hack.Slice(key))) % spilledPartitionNum
-
-			// Spill data when tmp chunk is full or the memory usage exceeds the threshold
-			if CheckChunkSpill(w.tmpChksForSpill[partitionNum]) {
-				err := w.spilledChunksIO[partitionNum].Add(w.tmpChksForSpill[partitionNum])
-				if err != nil {
-					return err
-				}
-				w.tmpChksForSpill[partitionNum].Reset()
-			}
-
-			// Serialize agg meta data to the tmp chunk
-			for i, aggFunc := range w.aggFuncs {
-				aggFunc.SerializePartialResult(partialResults[i], w.tmpChksForSpill[partitionNum], w.serializeHelpers)
-			}
-
-			// Append key
-			w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
+			w.partitionedKeysBuf[partitionNum] = append(w.partitionedKeysBuf[partitionNum], key)
 		}
-	}
 
-	// Trigger the spill of remaining data
-	err := w.spillRemainingDataToDisk()
-	if err != nil {
-		return err
+		for partitionNum, keys := range w.partitionedKeysBuf {
+			for _, key := range keys {
+				partialResults := partialResultsMap.M[key]
+
+				// Serialize agg meta data to the tmp chunk
+				for i, aggFunc := range w.aggFuncs {
+					aggFunc.SerializePartialResult(partialResults[i], w.tmpChkForSpill, w.serializeHelpers)
+				}
+
+				// Append key
+				w.tmpChkForSpill.AppendString(len(w.aggFuncs), key)
+
+				// Spill data when the tmp chunk is full or its memory usage exceeds the threshold.
+				if CheckChunkSpill(w.tmpChkForSpill) {
+					if err := w.spilledChunksIO[partitionNum].Add(w.tmpChkForSpill); err != nil {
+						return err
+					}
+					w.tmpChkForSpill.Reset()
+				}
+			}
+
+			// Flush before reusing the tmp chunk for another partition.
+			if err := w.spillRemainingDataToDisk(partitionNum); err != nil {
+				return err
+			}
+			clear(keys)
+			w.partitionedKeysBuf[partitionNum] = w.partitionedKeysBuf[partitionNum][:0]
+		}
 	}
 	return nil
 }
 
-// Some tmp chunks may no be full, so we need to manually trigger the spill action.
-func (w *HashAggPartialWorker) spillRemainingDataToDisk() error {
-	for i := range spilledPartitionNum {
-		if w.tmpChksForSpill[i].NumRows() > 0 {
-			err := w.spilledChunksIO[i].Add(w.tmpChksForSpill[i])
-			if err != nil {
-				return err
-			}
-			w.tmpChksForSpill[i].Reset()
+// The tmp chunk may not be full, so we need to manually trigger the spill action.
+func (w *HashAggPartialWorker) spillRemainingDataToDisk(partitionNum int) error {
+	if w.tmpChkForSpill.NumRows() > 0 {
+		if err := w.spilledChunksIO[partitionNum].Add(w.tmpChkForSpill); err != nil {
+			return err
 		}
+		w.tmpChkForSpill.Reset()
 	}
 	return nil
 }

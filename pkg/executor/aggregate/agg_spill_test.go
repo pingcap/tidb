@@ -743,32 +743,36 @@ func TestRandomFail(t *testing.T) {
 }
 
 func TestCheckChunkSpill(t *testing.T) {
-	newWideChunk := func() *chunk.Chunk {
-		fieldTypes := make([]*types.FieldType, 2048)
-		for i := range fieldTypes {
-			fieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
+	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeVarString)}
+	newEmptyChunkOverThreshold := func() *chunk.Chunk {
+		memoryUsagePerColumn := chunk.New(fieldTypes, 0, 2).UsedMemoryUsage()
+		columnNum := int64(aggregate.SpillChunkSizeThreshold)/memoryUsagePerColumn + 1
+		wideFieldTypes := make([]*types.FieldType, columnNum)
+		for i := range wideFieldTypes {
+			wideFieldTypes[i] = fieldTypes[0]
 		}
-		return chunk.New(fieldTypes, 0, 2)
+		return chunk.New(wideFieldTypes, 0, 2)
+	}
+	newChunkOverThreshold := func() *chunk.Chunk {
+		chk := chunk.New(fieldTypes, 0, 2)
+		chk.AppendBytes(0, make([]byte, aggregate.SpillChunkSizeThreshold))
+		return chk
 	}
 
 	t.Run("empty chunk over threshold", func(t *testing.T) {
-		chk := newWideChunk()
+		chk := newEmptyChunkOverThreshold()
 		require.GreaterOrEqual(t, chk.UsedMemoryUsage(), int64(aggregate.SpillChunkSizeThreshold))
 		require.Zero(t, chk.NumRows())
 		require.False(t, aggregate.CheckChunkSpill(chk))
 	})
 
 	t.Run("nonempty chunk over threshold", func(t *testing.T) {
-		chk := newWideChunk()
-		for i := range chk.NumCols() {
-			chk.AppendNull(i)
-		}
+		chk := newChunkOverThreshold()
 		require.Equal(t, 1, chk.NumRows())
 		require.False(t, chk.IsFull())
 		require.True(t, aggregate.CheckChunkSpill(chk))
 	})
 
-	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeVarString)}
 	t.Run("full chunk below threshold", func(t *testing.T) {
 		chk := chunk.New(fieldTypes, 1, 1)
 		chk.AppendString(0, "value")
