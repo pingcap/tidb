@@ -681,7 +681,10 @@ impl Session {
             }
             tidb_ast::GrantLevel::Table { database, table } => {
                 let database = self.resolve_grant_database(database.as_deref())?;
-                let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Table)?;
+                let TableScopePrivs {
+                    table: privs,
+                    columns,
+                } = self.resolve_table_scope_privs(&grant.privileges)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
                 // Go allows granting on a table that does not exist only
                 // when the privilege list includes `CREATE` (captured:
@@ -693,13 +696,27 @@ impl Session {
                         "{database}.{table}"
                     ))));
                 }
+                // Go's `checkAndInitColumnPriv` resolves every named column
+                // against the table and reports `Unknown column: <name>`
+                // when it is absent, so a `GRANT` naming a bad column stores
+                // nothing at all (captured). Resolving up front also
+                // normalises the spelling to the table's own: `GRANT SELECT
+                // (A)` prints back as `SELECT(a)`.
+                let columns = self.resolve_grant_columns(&database, table, &columns)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     if !registry.user_exists(user, host) {
                         return Err(DriverError::GrantToUnknownUser);
                     }
+                    // The TABLE row is created even by a column-only grant
+                    // (Go's `checkAndInitTablePriv` runs for every TABLE-level
+                    // GRANT), which is what later lets `REVOKE` on that table
+                    // get past its "no such grant" check.
                     registry.grant_table(user, host, &database, table, mask);
+                    for (column, column_mask) in &columns {
+                        registry.grant_column(user, host, &database, table, column, *column_mask);
+                    }
                 }
             }
         }
@@ -804,7 +821,10 @@ impl Session {
             }
             tidb_ast::GrantLevel::Table { database, table } => {
                 let database = self.resolve_grant_database(database.as_deref())?;
-                let privs = self.resolve_scoped_privs(&revoke.privileges, ScopeKind::Table)?;
+                let TableScopePrivs {
+                    table: privs,
+                    columns,
+                } = self.resolve_table_scope_privs(&revoke.privileges)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
@@ -815,6 +835,11 @@ impl Session {
                             host: host.to_owned(),
                         });
                     }
+                    // Go checks the TABLE row's existence for every account
+                    // BEFORE touching any row and before resolving a column
+                    // name, so revoking a nonexistent column from an account
+                    // with no grant on the table reports this and not
+                    // `Unknown column` (captured).
                     if !registry.table_grant_row_exists(user, host, &database, table) {
                         return Err(DriverError::RevokeNoTableGrant {
                             user: user.to_owned(),
@@ -823,7 +848,17 @@ impl Session {
                             table: table.clone(),
                         });
                     }
+                }
+                // `REVOKE` resolves columns through `table.FindCol` too, but
+                // only once the table rows are known to exist.
+                let columns = self.resolve_grant_columns(&database, table, &columns)?;
+                for spec in &revoke.users {
+                    let user = spec.user.user.as_str();
+                    let host = spec.user.host.as_str();
                     registry.revoke_table(user, host, &database, table, mask);
+                    for (column, column_mask) in &columns {
+                        registry.revoke_column(user, host, &database, table, column, *column_mask);
+                    }
                 }
             }
         }
@@ -842,6 +877,86 @@ impl Session {
             None if !self.current_db.is_empty() => Ok(self.current_db.clone()),
             None => Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected)),
         }
+    }
+
+    /// Resolves a TABLE-scope `GRANT`/`REVOKE` privilege list, splitting the
+    /// privileges that carry a column list from those that do not.
+    ///
+    /// Go validates each element against the scope its column list selects:
+    /// without one, `mysql.AllTablePrivs` (see [`Self::resolve_scoped_privs`]);
+    /// with one, `mysql.AllColumnPrivs` -- `SELECT`, `INSERT`, `UPDATE`,
+    /// `REFERENCES` and `ALL`/`USAGE` only. Everything else, `GRANT OPTION`
+    /// included, is the captured `ErrWrongUsage`/1221 "Incorrect usage of
+    /// COLUMN GRANT and NON-COLUMN PRIVILEGES". `ALL (col)` expands to all
+    /// four; `USAGE (col)` contributes no privilege at all.
+    fn resolve_table_scope_privs(
+        &self,
+        privileges: &[tidb_ast::GrantPrivilege],
+    ) -> Result<TableScopePrivs, DriverError> {
+        let mut result = TableScopePrivs::default();
+        let without_columns: Vec<tidb_ast::GrantPrivilege> = privileges
+            .iter()
+            .filter(|privilege| privilege.columns.is_empty())
+            .cloned()
+            .collect();
+        result.table = self.resolve_scoped_privs(&without_columns, ScopeKind::Table)?;
+        for privilege in privileges {
+            if privilege.columns.is_empty() {
+                continue;
+            }
+            let mask = match privilege.name.as_str() {
+                "ALL" => privilege::all_column_privs_mask(),
+                "USAGE" => 0,
+                _ => {
+                    let priv_ = privilege::GlobalPriv::from_grant_name(&privilege.name)
+                        .filter(|priv_| priv_.is_valid_at_column_scope())
+                        .ok_or(DriverError::ColumnGrantNonColumnPriv)?;
+                    priv_.bit()
+                }
+            };
+            for column in &privilege.columns {
+                match result
+                    .columns
+                    .iter_mut()
+                    .find(|(named, _)| named.eq_ignore_ascii_case(column))
+                {
+                    Some((_, existing)) => *existing |= mask,
+                    None => result.columns.push((column.clone(), mask)),
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Resolves each written column name against the table, returning the
+    /// table's own spelling of it (Go's `table.FindCol`, which matches on the
+    /// lowercased name -- captured: `GRANT SELECT (A)` prints back as
+    /// `SELECT(a)`). A name the table does not have is Go's plain
+    /// `Unknown column: <name>`.
+    fn resolve_grant_columns(
+        &self,
+        database: &str,
+        table: &str,
+        columns: &[(String, u64)],
+    ) -> Result<Vec<(String, u64)>, DriverError> {
+        if columns.is_empty() {
+            return Ok(Vec::new());
+        }
+        let catalog = self.lock_catalog()?;
+        let names = catalog
+            .table_in(database, table)
+            .map(tidb_executor::TableEntry::column_names)
+            .unwrap_or_default();
+        columns
+            .iter()
+            .map(|(column, mask)| {
+                names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(column))
+                    .map(|name| (name.clone(), *mask))
+                    .ok_or_else(|| DriverError::UnknownGrantColumn(column.clone()))
+            })
+            .collect()
     }
 
     /// Resolves a `GRANT`/`REVOKE` privilege list at DB or TABLE scope,

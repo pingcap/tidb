@@ -218,6 +218,17 @@ impl TableEntry {
         }
     }
 
+    /// The table's column names in schema order, for the callers outside
+    /// this crate that resolve a written column name against the table
+    /// (`GRANT SELECT (a) ON db.t`).
+    #[must_use]
+    pub fn column_names(&self) -> Vec<String> {
+        self.column_list()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    }
+
     /// Whether this entry is a view, which decides which of MySQL's two
     /// object kinds a statement is allowed to name.
     #[must_use]

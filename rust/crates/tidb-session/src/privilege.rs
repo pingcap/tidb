@@ -320,6 +320,37 @@ impl GlobalPriv {
     pub fn is_valid_at_table_scope(self) -> bool {
         self == Self::GrantOption || ALL_TABLE_PRIVS.contains(&self)
     }
+
+    /// Whether this privilege may carry a COLUMN list (`GRANT SELECT (a) ON
+    /// db.t`). Go checks `mysql.AllColumnPrivs` -- only the four privileges
+    /// MySQL records per column -- and refuses anything else, `GRANT OPTION`
+    /// included, with `ErrWrongUsage`/1221 "Incorrect usage of COLUMN GRANT
+    /// and NON-COLUMN PRIVILEGES" (captured for `DELETE`, `DROP`, `ALTER`,
+    /// `INDEX`, `CREATE` and `GRANT OPTION`).
+    #[must_use]
+    pub fn is_valid_at_column_scope(self) -> bool {
+        ALL_COLUMN_PRIVS.contains(&self)
+    }
+}
+
+/// Go `mysql.AllColumnPrivs` -- the privileges a column list may name, in
+/// `privOnColumnsToString`'s print order, which is also the order the
+/// per-privilege groups appear in one `SHOW GRANTS` column line (captured:
+/// ``GRANT SELECT(a), INSERT(a, b), UPDATE(a), REFERENCES(a) ON `cg`.`t` ``).
+pub const ALL_COLUMN_PRIVS: &[GlobalPriv] = &[
+    GlobalPriv::Select,
+    GlobalPriv::Insert,
+    GlobalPriv::Update,
+    GlobalPriv::References,
+];
+
+/// The mask with every privilege in [`ALL_COLUMN_PRIVS`] set -- what
+/// `GRANT ALL (col) ON db.t` expands to (captured: `ALL (a)` is accepted and
+/// prints as all four column privileges on `a`).
+pub(crate) fn all_column_privs_mask() -> u64 {
+    ALL_COLUMN_PRIVS
+        .iter()
+        .fold(0u64, |mask, priv_| mask | priv_.bit())
 }
 
 /// The mask with every privilege in [`ALL_TABLE_PRIVS`] set -- the
@@ -406,6 +437,18 @@ struct UserRecord {
     plugin: String,
 }
 
+/// One Go `mysql.Columns_priv` row: the privileges an account holds on a
+/// single column. Go's `columnsPrivRecord`.
+#[derive(Clone, Debug)]
+struct ColumnPrivRecord {
+    user: String,
+    host: String,
+    database: String,
+    table: String,
+    column: String,
+    privs: u64,
+}
+
 /// The server's account/global-privilege registry, shared by every session
 /// of one TiDB instance -- Go's single `privilege.Manager` per `Domain`.
 #[derive(Clone)]
@@ -418,6 +461,12 @@ pub struct PrivilegeRegistry {
     /// Go `mysql.Tables_priv` rows: one bitmask per
     /// `(user, host, database, table)`.
     table_privs: Arc<Mutex<HashMap<TablePrivKey, u64>>>,
+    /// Go `mysql.Columns_priv` rows. A `Vec` rather than a map because the
+    /// row ORDER is observable: `SHOW GRANTS` lists a privilege's columns in
+    /// the order Go's `columnsPriv` slice holds them, which is the order the
+    /// rows were inserted -- captured, granting `SELECT` on `b`, then `a`,
+    /// then `c` prints ``SELECT(b, a, c)``, not the sorted list.
+    column_privs: Arc<Mutex<Vec<ColumnPrivRecord>>>,
     /// Go `mysql.global_grants` rows: the DYNAMIC privileges of each
     /// account. An account with none has no entry here at all, which is what
     /// keeps `SHOW GRANTS` from printing an empty dynamic line.
@@ -499,6 +548,7 @@ impl PrivilegeRegistry {
             users: Arc::new(Mutex::new(users)),
             db_privs: Arc::new(Mutex::new(HashMap::new())),
             table_privs: Arc::new(Mutex::new(HashMap::new())),
+            column_privs: Arc::new(Mutex::new(Vec::new())),
             dynamic_privs: Arc::new(Mutex::new(HashMap::new())),
             role_edges: Arc::new(Mutex::new(HashMap::new())),
             default_roles: Arc::new(Mutex::new(HashMap::new())),
@@ -521,6 +571,12 @@ impl PrivilegeRegistry {
 
     fn lock_table(&self) -> std::sync::MutexGuard<'_, HashMap<TablePrivKey, u64>> {
         self.table_privs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_column(&self) -> std::sync::MutexGuard<'_, Vec<ColumnPrivRecord>> {
+        self.column_privs
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -740,6 +796,12 @@ impl PrivilegeRegistry {
             })
             .collect();
         drop(table_guard);
+        for row in self.lock_column().iter_mut() {
+            if row.user == old_user && row.host == old_host {
+                row.user = new_user.to_owned();
+                row.host = new_host.to_owned();
+            }
+        }
         let mut dynamic_guard = self.lock_dynamic();
         if let Some(privs) = dynamic_guard.remove(&(old_user.to_owned(), old_host.to_owned())) {
             dynamic_guard.insert((new_user.to_owned(), new_host.to_owned()), privs);
@@ -807,6 +869,8 @@ impl PrivilegeRegistry {
             .retain(|(row_user, row_host, _), _| row_user != user || row_host != host);
         self.lock_table()
             .retain(|(row_user, row_host, _, _), _| row_user != user || row_host != host);
+        self.lock_column()
+            .retain(|row| row.user != user || row.host != host);
         self.lock_dynamic()
             .remove(&(user.to_owned(), host.to_owned()));
         // Go's `DROP USER`/`DROP ROLE` deletes the account's `role_edges`
@@ -1185,6 +1249,83 @@ impl PrivilegeRegistry {
         }
     }
 
+    /// Sets every bit in `mask` on the account's `(database, table, column)`
+    /// row, appending the row if this is that column's first grant (Go's
+    /// `checkAndInitColumnPriv` followed by `grantColumnLevel`).
+    ///
+    /// A `mask` of zero appends nothing: Go does insert an empty
+    /// `mysql.Columns_priv` row for `GRANT USAGE (a)`, but `showGrants` skips
+    /// a row with no privilege bit, so the row is unobservable (captured:
+    /// `GRANT USAGE (a) ON cg.t` leaves `SHOW GRANTS` unchanged while
+    /// `mysql.columns_priv` gains a row with an empty `Column_priv`).
+    /// Not storing it removes the empty-row case instead of special-casing it
+    /// everywhere it would otherwise have to be filtered out.
+    pub fn grant_column(
+        &self,
+        user: &str,
+        host: &str,
+        database: &str,
+        table: &str,
+        column: &str,
+        mask: u64,
+    ) {
+        if mask == 0 {
+            return;
+        }
+        let mut rows = self.lock_column();
+        if let Some(row) = rows.iter_mut().find(|row| {
+            row.user == user
+                && row.host == host
+                && row.database == database
+                && row.table == table
+                && row.column == column
+        }) {
+            row.privs |= mask;
+            return;
+        }
+        rows.push(ColumnPrivRecord {
+            user: user.to_owned(),
+            host: host.to_owned(),
+            database: database.to_owned(),
+            table: table.to_owned(),
+            column: column.to_owned(),
+            privs: mask,
+        });
+    }
+
+    /// Clears every bit in `mask` on the account's `(database, table, column)`
+    /// row, DELETING the row once no privilege is left -- Go's
+    /// `revokeColumnPriv` issues a `DELETE` when the recomputed `Column_priv`
+    /// set is empty rather than leaving a blank row behind. Revoking from a
+    /// column that was never granted is a silent no-op; the "no such grant"
+    /// error belongs to the TABLE row and is raised by the caller before this
+    /// runs (captured: `REVOKE SELECT (a)` from an account with no grant on
+    /// the table reports the table-level `ErrNonexistingGrant`, and does so
+    /// even when the named column does not exist).
+    pub fn revoke_column(
+        &self,
+        user: &str,
+        host: &str,
+        database: &str,
+        table: &str,
+        column: &str,
+        mask: u64,
+    ) {
+        let mut rows = self.lock_column();
+        rows.retain_mut(|row| {
+            let matches = row.user == user
+                && row.host == host
+                && row.database == database
+                && row.table == table
+                && row.column == column;
+            if !matches {
+                return true;
+            }
+            row.privs &= !mask;
+            row.privs != 0
+        });
+    }
+
     /// Go `MySQLPrivilege.showGrants`: `None` when the account has no grant
     /// row at all (Go's `ErrNonexistingGrant`), `Some` with the newline-joined
     /// lines otherwise.
@@ -1243,6 +1384,7 @@ impl PrivilegeRegistry {
         }
         let mut db_lines: Vec<String> = db_masks
             .into_iter()
+            .filter(|(_, privs)| *privs != 0)
             .map(|(database, privs)| {
                 let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_db_privs_mask() {
                     "ALL PRIVILEGES".to_owned()
@@ -1257,6 +1399,14 @@ impl PrivilegeRegistry {
             .collect();
         db_lines.sort_unstable();
 
+        // An all-zero row prints NOTHING at DB and TABLE scope -- Go emits a
+        // line only when the privilege list is non-empty, or (the USAGE
+        // special case) when the only bit left is `GRANT OPTION`. Such rows
+        // are ordinary: `REVOKE`ing the last privilege keeps the row, and a
+        // column-only grant creates an empty TABLE row on the way past
+        // (captured: after `REVOKE SELECT ON cg.*` plus `REVOKE SELECT ON
+        // cg.t`, `SHOW GRANTS` reports the global USAGE line alone).
+        //
         // TABLE-scope lines: same lexical-sort rule as DB-scope.
         let mut table_masks: BTreeMap<(String, String), u64> = BTreeMap::new();
         for ((row_user, row_host, database, table), privs) in self.lock_table().iter() {
@@ -1268,6 +1418,7 @@ impl PrivilegeRegistry {
         }
         let mut table_lines: Vec<String> = table_masks
             .into_iter()
+            .filter(|(_, privs)| *privs != 0)
             .map(|((database, table), privs)| {
                 let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_table_privs_mask()
                 {
@@ -1282,6 +1433,52 @@ impl PrivilegeRegistry {
             })
             .collect();
         table_lines.sort_unstable();
+
+        // COLUMN-scope lines: one line per `db`.`table`, listing every
+        // column privilege the account holds there. They form their own
+        // block AFTER the table lines and are sorted lexically within it,
+        // so a table carrying both table-level and column-level privileges
+        // prints two separate lines (captured: `GRANT SELECT,UPDATE ON
+        // `cg`.`t`` followed by ``GRANT INSERT(a) ON `cg`.`t``).
+        //
+        // Within a line the privileges follow `ALL_COLUMN_PRIVS` order and
+        // each carries its own parenthesised column list in ROW order (Go
+        // appends `record.ColumnName` while walking the account's
+        // `columnsPriv` slice), joined with `", "`. There is no space
+        // between the privilege name and its `(`.
+        let mut column_groups: BTreeMap<(String, String), Vec<(String, u64)>> = BTreeMap::new();
+        for row in self.lock_column().iter() {
+            if owns(&row.user, &row.host) {
+                column_groups
+                    .entry((row.database.clone(), row.table.clone()))
+                    .or_default()
+                    .push((row.column.clone(), row.privs));
+            }
+        }
+        let mut column_lines: Vec<String> = column_groups
+            .into_iter()
+            .filter_map(|((database, table), columns)| {
+                let groups: Vec<String> = ALL_COLUMN_PRIVS
+                    .iter()
+                    .filter_map(|priv_| {
+                        let named: Vec<&str> = columns
+                            .iter()
+                            .filter(|(_, privs)| privs & priv_.bit() != 0)
+                            .map(|(column, _)| column.as_str())
+                            .collect();
+                        (!named.is_empty())
+                            .then(|| format!("{}({})", priv_.print_name(), named.join(", ")))
+                    })
+                    .collect();
+                (!groups.is_empty()).then(|| {
+                    format!(
+                        "GRANT {} ON `{database}`.`{table}` TO '{user}'@'{host}'",
+                        groups.join(", ")
+                    )
+                })
+            })
+            .collect();
+        column_lines.sort_unstable();
 
         // DYNAMIC lines close the output, AFTER every static scope (captured:
         // global, then `db`.*, then `db`.`t`, then dynamic). Go emits at most
@@ -1351,11 +1548,13 @@ impl PrivilegeRegistry {
             ));
         }
 
-        let mut lines =
-            Vec::with_capacity(2 + db_lines.len() + table_lines.len() + dynamic_lines.len());
+        let mut lines = Vec::with_capacity(
+            2 + db_lines.len() + table_lines.len() + column_lines.len() + dynamic_lines.len(),
+        );
         lines.push(global_line);
         lines.extend(db_lines);
         lines.extend(table_lines);
+        lines.extend(column_lines);
         lines.extend(role_line);
         lines.extend(dynamic_lines);
         Some(lines.join("\n"))
@@ -1865,15 +2064,12 @@ mod tests {
             )
         );
         registry.revoke_db("u", "%", "db1", GlobalPriv::Select.bit());
-        // The row still exists (Go never deletes it), it just reports
-        // USAGE like a fresh account would.
+        // The row still exists (Go never deletes it), but with no privilege
+        // left it prints no line at all.
         assert!(registry.db_grant_row_exists("u", "%", "db1"));
         assert_eq!(
             registry.show_grants("u", "%", &[]).as_deref(),
-            Some(
-                "GRANT USAGE ON *.* TO 'u'@'%'\n\
-                 GRANT USAGE ON `db1`.* TO 'u'@'%'"
-            )
+            Some("GRANT USAGE ON *.* TO 'u'@'%'")
         );
     }
 

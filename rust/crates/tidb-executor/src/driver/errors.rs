@@ -384,6 +384,14 @@ pub enum DriverError {
     /// Go `ErrIllegalGrantForTable` (1144): a TABLE-scope `GRANT`/`REVOKE`
     /// named a privilege outside `mysql.AllTablePrivs`.
     IllegalGrantForTable,
+    /// Go `ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN
+    /// PRIVILEGES")` (1221): a privilege carrying a column list is not one of
+    /// `mysql.AllColumnPrivs`.
+    ColumnGrantNonColumnPriv,
+    /// Go's plain `errors.Errorf("Unknown column: %s", ...)` in
+    /// `checkAndInitColumnPriv`: a `GRANT` named a column the table does not
+    /// have. Carries the column name as written.
+    UnknownGrantColumn(String),
     /// Go's plain `errors.Errorf("There is no such grant defined for user
     /// '%s' on host '%s' on database %s", ...)`: `REVOKE ... ON db.*` for an
     /// account with no `mysql.DB` row for that database at all.
@@ -1011,6 +1019,16 @@ impl DriverError {
              can be used"
                 .to_owned(),
         ),
+        // Go `ErrWrongUsage` (1221), `GrantExec.Next`'s column-list check.
+        DriverError::ColumnGrantNonColumnPriv => MysqlError::new(
+            1221,
+            *b"HY000",
+            "Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES".to_owned(),
+        ),
+        // Go: `errors.Errorf("Unknown column: %s", ...)`.
+        DriverError::UnknownGrantColumn(column) => {
+            MysqlError::unknown(format!("Unknown column: {column}"))
+        }
         // Go: `errors.Errorf("There is no such grant defined for user '%s' \
         // on host '%s' on database %s", ...)` in `RevokeExec.revokeOneUser`.
         DriverError::RevokeNoDbGrant {

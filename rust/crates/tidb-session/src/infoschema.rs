@@ -262,7 +262,10 @@ const USER_PRIVILEGES_COLUMNS: &[(&str, bool)] = &[
 /// never a row. Verified against `testkit.CreateMockStore` with grants
 /// actually present (`GRANT SELECT, INSERT ON db1.* TO 'u1'@'%'`,
 /// `GRANT ALL PRIVILEGES ON db1.* TO 'u2'@'localhost'`, plus table-scope
-/// grants): `SELECT COUNT(*)` returns `0`. Populating these from the
+/// grants): `SELECT COUNT(*)` returns `0`. RE-VERIFIED for
+/// `COLUMN_PRIVILEGES` with COLUMN grants present (`GRANT SELECT (a),
+/// INSERT (a,b) ON cg.t TO u` and friends): still `0` rows. Populating these
+/// from the
 /// privilege registry would be a DIVERGENCE from Go, not a completion --
 /// so the emptiness is the behavior being transcreated.
 const SCHEMA_PRIVILEGES_COLUMNS: &[(&str, bool)] = &[
