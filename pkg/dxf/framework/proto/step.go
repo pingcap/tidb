@@ -57,6 +57,8 @@ func Step2Str(t TaskType, s Step) string {
 		return importIntoStep2Str(s)
 	case TaskTypeExample:
 		return exampleStep2Str(s)
+	case Export:
+		return exportStep2Str(s)
 	}
 	return fmt.Sprintf("unknown type %s", t)
 }
@@ -91,6 +93,23 @@ func exampleStep2Str(s Step) string {
 		return "two"
 	case StepThree:
 		return "three"
+	default:
+		return unknownStepStr(s)
+	}
+}
+
+// Steps of Export. The initial step is StepInit(-1).
+// StepInit -> ExportStepDump -> StepDone
+// (PostProcess is inserted before StepDone by a later milestone.)
+const (
+	// ExportStepDump scans key-ordered spans of the table set and writes data files.
+	ExportStepDump Step = 1
+)
+
+func exportStep2Str(s Step) string {
+	switch s {
+	case ExportStepDump:
+		return "dump"
 	default:
 		return unknownStepStr(s)
 	}
