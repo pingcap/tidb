@@ -1059,16 +1059,14 @@ func testDropIndexesIfExists(t *testing.T, store kv.Storage) {
 	// Verify the impact of deletion order when dropping duplicate indexes.
 	tk.MustGetErrCode(
 		"alter table test_drop_indexes_if_exists drop index i2, drop index i2;",
-		errno.ErrUnsupportedDDLOperation,
+		errno.ErrCantDropFieldOrKey,
 	)
 	tk.MustGetErrCode(
 		"alter table test_drop_indexes_if_exists drop index if exists i2, drop index i2;",
-		errno.ErrUnsupportedDDLOperation,
+		errno.ErrCantDropFieldOrKey,
 	)
-	tk.MustGetErrCode(
-		"alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;",
-		errno.ErrUnsupportedDDLOperation,
-	)
+	tk.MustExec("alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;")
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Note|1091|index i2 doesn't exist"))
 }
 
 func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {

@@ -1144,7 +1144,9 @@ func TestAddForeignKey(t *testing.T) {
 		"add constraint fk_e foreign key (e) references t1(unknown_col)", infoschema.ErrForeignKeyNoColumnInParent)
 	tbl2Info = getTableInfo(t, dom, "test", "t2")
 	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
-	tk.MustGetDBError("alter table t2 drop index idx_c, add constraint fk_c foreign key (c) references t1(b)", dbterror.ErrDropIndexNeededInForeignKey)
+	tk.MustExec("alter table t2 drop index idx_c, add constraint fk_c foreign key (c) references t1(b)")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
 
 	// Test circular dependency add foreign key failed.
 	tk.MustExec("drop table if exists t1,t2")

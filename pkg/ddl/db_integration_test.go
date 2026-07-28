@@ -308,7 +308,8 @@ func TestIssue5092(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// The following two statements are consistent with MariaDB.
 	tk.MustGetErrCode("alter table t_issue_5092 add column if not exists d int, add column d int", errno.ErrDupFieldName)
-	tk.MustGetErrCode("alter table t_issue_5092 add column dd int, add column if not exists dd int", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t_issue_5092 add column dd int, add column if not exists dd int")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1060 Duplicate column name 'dd'"))
 
 	// in ddl.CreateTable, a Tp of default values will be filled, so the input Stmt is changed.
 	// ddlChecker relies on same Stmt to apply on ddl and SchemaTracker, because Stmt is changed after ddl.CreateTable
@@ -331,6 +332,7 @@ func TestIssue5092(t *testing.T) {
 		"  `c1` int(11) DEFAULT NULL,\n" +
 		"  `f` int(11) DEFAULT NULL,\n" +
 		"  `g` int(11) DEFAULT NULL,\n" +
+		"  `dd` int(11) DEFAULT NULL,\n" +
 		"  `ff` text DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	ddlChecker.Enable()
@@ -365,8 +367,8 @@ func TestIssue5092(t *testing.T) {
 	tk.MustExec("create table t_issue_5092 (a int)")
 	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
 	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists a, drop column b, drop column c", errno.ErrCantRemoveAllFields)
-	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_issue_5092 drop column c, drop column if exists c", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column c, drop column if exists c")
 	tk.MustExec("drop table t_issue_5092")
 }
 

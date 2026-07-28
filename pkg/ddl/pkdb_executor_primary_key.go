@@ -22,6 +22,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -33,10 +34,12 @@ import (
 func (e *executor) createPrimaryKeyWithTableInfo(
 	ctx sessionctx.Context,
 	schema *model.DBInfo,
-	tblInfo *model.TableInfo,
+	tbl table.Table,
 	indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
+	spec *ast.AlterTableSpec,
+	tbTracker *TableTracker,
 ) error {
 	if indexOption != nil && indexOption.PrimaryKeyTp == pmodel.PrimaryKeyTypeClustered {
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
@@ -48,11 +51,6 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 	}
 
 	indexName = pmodel.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil ||
-		// If the table's PKIsHandle is true, it also means that this table has a primary key.
-		tblInfo.PKIsHandle {
-		return infoschema.ErrMultiplePriKey
-	}
 
 	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
 	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
@@ -62,22 +60,26 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 		}
 	}
 
-	// Do the same prechecks as CreatePrimaryKey. The worker will re-check again at execution time.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, false)
+	currentTbl := getTrackedTable(tbl, tbTracker)
+	currentTblInfo := currentTbl.Meta()
+	if indexInfo := currentTblInfo.FindIndexByName(indexName.L); indexInfo != nil || currentTblInfo.PKIsHandle {
+		return infoschema.ErrMultiplePriKey
+	}
+	if _, err := CheckPKOnGeneratedColumn(currentTblInfo, indexPartSpecifications); err != nil {
+		return err
+	}
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), currentTblInfo.Columns, indexPartSpecifications, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
-		return err
-	}
-	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, "PRIMARY", indexColumns, true, indexOption != nil && indexOption.Global); err != nil {
+	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), currentTblInfo, "PRIMARY", indexColumns, true, indexOption != nil && indexOption.Global); err != nil {
 		return err
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
 	if indexOption != nil {
 		sessionVars := ctx.GetSessionVars()
-		if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
+		if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -86,11 +88,11 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
-		TableID:        tblInfo.ID,
+		TableID:        tbl.Meta().ID,
 		SchemaName:     schema.Name.L,
 		FullSchemaName: schema.Name,
-		TableName:      tblInfo.Name.L,
-		FullTableName:  tblInfo.Name,
+		TableName:      tbl.Meta().Name.L,
+		FullTableName:  tbl.Meta().Name,
 		Type:           model.ActionAddPrimaryKey,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
@@ -116,5 +118,11 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 		return err
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		return tbTracker.AlterTable(spec)
+	}
+	return nil
 }

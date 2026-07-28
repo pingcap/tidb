@@ -684,6 +684,10 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 }
 
 func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change for alter table placement")
+	}
+
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1939,31 +1943,24 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 
 	// In multi-schema change, later specs may depend on earlier specs (e.g. add column then add index/PK on it).
 	// Maintain a temporary TableInfo to perform prechecks/job construction.
-	var (
-		multiSchemaTmpSchema *model.DBInfo
-		multiSchemaTmpTbl    *model.TableInfo
-	)
+	var tbTracker *TableTracker
 	if isMultiSchemaChanges(validSpecs) {
 		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
 		// MultiSchemaInfo and skip running them. Then we will run them in
 		// d.multiSchemaChange all at once.
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
-		if schema, ok := is.SchemaByName(ident.Schema); ok {
-			multiSchemaTmpSchema = schema
-			multiSchemaTmpTbl = tb.Meta().Clone()
+		schema, ok := is.SchemaByName(ident.Schema)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 		}
+		tbTracker = NewTableTracker(tb.Meta(), schema, sctx)
 	}
 	for _, spec := range validSpecs {
-		prevSubJobCnt := 0
-		if mci := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
-			prevSubJobCnt = len(mci.SubJobs)
-		}
-
 		var handledCharsetOrCollate bool
 		var ttlOptionsHandled bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
-			err = e.AddColumn(sctx, ident, spec)
+			err = e.AddColumn(sctx, ident, spec, tbTracker)
 		case ast.AlterTableAddPartitions, ast.AlterTableAddLastPartition:
 			err = e.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
@@ -1985,13 +1982,13 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableRepairPartition:
 			err = errors.Trace(dbterror.ErrUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
-			err = e.DropColumn(sctx, ident, spec)
+			err = e.DropColumn(sctx, ident, spec, tbTracker)
 		case ast.AlterTableDropIndex:
-			err = e.dropIndex(sctx, ident, pmodel.NewCIStr(spec.Name), spec.IfExists, false)
+			err = e.dropIndex(sctx, ident, pmodel.NewCIStr(spec.Name), spec.IfExists, false, spec, tbTracker)
 		case ast.AlterTableDropPrimaryKey:
-			err = e.dropIndex(sctx, ident, pmodel.NewCIStr(mysql.PrimaryKeyName), spec.IfExists, false)
+			err = e.dropIndex(sctx, ident, pmodel.NewCIStr(mysql.PrimaryKeyName), spec.IfExists, false, spec, tbTracker)
 		case ast.AlterTableRenameIndex:
-			err = e.RenameIndex(sctx, ident, spec)
+			err = e.RenameIndex(sctx, ident, spec, tbTracker)
 		case ast.AlterTableDropPartition, ast.AlterTableDropFirstPartition:
 			err = e.DropTablePartition(sctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
@@ -2021,17 +2018,17 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeNone, pmodel.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists, spec, tbTracker)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeUnique, pmodel.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+					spec.Constraint.Keys, constr.Option, false, spec, tbTracker) // IfNotExists should be not applied
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
-				err = e.CreateForeignKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
+				err = e.CreateForeignKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer, spec, tbTracker)
 			case ast.ConstraintPrimaryKey:
-				if multiSchemaTmpSchema != nil && multiSchemaTmpTbl != nil {
-					err = e.createPrimaryKeyWithTableInfo(sctx, multiSchemaTmpSchema, multiSchemaTmpTbl, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				if tbTracker != nil {
+					err = e.createPrimaryKeyWithTableInfo(sctx, tbTracker.DBInfo(), tb, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, spec, tbTracker)
 				} else {
 					err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 				}
@@ -2050,15 +2047,15 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			}
 		case ast.AlterTableDropForeignKey:
 			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
-			err = e.DropForeignKey(sctx, ident, pmodel.NewCIStr(spec.Name))
+			err = e.DropForeignKey(sctx, ident, pmodel.NewCIStr(spec.Name), spec, tbTracker)
 		case ast.AlterTableModifyColumn:
-			err = e.ModifyColumn(ctx, sctx, ident, spec)
+			err = e.ModifyColumn(ctx, sctx, ident, spec, tbTracker)
 		case ast.AlterTableChangeColumn:
-			err = e.ChangeColumn(ctx, sctx, ident, spec)
+			err = e.ChangeColumn(ctx, sctx, ident, spec, tbTracker)
 		case ast.AlterTableRenameColumn:
-			err = e.RenameColumn(sctx, ident, spec)
+			err = e.RenameColumn(sctx, ident, spec, tbTracker)
 		case ast.AlterTableAlterColumn:
-			err = e.AlterColumn(sctx, ident, spec)
+			err = e.AlterColumn(sctx, ident, spec, tbTracker)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
@@ -2141,7 +2138,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableOrderByColumns:
 			err = e.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
-			err = e.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
+			err = e.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility, spec, tbTracker)
 		case ast.AlterTableAlterCheck:
 			if !variable.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
@@ -2185,15 +2182,12 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		// If a sub-job is appended, update the temporary schema so that following specs can reference it.
-		pkdbUpdateMultiSchemaTmpTableInfo(sctx, multiSchemaTmpTbl, prevSubJobCnt)
 	}
 
 	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
 		info := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
-		err = e.multiSchemaChange(sctx, ident, info)
+		err = e.multiSchemaChange(sctx, ident, info, tbTracker)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2202,7 +2196,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 	return nil
 }
 
-func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
+func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo, tbTracker *TableTracker) error {
 	subJobs := info.SubJobs
 	if len(subJobs) == 0 {
 		return nil
@@ -2254,6 +2248,10 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
 	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 	err = checkMultiSchemaInfo(info, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkVisibleColumnCnt(getTrackedTable(t, tbTracker), 0, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2392,14 +2390,24 @@ func (e *executor) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model
 }
 
 // AddColumn will add a new column to the table.
-func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	specNewColumn := spec.NewColumns[0]
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tbTracker != nil {
+		schema = tbTracker.DBInfo()
+		t = tables.MockTableFromMeta(tbTracker.TableInfo())
+	}
 	failpoint.InjectCall("afterGetSchemaAndTableByIdent", ctx)
 	tbInfo := t.Meta()
+	if tbInfo.ContainsAutoRandomBits() && containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) {
+		return dbterror.ErrUnsupportedAddColumn.GenWithStack(
+			"unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'",
+			specNewColumn.Name.Name.O, ti.Schema, ti.Name,
+		)
+	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
 	}
@@ -2429,6 +2437,12 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	}
 	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) {
 		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+	}
+
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
 	}
 
 	job := &model.Job{
@@ -2649,6 +2663,10 @@ func getPartitionInfoTypeNone() *model.PartitionInfo {
 
 // AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
 func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change for alter table partition by")
+	}
+
 	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
@@ -2799,6 +2817,10 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 
 // RemovePartitioning removes partitioning from a table.
 func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change for alter table remove partitioning")
+	}
+
 	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
@@ -3420,24 +3442,36 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 }
 
 // DropColumn will drop a column from the table, now we don't support drop the column with index covered.
-func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	failpoint.InjectCall("afterGetSchemaAndTableByIdent", ctx)
 
-	isDropable, err := checkIsDroppableColumn(ctx, e.infoCache.GetLatest(), schema, t, spec)
+	currentTbl := getTrackedTable(t, tbTracker)
+	colName := spec.OldColumnName.Name
+	originalCol := table.FindCol(t.VisibleCols(), colName.L)
+	currentCol := table.FindCol(currentTbl.VisibleCols(), colName.L)
+	if currentCol == nil && originalCol != nil {
+		if t.Meta().Partition != nil {
+			return dbterror.ErrRunMultiSchemaChanges
+		}
+		return handleTrackerMissingDropObject(ctx, spec.IfExists, colName, "column %s doesn't exist")
+	}
+
+	isDropable, err := checkIsDroppableColumn(ctx, e.infoCache.GetLatest(), schema, currentTbl, spec)
 	if err != nil {
 		return err
 	}
 	if !isDropable {
 		return nil
 	}
-	colName := spec.OldColumnName.Name
-	err = checkVisibleColumnCnt(t, 0, 1)
-	if err != nil {
-		return err
+	if tbTracker == nil {
+		err = checkVisibleColumnCnt(currentTbl, 0, 1)
+		if err != nil {
+			return err
+		}
 	}
 
 	job := &model.Job{
@@ -3460,7 +3494,15 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 		IgnoreExistenceErr: spec.IfExists,
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, schema *model.DBInfo, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, err error) {
@@ -3578,6 +3620,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 func (e *executor) getModifiableColumnJob(
 	ctx context.Context, sctx sessionctx.Context,
 	ident ast.Ident, originalColName pmodel.CIStr, spec *ast.AlterTableSpec,
+	tbTracker *TableTracker,
 ) (*JobWrapper, error) {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -3588,6 +3631,9 @@ func (e *executor) getModifiableColumnJob(
 	if err != nil {
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
+	if tbTracker != nil {
+		t = getTrackedTable(t, tbTracker)
+	}
 
 	return GetModifiableColumnJob(ctx, sctx, is, ident, originalColName, schema, t, spec)
 }
@@ -3595,7 +3641,7 @@ func (e *executor) getModifiableColumnJob(
 // ChangeColumn renames an existing column and modifies the column's definition,
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
@@ -3610,7 +3656,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
-	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec, tbTracker)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(spec.OldColumnName.Name, ident.Name))
@@ -3627,11 +3673,19 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenameColumn renames an existing column.
-func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	oldColName := spec.OldColumnName.Name
 	newColName := spec.NewColumnName.Name
 
@@ -3640,12 +3694,13 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		return errors.Trace(err)
 	}
 
-	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
+	currentTbl := getTrackedTable(tbl, tbTracker)
+	oldCol := table.FindCol(currentTbl.VisibleCols(), oldColName.L)
 	if oldCol == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
 	}
 	// check if column can rename with check constraint
-	err = IsColumnRenameableWithCheckConstraint(oldCol.Name, tbl.Meta())
+	err = IsColumnRenameableWithCheckConstraint(oldCol.Name, currentTbl.Meta())
 	if err != nil {
 		return err
 	}
@@ -3657,7 +3712,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
-	allCols := tbl.Cols()
+	allCols := currentTbl.Cols()
 	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
 	if colWithNewNameAlreadyExist {
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
@@ -3668,7 +3723,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkDropColumnWithPartitionConstraint(tbl, oldColName)
+	err = checkDropColumnWithPartitionConstraint(currentTbl, oldColName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3699,12 +3754,20 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Position:      spec.Position,
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
@@ -3712,9 +3775,8 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
 	}
-
 	originalColName := specNewColumn.Name.Name
-	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec, tbTracker)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
@@ -3731,10 +3793,18 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	specNewColumn := spec.NewColumns[0]
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -3746,9 +3816,10 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
 
+	currentTbl := getTrackedTable(t, tbTracker)
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
-	oldCol := table.FindCol(t.Cols(), colName.L)
+	oldCol := table.FindCol(currentTbl.Cols(), colName.L)
 	if oldCol == nil {
 		return dbterror.ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
@@ -3764,7 +3835,7 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		}
 		col.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
-		if IsAutoRandomColumnID(t.Meta(), col.ID) {
+		if IsAutoRandomColumnID(currentTbl.Meta(), col.ID) {
 			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 		hasDefaultValue, err := SetDefaultValue(ctx.GetExprCtx(), col, specNewColumn.Options[0])
@@ -3794,7 +3865,15 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		Col: col.ColumnInfo,
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AlterTableComment updates the table comment information.
@@ -4009,6 +4088,10 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 // `.JobInterval`. If the `.TTLInfo` in the table info is empty, this function will return an error.
 // When `ttlInfo` is not nil, it simply submits the job with the `ttlInfo` and ignore the `ttlEnable`.
 func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string) error {
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change for alter table ttl")
+	}
+
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -4064,6 +4147,10 @@ func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.I
 }
 
 func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error {
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change for alter table ttl")
+	}
+
 	is := e.infoCache.GetLatest()
 
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -4373,7 +4460,7 @@ func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toColla
 // RenameIndex renames an index.
 // In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
 // but index names are case-sensitive (we can rename index 'a' to 'A')
-func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -4387,7 +4474,8 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
 	}
-	duplicate, err := ValidateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+	currentTbl := getTrackedTable(tb, tbTracker)
+	duplicate, err := ValidateRenameIndex(spec.FromKey, spec.ToKey, currentTbl.Meta())
 	if duplicate {
 		return nil
 	}
@@ -4416,7 +4504,15 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 		},
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // If one drop those tables by mistake, it's difficult to recover.
@@ -5204,7 +5300,7 @@ func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DB
 func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	return e.createIndex(ctx, ident, stmt.KeyType, pmodel.NewCIStr(stmt.IndexName),
-		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
+		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists, nil, nil)
 }
 
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
@@ -5230,7 +5326,17 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 }
 
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName pmodel.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
+	var trackerSpec *ast.AlterTableSpec
+	if spec != nil {
+		clonedSpec := *spec
+		if spec.Constraint != nil {
+			clonedConstraint := *spec.Constraint
+			clonedConstraint.Keys = cloneIndexPartSpecifications(spec.Constraint.Keys)
+			clonedSpec.Constraint = &clonedConstraint
+		}
+		trackerSpec = &clonedSpec
+	}
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
@@ -5247,8 +5353,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
+
+	currentTbl := getTrackedTable(t, tbTracker)
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, hiddenCols, shardIndexVersion, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, unique, false, ifNotExists)
+	indexName, hiddenCols, shardIndexVersion, err := checkIndexNameAndColumns(metaBuildCtx, currentTbl, indexName, indexPartSpecifications, unique, false, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5257,7 +5365,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return nil
 	}
 
-	tblInfo := t.Meta()
+	tblInfo := currentTbl.Meta()
 	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
 	copy(finalColumns, tblInfo.Columns)
 	finalColumns = append(finalColumns, hiddenCols...)
@@ -5339,7 +5447,15 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(trackerSpec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
@@ -5571,7 +5687,7 @@ func buildFKInfo(fkName pmodel.CIStr, keys []*ast.IndexPartSpecification, refer 
 	return fkInfo, nil
 }
 
-func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName pmodel.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
+func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName pmodel.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -5585,24 +5701,31 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	if t.Meta().TempTableType != model.TempTableNone {
 		return infoschema.ErrCannotAddForeign
 	}
+	currentTblInfo := t.Meta()
+	currentCols := t.Cols()
+	if tbTracker != nil {
+		currentTblInfo = tbTracker.TableInfo()
+		currentCols = tables.MockTableFromMeta(currentTblInfo).Cols()
+	}
 
 	if fkName.L == "" {
 		fkName = pmodel.NewCIStr(fmt.Sprintf("fk_%d", t.Meta().MaxForeignKeyID+1))
 	}
-	err = checkFKDupName(t.Meta(), fkName)
+	err = checkFKDupName(currentTblInfo, fkName)
 	if err != nil {
 		return err
 	}
-	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
+	fkInfo, err := buildFKInfo(fkName, keys, refer, currentCols)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-	err = checkAddForeignKeyValid(is, schema.Name, t.Meta(), fkInfo, fkCheck)
+	err = checkAddForeignKeyValid(is, schema.Name, currentTblInfo, fkInfo, fkCheck)
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumnsForForeignKey(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
+	indexCheckTblInfo := currentTblInfo
+	if model.FindIndexByColumnsForForeignKey(indexCheckTblInfo, indexCheckTblInfo.Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -5615,7 +5738,16 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 			})
 		}
 		indexOption := &ast.IndexOption{}
-		err = e.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false)
+		generatedSpec := &ast.AlterTableSpec{
+			Tp: ast.AlterTableAddConstraint,
+			Constraint: &ast.Constraint{
+				Tp:     ast.ConstraintIndex,
+				Name:   fkInfo.Name.O,
+				Keys:   indexPartSpecifications,
+				Option: indexOption,
+			},
+		}
+		err = e.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false, generatedSpec, tbTracker)
 		if err != nil {
 			return err
 		}
@@ -5650,11 +5782,20 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 		FkInfo:  fkInfo,
 		FkCheck: fkCheck,
 	}
+
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName pmodel.CIStr) error {
+func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName pmodel.CIStr, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -5666,8 +5807,9 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
+	currentTbl := getTrackedTable(t, tbTracker)
 	foundFK := false
-	for _, fk := range t.Meta().ForeignKeys {
+	for _, fk := range currentTbl.Meta().ForeignKeys {
 		if fk.Name.L == fkName.L {
 			foundFK = true
 			break
@@ -5694,12 +5836,20 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 
 	args := &model.DropForeignKeyArgs{FkName: fkName}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *executor) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	err := e.dropIndex(ctx, ti, pmodel.NewCIStr(stmt.IndexName), stmt.IfExists, stmt.IsHypo)
+	err := e.dropIndex(ctx, ti, pmodel.NewCIStr(stmt.IndexName), stmt.IfExists, stmt.IsHypo, nil, nil)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
 		err = nil
 	}
@@ -5724,7 +5874,7 @@ func (*executor) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, ind
 
 // dropIndex drops the specified index.
 // isHypo is used to indicate whether this operation is for a hypo-index.
-func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExist, isHypo bool) error {
+func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExist, isHypo bool, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -5742,9 +5892,17 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
-	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	currentTbl := getTrackedTable(t, tbTracker)
+	originalIndexInfo := t.Meta().FindIndexByName(indexName.L)
+	indexInfo := currentTbl.Meta().FindIndexByName(indexName.L)
+	if indexInfo == nil && originalIndexInfo != nil {
+		if t.Meta().Partition != nil {
+			return dbterror.ErrRunMultiSchemaChanges
+		}
+		return handleTrackerMissingDropObject(ctx, ifExist, indexName, "index %s doesn't exist")
+	}
 
-	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)
+	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, currentTbl)
 	if err != nil {
 		return err
 	}
@@ -5762,7 +5920,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		return err
 	}
 
-	err = checkIndexNeededInForeignKey(is, schema.Name, t.Meta(), indexInfo)
+	err = checkIndexNeededInForeignKey(is, schema.Name, currentTbl.Meta(), indexInfo)
 	if err != nil {
 		return err
 	}
@@ -5795,7 +5953,15 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		OpType: model.OpDropIndex,
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CheckIsDropPrimaryKey checks if we will drop PK, there are many PK implementations so we provide a helper function.
@@ -6385,7 +6551,7 @@ func (e *executor) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceSt
 	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
 }
 
-func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName pmodel.CIStr, visibility ast.IndexVisibility) error {
+func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName pmodel.CIStr, visibility ast.IndexVisibility, spec *ast.AlterTableSpec, tbTracker *TableTracker) error {
 	schema, tb, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return err
@@ -6396,7 +6562,8 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 		invisible = true
 	}
 
-	skip, err := validateAlterIndexVisibility(ctx, indexName, invisible, tb.Meta())
+	currentTbl := getTrackedTable(tb, tbTracker)
+	skip, err := validateAlterIndexVisibility(ctx, indexName, invisible, currentTbl.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6423,7 +6590,15 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 		Invisible: invisible,
 	}
 	err = e.doDDLJob2(ctx, job, args)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbTracker != nil {
+		if err := tbTracker.AlterTable(spec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
