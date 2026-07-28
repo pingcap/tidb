@@ -126,7 +126,7 @@
 
 ### Tests
 - `pkg/dxf/importinto/conflictedkv/collector_test.go` - dxf/importinto/conflictedkv: Tests collect result merge and conflict-row recording.
-- `pkg/dxf/importinto/conflictedkv/deleter_internal_test.go` - dxf/importinto/conflictedkv: Tests commit error propagation when deleting buffered keys.
+- `pkg/dxf/importinto/conflictedkv/deleter_internal_test.go` - dxf/importinto/conflictedkv: Tests commit error propagation and transaction write-conflict retries when deleting buffered keys.
 - `pkg/dxf/importinto/conflictedkv/deleter_test.go` - dxf/importinto/conflictedkv: Tests deleter.
 - `pkg/dxf/importinto/conflictedkv/handler_test.go` - dxf/importinto/conflictedkv: Tests data/index handlers, including cross-buffer MV-index row deduplication.
 - `pkg/dxf/importinto/conflictedkv/row_handle_test.go` - dxf/importinto/conflictedkv: Tests global/local row-key filters and bounded key sets.

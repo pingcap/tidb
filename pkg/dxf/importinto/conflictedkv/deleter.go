@@ -142,7 +142,10 @@ func (d *Deleter) deleteKeysWithRetry(ctx context.Context, keys []tidbkv.Key) er
 	return dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, d.logger, func(ctx context.Context) (bool, error) {
 		err := d.deleteBufferedKeys(ctx, keys)
 		if err != nil {
-			return common.IsRetryableError(err), err
+			// KVs of one row should be handled by a single deleter, but for
+			// defensive programming without hurting readability, we still retry
+			// for errors like WRITE CONFLICT, no harm anyway.
+			return tidbkv.IsTxnRetryableError(err) || common.IsRetryableError(err), err
 		}
 		return true, nil
 	})
