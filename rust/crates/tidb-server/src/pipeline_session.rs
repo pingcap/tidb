@@ -38,12 +38,13 @@ use std::sync::Arc;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata};
 use tidb_protocol::ColumnInfo;
+use tidb_session::process::ProcessRegistry;
 use tidb_session::{Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
 
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory,
-    SessionContext, SqlQueryError, WriteOutcome,
+    ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 
 /// One connection's pipeline-backed query session.
@@ -83,6 +84,18 @@ impl Default for PipelineServerSession {
 #[derive(Default)]
 pub struct PipelineSessionFactory {
     catalog: SharedCatalog,
+    /// The live connection list `SHOW PROCESSLIST` reads and `KILL` reaches
+    /// into, shared by every connection this factory opens -- Go's one
+    /// `sessmgr.Manager` per TiDB instance.
+    processes: ProcessRegistry,
+}
+
+impl PipelineSessionFactory {
+    /// The process list of every connection this factory has open.
+    #[must_use]
+    pub fn processes(&self) -> ProcessRegistry {
+        self.processes.clone()
+    }
 }
 
 impl QuerySessionFactory for PipelineSessionFactory {
@@ -98,6 +111,21 @@ impl QuerySessionFactory for PipelineSessionFactory {
             format!("{}@{}", identity.username(), identity.host()),
             format!("{}@{}", identity.username(), context.peer_addr.ip()),
         );
+        // Go registers the connection with the session manager right after
+        // authentication, which is what puts it in `SHOW PROCESSLIST` and
+        // makes it reachable by `KILL`. The registration is owned by the
+        // session, so the row disappears exactly when the connection ends.
+        let guard = self.processes.register(
+            context.connection_id,
+            identity.username().to_owned(),
+            context.peer_addr.to_string(),
+            session.session.current_database().to_owned(),
+            Some(Arc::new(ConnectionKillTarget::new(
+                context.cancellation.clone(),
+                context.close.clone(),
+            ))),
+        );
+        session.session.attach_process(context.connection_id, guard);
         Ok(session)
     }
 }
@@ -395,6 +423,7 @@ mod tests {
                 peer_addr,
                 identity,
                 cancellation: ConnectionCancellation::default(),
+                close: crate::sql_node::ConnectionClose::default(),
             })
             .expect("pipeline session opens without process authorities")
     }

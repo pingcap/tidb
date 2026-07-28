@@ -28,7 +28,7 @@ fn authenticated_connection_owns_the_registry_and_all_three_commands() {
         .find("let mut prepared = PreparedStatementRegistry::default()")
         .expect("one connection-local prepared registry");
     let command_loop = source
-        .find("loop {\n        reader.set_sequence(0)")
+        .find("reader.set_sequence(0);\n        let payload = match reader.read_packet()")
         .expect("authenticated command loop");
     assert!(session < registry && registry < command_loop);
     assert!(source.contains("Command::StmtPrepare(bytes)"));

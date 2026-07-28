@@ -42,8 +42,8 @@ use crate::native_password::generate_handshake_salt;
 use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::{
-    ConnectionCancellation, ConnectionTracker, GeneralExecuteOutcome, PreparedStatement,
-    QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+    ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
+    PreparedStatement, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
 };
 use tidb_planner::prepared_dml::PreparedBindValue;
 
@@ -212,6 +212,9 @@ pub enum ConnectionExit {
     AuthenticationRejected,
     /// Authentication succeeded but a worker-local query session could not open.
     SessionRejected,
+    /// A `KILL` / `KILL CONNECTION` ended the connection (Go closes the
+    /// session's socket and the command loop stops).
+    Killed,
 }
 
 /// MySQL command opcodes observed while serving one connection.
@@ -370,6 +373,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     } = identity;
     stream.set_nodelay(true).map_err(MysqlConnectionError::Io)?;
     let mut output = stream.try_clone().map_err(MysqlConnectionError::Io)?;
+    let stream_for_close = stream.try_clone().map_err(MysqlConnectionError::Io)?;
     let salt = generate_handshake_salt();
     let handshake = InitialHandshake {
         connection_id: u32::try_from(connection_id).unwrap_or(u32::MAX),
@@ -481,11 +485,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             exit: ConnectionExit::AuthenticationRejected,
         });
     };
+    // The KILL handle is bound to this connection's own socket, so a `KILL`
+    // reaching a connection that is idle between commands wakes it up rather
+    // than leaving the row in the process list until the client happens to
+    // send something.
+    let close = ConnectionClose::with_socket(stream_for_close);
     let mut engine = match factory.open_session(SessionContext {
         connection_id,
         peer_addr,
         identity,
         cancellation,
+        close: close.clone(),
     }) {
         Ok(session) => session,
         Err(error) => {
@@ -509,9 +519,30 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     let mut queries = 0_u64;
     let mut prepared = PreparedStatementRegistry::default();
     loop {
+        // A `KILL` that arrived while the previous command ran ends the
+        // connection here, before it serves another one.
+        if close.is_closed() {
+            return Ok(ConnectionReport {
+                connection_id,
+                queries,
+                commands: *commands,
+                exit: ConnectionExit::Killed,
+            });
+        }
         reader.set_sequence(0);
         let payload = match reader.read_packet() {
             Ok(payload) => payload,
+            // A `KILL` shuts the socket down to wake an idle connection, so
+            // the read failure it causes -- including the clean end of stream
+            // the shutdown produces -- is that kill, not a peer disconnect.
+            Err(_) if close.is_closed() => {
+                return Ok(ConnectionReport {
+                    connection_id,
+                    queries,
+                    commands: *commands,
+                    exit: ConnectionExit::Killed,
+                });
+            }
             Err(PacketError::EndOfStream) => {
                 return Ok(ConnectionReport {
                     connection_id,

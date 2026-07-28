@@ -29,8 +29,8 @@ use tidb_protocol::{
     COM_STMT_PREPARE, COM_STMT_RESET, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{
-    serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
-    PipelineSessionFactory,
+    serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
+    ConnectionTracker, PipelineSessionFactory,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -1077,4 +1077,178 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
     worker.join().unwrap();
+}
+
+
+/// `SHOW PROCESSLIST` over the wire: the connection sees ITSELF in the list a
+/// real server keeps, with the identity the handshake authenticated and the
+/// statement it is running -- the SHOW.
+///
+/// Captured from TiDB (testkit session): columns
+/// `Id User Host db Command Time State Info`, one row per live connection,
+/// with `Info` the running statement and `State` `autocommit`.
+///
+/// `KILL <unknown id>` is captured as a silent no-op that answers OK: Go's
+/// `executeKillStmt` reaches `KillWithNormalCloseMsg`, which ignores an id it
+/// does not hold. (1094 `Unknown thread id` is EXPLAIN FOR CONNECTION's
+/// error, not KILL's.)
+#[test]
+fn mysql_client_reads_the_process_list_and_kills_by_id() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::default(),
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+
+    let rows = run_query(&mut client, &mut reader, "SHOW PROCESSLIST");
+    assert_eq!(rows.len(), 1, "one live connection: {rows:?}");
+    let row = &rows[0];
+    assert!(
+        row[0].parse::<u64>().unwrap() > 0,
+        "the server assigned a connection id: {row:?}"
+    );
+    assert_eq!(row[1], "alice");
+    assert!(row[2].starts_with("127.0.0.1:"), "client address: {row:?}");
+    assert_eq!(row[3], "test");
+    assert_eq!(row[4], "Query");
+    assert_eq!(row[6], "autocommit");
+    assert_eq!(row[7], "SHOW PROCESSLIST");
+    let connection_id: u64 = row[0].parse().unwrap();
+
+    // FULL differs only in that Info is not truncated.
+    let full = run_query(&mut client, &mut reader, "SHOW FULL PROCESSLIST");
+    assert_eq!(full[0][7], "SHOW FULL PROCESSLIST");
+
+    // An id this server does not hold: OK, nothing killed, connection usable.
+    assert_eq!(run_write(&mut client, &mut reader, "KILL 999999"), 0);
+    assert_eq!(
+        run_write(&mut client, &mut reader, "KILL CONNECTION 999999"),
+        0
+    );
+    // Killing one's OWN running query is legal and leaves the connection
+    // usable, as it is in Go.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            &format!("KILL QUERY {connection_id}")
+        ),
+        0
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT 1"),
+        vec![vec!["1".to_owned()]]
+    );
+
+    // COM_QUIT ends the connection cleanly, and the row leaves the list with
+    // it.
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    worker.join().unwrap();
+}
+
+
+/// Two connections on one server: the second sees BOTH rows in the process
+/// list, and `KILL <id>` ends the first one -- Go's `KILL` closes the target
+/// session's connection.
+///
+/// Deterministic: the kill shuts the target's socket down, so the thread
+/// serving it returns without the target's client having to send anything.
+#[test]
+fn kill_connection_ends_the_targeted_peer() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    // Both connections are served by ONE factory: that is what gives them one
+    // process list, as one TiDB instance has one session manager.
+    let factory = Arc::new(PipelineSessionFactory::default());
+    let store = Arc::new(users());
+    let acceptor = std::thread::spawn(move || {
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let tracker = Arc::clone(&tracker);
+            let factory = Arc::clone(&factory);
+            let store = Arc::clone(&store);
+            workers.push(std::thread::spawn(move || {
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+            }));
+        }
+        workers
+    });
+
+    // The victim connects first and runs one statement, so it is registered
+    // and idle between commands when the kill arrives.
+    let mut victim = TcpStream::connect(address).unwrap();
+    let victim_read = victim.try_clone().unwrap();
+    let mut victim_reader = PacketReader::new(victim_read);
+    authenticate(&mut victim, &mut victim_reader);
+    assert_eq!(
+        run_query(&mut victim, &mut victim_reader, "SELECT 1"),
+        vec![vec!["1".to_owned()]]
+    );
+
+    let mut killer = TcpStream::connect(address).unwrap();
+    let killer_read = killer.try_clone().unwrap();
+    let mut killer_reader = PacketReader::new(killer_read);
+    authenticate(&mut killer, &mut killer_reader);
+
+    let rows = run_query(&mut killer, &mut killer_reader, "SHOW PROCESSLIST");
+    assert_eq!(rows.len(), 2, "both connections are listed: {rows:?}");
+    // The killer is the row running this SHOW; the idle victim is `Sleep`
+    // with a NULL Info, which is how Go reports a connection between
+    // commands.
+    let victim_row = rows
+        .iter()
+        .find(|row| row[4] == "Sleep")
+        .unwrap_or_else(|| panic!("an idle peer row: {rows:?}"));
+    assert_eq!(victim_row[7], "NULL");
+    let victim_id: u64 = victim_row[0].parse().unwrap();
+
+    assert_eq!(
+        run_write(&mut killer, &mut killer_reader, &format!("KILL {victim_id}")),
+        0
+    );
+
+    // The killer ends normally; the victim's own serving thread reports that
+    // a KILL ended it.
+    write_packet(&mut killer, 0, &[0x01]);
+    drop(killer);
+    let workers = acceptor.join().unwrap();
+    let exits: Vec<ConnectionExit> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap().exit)
+        .collect();
+    assert!(
+        exits.contains(&ConnectionExit::Killed),
+        "the killed connection reports its kill: {exits:?}"
+    );
+    assert!(exits.contains(&ConnectionExit::Quit), "{exits:?}");
+    drop(victim);
 }

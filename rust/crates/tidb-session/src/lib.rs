@@ -113,6 +113,14 @@ pub struct Session {
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
+    /// Go `SessionVars.ConnectionID`. 0 for a session with no server front,
+    /// which is also what Go leaves it at for an internal session.
+    connection_id: u64,
+    /// This connection's registration in the server's process list, which the
+    /// front end installs. `None` for a session with no server front; such a
+    /// session still answers `SHOW PROCESSLIST` -- with the single row it can
+    /// honestly report, itself.
+    process: Option<process::ProcessGuard>,
 }
 
 impl Default for Session {
@@ -129,6 +137,8 @@ impl Default for Session {
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
+            connection_id: 0,
+            process: None,
         }
     }
 }
@@ -153,6 +163,7 @@ struct Transaction {
 pub use tidb_executor::TxnErrorKind;
 
 pub mod infoschema;
+pub mod process;
 pub mod sysvar;
 pub mod vars;
 pub use vars::{SessionVars, VarError};
@@ -1013,6 +1024,48 @@ impl Session {
                     }
                     Ok(Some(self.warning_output(show.count_only, true)))
                 }
+                // Go `ShowExec.fetchShowProcessList`: one row per live
+                // connection of this server, read from the session manager.
+                tidb_ast::AdminStmt::ShowInspection(show) => {
+                    if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
+                        return Ok(None);
+                    }
+                    if show.filter.is_some() || show.database.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "SHOW PROCESSLIST filters are not supported yet",
+                        ));
+                    }
+                    Ok(Some(self.process_list_output(show.full)))
+                }
+                // Go `SimpleExec.executeKillStmt`.
+                tidb_ast::AdminStmt::Kill(kill) => {
+                    let target = match &kill.target {
+                        tidb_ast::KillTarget::ConnectionId(id) => *id,
+                        // Go accepts `KILL CONNECTION_ID()` (kill my own
+                        // connection) and rejects every other expression with
+                        // this exact message.
+                        tidb_ast::KillTarget::Expr(tidb_ast::Expr::Func { name, args, .. })
+                            if name.eq_ignore_ascii_case("connection_id") && args.is_empty() =>
+                        {
+                            self.connection_id
+                        }
+                        tidb_ast::KillTarget::Expr(_) => {
+                            return Err(DriverError::Unsupported(
+                                "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead",
+                            ))
+                        }
+                    };
+                    // Captured from TiDB: KILL of an id this server does not
+                    // hold is NOT an error -- it answers OK, having done
+                    // nothing. (1094 `Unknown thread id` belongs to EXPLAIN
+                    // FOR CONNECTION, not to KILL.) A session with no server
+                    // front holds no connection at all, which is Go's
+                    // `sm == nil` early return: also a silent no-op.
+                    if let Some(guard) = &self.process {
+                        guard.registry().kill(target, kill.query);
+                    }
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
                 // Go `fetchShowCreateTable`.
                 tidb_ast::AdminStmt::ShowCreate { kind, name, .. } => {
                     if *kind != tidb_ast::ShowCreateKind::Table {
@@ -1550,6 +1603,8 @@ impl Session {
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
+            connection_id: 0,
+            process: None,
         }
     }
 
@@ -1600,6 +1655,11 @@ impl Session {
     pub fn statement_kind(&self, sql: &str) -> Result<StmtKind, DriverError> {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         Ok(match &stmt {
+            // `KILL` is the one admin statement that answers with an OK
+            // packet rather than a result set, as it does in Go.
+            Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Kill(_)) => {
+                StmtKind::Write
+            }
             // `SHOW`/`DESCRIBE`/`EXPLAIN` all answer with a result set.
             Stmt::Query(_) | Stmt::Admin(_) => StmtKind::Query,
             // `USE`, `SET` and the transaction controls answer with an OK
@@ -1616,6 +1676,38 @@ impl Session {
     pub fn set_user(&mut self, current_user: String, login_user: String) {
         self.current_user = Some(current_user);
         self.login_user = Some(login_user);
+    }
+
+    /// Joins this session to the server's process list under `connection_id`.
+    ///
+    /// Go's server registers each connection with the `sessmgr.Manager` right
+    /// after authentication; `guard` is that registration, and dropping the
+    /// session removes the row.
+    pub fn attach_process(&mut self, connection_id: u64, guard: process::ProcessGuard) {
+        self.connection_id = connection_id;
+        self.process = Some(guard);
+    }
+
+    /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
+    #[must_use]
+    pub const fn connection_id(&self) -> u64 {
+        self.connection_id
+    }
+
+    /// Go `serverStatus2Str` over this session's status bits: the `State`
+    /// column of `SHOW PROCESSLIST`.
+    ///
+    /// This tier's connections are always autocommit and set no other status
+    /// bit, so the text is `in transaction; autocommit` inside an explicit
+    /// transaction and `autocommit` outside one -- exactly the order Go's
+    /// `ascServerStatus` produces for those bits.
+    #[must_use]
+    pub fn status_text(&self) -> String {
+        if self.txn.is_some() {
+            "in transaction; autocommit".to_owned()
+        } else {
+            "autocommit".to_owned()
+        }
     }
 
     /// The number of `?` markers a statement carries, which
@@ -1663,7 +1755,21 @@ impl Session {
     /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
     /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
+        // long as it runs, which is why the process list is updated here --
+        // the one door every statement of this session goes through -- rather
+        // than in one front end's command loop.
+        if let Some(guard) = &self.process {
+            guard
+                .registry()
+                .statement_started(guard.id(), sql, &self.status_text());
+        }
         let result = self.execute_statement(sql);
+        if let Some(guard) = &self.process {
+            guard
+                .registry()
+                .statement_finished(guard.id(), &self.current_db, &self.status_text());
+        }
         if let Err(error) = &result {
             let reported = error.clone().to_mysql_error();
             self.warnings.push(SqlWarning {
@@ -2162,6 +2268,100 @@ impl Session {
     /// Captured from TiDB: the columns are `Level`, `Code`, `Message`; the
     /// count form returns a single `@@session.warning_count` column; and
     /// `SHOW ERRORS` shows only the `Error`-level rows.
+    /// The rows of `SHOW [FULL] PROCESSLIST`.
+    ///
+    /// With a server front end this is the whole live connection list. A
+    /// session with NO front end (in-process tests, the embedded driver) has
+    /// no peers to report, so it lists exactly one row: itself, with the
+    /// values it honestly knows -- its own connection id (0 when the front
+    /// end never assigned one), no client host, its current schema, and the
+    /// statement it is running, which is this SHOW.
+    ///
+    /// NOT MODELLED (Go filters the list by the `PROCESS` privilege, showing
+    /// a user without it only their own connections): this tier has no
+    /// privilege manager, so every row is visible.
+    fn process_list_output(&self, full: bool) -> StmtOutput {
+        let rows: Vec<process::ProcessRow> = match &self.process {
+            Some(guard) => guard.registry().snapshot(),
+            None => vec![process::ProcessRow {
+                id: self.connection_id,
+                user: self.process_list_user(),
+                host: String::new(),
+                db: self.current_db.clone(),
+                command: "Query".to_owned(),
+                time: 0,
+                state: self.status_text(),
+                info: Some(if full {
+                    "show full processlist".to_owned()
+                } else {
+                    "show processlist".to_owned()
+                }),
+            }],
+        };
+        let text = || FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
+        let nullable_text = |value: String| {
+            if value.is_empty() {
+                Datum::Null
+            } else {
+                Datum::Bytes(value.into_bytes())
+            }
+        };
+        StmtOutput::Rows {
+            columns: vec![
+                (
+                    "Id".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+                ("User".to_owned(), text()),
+                ("Host".to_owned(), text()),
+                ("db".to_owned(), text()),
+                ("Command".to_owned(), text()),
+                (
+                    "Time".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::Long),
+                ),
+                ("State".to_owned(), text()),
+                (
+                    "Info".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::String),
+                ),
+            ],
+            rows: rows
+                .into_iter()
+                .map(|row| {
+                    vec![
+                        Datum::UInt(row.id),
+                        Datum::Bytes(row.user.into_bytes()),
+                        Datum::Bytes(row.host.into_bytes()),
+                        // Go reports an unselected schema as SQL NULL.
+                        nullable_text(row.db),
+                        Datum::Bytes(row.command.into_bytes()),
+                        Datum::Int(i64::try_from(row.time).unwrap_or(i64::MAX)),
+                        Datum::Bytes(row.state.into_bytes()),
+                        // Go reports an idle connection's statement as NULL,
+                        // and truncates a running one to 100 runes without
+                        // FULL.
+                        match row.info {
+                            Some(info) => Datum::Bytes(
+                                process::truncate_process_info(&info, full).into_bytes(),
+                            ),
+                            None => Datum::Null,
+                        },
+                    ]
+                })
+                .collect(),
+        }
+    }
+
+    /// The `User` column: Go reports the bare user name, while this session
+    /// stores the login identity as `user@host`.
+    fn process_list_user(&self) -> String {
+        match &self.login_user {
+            Some(user) => user.split('@').next().unwrap_or_default().to_owned(),
+            None => String::new(),
+        }
+    }
+
     fn warning_output(&self, count_only: bool, errors_only: bool) -> StmtOutput {
         let reported = self
             .warnings
@@ -6640,6 +6840,148 @@ mod tests {
     /// does not yet produce those warnings -- only the preprocessor gate and
     /// the failed-statement error reach the buffer here. The filter forms of
     /// both statements are refused, not ignored.
+    /// Captured from TiDB (`show processlist` on a fresh testkit session):
+    ///
+    /// ```text
+    /// Id  User  Host  db    Command  Time  State       Info
+    /// 1               test  Query    0     autocommit  show processlist
+    /// ```
+    ///
+    /// with column types `Id BIGINT`, `User/Host/db/Command/State VARCHAR`,
+    /// `Time INT`, `Info STRING` -- and `show full processlist` differing only
+    /// in that `Info` is not truncated to 100 runes.
+    ///
+    /// A session with no server front lists exactly itself, which is what
+    /// this checks; the whole-server list is covered over TCP in
+    /// `tidb-server`'s `pipeline_mysql_client_source` test.
+    #[test]
+    fn show_processlist_lists_this_session() {
+        let mut session = Session::new();
+        let StmtOutput::Rows { columns, rows } =
+            session.run_with_columns("show processlist").unwrap()
+        else {
+            panic!("SHOW PROCESSLIST answers with rows");
+        };
+        assert_eq!(
+            columns
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Id", "User", "Host", "db", "Command", "Time", "State", "Info"]
+        );
+        let text: Vec<Vec<String>> = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|v| datum_text(v).unwrap_or_else(|| "NULL".to_owned()))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            text,
+            vec![vec![
+                "0".to_owned(),
+                String::new(),
+                String::new(),
+                "test".to_owned(),
+                "Query".to_owned(),
+                "0".to_owned(),
+                "autocommit".to_owned(),
+                "show processlist".to_owned(),
+            ]]
+        );
+    }
+
+    /// Captured from TiDB: `SHOW PROCESSLIST` truncates `Info` to 100 runes
+    /// and `SHOW FULL PROCESSLIST` does not.
+    #[test]
+    fn show_full_processlist_does_not_truncate_info() {
+        let registry = process::ProcessRegistry::default();
+        let mut session = Session::new();
+        let guard = registry.register(1, String::new(), String::new(), "test".to_owned(), None);
+        session.attach_process(1, guard);
+        // A peer connection, which is the row whose Info the SHOW truncates
+        // (the running SHOW is this session's own Info).
+        let _peer = registry.register(
+            9,
+            "alice".to_owned(),
+            "10.0.0.1:33".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        let long = format!("select /* {} */ 1", "x".repeat(200));
+        registry.statement_started(9, &long, "autocommit");
+        let short = row_text(session.run("show processlist"));
+        assert_eq!(short.len(), 2);
+        assert_eq!(short[1][0], "9");
+        assert_eq!(short[1][1], "alice");
+        assert_eq!(short[1][2], "10.0.0.1:33");
+        assert_eq!(short[1][4], "Query");
+        assert_eq!(short[1][7].chars().count(), 100);
+        // This session's own row reports the SHOW it is running.
+        assert_eq!(short[0][7], "show processlist");
+        let full = row_text(session.run("show full processlist"));
+        assert_eq!(full[1][7], long);
+        assert_eq!(full[0][7], "show full processlist");
+    }
+
+    /// Captured from TiDB: `KILL <unknown id>` is NOT an error -- it answers
+    /// OK having done nothing (1094 belongs to EXPLAIN FOR CONNECTION).
+    #[test]
+    fn kill_answers_ok_and_reaches_only_live_connections() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        #[derive(Default)]
+        struct Counter {
+            queries: AtomicUsize,
+            connections: AtomicUsize,
+        }
+        impl process::ProcessKillTarget for Counter {
+            fn cancel_query(&self) {
+                self.queries.fetch_add(1, Ordering::AcqRel);
+            }
+            fn kill_connection(&self) {
+                self.connections.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+        let registry = process::ProcessRegistry::default();
+        let target = Arc::new(Counter::default());
+        let mut session = Session::new();
+        let guard = registry.register(
+            5,
+            "alice".to_owned(),
+            String::new(),
+            "test".to_owned(),
+            Some(target.clone()),
+        );
+        session.attach_process(5, guard);
+        // KILL answers with an affected-row count, which the wire front turns
+        // into the OK packet Go sends.
+        assert_eq!(
+            session.statement_kind("kill 999999").unwrap(),
+            StmtKind::Write
+        );
+        assert_eq!(session.run("kill 999999").unwrap(), StmtResult::Affected(0));
+        assert_eq!(target.connections.load(Ordering::Acquire), 0);
+        // Killing one's own query is legal and only cancels the statement.
+        assert_eq!(
+            session.run("kill query 5").unwrap(),
+            StmtResult::Affected(0)
+        );
+        assert_eq!(target.queries.load(Ordering::Acquire), 1);
+        assert_eq!(
+            session.run("kill connection 5").unwrap(),
+            StmtResult::Affected(0)
+        );
+        assert_eq!(target.connections.load(Ordering::Acquire), 1);
+        // Go accepts CONNECTION_ID() and rejects any other expression.
+        assert_eq!(
+            session.run("kill query connection_id()").unwrap(),
+            StmtResult::Affected(0)
+        );
+        assert_eq!(target.queries.load(Ordering::Acquire), 2);
+        assert!(session.run("kill query 1 + 1").is_err());
+    }
+
     #[test]
     fn show_warnings() {
         let mut session = Session::new();

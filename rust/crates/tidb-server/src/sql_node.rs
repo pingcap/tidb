@@ -29,6 +29,7 @@ use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{serve_mysql_connection, MysqlConnectionError};
 use crate::node_config::NodeConfig;
 use crate::resultset_source::ResultSetSource;
+use tidb_session::process::ProcessKillTarget;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -106,6 +107,21 @@ impl ConnectionCancellation {
         }
     }
 
+    /// Cancels only the statement running right now, leaving the connection
+    /// able to run the next one -- Go's `KILL QUERY`, which differs from
+    /// forced drain exactly in that it does not latch the request.
+    fn cancel_current_query(&self) {
+        let active = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active
+            .clone();
+        if let Some(active) = active {
+            active.cancel();
+        }
+    }
+
     pub(crate) fn is_cancelled(&self) -> bool {
         self.state
             .lock()
@@ -121,6 +137,75 @@ impl ConnectionCancellation {
         if state.generation == generation {
             state.active = None;
         }
+    }
+}
+
+/// Cloneable handle that ends one connection, as Go's `KILL` /
+/// `KILL CONNECTION` does.
+///
+/// Two things have to happen for a connection to actually go away: its
+/// command loop must stop serving further commands, and a connection blocked
+/// reading its NEXT command must wake up. The flag does the first and the
+/// socket shutdown the second, which is how Go's `killConn` ends a session it
+/// is not currently executing anything for.
+#[derive(Clone, Debug, Default)]
+pub struct ConnectionClose {
+    closed: Arc<AtomicBool>,
+    socket: Option<Arc<TcpStream>>,
+}
+
+impl ConnectionClose {
+    /// Binds the handle to the connection's own socket.
+    pub(crate) fn with_socket(socket: TcpStream) -> Self {
+        Self {
+            closed: Arc::new(AtomicBool::new(false)),
+            socket: Some(Arc::new(socket)),
+        }
+    }
+
+    /// Marks the connection closed and wakes it if it is waiting for its next
+    /// command. The current command still finishes; the loop exits after it.
+    pub fn request(&self) {
+        self.closed.store(true, Ordering::Release);
+        if let Some(socket) = &self.socket {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+    }
+
+    /// Whether a `KILL` has ended this connection.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+}
+
+/// The [`ProcessKillTarget`] a server connection registers in the process
+/// list: `KILL QUERY` cancels the running statement through the same carrier
+/// forced drain uses, and `KILL` also ends the connection.
+pub struct ConnectionKillTarget {
+    cancellation: ConnectionCancellation,
+    close: ConnectionClose,
+}
+
+impl ConnectionKillTarget {
+    /// The kill target of one authenticated connection.
+    #[must_use]
+    pub const fn new(cancellation: ConnectionCancellation, close: ConnectionClose) -> Self {
+        Self {
+            cancellation,
+            close,
+        }
+    }
+}
+
+impl ProcessKillTarget for ConnectionKillTarget {
+    fn cancel_query(&self) {
+        self.cancellation.cancel_current_query();
+    }
+
+    fn kill_connection(&self) {
+        self.cancellation.cancel();
+        self.close.request();
     }
 }
 
@@ -407,6 +492,8 @@ pub struct SessionContext {
     pub identity: AuthenticatedIdentity,
     /// Forced-drain carrier on which the session registers each active query.
     pub cancellation: ConnectionCancellation,
+    /// Handle a `KILL` uses to end this connection.
+    pub close: ConnectionClose,
 }
 
 /// Query capability retained entirely inside one fixed worker thread.
