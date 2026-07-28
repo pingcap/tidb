@@ -1315,6 +1315,7 @@ dependencies = [
 name = "tidb-exec"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "prost",
  "serde_json",
  "tidb-ast",

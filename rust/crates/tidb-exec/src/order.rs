@@ -604,8 +604,10 @@ impl Error for PreparedOrderError {}
 ///
 /// A signed integer column decodes to [`Datum::Int`]; an unsigned `BIGINT`
 /// decodes to [`Datum::UInt`]; a `DOUBLE` decodes to [`Datum::Real`]; a `CHAR`
-/// column decodes to [`Datum::Bytes`] (its `utf8mb4` bytes). Any other pairing
-/// is a decode contract violation the ordering must not silently reorder.
+/// column decodes to [`Datum::Bytes`] (its `utf8mb4` bytes); `DATE`/`DATETIME`/
+/// `TIMESTAMP` decode to [`Datum::Time`]; `TIME` decodes to
+/// [`Datum::Duration`]. Any other pairing is a decode contract violation the
+/// ordering must not silently reorder.
 const fn scalar_type_admits(scalar_type: ConfiguredScalarType, datum: &Datum) -> bool {
     match scalar_type {
         ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => matches!(datum, Datum::Int(_)),
@@ -615,6 +617,10 @@ const fn scalar_type_admits(scalar_type: ConfiguredScalarType, datum: &Datum) ->
             matches!(datum, Datum::Bytes(_))
         }
         ConfiguredScalarType::Decimal { .. } => matches!(datum, Datum::Decimal(_)),
+        ConfiguredScalarType::Date
+        | ConfiguredScalarType::Datetime { .. }
+        | ConfiguredScalarType::Timestamp { .. } => matches!(datum, Datum::Time(_)),
+        ConfiguredScalarType::Duration { .. } => matches!(datum, Datum::Duration(_)),
     }
 }
 
@@ -724,6 +730,8 @@ fn sort_value_cmp(a: &Datum, b: &Datum) -> Ordering {
         (Datum::String(x), Datum::String(y)) => x.bytes().cmp(y.bytes()),
         (Datum::Bytes(x), Datum::Bytes(y)) => x.cmp(y),
         (Datum::Decimal(x), Datum::Decimal(y)) => x.cmp(y),
+        (Datum::Time(x), Datum::Time(y)) => x.compare(*y),
+        (Datum::Duration(x), Datum::Duration(y)) => x.compare(*y),
         // `Datum::Real` is always finite, so `partial_cmp` always
         // succeeds here — falls back to `Equal` only in the truly
         // impossible NaN/infinite case, same as the mixed-type fallback.

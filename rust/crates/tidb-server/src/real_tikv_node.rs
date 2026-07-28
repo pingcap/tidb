@@ -1091,6 +1091,16 @@ pub(crate) fn served_table_descriptor(table: &ConfiguredTable) -> String {
                 (_, ConfiguredScalarType::Decimal { precision, scale }) => {
                     format!("stored-decimal-not-null:{precision}:{scale}")
                 }
+                (_, ConfiguredScalarType::Date) => "stored-date-not-null".to_owned(),
+                (_, ConfiguredScalarType::Datetime { fsp }) => {
+                    format!("stored-datetime-not-null:{fsp}")
+                }
+                (_, ConfiguredScalarType::Timestamp { fsp }) => {
+                    format!("stored-timestamp-not-null:{fsp}")
+                }
+                (_, ConfiguredScalarType::Duration { fsp }) => {
+                    format!("stored-duration-not-null:{fsp}")
+                }
             };
             format!("{}:{}:{}", column.name(), column.id(), kind)
         })

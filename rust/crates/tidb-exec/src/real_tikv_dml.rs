@@ -178,6 +178,10 @@ impl fmt::Display for ConfiguredWriteError {
                     ConfiguredScalarType::Char { .. } => "CHAR",
                     ConfiguredScalarType::Varchar { .. } => "VARCHAR",
                     ConfiguredScalarType::Decimal { .. } => "DECIMAL",
+                    ConfiguredScalarType::Date => "DATE",
+                    ConfiguredScalarType::Datetime { .. } => "DATETIME",
+                    ConfiguredScalarType::Timestamp { .. } => "TIMESTAMP",
+                    ConfiguredScalarType::Duration { .. } => "TIME",
                 };
                 write!(
                     formatter,
@@ -209,6 +213,10 @@ impl fmt::Display for ConfiguredWriteError {
                     ConfiguredScalarType::Char { .. } => "CHAR",
                     ConfiguredScalarType::Varchar { .. } => "VARCHAR",
                     ConfiguredScalarType::Decimal { .. } => "DECIMAL",
+                    ConfiguredScalarType::Date => "DATE",
+                    ConfiguredScalarType::Datetime { .. } => "DATETIME",
+                    ConfiguredScalarType::Timestamp { .. } => "TIMESTAMP",
+                    ConfiguredScalarType::Duration { .. } => "TIME",
                 };
                 write!(
                     formatter,
@@ -547,7 +555,11 @@ fn decode_stored_column_value(
         scalar_type @ (ConfiguredScalarType::UnsignedBigInt
         | ConfiguredScalarType::Double
         | ConfiguredScalarType::Varchar { .. }
-        | ConfiguredScalarType::Decimal { .. }) => {
+        | ConfiguredScalarType::Decimal { .. }
+        | ConfiguredScalarType::Date
+        | ConfiguredScalarType::Datetime { .. }
+        | ConfiguredScalarType::Timestamp { .. }
+        | ConfiguredScalarType::Duration { .. }) => {
             Err(ConfiguredWriteError::UnsupportedScalarType {
                 column: column.name().to_owned(),
                 scalar_type,
@@ -805,7 +817,14 @@ fn max_configured_row_value_len(table: &ConfiguredTable) -> usize {
                 ConfiguredScalarType::BigInt
                 | ConfiguredScalarType::Int
                 | ConfiguredScalarType::UnsignedBigInt
-                | ConfiguredScalarType::Double => MAX_INT_PAYLOAD_LEN,
+                | ConfiguredScalarType::Double
+                // `Date`/`Datetime`/`Timestamp` persist as the packed 8-byte
+                // `types.Time`; `Duration` persists as an 8-byte `int64`
+                // nanosecond count (`tidb_codec::column`'s temporal decode).
+                | ConfiguredScalarType::Date
+                | ConfiguredScalarType::Datetime { .. }
+                | ConfiguredScalarType::Timestamp { .. }
+                | ConfiguredScalarType::Duration { .. } => MAX_INT_PAYLOAD_LEN,
                 ConfiguredScalarType::Char { max_length } => {
                     (max_length as usize).saturating_mul(UTF8MB4_MAX_BYTES_PER_CHAR)
                 }

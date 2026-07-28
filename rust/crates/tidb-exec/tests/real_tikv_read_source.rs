@@ -19,8 +19,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use chrono::Utc;
 use prost::Message;
-use tidb_datatype::{Datum, FieldTypeCode};
+use tidb_datatype::{parse_time, Datum, FieldTypeCode, MySqlDuration, TimeType};
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     CancelHandle, CopPagingState, QueryDispatch, QueryOperation, QueryTransport, RequestKeyRange,
@@ -417,6 +418,99 @@ fn configured_scalar_types_decode_their_own_coprocessor_chunk_layout() {
             Datum::UInt(u64::MAX),
             Datum::Real(3.5),
             Datum::new_collation_string(b"ab".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
+        ]]
+    );
+    record_set.close().unwrap();
+}
+
+/// Proves the DATE/DATETIME/TIMESTAMP/TIME(fsp) admission decodes each type's
+/// own real coprocessor chunk layout: `Date`/`Datetime`/`Timestamp` from the
+/// packed 8-byte Go `types.Time` value, `Duration` from a raw 8-byte `int64`
+/// nanosecond count that (unlike the self-describing packed `Time`) needs the
+/// column's own declared `fsp` to reconstruct a `MySqlDuration`.
+#[test]
+fn configured_temporal_types_decode_their_own_coprocessor_chunk_layout() {
+    let timestamps = ScriptedTimestampSource::new([9_002]);
+    let state = Rc::new(SharedTransportState::default());
+    let next_count = Rc::new(Cell::new(0));
+    let close_count = Rc::new(Cell::new(0));
+
+    let date = parse_time("2024-05-06", TimeType::Date, 0, false, false, false, &Utc)
+        .expect("valid DATE literal")
+        .time;
+    let datetime = parse_time(
+        "2024-05-06 07:08:09.5",
+        TimeType::DateTime,
+        1,
+        false,
+        false,
+        false,
+        &Utc,
+    )
+    .expect("valid DATETIME literal")
+    .time;
+    let timestamp = parse_time(
+        "2024-05-06 07:08:09.5",
+        TimeType::Timestamp,
+        1,
+        false,
+        false,
+        false,
+        &Utc,
+    )
+    .expect("valid TIMESTAMP literal")
+    .time;
+    let duration_nanoseconds = ((12 * 3_600 + 34 * 60 + 56) * 1_000_000_000) + 789 * 1_000_000;
+    let duration =
+        MySqlDuration::from_nanoseconds(duration_nanoseconds, 3).expect("valid TIME literal");
+
+    let id_column = chunk_fixed_column(&[11_i64.to_le_bytes().to_vec()]);
+    let date_column = chunk_fixed_column(&[date.go_raw().to_le_bytes().to_vec()]);
+    let datetime_column = chunk_fixed_column(&[datetime.go_raw().to_le_bytes().to_vec()]);
+    let timestamp_column = chunk_fixed_column(&[timestamp.go_raw().to_le_bytes().to_vec()]);
+    let duration_column = chunk_fixed_column(&[duration.nanoseconds().to_le_bytes().to_vec()]);
+    let scripted_response = chunk_response_result(
+        &[
+            id_column,
+            date_column,
+            datetime_column,
+            timestamp_column,
+            duration_column,
+        ],
+        Rc::clone(&next_count),
+        Rc::clone(&close_count),
+    );
+
+    let table = ConfiguredTable::new(
+        "test",
+        "temporal",
+        100,
+        vec![
+            ConfiguredColumn::clustered_primary_key("id", 1),
+            ConfiguredColumn::stored_date_not_null("d", 2),
+            ConfiguredColumn::stored_datetime_not_null("dt", 3, 1),
+            ConfiguredColumn::stored_timestamp_not_null("ts", 4, 1),
+            ConfiguredColumn::stored_duration_not_null("tm", 5, 3),
+        ],
+    );
+    let mut engine = RealTiKvReadSession::new(
+        table,
+        transport([scripted_response], Rc::clone(&state)),
+        timestamps,
+    );
+
+    let query = engine
+        .execute("SELECT id, d, dt, ts, tm FROM test.temporal")
+        .expect("a temporal configured projection must reach the transport");
+    let mut record_set = query.into_record_set();
+    assert_eq!(
+        record_set.next_batch(1).unwrap(),
+        vec![vec![
+            Datum::Int(11),
+            Datum::new_time(date),
+            Datum::new_time(datetime),
+            Datum::new_time(timestamp),
+            Datum::new_duration(duration),
         ]]
     );
     record_set.close().unwrap();

@@ -31,6 +31,7 @@ prost.workspace = true
 serde_json = { workspace = true }
 
 [dev-dependencies]
+chrono.workspace = true
 
 [[test]]
 name = "all"

@@ -244,6 +244,22 @@ pub fn configure_loaded_table(
     ))
 }
 
+/// Validates a fractional-seconds precision loaded from persisted column
+/// metadata, per Go `types.CheckFsp`'s `[MinFsp, MaxFsp] = [0, 6]` range.
+/// By the time DDL persists a `DATETIME`/`TIMESTAMP`/`TIME` column, its
+/// `decimal` is always this concrete value (never `UnspecifiedFsp`), since
+/// `setCharsetCollationFlenDecimal` fills in `DefaultFsp` (`0`) at column
+/// creation; an out-of-range value here would mean a corrupt catalog, so it
+/// is refused rather than clamped.
+fn configured_fsp(name: &str, sql_type: &str, decimal: i64) -> Result<u8, String> {
+    u8::try_from(decimal)
+        .ok()
+        .filter(|&fsp| fsp <= 6)
+        .ok_or_else(|| {
+            format!("column `{name}` is {sql_type} with an unusable declared fsp {decimal}")
+        })
+}
+
 fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, String> {
     let name = column.name.original();
     let flags = column.get_flag();
@@ -306,6 +322,27 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
             };
             Ok(ConfiguredColumn::stored_varchar_not_null(
                 name, column.id, max_length, binary,
+            ))
+        }
+        FieldTypeCode::Date if !unsigned => {
+            Ok(ConfiguredColumn::stored_date_not_null(name, column.id))
+        }
+        FieldTypeCode::Datetime if !unsigned => {
+            let fsp = configured_fsp(name, "DATETIME", column.get_decimal())?;
+            Ok(ConfiguredColumn::stored_datetime_not_null(
+                name, column.id, fsp,
+            ))
+        }
+        FieldTypeCode::Timestamp if !unsigned => {
+            let fsp = configured_fsp(name, "TIMESTAMP", column.get_decimal())?;
+            Ok(ConfiguredColumn::stored_timestamp_not_null(
+                name, column.id, fsp,
+            ))
+        }
+        FieldTypeCode::Duration if !unsigned => {
+            let fsp = configured_fsp(name, "TIME", column.get_decimal())?;
+            Ok(ConfiguredColumn::stored_duration_not_null(
+                name, column.id, fsp,
             ))
         }
         FieldTypeCode::NewDecimal if !unsigned => {

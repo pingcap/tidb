@@ -75,6 +75,23 @@ const MYSQL_TYPE_VAR_STRING: i32 = 253;
 const MYSQL_TYPE_NEWDECIMAL: i32 = 246;
 /// MySQL `TypeDouble`, per Go `mysql.TypeDouble`.
 const MYSQL_TYPE_DOUBLE: i32 = 5;
+/// MySQL `TypeTimestamp`, per Go `mysql.TypeTimestamp`.
+const MYSQL_TYPE_TIMESTAMP: i32 = 7;
+/// MySQL `TypeDate`, per Go `mysql.TypeDate`.
+const MYSQL_TYPE_DATE: i32 = 10;
+/// MySQL `TypeDuration` (`TIME`), per Go `mysql.TypeDuration`.
+const MYSQL_TYPE_DURATION: i32 = 11;
+/// MySQL `TypeDatetime`, per Go `mysql.TypeDatetime`.
+const MYSQL_TYPE_DATETIME: i32 = 12;
+/// `DATE`'s fixed display width (`YYYY-MM-DD`), per Go
+/// `mysql.MaxDateWidth` / `defaultLengthAndDecimal[TypeDate]`.
+const MAX_DATE_WIDTH: i32 = 10;
+/// `DATETIME`/`TIMESTAMP`'s display width with no fractional seconds
+/// (`YYYY-MM-DD HH:MM:SS`), per Go `mysql.MaxDatetimeWidthNoFsp`.
+const MAX_DATETIME_WIDTH_NO_FSP: i32 = 19;
+/// `TIME`'s display width with no fractional seconds (`HH:MM:SS`), per Go
+/// `mysql.MaxDurationWidthNoFsp`.
+const MAX_DURATION_WIDTH_NO_FSP: i32 = 10;
 /// `mysql.UnsignedFlag`, set on the coprocessor/result `ColumnInfo.Flag` for an
 /// unsigned integer column so both TiKV and the client decode it unsigned.
 const UNSIGNED_FLAG: i32 = 1 << 5;
@@ -152,6 +169,47 @@ pub enum ConfiguredScalarType {
         /// Declared number of digits after the decimal point (`D`).
         scale: u32,
     },
+    /// `DATE`. Has no fractional-seconds component.
+    Date,
+    /// `DATETIME(fsp)`, session-timezone-free (Go stores/reads it as the
+    /// literal wall-clock value with no UTC conversion).
+    Datetime {
+        /// Declared fractional-seconds precision (`0..=6`).
+        fsp: u8,
+    },
+    /// `TIMESTAMP(fsp)`. Unlike `DATETIME`, MySQL/TiDB store this as UTC and
+    /// convert to the session timezone on read — but that conversion already
+    /// happens server-side: the DAG request this node builds
+    /// (`dag_request::DagRequest`) already carries the session's
+    /// `time_zone_name`/`time_zone_offset` (see `tidb-exec::session`'s
+    /// `time_zone` setting), and per Go `rowcodec.ChunkDecoder`
+    /// (`pkg/util/rowcodec/decoder.go`), TiKV's coprocessor decodes each
+    /// stored `TIMESTAMP` with `ConvertTimeZone(UTC, thatZone)` before
+    /// encoding the response chunk. So the wall-clock value this node
+    /// decodes from the chunk is already the session-timezone value; no
+    /// client-side conversion is needed or performed here.
+    Timestamp {
+        /// Declared fractional-seconds precision (`0..=6`).
+        fsp: u8,
+    },
+    /// `TIME(fsp)` (a signed duration, not a time-of-day).
+    Duration {
+        /// Declared fractional-seconds precision (`0..=6`).
+        fsp: u8,
+    },
+}
+
+/// The extra display-width bytes a fractional-seconds precision adds to a
+/// temporal type's declared length: one byte for the decimal point plus one
+/// per fractional digit, or zero when `fsp` is `0` (no decimal point is
+/// displayed), per Go `mysql.MaxDatetimeWidthNoFsp`/`MaxDurationWidthNoFsp`
+/// callers (`parseFspType`'s `tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())`).
+const fn fsp_extra_width(fsp: u8) -> i32 {
+    if fsp > 0 {
+        1 + fsp as i32
+    } else {
+        0
+    }
 }
 
 impl ConfiguredScalarType {
@@ -170,7 +228,11 @@ impl ConfiguredScalarType {
             | Self::Double
             | Self::Char { .. }
             | Self::Varchar { .. }
-            | Self::Decimal { .. } => None,
+            | Self::Decimal { .. }
+            | Self::Date
+            | Self::Datetime { .. }
+            | Self::Timestamp { .. }
+            | Self::Duration { .. } => None,
         }
     }
 
@@ -183,6 +245,10 @@ impl ConfiguredScalarType {
             Self::Char { .. } => MYSQL_TYPE_STRING,
             Self::Varchar { .. } => MYSQL_TYPE_VAR_STRING,
             Self::Decimal { .. } => MYSQL_TYPE_NEWDECIMAL,
+            Self::Date => MYSQL_TYPE_DATE,
+            Self::Datetime { .. } => MYSQL_TYPE_DATETIME,
+            Self::Timestamp { .. } => MYSQL_TYPE_TIMESTAMP,
+            Self::Duration { .. } => MYSQL_TYPE_DURATION,
         }
     }
 
@@ -196,7 +262,11 @@ impl ConfiguredScalarType {
             | Self::Double
             | Self::Char { .. }
             | Self::Varchar { .. }
-            | Self::Decimal { .. } => 0,
+            | Self::Decimal { .. }
+            | Self::Date
+            | Self::Datetime { .. }
+            | Self::Timestamp { .. }
+            | Self::Duration { .. } => 0,
         }
     }
 
@@ -206,14 +276,21 @@ impl ConfiguredScalarType {
     /// `Char` carries the negated `utf8mb4_bin` id per TiDB's new-collation
     /// sign convention. The `Char` sign is taken from the Go source and is
     /// not yet exercised against real TiKV — the string read path that would
-    /// send it is not wired.
+    /// send it is not wired. The temporal types are not `types.IsString`, so
+    /// (per Go `setCharsetCollationFlenDecimal`, which sets their charset to
+    /// `binary` rather than `utf8mb4`) they carry the plain, un-negated
+    /// binary collation id, same as the numeric types.
     const fn collation_id(self) -> i32 {
         match self {
             Self::BigInt
             | Self::UnsignedBigInt
             | Self::Int
             | Self::Double
-            | Self::Decimal { .. } => BINARY_COLLATION_ID,
+            | Self::Decimal { .. }
+            | Self::Date
+            | Self::Datetime { .. }
+            | Self::Timestamp { .. }
+            | Self::Duration { .. } => BINARY_COLLATION_ID,
             Self::Varchar { binary: true, .. } => BINARY_COLLATION_ID,
             Self::Char { .. } | Self::Varchar { binary: false, .. } => {
                 UTF8MB4_BIN_COPROCESSOR_COLLATION_ID
@@ -221,7 +298,11 @@ impl ConfiguredScalarType {
         }
     }
 
-    /// Displayed column length.
+    /// Displayed column length, per Go `column.ConvertColumnInfo` /
+    /// `mysql.defaultLengthAndDecimal`: `DATE` is a fixed 10
+    /// (`YYYY-MM-DD`); `DATETIME`/`TIMESTAMP` are 19 with no fractional
+    /// seconds, plus one byte for the decimal point and one per fractional
+    /// digit when `fsp > 0`; `TIME` follows the same rule from a width of 10.
     const fn column_len(self) -> i32 {
         match self {
             Self::BigInt | Self::UnsignedBigInt => 20,
@@ -229,6 +310,11 @@ impl ConfiguredScalarType {
             Self::Double => 22,
             Self::Char { max_length } | Self::Varchar { max_length, .. } => max_length as i32,
             Self::Decimal { precision, .. } => precision as i32,
+            Self::Date => MAX_DATE_WIDTH,
+            Self::Datetime { fsp } | Self::Timestamp { fsp } => {
+                MAX_DATETIME_WIDTH_NO_FSP + fsp_extra_width(fsp)
+            }
+            Self::Duration { fsp } => MAX_DURATION_WIDTH_NO_FSP + fsp_extra_width(fsp),
         }
     }
 
@@ -256,7 +342,11 @@ impl ConfiguredScalarType {
             | Self::UnsignedBigInt
             | Self::Int
             | Self::Double
-            | Self::Decimal { .. } => BINARY_COLLATION_ID,
+            | Self::Decimal { .. }
+            | Self::Date
+            | Self::Datetime { .. }
+            | Self::Timestamp { .. }
+            | Self::Duration { .. } => BINARY_COLLATION_ID,
             Self::Varchar { binary: true, .. } => BINARY_COLLATION_ID,
             Self::Char { .. } | Self::Varchar { binary: false, .. } => {
                 UTF8MB4_BIN_RESULT_COLLATION_ID
@@ -267,7 +357,9 @@ impl ConfiguredScalarType {
     /// Result-column length, per Go `column.ConvertColumnInfo`: a string
     /// multiplies its declared length by the charset's max byte width
     /// (utf8mb4 is 4, binary is 1), so `CHAR(120)` reports 480 and
-    /// `VARBINARY(120)` reports 120.
+    /// `VARBINARY(120)` reports 120. The temporal types are not
+    /// `types.IsString`, so (unlike `CHAR`/`VARCHAR`) their declared length
+    /// passes through unscaled — same as [`Self::column_len`].
     #[must_use]
     pub const fn result_column_length(self) -> i32 {
         match self {
@@ -289,18 +381,26 @@ impl ConfiguredScalarType {
             Self::Decimal { precision, scale } => {
                 precision as i32 + 1 + if scale > 0 { 1 } else { 0 }
             }
+            Self::Date => MAX_DATE_WIDTH,
+            Self::Datetime { fsp } | Self::Timestamp { fsp } => {
+                MAX_DATETIME_WIDTH_NO_FSP + fsp_extra_width(fsp)
+            }
+            Self::Duration { fsp } => MAX_DURATION_WIDTH_NO_FSP + fsp_extra_width(fsp),
         }
     }
 
     /// MySQL protocol result-column `decimals` field: the declared scale for
-    /// `DECIMAL`, `0` for every other admitted type.
+    /// `DECIMAL`, the declared fractional-seconds precision for a temporal
+    /// type with one, `0` for every other admitted type.
     ///
     /// Go `column.ConvertColumnInfo` sends `mysql.NotFixedDec` (31) for a
-    /// column whose `GetDecimal()` is unspecified (every non-`DECIMAL` type
-    /// this node admits); the existing wire-building call sites already hard
-    /// code `0` there rather than `NotFixedDec`, so this method preserves
-    /// that established (if not byte-for-byte Go-faithful) behavior for
-    /// those types and only makes `DECIMAL` report its real scale.
+    /// column whose `GetDecimal()` is unspecified (every non-`DECIMAL`,
+    /// non-temporal type this node admits); the existing wire-building call
+    /// sites already hard code `0` there rather than `NotFixedDec`, so this
+    /// method preserves that established (if not byte-for-byte Go-faithful)
+    /// behavior for those types. `DECIMAL` and the fsp-bearing temporal types
+    /// always have their scale/fsp declared (never unspecified) by the time
+    /// they reach this configured catalog, so they report their real value.
     #[must_use]
     pub const fn result_decimal(self) -> u8 {
         match self {
@@ -309,8 +409,10 @@ impl ConfiguredScalarType {
             | Self::Int
             | Self::Double
             | Self::Char { .. }
-            | Self::Varchar { .. } => 0,
+            | Self::Varchar { .. }
+            | Self::Date => 0,
             Self::Decimal { scale, .. } => scale as u8,
+            Self::Datetime { fsp } | Self::Timestamp { fsp } | Self::Duration { fsp } => fsp,
         }
     }
 
@@ -351,6 +453,19 @@ impl ConfiguredScalarType {
             // `MyDecimal` binary encoding (`tidb_codec::column::decode_column_datums`);
             // it needs no flen/decimal to do so.
             Self::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
+            // `Date`/`Datetime`/`Timestamp` decode from the packed Go
+            // `types.Time` 8-byte representation, which is self-describing
+            // (it embeds its own fsp); the decoder needs no `decimal` hint.
+            Self::Date => FieldType::new(FieldTypeCode::Date),
+            Self::Datetime { .. } => FieldType::new(FieldTypeCode::Datetime),
+            Self::Timestamp { .. } => FieldType::new(FieldTypeCode::Timestamp),
+            // `Duration` decodes from a raw `int64` nanosecond count that does
+            // NOT self-describe its fsp, so the decoder
+            // (`tidb_codec::column::decode_column_datums`'s `Duration` arm)
+            // reads `field_type.decimal()` to build `MySqlDuration`.
+            Self::Duration { fsp } => {
+                FieldType::new(FieldTypeCode::Duration).with_decimal(i64::from(fsp))
+            }
         }
     }
 }
@@ -475,6 +590,50 @@ impl ConfiguredColumn {
             id,
             kind: ConfiguredColumnKind::StoredNotNull,
             scalar_type: ConfiguredScalarType::Decimal { precision, scale },
+        }
+    }
+
+    /// Configures one stored `DATE NOT NULL` column.
+    #[must_use]
+    pub fn stored_date_not_null(name: impl Into<String>, id: i64) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::Date,
+        }
+    }
+
+    /// Configures one stored `DATETIME(fsp) NOT NULL` column.
+    #[must_use]
+    pub fn stored_datetime_not_null(name: impl Into<String>, id: i64, fsp: u8) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::Datetime { fsp },
+        }
+    }
+
+    /// Configures one stored `TIMESTAMP(fsp) NOT NULL` column.
+    #[must_use]
+    pub fn stored_timestamp_not_null(name: impl Into<String>, id: i64, fsp: u8) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::Timestamp { fsp },
+        }
+    }
+
+    /// Configures one stored `TIME(fsp) NOT NULL` column.
+    #[must_use]
+    pub fn stored_duration_not_null(name: impl Into<String>, id: i64, fsp: u8) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::Duration { fsp },
         }
     }
 
@@ -1968,7 +2127,11 @@ fn resolve_prepared_aggregate(
         // argument, a result shape this DECIMAL-only path does not own yet.
         ConfiguredScalarType::Double
         | ConfiguredScalarType::Char { .. }
-        | ConfiguredScalarType::Varchar { .. } => {
+        | ConfiguredScalarType::Varchar { .. }
+        | ConfiguredScalarType::Date
+        | ConfiguredScalarType::Datetime { .. }
+        | ConfiguredScalarType::Timestamp { .. }
+        | ConfiguredScalarType::Duration { .. } => {
             return unsupported(UnsupportedReadOnlyFeature::Aggregate)
         }
     };
