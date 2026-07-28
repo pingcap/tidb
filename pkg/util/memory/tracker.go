@@ -461,8 +461,10 @@ func (t *Tracker) Consume(bs int64) {
 		}
 		if m := tracker.MemArbitrator; m != nil {
 			if m.state.Load() != memArbitratorStateDown {
-				if intest.InTest && mockConsumeAfterStateCheckInject != nil {
-					mockConsumeAfterStateCheckInject(m)
+				if intest.InTest {
+					if mockConsumeAfterStateCheckInject != nil {
+						mockConsumeAfterStateCheckInject(m)
+					}
 				}
 				if bs > 0 {
 					if m.useBigBudget() {
