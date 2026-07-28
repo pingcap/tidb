@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -28,11 +29,23 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// gcTTL is the TTL of the export service safepoint, in seconds.
+	gcTTL = 5 * 60
+)
+
+func gcSafePointID(taskKey string) string {
+	return "export-" + taskKey
+}
+
 type exportScheduler struct {
 	*scheduler.BaseScheduler
+	ctx      context.Context
 	store    kv.Storage
 	taskMeta *TaskMeta
 	logger   *zap.Logger
+
+	gcCancel context.CancelFunc
 }
 
 var _ scheduler.Scheduler = (*exportScheduler)(nil)
@@ -42,6 +55,7 @@ var _ scheduler.Extension = (*exportScheduler)(nil)
 func NewExportScheduler(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	return &exportScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
+		ctx:           ctx,
 		store:         param.TaskRuntime.Store(),
 		logger: logutil.BgLogger().With(
 			zap.Int64("task-id", task.ID), zap.String("task-type", string(proto.Export))),
@@ -55,8 +69,30 @@ func (s *exportScheduler) Init() error {
 		return errors.Annotate(err, "unmarshal export task meta failed")
 	}
 	s.taskMeta = taskMeta
+	if err := s.startGCKeeper(); err != nil {
+		s.logger.Warn("start gc safepoint keeper failed, snapshot may be GCed during a long export",
+			zap.Error(err))
+	}
 	s.BaseScheduler.Extension = s
 	return s.BaseScheduler.Init()
+}
+
+// startGCKeeper keeps a service safepoint at the snapshot TS alive until the
+// task is done, so a long export does not fail on GC.
+func (s *exportScheduler) startGCKeeper() error {
+	pdStore, ok := s.store.(kv.StorageWithPD)
+	if !ok {
+		s.logger.Warn("storage does not support PD, skip GC safepoint keeper")
+		return nil
+	}
+	mgr := gc.NewManager(pdStore.GetPDClient(), s.store.GetCodec().GetKeyspaceID())
+	gcCtx, cancel := context.WithCancel(s.ctx)
+	s.gcCancel = cancel
+	return gc.StartServiceSafePointKeeper(gcCtx, gc.BRServiceSafePoint{
+		ID:       gcSafePointID(s.GetTask().Key),
+		TTL:      gcTTL,
+		BackupTS: s.taskMeta.SnapshotTS,
+	}, mgr)
 }
 
 // OnTick implements scheduler.Extension.
@@ -96,7 +132,19 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 }
 
 // OnDone implements scheduler.Extension.
-func (s *exportScheduler) OnDone(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+func (s *exportScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
+	if s.gcCancel != nil {
+		s.gcCancel()
+	}
+	if pdStore, ok := s.store.(kv.StorageWithPD); ok {
+		mgr := gc.NewManager(pdStore.GetPDClient(), s.store.GetCodec().GetKeyspaceID())
+		if err := mgr.DeleteServiceSafePoint(ctx, gc.BRServiceSafePoint{
+			ID:  gcSafePointID(task.Key),
+			TTL: gcTTL,
+		}); err != nil {
+			s.logger.Warn("delete export gc safepoint failed, it will expire by TTL", zap.Error(err))
+		}
+	}
 	s.logger.Info("export task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	return nil
 }
