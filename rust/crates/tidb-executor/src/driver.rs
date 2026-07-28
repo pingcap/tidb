@@ -583,7 +583,12 @@ pub enum TxnErrorKind {
 
 impl From<ExecError> for DriverError {
     fn from(err: ExecError) -> Self {
-        DriverError::Exec(err)
+        match err {
+            // The same statement-level error whichever layer raised it, so
+            // callers match one variant.
+            ExecError::SubqueryReturnsMoreThanOneRow => DriverError::SubqueryReturnsMoreThanOneRow,
+            other => DriverError::Exec(other),
+        }
     }
 }
 
@@ -974,7 +979,8 @@ fn run_select_stmt(
     // handleScalarSubquery for the non-Apply case).
     let folded;
     let select = if select_has_uncorrelated_subquery(select, catalog, current_db, ctx) {
-        folded = fold_select_subqueries(select, catalog, current_db, ctx)?;
+        let outer = select_outer_scope(select, catalog, current_db, ctx);
+        folded = fold_select_subqueries(select, &outer, catalog, current_db, ctx)?;
         &folded
     } else {
         select
@@ -1108,23 +1114,222 @@ fn run_select_stmt(
         return run_aggregate_select(select, from_source, &resolver, catalog, ctx);
     }
 
+    // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
+    // from a table-dual.
+    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match from_source {
+        Some(exec) => {
+            let schema = exec.schema().clone();
+            (exec, schema)
+        }
+        None => (
+            Box::new(TableDualExec::new(
+                ExecutorMeta::new(Schema::new(vec![]), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                1,
+            )),
+            Schema::new(vec![]),
+        ),
+    };
+
+    // Optional WHERE: a selection over the source rows. A correlated
+    // subquery in the predicate first becomes an Apply below the selection,
+    // appending the column the rewritten predicate reads (Go's plan shape).
+    // The scope the rows above the WHERE have: the FROM tables, plus the
+    // column a correlated WHERE subquery's Apply appends.
+    let mut current_scope = scope.clone();
+    if let Some(predicate) = &select.where_clause {
+        let mut correlated = None;
+        let appended = scope.width();
+        let predicate = extract_correlated_subquery(
+            predicate,
+            &scope,
+            catalog,
+            current_db,
+            appended,
+            &mut correlated,
+            ctx,
+        )?;
+        let (predicate_resolver, predicate_scope);
+        let mut source_schema = source_schema;
+        if let Some(correlated) = correlated {
+            // The Apply's schema is the source's columns plus the subquery's.
+            let mut applied = scope.clone();
+            let mut value_type = FieldType::new(FieldTypeCode::LongLong);
+            if correlated.exists.is_none() {
+                value_type = subquery_result_type(&correlated, catalog, current_db, ctx)
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            }
+            applied.tables.push(FromTable {
+                name: String::new(),
+                columns: vec![(format!("__apply_{appended}"), value_type)],
+                offset: appended,
+            });
+            let columns: Vec<Column> = applied
+                .column_list()
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ft))| {
+                    let mut col = Column::new((i + 1) as i64, ft.clone());
+                    col.index = i as i64;
+                    col
+                })
+                .collect();
+            let apply_schema = Schema::new(columns);
+            let inner_scope = scope.clone();
+            // The apply callback outlives this borrow of the catalog, so it
+            // owns a snapshot (see ApplyExec::new).
+            let inner_catalog = catalog.clone();
+            let inner_db = current_db.to_owned();
+            // The statement context is a handle, so the callback shares the
+            // one warning buffer the statement reports.
+            let inner_ctx = ctx.clone();
+            let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
+                run_correlated_subquery(
+                    &correlated,
+                    values,
+                    &inner_scope,
+                    &inner_catalog,
+                    &inner_db,
+                    &inner_ctx,
+                )
+                .map_err(|e| match e {
+                    DriverError::Exec(exec) => exec,
+                    DriverError::SubqueryReturnsMoreThanOneRow => {
+                        ExecError::SubqueryReturnsMoreThanOneRow
+                    }
+                    other => ExecError::Unsupported(driver_error_text(&other)),
+                })
+            });
+            source = Box::new(crate::apply::ApplyExec::new(
+                ExecutorMeta::new(apply_schema.clone(), 7, INIT_CAP, MAX_CHUNK_SIZE),
+                source,
+                runner,
+            ));
+            source_schema = apply_schema;
+            current_scope = applied;
+            predicate_scope = current_scope.clone();
+        } else {
+            predicate_scope = scope.clone();
+        }
+        predicate_resolver = ScopeResolver {
+            scope: &predicate_scope,
+        };
+        let pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        source = Box::new(SelectionExec::new(
+            ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
+            vec![pred],
+            source,
+            ctx.clone(),
+        ));
+    }
+
+    // A correlated subquery in the SELECT list becomes an Apply above the
+    // WHERE's selection, appending the column the rewritten field reads --
+    // the same shape the WHERE path builds, and Go's plan for
+    // `handleScalarSubquery` when the subquery cannot be folded. It sits
+    // ABOVE the filter, so the inner query runs only for the rows the WHERE
+    // kept, as Go's plan does.
+    let mut projected: Vec<(SelectField, Option<String>)> = Vec::new();
+    for field in select.fields.fields() {
+        let SelectField::Expr { expr, alias } = field else {
+            projected.push((field.clone(), None));
+            continue;
+        };
+        let name = match (alias, expr) {
+            (Some(alias), _) => alias.clone(),
+            (None, tidb_ast::Expr::Column(path)) => {
+                path.last().cloned().unwrap_or_else(|| expr.restore())
+            }
+            (None, _) => expr.restore(),
+        };
+        let mut correlated = None;
+        let appended = current_scope.width();
+        let rewritten = extract_correlated_subquery(
+            expr,
+            &current_scope,
+            catalog,
+            current_db,
+            appended,
+            &mut correlated,
+            ctx,
+        )?;
+        if let Some(correlated) = correlated {
+            let mut value_type = FieldType::new(FieldTypeCode::LongLong);
+            if correlated.exists.is_none() {
+                value_type = subquery_result_type(&correlated, catalog, current_db, ctx)
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            }
+            let inner_scope = current_scope.clone();
+            current_scope.tables.push(FromTable {
+                name: String::new(),
+                columns: vec![(format!("__apply_{appended}"), value_type)],
+                offset: appended,
+            });
+            let columns: Vec<Column> = current_scope
+                .column_list()
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ft))| {
+                    let mut col = Column::new((i + 1) as i64, ft.clone());
+                    col.index = i as i64;
+                    col
+                })
+                .collect();
+            let apply_schema = Schema::new(columns);
+            // The callback outlives this borrow of the catalog, so it owns a
+            // snapshot (see ApplyExec::new); the context is a handle, so the
+            // inner query's warnings reach the statement's one buffer.
+            let inner_catalog = catalog.clone();
+            let inner_db = current_db.to_owned();
+            let inner_ctx = ctx.clone();
+            let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
+                run_correlated_subquery(
+                    &correlated,
+                    values,
+                    &inner_scope,
+                    &inner_catalog,
+                    &inner_db,
+                    &inner_ctx,
+                )
+                .map_err(|e| match e {
+                    DriverError::Exec(exec) => exec,
+                    DriverError::SubqueryReturnsMoreThanOneRow => {
+                        ExecError::SubqueryReturnsMoreThanOneRow
+                    }
+                    other => ExecError::Unsupported(driver_error_text(&other)),
+                })
+            });
+            source = Box::new(crate::apply::ApplyExec::new(
+                ExecutorMeta::new(apply_schema, 7, INIT_CAP, MAX_CHUNK_SIZE),
+                source,
+                runner,
+            ));
+        }
+        projected.push((
+            SelectField::Expr {
+                expr: rewritten,
+                alias: alias.clone(),
+            },
+            Some(name),
+        ));
+    }
+    let projected_fields: Vec<SelectField> =
+        projected.iter().map(|(field, _)| field.clone()).collect();
+    let resolver = ScopeResolver {
+        scope: &current_scope,
+    };
+
     // Rewrite each projected field into an evaluable expression; `*` expands to
     // every table column in order (Go's unfoldWildStar).
     let mut exprs: Vec<Expression> = Vec::new();
     let mut names: Vec<String> = Vec::new();
-    for field in select.fields.fields() {
+    for (field, name) in &projected {
         match field {
-            SelectField::Expr { expr, alias } => {
+            SelectField::Expr { expr, .. } => {
                 let rewritten = rewrite_expr_resolved(expr, &resolver)
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                 exprs.push(rewritten);
-                names.push(match (alias, expr) {
-                    (Some(alias), _) => alias.clone(),
-                    (None, tidb_ast::Expr::Column(path)) => {
-                        path.last().cloned().unwrap_or_else(|| expr.restore())
-                    }
-                    (None, _) => expr.restore(),
-                });
+                names.push(name.clone().unwrap_or_default());
             }
             SelectField::Wildcard(qualifier) => {
                 if scope.tables.is_empty() {
@@ -1184,108 +1389,6 @@ fn run_select_stmt(
         .map(|c| c.ret_type.clone().expect("output column has a type"))
         .collect();
 
-    // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
-    // from a table-dual.
-    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match from_source {
-        Some(exec) => {
-            let schema = exec.schema().clone();
-            (exec, schema)
-        }
-        None => (
-            Box::new(TableDualExec::new(
-                ExecutorMeta::new(Schema::new(vec![]), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                1,
-            )),
-            Schema::new(vec![]),
-        ),
-    };
-
-    // Optional WHERE: a selection over the source rows. A correlated
-    // subquery in the predicate first becomes an Apply below the selection,
-    // appending the column the rewritten predicate reads (Go's plan shape).
-    if let Some(predicate) = &select.where_clause {
-        let mut correlated = None;
-        let appended = scope.width();
-        let predicate = extract_correlated_subquery(
-            predicate,
-            &scope,
-            catalog,
-            current_db,
-            appended,
-            &mut correlated,
-            ctx,
-        )?;
-        let (predicate_resolver, predicate_scope);
-        let mut source_schema = source_schema;
-        if let Some(correlated) = correlated {
-            // The Apply's schema is the source's columns plus the subquery's.
-            let mut applied = scope.clone();
-            let mut value_type = FieldType::new(FieldTypeCode::LongLong);
-            if correlated.exists.is_none() {
-                value_type = subquery_result_type(&correlated.select, catalog, current_db, ctx)
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-            }
-            applied.tables.push(FromTable {
-                name: String::new(),
-                columns: vec![(format!("__apply_{appended}"), value_type)],
-                offset: appended,
-            });
-            let columns: Vec<Column> = applied
-                .column_list()
-                .iter()
-                .enumerate()
-                .map(|(i, (_, ft))| {
-                    let mut col = Column::new((i + 1) as i64, ft.clone());
-                    col.index = i as i64;
-                    col
-                })
-                .collect();
-            let apply_schema = Schema::new(columns);
-            let inner_scope = scope.clone();
-            // The apply callback outlives this borrow of the catalog, so it
-            // owns a snapshot (see ApplyExec::new).
-            let inner_catalog = catalog.clone();
-            let inner_db = current_db.to_owned();
-            // The statement context is a handle, so the callback shares the
-            // one warning buffer the statement reports.
-            let inner_ctx = ctx.clone();
-            let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
-                run_correlated_subquery(
-                    &correlated,
-                    values,
-                    &inner_scope,
-                    &inner_catalog,
-                    &inner_db,
-                    &inner_ctx,
-                )
-                .map_err(|e| match e {
-                    DriverError::Exec(exec) => exec,
-                    other => ExecError::Unsupported(driver_error_text(&other)),
-                })
-            });
-            source = Box::new(crate::apply::ApplyExec::new(
-                ExecutorMeta::new(apply_schema.clone(), 7, INIT_CAP, MAX_CHUNK_SIZE),
-                source,
-                runner,
-            ));
-            source_schema = apply_schema;
-            predicate_scope = applied;
-        } else {
-            predicate_scope = scope.clone();
-        }
-        predicate_resolver = ScopeResolver {
-            scope: &predicate_scope,
-        };
-        let pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        source = Box::new(SelectionExec::new(
-            ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
-            vec![pred],
-            source,
-            ctx.clone(),
-        ));
-    }
-
     // ORDER BY: a sort below the projection, with by-items resolved against
     // the SELECT list first and the SOURCE schema second -- Go's own
     // resolution order, which is why ordering by a column that is not
@@ -1293,7 +1396,7 @@ fn run_select_stmt(
     if !select.order_by.is_empty() {
         let mut by_items = Vec::with_capacity(select.order_by.len());
         for item in &select.order_by {
-            let resolved = substitute_output_aliases(&item.expr, select.fields.fields(), true)?;
+            let resolved = substitute_output_aliases(&item.expr, &projected_fields, true)?;
             let expr = rewrite_expr_resolved(&resolved, &resolver).map_err(|e| {
                 order_by_column_error(&resolved).unwrap_or(DriverError::Exec(ExecError::Eval(e)))
             })?;
@@ -2578,17 +2681,27 @@ fn build_agg_func(
     ))
 }
 
-/// A static-ish result type for a correlated scalar subquery's column: the
-/// type its select field reports when the query is planned with no bindings.
-/// Falling back to `LongLong` matches what the rest of the seed does for an
-/// expression whose type is not inferred.
+/// The type of the column an Apply appends for a correlated scalar subquery.
+///
+/// Go infers it statically from the subquery's select field; here the query is
+/// planned with every correlated column bound to NULL, which reaches the same
+/// field type without depending on any outer row -- and it must, because the
+/// appended column's width is fixed before the first inner run (a `SUM` is a
+/// 40-byte decimal, not an 8-byte integer). Falling back to `LongLong`
+/// matches what the rest of the seed does for an uninferred expression.
 fn subquery_result_type(
-    select: &tidb_ast::SelectStmt,
+    correlated: &CorrelatedSubquery,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<FieldType> {
-    run_select_stmt(select, catalog, current_db, ctx)
+    let nulls: Vec<(Vec<String>, Datum)> = correlated
+        .columns
+        .iter()
+        .map(|path| (path.clone(), Datum::Null))
+        .collect();
+    let typed = bind_subquery_columns(&correlated.select, &nulls).ok()?;
+    run_select_stmt(&typed, catalog, current_db, ctx)
         .ok()
         .and_then(|(columns, _)| columns.first().map(|(_, ft)| ft.clone()))
 }
@@ -2767,6 +2880,33 @@ fn paths_match(bound: &[String], candidate: &[String]) -> bool {
     }
 }
 
+/// Substitutes `bindings` for the correlated column references in every clause
+/// of `select`.
+fn bind_subquery_columns(
+    select: &tidb_ast::SelectStmt,
+    bindings: &[(Vec<String>, Datum)],
+) -> Result<tidb_ast::SelectStmt, DriverError> {
+    let mut bound = select.clone();
+    for field in bound.fields.fields_mut() {
+        if let SelectField::Expr { expr, .. } = field {
+            *expr = bind_correlated_columns(expr, bindings)?;
+        }
+    }
+    if let Some(where_clause) = &bound.where_clause {
+        bound.where_clause = Some(bind_correlated_columns(where_clause, bindings)?);
+    }
+    if let Some(having) = &bound.having {
+        bound.having = Some(bind_correlated_columns(having, bindings)?);
+    }
+    for item in &mut bound.group_by {
+        item.expr = bind_correlated_columns(&item.expr, bindings)?;
+    }
+    for item in &mut bound.order_by {
+        item.expr = bind_correlated_columns(&item.expr, bindings)?;
+    }
+    Ok(bound)
+}
+
 /// Binds every correlated column in `select` and runs it for one outer row.
 fn run_correlated_subquery(
     correlated: &CorrelatedSubquery,
@@ -2789,25 +2929,7 @@ fn run_correlated_subquery(
         bindings.push((path.clone(), value));
     }
 
-    let mut bound = correlated.select.clone();
-    for field in bound.fields.fields_mut() {
-        if let SelectField::Expr { expr, .. } = field {
-            *expr = bind_correlated_columns(expr, &bindings)?;
-        }
-    }
-    if let Some(where_clause) = &bound.where_clause {
-        bound.where_clause = Some(bind_correlated_columns(where_clause, &bindings)?);
-    }
-    if let Some(having) = &bound.having {
-        bound.having = Some(bind_correlated_columns(having, &bindings)?);
-    }
-    for item in &mut bound.group_by {
-        item.expr = bind_correlated_columns(&item.expr, &bindings)?;
-    }
-    for item in &mut bound.order_by {
-        item.expr = bind_correlated_columns(&item.expr, &bindings)?;
-    }
-
+    let bound = bind_subquery_columns(&correlated.select, &bindings)?;
     let (_, rows) = run_select_stmt(&bound, catalog, current_db, ctx)?;
     match correlated.exists {
         // EXISTS folds to 1/0 per outer row.
@@ -2910,6 +3032,24 @@ fn extract_correlated_subquery(
     })
 }
 
+/// The scope a subquery inside `select` sees as its OUTER scope: `select`'s
+/// own `FROM` tables. An unresolvable `FROM` yields an empty scope, and the
+/// error surfaces when the query itself is built.
+fn select_outer_scope(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> FromScope {
+    match &select.from {
+        None => FromScope::default(),
+        Some(join) => match build_join(join, catalog, current_db, ctx) {
+            Ok((_, scope)) => scope,
+            Err(_) => FromScope::default(),
+        },
+    }
+}
+
 /// Whether any clause of `select` contains a subquery the folding pass should
 /// run on. A correlated subquery in the `WHERE` is left for the Apply path.
 fn select_has_uncorrelated_subquery(
@@ -2920,13 +3060,7 @@ fn select_has_uncorrelated_subquery(
 ) -> bool {
     if let Some(where_clause) = &select.where_clause {
         if expr_has_subquery(where_clause) {
-            let outer = match &select.from {
-                None => FromScope::default(),
-                Some(join) => match build_join(join, catalog, current_db, ctx) {
-                    Ok((_, scope)) => scope,
-                    Err(_) => FromScope::default(),
-                },
-            };
+            let outer = select_outer_scope(select, catalog, current_db, ctx);
             let mut found = None;
             // A correlated WHERE subquery is the Apply path's job.
             if extract_correlated_subquery(
@@ -2990,6 +3124,7 @@ fn expr_has_subquery(expr: &tidb_ast::Expr) -> bool {
 /// Folds every subquery in `select`'s clauses, returning the rewritten copy.
 fn fold_select_subqueries(
     select: &tidb_ast::SelectStmt,
+    outer: &FromScope,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -2997,20 +3132,26 @@ fn fold_select_subqueries(
     let mut folded = select.clone();
     for field in folded.fields.fields_mut() {
         if let SelectField::Expr { expr, .. } = field {
-            *expr = fold_subqueries(expr, catalog, current_db, ctx)?;
+            *expr = fold_subqueries(expr, outer, catalog, current_db, ctx)?;
         }
     }
     if let Some(where_clause) = &folded.where_clause {
-        folded.where_clause = Some(fold_subqueries(where_clause, catalog, current_db, ctx)?);
+        folded.where_clause = Some(fold_subqueries(
+            where_clause,
+            outer,
+            catalog,
+            current_db,
+            ctx,
+        )?);
     }
     if let Some(having) = &folded.having {
-        folded.having = Some(fold_subqueries(having, catalog, current_db, ctx)?);
+        folded.having = Some(fold_subqueries(having, outer, catalog, current_db, ctx)?);
     }
     for item in &mut folded.order_by {
-        item.expr = fold_subqueries(&item.expr, catalog, current_db, ctx)?;
+        item.expr = fold_subqueries(&item.expr, outer, catalog, current_db, ctx)?;
     }
     for item in &mut folded.group_by {
-        item.expr = fold_subqueries(&item.expr, catalog, current_db, ctx)?;
+        item.expr = fold_subqueries(&item.expr, outer, catalog, current_db, ctx)?;
     }
     Ok(folded)
 }
@@ -3034,11 +3175,27 @@ fn fold_select_subqueries(
 /// subqueries; and row constructors (a subquery selecting several columns).
 fn fold_subqueries(
     expr: &tidb_ast::Expr,
+    outer: &FromScope,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
+    // A subquery reading the OUTER query's columns has no single value to fold
+    // to: it is the Apply path's job, one run per outer row.
+    if let Expr::Subquery(query)
+    | Expr::Exists {
+        subquery: query, ..
+    } = expr
+    {
+        if let tidb_ast::QueryStmt::Select(select) = &**query {
+            let mut columns = Vec::new();
+            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
+            if !columns.is_empty() {
+                return Ok(expr.clone());
+            }
+        }
+    }
     Ok(match expr {
         Expr::Subquery(query) => {
             let rows = run_subquery(query, catalog, current_db, ctx)?;
@@ -3085,7 +3242,7 @@ fn fold_subqueries(
                 return Ok(Expr::Int(i64::from(*not).to_string()));
             }
             Expr::In {
-                expr: Box::new(fold_subqueries(expr, catalog, current_db, ctx)?),
+                expr: Box::new(fold_subqueries(expr, outer, catalog, current_db, ctx)?),
                 list,
                 not: *not,
             }
@@ -3097,28 +3254,28 @@ fn fold_subqueries(
         }
         // Walk the forms the expression rewriter itself supports; anything
         // else is returned unchanged and fails to rewrite as it already does.
-        Expr::Paren(inner) => {
-            Expr::Paren(Box::new(fold_subqueries(inner, catalog, current_db, ctx)?))
-        }
+        Expr::Paren(inner) => Expr::Paren(Box::new(fold_subqueries(
+            inner, outer, catalog, current_db, ctx,
+        )?)),
         Expr::Unary(op, inner) => Expr::Unary(
             *op,
-            Box::new(fold_subqueries(inner, catalog, current_db, ctx)?),
+            Box::new(fold_subqueries(inner, outer, catalog, current_db, ctx)?),
         ),
         Expr::Binary(op, lhs, rhs) => Expr::Binary(
             *op,
-            Box::new(fold_subqueries(lhs, catalog, current_db, ctx)?),
-            Box::new(fold_subqueries(rhs, catalog, current_db, ctx)?),
+            Box::new(fold_subqueries(lhs, outer, catalog, current_db, ctx)?),
+            Box::new(fold_subqueries(rhs, outer, catalog, current_db, ctx)?),
         ),
         Expr::Is { expr, target, not } => Expr::Is {
-            expr: Box::new(fold_subqueries(expr, catalog, current_db, ctx)?),
+            expr: Box::new(fold_subqueries(expr, outer, catalog, current_db, ctx)?),
             target: *target,
             not: *not,
         },
         Expr::In { expr, list, not } => Expr::In {
-            expr: Box::new(fold_subqueries(expr, catalog, current_db, ctx)?),
+            expr: Box::new(fold_subqueries(expr, outer, catalog, current_db, ctx)?),
             list: list
                 .iter()
-                .map(|item| fold_subqueries(item, catalog, current_db, ctx))
+                .map(|item| fold_subqueries(item, outer, catalog, current_db, ctx))
                 .collect::<Result<_, _>>()?,
             not: *not,
         },
@@ -5887,14 +6044,16 @@ mod tests {
             vec![vec![Datum::Int(1)]]
         );
 
-        // A correlated subquery returning several rows is still the 1242 case.
+        // A correlated subquery returning several rows is still the 1242 case,
+        // raised from inside the apply loop and reported as the same error the
+        // folded path reports.
         assert!(matches!(
             run_select_on(
                 "SELECT id FROM o WHERE v = (SELECT w FROM i WHERE i.id = o.id)",
                 &catalog,
                 &crate::StmtContext::for_query()
             ),
-            Err(DriverError::Exec(ExecError::Unsupported(_)))
+            Err(DriverError::SubqueryReturnsMoreThanOneRow)
         ));
 
         // Correlated IN and ANY/ALL are still the deferred semi-join shapes.

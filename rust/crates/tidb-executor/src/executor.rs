@@ -28,6 +28,10 @@ pub enum ExecError {
     Eval(EvalError),
     /// An operator or feature is not yet ported.
     Unsupported(&'static str),
+    /// Go `ErrSubqueryMoreThan1Row` (1242), raised by the max-one-row check a
+    /// scalar subquery's plan carries. It is an executor error because it is
+    /// only known per outer row, once the inner query has run.
+    SubqueryReturnsMoreThanOneRow,
 }
 
 impl From<EvalError> for ExecError {
