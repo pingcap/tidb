@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -467,17 +468,28 @@ func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOn
 		conflictedkv.BufferedHandleLimit = bak
 	})
 
+	// The next-gen resource planner assigns one slot to this tiny input by
+	// default. Amplify its estimated size so the concurrent dispatcher and
+	// collectors are exercised.
+	testfailpoint.Enable(
+		s.T(),
+		"github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize",
+		fmt.Sprintf("return(%d)", 2*units.GiB),
+	)
+
 	// Issue #69799: handle 1 occurs in separate buffers because its two array
 	// elements conflict with different rows.
-	s.testSingleFileConflictResolution(
+	jobID := s.testConflictResolutionWithOptions(
 		`create table t (
 			pk bigint primary key clustered,
 			a json not null,
 			unique key uk_a ((cast(a->'$' as unsigned array)))
 		)`,
-		"1,\"[1000,2000]\"\n2,\"[1000]\"\n3,\"[2000]\"\n",
+		[]string{"1,\"[1000,2000]\"\n2,\"[1000]\"\n3,\"[2000]\"\n"},
 		[]string{},
+		"checksum_table = 'required'",
 	)
+	s.Greater(s.getTaskByJob(jobID).RequiredSlots, 1)
 }
 
 func (s *mockGCSSuite) TestGlobalSortResolvesGlobalIndexConflictsAcrossPartitions() {
