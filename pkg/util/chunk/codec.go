@@ -324,8 +324,10 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 		numDataBytes = srcCol.offsets[requiredRows] - srcCol.offsets[0]
 		deltaOffset := destCol.offsets[destCol.length] - srcCol.offsets[0]
 		destCol.offsets = append(destCol.offsets, srcCol.offsets[1:requiredRows+1]...)
-		for i := destCol.length + 1; i <= destCol.length+requiredRows; i++ {
-			destCol.offsets[i] = destCol.offsets[i] + deltaOffset
+		if deltaOffset != 0 {
+			for i := destCol.length + 1; i <= destCol.length+requiredRows; i++ {
+				destCol.offsets[i] = destCol.offsets[i] + deltaOffset
+			}
 		}
 		srcCol.offsets = srcCol.offsets[requiredRows:]
 	}

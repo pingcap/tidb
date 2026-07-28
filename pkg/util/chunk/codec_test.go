@@ -261,3 +261,59 @@ func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
 		codec.DecodeToChunk(buffer, chk)
 	}
 }
+
+func BenchmarkDecoderWideRowsZeroDelta(b *testing.B) {
+	const rows = 510
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLong),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+	source := NewChunkWithCapacity(colTypes, rows)
+	c := make([]byte, 119)
+	pad := make([]byte, 59)
+	for i := range rows {
+		source.AppendInt64(0, int64(i))
+		source.AppendInt64(1, int64(i))
+		source.AppendBytes(2, c)
+		source.AppendBytes(3, pad)
+	}
+	codec := NewCodec(colTypes)
+	buffer := codec.Encode(source)
+	intermediate := NewChunkWithCapacity(colTypes, rows)
+	destination := NewChunkWithCapacity(colTypes, rows)
+	decoder := NewDecoder(intermediate, colTypes)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(buffer)))
+	b.ResetTimer()
+	for range b.N {
+		destination.Reset()
+		decoder.Reset(buffer)
+		decoder.Decode(destination)
+	}
+}
+
+func TestDecoderAdjustsNonZeroVarLenOffsets(t *testing.T) {
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar)}
+	source := NewChunkWithCapacity(colTypes, 4)
+	values := []string{"a", "bb", "ccc", "dddd"}
+	for _, value := range values {
+		source.AppendString(0, value)
+	}
+	codec := NewCodec(colTypes)
+	intermediate := NewChunkWithCapacity(colTypes, 4)
+	decoder := NewDecoder(intermediate, colTypes)
+	decoder.Reset(codec.Encode(source))
+
+	destination := NewChunkWithCapacity(colTypes, 16)
+	destination.AppendString(0, "prefix")
+	decoder.Decode(destination)
+
+	require.Equal(t, 1+len(values), destination.NumRows())
+	require.Equal(t, "prefix", destination.GetRow(0).GetString(0))
+	for i, value := range values {
+		require.Equal(t, value, destination.GetRow(i+1).GetString(0))
+	}
+}
