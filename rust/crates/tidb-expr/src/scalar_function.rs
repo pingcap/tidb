@@ -224,6 +224,29 @@ impl ScalarFunction {
     /// operator semantics ([`crate::apply_binary`]), which dispatch on the
     /// operand kinds exactly as Go's per-signature builtins do. Every other
     /// function is reported as unsupported until its builtin is ported.
+    /// Go's conditional signatures evaluate every branch AS the merged
+    /// result type (`builtinIfDecimalSig` and friends), so the selected
+    /// branch's value takes that type here too -- a chunk cell is sized from
+    /// it, and an int value in a decimal cell would not fit.
+    fn coerce_to_ret_type(&self, value: Datum) -> Result<Datum, EvalError> {
+        if value.is_null() {
+            return Ok(value);
+        }
+        let Some(ret_type) = self.get_static_type() else {
+            return Ok(value);
+        };
+        match value.convert_to(ret_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
+            Ok(converted) => Ok(converted.value),
+            Err(_) => Ok(value),
+        }
+    }
+
+    /// Go `ScalarFunction.Eval`: evaluate the function against one row.
+    ///
+    /// The binary operators, the lazy control forms (`CASE`/`IF`), `LIKE`,
+    /// the casts, the session-state functions and the date/time family are
+    /// each handled by name below; everything else evaluates its arguments
+    /// eagerly and reuses the shared Datum-level implementations.
     pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
         if let Some(op) = binary_op_for_name(name) {
@@ -257,14 +280,25 @@ impl ScalarFunction {
                 let condition = pair[0].eval(ctx, row)?;
                 // A NULL condition is not a match, the same as false.
                 if crate::truthy_of(&condition)?.unwrap_or(false) {
-                    return pair[1].eval(ctx, row);
+                    return self.coerce_to_ret_type(pair[1].eval(ctx, row)?);
                 }
             }
             // An odd argument count means a trailing ELSE.
             return match pairs.remainder().first() {
-                Some(else_branch) => else_branch.eval(ctx, row),
+                Some(else_branch) => self.coerce_to_ret_type(else_branch.eval(ctx, row)?),
                 None => Ok(Datum::Null),
             };
+        }
+        // Go `builtinIf*Sig` is lazy too: the condition decides which single
+        // branch is evaluated, so an error in the other never surfaces.
+        if name == "if" && self.args.len() == 3 {
+            let condition = self.args[0].eval(ctx, row)?;
+            let branch = if crate::truthy_of(&condition)?.unwrap_or(false) {
+                1
+            } else {
+                2
+            };
+            return self.coerce_to_ret_type(self.args[branch].eval(ctx, row)?);
         }
         // Go `builtinLikeSig`: both operands are stringified, NULL in either
         // propagates, and the third argument is the escape byte.
@@ -327,6 +361,23 @@ impl ScalarFunction {
                 }
                 _ => {}
             }
+        }
+        // Go `builtinTrim*Sig`: the name carries the direction and the second
+        // argument is the string to remove.
+        if let Some(direction) = match name {
+            "trim" if self.args.len() == 2 => Some(tidb_ast::TrimDirection::Both),
+            "ltrim_with" => Some(tidb_ast::TrimDirection::Leading),
+            "rtrim_with" => Some(tidb_ast::TrimDirection::Trailing),
+            _ => None,
+        } {
+            let value = self.args[0].eval(ctx, row)?;
+            let remstr = self.args[1].eval(ctx, row)?;
+            let binary = matches!(value, Datum::Bytes(_));
+            let text = crate::coerce::coerce_str_bytes(&value)?;
+            let remove = crate::coerce::coerce_str_bytes(&remstr)?;
+            return Ok(crate::string_fn::trim_value(
+                text, remove, direction, binary,
+            ));
         }
         // Go picks a string-length signature from the ARGUMENT's type before
         // any value exists, which is what `build_string_length` models.
@@ -514,7 +565,9 @@ mod tests {
             Datum::Int(9)
         );
 
-        // A function outside the values-only entry stays unsupported.
+        // `IF` is a lazy control form now, so it evaluates here: the
+        // condition picks the branch (this used to be the example of a
+        // function outside the values-only entry).
         let iff = ScalarFunction::new(
             CiString::new("if"),
             ft(),
@@ -524,8 +577,16 @@ mod tests {
                 konst(Datum::Int(3)),
             ],
         );
+        assert_eq!(iff.eval(&NoColumns, row).unwrap(), Datum::Int(2));
+
+        // A function with no ported builtin at all still is unsupported.
+        let unknown = ScalarFunction::new(
+            CiString::new("no_such_builtin"),
+            ft(),
+            vec![konst(Datum::Int(1))],
+        );
         assert!(matches!(
-            iff.eval(&NoColumns, row),
+            unknown.eval(&NoColumns, row),
             Err(EvalError::Unsupported(_))
         ));
     }

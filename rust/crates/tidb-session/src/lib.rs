@@ -2860,6 +2860,92 @@ mod tests {
         }
     }
 
+    /// The math, conditional and TRIM builtins through the chunk executor,
+    /// checked against captured TiDB output -- including the result TYPES,
+    /// which are what size a chunk cell.
+    ///
+    /// The types are the subtle part and were read off TiDB's own result
+    /// fields: `ABS` and `MOD` keep the argument's domain, `CEIL`/`FLOOR`
+    /// return an integer for an integer OR decimal argument but stay real
+    /// for a real one, `ROUND`/`TRUNCATE` keep the decimal domain, and the
+    /// transcendental functions are always real.
+    #[test]
+    fn math_and_conditional_builtins() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(20), c BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,'x',10),(2,'y',20)")
+            .unwrap();
+
+        // Captured: ABS keeps the argument's domain.
+        assert_eq!(
+            row_text(session.run("SELECT ABS(-3), ABS(-3.5)")),
+            [["3", "3.5"]]
+        );
+        // Captured: CEIL/FLOOR of a decimal are integers, and of an integer
+        // are the integer itself.
+        assert_eq!(
+            row_text(session.run("SELECT CEIL(1.2), FLOOR(1.8), CEIL(3), FLOOR(3)")),
+            [["2", "1", "3", "3"]]
+        );
+        // Captured: ROUND keeps the decimal domain and rounds half away from
+        // zero; TRUNCATE cuts instead.
+        assert_eq!(
+            row_text(
+                session.run("SELECT ROUND(1.55,1), ROUND(1.55), ROUND(2.5), TRUNCATE(1.999,2)")
+            ),
+            [["1.6", "2", "3", "1.99"]]
+        );
+        // Captured: MOD follows its arguments.
+        assert_eq!(
+            row_text(session.run("SELECT MOD(7,3), MOD(7.5,3)")),
+            [["1", "1.5"]]
+        );
+        // Captured: the always-real family.
+        assert_eq!(
+            row_text(session.run("SELECT POW(2,3), SQRT(9), LOG10(100)")),
+            [["8", "3", "2"]]
+        );
+        // Captured: SIGN, CONV and CRC32.
+        assert_eq!(
+            row_text(session.run("SELECT SIGN(-2), CONV(255,10,16), CRC32('a')")),
+            [["-1", "FF", "3904355907"]]
+        );
+
+        // Captured: GREATEST/LEAST take the merged argument type, and work
+        // over strings as well as numbers.
+        assert_eq!(
+            row_text(session.run("SELECT GREATEST(1,2,3), LEAST(1,2,3), GREATEST('a','b')")),
+            [["3", "1", "b"]]
+        );
+        // Captured: IF picks one branch, and NULLIF is NULL only on equality.
+        assert_eq!(
+            row_text(session.run("SELECT IF(1,'big','small'), NULLIF(1,1), NULLIF(1,2)")),
+            [["big", "NULL", "1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, IF(c>15,'big','small') FROM t")),
+            [["1", "small"], ["2", "big"]]
+        );
+
+        // Captured: TRIM's three directions, and its implicit space.
+        assert_eq!(
+            row_text(session.run("SELECT TRIM(' x '), TRIM(LEADING 'x' FROM 'xxa')")),
+            [["x", "a"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT TRIM(TRAILING 'a' FROM 'xaa'), SUBSTRING('abc',1,2)")),
+            [["x", "ab"]]
+        );
+
+        // IF is lazy, so the branch not taken never runs -- a division by
+        // zero there would otherwise warn.
+        session.run("SELECT IF(1, 1, 1/0)").unwrap();
+        assert!(session.warnings().is_empty());
+    }
+
     /// The date/time family through the chunk executor, checked against
     /// captured TiDB output with `time_zone = '+00:00'`.
     ///

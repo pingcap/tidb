@@ -132,6 +132,33 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"
         | "microsecond" | "time_to_sec" | "to_days" | "period_add" | "period_diff"
         | "unix_timestamp" | "datediff" => int(),
+        // The math family. Go types these from the ARGUMENT, and the captured
+        // types are what a chunk cell must be sized for: `ABS` and `MOD`
+        // preserve the argument domain, `CEIL`/`FLOOR` return an integer for
+        // an integer or decimal argument but stay real for a real one, and
+        // `ROUND`/`TRUNCATE` keep the decimal domain.
+        "abs" | "mod" => arg_numeric_type(args)?,
+        "ceil" | "ceiling" | "floor" => match arg_numeric_type(args)?.eval_type() {
+            tidb_datatype::EvalType::Real => FieldType::new(FieldTypeCode::Double),
+            _ => int(),
+        },
+        "round" | "truncate" => match arg_numeric_type(args)?.eval_type() {
+            tidb_datatype::EvalType::Real => FieldType::new(FieldTypeCode::Double),
+            tidb_datatype::EvalType::Int if name == "round" => int(),
+            _ => FieldType::new(FieldTypeCode::NewDecimal),
+        },
+        // Always real, whatever went in.
+        "sqrt" | "pow" | "power" | "exp" | "ln" | "log" | "log2" | "log10" | "pi" | "sin"
+        | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "cot" | "radians" | "degrees"
+        | "rand" => FieldType::new(FieldTypeCode::Double),
+        "sign" | "crc32" => int(),
+        "conv" | "bin" | "oct" | "format" => text(),
+        // Go merges the argument types of these the same way it merges the
+        // branches of a CASE.
+        "greatest" | "least" => builtin_return_type("case_when", args)?,
+        // `NULLIF` keeps its first argument's type; the second only decides
+        // whether the result is NULL.
+        "nullif" => args.first()?.static_type()?.clone(),
         // Go reads these from `SessionVars`; each returns a string.
         "database" | "schema" | "version" => text(),
         // String in, number out.
@@ -147,7 +174,10 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // Go aggregates the branch types of these (`aggregateType`). Only a
         // set of branches that already agree is built here; a mixed set is
         // refused rather than guessed, because the guess sizes a chunk cell.
-        "case_when" | "if" | "ifnull" | "coalesce" | "nullif" => {
+        // `IF`'s first argument is the condition, so only its two result
+        // branches carry the type.
+        "if" if args.len() == 3 => builtin_return_type("case_when", &args[1..])?,
+        "case_when" | "ifnull" | "coalesce" => {
             // A NULL branch carries no type of its own -- Go's `aggregateType`
             // ignores it -- so only the typed branches have to agree.
             let branches = args
@@ -170,6 +200,21 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
                 } else {
                     first
                 }
+            } else if typed.iter().all(|ft| {
+                matches!(
+                    ft.eval_type(),
+                    tidb_datatype::EvalType::Int
+                        | tidb_datatype::EvalType::Decimal
+                        | tidb_datatype::EvalType::Real
+                )
+            }) {
+                // Go `AggregateEvalType` over a numeric set takes the widest
+                // domain, so an int branch beside a decimal one is decimal.
+                let owned: Vec<Expression> = typed
+                    .iter()
+                    .map(|ft| Expression::Constant(Constant::new(Datum::Null, (*ft).clone())))
+                    .collect();
+                arg_numeric_type(&owned)?
             } else {
                 if typed.iter().any(|ft| ft.code() != first.code()) {
                     return None;
@@ -249,6 +294,45 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         CastType::Time { .. } | CastType::Json => return None,
     };
     Some((name, ft))
+}
+
+/// The numeric type a type-preserving math builtin reports, which Go takes
+/// from its argument: an integer argument keeps the integer domain, a decimal
+/// keeps the decimal one, and a real keeps the real one. A pair of arguments
+/// (`MOD`, `ATAN2`) takes the wider of the two, which is the same order Go's
+/// `setFlenDecimal4Int`-family builders use.
+fn arg_numeric_type(args: &[Expression]) -> Option<FieldType> {
+    use tidb_datatype::EvalType;
+    let mut best: Option<FieldType> = None;
+    for arg in args {
+        let ft = arg.static_type()?;
+        let rank = |ft: &FieldType| match ft.eval_type() {
+            EvalType::Int => 0,
+            EvalType::Decimal => 1,
+            _ => 2,
+        };
+        if best.as_ref().is_none_or(|current| rank(ft) > rank(current)) {
+            best = Some(ft.clone());
+        }
+    }
+    let best = best?;
+    Some(match best.eval_type() {
+        EvalType::Int => FieldType::new(FieldTypeCode::LongLong),
+        EvalType::Decimal => FieldType::new(FieldTypeCode::NewDecimal),
+        // A string argument is read as a number, which Go does as a real.
+        _ => FieldType::new(FieldTypeCode::Double),
+    })
+}
+
+/// A string literal constant, used where Go's builder supplies a default
+/// argument (`TRIM`'s implicit space).
+fn constant_string(text: &str) -> Expression {
+    let mut datum = Datum::Null;
+    datum.set_bytes(text.as_bytes().to_vec());
+    Expression::Constant(Constant::new(
+        datum,
+        FieldType::new(FieldTypeCode::VarString),
+    ))
 }
 
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
@@ -598,6 +682,31 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 CiString::new(name),
                 ret_type,
                 vec![arg],
+            )))
+        }
+        // Go `trimFunctionClass`: the direction picks one of the three
+        // signatures, and a bare `TRIM(x)` strips spaces from both ends.
+        Expr::Trim {
+            expr,
+            remstr,
+            direction,
+        } => {
+            let name = match direction.unwrap_or(tidb_ast::TrimDirection::Both) {
+                tidb_ast::TrimDirection::Both => "trim",
+                tidb_ast::TrimDirection::Leading => "ltrim_with",
+                tidb_ast::TrimDirection::Trailing => "rtrim_with",
+            };
+            let mut args = vec![rewrite_expr_resolved(expr, resolver)?];
+            match remstr {
+                Some(remstr) => args.push(rewrite_expr_resolved(remstr, resolver)?),
+                None => args.push(constant_string(" ")),
+            }
+            let mut ret_type = FieldType::new(FieldTypeCode::VarString);
+            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type,
+                args,
             )))
         }
         _ => Err(EvalError::Unsupported(
