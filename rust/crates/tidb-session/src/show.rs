@@ -747,6 +747,9 @@ impl Session {
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
+            tidb_ast::AdminStmt::ShowCreateUser(spec) => {
+                Ok(Some(self.show_create_user_stmt(spec)?))
+            }
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowDatabases(show) => {

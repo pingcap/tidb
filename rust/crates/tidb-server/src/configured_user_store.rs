@@ -44,6 +44,24 @@ pub struct AuthenticatedIdentity {
     identity: MatchedIdentity,
 }
 
+/// Why [`ConfiguredUserStore::authenticate_native`] refused a login. Go's
+/// `pkg/privilege/privileges.ConnectionVerification` checks
+/// `record.AccountLocked` BEFORE comparing the password (`privileges.go`
+/// around line 762) and reports a distinct errno for it,
+/// `mysql.ErrAccountHasBeenLocked` (3118, `"Access denied for user '%s'@'%s'.
+/// Account is locked."`), rather than the generic `ErrAccessDenied` (1045) a
+/// bad password or unknown user gets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthenticationFailure {
+    /// The account exists and is locked -- `ACCOUNT LOCK`, or a ROLE (which
+    /// Go stores as a locked account with no password). Errno 3118.
+    AccountLocked,
+    /// Unknown user/host, or a known unlocked account whose password did
+    /// not match. Errno 1045; deliberately indistinguishable from each
+    /// other, matching Go's account-existence-hiding behavior.
+    AccessDenied,
+}
+
 impl AuthenticatedIdentity {
     /// Canonical username selected by TiDB-compatible host matching.
     #[must_use]
@@ -190,20 +208,20 @@ impl ConfiguredUserStore {
     /// account table.
     ///
     /// An unknown user or host still executes the native verifier against a
-    /// dummy hash before returning `None`. The successful result contains the
-    /// canonical stored host pattern, not the client-supplied host.
+    /// dummy hash before returning [`AuthenticationFailure::AccessDenied`].
+    /// The successful result contains the canonical stored host pattern, not
+    /// the client-supplied host.
     ///
     /// A passwordless account (empty `authentication_string`) authenticates
     /// only on an empty auth response, which is what a client sends when the
     /// user supplies no password.
-    #[must_use]
     pub fn authenticate_native(
         &self,
         username: &str,
         remote_host: &str,
         salt: &[u8],
         response: &[u8],
-    ) -> Option<AuthenticatedIdentity> {
+    ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
         let catalog = IdentityCatalog::new(
             self.accounts
                 .accounts()
@@ -218,12 +236,14 @@ impl ConfiguredUserStore {
         // A ROLE is a `mysql.user` row with `account_locked = 'Y'` and an
         // empty password, so without this it would be the most loginable
         // account on the server. Go refuses a locked account at the same
-        // point, before any password comparison.
+        // point, before any password comparison, with a distinct errno
+        // (3118) rather than the generic access-denied (1045) an unknown
+        // user or bad password gets.
         if identity
             .as_ref()
             .is_some_and(|identity| self.accounts.is_role(identity.username(), identity.host()))
         {
-            return None;
+            return Err(AuthenticationFailure::AccountLocked);
         }
         let stored = identity.as_ref().and_then(|identity| {
             self.accounts
@@ -242,9 +262,11 @@ impl ConfiguredUserStore {
             ),
         };
         if verified {
-            identity.map(|identity| AuthenticatedIdentity { identity })
+            identity
+                .map(|identity| AuthenticatedIdentity { identity })
+                .ok_or(AuthenticationFailure::AccessDenied)
         } else {
-            None
+            Err(AuthenticationFailure::AccessDenied)
         }
     }
 }

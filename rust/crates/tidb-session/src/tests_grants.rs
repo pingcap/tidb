@@ -2126,3 +2126,105 @@ fn a_role_confers_process_only_while_it_is_active() {
     admin.run("REVOKE watcher FROM 'bob'@'%'").unwrap();
     assert_eq!(row_text(session.run("show processlist")).len(), 1);
 }
+
+/// `SHOW CREATE USER`: CAPTURED against `pkg/executor/show.go`'s
+/// `fetchShowCreateUser` (test store, `testkit.CreateMockStore`). A freshly
+/// created native-password account prints the full DEFAULT clause set this
+/// tier has no storage for beyond plugin/hash/lock:
+/// `CREATE USER 'u'@'%' IDENTIFIED WITH 'mysql_native_password' AS
+/// '*<HASH>' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD
+/// HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`. A passwordless account
+/// prints `AS ''`.
+#[test]
+fn show_create_user_prints_the_captured_default_clause_set() {
+    let mut session = session_with_privileges();
+    session
+        .run("CREATE USER 'plain'@'%' IDENTIFIED BY 'pw1234'")
+        .unwrap();
+    let rows = row_text(session.run("SHOW CREATE USER 'plain'@'%'"));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0][0],
+        "CREATE USER 'plain'@'%' IDENTIFIED WITH 'mysql_native_password' AS \
+         '*0DB55B5CA3F29C6BCD42E6CF2D2BA346859991AB' REQUIRE NONE PASSWORD \
+         EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD \
+         REUSE INTERVAL DEFAULT"
+    );
+
+    session.run("CREATE USER 'nopw'@'%'").unwrap();
+    let rows = row_text(session.run("SHOW CREATE USER 'nopw'@'%'"));
+    assert_eq!(
+        rows[0][0],
+        "CREATE USER 'nopw'@'%' IDENTIFIED WITH 'mysql_native_password' AS \
+         '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD \
+         HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
+    );
+}
+
+/// A `caching_sha2_password`/`tidb_sm3_password` account's `IDENTIFIED
+/// WITH` clause names the real configured plugin, not the server default
+/// (CAPTURED: Go reads `mysql.user.plugin`, not
+/// `default_authentication_plugin`, whenever the row has a non-empty
+/// plugin).
+#[test]
+fn show_create_user_names_the_accounts_own_plugin() {
+    let mut session = session_with_privileges();
+    session
+        .run("CREATE USER 'sha2'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'pw1234'")
+        .unwrap();
+    let rows = row_text(session.run("SHOW CREATE USER 'sha2'@'%'"));
+    assert!(rows[0][0]
+        .starts_with("CREATE USER 'sha2'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '"));
+}
+
+/// A ROLE is a locked `mysql.user` row with no password (Go's `CREATE
+/// ROLE`), so `SHOW CREATE USER` on one prints `ACCOUNT LOCK` and an empty
+/// hash exactly like an `ALTER USER ... ACCOUNT LOCK`'d plain user would
+/// (CAPTURED; the two are indistinguishable at this column set, which is
+/// itself the captured Go behavior -- both are one `account_locked='Y'`
+/// row).
+#[test]
+fn show_create_user_reflects_account_lock_for_roles_and_locked_users() {
+    let mut session = session_with_privileges();
+    session.run("CREATE ROLE 'role1'").unwrap();
+    let rows = row_text(session.run("SHOW CREATE USER 'role1'@'%'"));
+    assert!(rows[0][0].contains(" ACCOUNT LOCK "));
+
+    session
+        .run("CREATE USER 'locked'@'%' IDENTIFIED BY 'pw1234'")
+        .unwrap();
+    session.run("ALTER USER 'locked'@'%' ACCOUNT LOCK").unwrap();
+    let rows = row_text(session.run("SHOW CREATE USER 'locked'@'%'"));
+    assert!(rows[0][0].contains(" ACCOUNT LOCK "));
+    session
+        .run("ALTER USER 'locked'@'%' ACCOUNT UNLOCK")
+        .unwrap();
+    let rows = row_text(session.run("SHOW CREATE USER 'locked'@'%'"));
+    assert!(rows[0][0].contains(" ACCOUNT UNLOCK "));
+}
+
+/// `SHOW CREATE USER` on a missing account is Go's `ErrCannotUser` (1396),
+/// quoted `'user'@'host'` like every other account-management error this
+/// tier reports the same way (CAPTURED against
+/// `exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", ...)`).
+#[test]
+fn show_create_user_reports_cannot_user_for_a_missing_account() {
+    let mut session = session_with_privileges();
+    assert!(matches!(
+        session.run("SHOW CREATE USER 'nosuch'@'%'"),
+        Err(DriverError::CannotUserRole {
+            operation: "SHOW CREATE USER",
+            ref target,
+        }) if target == "'nosuch'@'%'"
+    ));
+}
+
+/// `SHOW CREATE USER CURRENT_USER()` resolves the SESSION's own identity,
+/// the same account `SHOW GRANTS` (no `FOR`) resolves to.
+#[test]
+fn show_create_user_current_user_resolves_the_session_identity() {
+    let mut session = session_with_privileges();
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+    let rows = row_text(session.run("SHOW CREATE USER CURRENT_USER()"));
+    assert!(rows[0][0].starts_with("CREATE USER 'root'@'%' IDENTIFIED WITH"));
+}

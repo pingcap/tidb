@@ -729,3 +729,126 @@ fn a_caching_sha2_password_account_creates_but_native_login_fails_cleanly() {
         "dana's native login attempt: {exits:?}"
     );
 }
+
+/// `ALTER USER ... ACCOUNT LOCK` on a LIVE, already-logged-in-once account
+/// rejects the NEXT login with a distinct errno -- 3118, not the generic
+/// 1045 a bad password or unknown user gets -- matching Go's
+/// `pkg/privilege/privileges.ConnectionVerification`, which checks
+/// `record.AccountLocked` before ever comparing the password
+/// (`mysql.ErrAccountHasBeenLocked`: `"Access denied for user '%s'@'%s'.
+/// Account is locked."`). `ACCOUNT UNLOCK` restores the same login
+/// immediately, over the same live registry a new connection reads.
+///
+/// None of this is reachable in-process: only the wire front end's
+/// `ConfiguredUserStore::authenticate_native` runs the lock check at all.
+#[test]
+fn an_account_lock_rejects_the_next_login_with_3118_and_unlock_restores_it() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+
+    let acceptor_factory = Arc::clone(&factory);
+    let acceptor_store = Arc::clone(&store);
+    let acceptor_tracker = Arc::clone(&tracker);
+    // root's connection plus: eve's first (successful) login, the locked
+    // login attempt, and the post-unlock login.
+    let acceptor = std::thread::spawn(move || {
+        let mut workers = Vec::new();
+        for _ in 0..4 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let factory = Arc::clone(&acceptor_factory);
+            let store = Arc::clone(&acceptor_store);
+            let tracker = Arc::clone(&acceptor_tracker);
+            workers.push(std::thread::spawn(move || {
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+            }));
+        }
+        workers
+    });
+
+    let mut root = TcpStream::connect(address).unwrap();
+    let root_read = root.try_clone().unwrap();
+    let mut root_reader = PacketReader::new(root_read);
+    authenticate(&mut root, &mut root_reader, "root", b"rootpw");
+
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "CREATE USER 'eve'@'%' IDENTIFIED BY 'evepw'"
+        ),
+        0
+    );
+
+    // Before the lock, eve logs in normally.
+    {
+        let mut eve = TcpStream::connect(address).unwrap();
+        let eve_read = eve.try_clone().unwrap();
+        let mut eve_reader = PacketReader::new(eve_read);
+        authenticate(&mut eve, &mut eve_reader, "eve", b"evepw");
+        write_packet(&mut eve, 0, &[0x01]);
+    }
+
+    assert_eq!(
+        run_write(&mut root, &mut root_reader, "ALTER USER 'eve'@'%' ACCOUNT LOCK"),
+        0
+    );
+
+    // Locked: the SAME correct password is refused, with 3118/HY000, not
+    // the generic 1045/28000 access-denied.
+    {
+        let mut eve = TcpStream::connect(address).unwrap();
+        let eve_read = eve.try_clone().unwrap();
+        let mut eve_reader = PacketReader::new(eve_read);
+        let reply = try_authenticate(&mut eve, &mut eve_reader, "eve", b"evepw");
+        assert_eq!(reply[0], 0xff, "a locked account must be an ERR: {reply:?}");
+        assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 3118, "{reply:?}");
+        assert_eq!(&reply[4..9], b"HY000");
+        let message = String::from_utf8_lossy(&reply[9..]);
+        assert_eq!(
+            message, "Access denied for user 'eve'@'127.0.0.1'. Account is locked.",
+            "{reply:?}"
+        );
+    }
+
+    assert_eq!(
+        run_write(&mut root, &mut root_reader, "ALTER USER 'eve'@'%' ACCOUNT UNLOCK"),
+        0
+    );
+
+    // Unlocked: the same correct password authenticates again.
+    {
+        let mut eve = TcpStream::connect(address).unwrap();
+        let eve_read = eve.try_clone().unwrap();
+        let mut eve_reader = PacketReader::new(eve_read);
+        authenticate(&mut eve, &mut eve_reader, "eve", b"evepw");
+        write_packet(&mut eve, 0, &[0x01]);
+    }
+
+    write_packet(&mut root, 0, &[0x01]);
+    drop(root);
+    let workers = acceptor.join().unwrap();
+    let exits: Vec<ConnectionExit> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap().exit)
+        .collect();
+    assert_eq!(
+        exits
+            .iter()
+            .filter(|exit| **exit == ConnectionExit::AuthenticationRejected)
+            .count(),
+        1,
+        "only the locked-account login attempt is rejected: {exits:?}"
+    );
+}

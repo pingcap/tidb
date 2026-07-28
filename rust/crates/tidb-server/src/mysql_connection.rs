@@ -29,7 +29,7 @@ use tidb_protocol::{
 };
 
 use crate::auth_exchange::AuthSwitchRequest;
-use crate::configured_user_store::ConfiguredUserStore;
+use crate::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
 use crate::connection_resultset::{
     write_connection_binary_result_set_to_sink, write_connection_result_set_to_sink,
 };
@@ -92,6 +92,10 @@ const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
     | CLIENT_DEPRECATE_EOF;
 const ER_ACCESS_DENIED_ERROR: u16 = 1045;
 const ER_UNKNOWN_COM_ERROR: u16 = 1047;
+/// Go's `mysql.ErrAccountHasBeenLocked` (`pkg/errno/errcode.go`): the login
+/// errno an `ACCOUNT LOCK`'d (or ROLE) account gets, distinct from the
+/// generic access-denied a bad password or unknown user gets.
+const ER_ACCOUNT_HAS_BEEN_LOCKED: u16 = 3118;
 const ER_PARSE_ERROR: u16 = 1064;
 const ER_UNKNOWN_ERROR: u16 = 1105;
 const ER_WRONG_ARGUMENTS: u16 = 1210;
@@ -466,27 +470,46 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     } else {
         (response.auth, 2)
     };
-    let identity = users.authenticate_native(
+    let auth_result = users.authenticate_native(
         &response.user,
         &peer_addr.ip().to_string(),
         &salt,
         &auth_response,
     );
-    let Some(identity) = identity else {
-        write_error(
-            &mut output,
-            response_sequence,
-            ER_ACCESS_DENIED_ERROR,
-            *b"28000",
-            access_denied_message(&response.user, &peer_addr.ip().to_string(), &auth_response),
-            protocol_41,
-        )?;
-        return Ok(ConnectionReport {
-            connection_id,
-            queries: 0,
-            commands: *commands,
-            exit: ConnectionExit::AuthenticationRejected,
-        });
+    let identity = match auth_result {
+        Ok(identity) => identity,
+        Err(AuthenticationFailure::AccountLocked) => {
+            write_error(
+                &mut output,
+                response_sequence,
+                ER_ACCOUNT_HAS_BEEN_LOCKED,
+                *b"HY000",
+                account_locked_message(&response.user, &peer_addr.ip().to_string()),
+                protocol_41,
+            )?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
+        Err(AuthenticationFailure::AccessDenied) => {
+            write_error(
+                &mut output,
+                response_sequence,
+                ER_ACCESS_DENIED_ERROR,
+                *b"28000",
+                access_denied_message(&response.user, &peer_addr.ip().to_string(), &auth_response),
+                protocol_41,
+            )?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
     };
     // The KILL handle is bound to this connection's own socket, so a `KILL`
     // reaching a connection that is idle between commands wakes it up rather
@@ -1403,6 +1426,13 @@ fn access_denied_message(user: &str, host: &str, auth_response: &[u8]) -> String
         "YES"
     };
     format!("Access denied for user '{user}'@'{host}' (using password: {using_password})")
+}
+
+/// Go's `mysql.ErrAccountHasBeenLocked` template
+/// (`pkg/errno/errname.go`): `"Access denied for user '%s'@'%s'. Account is
+/// locked."`.
+fn account_locked_message(user: &str, host: &str) -> String {
+    format!("Access denied for user '{user}'@'{host}'. Account is locked.")
 }
 
 fn write_error(

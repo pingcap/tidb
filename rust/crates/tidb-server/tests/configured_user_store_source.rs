@@ -73,16 +73,16 @@ fn wrong_password_unknown_user_and_unknown_host_all_deny_authentication() {
 
     assert!(store
         .authenticate_native("alice", "10.0.0.7", &SOURCE_SALT, &correct)
-        .is_some());
+        .is_ok());
     assert!(store
         .authenticate_native("alice", "10.0.0.7", &SOURCE_SALT, &wrong)
-        .is_none());
+        .is_err());
     assert!(store
         .authenticate_native("unknown", "10.0.0.7", &SOURCE_SALT, &correct)
-        .is_none());
+        .is_err());
     assert!(store
         .authenticate_native("alice", "192.0.2.7", &SOURCE_SALT, &correct)
-        .is_none());
+        .is_err());
 }
 
 #[test]

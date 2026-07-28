@@ -470,6 +470,77 @@ impl Session {
         Ok(StmtOutput::Affected(0))
     }
 
+    /// `SHOW CREATE USER <account>`. Go's `fetchShowCreateUser`
+    /// (`pkg/executor/show.go`) reads `mysql.user`/`mysql.global_priv`
+    /// columns this tier has no storage for beyond `authentication_string`,
+    /// `plugin`, and `account_locked` (the `ACCOUNT LOCK`/`UNLOCK` flag
+    /// `set_locked` writes) -- every other clause therefore prints its
+    /// Go-observed DEFAULT rather than a tracked value:
+    /// - `REQUIRE NONE` always (no TLS/`REQUIRE` storage; `CREATE`/`ALTER
+    ///   USER` already reject `tls_options`, so no account can differ here).
+    /// - `PASSWORD EXPIRE DEFAULT` always. CAPTURED: Go's `CREATE ROLE`
+    ///   writes `Password_expired='Y'`, which prints bare `PASSWORD EXPIRE`
+    ///   (no `DEFAULT`) for a role -- this tier has no `Password_expired`
+    ///   column, so a role prints the same `DEFAULT` a plain user does
+    ///   (divergence, deferred: `FAILED_LOGIN_ATTEMPTS`/`PASSWORD EXPIRE`
+    ///   enforcement is out of scope for this tier).
+    /// - `PASSWORD HISTORY DEFAULT` / `PASSWORD REUSE INTERVAL DEFAULT`
+    ///   always (no `Password_reuse_history`/`Password_reuse_time` storage).
+    /// - No ` token_issuer`, ` WITH MAX_USER_CONNECTIONS`,
+    ///   ` FAILED_LOGIN_ATTEMPTS`, ` PASSWORD_LOCK_TIME`, or ` ATTRIBUTE`
+    ///   suffix (no storage for any of them; Go omits each when its column is
+    ///   NULL/empty too, so a freshly created account's line matches byte for
+    ///   byte).
+    ///
+    /// The `IDENTIFIED WITH '<plugin>' AS '<hash>'` clause DOES reflect the
+    /// account's real plugin and stored hash, and `ACCOUNT LOCK`/`UNLOCK`
+    /// DOES reflect the real `account_locked` flag (shared with `is_role`;
+    /// a `CREATE ROLE` account therefore prints `ACCOUNT LOCK` here, matching
+    /// Go).
+    pub(crate) fn show_create_user_stmt(
+        &mut self,
+        spec: &tidb_ast::UserSpec,
+    ) -> Result<StmtOutput, DriverError> {
+        let (user, host) = self.resolve_account(spec)?;
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "SHOW CREATE USER requires a server front end with a privilege registry",
+            ));
+        };
+        if !registry.user_exists(&user, &host) {
+            return Err(DriverError::CannotUserRole {
+                operation: "SHOW CREATE USER",
+                target: format!("'{user}'@'{host}'"),
+            });
+        }
+        let plugin = registry
+            .plugin(&user, &host)
+            .unwrap_or_else(|| tidb_mysql::consts::AuthNativePassword.to_owned());
+        let auth_string = registry.auth_string(&user, &host).unwrap_or_default();
+        // Go: `authStr` is empty ONLY for `auth_socket` with no stored data;
+        // every other plugin (including a native/sha2/sm3 account with an
+        // empty, passwordless hash) still prints ` AS '<possibly empty>'`.
+        let auth_clause = if plugin == tidb_mysql::consts::AuthSocket && auth_string.is_empty() {
+            String::new()
+        } else {
+            format!(" AS '{auth_string}'")
+        };
+        let account_clause = if registry.is_role(&user, &host) {
+            "LOCK"
+        } else {
+            "UNLOCK"
+        };
+        let show_str = format!(
+            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT {account_clause} PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
+        );
+        // Go: `fmt.Sprintf("CREATE USER for %s", s.User)` -- `s.User.String()`
+        // is unquoted `user@host` (same shape `SHOW GRANTS`'s header uses).
+        Ok(string_column_output(
+            &format!("CREATE USER for {user}@{host}"),
+            vec![show_str],
+        ))
+    }
+
     /// `SET PASSWORD [FOR <account>] = '<password>'`: the same
     /// `authentication_string` write as `ALTER USER ... IDENTIFIED BY`
     /// (captured: both leave the identical `*HEX` value), defaulting to the
