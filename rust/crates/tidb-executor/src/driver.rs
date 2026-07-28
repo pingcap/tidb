@@ -747,6 +747,12 @@ pub enum DriverError {
     /// privilege name is not one of the standard static privileges and is
     /// not a registered dynamic privilege either.
     DynamicPrivilegeNotRegistered(String),
+    /// Go `exeerrors.ErrIllegalPrivilegeLevel` (3619): a DYNAMIC privilege
+    /// was named at DATABASE or TABLE scope, which Go rejects before it
+    /// checks whether the privilege is registered at all. `GRANT` names the
+    /// offending privilege; `REVOKE` names every dynamic privilege in the
+    /// statement, comma-joined.
+    IllegalPrivilegeLevel(String),
     /// Go `ErrNonexistingGrant` (1141): `SHOW GRANTS FOR` an account with no
     /// grant row at all (also raised for an account that does not exist).
     NonexistingGrant {
@@ -10396,6 +10402,12 @@ impl DriverError {
             3929,
             *b"HY000",
             format!("Dynamic privilege '{name}' is not registered with the server."),
+        ),
+        // Go `ErrIllegalPrivilegeLevel` (3619).
+        DriverError::IllegalPrivilegeLevel(names) => MysqlError::new(
+            3619,
+            *b"HY000",
+            format!("Illegal privilege level specified for {names}"),
         ),
         // Go `ErrNonexistingGrant` (1141).
         DriverError::NonexistingGrant { user, host } => MysqlError::new(

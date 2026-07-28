@@ -42,10 +42,16 @@
 //! not confer it and makes `SHOW GRANTS` print it as the trailing
 //! ` WITH GRANT OPTION` suffix instead of inside the privilege list.
 //!
-//! OUT OF SCOPE (refused rather than faked): column-level grants, roles
-//! (`CREATE ROLE`/`GRANT ROLE`/`DROP ROLE`), and dynamic privileges.
+//! DYNAMIC privileges (Go's `dynamicPrivs` registry and the
+//! `mysql.global_grants` table) live here too: they are NOT bits in the
+//! `mysql.user` `Priv` mask but named rows in their own table, each carrying
+//! its own `WITH GRANT OPTION` flag, which is why `SHOW GRANTS` prints them
+//! on separate trailing lines.
+//!
+//! OUT OF SCOPE (refused rather than faked): column-level grants and roles
+//! (`CREATE ROLE`/`GRANT ROLE`/`DROP ROLE`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
@@ -148,7 +154,7 @@ impl GlobalPriv {
 
     /// Go `mysql.Priv2Str`, uppercased -- the exact text `SHOW GRANTS` prints
     /// for this privilege.
-    fn print_name(self) -> &'static str {
+    pub(crate) fn print_name(self) -> &'static str {
         match self {
             Self::Select => "SELECT",
             Self::Insert => "INSERT",
@@ -303,6 +309,54 @@ pub(crate) fn all_table_privs_mask() -> u64 {
         .fold(0u64, |mask, priv_| mask | priv_.bit())
 }
 
+/// Go `pkg/privilege/privileges/privileges.go`'s `dynamicPrivs` slice --
+/// the DYNAMIC privilege names TiDB registers at startup, in Go's source
+/// order. A `GRANT`/`REVOKE` naming anything outside this list is not a
+/// privilege at all (`ErrDynamicPrivilegeNotRegistered`/3929).
+///
+/// Go lets plugins append to this list at runtime
+/// (`RegisterDynamicPrivilege`); this tier loads no plugins, so the built-in
+/// set is the whole set and a `const` is the honest shape.
+pub const DYNAMIC_PRIVS: &[&str] = &[
+    "BACKUP_ADMIN",
+    "RESTORE_ADMIN",
+    "SYSTEM_USER",
+    "SYSTEM_VARIABLES_ADMIN",
+    "ROLE_ADMIN",
+    "CONNECTION_ADMIN",
+    "PLACEMENT_ADMIN",
+    "DASHBOARD_CLIENT",
+    "RESTRICTED_TABLES_ADMIN",
+    "RESTRICTED_STATUS_ADMIN",
+    "RESTRICTED_VARIABLES_ADMIN",
+    "RESTRICTED_USER_ADMIN",
+    "RESTRICTED_CONNECTION_ADMIN",
+    "RESTRICTED_REPLICA_WRITER_ADMIN",
+    "RESTRICTED_PRIV_ADMIN",
+    "RESTRICTED_SQL_ADMIN",
+    "RESOURCE_GROUP_ADMIN",
+    "RESOURCE_GROUP_USER",
+    "TRAFFIC_CAPTURE_ADMIN",
+    "TRAFFIC_REPLAY_ADMIN",
+    "APPLICATION_PASSWORD_ADMIN",
+];
+
+/// Go `UserPrivileges.IsDynamicPrivilege`: whether `name` -- matched
+/// case-insensitively, since Go uppercases before the lookup -- is a
+/// registered DYNAMIC privilege.
+#[must_use]
+pub fn is_dynamic_privilege(name: &str) -> bool {
+    DYNAMIC_PRIVS
+        .iter()
+        .any(|registered| registered.eq_ignore_ascii_case(name))
+}
+
+/// `mysql.global_grants` rows for one account: privilege name (uppercase) ->
+/// `with_grant_option`. Ordered so `SHOW GRANTS`'s alphabetical dynamic list
+/// falls out of iteration (Go sorts explicitly; a `BTreeMap` makes the sort
+/// structural).
+type DynamicPrivs = BTreeMap<String, bool>;
+
 /// One account's `mysql.user` row: its global privileges and the
 /// `authentication_string` a login is verified against.
 struct UserRecord {
@@ -327,6 +381,10 @@ pub struct PrivilegeRegistry {
     /// Go `mysql.Tables_priv` rows: one bitmask per
     /// `(user, host, database, table)`.
     table_privs: Arc<Mutex<HashMap<TablePrivKey, u64>>>,
+    /// Go `mysql.global_grants` rows: the DYNAMIC privileges of each
+    /// account. An account with none has no entry here at all, which is what
+    /// keeps `SHOW GRANTS` from printing an empty dynamic line.
+    dynamic_privs: Arc<Mutex<HashMap<(String, String), DynamicPrivs>>>,
 }
 
 impl std::fmt::Debug for PrivilegeRegistry {
@@ -383,6 +441,7 @@ impl PrivilegeRegistry {
             users: Arc::new(Mutex::new(users)),
             db_privs: Arc::new(Mutex::new(HashMap::new())),
             table_privs: Arc::new(Mutex::new(HashMap::new())),
+            dynamic_privs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -402,6 +461,12 @@ impl PrivilegeRegistry {
 
     fn lock_table(&self) -> std::sync::MutexGuard<'_, HashMap<TablePrivKey, u64>> {
         self.table_privs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_dynamic(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), DynamicPrivs>> {
+        self.dynamic_privs
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -515,6 +580,11 @@ impl PrivilegeRegistry {
                 }
             })
             .collect();
+        drop(table_guard);
+        let mut dynamic_guard = self.lock_dynamic();
+        if let Some(privs) = dynamic_guard.remove(&(old_user.to_owned(), old_host.to_owned())) {
+            dynamic_guard.insert((new_user.to_owned(), new_host.to_owned()), privs);
+        }
         true
     }
 
@@ -534,6 +604,8 @@ impl PrivilegeRegistry {
             .retain(|(row_user, row_host, _), _| row_user != user || row_host != host);
         self.lock_table()
             .retain(|(row_user, row_host, _, _), _| row_user != user || row_host != host);
+        self.lock_dynamic()
+            .remove(&(user.to_owned(), host.to_owned()));
         removed
     }
 
@@ -560,6 +632,87 @@ impl PrivilegeRegistry {
         self.lock()
             .get(&(user.to_owned(), host.to_owned()))
             .is_some_and(|record| record.privs & global_priv.bit() != 0)
+    }
+
+    /// Go's `GRANT <dynamic> ON *.* TO`, which is a
+    /// `REPLACE INTO mysql.global_grants` -- so re-granting a privilege the
+    /// account already holds OVERWRITES its `with_grant_option` rather than
+    /// ORing into it, and a plain re-grant therefore DOWNGRADES a previously
+    /// grantable privilege.
+    pub fn grant_dynamic(&self, user: &str, host: &str, name: &str, with_grant: bool) {
+        self.lock_dynamic()
+            .entry((user.to_owned(), host.to_owned()))
+            .or_default()
+            .insert(name.to_ascii_uppercase(), with_grant);
+    }
+
+    /// Go's `revokeDynamicPriv`: a `DELETE FROM mysql.global_grants` for the
+    /// one privilege. Revoking one the account never held is a silent no-op
+    /// (the 3929 warning for an UNREGISTERED name is raised by the caller,
+    /// which still reaches this delete).
+    pub fn revoke_dynamic(&self, user: &str, host: &str, name: &str) {
+        if let Some(privs) = self
+            .lock_dynamic()
+            .get_mut(&(user.to_owned(), host.to_owned()))
+        {
+            privs.remove(&name.to_ascii_uppercase());
+        }
+    }
+
+    /// Go's `REVOKE ALL ON *.*`, which additionally does an unqualified
+    /// `DELETE FROM mysql.global_grants WHERE user = ? AND host = ?` --
+    /// `ALL PRIVILEGES` revokes every DYNAMIC privilege even though
+    /// `GRANT ALL` never grants one.
+    pub fn revoke_all_dynamic(&self, user: &str, host: &str) {
+        self.lock_dynamic()
+            .remove(&(user.to_owned(), host.to_owned()));
+    }
+
+    /// Go `MySQLPrivilege.HasExplicitlyGrantedDynamicPrivilege`: whether the
+    /// account holds this DYNAMIC privilege as its own `global_grants` row,
+    /// with no SUPER fallback. `with_grant` additionally requires the row's
+    /// `with_grant_option`.
+    #[must_use]
+    pub fn has_explicit_dynamic_priv(
+        &self,
+        user: &str,
+        host: &str,
+        name: &str,
+        with_grant: bool,
+    ) -> bool {
+        self.lock_dynamic()
+            .get(&(user.to_owned(), host.to_owned()))
+            .and_then(|privs| privs.get(&name.to_ascii_uppercase()))
+            .is_some_and(|grantable| !with_grant || *grantable)
+    }
+
+    /// Go `MySQLPrivilege.RequestDynamicVerification` -- the check every
+    /// consumer of a DYNAMIC privilege actually runs.
+    ///
+    /// The rule is: an explicit `global_grants` row satisfies it, and
+    /// FAILING THAT, SUPER does. Go keeps that fallback deliberately ("the
+    /// SUPER privilege also has all DYNAMIC privileges granted to it ...
+    /// otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail"),
+    /// so a SUPER account passes every dynamic check without holding a
+    /// single dynamic row.
+    ///
+    /// The ONLY no-fallback case in Go is SEM (Security Enhanced Mode): when
+    /// SEM is on, `sem.IsRestrictedPrivilege` -- true for exactly the names
+    /// prefixed `RESTRICTED_` -- blocks the SUPER fallback. This tier has no
+    /// SEM, so no name is exempt here; wiring SEM on later means adding that
+    /// one branch and nothing else.
+    ///
+    /// `with_grant` mirrors Go: the explicit row must itself be grantable,
+    /// and the SUPER fallback additionally requires `GRANT OPTION`.
+    #[must_use]
+    pub fn has_dynamic_priv(&self, user: &str, host: &str, name: &str, with_grant: bool) -> bool {
+        if self.has_explicit_dynamic_priv(user, host, name, with_grant) {
+            return true;
+        }
+        if with_grant && !self.has_global_priv(user, host, GlobalPriv::GrantOption) {
+            return false;
+        }
+        self.has_global_priv(user, host, GlobalPriv::Super)
     }
 
     /// Sets every bit in `mask` on the account's `(database)` row, creating
@@ -704,11 +857,76 @@ impl PrivilegeRegistry {
             .collect();
         table_lines.sort_unstable();
 
-        let mut lines = Vec::with_capacity(1 + db_lines.len() + table_lines.len());
+        // DYNAMIC lines close the output, AFTER every static scope (captured:
+        // global, then `db`.*, then `db`.`t`, then dynamic). Go emits at most
+        // two of them -- one for the non-grantable privileges and one for the
+        // grantable ones -- each an alphabetically sorted, comma-joined list
+        // on `*.*`, with the grantable line carrying the usual
+        // ` WITH GRANT OPTION` suffix. An account with no dynamic row emits
+        // neither, and the `GRANT USAGE ON *.*` global line is printed
+        // regardless (captured: a dynamic-only account shows both).
+        let mut plain: Vec<String> = Vec::new();
+        let mut grantable: Vec<String> = Vec::new();
+        if let Some(privs) = self.lock_dynamic().get(&(user.to_owned(), host.to_owned())) {
+            for (name, with_grant) in privs {
+                if *with_grant {
+                    grantable.push(name.clone());
+                } else {
+                    plain.push(name.clone());
+                }
+            }
+        }
+        let mut dynamic_lines = Vec::new();
+        if !plain.is_empty() {
+            dynamic_lines.push(format!(
+                "GRANT {} ON *.* TO '{user}'@'{host}'",
+                plain.join(",")
+            ));
+        }
+        if !grantable.is_empty() {
+            dynamic_lines.push(format!(
+                "GRANT {} ON *.* TO '{user}'@'{host}' WITH GRANT OPTION",
+                grantable.join(",")
+            ));
+        }
+
+        let mut lines =
+            Vec::with_capacity(1 + db_lines.len() + table_lines.len() + dynamic_lines.len());
         lines.push(global_line);
         lines.extend(db_lines);
         lines.extend(table_lines);
+        lines.extend(dynamic_lines);
         Some(lines.join("\n"))
+    }
+
+    /// Go `MySQLPrivilege.UserPrivilegesTable`'s dynamic half: one
+    /// `(grantee, privilege_name, is_grantable)` triple per
+    /// `mysql.global_grants` row of `(user, host)`.
+    #[must_use]
+    pub fn dynamic_priv_rows(&self, user: &str, host: &str) -> Vec<(String, bool)> {
+        self.lock_dynamic()
+            .get(&(user.to_owned(), host.to_owned()))
+            .into_iter()
+            .flatten()
+            .map(|(name, grantable)| (name.clone(), *grantable))
+            .collect()
+    }
+
+    /// Every account's global privilege mask, for
+    /// `information_schema.USER_PRIVILEGES`'s static half.
+    #[must_use]
+    pub fn global_priv_masks(&self) -> Vec<((String, String), u64)> {
+        self.lock()
+            .iter()
+            .map(|(key, record)| (key.clone(), record.privs))
+            .collect()
+    }
+
+    /// The `(user, host)` of every account holding at least one DYNAMIC
+    /// privilege, for `information_schema.USER_PRIVILEGES`'s dynamic half.
+    #[must_use]
+    pub fn accounts_with_dynamic_privs(&self) -> Vec<(String, String)> {
+        self.lock_dynamic().keys().cloned().collect()
     }
 }
 

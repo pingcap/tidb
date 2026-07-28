@@ -376,8 +376,8 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     let revoked = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
     assert_eq!(revoked.len(), 1, "PROCESS revoked, live: {revoked:?}");
 
-    // Without SUPER (or CONNECTION_ADMIN, not modelled), bob cannot KILL
-    // root's connection -- Go's `planbuilder.go` `*ast.KillStmt` case reports
+    // Holding neither SUPER nor CONNECTION_ADMIN, bob cannot KILL root's
+    // connection -- Go's `planbuilder.go` `*ast.KillStmt` case reports
     // `ErrSpecificAccessDenied` (1227), not the unused 1095 `ErrKillDenied`.
     let (code, message) = run_query_expect_error(
         &mut bob,
@@ -390,11 +390,28 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
         "{message}"
     );
 
-    // Once root grants SUPER, the SAME kill from the SAME connection
-    // succeeds and really ends root's connection.
+    // Once root grants the DYNAMIC `CONNECTION_ADMIN` -- no SUPER anywhere --
+    // the SAME kill from the SAME connection succeeds and really ends root's
+    // connection. That is Go's actual gate; SUPER only passes it as the
+    // dynamic-privilege fallback.
     assert_eq!(
-        run_admin(&mut root, &mut root_reader, "GRANT SUPER ON *.* TO 'bob'@'%'"),
+        run_admin(
+            &mut root,
+            &mut root_reader,
+            "GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'"
+        ),
         0
+    );
+    // The dynamic grant crosses the wire as a trailing `SHOW GRANTS` line
+    // AFTER every static scope, leaving the static global line at bare
+    // `USAGE` (the earlier `PROCESS` having been revoked above).
+    assert_eq!(
+        run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
+        vec![
+            vec!["GRANT USAGE ON *.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'".to_owned()],
+        ]
     );
     assert_eq!(
         run_write(&mut bob, &mut bob_reader, &format!("KILL {root_connection_id}")),

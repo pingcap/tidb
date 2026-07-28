@@ -238,6 +238,22 @@ const PROCESSLIST_COLUMNS: &[(&str, bool)] = &[
     ("TIKV_CPU", true),
 ];
 
+/// Go `infoschema.tableUserPrivilegesCols`.
+///
+/// CAPTURED: unlike its `SCHEMA_PRIVILEGES`/`TABLE_PRIVILEGES`/
+/// `COLUMN_PRIVILEGES` siblings below, this one DOES have a retriever
+/// (`MySQLPrivilege.UserPrivilegesTable`) and DOES serve rows -- including
+/// one per DYNAMIC privilege, whose `IS_GRANTABLE` comes from that
+/// privilege's own `with_grant_option` rather than from the account's
+/// `GRANT OPTION`. Rows are built session-side (see
+/// `Session::user_privileges_table_rows`), not from the catalog.
+const USER_PRIVILEGES_COLUMNS: &[(&str, bool)] = &[
+    ("GRANTEE", false),
+    ("TABLE_CATALOG", false),
+    ("PRIVILEGE_TYPE", false),
+    ("IS_GRANTABLE", false),
+];
+
 /// Go `infoschema.tableSchemaPrivilegesCols`.
 ///
 /// CAPTURED: this table -- and its `TABLE_PRIVILEGES` / `COLUMN_PRIVILEGES`
@@ -302,6 +318,8 @@ pub fn table_columns(name: &str) -> Option<&'static [(&'static str, bool)]> {
         Some(REFERENTIAL_CONSTRAINTS_COLUMNS)
     } else if name.eq_ignore_ascii_case("PROCESSLIST") {
         Some(PROCESSLIST_COLUMNS)
+    } else if name.eq_ignore_ascii_case("USER_PRIVILEGES") {
+        Some(USER_PRIVILEGES_COLUMNS)
     } else if name.eq_ignore_ascii_case("SCHEMA_PRIVILEGES") {
         Some(SCHEMA_PRIVILEGES_COLUMNS)
     } else if name.eq_ignore_ascii_case("TABLE_PRIVILEGES") {

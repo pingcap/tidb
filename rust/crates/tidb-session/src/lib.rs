@@ -223,6 +223,16 @@ fn var_error(error: VarError) -> DriverError {
 
 /// Go `mysql.DefaultCharset` and the collation `getDefaultCollate` returns for
 /// it, which is what a table with no explicit charset reports.
+/// The one refusal every ROLE statement reports. Roles parse (Go's grammar
+/// is transcreated) but nothing executes them: a role is an account that can
+/// be GRANTed to other accounts, and resolving what a user may do then
+/// depends on which of its roles are ACTIVE in the session -- a role graph
+/// and per-session active-role set that no part of this tier models. Faking
+/// any half of it would make privilege checks answer wrongly, so the
+/// statements are refused whole.
+const ROLES_UNSUPPORTED: &str =
+    "roles (CREATE/DROP ROLE, GRANT/REVOKE <role>, SET ROLE) are not supported yet";
+
 const TABLE_CHARSET: &str = "utf8mb4";
 const TABLE_COLLATE: &str = "utf8mb4_bin";
 
@@ -599,6 +609,9 @@ impl Session {
                     self.use_database(name)?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
+                SessionStmt::SetRole(_) | SessionStmt::SetDefaultRole(_) => {
+                    Err(DriverError::Unsupported(ROLES_UNSUPPORTED))
+                }
                 _ => Ok(None),
             },
             Stmt::Ddl(ddl) => match &**ddl {
@@ -663,6 +676,19 @@ impl Session {
                 } => Ok(Some(self.drop_user_stmt(*if_exists, users)?)),
                 tidb_ast::DdlStmt::AlterUser(alter) => Ok(Some(self.alter_user_stmt(alter)?)),
                 tidb_ast::DdlStmt::RenameUser { pairs } => Ok(Some(self.rename_user_stmt(pairs)?)),
+                // ROLES parse but are refused by name rather than through the
+                // generic DDL fallback, so the message says which feature is
+                // missing. Go supports them fully (captured: `CREATE ROLE r1`
+                // succeeds, `GRANT r1 TO 'u1'@'%'` adds a
+                // `GRANT 'r1'@'%' TO 'u1'@'%'` line to `SHOW GRANTS` between
+                // the table-scope and dynamic lines, and a role's own
+                // privileges reach a user only through its ACTIVE roles);
+                // modelling that needs a role graph and active-role state,
+                // which is its own unit.
+                tidb_ast::DdlStmt::CreateRole { .. }
+                | tidb_ast::DdlStmt::DropUser { is_role: true, .. } => {
+                    Err(DriverError::Unsupported(ROLES_UNSUPPORTED))
+                }
                 _ => Ok(None),
             },
             Stmt::Admin(admin) => match &**admin {
@@ -836,6 +862,9 @@ impl Session {
                 tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
                 tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
                 tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
+                tidb_ast::AdminStmt::GrantRole(_) | tidb_ast::AdminStmt::RevokeRole(_) => {
+                    Err(DriverError::Unsupported(ROLES_UNSUPPORTED))
+                }
                 tidb_ast::AdminStmt::ShowDatabases(show) => {
                     if show.filter.is_some() {
                         return Err(DriverError::Unsupported(
@@ -1341,11 +1370,23 @@ impl Session {
                     if let Some(guard) = &self.process {
                         // Go `planbuilder.go`'s `*ast.KillStmt` case: everyone
                         // may KILL their own connection regardless of
-                        // privilege; killing anyone else's requires SUPER (or
-                        // the dynamic CONNECTION_ADMIN, not modelled in this
-                        // tier), reported as `ErrSpecificAccessDenied` (1227)
-                        // -- NOT the unused 1095 `ErrKillDenied` errno entry,
-                        // which no code path in current Go ever raises.
+                        // privilege; killing anyone else's requires the
+                        // DYNAMIC `CONNECTION_ADMIN`, reported as
+                        // `ErrSpecificAccessDenied.GenWithStackByArgs("SUPER
+                        // or CONNECTION_ADMIN")` (1227) -- NOT the unused
+                        // 1095 `ErrKillDenied` errno entry, which no code
+                        // path in current Go ever raises. SUPER still passes
+                        // because it is the fallback for every dynamic
+                        // privilege, which is exactly why Go's message names
+                        // both.
+                        //
+                        // Go additionally requires `RESTRICTED_CONNECTION_ADMIN`
+                        // to kill a connection owned by a
+                        // `RESTRICTED_USER_ADMIN` user, but only under SEM
+                        // (`appendVisitInfoIsRestrictedUser` returns early
+                        // when `sem.IsEnabled()` is false); with no SEM in
+                        // this tier that branch is unreachable, so it is
+                        // deliberately absent rather than half-modelled.
                         let is_self = self.connection_id == Some(target);
                         if !is_self {
                             let owner = guard
@@ -1354,18 +1395,16 @@ impl Session {
                                 .into_iter()
                                 .find(|row| row.id == target)
                                 .map(|row| row.user);
+                            // Go compares the process's USERNAME against the
+                            // logged-in username, ignoring host.
                             let same_user =
                                 owner.as_deref() == Some(self.process_list_user().as_str());
-                            let has_super = self.privileges.as_ref().is_some_and(|registry| {
+                            let may_kill = self.privileges.as_ref().is_some_and(|registry| {
                                 self.current_identity().is_some_and(|(user, host)| {
-                                    registry.has_global_priv(
-                                        user,
-                                        host,
-                                        privilege::GlobalPriv::Super,
-                                    )
+                                    registry.has_dynamic_priv(user, host, "CONNECTION_ADMIN", false)
                                 })
                             });
-                            if owner.is_some() && !same_user && !has_super {
+                            if owner.is_some() && !same_user && !may_kill {
                                 return Err(DriverError::KillAccessDenied);
                             }
                         }
@@ -1578,6 +1617,8 @@ impl Session {
         // which only ever sees the catalog.
         let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
             self.process_list_table_rows()
+        } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
+            self.user_privileges_table_rows()
         } else {
             self.with_catalog_mut(|catalog| {
                 Ok(infoschema::table_rows(&table_name, catalog).unwrap_or_default())
@@ -2372,7 +2413,17 @@ impl Session {
         };
         match &grant.level {
             tidb_ast::GrantLevel::Global => {
-                let mask = self.resolve_global_priv_mask(&grant.privileges)? | with_grant;
+                let (static_mask, dynamic) = self.split_global_privs(&grant.privileges, true)?;
+                // Go `containsNonDynamicPriv`: `WITH GRANT OPTION` sets the
+                // account's `mysql.user.Grant_priv` only when the statement
+                // named at least one NON-dynamic privilege. A grant of
+                // dynamic privileges alone records the grant option on each
+                // `global_grants` row instead, leaving the account's own
+                // `GRANT OPTION` untouched -- "with DYNAMIC privileges the
+                // GRANT OPTION is individually grantable, and not a global
+                // property of the user".
+                let names_static = grant.privileges.iter().any(|privilege| !privilege.dynamic);
+                let mask = static_mask | if names_static { with_grant } else { 0 };
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -2383,6 +2434,9 @@ impl Session {
                         return Err(DriverError::GrantToUnknownUser);
                     }
                     registry.grant(user, host, mask);
+                    for name in &dynamic {
+                        registry.grant_dynamic(user, host, name, grant.with_grant);
+                    }
                 }
             }
             tidb_ast::GrantLevel::Database(database) => {
@@ -2439,9 +2493,32 @@ impl Session {
                 "REVOKE requires a server front end with a privilege registry",
             ));
         };
+        // Go's `checkDynamicPrivilegeUsage` runs before any row is touched
+        // and names EVERY dynamic privilege in the statement, comma-joined,
+        // in the one 3619 it raises.
+        if !matches!(revoke.level, tidb_ast::GrantLevel::Global) {
+            let dynamic: Vec<String> = revoke
+                .privileges
+                .iter()
+                .filter(|privilege| privilege.dynamic)
+                .map(|privilege| privilege.name.to_ascii_uppercase())
+                .collect();
+            if !dynamic.is_empty() {
+                return Err(DriverError::IllegalPrivilegeLevel(dynamic.join(",")));
+            }
+        }
         match &revoke.level {
             tidb_ast::GrantLevel::Global => {
-                let mask = self.resolve_global_priv_mask(&revoke.privileges)?;
+                let (mask, dynamic) = self.split_global_privs(&revoke.privileges, false)?;
+                let revoke_all_dynamic = revoke
+                    .privileges
+                    .iter()
+                    .any(|privilege| privilege.name == "ALL");
+                let unregistered: Vec<String> = dynamic
+                    .iter()
+                    .filter(|name| !privilege::is_dynamic_privilege(name))
+                    .cloned()
+                    .collect();
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -2452,6 +2529,24 @@ impl Session {
                         });
                     }
                     registry.revoke(user, host, mask);
+                    if revoke_all_dynamic {
+                        registry.revoke_all_dynamic(user, host);
+                    }
+                    for name in &dynamic {
+                        registry.revoke_dynamic(user, host, name);
+                    }
+                }
+                // An unregistered name is a WARNING here, not the error
+                // `GRANT` raises for it, and the delete still runs
+                // (captured: the statement reports OK with a 3929 warning).
+                for name in unregistered {
+                    self.warnings.push(SqlWarning {
+                        level: WarningLevel::Warning,
+                        code: 3929,
+                        message: format!(
+                            "Dynamic privilege '{name}' is not registered with the server."
+                        ),
+                    });
                 }
             }
             tidb_ast::GrantLevel::Database(database) => {
@@ -2544,16 +2639,20 @@ impl Session {
                     "GRANT/REVOKE with a column list is not supported yet",
                 ));
             }
+            // A DYNAMIC privilege is refused for being at the wrong LEVEL
+            // before anything asks whether it is registered, so an
+            // unregistered name outside `*.*` reports 3619 and not 3929
+            // (Go: `grantDynamicPriv`'s level check precedes its registry
+            // check; `REVOKE`'s `checkDynamicPrivilegeUsage` runs even
+            // earlier).
+            if privilege.dynamic {
+                return Err(DriverError::IllegalPrivilegeLevel(privilege.name.clone()));
+            }
             let Some(priv_) = privilege::GlobalPriv::from_grant_name(&privilege.name) else {
                 return Err(DriverError::DynamicPrivilegeNotRegistered(
                     privilege.name.clone(),
                 ));
             };
-            if privilege.dynamic {
-                return Err(DriverError::DynamicPrivilegeNotRegistered(
-                    privilege.name.clone(),
-                ));
-            }
             let valid = match scope {
                 ScopeKind::Database => priv_.is_valid_at_db_scope(),
                 ScopeKind::Table => priv_.is_valid_at_table_scope(),
@@ -2577,11 +2676,27 @@ impl Session {
     /// raises for an unregistered dynamic privilege (captured: 3929),
     /// because `tidb-parser` accepts any bare identifier there through its
     /// `ExtendedPriv`/dynamic-privilege grammar branch.
-    fn resolve_global_priv_mask(
+    /// Splits a GLOBAL-scope privilege list into the static bitmask and the
+    /// DYNAMIC privilege names, which live in different tables
+    /// (`mysql.user.Priv` vs `mysql.global_grants`) and so are applied
+    /// separately.
+    ///
+    /// `ALL [PRIVILEGES]` expands to the static mask only: Go's `GRANT ALL`
+    /// never confers a dynamic privilege. (`REVOKE ALL` DOES clear them, but
+    /// through its own unqualified delete rather than through this list --
+    /// see [`privilege::PrivilegeRegistry::revoke_all_dynamic`].)
+    ///
+    /// `reject_unregistered` distinguishes the two consumers: `GRANT` fails
+    /// with `ErrDynamicPrivilegeNotRegistered`/3929 on an unknown name,
+    /// while `REVOKE` only WARNS with the same error and proceeds, so it
+    /// asks for the names unfiltered and warns itself.
+    fn split_global_privs(
         &self,
         privileges: &[tidb_ast::GrantPrivilege],
-    ) -> Result<u64, DriverError> {
+        reject_unregistered: bool,
+    ) -> Result<(u64, Vec<String>), DriverError> {
         let mut mask = 0u64;
+        let mut dynamic = Vec::new();
         for privilege in privileges {
             if privilege.name == "ALL" {
                 mask |= privilege::all_privs_mask();
@@ -2592,16 +2707,25 @@ impl Session {
                     "GRANT/REVOKE with a column list is not supported yet",
                 ));
             }
+            if privilege.dynamic {
+                if reject_unregistered && !privilege::is_dynamic_privilege(&privilege.name) {
+                    return Err(DriverError::DynamicPrivilegeNotRegistered(
+                        privilege.name.clone(),
+                    ));
+                }
+                dynamic.push(privilege.name.to_ascii_uppercase());
+                continue;
+            }
             match privilege::GlobalPriv::from_grant_name(&privilege.name) {
-                Some(priv_) if !privilege.dynamic => mask |= priv_.bit(),
-                _ => {
+                Some(priv_) => mask |= priv_.bit(),
+                None => {
                     return Err(DriverError::DynamicPrivilegeNotRegistered(
                         privilege.name.clone(),
                     ));
                 }
             }
         }
-        Ok(mask)
+        Ok((mask, dynamic))
     }
 
     /// `SHOW GRANTS [FOR <user>]` at GLOBAL scope. `USING <roles>` is refused
@@ -3356,6 +3480,86 @@ impl Session {
                 })
                 .collect(),
         }
+    }
+
+    /// `SELECT * FROM information_schema.USER_PRIVILEGES` rows, in Go's
+    /// `MySQLPrivilege.UserPrivilegesTable` order: EVERY account's static
+    /// privileges first (one row per privilege, in `mysql.AllGlobalPrivs`
+    /// print order, or a single `USAGE` row for an account with none), then
+    /// EVERY account's DYNAMIC privileges. Accounts are visited in username
+    /// order, since Go walks a B-tree keyed by username.
+    ///
+    /// `IS_GRANTABLE` means different things in the two halves (captured):
+    /// a static row reports the account's `GRANT OPTION`, while a dynamic
+    /// row reports that one privilege's own `with_grant_option`.
+    ///
+    /// Visibility (Go: "Seeing all users requires SELECT ON * FROM mysql.*.
+    /// The SUPER privilege (or any other dynamic privilege) doesn't help
+    /// here. This is verified against MySQL."): without global `SELECT`, a
+    /// session sees only its own account's rows.
+    fn user_privileges_table_rows(&self) -> Vec<Vec<Datum>> {
+        let Some(registry) = &self.privileges else {
+            return Vec::new();
+        };
+        let identity = self
+            .current_identity()
+            .map(|(user, host)| (user.to_owned(), host.to_owned()));
+        let show_all = identity.as_ref().is_none_or(|(user, host)| {
+            registry.has_global_priv(user, host, privilege::GlobalPriv::Select)
+        });
+        let visible = |account: &(String, String)| show_all || identity.as_ref() == Some(account);
+
+        let grantee = |(user, host): &(String, String)| format!("'{user}'@'{host}'");
+        let cell = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+        let flag = |grantable: bool| cell(if grantable { "YES" } else { "NO" });
+
+        let mut static_accounts = registry.global_priv_masks();
+        static_accounts.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let mut rows = Vec::new();
+        for (account, privs) in &static_accounts {
+            if !visible(account) {
+                continue;
+            }
+            let grantable = flag(privs & privilege::GlobalPriv::GrantOption.bit() != 0);
+            let named: Vec<&privilege::GlobalPriv> = privilege::ALL_GLOBAL_PRIVS
+                .iter()
+                .filter(|priv_| privs & priv_.bit() != 0)
+                .collect();
+            if named.is_empty() {
+                rows.push(vec![
+                    cell(&grantee(account)),
+                    cell("def"),
+                    cell("USAGE"),
+                    grantable.clone(),
+                ]);
+                continue;
+            }
+            for priv_ in named {
+                rows.push(vec![
+                    cell(&grantee(account)),
+                    cell("def"),
+                    cell(priv_.print_name()),
+                    grantable.clone(),
+                ]);
+            }
+        }
+
+        let mut dynamic_accounts = registry.accounts_with_dynamic_privs();
+        dynamic_accounts.sort();
+        for account in &dynamic_accounts {
+            if !visible(account) {
+                continue;
+            }
+            for (name, grantable) in registry.dynamic_priv_rows(&account.0, &account.1) {
+                rows.push(vec![
+                    cell(&grantee(account)),
+                    cell("def"),
+                    cell(&name),
+                    flag(grantable),
+                ]);
+            }
+        }
+        rows
     }
 
     /// The `User` column: Go reports the bare user name, while this session
@@ -12925,6 +13129,265 @@ mod tests {
         }
     }
 
+    /// DYNAMIC privileges through `GRANT`/`REVOKE`/`SHOW GRANTS`, captured
+    /// from `pkg/executor/zz_dump_dynpriv_test.go` against
+    /// `testkit.CreateMockStore`.
+    ///
+    /// The captured ordering rule: dynamic lines come LAST, after every
+    /// static scope, as at most two lines -- the non-grantable privileges
+    /// first, then the grantable ones with the ` WITH GRANT OPTION` suffix
+    /// -- each an alphabetically sorted comma-joined list on `*.*`. The
+    /// `GRANT USAGE ON *.*` global line is still printed for an account
+    /// whose only privileges are dynamic.
+    #[test]
+    fn dynamic_privileges_grant_revoke_and_show_grants() {
+        let mut session = session_with_privileges();
+        session.run("CREATE DATABASE db1").unwrap();
+        session.run("CREATE TABLE db1.t (a INT)").unwrap();
+        session.run("CREATE USER 'u1'@'%'").unwrap();
+
+        // A dynamic privilege is GLOBAL-only: `ErrIllegalPrivilegeLevel`
+        // (3619) at DB and TABLE scope, and it fires BEFORE the
+        // is-it-registered check.
+        for level in ["db1.*", "db1.t"] {
+            match session.run(&format!("GRANT BACKUP_ADMIN ON {level} TO 'u1'@'%'")) {
+                Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "BACKUP_ADMIN"),
+                other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
+            }
+        }
+        match session.run("REVOKE BACKUP_ADMIN ON db1.* FROM 'u1'@'%'") {
+            Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "BACKUP_ADMIN"),
+            other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
+        }
+        // An UNREGISTERED name is 3929 at `*.*` -- and 3619 elsewhere, since
+        // the level check runs first.
+        match session.run("GRANT NOT_A_REAL_PRIV ON *.* TO 'u1'@'%'") {
+            Err(DriverError::DynamicPrivilegeNotRegistered(name)) => {
+                assert_eq!(name, "NOT_A_REAL_PRIV");
+            }
+            other => panic!("expected DynamicPrivilegeNotRegistered, got {other:?}"),
+        }
+        match session.run("GRANT NOT_A_REAL_PRIV ON db1.* TO 'u1'@'%'") {
+            Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "NOT_A_REAL_PRIV"),
+            other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
+        }
+
+        // The registered names are accepted case-insensitively.
+        session
+            .run("GRANT BACKUP_ADMIN ON *.* TO 'u1'@'%'")
+            .unwrap();
+        session
+            .run("GRANT connection_admin ON *.* TO 'u1'@'%'")
+            .unwrap();
+        session
+            .run("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' WITH GRANT OPTION")
+            .unwrap();
+        session
+            .run("GRANT RESTRICTED_USER_ADMIN ON *.* TO 'u1'@'%' WITH GRANT OPTION")
+            .unwrap();
+        session
+            .run("GRANT SELECT, PROCESS ON *.* TO 'u1'@'%'")
+            .unwrap();
+        session.run("GRANT INSERT ON db1.* TO 'u1'@'%'").unwrap();
+        session.run("GRANT UPDATE ON db1.t TO 'u1'@'%'").unwrap();
+
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [
+                ["GRANT SELECT,PROCESS ON *.* TO 'u1'@'%'"],
+                ["GRANT INSERT ON `db1`.* TO 'u1'@'%'"],
+                ["GRANT UPDATE ON `db1`.`t` TO 'u1'@'%'"],
+                ["GRANT BACKUP_ADMIN,CONNECTION_ADMIN ON *.* TO 'u1'@'%'"],
+                [
+                    "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' \
+                     WITH GRANT OPTION"
+                ],
+            ]
+        );
+
+        // REVOKE of a registered privilege the account holds; of one it does
+        // not hold (silent); of an unregistered name (3929 as a WARNING, the
+        // statement still succeeding).
+        session
+            .run("REVOKE BACKUP_ADMIN ON *.* FROM 'u1'@'%'")
+            .unwrap();
+        session
+            .run("REVOKE ROLE_ADMIN ON *.* FROM 'u1'@'%'")
+            .unwrap();
+        session
+            .run("REVOKE NOT_A_REAL_PRIV ON *.* FROM 'u1'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW WARNINGS")),
+            [[
+                "Warning",
+                "3929",
+                "Dynamic privilege 'NOT_A_REAL_PRIV' is not registered with the server."
+            ]]
+        );
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [
+                ["GRANT SELECT,PROCESS ON *.* TO 'u1'@'%'"],
+                ["GRANT INSERT ON `db1`.* TO 'u1'@'%'"],
+                ["GRANT UPDATE ON `db1`.`t` TO 'u1'@'%'"],
+                ["GRANT CONNECTION_ADMIN ON *.* TO 'u1'@'%'"],
+                [
+                    "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' \
+                     WITH GRANT OPTION"
+                ],
+            ]
+        );
+
+        // An account whose ONLY privileges are dynamic still gets the
+        // `USAGE` global line ahead of them.
+        session.run("CREATE USER 'u2'@'%'").unwrap();
+        session
+            .run("GRANT DASHBOARD_CLIENT, ROLE_ADMIN ON *.* TO 'u2'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
+            [
+                ["GRANT USAGE ON *.* TO 'u2'@'%'"],
+                ["GRANT DASHBOARD_CLIENT,ROLE_ADMIN ON *.* TO 'u2'@'%'"],
+            ]
+        );
+
+        // `GRANT ALL` confers no dynamic privilege, but `REVOKE ALL` clears
+        // every one of them (Go's unqualified `DELETE FROM
+        // mysql.global_grants`).
+        session.run("REVOKE ALL ON *.* FROM 'u2'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
+            [["GRANT USAGE ON *.* TO 'u2'@'%'"]]
+        );
+        session.run("GRANT ALL ON *.* TO 'u2'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
+            [["GRANT ALL PRIVILEGES ON *.* TO 'u2'@'%'"]]
+        );
+    }
+
+    /// The SUPER fallback: Go's `RequestDynamicVerification` passes a dynamic
+    /// check for any account holding SUPER, even with no `global_grants` row
+    /// -- while `HasExplicitlyGrantedDynamicPrivilege` does not. The only
+    /// no-fallback case in Go is SEM's `RESTRICTED_*` family, and SEM is not
+    /// modelled here.
+    #[test]
+    fn super_is_the_fallback_for_every_dynamic_privilege() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'su'@'%'").unwrap();
+        session.run("GRANT SUPER ON *.* TO 'su'@'%'").unwrap();
+        let registry = session.privileges.clone().unwrap();
+
+        for name in privilege::DYNAMIC_PRIVS {
+            assert!(
+                registry.has_dynamic_priv("su", "%", name, false),
+                "SUPER satisfies {name}"
+            );
+            assert!(
+                !registry.has_explicit_dynamic_priv("su", "%", name, false),
+                "{name} is not explicitly granted"
+            );
+        }
+
+        // SUPER alone does not satisfy a GRANTABLE dynamic check: the
+        // account must also hold GRANT OPTION.
+        assert!(!registry.has_dynamic_priv("su", "%", "BACKUP_ADMIN", true));
+        session
+            .run("GRANT SUPER ON *.* TO 'su'@'%' WITH GRANT OPTION")
+            .unwrap();
+        assert!(registry.has_dynamic_priv("su", "%", "BACKUP_ADMIN", true));
+
+        // An account with neither SUPER nor a row fails every check, and
+        // `SHOW GRANTS` for a SUPER account prints no dynamic line -- the
+        // fallback is a check-time rule, not stored state.
+        session.run("CREATE USER 'plain'@'%'").unwrap();
+        assert!(!registry.has_dynamic_priv("plain", "%", "BACKUP_ADMIN", false));
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'su'@'%'")),
+            [["GRANT SUPER ON *.* TO 'su'@'%' WITH GRANT OPTION"]]
+        );
+
+        // Re-granting without `WITH GRANT OPTION` is a REPLACE, not an OR:
+        // it downgrades a previously grantable dynamic privilege.
+        session
+            .run("GRANT BACKUP_ADMIN ON *.* TO 'plain'@'%' WITH GRANT OPTION")
+            .unwrap();
+        assert!(registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", true));
+        session
+            .run("GRANT BACKUP_ADMIN ON *.* TO 'plain'@'%'")
+            .unwrap();
+        assert!(!registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", true));
+        assert!(registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", false));
+    }
+
+    /// `information_schema.USER_PRIVILEGES` -- the one member of the
+    /// PRIVILEGES family that Go actually populates. Captured: every
+    /// account's static rows first (username order, `AllGlobalPrivs` print
+    /// order, a lone `USAGE` row for an account with none), then every
+    /// account's dynamic rows; `IS_GRANTABLE` is the account's `GRANT
+    /// OPTION` on a static row and the privilege's own flag on a dynamic
+    /// one.
+    #[test]
+    fn user_privileges_table_reports_static_and_dynamic_rows() {
+        let mut session = session_with_privileges();
+        session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+        session.run("CREATE USER 'zz'@'%'").unwrap();
+        session.run("CREATE USER 'aa'@'%'").unwrap();
+        session.run("GRANT SELECT ON *.* TO 'aa'@'%'").unwrap();
+        session.run("GRANT ROLE_ADMIN ON *.* TO 'aa'@'%'").unwrap();
+        session
+            .run("GRANT BACKUP_ADMIN ON *.* TO 'zz'@'%' WITH GRANT OPTION")
+            .unwrap();
+
+        let rows = row_text(session.run(
+            "SELECT grantee, table_catalog, privilege_type, is_grantable \
+             FROM information_schema.user_privileges WHERE grantee <> '''root''@''%'''",
+        ));
+        assert_eq!(
+            rows,
+            [
+                ["'aa'@'%'", "def", "SELECT", "NO"],
+                ["'zz'@'%'", "def", "USAGE", "NO"],
+                ["'aa'@'%'", "def", "ROLE_ADMIN", "NO"],
+                ["'zz'@'%'", "def", "BACKUP_ADMIN", "YES"],
+            ]
+        );
+    }
+
+    /// Every ROLE statement parses and is refused by name -- not through a
+    /// generic "unsupported statement kind" fallback, which would leave a
+    /// user guessing whether the syntax or the feature is missing.
+    ///
+    /// Captured from Go for the FUTURE roles unit: `CREATE ROLE r1` and
+    /// `GRANT r1 TO 'u1'@'%'` both succeed, after which `SHOW GRANTS FOR
+    /// 'u1'@'%'` gains a `GRANT 'r1'@'%' TO 'u1'@'%'` line positioned AFTER
+    /// the table-scope lines and BEFORE the dynamic ones; the role's own
+    /// dynamic privileges do NOT appear in that output, because a role's
+    /// privileges reach a user only through its ACTIVE roles. `SET ROLE r1`
+    /// from a session that was not granted `r1` is
+    /// `` `r1`@`%` is not granted to root@% `` (3530).
+    #[test]
+    fn role_statements_are_refused_by_name() {
+        let mut session = session_with_privileges();
+        for sql in [
+            "CREATE ROLE r1",
+            "DROP ROLE r1",
+            "GRANT r1 TO 'u1'@'%'",
+            "REVOKE r1 FROM 'u1'@'%'",
+            "SET ROLE r1",
+            "SET DEFAULT ROLE r1 TO 'u1'@'%'",
+        ] {
+            match session.run(sql) {
+                Err(DriverError::Unsupported(message)) => {
+                    assert_eq!(message, ROLES_UNSUPPORTED, "{sql}");
+                }
+                other => panic!("expected the roles refusal for {sql}, got {other:?}"),
+            }
+        }
+    }
+
     /// CAPTURED: `SHOW GRANTS` with no `FOR` reports the current session's
     /// own account, and a fresh cluster's bootstrap `root`@`%` carries
     /// `ALL PRIVILEGES ... WITH GRANT OPTION`.
@@ -13430,6 +13893,66 @@ mod tests {
         // Granting SUPER lets the same KILL through.
         bob.run("GRANT SUPER ON *.* TO 'bob'@'%'").unwrap();
         assert_eq!(bob.run("kill 1").unwrap(), StmtResult::Affected(0));
+    }
+
+    /// The gate Go actually writes is the DYNAMIC `CONNECTION_ADMIN`; SUPER
+    /// passes only as its fallback. So `CONNECTION_ADMIN` ALONE -- with no
+    /// SUPER anywhere -- must open the same KILL, and revoking it must close
+    /// it again.
+    #[test]
+    fn kill_of_another_users_connection_accepts_connection_admin() {
+        let registry = process::ProcessRegistry::default();
+        let mut victim = session_with_privileges();
+        victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
+        let victim_guard = registry.register(
+            1,
+            "root".to_owned(),
+            "10.0.0.1:1".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        victim.attach_process(1, victim_guard);
+
+        let mut bob = session_with_privileges();
+        bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
+        let bob_guard = registry.register(
+            2,
+            "bob".to_owned(),
+            "10.0.0.2:2".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        bob.attach_process(2, bob_guard);
+        bob.run("CREATE USER 'bob'@'%'").unwrap();
+
+        match bob.run("kill 1") {
+            Err(DriverError::KillAccessDenied) => {}
+            other => panic!("expected KillAccessDenied, got {other:?}"),
+        }
+
+        bob.run("GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'")
+            .unwrap();
+        assert_eq!(
+            bob.run("kill 1").unwrap(),
+            StmtResult::Affected(0),
+            "CONNECTION_ADMIN alone authorizes KILL of a peer's connection"
+        );
+        // The dynamic privilege is the ONLY thing bob holds: no static
+        // privilege was granted along the way.
+        assert_eq!(
+            row_text(bob.run("SHOW GRANTS FOR 'bob'@'%'")),
+            [
+                ["GRANT USAGE ON *.* TO 'bob'@'%'"],
+                ["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'"],
+            ]
+        );
+
+        bob.run("REVOKE CONNECTION_ADMIN ON *.* FROM 'bob'@'%'")
+            .unwrap();
+        match bob.run("kill 1") {
+            Err(DriverError::KillAccessDenied) => {}
+            other => panic!("expected KillAccessDenied after REVOKE, got {other:?}"),
+        }
     }
 
     /// `PROCESS` granted through `GRANT` (not the test-only
