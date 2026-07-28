@@ -4,7 +4,7 @@
 
 **Goal:** Add `EXPORT TABLE db.t TO 's3://…'` — a distributed single-table export that runs as a DXF task, writing PK/handle-ordered SQL/CSV/parquet files to an object store, byte-compatible with Dumpling output.
 
-**Architecture:** A new DXF task type `Export` (`pkg/dxf/export`) modeled on `pkg/dxf/importinto`: a `Dump` step splits the table into key-ordered spans (reusing backfill's region split) and runs a per-subtask read→encode→upload pipeline (cop scan at a fixed TSO snapshot → `DumpTextRow`/`dumpformat` encode → object-store multipart writer, cutting files at `FileSize`); a `PostProcess` step writes schema + metadata files; a revert step cleans the bucket synchronously on failure/cancel. A user-facing job lives in `mysql.tidb_export_jobs`; the statement/`SHOW`/`CANCEL` wiring mirrors IMPORT INTO.
+**Architecture:** A new DXF task type `Export` (`pkg/dxf/export`) modeled on `pkg/dxf/importinto`, **table-set-native**: the task carries a `Tables[]` set (`EXPORT TABLE db.t` = 1 element, `EXPORT SCHEMA db` = all base tables — one shared backend, single-table is just `len(Tables)==1`). A `Dump` step splits each table into key-ordered spans (reusing backfill's region split) and runs a per-subtask read→encode→upload pipeline (cop scan at a fixed TSO snapshot → `DumpTextRow`/`dumpformat` encode → object-store multipart writer, cutting files at `FileSize`); a `PostProcess` step writes schema + metadata files; a revert step cleans the bucket synchronously on failure/cancel. A user-facing job lives in `mysql.tidb_export_jobs`; the statement/`SHOW`/`CANCEL` wiring mirrors IMPORT INTO. A submit-time precheck requires the destination prefix to be writable (List/Get/Put/Delete) and empty; on failure/cancel the synchronous revert sweep records a `cleanup_status` the job surfaces to the user.
 
 **Tech Stack:** Go, TiDB DXF framework (`pkg/dxf/framework`), coprocessor/distsql (`pkg/store/copr`), `pkg/objstore` (S3 multipart), `pkg/parser`, `pkg/server/internal/column` (DumpTextRow), Dumpling (`dumpling/export`).
 
@@ -15,11 +15,14 @@
 ## Milestone overview (implement in order; each is a PR-sized, testable unit)
 
 - **M0 — Formatting foundations (the blocker).** Extract `DumpTextRow` value formatting out of `pkg/server/internal/*` into a shared package; create `pkg/dumpformat` (CSV/SQL framing reused by Dumpling and the exporter). *Nothing else compiles against the exporter until this lands.*
-- **M1 — Statement + job table.** `mysql.tidb_export_jobs`; `EXPORT TABLE` / `SHOW EXPORT JOB[S]` / `CANCEL EXPORT JOB` parser + executor wiring; validation; submit/poll/detached.
-- **M2 — DXF task: split + dump pipeline.** Register `Export` task type; `Dump` step splitting (reuse backfill); subtask read→encode→write pipeline; file naming; GC barrier.
-- **M3 — PostProcess + revert + job progress.** Schema/metadata files; synchronous revert cleanup; progress aggregation into the job row; `SHOW EXPORT JOB` 15 columns.
-- **M4 — Parquet encoder.** Separate columnar encoder (type→schema mapping, row-group `FileSize` cutting).
-- **M5 — Metrics + e2e tests.** Grafana metrics; real-TiKV round-trip via IMPORT INTO.
+- **M1 — Statement plumbing (parser-less, inert).** `mysql.tidb_export_jobs`; the `ExportTable` plan node + builder wiring + option validation + submit/poll/detached + `SHOW`/`CANCEL` executors + job-table accessors. The AST **structs** (`ast.ExportTableStmt`, …) are defined here, but **no `parser.y` grammar produces them yet** — so nothing reaches this code until M6.
+- **M2 — DXF task: split + dump pipeline.** Register `Export` task type; `Dump` step splitting (reuse backfill); subtask read→encode→write pipeline; file naming; GC barrier. *Inert: no task of type `Export` is ever submitted until M6.*
+- **M3 — PostProcess + revert + job progress.** Schema/metadata files; synchronous revert cleanup that records `cleanup_status`; progress aggregation into the job row; `SHOW EXPORT JOB` 16 columns (incl. `Cleanup_Status`). *Inert until M6.*
+- **M4 — Parquet encoder.** Separate columnar encoder (type→schema mapping, row-group `FileSize` cutting). *Inert until M6.*
+- **M5 — Metrics.** Grafana panels + export counters/gauges. *Inert until M6.*
+- **M6 — Wire (the on-switch) + e2e.** The `EXPORT TABLE` / `SHOW EXPORT JOB[S]` / `CANCEL EXPORT JOB` **parser grammar** — the single change that produces the AST and lights up the already-merged M1–M5 chain — then the real-TiKV round-trip e2e (which needs to issue `EXPORT`).
+
+**Inert-until-wire invariant:** M1–M5 add only unreachable code (a new empty system table, an unregistered-from-SQL plan node, an `Export` DXF task type that is never submitted, a parquet encoder no caller invokes, dormant metrics). Merging any of them leaves existing TiDB behavior unchanged. **M6 is the only PR that changes user-visible behavior** — landing the grammar is what makes `EXPORT TABLE` parseable and flows it through the whole chain. Keeping parser last also defers the keyword-collision risk to the end, after everything else is proven.
 
 Each milestone's tasks below are TDD bite-sized where the logic is self-contained (naming, encoding, cleanup, splitting). Where a task threads through an existing TiDB subsystem (parser grammar, scheduler interface), it names the **exact reference implementation to copy** and the **exact verification** — these are not placeholders; follow the cited pattern.
 
@@ -33,16 +36,17 @@ Each milestone's tasks below are TDD bite-sized where the logic is self-containe
 - Create `pkg/dumpformat/` — `FileFormat` enum, CSV/SQL framing+escaping, output-file naming, compression glue, a chunk-backed `RowSource`.
 - Modify `dumpling/export/writer_util.go` / `sql_type.go` → re-use `pkg/dumpformat` (keep Dumpling behavior).
 
-**M1**
+**M1** *(all inert — no `parser.y` grammar, so no SQL reaches any of it)*
 - Modify `pkg/meta/metadef/system_tables_def.go` (add `CreateTiDBExportJobsTable`), `pkg/meta/metadef/system.go` (reserve `TiDBExportJobsTableID`), `pkg/session/bootstrap.go` (register table), `pkg/session/upgrade_def.go` (upgrade step).
-- Modify `pkg/parser/ast/dml.go` (AST: `ExportTableStmt`, `ShowExportJobs`, `ExportJobActionStmt`), `pkg/parser/parser.y` + regen.
-- Create `pkg/executor/export/` — submit/validate/poll executor + `SHOW`/`CANCEL` executors + job-table accessors (`pkg/dxf/export/job.go`, mirroring `pkg/dxf/importinto/job.go`).
+- Modify `pkg/parser/ast/dml.go` (AST **struct defs only**: `ExportTableStmt`, `ShowExportJobs`, `ExportJobActionStmt` — no grammar rules; grammar is M6).
+- Create `pkg/executor/export/` — submit/validate/poll executor + `SHOW`/`CANCEL` executors + job-table accessors (`pkg/dxf/export/job.go`, mirroring `pkg/dxf/importinto/job.go`); wire the plan builder to switch on the AST structs.
 
-**M2–M3**
+**M2–M3** *(inert — `Export` task type registered but never submitted until M6)*
 - Create `pkg/dxf/export/`: `register.go`, `proto.go` (task/subtask meta), `scheduler.go`, `task_executor.go`, `subtask_executor.go`, `clean_up.go`, `pipeline.go`, `naming.go`.
 
-**M4** — Create `pkg/dumpformat/parquet.go` (or `pkg/dxf/export/parquet.go`).
-**M5** — `metrics/grafana/*.json` additions; `tests/realtikvtest/exporttest/`.
+**M4** — Create `pkg/dumpformat/parquet.go` (or `pkg/dxf/export/parquet.go`). *(inert)*
+**M5** — `metrics/grafana/*.json` additions. *(inert)*
+**M6 (on-switch)** — Modify `pkg/parser/parser.y` (grammar rules that construct the M1 AST structs) + `make parser` regen; add non-reserved keywords; then `tests/realtikvtest/exporttest/`.
 
 > After any added/moved/renamed Go file or new `TestXxx`, run `make bazel_prepare` and include the Bazel metadata (AGENTS.md Quick Decision Matrix).
 
@@ -115,41 +119,35 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 
 ---
 
-## M1 — Statement + job table
+## M1 — Statement plumbing (parser-less, inert)
 
 ### Task 1.1: `mysql.tidb_export_jobs` system table
 
 **Files:** Modify `pkg/meta/metadef/system_tables_def.go` (add `CreateTiDBExportJobsTable`, mirroring `CreateTiDBImportJobsTable` at `:681`), `pkg/meta/metadef/system.go` (reserve `TiDBExportJobsTableID = ReservedGlobalIDUpperBound - <next free>`), `pkg/session/bootstrap.go` (register, like `:320`), `pkg/session/upgrade_def.go` (new bootstrap version + `mustExecute(s, metadef.CreateTiDBExportJobsTable)`).
 
-- [ ] **Step 1 — Test:** bootstrap a test store, `SELECT` from `mysql.tidb_export_jobs`, assert columns exist (`id, create/start/update/end_time, table_schema, table_name, table_id, destination, format, created_by, parameters, total_size, status, step, summary, error_message`).
+- [ ] **Step 1 — Test:** bootstrap a test store, `SELECT` from `mysql.tidb_export_jobs`, assert columns exist (`id, create/start/update/end_time, table_schema, table_name, table_id, destination, format, created_by, parameters, total_size, status, cleanup_status, step, summary, error_message`).
 - [ ] **Step 2 — Run, fail** (table missing).
-- [ ] **Step 3 — Add the DDL + table id + bootstrap + upgrade step** (copy `tidb_import_jobs` and adapt columns; add `destination`, `format`, `total_size`).
+- [ ] **Step 3 — Add the DDL + table id + bootstrap + upgrade step** (copy `tidb_import_jobs` and adapt columns; add `destination`, `format`, `total_size`, `cleanup_status` — `skipped`/`finished`/`failed`, default `skipped`).
 - [ ] **Step 4 — Run, pass.**
 - [ ] **Step 5 — `make bazel_prepare`; commit.**
 
-### Task 1.2: Parser — `EXPORT TABLE … TO … WITH (…)`
+### Task 1.2: AST struct definitions (inert — no grammar)
 
-**Files:** Modify `pkg/parser/ast/dml.go` (`ExportTableStmt` AST, model on `ImportIntoStmt`), `pkg/parser/parser.y` (grammar), then `make parser`. Test: `pkg/parser/parser_test.go`.
+> **Parser-last split:** the AST **structs** land here so the plan builder + executor (Task 1.3) can compile and switch on them, but **no `parser.y` grammar constructs them yet** — the grammar is deferred to M6, so no SQL can produce these nodes and the executor stays unreachable. This matches the already-merged `#69291` (plan node + builder wiring, parser not wired).
 
-- [ ] **Step 1 — Parser test:** `EXPORT TABLE db.t TO 's3://b/p' WITH (FORMAT='csv', FILE_SIZE='256MiB', COMPRESSION='zstd', DETACHED)` parses to an `ExportTableStmt` with the right table, URI, and options; restore round-trips.
+**Files:** Modify `pkg/parser/ast/dml.go` (define `ExportTableStmt` modeled on `ImportIntoStmt`; `ShowExportJobs` flag + `ExportJobID` like `ShowImportJobs` at `:3148`; `ExportJobActionStmt` for `CANCEL`). No `parser.y` changes. Test: `pkg/parser/ast` restore/visitor unit tests only (constructed programmatically, not parsed).
+
+- [ ] **Step 1 — Test:** build an `ExportTableStmt` in Go, assert `Restore()` round-trips to the expected SQL text and `Accept`/visitor walks the table + options. (No parse — grammar is M6.)
+- [ ] **Step 2-4 — fail → define the structs + `Restore`/`Accept` → pass.**
+- [ ] **Step 5 — `make bazel_prepare`; commit.**
+
+### Task 1.3: EXPORT executor (validate, snapshot, job row, submit/poll) + SHOW/CANCEL executors
+
+**Files:** Create `pkg/executor/export/export.go` (the `EXPORT` exec), `show_export.go`, `cancel_export.go`; create `pkg/dxf/export/job.go` (insert/update/get on `tidb_export_jobs`, mirroring `pkg/dxf/importinto/job.go`). Wire into `pkg/executor/builder.go` (switch on the Task 1.2 AST structs). *Inert: nothing produces those AST nodes until M6.*
+
+- [ ] **Step 1 — Validation test:** drive the executor with a programmatically-built `ExportTableStmt` (no parse). EXPORT on a view → error; bad `FORMAT` → error; missing credentials in URI → error; destination prefix non-empty → error; destination not writable (Put/Delete denied) → error. (No DXF submit yet; stub the submit and the store probe.)
 - [ ] **Step 2 — Run, fail.**
-- [ ] **Step 3 — Add AST + grammar** following `ImportIntoStmt` (the `WITH (...)` option list parsing is identical; reuse it). `make parser` to regenerate.
-- [ ] **Step 4 — Run, pass.**
-- [ ] **Step 5 — `make parser_unit_test`; `make bazel_prepare`; commit.**
-
-### Task 1.3: `SHOW EXPORT JOB[S]` / `CANCEL EXPORT JOB <id>`
-
-**Files:** Modify `pkg/parser/ast/dml.go` (`ShowExportJobs` flag + `ExportJobID`, like `ShowImportJobs` at `:3148`), `parser.y`; regen. Test in `parser_test.go`.
-
-- [ ] Steps mirror Task 1.2: failing parser test for the three forms → grammar → regen → pass → commit.
-
-### Task 1.4: EXPORT executor (validate, snapshot, job row, submit/poll) + SHOW/CANCEL executors
-
-**Files:** Create `pkg/executor/export/export.go` (the `EXPORT` exec), `show_export.go`, `cancel_export.go`; create `pkg/dxf/export/job.go` (insert/update/get on `tidb_export_jobs`, mirroring `pkg/dxf/importinto/job.go`). Wire into `pkg/executor/builder.go`.
-
-- [ ] **Step 1 — Validation test:** EXPORT on a view → error; bad `FORMAT` → error; missing credentials in URI → error. (No DXF submit yet; stub the submit.)
-- [ ] **Step 2 — Run, fail.**
-- [ ] **Step 3 — Implement:** validate (base table via infoschema, options), resolve snapshot TS (oracle), insert a `tidb_export_jobs` row, then submit `handle.SubmitTask("Export", …)` (returns task id; store on the job row). `DETACHED` → return job id; else poll the job row to terminal and return the summary. `SHOW EXPORT JOB[S]` reads the job table; `CANCEL` sets the job to canceling and cancels the DXF task.
+- [ ] **Step 3 — Implement:** validate (base table via infoschema, options); **precheck the destination** — the credentials must grant `s3:ListBucket, s3:GetObject, s3:PutObject, s3:DeleteObject` on the target prefix (same set as the global-sort URI; `DeleteObject` is needed for revert cleanup), probing at **prefix scope, not bucket root** (per GTOC-8461: customer IAM may scope permissions to the prefix, so a bucket-root probe would falsely `AccessDenied`), and the prefix must be **empty** (fail fast, else a prior export's files would collide with the revert sweep's reserved names); **estimate the data size and compute resources** (see *Design notes → Resource sizing*): estimate the table size without reading it (sum region approximate sizes over the key range, fall back to stats `DATA_LENGTH`) → `scheduler.NewRCCalc(size, nodeCPU, 0, factors)` → `ThreadCnt`/`MaxNodeCnt`/`DistSQLScanConcurrency` + required coprocessor-worker count, stored on the task meta (`WITH thread=`/`max_node_count=` override, `-1` = auto); resolve snapshot TS (oracle), insert a `tidb_export_jobs` row, then submit `handle.SubmitTask("Export", …)` (returns task id; store on the job row). `DETACHED` → return job id; else poll the job row to terminal and return the summary. `SHOW EXPORT JOB[S]` reads the job table; `CANCEL` sets the job to canceling and cancels the DXF task.
 - [ ] **Step 4 — Run, pass.** Commit (with `make bazel_prepare`).
 
 ---
@@ -158,7 +156,7 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 
 ### Task 2.1: Register the `Export` task type + scheduler skeleton
 
-**Files:** Create `pkg/dxf/export/register.go` (`RegisterSchedulerFactory`/`RegisterTaskType`/`RegisterSchedulerCleanUpFactory`, like `importinto`), `scheduler.go` (steps `Dump`, `PostProcess`; `GetNextStep`; `OnDone` handling `reverting`), `proto.go` (task meta = table, dest, format, snapshot TS; subtask meta = key range, `Ordinal` carries naming, file-index base). Reference: `pkg/dxf/importinto/scheduler.go`.
+**Files:** Create `pkg/dxf/export/register.go` (`RegisterSchedulerFactory`/`RegisterTaskType`/`RegisterSchedulerCleanUpFactory`, like `importinto`), `scheduler.go` (steps `Dump`, `PostProcess`; `GetNextStep`; `OnDone` handling `reverting`), `proto.go` (task meta = `Tables[]` (the table set — `EXPORT TABLE` = 1, `EXPORT SCHEMA` = all; see *Design notes → One backend*), dest, format, snapshot TS, computed resources `RequiredSlots`/`MaxNodeCount`; subtask meta = a **list of per-table units** `{TableIdx, KeyRange, NameOrdinal}` + file-index base — one unit for a single-table span; a batch of whole small tables for `EXPORT SCHEMA`). `NameOrdinal` is table-local, stamped at split (**not** the framework's global `Ordinal`). Reference: `pkg/dxf/importinto/scheduler.go`.
 
 - [ ] **Step 1 — Test:** `GetNextStep` returns `StepInit → Dump → PostProcess → StepDone`. Marshal/unmarshal subtask meta round-trips.
 - [ ] **Step 2-4 — fail → implement (copy importinto skeleton, two steps) → pass.**
@@ -170,7 +168,7 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 
 - [ ] **Step 1 — Test (determinism + continuity + order):** given a stubbed continuous region set over `[start,end]`, the produced subtask metas (a) cover `[start,end]` with no gap/overlap, (b) are in key order, (c) are deterministic across two calls. Given a region set with a gap, splitting errors `"regions are not continuous"`.
 - [ ] **Step 2 — Run, fail.**
-- [ ] **Step 3 — Implement:** `getTableRange(snapshotVer)` for `[start,end]`; `regionCache.LoadRegionsInKeyRange`; **sort + continuity check (keep it — do not drop)**; group into coarse spans (`CalculateRegionBatch`); emit metas in key order so the framework's `Ordinal = i+1` follows the handle (scheduler.go:567). Set field widths: `Ordinal` 7 digits, `Writer` 3, `File` 4 — assert `#spans < 10^7`, `Rw ≤ 999`, files/writer `< 10^4` given the span size; widen if a check trips. Partitioned: iterate physical partitions, emit partition-then-handle.
+- [ ] **Step 3 — Implement:** `getTableRange(snapshotVer)` for `[start,end]`; `regionCache.LoadRegionsInKeyRange`; **sort + continuity check (keep it — do not drop)**; group into coarse spans (`CalculateRegionBatch`); emit metas in key order and **stamp each with an explicit table-local `NameOrdinal`** (do **not** derive naming from the framework's global `Ordinal` — that couples file numbering to emission order; see *Design notes → One backend*). **Always iterate the task's `Tables[]`** (one table for `EXPORT TABLE`, all base tables for `EXPORT SCHEMA`) and run the sort + continuity check **per table** (reset at boundaries; cross-table key gaps are expected); for `EXPORT SCHEMA`, additionally pack small whole tables into shared subtasks (see *Design notes → One backend*). Set field widths: `Ordinal` 7 digits, `Writer` 3, `File` 4 — assert `#spans < 10^7`, `Rw ≤ 999`, files/writer `< 10^4` given the span size; widen if a check trips. Partitioned: iterate physical partitions, emit partition-then-handle.
 - [ ] **Step 4 — Run, pass; commit.**
 
 ### Task 2.3: Subtask executor — read → encode → write pipeline
@@ -198,6 +196,84 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 
 ---
 
+## Design notes (forward-compatible — fix the interface now, implement later)
+
+These two concerns cut across M1–M3. Decide the **shape** now so later work is field-adds, not rewrites.
+
+### Resource sizing (mirror IMPORT INTO)
+
+The prototype fixes concurrency + node count. Production must size from the **estimated data volume**, exactly like IMPORT INTO's `LoadDataController.CalResourceParams` (`pkg/executor/importer/import.go:1626`) → `scheduler.ResourceCalc` (`pkg/dxf/framework/scheduler/autoscaler.go`):
+
+- **Estimate the data size** — EXPORT has no source files, so size the table(s) *without reading*: sum region approximate sizes over the table key range (PD), fall back to `information_schema.TABLES.DATA_LENGTH` / `rowcount × AvgRowLength`. `indexSizeRatio = 0` (pure read; no index KV generated).
+- **Compute resources** — `NewRCCalc(size, nodeCPU, 0, factors)`: `CalcRequiredSlots()` → per-node threads (≈ `size/25GiB`, capped at `nodeCPU`), node-count (≈ +1 per 200GiB, capped ≈32 @8c), `CalcDistSQLConcurrency()` → scan concurrency. Store on task meta; the scheduler sets `task.RequiredSlots`/`task.MaxNodeCount` (mirror `importinto/scheduler.go:375-376`).
+- **Re-tune the constants** — `25GiB`/`200GiB`/`32-node` are calibrated for the write/ingest path; EXPORT is read+encode+upload-bound, so add EXPORT-specific constants (`NewRCCalcForExport` / `CalcMaxNodeCountForExport`), values from the M6 benchmark.
+- **Second axis — coprocessor-worker count (EXPORT-only)** — cop-workers autoscale on CPU, which won't ramp ahead of a burst full-table scan, so expose the required cop-worker count to the control plane via `/dxf/schedule/status` (#69114), derived from the same estimate.
+- **Overrides** — `WITH thread=` / `max_node_count=` (`-1` = auto) mirror IMPORT INTO; the prototype's fixed values become the fallback, not the default. The per-file multipart **upload** concurrency (`csvUploadConcurrency`) stays a fixed constant — bandwidth/part-size bound, not data-volume-scaled.
+
+### One backend for `EXPORT TABLE` and `EXPORT SCHEMA`
+
+`EXPORT TABLE db.t` and `EXPORT SCHEMA db` **share the same backend**. The DXF task operates
+on a `Tables[]` set; the two statements differ **only** in how the executor resolves that set
+— `EXPORT TABLE` → one table (`db.t`), `EXPORT SCHEMA` → all base tables (`db.*`). Everything
+downstream (task/subtask meta, split, pipeline, naming, PostProcess, revert, job) is
+table-set-native and **never special-cases 1 vs N** — single-table is just `len(Tables) == 1`.
+
+This `Tables[]` model is **built from the start** (the split/subtask shape below is core, not a
+later add). `EXPORT SCHEMA` then adds only two things on top: the **enumeration front-end**, and
+the **small-table packing** that keeps a schema of thousands of tiny tables from exploding into
+thousands of subtasks. A schema can hold hundreds/thousands of tables, most small — that scale
+is what makes packing worth it.
+
+- **Table enumeration (submit time).** The executor resolves the schema via infoschema into
+  its **base tables** (skip views/sequences), records them as the task's `Tables[]`, and
+  resolves **one shared snapshot TS** for the whole set → a point-in-time-consistent schema
+  export.
+- **Task meta**: `table` → `Tables []TableSpec` (db/table/table_id/colTypes/schema), shared
+  snapshot TS.
+- **Subtask meta**: a **list of per-table units** `[]{TableIdx, KeyRange, NameOrdinal}`
+  (+ file-index base) from the start. One shape covers both:
+  - a **big table** → one unit per region-span (`KeyRange` set);
+  - **small tables** → several *whole* tables packed into one subtask (`KeyRange` = full
+    table), so thousands of tiny tables don't explode into thousands of subtasks.
+
+  Single-table export degenerates to a one-unit list. `encode` pulls colTypes/name from
+  `Tables[TableIdx]`.
+- **Split (`Dump` step)**: iterate the enumerated tables; region-split **big** tables into
+  spans (sort + continuity check **per table** — cross-table key gaps are expected); **pack
+  small** tables (below a span-size threshold) together into shared subtasks. Stamp each
+  unit's table-local `NameOrdinal` at split (never the framework global `Ordinal`). Emit in
+  batches via `OnNextSubtasksBatch` since the table count can be large.
+  - **Decision (v1): do size-based packing.** Pack whole small tables into a subtask until its
+    accumulated estimated size reaches ~`FileSize` (the same budget one output file targets), so
+    every subtask is a comparable unit of work; a table at/above that size gets its own
+    region-split spans instead. Without packing, a schema of thousands of tiny tables becomes
+    thousands of dispatch-heavy subtasks.
+- **Naming & file IDs (packing-transparent)**: the filename is a **pure function of the unit,
+  never the subtask** — `<db>.<Tables[TableIdx].table>.<NameOrdinal:7><Writer:3><File:4>.<ext>`.
+  All three numeric fields are table-scoped: `NameOrdinal` = the table's span index (`0` for a
+  whole small table), `Writer` = sub-range within the unit's range (`0` for a small table's single
+  range), `File` = FileSize-rotation index within that writer. So a subtask packing N whole small
+  tables writes, per table, `<db>.<tableK>.0000000_000_0000.<ext>` — each isolated by its own
+  `<db>.<table>.` prefix; the subtask id never appears in a name. Consequences: packing is
+  transparent to naming; **idempotent retry holds** (names are deterministic from the unit,
+  subtask-independent, so a retry overwrites the same files); **no cross-subtask collision** (each
+  small table lives in exactly one unit, names are table-scoped). A mis-estimated "small" table
+  that exceeds `FileSize` simply rotates `File` under its own prefix. The sort invariant stays
+  per-table (matches IMPORT INTO's per-table glob). **Open decision (carried):** flat
+  (`<dest>/<db>.<table>.…`, Dumpling-compatible) vs per-table subdir (`<dest>/<db>.<table>/…`).
+- **Subtask executor (packed)**: loops its units, exporting each table's range to that table's own
+  files; concurrency for the many-small-tables case comes from **parallel subtasks across nodes**,
+  not intra-subtask parallelism. Big-table spans keep the sub-range / multi-writer pipeline.
+- **Statement**: add `EXPORT SCHEMA db TO '...'` — AST `ExportSchemaStmt` (or a `Scope` field
+  on the export stmt); grammar in M6, executor resolves it to `Tables[]`.
+- **Downstream**: PostProcess writes `<db>-schema-create.sql` once + per-table
+  `<db>.<table>-schema.sql` + a metadata file listing all tables; revert sweeps the whole
+  owned (empty-at-precheck) prefix regardless of table count; the job row's **scope is the
+  schema** (store the schema + table count; progress aggregates rows/bytes/files across all
+  tables, with a per-table breakdown in `summary`).
+
+---
+
 ## M3 — PostProcess + revert + progress
 
 ### Task 3.1: `PostProcess` — schema + metadata files (Dumpling layout)
@@ -214,13 +290,13 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 **Files:** `pkg/dxf/export/scheduler.go` (`OnDone`: when `task.Error != nil`, prefix-sweep the destination before returning), `clean_up.go`. Reference: `pkg/dxf/importinto/clean_up.go` (prefix sweep) + `objstore` `WalkDir`/`DeleteFiles` + `s3store` `ListMultipartUploads`/`AbortMultipartUpload`.
 
 - [ ] **Step 1 — Test:** after a forced Dump failure, `OnDone` deletes all `<db>.<table>.*` objects under the destination and aborts incomplete multipart uploads (via `ListMultipartUploads` over the prefix); the task reaches `reverted` only after the sweep completes (assert via a mock object store: bucket empty before `RevertedTask`).
-- [ ] **Steps 2-5 — fail → implement the single-node prefix sweep in `OnDone` (list `<db>.<table>.*` → `DeleteFiles`; list+abort lingering multiparts). Additionally, each Dump `StepExecutor.Cleanup` best-effort aborts the multipart upload it currently holds when its subtask is cancelled (per-node teardown of the *existing* subtask, not a new revert subtask) → pass → commit.** Add an S3 lifecycle-rule note (doc/runbook) as the backstop for node-death-mid-sweep.
+- [ ] **Steps 2-5 — fail → implement the single-node prefix sweep in `OnDone` (list `<db>.<table>.*` → `DeleteFiles`; list+abort lingering multiparts). Set `cleanup_status = finished` on a clean sweep; on a sweep error set `cleanup_status = failed` and write the error to `error_message` (unlike Dumpling, which leaves partial files + orphaned multiparts silently — the export must tell the user cleanup failed). Additionally, each Dump `StepExecutor.Cleanup` best-effort aborts the multipart upload it currently holds when its subtask is cancelled (per-node teardown of the *existing* subtask, not a new revert subtask) → pass → commit.** Add an S3 lifecycle-rule note (doc/runbook) as the backstop for node-death-mid-sweep.
 
 ### Task 3.3: Progress aggregation + `SHOW EXPORT JOB` columns
 
 **Files:** `pkg/dxf/export/scheduler.go` (`OnTick`/`OnNextSubtasksBatch` aggregate subtask summaries into `tidb_export_jobs.summary`), `pkg/executor/export/show_export.go` (the 15 columns).
 
-- [ ] **Step 1 — Test:** as Dump subtasks report rows/bytes/files (via the framework summary), the job row's `summary` reflects the totals; `SHOW EXPORT JOB <id>` returns exactly the 15 columns (Job_ID, Source_Table, Table_ID, Destination, Phase, Status, Total_Size, Exported_Size, Exported_Rows, Exported_Files, Result_Message, Create/Start/End_Time, Created_By).
+- [ ] **Step 1 — Test:** as Dump subtasks report rows/bytes/files (via the framework summary), the job row's `summary` reflects the totals; `SHOW EXPORT JOB <id>` returns exactly the 16 columns (Job_ID, Source_Table, Table_ID, Destination, Phase, Status, Cleanup_Status, Total_Size, Exported_Size, Exported_Rows, Exported_Files, Result_Message, Create/Start/End_Time, Created_By). `Result_Message` carries an actionable error (message + reason) on failure, not just a bare status.
 - [ ] **Steps 2-5 — fail → implement → pass → commit.**
 
 ---
@@ -236,7 +312,7 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 
 ---
 
-## M5 — Metrics + e2e
+## M5 — Metrics
 
 ### Task 5.1: Metrics
 
@@ -244,9 +320,31 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 
 - [ ] Add metrics + a Grafana panel; commit. (Resource metering for next-gen billing reuses IMPORT INTO's `SendRowAndSizeMeterData` path — wire it in `clean_up`/`OnDone` for succeeded tasks.)
 
-### Task 5.2: Real-TiKV round-trip e2e
+---
 
-**Files:** `tests/realtikvtest/exporttest/export_test.go`. Per AGENTS.md RealTiKV flow (start playground → run → cleanup).
+## M6 — Wire (parser on-switch) + e2e
+
+> **This is the only behavior-changing milestone.** M1–M5 merged unreachable code; landing the grammar here is what makes `EXPORT TABLE` parseable and flows it through the already-merged executor → DXF task → pipeline → revert chain. Do it **last**, after M1–M5 are proven, so the keyword-collision surface is exercised only once everything behind it is stable.
+
+### Task 6.1: Parser grammar — `EXPORT TABLE … TO … WITH (…)`
+
+**Files:** Modify `pkg/parser/parser.y` (grammar rules constructing the Task 1.2 `ExportTableStmt`; the `WITH (...)` option list is identical to `ImportIntoStmt` — reuse it), add `EXPORT` etc. as **non-reserved** keywords, then `make parser`. Test: `pkg/parser/parser_test.go`.
+
+- [ ] **Step 1 — Keyword-safety test:** assert existing queries that use `export`/`job`/`jobs` as identifiers (`SELECT export FROM t`, `CREATE TABLE t (job INT)`) still parse — the new keywords MUST be non-reserved. Then the positive test: `EXPORT TABLE db.t TO 's3://b/p' WITH (FORMAT='csv', FILE_SIZE='256MiB', COMPRESSION='zstd', DETACHED)` parses to an `ExportTableStmt` with the right table, URI, options; restore round-trips.
+- [ ] **Step 2 — Run, fail.**
+- [ ] **Step 3 — Add grammar + non-reserved keywords; `make parser`.**
+- [ ] **Step 4 — Run, pass.**
+- [ ] **Step 5 — `make parser_unit_test`; `make bazel_prepare`; commit.**
+
+### Task 6.2: Parser grammar — `SHOW EXPORT JOB[S]` / `CANCEL EXPORT JOB <id>`
+
+**Files:** Modify `pkg/parser/parser.y` (rules for the three forms, constructing the Task 1.2 `ShowExportJobs`/`ExportJobActionStmt` structs); regen. Test in `parser_test.go`.
+
+- [ ] Steps mirror Task 6.1: failing parser test for the three forms → grammar → regen → pass → commit. After this lands, the full `EXPORT`/`SHOW`/`CANCEL` surface is live end-to-end.
+
+### Task 6.3: Real-TiKV round-trip e2e
+
+**Files:** `tests/realtikvtest/exporttest/export_test.go`. Per AGENTS.md RealTiKV flow (start playground → run → cleanup). *Depends on M6.1/6.2 — it issues real `EXPORT TABLE` SQL.*
 
 - [ ] **Step 1 — Test:** create a table with mixed types (clustered int PK, then a non-clustered case), `EXPORT TABLE … TO 's3://…'` (local/minio), assert: files sort by name into handle order, no overlap, and **`IMPORT INTO` the exported files reproduces the table** (row count + checksum). For CSV/SQL, also assert byte-identity vs a `dumpling` run of the same table.
 - [ ] **Step 2-3 — run via the realtikv runner; commit.**
@@ -257,18 +355,21 @@ func TestFileNameSortsByOrdinalWriterFile(t *testing.T) {
 
 | Design section | Task(s) |
 |---|---|
-| Statement, options, credentials, validation | 1.2, 1.4 |
-| Configuration (FORMAT/FILE_SIZE/COMPRESSION/SNAPSHOT/DETACHED) | 1.2, 2.3, 4.1 |
-| Job lifecycle, `tidb_export_jobs`, SHOW/CANCEL, progress | 1.1, 1.3, 1.4, 3.3 |
+| Statement, options, credentials, validation | 1.3 (validation), 6.1 (grammar) |
+| Configuration (FORMAT/FILE_SIZE/COMPRESSION/SNAPSHOT/DETACHED) | 6.1 (grammar), 2.3, 4.1 |
+| Job lifecycle, `tidb_export_jobs`, SHOW/CANCEL, progress | 1.1, 1.3, 3.3, 6.2 (SHOW/CANCEL grammar) |
 | Output data & invariants (handle order, disjoint, monotonic name) | 2.2 (ordinal in key order), 2.3 (per-writer cut), 0.2 (naming) |
-| Data format (byte-identical CSV/SQL via DumpTextRow + charset) | 0.1, 0.2, 2.3, 5.2 |
+| Data format (byte-identical CSV/SQL via DumpTextRow + charset) | 0.1, 0.2, 2.3, 6.3 |
 | Task model (Export type, Dump/PostProcess, no merge-sort, GC) | 2.1, 2.2, 2.4, 3.1 |
 | Range splitting (reuse backfill, continuity, partitioned) | 2.2 |
 | Subtask pipeline (read/encode/upload pools, multipart writer) | 2.3 |
-| Errors/idempotency/cleanup (revert, abort multiparts) | 2.3 (idempotent), 3.2 |
+| Errors/idempotency/cleanup (precheck writable+empty prefix, revert, abort multiparts, `cleanup_status`) | 1.3 (precheck), 2.3 (idempotent), 3.2 (revert + cleanup_status) |
 | Parquet | 4.1 |
-| Auto-scaling (formula TBD post-benchmark) | *deferred — sizing constants from M5 benchmark; not blocking* |
+| Parser last (AST structs inert in M1, grammar on-switch in M6, keyword-safety) | 1.2 (structs), 6.1, 6.2 |
+| Resource sizing / auto-scaling (estimate data size → `ResourceCalc`; cop-worker exposure) | 1.3 (estimate + compute at submit), 2.1/2.2 (scheduler applies slots/nodes), *Design notes → Resource sizing*; **constants** TBD post-M6-benchmark |
+| Shared `EXPORT TABLE`/`EXPORT SCHEMA` backend (`Tables[]`, subtask meta = list of `{TableIdx, KeyRange, NameOrdinal}` units, per-table split — **core, built now** in 2.1/2.2; single-table = `len==1`) | *Design notes → One backend* |
+| `EXPORT SCHEMA` front-end (later, additive: schema enumeration, small-table packing, `EXPORT SCHEMA` grammar, schema-scope job) | *Design notes → One backend* |
 | Metrics | 5.1 |
-| Testing | 0.x/1.x/2.x unit + 5.2 e2e |
+| Testing | 0.x/1.x/2.x unit + 6.3 e2e |
 
-**Open items carried from the design (not blocking M0–M3):** the cleanup-policy question (kept open in the doc); the auto-scaling formula (constants after benchmark); metering detail (reuse IMPORT INTO). These are noted at their tasks, not silently dropped.
+**Open items carried from the design (not blocking M0–M3):** the auto-scaling formula (constants after benchmark); metering detail (reuse IMPORT INTO); heartbeat/stuck-job signal (design defers it — `speed` is the interim signal, a real heartbeat is future work). These are noted at their tasks, not silently dropped. *(The cleanup-policy question is now resolved: synchronous revert + empty-prefix precheck + `cleanup_status`, per Task 1.3 / 3.2.)*
