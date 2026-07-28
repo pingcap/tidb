@@ -880,6 +880,73 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let dead = reader.read_packet().unwrap();
     assert_eq!(dead[0], 0xff, "fetch on a closed cursor errors: {dead:?}");
 
+    // The features the last integration landed, each proven through the
+    // socket rather than only in process -- this seam has hidden three
+    // working-in-process features before.
+    // SHOW STATUS answers rows.
+    let status = run_query(&mut client, &mut reader, "SHOW STATUS LIKE 'Compression'");
+    assert_eq!(status.len(), 1, "{status:?}");
+    assert_eq!(status[0][0], "Compression");
+    // INSERT ... SET writes through the same OK path.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "CREATE TABLE ws (a BIGINT PRIMARY KEY, b BIGINT DEFAULT 7)"
+        ),
+        0
+    );
+    assert_eq!(
+        run_write(&mut client, &mut reader, "INSERT INTO ws SET a = 1"),
+        1
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT a, b FROM ws"),
+        vec![vec!["1".to_owned(), "7".to_owned()]]
+    );
+    // WITH ROLLUP and a multi-argument, inner-ordered GROUP_CONCAT.
+    run_write(
+        &mut client,
+        &mut reader,
+        "CREATE TABLE wr (g BIGINT, v VARCHAR(10), n BIGINT)",
+    );
+    run_write(
+        &mut client,
+        &mut reader,
+        "INSERT INTO wr VALUES (1,'b',2),(1,'a',1),(2,'c',3)",
+    );
+    let rollup = run_query(
+        &mut client,
+        &mut reader,
+        "SELECT g, SUM(n) FROM wr GROUP BY g WITH ROLLUP ORDER BY g, SUM(n)",
+    );
+    assert_eq!(
+        rollup,
+        vec![
+            vec!["NULL".to_owned(), "6".to_owned()],
+            vec!["1".to_owned(), "3".to_owned()],
+            vec!["2".to_owned(), "3".to_owned()],
+        ],
+        "rollup over the wire"
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT GROUP_CONCAT(v, n ORDER BY n SEPARATOR '|') FROM wr"
+        ),
+        vec![vec!["a1|b2|c3".to_owned()]]
+    );
+    // RETURNING parses and is ignored, answering a plain OK like Go.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "INSERT INTO ws (a) VALUES (2) RETURNING a"
+        ),
+        1
+    );
+
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
