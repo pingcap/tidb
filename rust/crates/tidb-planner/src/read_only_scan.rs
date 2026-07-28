@@ -2126,7 +2126,7 @@ fn bind_unbound_operand(
     }
 }
 
-fn is_integer_literal_shape(expr: &Expr) -> bool {
+pub(crate) fn is_integer_literal_shape(expr: &Expr) -> bool {
     match expr {
         Expr::Int(_) => true,
         Expr::Paren(inner) | Expr::Unary(UnaryOp::Plus | UnaryOp::Minus, inner) => {
@@ -2136,7 +2136,7 @@ fn is_integer_literal_shape(expr: &Expr) -> bool {
     }
 }
 
-fn parse_signed_integer(expr: &Expr) -> Option<i64> {
+pub(crate) fn parse_signed_integer(expr: &Expr) -> Option<i64> {
     fn parse(expr: &Expr) -> Option<i128> {
         match expr {
             Expr::Int(value) => value.parse::<i128>().ok(),

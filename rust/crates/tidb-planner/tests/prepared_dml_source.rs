@@ -26,7 +26,7 @@ use tidb_ast::{DmlStmt, Expr, Stmt};
 use tidb_planner::{
     configured_catalog::ConfiguredCatalog,
     prepared_dml::{
-        lower_prepared_write, ConfiguredAssignment, ConfiguredPreparedWrite,
+        lower_prepared_write, lower_text_write, ConfiguredAssignment, ConfiguredPreparedWrite,
         ConfiguredPreparedWriteTemplate, PreparedBindValue, PreparedWriteBindError,
         PreparedWritePlanError, UnsupportedPreparedWrite, MAX_PREPARED_INSERT_ROWS,
     },
@@ -570,5 +570,166 @@ fn binding_carries_the_full_signed_bigint_domain() {
     assert_eq!(
         rows[0].values(),
         int_pairs(&[(0, i64::MIN), (1, i64::MAX)]).as_slice()
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Text-protocol lowering: the same admission with literals in place of markers
+// -----------------------------------------------------------------------------
+
+fn text_template(sql: &str) -> ConfiguredPreparedWriteTemplate {
+    lower_text_write(&parse(sql), &catalog()).expect("text write must lower")
+}
+
+fn text_rejection(sql: &str) -> PreparedWritePlanError {
+    lower_text_write(&parse(sql), &catalog()).expect_err("text write must be rejected")
+}
+
+/// Binds a text template, which supplies no execute values of its own.
+fn text_bound(sql: &str) -> ConfiguredPreparedWrite {
+    text_template(sql).bind(&[]).expect("bind must succeed")
+}
+
+#[test]
+fn a_text_write_carries_its_literals_and_needs_no_execute_values() {
+    let insert = text_template("INSERT INTO campaign28.accounts (id, balance) VALUES (7, -9)");
+    assert_eq!(insert.parameter_count(), 0);
+    let ConfiguredPreparedWrite::InsertRows { rows, .. } =
+        insert.bind(&[]).expect("bind must succeed")
+    else {
+        panic!("expected an INSERT command");
+    };
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].values(), int_pairs(&[(0, 7), (1, -9)]).as_slice());
+}
+
+#[test]
+fn text_and_prepared_writes_produce_the_same_bound_command() {
+    let cases = [
+        (
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (10, 150), (11, 151)",
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?), (?, ?)",
+            ints(&[10, 150, 11, 151]),
+        ),
+        (
+            "UPDATE campaign28.accounts SET balance = 150 WHERE id = 10",
+            "UPDATE campaign28.accounts SET balance = ? WHERE id = ?",
+            ints(&[150, 10]),
+        ),
+        (
+            "UPDATE campaign28.accounts SET balance = balance + 7 WHERE id = 10",
+            "UPDATE campaign28.accounts SET balance = balance + ? WHERE id = ?",
+            ints(&[7, 10]),
+        ),
+        (
+            "DELETE FROM campaign28.accounts WHERE id = 10",
+            "DELETE FROM campaign28.accounts WHERE id = ?",
+            ints(&[10]),
+        ),
+    ];
+    for (text, prepared, params) in cases {
+        assert_eq!(
+            text_bound(text),
+            template(prepared)
+                .bind(&params)
+                .expect("prepared bind must succeed"),
+            "text and prepared must bind identically for {text}"
+        );
+    }
+}
+
+#[test]
+fn a_text_update_reads_its_arithmetic_addend_from_the_literal() {
+    let ConfiguredPreparedWrite::UpdatePoint {
+        handle, assignment, ..
+    } = text_bound("UPDATE campaign28.accounts SET balance = balance + 7 WHERE id = 10")
+    else {
+        panic!("expected an UPDATE command");
+    };
+    assert_eq!(handle, 10);
+    assert_eq!(assignment, ConfiguredAssignment::Add(7));
+}
+
+#[test]
+fn text_writes_refuse_every_shape_the_prepared_path_refuses() {
+    // Same statement modulo the value positions: the refusal must be the same.
+    let cases = [
+        (
+            "INSERT INTO campaign28.accounts (id) VALUES (10)",
+            "INSERT INTO campaign28.accounts (id) VALUES (?)",
+        ),
+        (
+            "REPLACE INTO campaign28.accounts (id, balance) VALUES (10, 1)",
+            "REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)",
+        ),
+        (
+            "UPDATE campaign28.accounts SET id = 10 WHERE id = 11",
+            "UPDATE campaign28.accounts SET id = ? WHERE id = ?",
+        ),
+        (
+            "UPDATE campaign28.accounts SET balance = balance - 1 WHERE id = 10",
+            "UPDATE campaign28.accounts SET balance = balance - ? WHERE id = ?",
+        ),
+        (
+            "UPDATE campaign28.accounts SET balance = 1 WHERE balance = 2",
+            "UPDATE campaign28.accounts SET balance = ? WHERE balance = ?",
+        ),
+        (
+            "UPDATE campaign28.accounts SET balance = 1 WHERE id > 2",
+            "UPDATE campaign28.accounts SET balance = ? WHERE id > ?",
+        ),
+        (
+            "DELETE FROM campaign28.accounts",
+            "DELETE FROM campaign28.accounts",
+        ),
+        (
+            "UPDATE campaign28.accounts SET balance = 1 WHERE id = 2 LIMIT 1",
+            "UPDATE campaign28.accounts SET balance = ? WHERE id = ? LIMIT 1",
+        ),
+    ];
+    for (text, prepared) in cases {
+        assert_eq!(
+            text_rejection(text),
+            rejection(prepared),
+            "text and prepared must refuse {text} identically"
+        );
+    }
+}
+
+#[test]
+fn a_text_write_value_must_be_a_literal_this_boundary_can_evaluate() {
+    // A column reference, an expression, and a marker are all values the text
+    // path cannot evaluate to a bound value.
+    assert_eq!(
+        text_rejection("INSERT INTO campaign28.accounts (id, balance) VALUES (10, balance)"),
+        PreparedWritePlanError::TextValueShape { position: 1 }
+    );
+    assert_eq!(
+        text_rejection("DELETE FROM campaign28.accounts WHERE id = ?"),
+        PreparedWritePlanError::TextValueShape { position: 0 }
+    );
+    assert_eq!(
+        text_rejection("UPDATE campaign28.accounts SET balance = balance * 2 WHERE id = 1"),
+        PreparedWritePlanError::UpdateAssignmentShape
+    );
+}
+
+#[test]
+fn a_text_value_of_the_wrong_kind_fails_exactly_where_a_bound_parameter_does() {
+    // A string written into an integer column is the same bind-time refusal,
+    // at the same position, as binding a string parameter there.
+    let text_error = text_template("UPDATE campaign28.accounts SET balance = 'x' WHERE id = 10")
+        .bind(&[])
+        .expect_err("a string into an integer column is rejected");
+    let prepared_error = template("UPDATE campaign28.accounts SET balance = ? WHERE id = ?")
+        .bind(&[
+            PreparedBindValue::Bytes(b"x".to_vec()),
+            PreparedBindValue::Int(10),
+        ])
+        .expect_err("a string parameter into an integer column is rejected");
+    assert_eq!(text_error, prepared_error);
+    assert_eq!(
+        text_error,
+        PreparedWriteBindError::NonIntegerParameter { position: 0 }
     );
 }

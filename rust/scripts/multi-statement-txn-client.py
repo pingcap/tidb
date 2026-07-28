@@ -6,7 +6,10 @@ Drives two independent connections through one open transaction each, which is
 the only way to observe what a transaction actually is: that a connection reads
 its own uncommitted writes, that nobody else does until COMMIT, that a
 pessimistic lock really blocks another transaction, and that two optimistic
-transactions racing for one row produce exactly one winner.
+transactions racing for one row produce exactly one winner. The `text` command
+runs the same transaction legs over the TEXT protocol only: every INSERT,
+UPDATE, DELETE, and locking read carries its own literals in a COM_QUERY
+packet, with nothing prepared.
 
 Every check is an assertion against the wire: a row value, an affected-row
 count, or a MySQL error code. Any deviation exits nonzero.
@@ -244,10 +247,142 @@ def optimistic(args: argparse.Namespace) -> None:
         emit("winner_is_durable", balance=args.first_balance)
 
 
+def write(connection: MysqlConnection, sql: str, *, name: str, expected_affected: int) -> None:
+    """Runs one text-protocol DML statement, asserting its OK affected-row count.
+
+    This is the mysql-client-style path: the statement carries its own literals
+    in a COM_QUERY packet, with no prepare, no parameter markers, and no binary
+    execute values anywhere.
+    """
+    connection.write_packet(bytes([COM_QUERY]) + sql.encode(), 0)
+    packet = connection.read_packet(1)
+    if packet and packet[0] == 0xFF:
+        error = parse_error(packet)
+        raise ProtocolError(f"{name}: {sql!r} failed with {error.code} {error.message}")
+    if not packet or packet[0] != 0x00:
+        raise ProtocolError(f"{name}: {sql!r} did not answer with an OK packet: {packet.hex()}")
+    affected, cursor = read_lenenc(packet, 1)
+    if affected is None or cursor > len(packet):
+        raise ProtocolError(f"{name}: {sql!r} OK packet omitted affected rows: {packet.hex()}")
+    if affected != expected_affected:
+        raise ProtocolError(
+            f"{name}: {sql!r} reported {affected} affected rows, expected {expected_affected}"
+        )
+
+
+def expect_no_row(connection: MysqlConnection, select_sql: str, *, name: str) -> None:
+    rows = run(connection, select_sql, name=name)
+    if rows:
+        raise ProtocolError(f"{name}: expected no row, observed {rows}")
+
+
+def text(args: argparse.Namespace) -> None:
+    """Every DML leg of a transaction over the TEXT protocol only.
+
+    No statement in this proof is prepared: each INSERT/UPDATE/DELETE carries
+    its own literals in a COM_QUERY packet, inside and outside an explicit
+    pessimistic transaction, and the locking read is text as well.
+    """
+    table = f"{args.database}.{args.table}"
+    select_sql = f"SELECT id, balance FROM {table} WHERE id = {args.row_id}"
+    lock_sql = f"{select_sql} FOR UPDATE NOWAIT"
+    inserted_sql = f"SELECT id, balance FROM {table} WHERE id = {args.insert_id}"
+
+    with connect(args) as first, connect(args) as second:
+        before = read_row(second, select_sql, name="baseline")
+        emit("baseline", row=before)
+        if before[1] == str(args.new_balance):
+            raise ProtocolError("the proof needs a new balance different from the stored one")
+        expect_no_row(second, inserted_sql, name="the inserted row must not exist yet")
+
+        run(first, "BEGIN PESSIMISTIC", name="A BEGIN")
+        write(
+            first,
+            f"UPDATE {table} SET balance = {args.new_balance} WHERE id = {args.row_id}",
+            name="A text UPDATE",
+            expected_affected=1,
+        )
+        emit("text_update_in_transaction", id=args.row_id, balance=args.new_balance)
+
+        # Read-your-own-writes over text, exactly as the prepared path proves it.
+        expect_row(
+            first,
+            select_sql,
+            [str(args.row_id), str(args.new_balance)],
+            name="A reads its own text write",
+        )
+        # Isolation: B still sees the pre-transaction value.
+        expect_row(second, select_sql, before, name="B is isolated")
+
+        # A holds the row's pessimistic lock, so B's TEXT locking read is refused.
+        run(second, "BEGIN PESSIMISTIC", name="B BEGIN")
+        error = require_query_error(
+            second, lock_sql, ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, name="B text NOWAIT"
+        )
+        emit("text_lock_refused", code=error.code, state=error.state, message=error.message)
+        expect_row(second, select_sql, before, name="B survives its failed statement")
+        run(second, "ROLLBACK", name="B ROLLBACK")
+
+        # A text INSERT in the same transaction, published by the same COMMIT.
+        write(
+            first,
+            f"INSERT INTO {table} (id, balance) VALUES ({args.insert_id}, {args.insert_balance})",
+            name="A text INSERT",
+            expected_affected=1,
+        )
+        run(first, "COMMIT", name="A COMMIT")
+        emit("text_transaction_committed", id=args.row_id, inserted=args.insert_id)
+
+        expect_row(
+            second,
+            select_sql,
+            [str(args.row_id), str(args.new_balance)],
+            name="B reads the committed text UPDATE",
+        )
+        expect_row(
+            second,
+            inserted_sql,
+            [str(args.insert_id), str(args.insert_balance)],
+            name="B reads the committed text INSERT",
+        )
+
+        # Autocommit text DML: an arithmetic UPDATE and a point DELETE, each its
+        # own single-statement transaction.
+        write(
+            second,
+            f"UPDATE {table} SET balance = balance + 1 WHERE id = {args.insert_id}",
+            name="text autocommit UPDATE",
+            expected_affected=1,
+        )
+        expect_row(
+            second,
+            inserted_sql,
+            [str(args.insert_id), str(args.insert_balance + 1)],
+            name="the autocommit text UPDATE is durable",
+        )
+        emit("text_autocommit_update", id=args.insert_id, balance=args.insert_balance + 1)
+        write(
+            second,
+            f"DELETE FROM {table} WHERE id = {args.insert_id}",
+            name="text autocommit DELETE",
+            expected_affected=1,
+        )
+        expect_no_row(second, inserted_sql, name="the autocommit text DELETE is durable")
+        emit("text_autocommit_delete", id=args.insert_id)
+
+        # Parity: a shape the prepared write path refuses is refused as text too,
+        # rather than silently running as some other statement.
+        rows, error = query(second, f"UPDATE {table} SET balance = 1 WHERE balance = 2")
+        if error is None:
+            raise ProtocolError(
+                f"a non-point text UPDATE must be refused, got rows={rows}"
+            )
+        emit("text_refusal_matches_prepared", code=error.code, message=error.message)
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     subcommands = result.add_subparsers(dest="command", required=True)
-    for name in ("pessimistic", "optimistic"):
+    for name in ("pessimistic", "optimistic", "text"):
         command = subcommands.add_parser(name)
         command.add_argument("--host", default="127.0.0.1")
         command.add_argument("--port", type=int, required=True)
@@ -256,21 +391,22 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--database", required=True)
         command.add_argument("--table", required=True)
         command.add_argument("--row-id", type=int, required=True)
-        if name == "pessimistic":
-            command.add_argument("--new-balance", type=int, required=True)
-        else:
+        if name == "optimistic":
             command.add_argument("--first-balance", type=int, required=True)
             command.add_argument("--second-balance", type=int, required=True)
+        else:
+            command.add_argument("--new-balance", type=int, required=True)
+        if name == "text":
+            command.add_argument("--insert-id", type=int, required=True)
+            command.add_argument("--insert-balance", type=int, required=True)
     return result
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        if args.command == "pessimistic":
-            pessimistic(args)
-        else:
-            optimistic(args)
+        commands = {"pessimistic": pessimistic, "optimistic": optimistic, "text": text}
+        commands[args.command](args)
     except (ProtocolError, OSError) as error:
         emit("failed", command=args.command, error=str(error))
         return 1

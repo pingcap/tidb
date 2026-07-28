@@ -29,7 +29,9 @@ use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, StagedRowOverlay, TransactionStatementError,
 };
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
-use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
+use tidb_exec::real_tikv_dml::{
+    commit_configured_write, prepare_configured_write, prepare_text_write,
+};
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
     ProductionReadSessionFactory, ProductionReadTransport, ReadProcessShutdownError,
@@ -37,7 +39,7 @@ use tidb_exec::real_tikv_read::{
     RealTiKvReadSessionOpener,
 };
 use tidb_planner::aggregation_descriptor::AggregateKind;
-use tidb_planner::prepared_dml::PreparedBindValue;
+use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::{
     configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredColumnKind, ConfiguredIndex,
     ConfiguredScalarType, ConfiguredTable, PreparedAggregate, PreparedAggregateKind,
@@ -501,6 +503,41 @@ impl RealTiKvServerSession {
         )
     }
 
+    /// Binds one write template and applies it, whichever protocol carried it.
+    ///
+    /// Inside an explicit transaction the write is buffered into it and
+    /// published only by COMMIT; outside one it commits its own
+    /// single-statement transaction. A text statement supplies no bind values
+    /// because its template already carries them, so both protocols reach
+    /// storage through this one seam.
+    fn commit_bound_write(
+        &mut self,
+        template: &ConfiguredPreparedWriteTemplate,
+        parameters: &[PreparedBindValue],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let bound = template
+            .bind(parameters)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let buffered = self
+            .transaction_for_statement()?
+            .map(|transaction| transaction.execute_write(&bound));
+        let report = match buffered {
+            Some(Ok(report)) => report,
+            Some(Err(error)) => return Err(self.report(&error)),
+            None => commit_configured_write(
+                &self.transaction_opener,
+                &bound,
+                PRODUCTION_CONTROL_PLANE_TIMEOUT,
+            )
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+        };
+        Ok(WriteOutcome {
+            affected_rows: report.affected_rows,
+            // This node has no auto-increment allocator.
+            last_insert_id: 0,
+        })
+    }
+
     /// Allocates this session's next query identity and its activity lease.
     fn begin_query(&mut self) -> Result<(u64, QueryActivityLease), SqlQueryError> {
         let query_id = self.next_query_id;
@@ -763,36 +800,26 @@ impl QuerySession for RealTiKvServerSession {
         Ok(PreparedWrite::new(template))
     }
 
+    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let template = prepare_text_write(sql, &catalog)
+            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
+        // Not a write statement at all: the caller runs it as an ordinary query.
+        let Some(template) = template else {
+            return Ok(None);
+        };
+        // A text statement carries its own values, so binding supplies none; the
+        // bound write, and everything downstream of it, is the prepared path's.
+        self.commit_bound_write(&template, &[]).map(Some)
+    }
+
     fn execute_prepared_write(
         &mut self,
         statement: &PreparedWrite,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let bound = statement
-            .template()
-            .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        // Inside an explicit transaction the write is buffered into it and
-        // published only by COMMIT; outside one it commits its own
-        // single-statement transaction exactly as before.
-        let buffered = self
-            .transaction_for_statement()?
-            .map(|transaction| transaction.execute_write(&bound));
-        let report = match buffered {
-            Some(Ok(report)) => report,
-            Some(Err(error)) => return Err(self.report(&error)),
-            None => commit_configured_write(
-                &self.transaction_opener,
-                &bound,
-                PRODUCTION_CONTROL_PLANE_TIMEOUT,
-            )
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
-        };
-        Ok(WriteOutcome {
-            affected_rows: report.affected_rows,
-            // This node has no auto-increment allocator.
-            last_insert_id: 0,
-        })
+        self.commit_bound_write(statement.template(), parameters)
     }
 
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {

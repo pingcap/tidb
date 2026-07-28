@@ -12,13 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Prepared signed-`BIGINT` INSERT and point UPDATE templates.
+//! Signed-`BIGINT` INSERT, point UPDATE, and point DELETE write templates.
 //!
 //! These are the only write shapes the configured node admits. A template owns
 //! no SQL text and no storage: binding positional non-NULL `MYSQL_TYPE_LONGLONG`
 //! values yields a storage-neutral [`ConfiguredPreparedWrite`] that the executor
 //! lowers into encoded mutations. Every unsupported INSERT/UPDATE feature is
 //! rejected here, before a timestamp or any TiKV work exists.
+//!
+//! One lowering serves both wire protocols. A prepared statement writes a
+//! parameter marker at every value position and binds its values at execute
+//! time ([`lower_prepared_write`]); a text `COM_QUERY` statement writes the
+//! literals inline and carries them in the template itself
+//! ([`lower_text_write`]). Only the value-position admission differs — the
+//! table, column, shape, and predicate validation, and every bind-time type
+//! check, are the same code for both, so the two protocols admit and refuse
+//! exactly the same statements.
 
 use std::{error::Error, fmt};
 
@@ -29,7 +38,10 @@ use tidb_ast::{
 
 use crate::{
     configured_catalog::{ConfiguredCatalog, ConfiguredTableLookupError},
-    read_only_scan::{fold_identifier, ConfiguredColumnKind, ConfiguredTable},
+    read_only_scan::{
+        fold_identifier, is_integer_literal_shape, parse_signed_integer, ConfiguredColumnKind,
+        ConfiguredTable,
+    },
 };
 
 /// Maximum `VALUES` rows admitted by one prepared INSERT template.
@@ -38,7 +50,7 @@ use crate::{
 /// well inside the transaction coordinator's own mutation bound.
 pub const MAX_PREPARED_INSERT_ROWS: usize = 128;
 
-/// Why a parsed DML statement cannot become a configured prepared template.
+/// Why a parsed DML statement cannot become a configured write template.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreparedWritePlanError {
     /// The statement's table name did not resolve to one configured entry.
@@ -86,34 +98,40 @@ pub enum PreparedWritePlanError {
     UpdateAssignmentCount(usize),
     /// UPDATE cannot move a row: its clustered handle is not assignable.
     UpdateClusteredHandle(String),
-    /// The `SET` expression is neither `?` nor `<same column> + ?`.
+    /// The `SET` expression is neither a value nor `<same column> + <value>`.
     UpdateAssignmentShape,
     /// A point UPDATE/DELETE requires exactly one clustered-primary-key
-    /// equality against a marker in `WHERE`.
+    /// equality in `WHERE`, against this protocol's own value.
     PointHandlePredicate,
+    /// A text write's value position is not a literal this boundary can
+    /// evaluate to a bindable value.
+    TextValueShape {
+        /// Position of the offending value in left-to-right source order.
+        position: usize,
+    },
 }
 
 impl fmt::Display for PreparedWritePlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Catalog(error) => write!(formatter, "prepared write table rejected: {error}"),
+            Self::Catalog(error) => write!(formatter, "write target table rejected: {error}"),
             Self::MalformedTableName(name) => {
                 write!(formatter, "unsupported qualified table name: {name}")
             }
             Self::Unsupported(feature) => {
-                write!(formatter, "unsupported prepared write feature: {feature:?}")
+                write!(formatter, "unsupported write feature: {feature:?}")
             }
             Self::UnknownColumn(column) => write!(formatter, "unknown column: {column}"),
             Self::InsertColumnCoverage { configured, named } => write!(
                 formatter,
-                "prepared INSERT must name all {configured} configured columns, found {named}"
+                "INSERT must name all {configured} configured columns, found {named}"
             ),
             Self::DuplicateInsertColumn(column) => {
-                write!(formatter, "prepared INSERT names column {column} twice")
+                write!(formatter, "INSERT names column {column} twice")
             }
             Self::InsertRowCount { rows, limit } => write!(
                 formatter,
-                "prepared INSERT admits 1 to {limit} VALUES rows, found {rows}"
+                "INSERT admits 1 to {limit} VALUES rows, found {rows}"
             ),
             Self::InsertRowArity {
                 row,
@@ -121,7 +139,7 @@ impl fmt::Display for PreparedWritePlanError {
                 columns,
             } => write!(
                 formatter,
-                "prepared INSERT row {row} has {values} values for {columns} columns"
+                "INSERT row {row} has {values} values for {columns} columns"
             ),
             Self::MarkerPosition { expected, found } => match found {
                 Some(found) => write!(
@@ -135,17 +153,20 @@ impl fmt::Display for PreparedWritePlanError {
             },
             Self::UpdateAssignmentCount(count) => write!(
                 formatter,
-                "prepared UPDATE requires exactly one assignment, found {count}"
+                "UPDATE requires exactly one assignment, found {count}"
             ),
             Self::UpdateClusteredHandle(column) => write!(
                 formatter,
-                "prepared UPDATE cannot assign clustered primary key {column}"
+                "UPDATE cannot assign clustered primary key {column}"
             ),
             Self::UpdateAssignmentShape => formatter.write_str(
-                "prepared UPDATE assigns either ? or the same column plus ? to a stored column",
+                "UPDATE assigns either a value or the same column plus a value to a stored column",
             ),
-            Self::PointHandlePredicate => formatter.write_str(
-                "prepared point write requires one clustered primary-key equality against a marker",
+            Self::PointHandlePredicate => formatter
+                .write_str("a point write requires exactly one clustered primary-key equality"),
+            Self::TextValueShape { position } => write!(
+                formatter,
+                "text write requires a literal value at position {position}"
             ),
         }
     }
@@ -335,6 +356,101 @@ fn expect_bytes(
     }
 }
 
+/// How a lowering admits the value at one write position.
+///
+/// The two wire protocols differ here and nowhere else: a prepared statement
+/// writes `?` and supplies the value at execute time, a text statement writes
+/// the value itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ValueMode {
+    /// A parameter marker at its exact left-to-right position.
+    Marker,
+    /// A literal the statement text already carries.
+    Literal,
+}
+
+/// One admitted value position of a write template.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TemplateValue {
+    /// Filled by the execute packet, in marker order.
+    Marker,
+    /// Carried by the statement text.
+    Literal(PreparedBindValue),
+}
+
+/// Number of execute-packet values a slot list consumes.
+fn marker_count(slots: &[TemplateValue]) -> usize {
+    slots
+        .iter()
+        .filter(|slot| matches!(slot, TemplateValue::Marker))
+        .count()
+}
+
+/// Resolves every slot to its value, taking marker slots from `params` in
+/// order.
+///
+/// The result is positional and complete, so every bind-time type check runs
+/// against the same position numbers regardless of which protocol supplied the
+/// value.
+fn resolve_values(
+    slots: &[TemplateValue],
+    params: &[PreparedBindValue],
+) -> Result<Vec<PreparedBindValue>, PreparedWriteBindError> {
+    let expected = marker_count(slots);
+    if params.len() != expected {
+        return Err(PreparedWriteBindError::ParameterCount {
+            expected,
+            found: params.len(),
+        });
+    }
+    let mut supplied = params.iter();
+    Ok(slots
+        .iter()
+        .map(|slot| match slot {
+            TemplateValue::Marker => supplied
+                .next()
+                .expect("the marker count equals the supplied value count")
+                .clone(),
+            TemplateValue::Literal(value) => value.clone(),
+        })
+        .collect())
+}
+
+/// Admits one value position under the statement's own protocol.
+fn admit_value(
+    expr: &Expr,
+    position: usize,
+    mode: ValueMode,
+) -> Result<TemplateValue, PreparedWritePlanError> {
+    match mode {
+        ValueMode::Marker => {
+            expect_marker(expr, position)?;
+            Ok(TemplateValue::Marker)
+        }
+        ValueMode::Literal => literal_bind_value(expr)
+            .map(TemplateValue::Literal)
+            .ok_or(PreparedWritePlanError::TextValueShape { position }),
+    }
+}
+
+/// Evaluates a text statement's literal to the same bindable value a prepared
+/// execute packet would have supplied.
+///
+/// Signed integer literals reuse the read path's own literal folding, so a
+/// text write and a text read admit exactly the same integer shapes; a string
+/// literal carries its decoded bytes for a `CHAR` column.
+fn literal_bind_value(expr: &Expr) -> Option<PreparedBindValue> {
+    match expr {
+        Expr::String(value) | Expr::RawString(value) => {
+            Some(PreparedBindValue::Bytes(value.clone().into_bytes()))
+        }
+        literal if is_integer_literal_shape(literal) => {
+            parse_signed_integer(literal).map(PreparedBindValue::Int)
+        }
+        _ => None,
+    }
+}
+
 /// A validated multi-row INSERT template over the configured columns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredPreparedInsertTemplate {
@@ -342,13 +458,15 @@ pub struct ConfiguredPreparedInsertTemplate {
     /// Configured column index for each named INSERT column, in source order.
     columns: Vec<usize>,
     rows: usize,
+    /// One value slot per `(row, column)`, in left-to-right source order.
+    values: Vec<TemplateValue>,
 }
 
 impl ConfiguredPreparedInsertTemplate {
     /// Number of positional markers across every `VALUES` row.
     #[must_use]
-    pub const fn parameter_count(&self) -> usize {
-        self.rows * self.columns.len()
+    pub fn parameter_count(&self) -> usize {
+        marker_count(&self.values)
     }
 
     /// Number of `VALUES` rows this template inserts.
@@ -367,14 +485,8 @@ impl ConfiguredPreparedInsertTemplate {
         &self,
         params: &[PreparedBindValue],
     ) -> Result<ConfiguredPreparedWrite, PreparedWriteBindError> {
-        let expected = self.parameter_count();
-        if params.len() != expected {
-            return Err(PreparedWriteBindError::ParameterCount {
-                expected,
-                found: params.len(),
-            });
-        }
-        let rows = params
+        let values = resolve_values(&self.values, params)?;
+        let rows = values
             .chunks_exact(self.columns.len())
             .map(|values| ConfiguredInsertRow {
                 values: self
@@ -398,6 +510,8 @@ pub struct ConfiguredPreparedUpdateTemplate {
     table: ConfiguredTable,
     column_index: usize,
     assignment: PreparedAssignmentShape,
+    /// The assigned value's slot, then the clustered handle's.
+    values: [TemplateValue; 2],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -411,10 +525,10 @@ enum PreparedAssignmentShape {
 }
 
 impl ConfiguredPreparedUpdateTemplate {
-    /// A point UPDATE binds the assigned value and then the handle.
+    /// Markers among the assigned value and the clustered handle.
     #[must_use]
-    pub const fn parameter_count(&self) -> usize {
-        2
+    pub fn parameter_count(&self) -> usize {
+        marker_count(&self.values)
     }
 
     /// Configured index of the assigned stored column.
@@ -427,11 +541,9 @@ impl ConfiguredPreparedUpdateTemplate {
         &self,
         params: &[PreparedBindValue],
     ) -> Result<ConfiguredPreparedWrite, PreparedWriteBindError> {
-        let [value, handle] = params else {
-            return Err(PreparedWriteBindError::ParameterCount {
-                expected: 2,
-                found: params.len(),
-            });
+        let values = resolve_values(&self.values, params)?;
+        let [value, handle] = values.as_slice() else {
+            unreachable!("a point UPDATE resolves exactly two values");
         };
         // The clustered handle at position 1 is always a signed integer; the
         // assigned value at position 0 follows the target column's type, resolved
@@ -457,24 +569,24 @@ impl ConfiguredPreparedUpdateTemplate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredPreparedDeleteTemplate {
     table: ConfiguredTable,
+    /// The clustered handle's slot.
+    values: [TemplateValue; 1],
 }
 
 impl ConfiguredPreparedDeleteTemplate {
-    /// A point DELETE binds only the clustered handle.
+    /// One marker if the clustered handle is a marker, none if it is a literal.
     #[must_use]
-    pub const fn parameter_count(&self) -> usize {
-        1
+    pub fn parameter_count(&self) -> usize {
+        marker_count(&self.values)
     }
 
     fn bind(
         &self,
         params: &[PreparedBindValue],
     ) -> Result<ConfiguredPreparedWrite, PreparedWriteBindError> {
-        let [handle] = params else {
-            return Err(PreparedWriteBindError::ParameterCount {
-                expected: 1,
-                found: params.len(),
-            });
+        let values = resolve_values(&self.values, params)?;
+        let [handle] = values.as_slice() else {
+            unreachable!("a point DELETE resolves exactly one value");
         };
         // The clustered handle binds at position 0 and targets an integer PK,
         // so a string parameter is a type error.
@@ -554,18 +666,40 @@ pub fn lower_prepared_write(
     statement: &Stmt,
     catalog: &ConfiguredCatalog,
 ) -> Result<ConfiguredPreparedWriteTemplate, PreparedWritePlanError> {
+    lower_write(statement, catalog, ValueMode::Marker)
+}
+
+/// Lowers a text-protocol statement into the same configured write template,
+/// reading each value from the statement's own literal instead of from an
+/// execute packet.
+///
+/// The resulting template has no markers, so binding it with no values yields
+/// the complete write. Every other admission rule -- and every refusal -- is
+/// the prepared path's, unchanged.
+pub fn lower_text_write(
+    statement: &Stmt,
+    catalog: &ConfiguredCatalog,
+) -> Result<ConfiguredPreparedWriteTemplate, PreparedWritePlanError> {
+    lower_write(statement, catalog, ValueMode::Literal)
+}
+
+fn lower_write(
+    statement: &Stmt,
+    catalog: &ConfiguredCatalog,
+    mode: ValueMode,
+) -> Result<ConfiguredPreparedWriteTemplate, PreparedWritePlanError> {
     let Stmt::Dml(dml) = statement else {
         return Err(unsupported(UnsupportedPreparedWrite::NonDmlStatement));
     };
     match dml.as_ref() {
         DmlStmt::Insert(insert) => {
-            lower_prepared_insert(insert, catalog).map(ConfiguredPreparedWriteTemplate::Insert)
+            lower_insert(insert, catalog, mode).map(ConfiguredPreparedWriteTemplate::Insert)
         }
         DmlStmt::Update(update) => {
-            lower_prepared_update(update, catalog).map(ConfiguredPreparedWriteTemplate::Update)
+            lower_update(update, catalog, mode).map(ConfiguredPreparedWriteTemplate::Update)
         }
         DmlStmt::Delete(delete) => {
-            lower_prepared_delete(delete, catalog).map(ConfiguredPreparedWriteTemplate::Delete)
+            lower_delete(delete, catalog, mode).map(ConfiguredPreparedWriteTemplate::Delete)
         }
         DmlStmt::With { .. } => Err(unsupported(UnsupportedPreparedWrite::CommonTableExpression)),
         DmlStmt::ImportInto(_)
@@ -582,6 +716,14 @@ pub fn lower_prepared_write(
 pub fn lower_prepared_insert(
     statement: &InsertStmt,
     catalog: &ConfiguredCatalog,
+) -> Result<ConfiguredPreparedInsertTemplate, PreparedWritePlanError> {
+    lower_insert(statement, catalog, ValueMode::Marker)
+}
+
+fn lower_insert(
+    statement: &InsertStmt,
+    catalog: &ConfiguredCatalog,
+    mode: ValueMode,
 ) -> Result<ConfiguredPreparedInsertTemplate, PreparedWritePlanError> {
     if statement.replace {
         return Err(unsupported(UnsupportedPreparedWrite::Replace));
@@ -625,7 +767,7 @@ pub fn lower_prepared_insert(
         });
     }
 
-    let mut position = 0;
+    let mut values = Vec::with_capacity(rows * columns.len());
     for (row_index, row) in statement.rows.iter().enumerate() {
         if row.len() != columns.len() {
             return Err(PreparedWritePlanError::InsertRowArity {
@@ -635,8 +777,8 @@ pub fn lower_prepared_insert(
             });
         }
         for value in row {
-            expect_marker(value, position)?;
-            position += 1;
+            let position = values.len();
+            values.push(admit_value(value, position, mode)?);
         }
     }
 
@@ -644,6 +786,7 @@ pub fn lower_prepared_insert(
         table: table.clone(),
         columns,
         rows,
+        values,
     })
 }
 
@@ -651,6 +794,14 @@ pub fn lower_prepared_insert(
 pub fn lower_prepared_update(
     statement: &UpdateStmt,
     catalog: &ConfiguredCatalog,
+) -> Result<ConfiguredPreparedUpdateTemplate, PreparedWritePlanError> {
+    lower_update(statement, catalog, ValueMode::Marker)
+}
+
+fn lower_update(
+    statement: &UpdateStmt,
+    catalog: &ConfiguredCatalog,
+    mode: ValueMode,
 ) -> Result<ConfiguredPreparedUpdateTemplate, PreparedWritePlanError> {
     if statement.ignore {
         return Err(unsupported(UnsupportedPreparedWrite::Ignore));
@@ -685,20 +836,10 @@ pub fn lower_prepared_update(
         ));
     }
 
-    let shape = match &assignment.value {
-        Expr::ParamMarker { order, .. } => {
-            expect_position(*order, 0)?;
-            // The set value's type follows the target column: an integer column
-            // binds a signed integer, a CHAR column raw string bytes.
-            if column.scalar_type().integer_range().is_some() {
-                PreparedAssignmentShape::SetInt
-            } else {
-                PreparedAssignmentShape::SetBytes
-            }
-        }
+    let (shape, value) = match &assignment.value {
         Expr::Binary(BinaryOp::Plus, left, right) => {
-            // `column + ?` is signed integer arithmetic; a non-integer column has
-            // no such assignment in this bounded write path.
+            // `column + <value>` is signed integer arithmetic; a non-integer
+            // column has no such assignment in this bounded write path.
             if column.scalar_type().integer_range().is_none() {
                 return Err(PreparedWritePlanError::UpdateAssignmentShape);
             }
@@ -709,23 +850,43 @@ pub fn lower_prepared_update(
             if addend_index != column_index {
                 return Err(PreparedWritePlanError::UpdateAssignmentShape);
             }
-            expect_marker(right, 0)?;
-            PreparedAssignmentShape::Add
+            (PreparedAssignmentShape::Add, admit_value(right, 0, mode)?)
         }
-        _ => return Err(PreparedWritePlanError::UpdateAssignmentShape),
+        assigned => {
+            let value = match admit_value(assigned, 0, mode) {
+                Ok(value) => value,
+                // An expression that is not a value at all is an
+                // assignment-shape refusal (the `column + value` form is the
+                // arm above), not a misplaced or missing marker.
+                Err(
+                    PreparedWritePlanError::MarkerPosition { found: None, .. }
+                    | PreparedWritePlanError::TextValueShape { .. },
+                ) => return Err(PreparedWritePlanError::UpdateAssignmentShape),
+                Err(error) => return Err(error),
+            };
+            // The set value's type follows the target column: an integer column
+            // binds a signed integer, a CHAR column raw string bytes.
+            let shape = if column.scalar_type().integer_range().is_some() {
+                PreparedAssignmentShape::SetInt
+            } else {
+                PreparedAssignmentShape::SetBytes
+            };
+            (shape, value)
+        }
     };
 
     let Some(predicate) = &statement.where_clause else {
         return Err(unsupported(UnsupportedPreparedWrite::MissingWhere));
     };
-    // The UPDATE binds its assigned value at position 0, so the handle marker
-    // is position 1.
-    validate_handle_equality(predicate, table_ref, table, 1)?;
+    // The UPDATE binds its assigned value at position 0, so the handle is
+    // position 1.
+    let handle = validate_handle_equality(predicate, table_ref, table, 1, mode)?;
 
     Ok(ConfiguredPreparedUpdateTemplate {
         table: table.clone(),
         column_index,
         assignment: shape,
+        values: [value, handle],
     })
 }
 
@@ -736,6 +897,14 @@ pub fn lower_prepared_update(
 pub fn lower_prepared_delete(
     statement: &DeleteStmt,
     catalog: &ConfiguredCatalog,
+) -> Result<ConfiguredPreparedDeleteTemplate, PreparedWritePlanError> {
+    lower_delete(statement, catalog, ValueMode::Marker)
+}
+
+fn lower_delete(
+    statement: &DeleteStmt,
+    catalog: &ConfiguredCatalog,
+    mode: ValueMode,
 ) -> Result<ConfiguredPreparedDeleteTemplate, PreparedWritePlanError> {
     if statement.ignore {
         return Err(unsupported(UnsupportedPreparedWrite::Ignore));
@@ -762,10 +931,11 @@ pub fn lower_prepared_delete(
         return Err(unsupported(UnsupportedPreparedWrite::MissingWhere));
     };
     // The DELETE binds only the clustered handle, at position 0.
-    validate_handle_equality(predicate, table_ref, table, 0)?;
+    let handle = validate_handle_equality(predicate, table_ref, table, 0, mode)?;
 
     Ok(ConfiguredPreparedDeleteTemplate {
         table: table.clone(),
+        values: [handle],
     })
 }
 
@@ -774,20 +944,21 @@ fn validate_handle_equality(
     table_ref: &TableRef,
     table: &ConfiguredTable,
     handle_position: usize,
-) -> Result<(), PreparedWritePlanError> {
+    mode: ValueMode,
+) -> Result<TemplateValue, PreparedWritePlanError> {
     let Expr::Binary(BinaryOp::Eq, left, right) = predicate else {
         return Err(PreparedWritePlanError::PointHandlePredicate);
     };
-    let (path, marker) = match (left.as_ref(), right.as_ref()) {
-        (Expr::Column(path), marker) => (path, marker),
-        (marker, Expr::Column(path)) => (path, marker),
+    let (path, handle) = match (left.as_ref(), right.as_ref()) {
+        (Expr::Column(path), handle) => (path, handle),
+        (handle, Expr::Column(path)) => (path, handle),
         _ => return Err(PreparedWritePlanError::PointHandlePredicate),
     };
     let (_, column) = resolve_write_column(path, table_ref, table)?;
     if column.kind() != ConfiguredColumnKind::ClusteredPrimaryKey {
         return Err(PreparedWritePlanError::PointHandlePredicate);
     }
-    expect_marker(marker, handle_position)
+    admit_value(handle, handle_position, mode)
 }
 
 fn resolve_write_table<'a>(

@@ -45,8 +45,9 @@ use tidb_codec::{
 use tidb_datatype::{produce_char_value, Datum};
 use tidb_planner::{
     prepared_dml::{
-        lower_prepared_write, ConfiguredAssignment, ConfiguredInsertRow, ConfiguredPreparedWrite,
-        ConfiguredPreparedWriteTemplate, PreparedBindValue, PreparedWritePlanError,
+        lower_prepared_write, lower_text_write, ConfiguredAssignment, ConfiguredInsertRow,
+        ConfiguredPreparedWrite, ConfiguredPreparedWriteTemplate, PreparedBindValue,
+        PreparedWritePlanError,
     },
     read_only_scan::{
         configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredColumnKind,
@@ -861,6 +862,35 @@ pub fn prepare_configured_write(
         ConfiguredWriteError::Parse(format!("{} at byte {}", error.message, error.offset))
     })?;
     lower_prepared_write(&statement, catalog).map_err(ConfiguredWriteError::Plan)
+}
+
+/// Parses and admits one text-protocol `COM_QUERY` statement as a write.
+///
+/// Returns `None` when the statement is not a single-table INSERT/UPDATE/DELETE
+/// — including when it does not parse at all, so an unparsable statement is
+/// still reported by the read path that owns the same text. A statement that
+/// *is* one of those three is lowered through the prepared path's own admission
+/// rules with its literals in place of markers, so text and prepared writes
+/// admit and refuse exactly the same shapes.
+pub fn prepare_text_write(
+    sql: &str,
+    catalog: &ConfiguredCatalog,
+) -> Result<Option<ConfiguredPreparedWriteTemplate>, ConfiguredWriteError> {
+    let Ok(statement) = tidb_parser::parse(sql) else {
+        return Ok(None);
+    };
+    let tidb_ast::Stmt::Dml(dml) = &statement else {
+        return Ok(None);
+    };
+    if !matches!(
+        dml.as_ref(),
+        tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+    ) {
+        return Ok(None);
+    }
+    lower_text_write(&statement, catalog)
+        .map(Some)
+        .map_err(ConfiguredWriteError::Plan)
 }
 
 /// What one committed statement reports to the MySQL client.

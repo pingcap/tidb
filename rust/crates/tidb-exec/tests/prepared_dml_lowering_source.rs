@@ -32,6 +32,7 @@ use tidb_codec::{
 use tidb_datatype::Datum;
 use tidb_exec::real_tikv_dml::{
     plan_configured_write, plan_delete, plan_insert, plan_update, planned_publication_bounds,
+    prepare_text_write,
     ConfiguredWriteError, ConfiguredWritePlan, NoWriteReason, WritePlanningSnapshot,
 };
 use tidb_planner::{
@@ -1272,4 +1273,71 @@ fn plan_configured_write_reads_then_plans_a_present_delete() {
     };
     assert_eq!(affected_rows, 1);
     assert_eq!(mutations[0].kind(), OptimisticMutationKind::Delete);
+}
+
+/// Lowers one text-protocol statement against the same configured catalog.
+fn text_write(sql: &str) -> Option<ConfiguredPreparedWrite> {
+    let catalog = ConfiguredCatalog::new([table()]).expect("catalog must validate");
+    prepare_text_write(sql, &catalog)
+        .expect("text write must admit")
+        .map(|template| template.bind(&[]).expect("a text template binds no values"))
+}
+
+#[test]
+fn a_text_dml_statement_lowers_to_the_same_bound_write_a_prepared_one_does() {
+    for (text, prepared, params) in [
+        (
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (10, 100)",
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?)",
+            vec![10, 100],
+        ),
+        (
+            "UPDATE campaign28.accounts SET balance = 150 WHERE id = 10",
+            "UPDATE campaign28.accounts SET balance = ? WHERE id = ?",
+            vec![150, 10],
+        ),
+        (
+            "DELETE FROM campaign28.accounts WHERE id = 10",
+            "DELETE FROM campaign28.accounts WHERE id = ?",
+            vec![10],
+        ),
+    ] {
+        assert_eq!(
+            text_write(text).expect("a DML statement is a write"),
+            bound_write(prepared, &params),
+            "text and prepared must lower {text} identically"
+        );
+    }
+}
+
+#[test]
+fn a_statement_that_is_not_dml_is_left_to_the_read_path() {
+    // A query, a non-DML statement, and text that does not parse are all `None`:
+    // the caller runs them as ordinary queries so the read path owns the answer
+    // (including the parse error).
+    for sql in [
+        "SELECT id, balance FROM campaign28.accounts WHERE id = 10",
+        "SELECT balance FROM campaign28.accounts WHERE id = 10 FOR UPDATE",
+        "SHOW TABLES",
+        "NOT SQL AT ALL",
+    ] {
+        assert!(
+            text_write(sql).is_none(),
+            "{sql} is not a write and must fall through to the read path"
+        );
+    }
+}
+
+#[test]
+fn a_text_dml_statement_outside_the_write_boundary_is_refused_not_ignored() {
+    let catalog = ConfiguredCatalog::new([table()]).expect("catalog must validate");
+    let error = prepare_text_write(
+        "UPDATE campaign28.accounts SET balance = 1 WHERE balance = 2",
+        &catalog,
+    )
+    .expect_err("a non-point UPDATE is refused rather than run as a query");
+    assert!(
+        matches!(error, ConfiguredWriteError::Plan(_)),
+        "expected a plan refusal, found {error}"
+    );
 }

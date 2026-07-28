@@ -16,6 +16,10 @@
 #   * optimistic: two transactions write one row without locking. The first
 #     COMMIT wins, the second is refused with 9007, and the winner's value is
 #     the durable one.
+#   * text: the same transaction legs with NOTHING prepared. Every INSERT,
+#     UPDATE, DELETE and the `FOR UPDATE NOWAIT` locking read is a plain
+#     COM_QUERY carrying its own literals, inside the transaction and in
+#     autocommit, and the creating Go TiDB confirms what reached storage.
 
 set -euo pipefail
 
@@ -313,7 +317,7 @@ CREATE TABLE ${DATABASE}.${SERVED_TABLE} (
   id BIGINT PRIMARY KEY CLUSTERED,
   balance BIGINT NOT NULL
 );
-INSERT INTO ${DATABASE}.${SERVED_TABLE} VALUES (1, 100), (2, 200);
+INSERT INTO ${DATABASE}.${SERVED_TABLE} VALUES (1, 100), (2, 200), (3, 300);
 SQL
 
 TABLE_ID=$(go_tidb -Nse \
@@ -405,8 +409,33 @@ if [[ "${GO_BALANCE}" != "777" ]]; then
   exit 1
 fi
 
+# The same transaction legs over the TEXT protocol only: nothing prepared.
+if ! txn_client text --row-id 3 --new-balance 909 --insert-id 7 --insert-balance 70 \
+  | tee -a "${CLIENT_LOG}"; then
+  echo "the text-protocol multi-statement transaction proof failed" >&2
+  tail -200 "${RUST_LOG}" >&2
+  exit 1
+fi
+if ! grep -q '"event":"passed","command":"text"' "${CLIENT_LOG}"; then
+  echo "the text-protocol proof did not report a pass" >&2
+  exit 1
+fi
+GO_BALANCE=$(go_tidb -Nse "SELECT balance FROM ${DATABASE}.${SERVED_TABLE} WHERE id = 3")
+if [[ "${GO_BALANCE}" != "909" ]]; then
+  echo "the real Go TiDB does not see the text UPDATE's committed row: ${GO_BALANCE}" >&2
+  exit 1
+fi
+GO_INSERTED=$(go_tidb -Nse "SELECT count(*) FROM ${DATABASE}.${SERVED_TABLE} WHERE id = 7")
+if [[ "${GO_INSERTED}" != "0" ]]; then
+  echo "the text DELETE did not remove the text-inserted row: ${GO_INSERTED} rows remain" >&2
+  exit 1
+fi
+
 echo "multi-statement-txn live proof passed: on ${DATABASE}.${SERVED_TABLE} (table_id=${TABLE_ID}) a \
 pessimistic transaction read its own uncommitted UPDATE while another connection saw the old row and \
 was refused the lock with 3572, its COMMIT published balance=4242 to the creating Go TiDB, and of two \
 optimistic transactions writing one row the first COMMIT won while the second was refused with 9007; \
+over the TEXT protocol alone a pessimistic transaction's UPDATE and INSERT were read back by their own \
+connection, refused another connection's FOR UPDATE NOWAIT with 3572, and published balance=909 to the \
+creating Go TiDB, whose row 7 was then removed by an autocommit text DELETE; \
 pd_cluster_id=${PD_CLUSTER_ID}"
