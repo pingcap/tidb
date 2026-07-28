@@ -18,6 +18,8 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-model = { path = "../tidb-model" }
 tidb-error = { path = "../tidb-error" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-pd-client = { path = "../tidb-pd-client" }

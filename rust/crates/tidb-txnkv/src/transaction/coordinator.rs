@@ -20,7 +20,7 @@ use tidb_pd_client::PdClient;
 use tidb_proto::{
     KvrpcAssertionLevel, KvrpcBatchRollbackRequest, KvrpcCommitRequest, KvrpcCommitRole,
     KvrpcCommitTsExpired, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcPessimisticAction,
-    KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcPrewriteRequest, KvrpcPrewriteResponse, KvrpcScanRequest, KvrpcScanResponse,
 };
 
 use crate::lock::{
@@ -49,6 +49,11 @@ use super::ttl::{HeartBeatFailure, LockKeepAlive, TxnHeartBeatSender, MANAGED_LO
 
 const DEFAULT_LOCK_TTL_MS: u64 = 3_000;
 pub(super) const MAX_LOCK_ATTEMPTS: usize = 4;
+/// Key/value pairs one snapshot scan returned, in key order.
+pub type SnapshotScanPairs = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Pairs one Scan page may return. client-go's `scanBatchSize`.
+const SCAN_PAGE_LIMIT: u32 = 256;
 const TSO_LOGICAL_BITS: u32 = 18;
 const MAX_COMMIT_TS_DRIFT_MS: u64 = 60 * 60 * 1_000;
 
@@ -533,6 +538,158 @@ where
                 publication: result.publication.clone(),
             });
             return Ok(result);
+        }
+    }
+
+    /// Reads every pair in `[start_key, end_key)` at this transaction's exact
+    /// start timestamp.
+    ///
+    /// One Scan is answered by one region, so this walks the range region by
+    /// region and, inside a region, page by page until the region is drained.
+    /// Because every page is read at the same `start_ts`, a concurrent DDL
+    /// cannot make the caller see half of one schema version and half of
+    /// another — that single-snapshot property is what makes this usable as a
+    /// catalog read.
+    pub fn snapshot_scan(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        if start_key.is_empty() {
+            return Err(OptimisticCoordinatorError::SnapshotGet(
+                "scan start key is empty".to_owned(),
+            ));
+        }
+        if end_key.is_empty() || end_key <= start_key {
+            return Err(OptimisticCoordinatorError::SnapshotGet(
+                "scan range must be a non-empty [start, end)".to_owned(),
+            ));
+        }
+        self.state
+            .transition(CoordinatorState::Reading)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let mut pairs = Vec::new();
+        let mut cursor = start_key.to_vec();
+        let mut lock_attempts = 0usize;
+        while cursor.as_slice() < end_key {
+            let route = point_route(&self.runtime, &cursor)
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            // TiKV stops at the region boundary anyway; naming it keeps the
+            // cursor advance exact when a page ends flush with the region.
+            let region_end = route.region_end_key().to_vec();
+            let page_end = if region_end.is_empty() || region_end.as_slice() > end_key {
+                end_key.to_vec()
+            } else {
+                region_end.clone()
+            };
+            let request = KvrpcScanRequest {
+                start_key: cursor.clone(),
+                end_key: page_end.clone(),
+                limit: SCAN_PAGE_LIMIT,
+                version: self.start_ts,
+                ..KvrpcScanRequest::default()
+            };
+            let response = self.begin_scan(&route, &request, call)?;
+            if let Some(region_error) = response.response.region_error.as_ref() {
+                self.recover_region_error(
+                    RecoveryPhase::Forward,
+                    region_error,
+                    route.attempt(),
+                    call,
+                )
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                continue;
+            }
+            let mut locked = Vec::new();
+            if let Some(key_error) = response.response.error.as_ref() {
+                collect_scan_lock(key_error, &mut locked)?;
+            }
+            for pair in &response.response.pairs {
+                if let Some(key_error) = pair.error.as_ref() {
+                    collect_scan_lock(key_error, &mut locked)?;
+                }
+            }
+            if !locked.is_empty() {
+                if lock_attempts >= MAX_LOCK_ATTEMPTS {
+                    return Err(OptimisticCoordinatorError::SnapshotGet(
+                        "scan lock retry budget exhausted".to_owned(),
+                    ));
+                }
+                lock_attempts += 1;
+                match resolve_optimistic_locks(
+                    &self.runtime,
+                    &locked,
+                    self.start_ts,
+                    route.context(),
+                    call,
+                    &self.timestamps,
+                )
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?
+                {
+                    LockRecoveryResult::Resolved(_) => {}
+                    LockRecoveryResult::Alive(wait) => {
+                        wait_with_call(call, alive_retry_delay(wait)).map_err(|error| {
+                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                        })?;
+                    }
+                }
+                // Redo this page: a locked scan returns no trustworthy pairs.
+                continue;
+            }
+            let page_len = response.response.pairs.len();
+            let last_key = response
+                .response
+                .pairs
+                .last()
+                .map(|pair| pair.key.clone())
+                .unwrap_or_default();
+            for pair in response.response.pairs {
+                pairs.push((pair.key, pair.value));
+            }
+            self.snapshot_reads.push(SnapshotReadReceipt {
+                key: cursor.clone(),
+                region: route.region(),
+                publication: response.publication,
+            });
+            if page_len == SCAN_PAGE_LIMIT as usize {
+                // The page filled up; the next key after the last one served
+                // is the smallest key this page could not have covered.
+                cursor = last_key;
+                cursor.push(0);
+            } else {
+                // The region (or the requested range) is drained.
+                if page_end.as_slice() >= end_key {
+                    break;
+                }
+                cursor = page_end;
+            }
+        }
+        Ok(pairs)
+    }
+
+    fn begin_scan(
+        &self,
+        route: &RegionKeyBatch,
+        request: &KvrpcScanRequest,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchResponse<KvrpcScanResponse>, OptimisticCoordinatorError> {
+        let published = self
+            .runtime
+            .client()
+            .try_borrow_mut()
+            .map_err(|_| {
+                OptimisticCoordinatorError::SnapshotGet(
+                    "TiKV client is already borrowed".to_owned(),
+                )
+            })?
+            .publish_transaction_scan(route.address(), request, route.context(), call);
+        match published {
+            PublishedCommand::Response(response) => Ok(response),
+            PublishedCommand::BeforePublication(error)
+            | PublishedCommand::AfterPublication { error, .. } => {
+                Err(OptimisticCoordinatorError::SnapshotGet(error))
+            }
         }
     }
 
@@ -1848,6 +2005,26 @@ pub(super) fn transaction_lock_ttl_ms(opened_at: Instant, transaction_bytes: usi
     let base = sized_ttl.clamp(DEFAULT_LOCK_TTL_MS, MANAGED_LOCK_TTL_MS);
     let elapsed_ms = u64::try_from(opened_at.elapsed().as_millis()).unwrap_or(u64::MAX);
     base.saturating_add(elapsed_ms)
+}
+
+/// Gathers the locks named by one Scan key error so they can be resolved.
+///
+/// A key error without lock information is not something a snapshot read can
+/// recover from, so it fails the scan instead of being retried forever.
+fn collect_scan_lock(
+    key_error: &KvrpcKeyError,
+    locked: &mut Vec<crate::lock::OptimisticLock>,
+) -> Result<(), OptimisticCoordinatorError> {
+    let Some(lock_info) = key_error.locked.as_ref() else {
+        return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+            "TiKV scan key error: {key_error:?}"
+        )));
+    };
+    locked.extend(
+        decode_lock_observation(lock_info)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?,
+    );
+    Ok(())
 }
 
 pub(super) fn wait_with_call(

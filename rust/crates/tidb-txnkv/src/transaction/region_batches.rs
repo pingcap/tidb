@@ -78,6 +78,10 @@ pub struct RegionKeyBatch {
     context: KvrpcContext,
     attempt: RegionAttempt,
     keys: Vec<Vec<u8>>,
+    /// Exclusive end of the serving region; empty means positive infinity.
+    /// A range read must know it, because TiKV stops a Scan at this boundary
+    /// whatever end key the request carried.
+    region_end_key: Vec<u8>,
 }
 
 impl RegionKeyBatch {
@@ -103,6 +107,11 @@ impl RegionKeyBatch {
     #[must_use]
     pub(super) fn keys(&self) -> &[Vec<u8>] {
         &self.keys
+    }
+
+    #[must_use]
+    pub(super) fn region_end_key(&self) -> &[u8] {
+        &self.region_end_key
     }
 }
 
@@ -182,6 +191,7 @@ where
                 context: route.context.clone(),
                 attempt: route.attempt.clone(),
                 keys,
+                region_end_key: route.region_end_key.clone(),
             });
         }
     }
@@ -241,6 +251,7 @@ where
         context: route.context,
         attempt: route.attempt,
         keys: vec![key.to_vec()],
+        region_end_key: route.region_end_key,
     })
 }
 
@@ -250,6 +261,7 @@ struct Route {
     address: String,
     context: KvrpcContext,
     attempt: RegionAttempt,
+    region_end_key: Vec<u8>,
 }
 
 fn locate_route<C, L>(
@@ -297,6 +309,7 @@ fn route_from_location(
     }
     Ok(Route {
         region: location.region,
+        region_end_key: location.end_key.clone(),
         address: store.address.clone(),
         context: KvrpcContext {
             region_id: location.region.id,

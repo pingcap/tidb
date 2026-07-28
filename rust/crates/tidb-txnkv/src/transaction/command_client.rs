@@ -30,7 +30,7 @@ use tidb_proto::{
     KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest,
     KvrpcPessimisticLockResponse, KvrpcPessimisticRollbackRequest,
     KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
-    KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
+    KvrpcScanRequest, KvrpcScanResponse, KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
 };
 
 use crate::rpc::{
@@ -76,6 +76,18 @@ pub trait TransactionCommandClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcGetResponse>;
+
+    /// Publishes one forward Scan at the caller's snapshot timestamp.
+    ///
+    /// TiKV answers only from the region named by `context`, so a caller that
+    /// wants a whole key range keeps re-routing until the range is covered.
+    fn publish_transaction_scan(
+        &mut self,
+        address: &str,
+        request: &KvrpcScanRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcScanResponse>;
 
     /// Publishes one Prewrite for an immutable, region-grouped mutation batch.
     fn publish_prewrite(
@@ -145,6 +157,20 @@ impl TransactionCommandClient for TonicCoprocessorClient {
     ) -> PublishedCommand<KvrpcGetResponse> {
         complete_published(
             self.begin_transaction_get(address, None, request, context, call)
+                .map_err(|error| error.to_string()),
+            call,
+        )
+    }
+
+    fn publish_transaction_scan(
+        &mut self,
+        address: &str,
+        request: &KvrpcScanRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcScanResponse> {
+        complete_published(
+            self.begin_transaction_scan(address, None, request, context, call)
                 .map_err(|error| error.to_string()),
             call,
         )

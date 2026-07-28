@@ -25,13 +25,14 @@ use tidb_proto::{
     KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest,
     KvrpcPessimisticLockResponse, KvrpcPessimisticRollbackRequest,
     KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
-    KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
+    KvrpcScanRequest, KvrpcScanResponse, KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
 };
 
 use super::batch::{
     batch_rollback_entry, commit_entry, get_entry, pessimistic_lock_entry,
-    pessimistic_rollback_entry, prewrite_entry, txn_heart_beat_entry, BatchCommandEntry,
-    BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute, OpaqueBatchCommand,
+    pessimistic_rollback_entry, prewrite_entry, scan_entry, txn_heart_beat_entry,
+    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute,
+    OpaqueBatchCommand,
 };
 use super::TonicCoprocessorClient;
 use super::{
@@ -287,6 +288,23 @@ impl TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchPending<KvrpcGetResponse>, DirectUnaryClientError> {
         let (entry, pending) = get_entry(request, context, forwarded_host);
+        self.publish_transaction_command(physical_address, entry, pending, call)
+    }
+
+    /// Begins one transactional forward Scan on an already selected TiKV route.
+    ///
+    /// A Scan is bounded by the serving region: TiKV stops at the region's end
+    /// key even when `end_key` reaches further, so the caller advances across
+    /// regions itself.
+    pub fn begin_transaction_scan(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &KvrpcScanRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchPending<KvrpcScanResponse>, DirectUnaryClientError> {
+        let (entry, pending) = scan_entry(request, context, forwarded_host);
         self.publish_transaction_command(physical_address, entry, pending, call)
     }
 

@@ -1323,6 +1323,8 @@ dependencies = [
  "tidb-distsql",
  "tidb-error",
  "tidb-expr",
+ "tidb-meta",
+ "tidb-model",
  "tidb-parser",
  "tidb-pd-client",
  "tidb-planner",

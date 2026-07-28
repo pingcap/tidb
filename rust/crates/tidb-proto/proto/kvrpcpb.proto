@@ -109,6 +109,39 @@ message GetResponse {
   uint64 commit_ts = 7;
 }
 
+// Exact pinned transactional forward range read. The catalog loader reads the
+// `m` meta namespace, which no coprocessor DAG can describe.
+message ScanRequest {
+  Context context = 1;
+  bytes start_key = 2;
+  // The maximum number of pairs to return.
+  uint32 limit = 3;
+  uint64 version = 4;
+  // Return only the keys found by scanning, not their values.
+  bool key_only = 5;
+  bool reverse = 6;
+  // Scanning forward covers [start_key, end_key).
+  bytes end_key = 7;
+  uint32 sample_step = 8;
+}
+
+message ScanResponse {
+  errorpb.Error region_error = 1;
+  // Each pair may carry its own key error.
+  repeated KvPair pairs = 2;
+  // Set when some key is locked and TiKV could not check every key's locks. In
+  // that case `pairs` is empty and the scan must be redone after resolving.
+  KeyError error = 3;
+}
+
+message KvPair {
+  KeyError error = 1;
+  bytes key = 2;
+  bytes value = 3;
+  // Zero means the commit timestamp is unknown.
+  uint64 commit_ts = 4;
+}
+
 message LockInfo {
   bytes primary_lock = 1;
   uint64 lock_version = 2;
