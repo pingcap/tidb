@@ -765,6 +765,9 @@ type TableColumnArgs struct {
 	// it's shared by add/drop column.
 	IgnoreExistenceErr bool `json:"ignore_existence_err,omitempty"`
 
+	// Constraints are inline CHECK constraints from ADD COLUMN column definition.
+	Constraints []*ConstraintInfo `json:"constraints,omitempty"`
+
 	// for drop column.
 	// below 2 fields are filled during running, and PartitionIDs is only effective
 	// when len(IndexIDs) > 0.
