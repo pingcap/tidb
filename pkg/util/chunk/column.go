@@ -123,11 +123,26 @@ func newColumn(ts, capacity int) *Column {
 
 // newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
 func newFixedLenColumn(elemLen, capacity int) *Column {
-	return &Column{
-		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, getDataMemCap(capacity, elemLen)),
-		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
+	var col *Column
+	if elemLen == sizeInt64 && capacity == InitialCapacity {
+		storage := &fixedLen8ColumnStorage{}
+		storage.col.elemBuf = storage.elemBuf[:]
+		storage.col.nullBitmap = storage.nullBitmap[:0]
+		col = &storage.col
+	} else {
+		col = &Column{
+			elemBuf:    make([]byte, elemLen),
+			nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
+		}
 	}
+	col.data = make([]byte, 0, getDataMemCap(capacity, elemLen))
+	return col
+}
+
+type fixedLen8ColumnStorage struct {
+	col        Column
+	elemBuf    [sizeInt64]byte
+	nullBitmap [InitialCapacity / 8]byte
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
