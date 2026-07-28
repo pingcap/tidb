@@ -579,7 +579,9 @@ fn decode_staged_projection(
             // assumed.
             (
                 _,
-                scalar_type @ (ConfiguredScalarType::UnsignedBigInt | ConfiguredScalarType::Double),
+                scalar_type @ (ConfiguredScalarType::UnsignedBigInt
+                | ConfiguredScalarType::Double
+                | ConfiguredScalarType::Decimal { .. }),
             ) => Err(ConfiguredWriteError::UnsupportedScalarType {
                 column: column.source_name().to_owned(),
                 scalar_type,
