@@ -296,6 +296,23 @@ impl ScalarFunction {
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
+        // Go `builtinDatabaseSig`/`builtinVersionSig` read session state
+        // rather than arguments: the current database (NULL when none is
+        // selected) and the same string `@@version` reports.
+        if self.args.is_empty() {
+            match name {
+                "database" | "schema" => {
+                    return Ok(match ctx.current_database() {
+                        Some(name) => Datum::Bytes(name.into_bytes()),
+                        None => Datum::Null,
+                    })
+                }
+                "version" => {
+                    return Ok(ctx.sysvar(None, "version").unwrap_or(Datum::Null));
+                }
+                _ => {}
+            }
+        }
         // Go picks a string-length signature from the ARGUMENT's type before
         // any value exists, which is what `build_string_length` models.
         if self.args.len() == 1 {

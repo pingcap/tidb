@@ -76,6 +76,12 @@ pub trait Columns {
         None
     }
 
+    /// Go `SessionVars.CurrentDB`, which `DATABASE()`/`SCHEMA()` return.
+    /// `None` is the no-database-selected state, where Go returns NULL.
+    fn current_database(&self) -> Option<String> {
+        None
+    }
+
     /// Reads a supported system variable.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);

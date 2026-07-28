@@ -1109,11 +1109,11 @@ impl Session {
             self.check_noop_functions(query)?;
             self.check_query_clauses(query)?;
         }
-        // Go raises ErrNoDB when a statement resolves an unqualified name and
-        // no database is selected.
-        if matches!(stmt, Stmt::Query(_) | Stmt::Dml(_) | Stmt::Ddl(_)) {
-            self.require_current_database()?;
-        }
+        // Go raises ErrNoDB where an unqualified NAME is resolved, not for
+        // every statement: `SELECT 1` and `SELECT DATABASE()` both run with
+        // no database selected (captured). The driver's own
+        // `split_table_path` raises it at the resolution point, which is
+        // where Go's does.
         match &stmt {
             Stmt::Query(query) => {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
@@ -1356,8 +1356,16 @@ impl Session {
     /// without `ERROR_FOR_DIVISION_BY_ZERO` the condition is ignored, a
     /// non-strict mode warns, and the default strict mode fails the statement.
     fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
+        // Go hands the same `SessionVars` to every expression, which is where
+        // `DATABASE()` and `VERSION()` read from.
+        let current_db = if self.current_db.is_empty() {
+            None
+        } else {
+            Some(self.current_db.clone())
+        };
+        let version = self.vars.get_system("version").ok();
         if !is_dml {
-            return tidb_executor::StmtContext::for_query();
+            return tidb_executor::StmtContext::for_query().with_session_state(current_db, version);
         }
         let mode = self
             .vars
@@ -1369,6 +1377,7 @@ impl Session {
             has("ERROR_FOR_DIVISION_BY_ZERO"),
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
         )
+        .with_session_state(current_db, version)
     }
 
     /// Moves what evaluation recorded into the statement's warning buffer.
@@ -2886,12 +2895,25 @@ mod tests {
             [["xy", "xy", "n"], ["Yz", "Yz", "n"], ["z", "z", "n"],]
         );
 
+        // Captured: DATABASE() and its SCHEMA() synonym report the current
+        // database, and VERSION() reports the same string as @@version.
+        assert_eq!(
+            row_text(session.run("SELECT DATABASE(), SCHEMA()")),
+            [["test", "test"]]
+        );
+        let version = match session.run("SELECT VERSION()").unwrap() {
+            StmtResult::Rows(rows) => datum_text(&rows[0][0]).unwrap(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+        assert_eq!(version, session.vars().get_system("version").unwrap());
+        assert!(version.contains("TiDB"), "{version}");
+        // Captured: with no database selected, DATABASE() is NULL.
+        let mut fresh = Session::new();
+        fresh.run("DROP DATABASE test").unwrap();
+        assert_eq!(row_text(fresh.run("SELECT DATABASE()")), [["NULL"]]);
+
         // The refusals above are refusals, not wrong answers.
-        for sql in [
-            "SELECT DATABASE()",
-            "SELECT VERSION()",
-            "SELECT CAST(c AS CHAR) FROM t",
-        ] {
+        for sql in ["SELECT CURRENT_USER()", "SELECT CAST(c AS CHAR) FROM t"] {
             assert!(session.run(sql).is_err(), "{sql} should still be refused");
         }
     }

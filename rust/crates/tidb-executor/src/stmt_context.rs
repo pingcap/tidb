@@ -37,6 +37,8 @@ pub struct StmtContext {
     warnings: Rc<RefCell<Vec<(u16, String)>>>,
     division_by_zero: ErrorLevel,
     strict: bool,
+    current_db: Option<String>,
+    version: Option<String>,
 }
 
 impl StmtContext {
@@ -47,7 +49,23 @@ impl StmtContext {
             warnings: Rc::default(),
             division_by_zero: ErrorLevel::Warn,
             strict: true,
+            current_db: None,
+            version: None,
         }
+    }
+
+    /// Attaches the session state the builtins read: Go reads both from
+    /// `SessionVars`, where `DATABASE()` is `CurrentDB` and `VERSION()` is
+    /// the same string `@@version` reports.
+    #[must_use]
+    pub fn with_session_state(
+        mut self,
+        current_db: Option<String>,
+        version: Option<String>,
+    ) -> Self {
+        self.current_db = current_db;
+        self.version = version;
+        self
     }
 
     /// A context for `INSERT`/`UPDATE`/`DELETE`, where Go resolves the level
@@ -67,6 +85,8 @@ impl StmtContext {
             warnings: Rc::default(),
             division_by_zero: level,
             strict,
+            current_db: None,
+            version: None,
         }
     }
 
@@ -102,6 +122,22 @@ impl StmtContext {
 
 impl Columns for StmtContext {
     fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn current_database(&self) -> Option<String> {
+        self.current_db.clone()
+    }
+
+    fn sysvar(&self, _scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
+        // Only the variables a builtin reads are answered here; the session
+        // resolves every other `@@var` before the driver sees the statement.
+        if name.eq_ignore_ascii_case("version") {
+            return self
+                .version
+                .as_ref()
+                .map(|value| Datum::Bytes(value.clone().into_bytes()));
+        }
         None
     }
 
