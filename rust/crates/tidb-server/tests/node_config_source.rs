@@ -554,3 +554,54 @@ fn char_column_length_is_required_and_range_checked() {
         );
     }
 }
+
+#[test]
+fn load_table_names_a_schema_the_cluster_already_stores() {
+    let config = NodeConfig::parse(vec![
+        "tidb-server",
+        "--path",
+        "127.0.0.1:2379",
+        "--load-table",
+        "campaign.rows",
+        "--load-table",
+        "campaign.Notes",
+        "--auth-file",
+        "/tmp/campaign21-users.tsv",
+    ])
+    .unwrap();
+    // A loaded table needs no command-line schema at all.
+    assert!(config.read_tables.is_empty());
+    assert_eq!(config.load_tables.len(), 2);
+    assert_eq!(config.load_tables[0].database, "campaign");
+    assert_eq!(config.load_tables[0].table, "rows");
+    assert_eq!(config.load_tables[1].table, "Notes");
+}
+
+#[test]
+fn load_table_requires_a_qualified_name() {
+    let error = NodeConfig::parse(vec![
+        "tidb-server",
+        "--path",
+        "127.0.0.1:2379",
+        "--load-table",
+        "rows",
+        "--auth-file",
+        "/tmp/campaign21-users.tsv",
+    ])
+    .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("--load-table"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn a_table_cannot_be_both_described_and_loaded() {
+    let mut arguments = required();
+    arguments.extend(["--load-table", "campaign19.rows"]);
+    let error = NodeConfig::parse(arguments).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("--load-table"),
+        "unexpected error: {error:?}"
+    );
+}

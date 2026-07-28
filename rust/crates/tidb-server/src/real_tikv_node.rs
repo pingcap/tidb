@@ -19,7 +19,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
+use tidb_exec::cluster_catalog::{configure_loaded_table, LoadedTableRefusal};
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
+use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -30,8 +32,9 @@ use tidb_exec::real_tikv_read::{
 use tidb_planner::aggregation_descriptor::AggregateKind;
 use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::read_only_scan::{
-    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredIndex, ConfiguredTable,
-    PreparedAggregate, PreparedAggregateKind, ReadOnlyScanPlan,
+    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredColumnKind, ConfiguredIndex,
+    ConfiguredScalarType, ConfiguredTable, PreparedAggregate, PreparedAggregateKind,
+    ReadOnlyScanPlan,
 };
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::ColumnInfo;
@@ -93,6 +96,9 @@ pub struct RealTiKvSessionFactory {
     transaction_opener: RealOptimisticTransactionOpener,
     query_activity: Arc<QueryActivity>,
     read_authority_id: u64,
+    /// Tables the cluster really has, that this node loaded and cannot serve.
+    /// They are not hidden: a query naming one gets the exact reason back.
+    table_refusals: Arc<Vec<LoadedTableRefusal>>,
 }
 
 impl RealTiKvSessionFactory {
@@ -100,16 +106,21 @@ impl RealTiKvSessionFactory {
     pub fn connect(
         config: &NodeConfig,
     ) -> Result<(Self, ProductionReadProcessAuthority), SqlQueryError> {
-        let catalog = configured_catalog(config)?;
-        let [table] = catalog.tables() else {
+        // A shape this node could never dispatch is rejected before PD, a
+        // region cache, or a transport is started. Only a `--load-table` node
+        // has to reach the cluster to know its own catalog.
+        if config.read_tables.len() > 1
+            || (config.load_tables.is_empty() && config.read_tables.len() != 1)
+        {
             return Err(SqlQueryError::unknown(
                 "multiple configured tables require the multi-relation dispatcher",
             ));
-        };
-        let authority = ProductionReadProcessAuthority::connect(
+        }
+        let mut refusals = Vec::new();
+        let authority = ProductionReadProcessAuthority::connect_with_catalog(
             config.pd_endpoints.clone(),
             PRODUCTION_CONTROL_PLANE_TIMEOUT,
-            table.clone(),
+            |transaction_opener| served_table(config, transaction_opener, &mut refusals),
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let factory = Self {
@@ -117,6 +128,7 @@ impl RealTiKvSessionFactory {
             transaction_opener: authority.transaction_opener(),
             query_activity: Arc::new(QueryActivity::default()),
             read_authority_id: authority.read_authority_id(),
+            table_refusals: Arc::new(refusals),
         };
         Ok((factory, authority))
     }
@@ -138,6 +150,19 @@ impl RealTiKvSessionFactory {
     pub const fn read_authority_id(&self) -> u64 {
         self.read_authority_id
     }
+
+    /// The exact table this node serves, whether described on the command line
+    /// or loaded from the cluster's own catalog.
+    #[must_use]
+    pub fn served_table(&self) -> &ConfiguredTable {
+        self.opener.configured_table()
+    }
+
+    /// Loaded tables this node refuses to serve, with their exact reasons.
+    #[must_use]
+    pub fn table_refusals(&self) -> &[LoadedTableRefusal] {
+        &self.table_refusals
+    }
 }
 
 impl QuerySessionFactory for RealTiKvSessionFactory {
@@ -151,6 +176,7 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
         Ok(RealTiKvServerSession {
             inner,
             transaction_opener: self.transaction_opener.clone(),
+            table_refusals: Arc::clone(&self.table_refusals),
             context,
             query_activity: Arc::clone(&self.query_activity),
             next_query_id: 1,
@@ -163,6 +189,8 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
 pub struct RealTiKvServerSession {
     inner: RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>,
     transaction_opener: RealOptimisticTransactionOpener,
+    /// Loaded-but-unservable tables, consulted when a statement names one.
+    table_refusals: Arc<Vec<LoadedTableRefusal>>,
     context: SessionContext,
     query_activity: Arc<QueryActivity>,
     next_query_id: u64,
@@ -257,6 +285,64 @@ impl RealTiKvServerSession {
     }
 }
 
+/// Chooses the one table this node serves, reading any `--load-table` schema
+/// from the cluster's own catalog.
+///
+/// A loaded table this node cannot decode is not silently dropped: it is
+/// recorded in `refusals` so a statement naming it is answered with the exact
+/// column and type that blocked it.
+fn served_table(
+    config: &NodeConfig,
+    transaction_opener: &RealOptimisticTransactionOpener,
+    refusals: &mut Vec<LoadedTableRefusal>,
+) -> Result<ConfiguredTable, String> {
+    let mut tables: Vec<ConfiguredTable> =
+        config.read_tables.iter().map(configured_table).collect();
+    if !config.load_tables.is_empty() {
+        let catalog =
+            load_catalog_from_cluster(transaction_opener, PRODUCTION_CONTROL_PLANE_TIMEOUT)
+                .map_err(|error| error.to_string())?;
+        for wanted in &config.load_tables {
+            let Some((database, stored)) = catalog.find_table(&wanted.database, &wanted.table)
+            else {
+                return Err(format!(
+                    "table {}.{} is not in the cluster catalog at schema version {}",
+                    wanted.database, wanted.table, catalog.schema_version
+                ));
+            };
+            match configure_loaded_table(database.name.original(), stored) {
+                Ok(table) => tables.push(table),
+                Err(refusal) => refusals.push(refusal),
+            }
+        }
+    }
+    match tables.len() {
+        1 => Ok(tables.remove(0)),
+        0 => Err(match refusals.first() {
+            Some(refusal) => refusal.to_string(),
+            None => "no table is configured or loaded".to_owned(),
+        }),
+        _ => Err("multiple configured tables require the multi-relation dispatcher".to_owned()),
+    }
+}
+
+/// Reports a statement that named a loaded-but-unservable table with the exact
+/// reason, instead of the generic unknown-table failure.
+fn refusal_aware_error(refusals: &[LoadedTableRefusal], message: String) -> SqlQueryError {
+    let lowered = message.to_lowercase();
+    for refusal in refusals {
+        if lowered.contains(&refusal.name.to_lowercase()) {
+            return SqlQueryError::unknown(refusal.to_string());
+        }
+        if let Some((_, table)) = refusal.name.split_once('.') {
+            if lowered.contains(&format!("table: {}", table.to_lowercase())) {
+                return SqlQueryError::unknown(refusal.to_string());
+            }
+        }
+    }
+    SqlQueryError::unknown(message)
+}
+
 impl QuerySession for RealTiKvServerSession {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         // Text statements inside an explicit transaction are a later slice: the
@@ -280,10 +366,11 @@ impl QuerySession for RealTiKvServerSession {
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
         let cluster_id = self.inner.cluster_id();
         let evidence = self.inner.transport_evidence_handle();
+        let refusals = Arc::clone(&self.table_refusals);
         let query = self
             .inner
             .execute_with_cancellation(sql, cancellation)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(|error| refusal_aware_error(&refusals, error.to_string()))?;
         observe_real_tikv_query(
             &self.context,
             query,
@@ -299,7 +386,7 @@ impl QuerySession for RealTiKvServerSession {
         let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_configured_point_read(sql, &catalog)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
         // An aggregate's result column is its own type (a DECIMAL for SUM), not
         // the summed scan column's, so it bypasses the scan-derived metadata.
         let result_columns = if let Some(aggregate) = template.aggregate() {
@@ -396,7 +483,7 @@ impl QuerySession for RealTiKvServerSession {
         let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_configured_write(sql, &catalog)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
         Ok(PreparedWrite::new(template))
     }
 
@@ -664,6 +751,41 @@ pub(crate) fn configured_catalog(config: &NodeConfig) -> Result<ConfiguredCatalo
         .map_err(|error| SqlQueryError::unknown(error.to_string()))
 }
 
+/// Renders the served table for the readiness event.
+///
+/// The served table is the truth published here, because with `--load-table`
+/// the schema comes from the cluster rather than from the command line, and it
+/// can carry scalar types (`BIGINT UNSIGNED`, `DOUBLE`) the command-line
+/// descriptor grammar cannot even express.
+fn served_table_descriptor(table: &ConfiguredTable) -> String {
+    let columns = table
+        .columns()
+        .iter()
+        .map(|column| {
+            let kind = match (column.kind(), column.scalar_type()) {
+                (ConfiguredColumnKind::ClusteredPrimaryKey, _) => "clustered-pk".to_owned(),
+                (_, ConfiguredScalarType::BigInt) => "stored-not-null".to_owned(),
+                (_, ConfiguredScalarType::Int) => "stored-int-not-null".to_owned(),
+                (_, ConfiguredScalarType::UnsignedBigInt) => {
+                    "stored-unsigned-bigint-not-null".to_owned()
+                }
+                (_, ConfiguredScalarType::Double) => "stored-double-not-null".to_owned(),
+                (_, ConfiguredScalarType::Char { max_length }) => {
+                    format!("stored-char-not-null:{max_length}")
+                }
+            };
+            format!("{}:{}:{}", column.name(), column.id(), kind)
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "{{\"database\":{:?},\"table\":{:?},\"table_id\":{},\"columns\":{:?}}}",
+        table.schema(),
+        table.table(),
+        table.table_id(),
+        columns
+    )
+}
+
 /// Starts the bounded concurrent production Rust SQL node.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     let users = Arc::new(
@@ -675,6 +797,18 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
     let read_authority_id = factory.read_authority_id();
+    let served_table = factory.served_table().clone();
+    let refused_descriptors = factory
+        .table_refusals()
+        .iter()
+        .map(|refusal| {
+            format!(
+                "{{\"table\":{:?},\"reason\":{:?}}}",
+                refusal.name, refusal.reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     run_with_process_shutdown(factory, authority, move |factory| {
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
@@ -691,31 +825,9 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             emit_connections_startup_failure(&error);
             RunConfiguredNodeError::Signal(error)
         })?;
-        let table_descriptors = config
-            .read_tables
-            .iter()
-            .map(|table| {
-                let columns = table
-                    .columns
-                    .iter()
-                    .map(|column| {
-                        format!(
-                            "{}:{}:{}",
-                            column.name,
-                            column.id,
-                            column.kind.descriptor_name()
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                format!(
-                    "{{\"database\":{:?},\"table\":{:?},\"table_id\":{},\"columns\":{:?}}}",
-                    table.database, table.table, table.table_id, columns
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
+        let table_descriptors = served_table_descriptor(&served_table);
         eprintln!(
-            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"tables\":[{table_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
+            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"tables\":[{table_descriptors}],\"refused_tables\":[{refused_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
             config.pd_endpoints.len(),
             config.max_connections,
             users.len(),

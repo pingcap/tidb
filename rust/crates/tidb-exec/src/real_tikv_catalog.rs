@@ -85,7 +85,7 @@ pub fn load_catalog_from_cluster(
     timeout: Duration,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
     let mut transaction = opener
-        .begin(0, 0)
+        .begin_read_only()
         .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
     let catalog = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);

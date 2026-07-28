@@ -109,6 +109,15 @@ pub struct ConfiguredReadTable {
     pub indexes: Vec<ConfiguredReadIndex>,
 }
 
+/// One `<database>.<table>` name whose schema the node reads from the cluster.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedTableName {
+    /// Database name, matched case-insensitively against the stored catalog.
+    pub database: String,
+    /// Table name, matched case-insensitively against the stored catalog.
+    pub table: String,
+}
+
 /// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
@@ -120,6 +129,10 @@ pub struct NodeConfig {
     pub pd_endpoints: Vec<String>,
     /// Checked tables exposed to the bounded planner in command-line order.
     pub read_tables: Vec<ConfiguredReadTable>,
+    /// Tables whose schema is read from the cluster's own stored catalog at
+    /// startup instead of being described on the command line, as
+    /// `<database>.<table>` pairs in command-line order.
+    pub load_tables: Vec<LoadedTableName>,
     /// Maximum accepted logical MySQL packet size.
     pub max_allowed_packet: usize,
     /// Required immutable native-password account file.
@@ -205,6 +218,7 @@ impl NodeConfig {
         let mut path = None;
         let mut store = None;
         let mut read_tables = Vec::new();
+        let mut load_tables = Vec::new();
         let mut max_allowed_packet = None;
         let mut auth_file = None;
         let mut max_connections = None;
@@ -225,6 +239,14 @@ impl NodeConfig {
             }
             if argument == "--read-table" {
                 read_tables.push(parse_read_table(&mut pending)?);
+                continue;
+            }
+            if argument == "--load-table" {
+                let value = pending
+                    .next()
+                    .filter(|value| !value.starts_with("--"))
+                    .ok_or_else(|| NodeConfigError::MissingValue("--load-table".to_owned()))?;
+                load_tables.push(parse_loaded_table_name(&value)?);
                 continue;
             }
             let (option, inline_value) = split_option(&argument)?;
@@ -254,6 +276,7 @@ impl NodeConfig {
                 "--connection-timeout-ms" => {
                     set_once(&mut connection_timeout_ms, option, value)?;
                 }
+                "--load-table" => load_tables.push(parse_loaded_table_name(&value)?),
                 "--max-topn-rows" => set_once(&mut max_topn_rows, option, value)?,
                 _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
             }
@@ -269,7 +292,8 @@ impl NodeConfig {
             return Err(NodeConfigError::UnsupportedStore(store.to_owned()));
         }
         let pd_endpoints = parse_pd_endpoints(required(path, "--path")?)?;
-        validate_read_tables(&read_tables)?;
+        validate_read_tables(&read_tables, &load_tables)?;
+        validate_load_tables(&read_tables, &load_tables)?;
         let max_allowed_packet = match max_allowed_packet {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
@@ -299,6 +323,7 @@ impl NodeConfig {
             port,
             pd_endpoints,
             read_tables,
+            load_tables,
             max_allowed_packet,
             auth_file,
             max_connections,
@@ -311,10 +336,11 @@ impl NodeConfig {
     #[must_use]
     pub const fn help_text() -> &'static str {
         "Usage: tidb-server --path <pd[,pd...]> \
---read-table <database> <table> <table-id> <column-count> \
+[--read-table <database> <table> <table-id> <column-count> \
 <name>:<id>:<clustered-pk|stored-not-null> \
-[<name>:<id>:<clustered-pk|stored-not-null> ...] \
+[<name>:<id>:<clustered-pk|stored-not-null> ...]] \
 [--read-table <database> <table> <table-id> <column-count> <column> ...] \
+[--load-table <database>.<table> ...] \
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
 [--max-topn-rows <rows>] \
 --auth-file <mode-0600-tsv> \
@@ -589,8 +615,55 @@ fn validate_columns(option: &str, columns: &[ConfiguredReadColumn]) -> Result<()
     Ok(())
 }
 
-fn validate_read_tables(tables: &[ConfiguredReadTable]) -> Result<(), NodeConfigError> {
-    if tables.is_empty() {
+/// Splits `<database>.<table>`, the only shape `--load-table` accepts: the
+/// cluster's stored catalog supplies everything else about the table.
+fn parse_loaded_table_name(value: &str) -> Result<LoadedTableName, NodeConfigError> {
+    let Some((database, table)) = value.split_once('.') else {
+        return Err(invalid("--load-table", "expected <database>.<table>"));
+    };
+    Ok(LoadedTableName {
+        database: parse_identifier("--load-table", database.to_owned())?,
+        table: parse_identifier("--load-table", table.to_owned())?,
+    })
+}
+
+fn validate_load_tables(
+    read_tables: &[ConfiguredReadTable],
+    load_tables: &[LoadedTableName],
+) -> Result<(), NodeConfigError> {
+    if load_tables.len() > MAX_CONFIGURED_READ_TABLES {
+        return Err(invalid(
+            "--load-table",
+            "loaded table count must not exceed two",
+        ));
+    }
+    let mut names = HashSet::with_capacity(load_tables.len());
+    for loaded in load_tables {
+        let name = (loaded.database.to_lowercase(), loaded.table.to_lowercase());
+        if !names.insert(name.clone()) {
+            return Err(invalid(
+                "--load-table",
+                "loaded table names must be unique case-insensitively",
+            ));
+        }
+        if read_tables
+            .iter()
+            .any(|table| (table.database.to_lowercase(), table.table.to_lowercase()) == name)
+        {
+            return Err(invalid(
+                "--load-table",
+                "a table cannot be both described on the command line and loaded",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_read_tables(
+    tables: &[ConfiguredReadTable],
+    load_tables: &[LoadedTableName],
+) -> Result<(), NodeConfigError> {
+    if tables.is_empty() && load_tables.is_empty() {
         return Err(NodeConfigError::MissingOption("--read-table"));
     }
     if tables.len() > MAX_CONFIGURED_READ_TABLES {

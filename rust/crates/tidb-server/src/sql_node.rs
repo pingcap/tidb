@@ -1389,6 +1389,7 @@ mod tests {
                 }],
                 indexes: Vec::new(),
             }],
+            load_tables: Vec::new(),
             max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
             auth_file: PathBuf::from("unused"),
             max_connections: 2,

@@ -164,6 +164,25 @@ impl RealOptimisticTransactionOpener {
         // TSO; `new_injected` revalidates for callers that already hold one.
         validate_plan(planned_mutation_count, planned_aggregate_bytes)
             .map_err(OptimisticCoordinatorError::Mutations)?;
+        self.open(planned_mutation_count, planned_aggregate_bytes)
+    }
+
+    /// Opens a transaction that may only read.
+    ///
+    /// A read has no mutation plan to validate, and a zero plan is not a
+    /// loophole: it is the tightest possible write budget, so any later attempt
+    /// to publish a mutation on this transaction is rejected.
+    pub fn begin_read_only(
+        &self,
+    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+        self.open(0, 0)
+    }
+
+    fn open(
+        &self,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
         let opened_at = Instant::now();
         let runtime = self
             .opener
@@ -184,7 +203,7 @@ impl RealOptimisticTransactionOpener {
                 "PD returned zero start timestamp".to_owned(),
             ));
         }
-        RealOptimisticTransaction::new_injected(
+        RealOptimisticTransaction::new_opened(
             runtime,
             PdLockTimestampSource(self.pd.clone()),
             self.timeout,
@@ -391,6 +410,31 @@ where
     ) -> Result<Self, OptimisticCoordinatorError> {
         validate_plan(planned_mutation_count, planned_aggregate_bytes)
             .map_err(OptimisticCoordinatorError::Mutations)?;
+        Self::new_opened(
+            runtime,
+            timestamps,
+            timeout,
+            start_ts,
+            opened_at,
+            planned_mutation_count,
+            planned_aggregate_bytes,
+        )
+    }
+
+    /// Builds one already-opened transaction whose plan the caller validated.
+    ///
+    /// A read-only transaction legitimately has a zero mutation plan, which
+    /// [`validate_plan`] rejects, so the plan check stays with the callers that
+    /// intend to write.
+    pub(super) fn new_opened(
+        runtime: SharedReadRuntime<C, L>,
+        timestamps: T,
+        timeout: Duration,
+        start_ts: u64,
+        opened_at: Instant,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<Self, OptimisticCoordinatorError> {
         if start_ts == 0 {
             return Err(OptimisticCoordinatorError::Timestamp(
                 "a transaction requires a real nonzero start timestamp".to_owned(),

@@ -145,6 +145,12 @@ pub use sql_node::{
 /// the connected same-snapshot join path; no fallback can silently execute a
 /// multi-table query against an in-memory or single-table authority.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    // A `--load-table` schema is not known until the cluster's catalog is read,
+    // which happens inside the single-reader authority's bootstrap; the
+    // two-table join path takes only command-line-described tables.
+    if !config.load_tables.is_empty() {
+        return run_single_configured_node(config);
+    }
     match config.read_tables.len() {
         1 => run_single_configured_node(config),
         2 => run_configured_multi_node(config),

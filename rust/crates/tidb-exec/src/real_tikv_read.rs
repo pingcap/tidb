@@ -637,6 +637,25 @@ impl ProductionReadProcessAuthority {
         I: IntoIterator<Item = E>,
         E: Into<String>,
     {
+        Self::connect_with_catalog(pd_endpoints, timeout, |_| Ok(table))
+    }
+
+    /// Bootstraps the same authorities, then chooses the served table from the
+    /// catalog this cluster actually stores.
+    ///
+    /// The load runs on the authority that has just been started, so the node
+    /// opens exactly one PD client, one region cache, and one transport even
+    /// though it reads the catalog before it knows what it serves.
+    pub fn connect_with_catalog<I, E, F>(
+        pd_endpoints: I,
+        timeout: Duration,
+        choose_table: F,
+    ) -> Result<Self, RealTiKvReadError>
+    where
+        I: IntoIterator<Item = E>,
+        E: Into<String>,
+        F: FnOnce(&RealOptimisticTransactionOpener) -> Result<ConfiguredTable, String>,
+    {
         let pd = PdClient::connect_seeds(pd_endpoints, timeout)?;
         let cluster_id = pd.cluster_id();
         let timestamp_source = PdTimestampSource::new(pd.clone());
@@ -662,6 +681,7 @@ impl ProductionReadProcessAuthority {
             timeout,
         )
         .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
+        let table = choose_table(&transaction_opener).map_err(RealTiKvReadError::Catalog)?;
         let (opener, admission) = RealTiKvReadSessionOpener::new_with_admission_owner(
             table,
             factory,
@@ -1001,6 +1021,8 @@ pub enum RealTiKvReadError {
     Request(String),
     /// Existing lazy DistSQL send boundary failed.
     Query(String),
+    /// Reading or admitting the cluster's stored catalog failed.
+    Catalog(String),
 }
 
 impl fmt::Display for RealTiKvReadError {
@@ -1008,6 +1030,7 @@ impl fmt::Display for RealTiKvReadError {
         match self {
             Self::Pd(error) => write!(formatter, "PD read control plane failed: {error}"),
             Self::Transport(message) => write!(formatter, "TiKV transport failed: {message}"),
+            Self::Catalog(message) => write!(formatter, "cluster catalog load failed: {message}"),
             Self::Plan(error) => write!(formatter, "read-only SQL rejected: {error}"),
             Self::Dag(error) => write!(formatter, "DAG lowering failed: {error}"),
             Self::Request(message) => write!(formatter, "DistSQL request failed: {message}"),
