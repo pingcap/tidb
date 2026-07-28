@@ -27,10 +27,29 @@ use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, Meta
 use tidb_exec::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, ClusterBootstrapState,
 };
-use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapError, BootstrapWrite};
+use tidb_datatype::{Time, TimeType};
+use tidb_exec::mysql_bootstrap::{
+    plan_mysql_bootstrap, BootstrapEnvironment, BootstrapError, BootstrapWrite,
+};
 use tidb_meta::key;
 use tidb_metadef::BOOTSTRAP_TABLES;
 use tidb_txnkv::transaction::OptimisticMutationKind;
+
+/// One fixed environment, so every plan here is byte-for-byte reproducible.
+fn environment() -> BootstrapEnvironment {
+    BootstrapEnvironment {
+        system_tz: "Asia/Shanghai".to_owned(),
+        new_collation_enabled: true,
+        cluster_id: 7_667_705_271_188_879_689,
+        current_timestamp: Time::from_date_checked(
+            2026, 7, 29, 6, 12, 55, 0,
+            TimeType::Timestamp,
+            0,
+        )
+        .expect("a fixed calendar date is a valid timestamp"),
+        ddl_table_version: 0,
+    }
+}
 
 #[derive(Default)]
 struct MetaStore {
@@ -72,7 +91,7 @@ fn apply(store: &mut MetaStore, write: &BootstrapWrite) {
 
 fn bootstrapped() -> MetaStore {
     let mut store = MetaStore::default();
-    let write = plan_mysql_bootstrap(&mut store, 467_996_279_696_261_139).expect("a fresh keyspace bootstraps");
+    let write = plan_mysql_bootstrap(&mut store, 467_996_279_696_261_139, &environment()).expect("a fresh keyspace bootstraps");
     apply(&mut store, &write);
     store
 }
@@ -133,7 +152,7 @@ fn the_seeded_root_account_loads_back_as_an_unlocked_superuser() {
 #[test]
 fn a_second_bootstrap_is_refused_rather_than_layered_on_top() {
     let mut store = bootstrapped();
-    let error = plan_mysql_bootstrap(&mut store, 1).expect_err("a bootstrapped keyspace is refused");
+    let error = plan_mysql_bootstrap(&mut store, 1, &environment()).expect_err("a bootstrapped keyspace is refused");
     assert!(
         matches!(error, BootstrapError::AlreadyPresent { .. }),
         "{error}"
@@ -148,7 +167,7 @@ fn a_second_bootstrap_is_refused_rather_than_layered_on_top() {
         ),
         b"{}".to_vec(),
     );
-    let error = plan_mysql_bootstrap(&mut half, 1).expect_err("a half-bootstrapped keyspace is refused");
+    let error = plan_mysql_bootstrap(&mut half, 1, &environment()).expect_err("a half-bootstrapped keyspace is refused");
     assert!(
         matches!(error, BootstrapError::AlreadyPresent { .. }),
         "{error}"
@@ -161,7 +180,7 @@ fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
     store
         .pairs
         .insert(key::schema_version_kv_key(), b"60".to_vec());
-    let write = plan_mysql_bootstrap(&mut store, 7).expect("the keyspace bootstraps");
+    let write = plan_mysql_bootstrap(&mut store, 7, &environment()).expect("the keyspace bootstraps");
     assert_eq!(write.schema_version, 61);
     assert_eq!(write.diff.version, 61);
     assert_eq!(
@@ -180,7 +199,7 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
     // `mysql.user` and `mysql.tidb` are both NON-clustered, so a row with no
     // index entry is a row half of TiDB cannot find. Nothing backfills them
     // later, so the bootstrap that writes the row must write them.
-    let write = plan_mysql_bootstrap(&mut MetaStore::default(), 7).expect("the keyspace bootstraps");
+    let write = plan_mysql_bootstrap(&mut MetaStore::default(), 7, &environment()).expect("the keyspace bootstraps");
     let index_entries = write
         .mutations
         .iter()
@@ -191,8 +210,8 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .iter()
         .filter(|mutation| mutation.kind() == OptimisticMutationKind::Insert)
         .count();
-    // One `mysql.user` row (PRIMARY + i_user) and two `mysql.tidb` rows
+    // One `mysql.user` row (PRIMARY + i_user) and six `mysql.tidb` rows
     // (PRIMARY each).
-    assert_eq!(records, 3);
-    assert_eq!(index_entries, 4);
+    assert_eq!(records, 7);
+    assert_eq!(index_entries, 8);
 }

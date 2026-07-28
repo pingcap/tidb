@@ -30,11 +30,11 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+chrono.workspace = true
 prost.workspace = true
 serde_json = { workspace = true }
 
 [dev-dependencies]
-chrono.workspace = true
 
 [[test]]
 name = "all"

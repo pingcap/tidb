@@ -24,11 +24,13 @@
 //! 3. the row-ID allocator key, so the next writer does not hand out a handle
 //!    this bootstrap already used.
 
+use chrono::{Datelike, Timelike};
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_codec::{gen_table_record_prefix, Encoder};
-use tidb_datatype::{Collation, Datum, FieldTypeCode, MysqlEnum};
+use tidb_datatype::{Collation, Datum, FieldTypeCode, MysqlEnum, Time, TimeType};
 use tidb_meta::{key, value};
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
+use tidb_model::column::ColumnDefaultValue;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{
     encode_table_row, generate_index_key, generate_index_value, IndexColumn as CodecIndexColumn,
@@ -37,14 +39,20 @@ use tidb_tablecodec::{
 use tidb_txnkv::transaction::OptimisticMutation;
 use tidb_txnkv::{Handle, IntHandle};
 
-use super::{text, BootstrapError, BOOTSTRAPPED_VAR, TIDB_SERVER_VERSION_VAR, VAR_TRUE};
+use super::{
+    text, BootstrapError, BOOTSTRAPPED_VAR, CLUSTER_ID_VAR, DDL_TABLE_VERSION_VAR,
+    NEW_COLLATION_ENABLED_VAR, SYSTEM_TZ_VAR, TIDB_SERVER_VERSION_VAR, VAR_FALSE, VAR_TRUE,
+};
 
 /// Go `currentBootstrapVersion` as this node writes it.
 ///
 /// A real TiDB compares the stored value against its own build's constant and
-/// runs the upgrade steps between them; writing the version whose *schema* this
-/// node actually created is what keeps that comparison honest.
-pub const CURRENT_BOOTSTRAP_VERSION: i64 = 245;
+/// runs the upgrade steps between them, so this must be the same number Go's
+/// upgrade registry ends at — there is only one such number, and
+/// [`crate::upgrade_versions`] already owns it. A second copy here could only
+/// ever be a stale one, and a stale one makes a real TiDB run upgrade steps
+/// over a schema that was already created at the current version.
+pub use crate::upgrade_versions::CURRENT_BOOTSTRAP_VERSION;
 
 /// One value of a seed row, named by its column so a schema that renames or
 /// reorders columns fails loudly instead of writing into the wrong one.
@@ -66,28 +74,60 @@ pub struct SeedRow {
     pub values: Vec<SeedValue>,
 }
 
+/// Go `ast.CurrentTimestamp`, as a column default stores it.
+const CURRENT_TIMESTAMP: &str = "CURRENT_TIMESTAMP";
+
 /// Go's own `Y`/`N` privilege spelling.
 const YES: &str = "Y";
 const NO: &str = "N";
 
+/// The facts about *this* cluster and host that Go's `doDMLWorks` reads out of
+/// its environment rather than out of any constant.
+///
+/// They are inputs, not defaults: a real TiDB reads `system_tz` and
+/// `new_collation_enabled` back on every start and refuses to run without them,
+/// so a bootstrap that cannot state them is a bootstrap that produces a cluster
+/// no TiDB can open.
+#[derive(Clone, Debug)]
+pub struct BootstrapEnvironment {
+    /// Go `timeutil.InferSystemTZ()`: the host's own zone name.
+    pub system_tz: String,
+    /// Go `config.NewCollationsEnabledOnFirstBootstrap`, frozen for the life of
+    /// the cluster by this very row.
+    pub new_collation_enabled: bool,
+    /// The PD cluster ID this keyspace belongs to.
+    pub cluster_id: u64,
+    /// What `CURRENT_TIMESTAMP` evaluates to for this bootstrap, in UTC.
+    ///
+    /// Go's seed rows get theirs from the `INSERT` that writes them; this one
+    /// is stated so a bootstrap plan stays a pure function of its inputs.
+    pub current_timestamp: Time,
+    /// Go `Mutator.GetDDLTableVersion` as it stands *before* any TiDB has
+    /// created its DDL tables — this bootstrap creates none of them, so the
+    /// row states what the meta key says rather than what Go's own bootstrap
+    /// would have left behind.
+    pub ddl_table_version: i64,
+}
+
 /// Writes every seed row Go's `doDMLWorks` writes, with its index entries.
 pub fn seed(
     tables: &[TableInfo],
+    environment: &BootstrapEnvironment,
     mutations: &mut Vec<OptimisticMutation>,
 ) -> Result<(), BootstrapError> {
-    for row in seed_rows() {
+    for row in seed_rows(environment) {
         let table = tables
             .iter()
             .find(|table| table.name.lowercase() == row.table)
             .ok_or_else(|| {
                 BootstrapError::Encode(format!("mysql.{} was not created", row.table))
             })?;
-        write_row(table, &row, mutations)?;
+        write_row(table, &row, environment.current_timestamp, mutations)?;
     }
     // Every seeded table hands out `_tidb_rowid`s from 1, so the allocator has
     // to record the last one used before another writer asks for the next.
     for table in tables {
-        let used = seed_rows()
+        let used = seed_rows(environment)
             .iter()
             .filter(|row| row.table == table.name.lowercase())
             .count();
@@ -103,7 +143,7 @@ pub fn seed(
 }
 
 /// Go `doDMLWorks`, as data.
-fn seed_rows() -> Vec<SeedRow> {
+fn seed_rows(environment: &BootstrapEnvironment) -> Vec<SeedRow> {
     // The non-secure bootstrap account: `root`@`%` with every static privilege
     // except `Account_locked`, an EMPTY password, and the native-password
     // plugin. An empty `authentication_string` is what makes a fresh cluster
@@ -151,6 +191,30 @@ fn seed_rows() -> Vec<SeedRow> {
             TIDB_SERVER_VERSION_VAR,
             &CURRENT_BOOTSTRAP_VERSION.to_string(),
             "Bootstrap version. Do not delete.",
+        ),
+        tidb_variable(
+            SYSTEM_TZ_VAR,
+            &environment.system_tz,
+            "TiDB Global System Timezone.",
+        ),
+        tidb_variable(
+            NEW_COLLATION_ENABLED_VAR,
+            if environment.new_collation_enabled {
+                VAR_TRUE
+            } else {
+                VAR_FALSE
+            },
+            "If the new collations are enabled. Do not edit it.",
+        ),
+        tidb_variable(
+            DDL_TABLE_VERSION_VAR,
+            &environment.ddl_table_version.to_string(),
+            "DDL Table Version. Do not delete.",
+        ),
+        tidb_variable(
+            CLUSTER_ID_VAR,
+            &environment.cluster_id.to_string(),
+            "TiDB Cluster ID.",
         ),
     ]
 }
@@ -216,6 +280,7 @@ const GRANTED_PRIVILEGE_COLUMNS: &[&str] = &[
 fn write_row(
     table: &TableInfo,
     row: &SeedRow,
+    current_timestamp: Time,
     mutations: &mut Vec<OptimisticMutation>,
 ) -> Result<(), BootstrapError> {
     // Each seeded table's rows are numbered from 1 in the order they appear.
@@ -233,21 +298,37 @@ fn write_row(
         + 1;
     let handle = Handle::Int(IntHandle::new(row_id));
 
-    let mut column_ids = Vec::with_capacity(row.values.len());
-    let mut values = Vec::with_capacity(row.values.len());
-    for seed in &row.values {
-        let column = table
-            .cols()
-            .into_iter()
-            .find(|column| column.name.lowercase() == seed.column)
-            .ok_or_else(|| {
-                BootstrapError::Encode(format!(
-                    "mysql.{} has no column `{}` to seed",
-                    row.table, seed.column
-                ))
-            })?;
+    // A seed row names only the columns it cares about, but the stored row
+    // carries *every* column, because that is what an `INSERT` — the statement
+    // Go bootstraps with — produces: each unnamed column is materialised from
+    // its declared default, `CURRENT_TIMESTAMP` included. Leaving a column out
+    // instead is what a real TiDB trips on, either as TiKV's "missing data for
+    // NOT NULL column" or as a zero time it refuses to convert.
+    let mut column_ids = Vec::with_capacity(table.columns.len());
+    let mut values = Vec::with_capacity(table.columns.len());
+    for column in table.cols() {
+        let named = row
+            .values
+            .iter()
+            .find(|seed| seed.column == column.name.lowercase());
+        let value = match named {
+            Some(seed) => typed_value(&seed.value, column.get_type()),
+            None => declared_default(column, row.table, current_timestamp)?,
+        };
         column_ids.push(column.id);
-        values.push(typed_value(&seed.value, column.get_type()));
+        values.push(value);
+    }
+    for seed in &row.values {
+        if !table
+            .columns
+            .iter()
+            .any(|column| column.name.lowercase() == seed.column)
+        {
+            return Err(BootstrapError::Encode(format!(
+                "mysql.{} has no column `{}` to seed",
+                row.table, seed.column
+            )));
+        }
     }
     let encoded = encode_table_row(None, &values, &column_ids, true, None)
         .map_err(|error| BootstrapError::Encode(error.to_string()))?;
@@ -313,6 +394,98 @@ fn write_row(
 /// Every seed value is written as text here, because that is how Go's own
 /// `INSERT` spells it; a column whose declared type is `ENUM` needs it as the
 /// member it names, not as a string, or the row decodes as the wrong type.
+/// The UTC wall clock as one `TIMESTAMP` value, for
+/// [`BootstrapEnvironment::current_timestamp`].
+///
+/// # Panics
+///
+/// Never in practice: the fields come from a calendar date that is by
+/// construction in range.
+#[must_use]
+pub fn utc_now_timestamp() -> Time {
+    let now = chrono::Utc::now();
+    Time::from_date_checked(
+        now.year(),
+        i32::try_from(now.month()).expect("a month fits in i32"),
+        i32::try_from(now.day()).expect("a day fits in i32"),
+        i32::try_from(now.hour()).expect("an hour fits in i32"),
+        i32::try_from(now.minute()).expect("a minute fits in i32"),
+        i32::try_from(now.second()).expect("a second fits in i32"),
+        0,
+        TimeType::Timestamp,
+        0,
+    )
+    .expect("the current UTC calendar date is a valid timestamp")
+}
+
+/// The datum one column's declared `DEFAULT` materialises to.
+///
+/// This is what an `INSERT` stores for a column the statement does not name: a
+/// literal default as itself, `CURRENT_TIMESTAMP` as this bootstrap's own
+/// timestamp, and no default at all as `NULL`. An expression default is
+/// refused, because evaluating one is not this bootstrap's job and silently
+/// storing its unevaluated text writes a row a real TiDB rejects.
+fn declared_default(
+    column: &tidb_model::column::ColumnInfo,
+    table: &str,
+    current_timestamp: Time,
+) -> Result<Datum, BootstrapError> {
+    let refuse = || {
+        BootstrapError::Encode(format!(
+            "mysql.{table}.{} declares a default this bootstrap cannot materialise",
+            column.name.original()
+        ))
+    };
+    if column.default_is_expr {
+        return Err(refuse());
+    }
+    // A `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` column stores that very word as
+    // its default: an `INSERT` evaluates it, so a bootstrap that stores the
+    // word instead writes a row TiDB rejects as an `Incorrect time value`.
+    if let Some(ColumnDefaultValue::Str(bytes)) = column.default_value.as_ref() {
+        if String::from_utf8_lossy(bytes).eq_ignore_ascii_case(CURRENT_TIMESTAMP) {
+            return Ok(Datum::new_time(current_timestamp));
+        }
+    }
+    let Some(default) = column.default_value.as_ref() else {
+        // No declared default: an `INSERT` stores NULL, and the column is
+        // nullable or the schema would not have parsed.
+        return Ok(Datum::Null);
+    };
+    let datum = match default {
+        ColumnDefaultValue::Int(value) => Datum::Int(*value),
+        ColumnDefaultValue::Uint(value) => Datum::UInt(*value),
+        ColumnDefaultValue::Bool(value) => Datum::Int(i64::from(*value)),
+        ColumnDefaultValue::Float(value) => Datum::Real(*value),
+        ColumnDefaultValue::Str(bytes) => {
+            let text = Datum::Bytes(bytes.clone());
+            // A numeric column's default is stored as its printed form, so it
+            // has to be read back as a number before it is encoded as one.
+            match column.get_type() {
+                FieldTypeCode::Tiny
+                | FieldTypeCode::Short
+                | FieldTypeCode::Int24
+                | FieldTypeCode::Long
+                | FieldTypeCode::LongLong
+                | FieldTypeCode::Year => {
+                    let printed = String::from_utf8_lossy(bytes);
+                    let parsed = printed.trim().parse::<i64>().map_err(|_| refuse())?;
+                    if column
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+                    {
+                        Datum::UInt(u64::try_from(parsed).map_err(|_| refuse())?)
+                    } else {
+                        Datum::Int(parsed)
+                    }
+                }
+                code => typed_value(&text, code),
+            }
+        }
+    };
+    Ok(datum)
+}
+
 fn typed_value(value: &Datum, code: FieldTypeCode) -> Datum {
     match (value, code) {
         (Datum::Bytes(bytes), FieldTypeCode::Enum) => {

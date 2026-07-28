@@ -154,6 +154,15 @@ impl RealOptimisticTransactionOpener {
         self.opener.authority_id()
     }
 
+    /// The PD cluster this opener writes to, as PD itself names it.
+    ///
+    /// Never zero: [`Self::from_process_capabilities`] refuses a PD client that
+    /// has not learned its cluster ID.
+    #[must_use]
+    pub fn cluster_id(&self) -> u64 {
+        self.pd.cluster_id()
+    }
+
     /// Opens a worker-local transaction over the existing process authorities.
     pub fn begin(
         &self,

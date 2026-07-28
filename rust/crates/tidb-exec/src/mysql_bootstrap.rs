@@ -61,7 +61,7 @@ use crate::table_info_build::{build_table_info, ClusteredIndexDefMode, DdlAdmiss
 
 mod rows;
 
-pub use rows::{SeedRow, SeedValue};
+pub use rows::{utc_now_timestamp, BootstrapEnvironment, SeedRow, SeedValue};
 
 /// Go `mysql.DefaultCharset` / the collation TiDB's own `mysql` schema carries.
 const SYSTEM_DB_CHARSET: &str = "utf8mb4";
@@ -72,8 +72,18 @@ const SYSTEM_DB_COLLATION: &str = "utf8mb4_bin";
 pub const BOOTSTRAPPED_VAR: &str = "bootstrapped";
 /// Go `tidbServerVersionVar`.
 pub const TIDB_SERVER_VERSION_VAR: &str = "tidb_server_version";
+/// Go `tidbSystemTZ`.
+pub const SYSTEM_TZ_VAR: &str = "system_tz";
+/// Go `TidbNewCollationEnabled`.
+pub const NEW_COLLATION_ENABLED_VAR: &str = "new_collation_enabled";
+/// Go `tidbDDLTableVersion`.
+pub const DDL_TABLE_VERSION_VAR: &str = "ddl_table_version";
+/// Go `tidbClusterID`.
+pub const CLUSTER_ID_VAR: &str = "cluster_id";
 /// Go `varTrue`.
 pub const VAR_TRUE: &str = "True";
+/// Go `varFalse`.
+pub const VAR_FALSE: &str = "False";
 
 /// Why a bootstrap cannot be planned.
 #[derive(Clone, Debug)]
@@ -151,6 +161,7 @@ pub struct BootstrapWrite {
 pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
     snapshot: &mut S,
     start_ts: u64,
+    environment: &BootstrapEnvironment,
 ) -> Result<BootstrapWrite, BootstrapError> {
     refuse_if_present(snapshot)?;
 
@@ -184,7 +195,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         created_tables.push(info);
     }
 
-    rows::seed(&created_tables, &mut mutations)?;
+    rows::seed(&created_tables, environment, &mut mutations)?;
 
     // The version bump comes last, so the write set ends with the two keys that
     // make the whole schema observable at once.
@@ -222,8 +233,21 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
 pub fn bootstrap_mysql_schema<S: MetaSnapshot>(
     snapshot: &mut S,
     start_ts: u64,
+    environment: &BootstrapEnvironment,
 ) -> Result<BootstrapWrite, BootstrapError> {
-    plan_mysql_bootstrap(snapshot, start_ts)
+    plan_mysql_bootstrap(snapshot, start_ts, environment)
+}
+
+/// Reads Go `Mutator.GetDDLTableVersion` at this snapshot.
+///
+/// A keyspace no TiDB has touched has no such key, and Go's own reader treats
+/// that absence as `InitDDLTableVersion` — zero.
+pub fn read_ddl_table_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, BootstrapError> {
+    match snapshot.get(&key::ddl_table_version_kv_key())? {
+        Some(stored) => value::parse_int_value(&stored)
+            .map_err(|error| BootstrapError::Encode(format!("DDLTableVersion: {error}"))),
+        None => Ok(0),
+    }
 }
 
 /// Builds one `mysql.*` table at its reserved ID.

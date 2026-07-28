@@ -200,6 +200,14 @@ pub fn bootstrap_kv_key() -> Vec<u8> {
     encode_string_data_key(BOOTSTRAP)
 }
 
+/// The raw KV key holding the DDL-table version. Go
+/// `Mutator.GetDDLTableVersion`, which stores it as a plain string value, not
+/// a field of any hash.
+#[must_use]
+pub fn ddl_table_version_kv_key() -> Vec<u8> {
+    encode_string_data_key(DDL_TABLE_VERSION)
+}
+
 /// The raw KV key holding one schema diff. Go `Mutator.EncodeSchemaDiffKey`.
 #[must_use]
 pub fn schema_diff_kv_key(schema_version: i64) -> Vec<u8> {
