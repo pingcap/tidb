@@ -207,6 +207,12 @@ pub enum DriverError {
     /// Go `types.ErrJSONDocumentNULLKey` (3158): `JSON_OBJECTAGG` evaluated a
     /// NULL member name.
     JsonDocumentNullKey,
+    /// Go `types.ErrInvalidJSONCharset` (3144): `JSON_OBJECTAGG` evaluated a
+    /// BINARY-charset key.
+    InvalidJsonCharset {
+        /// The rejected key argument's charset name.
+        charset: String,
+    },
     /// Go `typeInfer4ApproxPercentile`'s plain errors (no error class, so
     /// 1105), carrying the message text Go writes.
     ApproxPercentileArgument(&'static str),
@@ -474,6 +480,9 @@ impl From<ExecError> for DriverError {
             // callers match one variant.
             ExecError::SubqueryReturnsMoreThanOneRow => DriverError::SubqueryReturnsMoreThanOneRow,
             ExecError::JsonDocumentNullKey => DriverError::JsonDocumentNullKey,
+            ExecError::InvalidJsonCharset { charset } => {
+                DriverError::InvalidJsonCharset { charset }
+            }
             other => DriverError::Exec(other),
         }
     }
@@ -831,6 +840,14 @@ impl DriverError {
             3158,
             *b"22032",
             "JSON documents may not contain NULL member names.".to_owned(),
+        ),
+        // Go: "Cannot create a JSON value from a string with CHARACTER SET
+        // '%s'." (`types.ErrInvalidJSONCharset`, captured verbatim from a
+        // BINARY-charset `JSON_OBJECTAGG` key).
+        DriverError::InvalidJsonCharset { charset } => MysqlError::new(
+            3144,
+            *b"22032",
+            format!("Cannot create a JSON value from a string with CHARACTER SET '{charset}'."),
         ),
         // Go raises these with a bare `errors.New`/`fmt.Errorf`, so they carry
         // no error class and reach the client as 1105.

@@ -36,6 +36,15 @@ pub enum ExecError {
     /// NULL member name. It is an executor error because Go raises it while
     /// folding the group, after the result columns are already on the wire.
     JsonDocumentNullKey,
+    /// Go `types.ErrInvalidJSONCharset` (3144): `JSON_OBJECTAGG` evaluated a
+    /// BINARY-charset key. Like `JsonDocumentNullKey`, this surfaces only
+    /// once the group is folded, not at plan time.
+    InvalidJsonCharset {
+        /// The rejected key argument's charset name (always `binary`; Go's
+        /// message is parameterized on it, so it travels with the error
+        /// rather than being hard-coded at the wire boundary).
+        charset: String,
+    },
 }
 
 impl From<EvalError> for ExecError {

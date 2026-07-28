@@ -1483,7 +1483,7 @@ fn evaluate_partition(
                 // further tuple members reach the accumulator, since
                 // `APPROX_PERCENTILE`'s percentage already rides the kind.
                 let extras = |at: usize| match kind {
-                    AggKind::JsonObjectAgg => vec![arg_at(1, at)],
+                    AggKind::JsonObjectAgg { .. } => vec![arg_at(1, at)],
                     AggKind::ApproxCountDistinct => {
                         (1..arg_values.len()).map(|slot| arg_at(slot, at)).collect()
                     }

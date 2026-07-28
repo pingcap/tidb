@@ -2043,10 +2043,38 @@ pub(crate) fn agg_kind_and_type(
         "JSON_ARRAYAGG" | "JSON_OBJECTAGG" => {
             let mut t = FieldType::new(FieldTypeCode::Json);
             t.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
-            let kind = if name == "JSON_ARRAYAGG" {
-                AggKind::JsonArrayAgg
+            // The VALUE argument's own field type -- `JSON_ARRAYAGG`'s first
+            // argument, `JSON_OBJECTAGG`'s second -- decides how a
+            // BINARY-charset string embeds: Go's `getRealJSONValue` tags the
+            // JSON `Opaque` it builds with `ft.GetType()`, the source
+            // column's exact MySQL type code (captured: VARBINARY is 15,
+            // fixed-length BINARY(n) is 254 and zero-padded to `n`, the
+            // TINYBLOB/BLOB/MEDIUMBLOB/LONGBLOB family is 249/252/250/251).
+            let value_arg = if name == "JSON_ARRAYAGG" {
+                args.first()
             } else {
-                AggKind::JsonObjectAgg
+                args.get(1)
+            };
+            let value_type = value_arg
+                .and_then(Expression::static_type)
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::VarString));
+            let kind = if name == "JSON_ARRAYAGG" {
+                AggKind::JsonArrayAgg { value_type }
+            } else {
+                // The KEY argument's own field type decides 3144 -- Go:
+                // `e.args[0].GetType(sctx).GetCharset() == charset.CharsetBin`
+                // -- a STATIC property of the declared argument type, not
+                // the evaluated key datum (see `AggKind::JsonObjectAgg`'s own
+                // doc for why the datum kind alone is not enough).
+                let key_is_binary = args
+                    .first()
+                    .and_then(Expression::static_type)
+                    .is_some_and(FieldType::is_binary_string);
+                AggKind::JsonObjectAgg {
+                    value_type,
+                    key_is_binary,
+                }
             };
             (kind, t)
         }

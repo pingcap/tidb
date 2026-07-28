@@ -1080,6 +1080,45 @@ impl Datum {
         BinaryJSON::from_typed_value(&value).map_err(Into::into)
     }
 
+    /// As [`Self::to_mysql_json`], but a `Bytes` payload -- and a `String`
+    /// payload whose `field_type` is BINARY-charset -- embeds
+    /// `field_type`'s own MySQL type code as a JSON `Opaque` value instead
+    /// of an ordinary JSON string. Go's `getRealJSONValue`
+    /// (`pkg/executor/aggfuncs/func_json_objectagg.go`), the value rule
+    /// shared by `JSON_ARRAYAGG` and `JSON_OBJECTAGG`, wraps `KindBytes`
+    /// unconditionally (a byte datum has no other charset) and `KindString`
+    /// only when its field type's charset is `binary`.
+    ///
+    /// A fixed-length `BINARY(n)` column (`FieldTypeCode::String`) pads the
+    /// embedded buffer to `flen` bytes before encoding, matching Go's own
+    /// tailing-zero rule (captured: `BINARY(3)` holding `"ab"` renders
+    /// `base64:type254:YWIA`, the trailing NUL included). Every other datum
+    /// kind defers to `to_mysql_json` unchanged.
+    pub fn to_mysql_json_with_source_type(
+        &self,
+        field_type: &crate::FieldType,
+    ) -> Result<BinaryJSON, DatumValueError> {
+        let buf = match self {
+            Self::Bytes(value) => Some(value.clone()),
+            Self::String(value) if field_type.is_binary_string() => Some(value.bytes().to_vec()),
+            _ => None,
+        };
+        let Some(mut buf) = buf else {
+            return self.to_mysql_json();
+        };
+        if field_type.code() == crate::FieldTypeCode::String {
+            let flen = field_type.flen();
+            if flen > 0 {
+                buf.resize(flen as usize, 0);
+            }
+        }
+        let opaque = crate::Opaque {
+            type_code: field_type.code().mysql_type(),
+            bytes: buf,
+        };
+        BinaryJSON::from_typed_value(&BinaryJSONValue::Opaque(opaque)).map_err(Into::into)
+    }
+
     /// Owned memory estimate for the Rust enum representation.
     pub fn estimated_mem_usage(&self) -> usize {
         std::mem::size_of::<Self>()
@@ -2054,5 +2093,101 @@ mod tests {
             let decoded = Datum::unmarshal_json(&encoded).unwrap();
             assert_eq!(decoded, value, "round-trip row {index}: {encoded:?}");
         }
+    }
+
+    /// `Datum::to_mysql_json_with_source_type`: a BINARY-charset argument
+    /// embeds the source column's own MySQL type code as a JSON `Opaque`
+    /// value, Go's `getRealJSONValue`
+    /// (`pkg/executor/aggfuncs/func_json_objectagg.go`), the value rule
+    /// `JSON_ARRAYAGG`/`JSON_OBJECTAGG` share.
+    ///
+    /// Every expected string below is captured verbatim from a real TiDB
+    /// server (`zz_dump_opaque_test.go`, `TestZZDumpOpaque`):
+    /// `SELECT JSON_ARRAYAGG(col) FROM t` over one-column tables of each
+    /// listed type, each holding the two-byte string `"ab"`.
+    #[test]
+    fn to_mysql_json_with_source_type_matches_captured_opaque_rendering() {
+        use crate::{FieldType, FieldTypeCode};
+
+        // VARBINARY(10): mysql.TypeVarchar (15) -- VARBINARY and VARCHAR
+        // share this parse-time code, so the binary distinction rides the
+        // collation, not the code, at DDL time.
+        let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
+        assert_eq!(
+            Datum::new_bytes(*b"ab")
+                .to_mysql_json_with_source_type(&varbinary)
+                .unwrap()
+                .to_string(),
+            "\"base64:type15:YWI=\""
+        );
+
+        // BINARY(3): mysql.TypeString (254), fixed-length and zero-padded to
+        // `flen` before encoding -- the captured `YWIA` decodes to
+        // `61 62 00` (`ab\0`), the tailing pad byte included.
+        let mut binary = FieldType::new(FieldTypeCode::String);
+        binary.set_flen(3);
+        assert_eq!(
+            Datum::new_bytes(*b"ab")
+                .to_mysql_json_with_source_type(&binary)
+                .unwrap()
+                .to_string(),
+            "\"base64:type254:YWIA\""
+        );
+
+        // TINYBLOB/BLOB/MEDIUMBLOB/LONGBLOB: mysql.Type{Tiny,Medium,Long}Blob
+        // and mysql.TypeBlob (249/250/251/252), never padded.
+        for (code, expected) in [
+            (FieldTypeCode::TinyBlob, "\"base64:type249:YWI=\""),
+            (FieldTypeCode::MediumBlob, "\"base64:type250:YWI=\""),
+            (FieldTypeCode::LongBlob, "\"base64:type251:YWI=\""),
+            (FieldTypeCode::Blob, "\"base64:type252:YWI=\""),
+        ] {
+            let field_type = FieldType::new(code);
+            assert_eq!(
+                Datum::new_bytes(*b"ab")
+                    .to_mysql_json_with_source_type(&field_type)
+                    .unwrap()
+                    .to_string(),
+                expected,
+                "{code:?}"
+            );
+        }
+
+        // `CAST(x AS BINARY)`: mysql.TypeVarString (253), captured from
+        // `JSON_ARRAY(CAST('ab' AS BINARY))` = `["base64:type253:YWI="]`.
+        let cast_binary = FieldType::new(FieldTypeCode::VarString);
+        assert_eq!(
+            Datum::new_bytes(*b"ab")
+                .to_mysql_json_with_source_type(&cast_binary)
+                .unwrap()
+                .to_string(),
+            "\"base64:type253:YWI=\""
+        );
+
+        // A non-binary-charset argument (an ordinary VARCHAR column) is
+        // unaffected: it stays a plain JSON string, matching
+        // `to_mysql_json`.
+        let varchar = FieldType::new(FieldTypeCode::Varchar);
+        assert_eq!(
+            Datum::new_string("ab")
+                .to_mysql_json_with_source_type(&varchar)
+                .unwrap()
+                .to_string(),
+            "\"ab\""
+        );
+    }
+
+    /// `JSON_TYPE()` of a BINARY-charset opaque value reports `"BLOB"`, not
+    /// `"OPAQUE"` -- captured: `JSON_TYPE(JSON_EXTRACT(arrayagg_result,
+    /// '$[0]'))` over a VARBINARY-sourced element is `"BLOB"`.
+    #[test]
+    fn opaque_json_type_of_binary_charset_value_is_blob() {
+        use crate::{FieldType, FieldTypeCode};
+
+        let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
+        let opaque = Datum::new_bytes(*b"ab")
+            .to_mysql_json_with_source_type(&varbinary)
+            .unwrap();
+        assert_eq!(opaque.type_name().unwrap(), "BLOB");
     }
 }

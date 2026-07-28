@@ -364,6 +364,75 @@ fn json_and_approximate_aggregates() {
     ));
 }
 
+/// `JSON_ARRAYAGG`/`JSON_OBJECTAGG` over a BINARY-charset value: Go wraps it
+/// in a JSON `Opaque` value (rendered `"base64:type<N>:<data>"`) tagged with
+/// the source column's own MySQL type code, rather than an ordinary JSON
+/// string. A BINARY-charset KEY is rejected with 3144. Every expectation is
+/// captured verbatim from a real TiDB server (`zz_dump_opaque_test.go`,
+/// `TestZZDumpOpaque`).
+#[test]
+fn json_aggregates_wrap_binary_charset_values_as_opaque() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (\
+                 c_varbin VARBINARY(10), c_bin BINARY(3), c_tinyblob TINYBLOB, \
+                 c_blob BLOB, c_mediumblob MEDIUMBLOB, c_longblob LONGBLOB)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES ('ab','ab','ab','ab','ab','ab')")
+        .unwrap();
+
+    // mysql.TypeVarchar (15).
+    assert_eq!(
+        row_text(session.run("SELECT JSON_ARRAYAGG(c_varbin) FROM t")),
+        [["[\"base64:type15:YWI=\"]"]]
+    );
+    // mysql.TypeString (254), fixed-length and zero-padded to `flen` before
+    // encoding -- `YWIA` decodes to `61 62 00` (`ab\0`), the tailing pad
+    // byte included.
+    assert_eq!(
+        row_text(session.run("SELECT JSON_ARRAYAGG(c_bin) FROM t")),
+        [["[\"base64:type254:YWIA\"]"]]
+    );
+    // mysql.Type{Tiny,Medium,Long}Blob / mysql.TypeBlob (249/250/251/252).
+    assert_eq!(
+        row_text(session.run("SELECT JSON_ARRAYAGG(c_tinyblob) FROM t")),
+        [["[\"base64:type249:YWI=\"]"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT JSON_ARRAYAGG(c_blob) FROM t")),
+        [["[\"base64:type252:YWI=\"]"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT JSON_ARRAYAGG(c_mediumblob) FROM t")),
+        [["[\"base64:type250:YWI=\"]"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT JSON_ARRAYAGG(c_longblob) FROM t")),
+        [["[\"base64:type251:YWI=\"]"]]
+    );
+
+    // JSON_OBJECTAGG's VALUE side follows the same rule.
+    assert_eq!(
+        row_text(session.run("SELECT JSON_OBJECTAGG('k', c_varbin) FROM t")),
+        [["{\"k\": \"base64:type15:YWI=\"}"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT JSON_OBJECTAGG('k', c_bin) FROM t")),
+        [["{\"k\": \"base64:type254:YWIA\"}"]]
+    );
+
+    // A BINARY-charset KEY fails the statement with 3144 -- captured:
+    // "[json:3144]Cannot create a JSON value from a string with CHARACTER
+    // SET 'binary'.".
+    assert!(matches!(
+        session.run("SELECT JSON_OBJECTAGG(c_varbin, 1) FROM t"),
+        Err(DriverError::InvalidJsonCharset { charset }) if charset == "binary"
+    ));
+}
+
 /// `APPROX_COUNT_DISTINCT` past the 65536-distinct-value threshold, where
 /// Go's `BJKST` sketch (`func_count_distinct.go`) starts discarding samples
 /// and extrapolating rather than counting exactly.

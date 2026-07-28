@@ -124,12 +124,33 @@ pub enum AggKind {
     /// `JSON_ARRAYAGG(v)`: every row's value in ARRIVAL order, NULL rows
     /// included as JSON `null` (Go `func_json_arrayagg.go` appends the
     /// converted datum unconditionally). An empty group is SQL NULL.
-    JsonArrayAgg,
+    /// `value_type` is the argument's own field type, needed to tag a
+    /// BINARY-charset value's JSON `Opaque` wrapping with the source
+    /// column's exact MySQL type code.
+    JsonArrayAgg {
+        /// The VALUE argument's static field type.
+        value_type: FieldType,
+    },
     /// `JSON_OBJECTAGG(k, v)`: a JSON object keyed by the stringified first
     /// argument. A repeated key keeps the LAST row's value (Go's
     /// `MemAwareMap.SetExt` overwrites), a NULL key fails the statement with
-    /// 3158, and a NULL value stores JSON `null`.
-    JsonObjectAgg,
+    /// 3158, a BINARY-charset key fails with 3144, and a NULL value stores
+    /// JSON `null`. `value_type` is the VALUE argument's own field type, for
+    /// the same `Opaque` type-code tagging `JsonArrayAgg` needs.
+    ///
+    /// `key_is_binary` is a STATIC property of the KEY argument's own field
+    /// type (Go: `e.args[0].GetType(sctx).GetCharset() == charset.CharsetBin`),
+    /// not a runtime check on the evaluated key datum: an ordinary string
+    /// LITERAL key can also evaluate to a byte-backed datum in this
+    /// evaluator (the chunk rewriter's own representation choice, not a
+    /// charset), so only the argument's declared type can tell a genuinely
+    /// BINARY-charset key apart from that coincidence.
+    JsonObjectAgg {
+        /// The VALUE argument's static field type.
+        value_type: FieldType,
+        /// Whether the KEY argument's static field type is BINARY-charset.
+        key_is_binary: bool,
+    },
     /// `APPROX_COUNT_DISTINCT(a[, b, ...])`: Go's BJKST sketch
     /// ([`ApproxCountDistinctSketch`]) over the FarmHash `Hash64` of the
     /// encoded argument tuple, skipping any row with a NULL argument. Below
@@ -243,12 +264,14 @@ enum Partial {
         sample: bool,
         sqrt: bool,
     },
-    /// `JSON_ARRAYAGG`: the converted values in arrival order.
-    JsonArrayAgg(Vec<BinaryJSON>),
-    /// `JSON_OBJECTAGG`: the object built so far. A `BTreeMap` both keeps the
-    /// last write per key (Go's map overwrite) and hands the encoder the
-    /// bytewise-sorted key order it needs.
-    JsonObjectAgg(BTreeMap<String, BinaryJSON>),
+    /// `JSON_ARRAYAGG`: the converted values in arrival order, plus the
+    /// value argument's field type for `Opaque` type-code tagging.
+    JsonArrayAgg(Vec<BinaryJSON>, FieldType),
+    /// `JSON_OBJECTAGG`: the object built so far, the value argument's field
+    /// type, and whether the key argument is BINARY-charset. A `BTreeMap`
+    /// both keeps the last write per key (Go's map overwrite) and hands the
+    /// encoder the bytewise-sorted key order it needs.
+    JsonObjectAgg(BTreeMap<String, BinaryJSON>, FieldType, bool),
     /// `APPROX_COUNT_DISTINCT`: the BJKST sketch folding the group's encoded
     /// argument tuples.
     ApproxCountDistinct(ApproxCountDistinctSketch),
@@ -454,8 +477,13 @@ impl Partial {
                 sample: *sample,
                 sqrt: *sqrt,
             },
-            AggKind::JsonArrayAgg => Partial::JsonArrayAgg(Vec::new()),
-            AggKind::JsonObjectAgg => Partial::JsonObjectAgg(BTreeMap::new()),
+            AggKind::JsonArrayAgg { value_type } => {
+                Partial::JsonArrayAgg(Vec::new(), value_type.clone())
+            }
+            AggKind::JsonObjectAgg {
+                value_type,
+                key_is_binary,
+            } => Partial::JsonObjectAgg(BTreeMap::new(), value_type.clone(), *key_is_binary),
             AggKind::ApproxCountDistinct => {
                 Partial::ApproxCountDistinct(ApproxCountDistinctSketch::new())
             }
@@ -475,16 +503,30 @@ impl Partial {
         match (self, value) {
             // Go appends the converted value for EVERY row, so a NULL input
             // lands in the array as JSON `null` rather than being skipped.
-            (Partial::JsonArrayAgg(_), None) => {
+            (Partial::JsonArrayAgg(..), None) => {
                 return Err(ExecError::Unsupported("JSON_ARRAYAGG requires an argument"))
             }
-            (Partial::JsonArrayAgg(entries), Some(input)) => entries.push(json_value(&input)?),
-            (Partial::JsonObjectAgg(_), None | Some(Datum::Null)) => {
+            (Partial::JsonArrayAgg(entries, value_type), Some(input)) => {
+                entries.push(json_value(&input, value_type)?)
+            }
+            (Partial::JsonObjectAgg(..), None | Some(Datum::Null)) => {
                 return Err(ExecError::JsonDocumentNullKey)
             }
-            (Partial::JsonObjectAgg(entries), Some(key)) => {
+            // A BINARY-charset key (Go: `e.args[0].GetType(sctx).GetCharset()
+            // == charset.CharsetBin`) fails the statement with 3144 before
+            // the value is even evaluated -- a STATIC property of the key
+            // argument's declared type, checked here rather than by
+            // inspecting the evaluated datum (see `key_is_binary`'s own doc
+            // for why the datum kind alone cannot tell this apart from an
+            // ordinary string literal).
+            (Partial::JsonObjectAgg(_, _, true), Some(_)) => {
+                return Err(ExecError::InvalidJsonCharset {
+                    charset: "binary".to_owned(),
+                })
+            }
+            (Partial::JsonObjectAgg(entries, value_type, false), Some(key)) => {
                 let value = extra.first().cloned().unwrap_or(Datum::Null);
-                entries.insert(json_object_key(&key)?, json_value(&value)?);
+                entries.insert(json_object_key(&key)?, json_value(&value, value_type)?);
             }
             // A row with a NULL argument (or, for the multi-argument form, a
             // NULL in ANY argument, which the caller has already collapsed to
@@ -675,16 +717,16 @@ impl Partial {
         Ok(match self {
             Partial::Count(n) => Datum::Int(*n),
             // An empty group is SQL NULL, not the empty document `[]`/`{}`.
-            Partial::JsonArrayAgg(entries) if entries.is_empty() => Datum::Null,
-            Partial::JsonArrayAgg(entries) => encode_json(BinaryJSONValue::Array(
+            Partial::JsonArrayAgg(entries, _) if entries.is_empty() => Datum::Null,
+            Partial::JsonArrayAgg(entries, _) => encode_json(BinaryJSONValue::Array(
                 entries
                     .iter()
                     .cloned()
                     .map(BinaryJSONValue::Binary)
                     .collect(),
             ))?,
-            Partial::JsonObjectAgg(entries) if entries.is_empty() => Datum::Null,
-            Partial::JsonObjectAgg(entries) => encode_json(BinaryJSONValue::Object(
+            Partial::JsonObjectAgg(entries, _, _) if entries.is_empty() => Datum::Null,
+            Partial::JsonObjectAgg(entries, _, _) => encode_json(BinaryJSONValue::Object(
                 entries
                     .iter()
                     .map(|(key, value)| (key.clone(), BinaryJSONValue::Binary(value.clone())))
@@ -784,14 +826,13 @@ impl Partial {
 
 /// One JSON aggregate input as a JSON value, Go's `getRealJSONValue` followed
 /// by `CreateBinaryJSONWithCheck`'s per-element conversion: a NULL datum is
-/// JSON `null`, a DECIMAL becomes a DOUBLE, and a JSON column's value is
-/// carried through unchanged.
-///
-/// DEFERRED: a BINARY-charset string argument, which Go wraps in a JSON
-/// `Opaque` value rather than a JSON string.
-fn json_value(value: &Datum) -> Result<BinaryJSON, ExecError> {
+/// JSON `null`, a DECIMAL becomes a DOUBLE, a JSON column's value is carried
+/// through unchanged, and a BINARY-charset string (`value_type`'s charset is
+/// `binary`) wraps into a JSON `Opaque` tagged with `value_type`'s own MySQL
+/// type code rather than becoming a JSON string.
+fn json_value(value: &Datum, value_type: &FieldType) -> Result<BinaryJSON, ExecError> {
     value
-        .to_mysql_json()
+        .to_mysql_json_with_source_type(value_type)
         .map_err(|_| ExecError::Unsupported("this datum kind is not a JSON value"))
 }
 
@@ -936,7 +977,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
                             Some(expr) => Some(expr.eval(&self.ctx, row)?),
                             None => None,
                         }
-                    } else if matches!(f.kind, AggKind::JsonObjectAgg) {
+                    } else if matches!(f.kind, AggKind::JsonObjectAgg { .. }) {
                         // `JSON_OBJECTAGG(key, value)` is the one aggregate
                         // whose two arguments stay SEPARATE: the key is
                         // stringified into a member name and the value keeps
@@ -1410,6 +1451,69 @@ mod tests {
             NoColumns,
         );
         assert_eq!(run(agg), Vec::<Vec<Datum>>::new());
+    }
+
+    /// `JSON_ARRAYAGG`/`JSON_OBJECTAGG` over a BINARY-charset value: `Opaque`
+    /// wrapping tagged with the source column's own MySQL type code, and a
+    /// BINARY-charset key failing with 3144. Every expected JSON text is
+    /// captured verbatim from a real TiDB server (`zz_dump_opaque_test.go`,
+    /// `TestZZDumpOpaque`).
+    mod json_agg_opaque {
+        use super::*;
+        use tidb_datatype::FieldTypeCode;
+
+        fn varbinary() -> FieldType {
+            FieldType::new(FieldTypeCode::Varchar).with_collation(tidb_datatype::Collation::Binary)
+        }
+
+        /// `SELECT JSON_ARRAYAGG(c_varbin) FROM t` over one row holding
+        /// `"ab"` = `["base64:type15:YWI="]`.
+        #[test]
+        fn json_arrayagg_wraps_binary_charset_value_as_opaque() {
+            let mut partial = Partial::JsonArrayAgg(Vec::new(), varbinary());
+            partial
+                .update(Some(Datum::new_bytes(*b"ab")), &[], Vec::new())
+                .unwrap();
+            let result = partial.finish(&[]).unwrap();
+            let Datum::Json(json) = result else {
+                panic!("expected a JSON datum, got {result:?}");
+            };
+            assert_eq!(json.to_string(), r#"["base64:type15:YWI="]"#);
+        }
+
+        /// `SELECT JSON_OBJECTAGG('k', c_varbin) FROM t` over one row
+        /// holding `"ab"` = `{"k": "base64:type15:YWI="}`.
+        #[test]
+        fn json_objectagg_wraps_binary_charset_value_as_opaque() {
+            let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), varbinary(), false);
+            partial
+                .update(
+                    Some(Datum::new_string("k")),
+                    &[Datum::new_bytes(*b"ab")],
+                    Vec::new(),
+                )
+                .unwrap();
+            let result = partial.finish(&[]).unwrap();
+            let Datum::Json(json) = result else {
+                panic!("expected a JSON datum, got {result:?}");
+            };
+            assert_eq!(json.to_string(), r#"{"k": "base64:type15:YWI="}"#);
+        }
+
+        /// `SELECT JSON_OBJECTAGG(c_varbin, 1) FROM t`: a BINARY-charset KEY
+        /// fails with 3144, captured message `Cannot create a JSON value
+        /// from a string with CHARACTER SET 'binary'.`.
+        #[test]
+        fn json_objectagg_binary_charset_key_is_error_3144() {
+            let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), long(), true);
+            let err = partial
+                .update(Some(Datum::new_bytes(*b"ab")), &[Datum::Int(1)], Vec::new())
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ExecError::InvalidJsonCharset { charset } if charset == "binary"
+            ));
+        }
     }
 
     /// `APPROX_COUNT_DISTINCT` argument-encoding tests: golden counts
