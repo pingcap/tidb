@@ -241,9 +241,9 @@ fn type_chunk_typed_scalar_leaf_rejects_opaque_field_type_without_consuming_more
         .decode_columnar(&[ColumnLayout::fixed(8)])
         .expect("explicit fixed column layout");
     assert_eq!(
-        decoded.decode_datums(&[FieldType::new(FieldTypeCode::Datetime)]),
+        decoded.decode_datums(&[FieldType::new(FieldTypeCode::Geometry)]),
         Err(ChunkDecodeError::TypedColumnCodec(
-            tidb_codec::TypedColumnError::UnsupportedFieldType(FieldTypeCode::Datetime)
+            tidb_codec::TypedColumnError::UnsupportedFieldType(FieldTypeCode::Geometry)
         ))
     );
     assert_eq!(decoded.remainder, b"suffix");

@@ -122,6 +122,16 @@ impl LockRecoveryClient for RecordingClient {
         Ok(response)
     }
 
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        panic!("this realtikv test does not clean pessimistic locks")
+    }
     fn resolve_lock_for_read(
         &mut self,
         address: &str,

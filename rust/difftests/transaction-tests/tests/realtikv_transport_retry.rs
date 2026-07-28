@@ -193,6 +193,16 @@ impl tidb_distsql::LockRecoveryClient for RecordingClient {
         self.inner.check_txn_status(address, request, context, call)
     }
 
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        panic!("this realtikv test does not clean pessimistic locks")
+    }
     fn resolve_lock_for_read(
         &mut self,
         address: &str,
