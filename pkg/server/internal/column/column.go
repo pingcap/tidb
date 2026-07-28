@@ -239,6 +239,14 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 
 // DumpBinaryRow dumps a row to bytes.
 func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder) ([]byte, error) {
+	if len(columns) == 1 && columns[0].Type == mysql.TypeLonglong {
+		buffer = append(buffer, mysql.OKHeader, 0)
+		if row.IsNull(0) {
+			buffer[len(buffer)-1] = 1 << 2
+			return buffer, nil
+		}
+		return dump.Uint64(buffer, row.GetUint64(0)), nil
+	}
 	if d == nil {
 		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}

@@ -27,6 +27,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var dumpBinaryRowsSink []byte
+
+func BenchmarkDumpBinaryRowsSingleBigInt(b *testing.B) {
+	const rows = 510
+	columns := []*Info{{Type: mysql.TypeLonglong}}
+	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	chk := chunk.NewChunkWithCapacity(fieldTypes, rows)
+	for i := range rows {
+		chk.AppendInt64(0, int64(i))
+	}
+	encoder := NewResultEncoder(charset.CharsetUTF8MB4)
+	output := make([]byte, 0, rows*10)
+
+	b.ReportAllocs()
+	b.SetBytes(rows * 10)
+	b.ResetTimer()
+	for b.Loop() {
+		output = output[:0]
+		var err error
+		for i := range rows {
+			output, err = DumpBinaryRow(output, columns, chk.GetRow(i), encoder)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	dumpBinaryRowsSink = output
+}
+
+func TestDumpBinaryRowSingleBigInt(t *testing.T) {
+	columns := []*Info{{Type: mysql.TypeLonglong}}
+	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	chk := chunk.NewChunkWithCapacity(fieldTypes, 2)
+	chk.AppendUint64(0, 0x0102030405060708)
+	chk.AppendNull(0)
+
+	output, err := DumpBinaryRow(nil, columns, chk.GetRow(0), nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte{mysql.OKHeader, 0, 8, 7, 6, 5, 4, 3, 2, 1}, output)
+
+	output, err = DumpBinaryRow(nil, columns, chk.GetRow(1), nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte{mysql.OKHeader, 1 << 2}, output)
+}
+
 func TestDumpColumn(t *testing.T) {
 	info := Info{
 		Schema:       "testSchema",
