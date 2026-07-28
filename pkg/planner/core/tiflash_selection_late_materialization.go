@@ -286,13 +286,17 @@ func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *
 	}
 
 	forcedConds, remainingConds := splitForcedLateMaterializationConds(sctx, conds, physicalTableScan)
-	// When the table is small, only the conditions explicitly forced by hints are pushed down.
-	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize {
+	// When the user specifies TIFLASH_LM_FILTER, only the matching conditions are pushed down.
+	if len(physicalTableScan.ForcedLateMaterializationFilterColumnIDs) > 0 {
 		if len(forcedConds) == 0 {
 			return
 		}
 		logutil.BgLogger().Debug("planner: push down forced conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx.GetExprCtx().GetEvalCtx(), forcedConds))))
 		PushedDown(physicalSelection, physicalTableScan, forcedConds, calcLateMaterializationSelectivity(sctx, physicalTableScan, forcedConds))
+		return
+	}
+	// When the table is small, skip cost-based pushdown.
+	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize {
 		return
 	}
 
