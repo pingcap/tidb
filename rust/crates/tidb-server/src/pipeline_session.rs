@@ -199,6 +199,13 @@ impl QuerySession for PipelineServerSession {
                     }
                 }
                 tidb_protocol::PreparedValue::Null => tidb_datatype::Datum::Null,
+                // Go parses the rendered text into a Time or Duration datum.
+                // This tier keeps temporal values as their formatted text --
+                // the same documented divergence the temporal casts and the
+                // date/time builtins carry -- so the text IS the value here.
+                tidb_protocol::PreparedValue::Temporal(text) => {
+                    tidb_datatype::Datum::Bytes(text.clone().into_bytes())
+                }
             })
             .collect();
         let output = self

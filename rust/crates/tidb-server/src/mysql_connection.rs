@@ -78,6 +78,7 @@ fn write_bind_parameters(values: Vec<PreparedValue>) -> Vec<PreparedBindValue> {
                 PreparedBindValue::Bytes(value.to_string().into_bytes())
             }
             PreparedValue::Null => PreparedBindValue::Bytes(Vec::new()),
+            PreparedValue::Temporal(text) => PreparedBindValue::Bytes(text.into_bytes()),
         })
         .collect()
 }

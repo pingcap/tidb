@@ -778,6 +778,81 @@ fn execute_decodes_every_parameter_family() {
             PreparedValue::Decimal(b"12.345".to_vec()),
         ),
     ];
+    // The temporal families, whose payload length picks how much of the
+    // value it carries -- Go's binaryDate/binaryDateTime/binaryTimestamp and
+    // binaryDuration produce exactly these renderings.
+    let temporal_cases: Vec<(&str, u8, Vec<u8>, &str)> = vec![
+        ("zero datetime", 0x0c, vec![0], "0000-00-00 00:00:00"),
+        (
+            "date only",
+            0x0a,
+            {
+                let mut payload = vec![4];
+                payload.extend_from_slice(&2020_u16.to_le_bytes());
+                payload.push(3);
+                payload.push(5);
+                payload
+            },
+            "2020-03-05",
+        ),
+        (
+            "datetime",
+            0x0c,
+            {
+                let mut payload = vec![7];
+                payload.extend_from_slice(&2020_u16.to_le_bytes());
+                payload.extend_from_slice(&[3, 5, 6, 7, 8]);
+                payload
+            },
+            "2020-03-05 06:07:08",
+        ),
+        (
+            "timestamp with microseconds",
+            0x07,
+            {
+                let mut payload = vec![11];
+                payload.extend_from_slice(&2020_u16.to_le_bytes());
+                payload.extend_from_slice(&[3, 5, 6, 7, 8]);
+                payload.extend_from_slice(&123_456_u32.to_le_bytes());
+                payload
+            },
+            "2020-03-05 06:07:08.123456",
+        ),
+        (
+            "negative duration",
+            0x0b,
+            {
+                let mut payload = vec![8, 1];
+                payload.extend_from_slice(&2_u32.to_le_bytes());
+                payload.extend_from_slice(&[3, 4, 5]);
+                payload
+            },
+            "-2 03:04:05",
+        ),
+        (
+            "duration with microseconds",
+            0x0b,
+            {
+                let mut payload = vec![12, 0];
+                payload.extend_from_slice(&1_u32.to_le_bytes());
+                payload.extend_from_slice(&[2, 3, 4]);
+                payload.extend_from_slice(&500_000_u32.to_le_bytes());
+                payload
+            },
+            "1 02:03:04.500000",
+        ),
+    ];
+    for (name, type_code, payload, expected) in temporal_cases {
+        let packet = execute_payload_typed(1, type_code, 0, &payload);
+        assert_eq!(
+            decode_prepared_statement_execute(&packet, 1, None)
+                .unwrap_or_else(|error| panic!("{name} should decode: {error:?}"))
+                .values,
+            vec![PreparedValue::Temporal(expected.to_owned())],
+            "{name}"
+        );
+    }
+
     for (name, type_code, flag, value_bytes, expected) in cases {
         let packet = execute_payload_typed(1, type_code, flag, &value_bytes);
         assert_eq!(

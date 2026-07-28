@@ -666,6 +666,30 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         ]]
     );
 
+    // A temporal parameter: the driver sends the packed date-time and the
+    // engine stores what Go renders from those same bytes.
+    assert_eq!(
+        run_write(&mut client, &mut reader, "CREATE TABLE d (t VARCHAR(30))"),
+        0
+    );
+    let (date_id, date_params, _) =
+        prepare_statement(&mut client, &mut reader, "INSERT INTO d (t) VALUES (?)");
+    assert_eq!(date_params, 1);
+    let mut datetime_payload = vec![7];
+    datetime_payload.extend_from_slice(&2020_u16.to_le_bytes());
+    datetime_payload.extend_from_slice(&[3, 5, 6, 7, 8]);
+    execute_statement_typed(
+        &mut client,
+        &mut reader,
+        date_id,
+        &[(0x0c, 0, datetime_payload)], // MYSQL_TYPE_DATETIME
+        &[false],
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT t FROM d"),
+        vec![vec!["2020-03-05 06:07:08".to_owned()]]
+    );
+
     let mut close = vec![COM_STMT_CLOSE];
     close.extend_from_slice(&statement_id.to_le_bytes());
     write_packet(&mut client, 0, &close);

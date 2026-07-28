@@ -24,8 +24,9 @@
 
 use crate::{
     append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, ColumnInfo,
-    EofPacket, ResultSetOptions, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG,
-    TYPE_NEW_DECIMAL, TYPE_SHORT, TYPE_STRING, TYPE_TINY, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
+    EofPacket, ResultSetOptions, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_FLOAT,
+    TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SHORT, TYPE_STRING,
+    TYPE_TIMESTAMP, TYPE_TINY, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
 };
 use tidb_datatype::{Decimal, PackedTime};
 
@@ -72,6 +73,16 @@ pub enum PreparedParameterType {
     /// A `MYSQL_TYPE_NEWDECIMAL`/`DECIMAL` parameter, which the protocol
     /// carries as a length-encoded string of digits.
     Decimal,
+    /// A `MYSQL_TYPE_DATE` parameter, whose payload length picks how much of
+    /// the date/time it carries.
+    Date,
+    /// A `MYSQL_TYPE_DATETIME` parameter.
+    DateTime,
+    /// A `MYSQL_TYPE_TIMESTAMP` parameter, which is byte-identical to
+    /// `DATETIME` on the wire.
+    Timestamp,
+    /// A `MYSQL_TYPE_TIME` parameter, which carries a signed day/time span.
+    Time,
 }
 
 /// A decoded prepared-statement value admitted by this protocol leaf.
@@ -96,6 +107,10 @@ pub enum PreparedValue {
     Decimal(Vec<u8>),
     /// A parameter the execute packet marked NULL in its bitmap.
     Null,
+    /// A temporal parameter, rendered the way Go renders it before parsing:
+    /// `binaryDate`/`binaryDateTime`/`binaryTimestamp` produce the date-time
+    /// text and `binaryDuration` the day/time span text.
+    Temporal(String),
 }
 
 /// Whether an execute packet supplied a new parameter type vector.
@@ -427,6 +442,14 @@ pub fn decode_prepared_statement_execute(
             }
             PreparedParameterType::Decimal => {
                 PreparedValue::Decimal(cursor.read_length_encoded_string("DECIMAL value")?)
+            }
+            PreparedParameterType::Date
+            | PreparedParameterType::DateTime
+            | PreparedParameterType::Timestamp => {
+                PreparedValue::Temporal(read_binary_datetime(&mut cursor)?)
+            }
+            PreparedParameterType::Time => {
+                PreparedValue::Temporal(read_binary_duration(&mut cursor)?)
             }
         };
         values.push(value);
@@ -914,6 +937,79 @@ impl BinaryResultSetStream {
     }
 }
 
+/// Go `binaryDate`/`binaryDateTime`/`binaryTimestamp`/`binaryTimestampWithTZ`:
+/// the payload's own length picks how much of the date-time it carries, and
+/// the text produced here is exactly what Go parses into its `Time` datum.
+fn read_binary_datetime(cursor: &mut PacketCursor<'_>) -> Result<String, PreparedStatementError> {
+    let length = cursor.read_u8("temporal payload length")?;
+    // Go `types.ZeroDatetimeStr` for an empty payload.
+    if length == 0 {
+        return Ok("0000-00-00 00:00:00".to_owned());
+    }
+    if !matches!(length, 4 | 7 | 11 | 13) {
+        return Err(PreparedStatementError::InvalidField {
+            field: "temporal payload length",
+            value: length,
+        });
+    }
+    let year = cursor.read_u16("temporal year")?;
+    let month = cursor.read_u8("temporal month")?;
+    let day = cursor.read_u8("temporal day")?;
+    let mut rendered = format!("{year:04}-{month:02}-{day:02}");
+    if length >= 7 {
+        let hour = cursor.read_u8("temporal hour")?;
+        let minute = cursor.read_u8("temporal minute")?;
+        let second = cursor.read_u8("temporal second")?;
+        rendered.push_str(&format!(" {hour:02}:{minute:02}:{second:02}"));
+    }
+    if length >= 11 {
+        let microseconds = cursor.read_u32("temporal microseconds")?;
+        rendered.push_str(&format!(".{microseconds:06}"));
+    }
+    if length == 13 {
+        // Go renders the zone shift as +HH:MM, with the minutes always
+        // positive even when the shift itself is negative.
+        let shift_minutes = cursor.read_i16("temporal zone shift")?;
+        let shift_hours = shift_minutes / 60;
+        let shift_abs_minutes = (shift_minutes % 60).abs();
+        rendered.push_str(&format!("{shift_hours:+03}:{shift_abs_minutes:02}"));
+    }
+    Ok(rendered)
+}
+
+/// Go `binaryDuration`/`binaryDurationWithMS`: a signed day/time span, whose
+/// payload length says whether microseconds follow.
+fn read_binary_duration(cursor: &mut PacketCursor<'_>) -> Result<String, PreparedStatementError> {
+    let length = cursor.read_u8("duration payload length")?;
+    if length == 0 {
+        return Ok("0".to_owned());
+    }
+    if !matches!(length, 8 | 12) {
+        return Err(PreparedStatementError::InvalidField {
+            field: "duration payload length",
+            value: length,
+        });
+    }
+    let negative = cursor.read_u8("duration sign")?;
+    if negative > 1 {
+        return Err(PreparedStatementError::InvalidField {
+            field: "duration sign",
+            value: negative,
+        });
+    }
+    let days = cursor.read_u32("duration days")?;
+    let hours = cursor.read_u8("duration hours")?;
+    let minutes = cursor.read_u8("duration minutes")?;
+    let seconds = cursor.read_u8("duration seconds")?;
+    let sign = if negative == 1 { "-" } else { "" };
+    let mut rendered = format!("{sign}{days} {hours:02}:{minutes:02}:{seconds:02}");
+    if length == 12 {
+        let microseconds = cursor.read_u32("duration microseconds")?;
+        rendered.push_str(&format!(".{microseconds:06}"));
+    }
+    Ok(rendered)
+}
+
 fn decode_parameter_type(
     parameter: usize,
     type_code: u8,
@@ -942,6 +1038,10 @@ fn decode_parameter_type(
         TYPE_FLOAT => Ok(PreparedParameterType::Float),
         TYPE_DOUBLE => Ok(PreparedParameterType::Double),
         TYPE_NEW_DECIMAL => Ok(PreparedParameterType::Decimal),
+        TYPE_DATE => Ok(PreparedParameterType::Date),
+        TYPE_DATETIME => Ok(PreparedParameterType::DateTime),
+        TYPE_TIMESTAMP => Ok(PreparedParameterType::Timestamp),
+        TYPE_DURATION => Ok(PreparedParameterType::Time),
         TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING => Ok(PreparedParameterType::String),
         _ => Err(PreparedStatementError::UnsupportedParameterType {
             parameter,
