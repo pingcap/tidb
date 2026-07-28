@@ -31,7 +31,9 @@ tidb-util = { path = "../tidb-util" }
 [dev-dependencies]
 prost.workspace = true
 tidb-ast = { path = "../tidb-ast" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 
 [[test]]
 name = "all"

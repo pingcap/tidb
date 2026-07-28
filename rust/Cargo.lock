@@ -1511,10 +1511,12 @@ dependencies = [
  "tidb-exec",
  "tidb-executor",
  "tidb-model",
+ "tidb-parser",
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
  "tidb-session",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
 ]
