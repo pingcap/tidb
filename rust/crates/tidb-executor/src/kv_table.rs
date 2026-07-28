@@ -746,6 +746,14 @@ impl KvTable {
         self.indexes.push(index);
     }
 
+    /// The next auto-increment value, which `SHOW TABLE STATUS` reports as
+    /// `Auto_increment`. `None` when the table has no auto column at all,
+    /// which is the NULL Go reports there.
+    #[must_use]
+    pub fn next_auto_increment(&self) -> Option<i64> {
+        self.auto_increment_offset.map(|_| self.next_auto_id)
+    }
+
     /// The table's indexes.
     #[must_use]
     pub fn indexes(&self) -> &[KvIndex] {

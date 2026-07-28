@@ -468,6 +468,88 @@ impl Session {
                     let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                     Ok(Some(string_column_output("Database", names)))
                 }
+                // Go `fetchShowTableStatus`: one row per table in the
+                // schema, with the columns MySQL's own SHOW TABLE STATUS
+                // reports.
+                //
+                // NOT MODELLED, and each reported the way Go reports an
+                // absent value rather than invented: every size and count
+                // (Rows, Data_length, Index_length and friends) is 0, which
+                // is also what TiDB itself answers without a statistics tier;
+                // Create_time is NULL because this tier stores no per-table
+                // creation timestamp; Update_time, Check_time and Checksum
+                // are NULL or empty for the same reason.
+                tidb_ast::AdminStmt::ShowTableStatus(show) => {
+                    let database = match &show.database {
+                        Some(database) => database.clone(),
+                        None => self.require_current_database()?.to_owned(),
+                    };
+                    let pattern = match &show.filter {
+                        Some(tidb_ast::ShowTableStatusFilter::Like(tidb_ast::Expr::String(
+                            text,
+                        ))) => Some(text.clone()),
+                        Some(tidb_ast::ShowTableStatusFilter::Like(_)) => {
+                            return Err(DriverError::Unsupported(
+                                "SHOW TABLE STATUS LIKE takes a string pattern",
+                            ))
+                        }
+                        Some(tidb_ast::ShowTableStatusFilter::Where(_)) | None => None,
+                    };
+                    let where_clause = match &show.filter {
+                        Some(tidb_ast::ShowTableStatusFilter::Where(expr)) => Some(expr.clone()),
+                        _ => None,
+                    };
+                    let rows = self.with_catalog_mut(|catalog| {
+                        let mut rows = Vec::new();
+                        let names = catalog.table_names(&database).ok_or_else(|| {
+                            DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
+                        })?;
+                        for name in names {
+                            if let Some(pattern) = &pattern {
+                                if !tidb_executor::like_match_with_collation(
+                                    &name,
+                                    pattern,
+                                    None,
+                                    tidb_datatype::Collation::Utf8Mb4Bin,
+                                ) {
+                                    continue;
+                                }
+                            }
+                            let auto_increment = match catalog.table_in(&database, &name) {
+                                Some(tidb_executor::TableEntry::Kv(table)) => {
+                                    table.next_auto_increment()
+                                }
+                                _ => None,
+                            };
+                            let row = show_table_status_row(&name, auto_increment);
+                            if let Some(predicate) = &where_clause {
+                                if !show_row_matches(
+                                    predicate,
+                                    &SHOW_TABLE_STATUS_COLUMNS
+                                        .iter()
+                                        .map(|(name, _)| *name)
+                                        .collect::<Vec<_>>(),
+                                    &row,
+                                )? {
+                                    continue;
+                                }
+                            }
+                            rows.push(row);
+                        }
+                        Ok(rows)
+                    })?;
+                    let text =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    let number =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+                    let columns = SHOW_TABLE_STATUS_COLUMNS
+                        .iter()
+                        .map(|(name, numeric)| {
+                            ((*name).to_owned(), if *numeric { number() } else { text() })
+                        })
+                        .collect();
+                    Ok(Some(StmtOutput::Rows { columns, rows }))
+                }
                 // Go `fetchShowIndex`: one row per index COLUMN, ordered
                 // with the clustered primary key first, then the table's own
                 // indexes in definition order.
@@ -1420,6 +1502,58 @@ impl Session {
             )),
         }
     }
+}
+
+/// The `SHOW TABLE STATUS` header, with the columns Go reports as numbers
+/// marked.
+const SHOW_TABLE_STATUS_COLUMNS: &[(&str, bool)] = &[
+    ("Name", false),
+    ("Engine", false),
+    ("Version", true),
+    ("Row_format", false),
+    ("Rows", true),
+    ("Avg_row_length", true),
+    ("Data_length", true),
+    ("Max_data_length", true),
+    ("Index_length", true),
+    ("Data_free", true),
+    ("Auto_increment", true),
+    ("Create_time", false),
+    ("Update_time", false),
+    ("Check_time", false),
+    ("Collation", false),
+    ("Checksum", false),
+    ("Create_options", false),
+    ("Comment", false),
+];
+
+/// One `SHOW TABLE STATUS` row. The sizes and counts this tier has no source
+/// for are zero, which is what TiDB itself reports without statistics.
+fn show_table_status_row(name: &str, auto_increment: Option<i64>) -> Vec<Datum> {
+    let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+    vec![
+        text(name),
+        text("InnoDB"),
+        Datum::Int(10),
+        text("Compact"),
+        Datum::Int(0), // Rows
+        Datum::Int(0), // Avg_row_length
+        Datum::Int(0), // Data_length
+        Datum::Int(0), // Max_data_length
+        Datum::Int(0), // Index_length
+        Datum::Int(0), // Data_free
+        match auto_increment {
+            Some(next) => Datum::Int(next),
+            None => Datum::Null,
+        },
+        Datum::Null, // Create_time: no per-table creation timestamp here.
+        Datum::Null, // Update_time
+        Datum::Null, // Check_time
+        text(TABLE_COLLATE),
+        text(""), // Checksum
+        text(""), // Create_options
+        text(""), // Comment
+    ]
 }
 
 /// The `SHOW INDEX` header, with the columns Go reports as numbers marked.
@@ -3391,6 +3525,84 @@ mod tests {
             Ok(_) => panic!("an extra value should fail"),
             Err(error) => assert_eq!(error.to_mysql_error().code, 1210),
         }
+    }
+
+    /// `SHOW TABLE STATUS`, checked against captured TiDB output -- the
+    /// 18-column header GUI clients read to list a schema.
+    ///
+    /// NOT MODELLED, and reported the way Go reports an absent value rather
+    /// than invented: every size and count is 0, which is also what TiDB
+    /// answers without a statistics tier, and the three timestamps are NULL
+    /// because this tier stores none.
+    #[test]
+    fn show_table_status() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10))")
+            .unwrap();
+        session.run("CREATE TABLE u (x BIGINT)").unwrap();
+        session.run("INSERT INTO t VALUES (1,'p'),(2,'q')").unwrap();
+
+        match session.run_with_columns("SHOW TABLE STATUS").unwrap() {
+            StmtOutput::Rows { columns, .. } => assert_eq!(
+                columns
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "Name",
+                    "Engine",
+                    "Version",
+                    "Row_format",
+                    "Rows",
+                    "Avg_row_length",
+                    "Data_length",
+                    "Max_data_length",
+                    "Index_length",
+                    "Data_free",
+                    "Auto_increment",
+                    "Create_time",
+                    "Update_time",
+                    "Check_time",
+                    "Collation",
+                    "Checksum",
+                    "Create_options",
+                    "Comment",
+                ]
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // Captured: one row per table, with the engine, version, row format
+        // and collation TiDB reports.
+        let rows = row_text(session.run("SHOW TABLE STATUS"));
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[0][0], "t");
+        assert_eq!(rows[1][0], "u");
+        assert_eq!(rows[0][1], "InnoDB");
+        assert_eq!(rows[0][2], "10");
+        assert_eq!(rows[0][3], "Compact");
+        assert_eq!(rows[0][14], "utf8mb4_bin");
+        // Captured: Auto_increment is NULL for a table with no auto column.
+        assert_eq!(rows[0][10], "NULL");
+
+        // Captured: the LIKE filter narrows to one table.
+        let filtered = row_text(session.run("SHOW TABLE STATUS LIKE 't'"));
+        assert_eq!(filtered.len(), 1, "{filtered:?}");
+        assert_eq!(filtered[0][0], "t");
+
+        // A table with an auto column reports its next value there.
+        session
+            .run("CREATE TABLE g (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        session.run("INSERT INTO g (v) VALUES (1), (2)").unwrap();
+        let auto = row_text(session.run("SHOW TABLE STATUS LIKE 'g'"));
+        assert_eq!(auto[0][10], "3", "{auto:?}");
+
+        // The WHERE form filters the same virtual rows.
+        let named = row_text(session.run("SHOW TABLE STATUS WHERE Name = 'u'"));
+        assert_eq!(named.len(), 1, "{named:?}");
+        assert_eq!(named[0][0], "u");
     }
 
     /// `SHOW INDEX` / `SHOW KEYS`, checked against captured TiDB output --
