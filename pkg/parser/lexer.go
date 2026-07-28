@@ -28,6 +28,10 @@ import (
 
 var _ = yyLexer(&Scanner{})
 
+// maxParenthesesDepth bounds user-controlled nesting before it can build an
+// AST that is too deep for recursive visitors.
+const maxParenthesesDepth = 10000
+
 // Pos represents the position of a token.
 type Pos struct {
 	Line   int
@@ -84,6 +88,8 @@ type Scanner struct {
 
 	// keepHint, if true, Scanner will keep hint when normalizing .
 	keepHint bool
+
+	parenDepth int
 }
 
 // Errors returns the errors and warns during a scan.
@@ -103,6 +109,7 @@ func (s *Scanner) reset(sql string) {
 	s.inBangComment = false
 	s.lastKeyword = 0
 	s.identifierDot = false
+	s.parenDepth = 0
 }
 
 func (s *Scanner) stmtText() string {
@@ -231,6 +238,15 @@ func (s *Scanner) Lex(v *yySymType) (tok int) {
 	var pos Pos
 	var lit string
 	tok, pos, lit = s.scan()
+	if tok == int('(') {
+		s.parenDepth++
+		if s.parenDepth > maxParenthesesDepth {
+			s.AppendError(ErrParse.GenWithStackByArgs("parentheses nesting depth exceeds maximum", strconv.Itoa(maxParenthesesDepth)))
+			return invalid
+		}
+	} else if tok == int(')') && s.parenDepth > 0 {
+		s.parenDepth--
+	}
 	s.lastScanOffset = pos.Offset
 	s.lastKeyword3 = s.lastKeyword2
 	s.lastKeyword2 = s.lastKeyword
