@@ -3891,8 +3891,10 @@ mod tests {
     ///
     /// STILL REFUSED, each recorded at its gate: `REPLACE INTO`,
     /// `INSERT IGNORE`, `ON DUPLICATE KEY UPDATE` (all three need
-    /// conflict-time row replacement), the `SET` insert syntax, partitions
-    /// and `RETURNING`.
+    /// conflict-time row replacement), the `SET` insert syntax, and
+    /// partitions. `RETURNING` is parsed and silently ignored, matching Go
+    /// (testkit probe: the write succeeds with a plain OK, no result set,
+    /// no warning).
     #[test]
     fn insert_select_and_ordered_dml() {
         let mut session = Session::new();
@@ -3968,12 +3970,32 @@ mod tests {
             [["3"], ["7"]]
         );
 
-        // RETURNING is the shape still refused here; REPLACE, ON DUPLICATE
-        // KEY UPDATE and the SET form are implemented (see
-        // `insert_conflict_policies` and `insert_set_syntax`).
-        assert!(session
-            .run("INSERT INTO t (a) VALUES (42) RETURNING a")
-            .is_err());
+        // RETURNING parses but is silently ignored, exactly as in Go: the
+        // planner and executor never read the AST's Returning list, so the
+        // write lands and answers with a plain OK (affected rows), no result
+        // set and no warning. Captured with a Go testkit probe.
+        assert_eq!(
+            session
+                .run("INSERT INTO t (a) VALUES (42) RETURNING a")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(
+            session
+                .run("UPDATE t SET c = 0 WHERE a = 42 RETURNING a, c")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(
+            session
+                .run("DELETE FROM t WHERE a = 42 RETURNING a")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t ORDER BY a")),
+            [["3"], ["7"]]
+        );
     }
 
     /// `ORDER BY` resolved against the SELECT list, checked against captured
@@ -5218,8 +5240,13 @@ mod tests {
         // to be the examples here; both work now -- see
         // `insert_select_and_ordered_dml`.)
         assert!(session.run("DELETE QUICK FROM t").is_err());
-        assert!(session
-            .run("INSERT INTO t (a) VALUES (1) RETURNING a")
-            .is_err());
+        // RETURNING is not one of them: Go parses it and silently ignores it,
+        // so the insert lands with a plain OK.
+        assert_eq!(
+            session
+                .run("INSERT INTO t (a) VALUES (1) RETURNING a")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
     }
 }

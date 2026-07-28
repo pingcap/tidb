@@ -1359,7 +1359,11 @@ fn run_select_stmt(
 /// The write half of the in-memory gateway (the storage-backed `InsertExec`
 /// with autoid/defaults/constraints lands with real tables). Unsupported here
 /// (rejected, documented): `REPLACE`, `IGNORE`, `ON DUPLICATE KEY UPDATE`,
-/// `SET` syntax, `INSERT ... SELECT`, partitions, and `RETURNING`. Columns not
+/// `SET` syntax, `INSERT ... SELECT`, and partitions. A `RETURNING` clause is
+/// parsed and silently ignored: Go's hand-written parser stores it on the AST
+/// but the planner and executor never read it, so the write runs normally and
+/// answers with a plain OK packet (verified against Go with a testkit probe).
+/// Columns not
 /// listed in an explicit column list are filled with NULL (column defaults
 /// wait on ColumnInfo default-value wiring).
 pub fn run_insert_on(
@@ -1402,13 +1406,8 @@ pub fn run_insert_reporting(
         _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
     };
 
-    if !insert.partitions.is_empty()
-        || !insert.returning.fields().is_empty()
-        || (insert.replace && !insert.on_duplicate.is_empty())
-    {
-        return Err(DriverError::Unsupported(
-            "partitions and RETURNING are not supported yet",
-        ));
+    if !insert.partitions.is_empty() || (insert.replace && !insert.on_duplicate.is_empty()) {
+        return Err(DriverError::Unsupported("partitions are not supported yet"));
     }
 
     // `INSERT ... SELECT` runs its source query first, over the catalog as it
@@ -3840,7 +3839,7 @@ fn column_is_not_null(meta: &[(Option<Datum>, bool, String)], offset: usize) -> 
 /// `composeNewRow` order.
 ///
 /// DEFERRED (documented): multi-table UPDATE, `ORDER BY`/`LIMIT` tails,
-/// `IGNORE`, `RETURNING`, generated and `ON UPDATE CURRENT_TIMESTAMP` columns,
+/// `IGNORE`, generated and `ON UPDATE CURRENT_TIMESTAMP` columns,
 /// and the handle-changed path (a row whose primary-key handle column is
 /// assigned is deleted and re-inserted in Go; this seed rejects it).
 pub fn run_update_on(
@@ -3866,9 +3865,11 @@ pub fn run_update_in(
         },
         _ => return Err(DriverError::Unsupported("only UPDATE is supported here")),
     };
-    if update.ignore || !update.returning.fields().is_empty() {
+    // A `RETURNING` clause is parsed and silently ignored, matching Go: the
+    // planner and executor never read `UpdateStmt.Returning`.
+    if update.ignore {
         return Err(DriverError::Unsupported(
-            "UPDATE IGNORE and RETURNING are not supported yet",
+            "UPDATE IGNORE is not supported yet",
         ));
     }
     let table_ref = match &update.kind {
@@ -4023,7 +4024,8 @@ fn compute_updated_row(
 /// affected-row count is simply that count.
 ///
 /// DEFERRED (documented): multi-table DELETE, `ORDER BY`/`LIMIT` tails,
-/// `IGNORE`, and `RETURNING`.
+/// `IGNORE`. A `RETURNING` clause is parsed and silently ignored, matching
+/// Go, where the planner and executor never read `DeleteStmt.Returning`.
 pub fn run_delete_on(
     sql: &str,
     catalog: &mut Catalog,
@@ -4047,7 +4049,7 @@ pub fn run_delete_in(
         },
         _ => return Err(DriverError::Unsupported("only DELETE is supported here")),
     };
-    if delete.ignore || delete.quick || !delete.returning.fields().is_empty() {
+    if delete.ignore || delete.quick {
         return Err(DriverError::Unsupported(
             "only plain DELETE FROM t [WHERE ...] is supported",
         ));
