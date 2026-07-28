@@ -844,6 +844,36 @@ func adjustProbeRowCountByApplyDepth(ds *logicalop.DataSource, rowCount, countAf
 	return rowCount + (countAfterAccess-rowCount)*rEff
 }
 
+// indexJoinProbeEqSkewLift returns the multiplier that lifts an index-join
+// probe's per-probe estimates from the average key fanout toward the fanout of
+// the hottest key in the probed index, controlled by tidb_opt_risk_eq_skew_ratio.
+// The probe estimates are derived from EqualCondOutCnt, i.e. the rows/NDV
+// *average* fanout of the join key; when the key distribution is skewed and the
+// probed outer rows favor hot keys, each probe can match far more rows than the
+// average (issue #69092). The index TopN records the row count of the most
+// frequent key, which bounds that worst case, and the risk ratio interpolates
+// between the two the same way tidb_opt_risk_eq_skew_ratio does for point
+// predicates. Returns 1 (no lift) when the ratio is disabled, stats are
+// missing, or the average already reaches the hottest-key fanout.
+func indexJoinProbeEqSkewLift(ds *logicalop.DataSource, idxID int64, perProbeAccess float64) float64 {
+	sessVars := ds.SCtx().GetSessionVars()
+	skewRatio := sessVars.RiskEqSkewRatio
+	sessVars.RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	if skewRatio <= 0 || perProbeAccess <= 0 || ds.TableStats == nil || ds.TableStats.HistColl == nil {
+		return 1
+	}
+	idxStats := ds.TableStats.HistColl.GetIdx(idxID)
+	if idxStats == nil || idxStats.TopN == nil {
+		return 1
+	}
+	hottestKeyCnt := float64(idxStats.TopN.MaxCount()) *
+		idxStats.GetIncreaseFactor(ds.TableStats.HistColl.RealtimeCount)
+	if hottestKeyCnt <= perProbeAccess {
+		return 1
+	}
+	return statistics.CalculateSkewRatioCounts(perProbeAccess, hottestKeyCnt, skewRatio).Est / perProbeAccess
+}
+
 // constructDS2TableScanTask constructs the inner table scan task for index join.
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
@@ -1215,6 +1245,17 @@ func constructDS2IndexScanTask(
 			cnt = math.Min(cnt, 1.0)
 		}
 		tmpPath.CountAfterAccess = cnt
+	}
+	// The counts above derive from the average fanout of the join key; a skewed
+	// key can match far more rows per probe. Lift all per-probe counts
+	// proportionally toward the hottest-key fanout by the configured risk ratio.
+	// Unique-key probes (maxOneRow) have no fanout and are exempt.
+	if !maxOneRow {
+		if skewLift := indexJoinProbeEqSkewLift(ds, path.Index.ID, tmpPath.CountAfterAccess); skewLift > 1 {
+			rowCount *= skewLift
+			tmpPath.CountAfterIndex *= skewLift
+			tmpPath.CountAfterAccess *= skewLift
+		}
 	}
 	is.SetStats(ds.TableStats.ScaleByExpectCnt(is.SCtx().GetSessionVars(), tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)

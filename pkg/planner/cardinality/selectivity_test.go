@@ -2334,6 +2334,59 @@ func TestOrderingIdxSelectivityRatioForApply(t *testing.T) {
 	require.Less(t, planCost3, planCost4)
 }
 
+// TestIndexJoinProbeEqSkewRisk verifies that tidb_opt_risk_eq_skew_ratio lifts
+// index-join probe estimates from the average join-key fanout toward the
+// hottest-key fanout recorded in the probed index TopN. rel.jk is skewed: 64
+// hot keys hold ~205 rows each while the remaining keys are near-unique, so
+// the average fanout (rows/NDV ~ 4.9) understates hot-key probes by ~40x.
+func TestIndexJoinProbeEqSkewRisk(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@cte_max_recursion_depth = 20000")
+	tk.MustExec("drop table if exists d, rel")
+	tk.MustExec("create table d(id int primary key, fk int, flt int)")
+	tk.MustExec("create table rel(id int primary key, jk int, f int, index ijk(jk))")
+	const nRel = 16384
+	tk.MustExec(fmt.Sprintf(`insert into rel
+		with recursive nums(n) as (select 1 union all select n+1 from nums where n < %d)
+		select n, if(n %% 5 = 0, 10000 + (n %% 8192), n %% 64), n %% 7 from nums`, nRel))
+	tk.MustExec(`insert into d
+		with recursive nums(n) as (select 1 union all select n+1 from nums where n < 512)
+		select n, if(n % 2 = 0, n % 64, 10000 + (n % 8192)), n % 4 from nums`)
+	tk.MustExec("analyze table d, rel")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	query := "explain format='verbose' select /*+ inl_join(rel) */ count(*) from d join rel on d.fk = rel.jk where d.flt = 0"
+	probeEstRows := func() float64 {
+		for _, row := range tk.MustQuery(query).Rows() {
+			op := fmt.Sprint(row[0])
+			if strings.Contains(op, "IndexReader") || strings.Contains(op, "IndexLookUp") {
+				est, err := strconv.ParseFloat(fmt.Sprint(row[1]), 64)
+				require.NoError(t, err)
+				return est
+			}
+		}
+		require.Fail(t, "no index-join probe reader found in plan")
+		return 0
+	}
+
+	tk.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	base := probeEstRows()
+	tk.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
+	mid := probeEstRows()
+	tk.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
+	full := probeEstRows()
+
+	// Monotone lift with the ratio, and at ratio=1 the per-probe estimate
+	// reaches the hottest-key fanout: ~205 rows per probe vs the ~4.9 average,
+	// i.e. roughly a 40x lift of the probe-side estimate.
+	require.Less(t, base, mid)
+	require.Less(t, mid, full)
+	require.Greater(t, full, base*30, "full skew risk should approach the hottest-key fanout")
+	require.Less(t, full, base*50, "skew lift should not exceed the hottest-key fanout")
+}
+
 func TestOrderingRatioForProbeLevel(t *testing.T) {
 	r := 0.01
 	require.InDelta(t, 0.01, cardinality.OrderingRatioForProbeLevel(r, 0), 1e-9)   // not under a probe

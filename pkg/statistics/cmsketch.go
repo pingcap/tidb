@@ -578,6 +578,21 @@ func (c *TopN) MinCount() uint64 {
 	return c.minCount
 }
 
+// MaxCount returns the maximum count in the TopN, i.e. the row count of the
+// most frequent value. It bounds the worst-case fanout of an equality probe
+// against the column/index: no single key can match more rows than this as
+// long as the TopN really holds the most frequent values.
+func (c *TopN) MaxCount() uint64 {
+	if c == nil || len(c.TopN) == 0 {
+		return 0
+	}
+	var maxCount uint64
+	for i := range c.TopN {
+		maxCount = max(maxCount, c.TopN[i].Count)
+	}
+	return maxCount
+}
+
 func (c *TopN) calculateMinCountAndCount() {
 	if intest.InTest {
 		// In test, After the sync.Once is called, topN will not be modified anymore.

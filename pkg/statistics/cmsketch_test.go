@@ -321,6 +321,15 @@ func TestSortTopnMeta(t *testing.T) {
 	require.Equal(t, uint64(2), data[0].Count)
 }
 
+func TestTopNMaxCount(t *testing.T) {
+	var nilTopN *TopN
+	require.Equal(t, uint64(0), nilTopN.MaxCount())
+	require.Equal(t, uint64(0), (&TopN{}).MaxCount())
+	topN := &TopN{TopN: []TopNMeta{{Count: 3}, {Count: 205}, {Count: 17}}}
+	require.Equal(t, uint64(205), topN.MaxCount())
+	require.Equal(t, uint64(3), topN.MinCount())
+}
+
 func TestTopNScale(t *testing.T) {
 	for _, scaleFactor := range []float64{0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99} {
 		var data []TopNMeta
