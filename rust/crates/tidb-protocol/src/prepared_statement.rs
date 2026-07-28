@@ -324,22 +324,22 @@ pub fn decode_prepared_statement_execute(
     parameter_count: usize,
     previous_types: Option<&[PreparedParameterType]>,
 ) -> Result<PreparedStatementExecute, PreparedStatementError> {
-    // The body below is already count-generic: the null bitmap, the type
-    // vector, and the value loop are all driven by `parameter_count`. Only a
-    // zero-marker execute is rejected, because every admitted template binds at
-    // least one value.
-    if parameter_count == 0 {
-        return Err(PreparedStatementError::UnsupportedParameterCount {
-            count: parameter_count,
-        });
-    }
+    // The body below is count-generic: the null bitmap, the type vector, and
+    // the value loop are all driven by `parameter_count`. A zero-marker
+    // execute simply skips all three, which is how MySQL encodes executing a
+    // statement with no `?` at all -- the general prepared path produces
+    // those routinely. (The old at-least-one rejection dated from the era
+    // when the only prepared statement was a configured point read.)
     let mut cursor = PacketCursor::new(payload);
     let statement_id = cursor.read_u32("statement ID")?;
     if statement_id == 0 {
         return Err(PreparedStatementError::ZeroStatementId);
     }
     let cursor_flags = cursor.read_u8("cursor flags")?;
-    if cursor_flags != 0 {
+    // Go accepts only the forward-only read-only cursor: CursorTypeReadOnly
+    // (0x01) sets `useCursor`, and ForUpdate (0x02) / Scrollable (0x04) are
+    // rejected by name.
+    if cursor_flags & !CURSOR_TYPE_READ_ONLY != 0 {
         return Err(PreparedStatementError::UnsupportedCursorFlag(cursor_flags));
     }
     let iteration_count = cursor.read_u32("iteration count")?;
@@ -364,6 +364,21 @@ pub fn decode_prepared_statement_execute(
         return Err(PreparedStatementError::NonzeroNullBitmapPadding);
     }
 
+    // A zero-parameter execute ends right after the iteration count: no
+    // bitmap, no bound flag, no type vector, no values.
+    if parameter_count == 0 {
+        if cursor.remaining() != 0 {
+            return Err(PreparedStatementError::TrailingBytes {
+                bytes: cursor.remaining(),
+            });
+        }
+        return Ok(PreparedStatementExecute {
+            statement_id,
+            cursor_flags,
+            parameter_types: PreparedParameterTypes::New(Vec::new()),
+            values: Vec::new(),
+        });
+    }
     let new_types = cursor.read_u8("new parameter bound flag")?;
     let (parameter_types, types): (PreparedParameterTypes, Vec<PreparedParameterType>) =
         match new_types {
@@ -466,6 +481,27 @@ pub fn decode_prepared_statement_execute(
         parameter_types,
         values,
     })
+}
+
+/// `CURSOR_TYPE_READ_ONLY`: the one cursor kind Go supports.
+pub const CURSOR_TYPE_READ_ONLY: u8 = 0x01;
+
+/// Decodes the eight-byte `COM_STMT_FETCH` payload: the statement id and the
+/// requested row count. Go's `parse.StmtFetchCmd` rejects any other length as
+/// a malformed packet.
+pub fn decode_prepared_statement_fetch(
+    payload: &[u8],
+) -> Result<(u32, u32), PreparedStatementError> {
+    if payload.len() != 8 {
+        return Err(PreparedStatementError::Truncated {
+            field: "COM_STMT_FETCH payload",
+            required: 8,
+            available: payload.len(),
+        });
+    }
+    let statement_id = u32::from_le_bytes(payload[0..4].try_into().expect("four bytes"));
+    let fetch_size = u32::from_le_bytes(payload[4..8].try_into().expect("four bytes"));
+    Ok((statement_id, fetch_size))
 }
 
 /// Decodes the four-byte `COM_STMT_CLOSE` payload.

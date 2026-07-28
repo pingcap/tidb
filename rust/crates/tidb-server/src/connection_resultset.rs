@@ -24,7 +24,7 @@ use tidb_protocol::{
 /// Maps one decoded `Datum` to the binary cell its column type dumps, following
 /// TiDB's `DumpBinaryRow` switch on `columns[i].Type`. Returns `None` when the
 /// datum and column type disagree (a caller-surfaced error, never silent).
-fn datum_to_binary_cell(datum: Datum, type_code: u8) -> Option<BinaryResultCell> {
+pub(crate) fn datum_to_binary_cell(datum: Datum, type_code: u8) -> Option<BinaryResultCell> {
     match datum {
         // NULL is type-agnostic: it writes no value bytes and only sets the
         // row's null-bitmap bit, so any result column admits it (a nullable

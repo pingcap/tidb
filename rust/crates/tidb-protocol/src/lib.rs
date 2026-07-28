@@ -67,13 +67,14 @@ pub use packet::{
     DEFAULT_MAX_ALLOWED_PACKET, MAX_PAYLOAD_LEN,
 };
 pub use prepared_statement::{
-    decode_prepared_statement_close, decode_prepared_statement_execute, encode_binary_datetime,
-    encode_binary_result_row, encode_binary_signed_longlong_row, encode_binary_time,
+    decode_prepared_statement_close, decode_prepared_statement_execute,
+    decode_prepared_statement_fetch, encode_binary_datetime, encode_binary_result_row,
+    encode_binary_signed_longlong_row, encode_binary_time,
     encode_prepared_statement_prepare_response, is_binary_decimal_result_type,
     is_binary_float_result_type, is_binary_integer_result_type, is_binary_string_result_type,
     BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, PreparedParameterType,
     PreparedParameterTypes, PreparedStatementError, PreparedStatementExecute, PreparedValue,
-    MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
+    CURSOR_TYPE_READ_ONLY, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{
     append_length_encoded_bytes, append_length_encoded_int, encode_text_row, is_string_column_type,

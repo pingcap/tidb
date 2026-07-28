@@ -22,10 +22,10 @@ use std::sync::Arc;
 
 use tidb_protocol::{
     decode_command, decode_prepared_statement_close, decode_prepared_statement_execute,
-    encode_error_packet, encode_ok_packet, encode_prepared_statement_prepare_response, ColumnInfo,
-    Command, ErrorPacket, OkPacket, PacketError, PacketReader, PacketWriter, PreparedParameterType,
-    PreparedParameterTypes, PreparedValue, ResultSetOptions, BINARY_DEFAULT_COLLATION_ID,
-    MYSQL_TYPE_LONGLONG,
+    decode_prepared_statement_fetch, encode_error_packet, encode_ok_packet,
+    encode_prepared_statement_prepare_response, ColumnInfo, Command, ErrorPacket, OkPacket,
+    PacketError, PacketReader, PacketWriter, PreparedParameterType, PreparedParameterTypes,
+    PreparedValue, ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, MYSQL_TYPE_LONGLONG,
 };
 
 use crate::auth_exchange::AuthSwitchRequest;
@@ -39,6 +39,7 @@ use crate::handshake::{
     DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS,
 };
 use crate::native_password::generate_handshake_salt;
+use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::{
     ConnectionCancellation, ConnectionTracker, GeneralExecuteOutcome, PreparedStatement,
@@ -101,6 +102,18 @@ const RESULT_BATCH_SIZE: usize = 128;
 struct ConnectionPreparedStatement {
     statement: PreparedStatement,
     parameter_types: Option<Vec<PreparedParameterType>>,
+    /// An open read-only cursor: the materialized result a cursor-mode
+    /// execute stored for later `COM_STMT_FETCH` commands, with the columns
+    /// it advertises and the next unread row. Go holds the same thing on the
+    /// statement as a row container.
+    cursor: Option<CursorState>,
+}
+
+#[derive(Clone, Debug)]
+struct CursorState {
+    columns: Vec<tidb_protocol::ColumnInfo>,
+    rows: Vec<Vec<tidb_datatype::Datum>>,
+    next_row: usize,
 }
 
 #[derive(Debug)]
@@ -129,6 +142,7 @@ impl PreparedStatementRegistry {
             ConnectionPreparedStatement {
                 statement,
                 parameter_types: None,
+                cursor: None,
             },
         );
         Ok(statement_id)
@@ -160,9 +174,29 @@ impl PreparedStatementRegistry {
         match self.statements.get_mut(&statement_id) {
             Some(statement) => {
                 statement.parameter_types = None;
+                // Go's stmt.Reset closes the open cursor too.
+                statement.cursor = None;
                 true
             }
             None => false,
+        }
+    }
+
+    fn open_cursor(&mut self, statement_id: u32, state: CursorState) {
+        if let Some(statement) = self.statements.get_mut(&statement_id) {
+            statement.cursor = Some(state);
+        }
+    }
+
+    fn cursor_mut(&mut self, statement_id: u32) -> Option<&mut CursorState> {
+        self.statements
+            .get_mut(&statement_id)
+            .and_then(|statement| statement.cursor.as_mut())
+    }
+
+    fn close_cursor(&mut self, statement_id: u32) {
+        if let Some(statement) = self.statements.get_mut(&statement_id) {
+            statement.cursor = None;
         }
     }
 }
@@ -200,6 +234,10 @@ pub struct ConnectionCommandCounts {
     pub stmt_close_commands: u64,
     /// Number of `COM_STMT_RESET` commands, including unknown handles.
     pub stmt_reset_commands: u64,
+    /// Number of `COM_STMT_FETCH` commands, including unknown handles.
+    pub stmt_fetch_commands: u64,
+    /// Number of complete successful `COM_STMT_FETCH` responses.
+    pub stmt_fetch_successes: u64,
 }
 
 /// Successful lifecycle report.
@@ -797,6 +835,119 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     }
                     PreparedStatement::General(general) => {
+                        // Go's read-only cursor: the execute materializes the
+                        // rows, holds them on the statement, and answers with
+                        // only the column definitions plus an EOF whose
+                        // status advertises the open cursor; the rows travel
+                        // later through COM_STMT_FETCH.
+                        if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                            match engine.execute_general(&general, &values) {
+                                Ok(GeneralExecuteOutcome::Rows(mut result)) => {
+                                    let columns = match result.source().columns() {
+                                        Ok(columns) => columns,
+                                        Err(message) => {
+                                            write_error(
+                                                &mut output,
+                                                1,
+                                                ER_UNKNOWN_ERROR,
+                                                *b"HY000",
+                                                message,
+                                                protocol_41,
+                                            )?;
+                                            continue;
+                                        }
+                                    };
+                                    let rows = match drain_result_rows(&mut result) {
+                                        Ok(rows) => rows,
+                                        Err(message) => {
+                                            write_error(
+                                                &mut output,
+                                                1,
+                                                ER_UNKNOWN_ERROR,
+                                                *b"HY000",
+                                                message,
+                                                protocol_41,
+                                            )?;
+                                            continue;
+                                        }
+                                    };
+                                    drop(result);
+                                    let cursor_options = ResultSetOptions {
+                                        status_flags: options.status_flags
+                                            | SERVER_STATUS_CURSOR_EXISTS,
+                                        ..options
+                                    };
+                                    let mut stream = match tidb_protocol::BinaryResultSetStream::new(
+                                        columns.clone(),
+                                        cursor_options,
+                                    ) {
+                                        Ok(stream) => stream,
+                                        Err(error) => {
+                                            write_error(
+                                                &mut output,
+                                                1,
+                                                ER_UNKNOWN_ERROR,
+                                                *b"HY000",
+                                                error.to_string(),
+                                                protocol_41,
+                                            )?;
+                                            continue;
+                                        }
+                                    };
+                                    let mut sequence = 1;
+                                    let metadata = match stream.metadata_packets() {
+                                        Ok(metadata) => metadata,
+                                        Err(error) => {
+                                            write_error(
+                                                &mut output,
+                                                1,
+                                                ER_UNKNOWN_ERROR,
+                                                *b"HY000",
+                                                error.to_string(),
+                                                protocol_41,
+                                            )?;
+                                            continue;
+                                        }
+                                    };
+                                    for packet in metadata {
+                                        write_packet_to(&mut output, sequence, &packet)?;
+                                        sequence += 1;
+                                    }
+                                    // The deprecate-EOF mode still terminates
+                                    // the metadata with an OK-as-EOF here,
+                                    // because no row packets follow.
+                                    write_eof_or_ok(&mut output, sequence, cursor_options)?;
+                                    prepared.open_cursor(
+                                        statement_id,
+                                        CursorState {
+                                            columns,
+                                            rows,
+                                            next_row: 0,
+                                        },
+                                    );
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                Ok(GeneralExecuteOutcome::Write(outcome)) => {
+                                    // Go clears the cursor bit when the
+                                    // statement produced no result set and
+                                    // answers a plain OK.
+                                    write_affected_rows_ok(
+                                        &mut output,
+                                        1,
+                                        outcome.affected_rows,
+                                        outcome.last_insert_id,
+                                        protocol_41,
+                                    )?;
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                Err(error) => {
+                                    write_query_error(&mut output, &error, protocol_41)?;
+                                }
+                            }
+                            continue;
+                        }
                         match engine.execute_general(&general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                 let write_result = {
@@ -900,9 +1051,85 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 }
             }
+            Command::StmtFetch(bytes) => {
+                commands.stmt_fetch_commands += 1;
+                let (statement_id, fetch_size) = match decode_prepared_statement_fetch(&bytes) {
+                    Ok(decoded) => decoded,
+                    Err(error) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_WRONG_ARGUMENTS,
+                            *b"HY000",
+                            error.to_string(),
+                            protocol_41,
+                        )?;
+                        continue;
+                    }
+                };
+                if prepared.get(statement_id).is_none() {
+                    write_unknown_statement(&mut output, statement_id, protocol_41)?;
+                    continue;
+                }
+                let Some(cursor) = prepared.cursor_mut(statement_id) else {
+                    // Go `ErrSpCursorNotOpen` (1326).
+                    write_error(
+                        &mut output,
+                        1,
+                        1326,
+                        *b"24000",
+                        "Cursor is not open",
+                        protocol_41,
+                    )?;
+                    continue;
+                };
+                // Go sends up to fetch_size binary rows and an EOF; when the
+                // iterator is exhausted the EOF drops the cursor bit, sets
+                // ServerStatusLastRowSend, and the statement resets.
+                let end = cursor
+                    .next_row
+                    .saturating_add(fetch_size as usize)
+                    .min(cursor.rows.len());
+                let batch: Vec<Vec<tidb_datatype::Datum>> =
+                    cursor.rows[cursor.next_row..end].to_vec();
+                cursor.next_row = end;
+                let exhausted = end >= cursor.rows.len();
+                let columns = cursor.columns.clone();
+                let status = if exhausted {
+                    (options.status_flags | SERVER_STATUS_LAST_ROW_SEND)
+                        & !SERVER_STATUS_CURSOR_EXISTS
+                } else {
+                    options.status_flags | SERVER_STATUS_CURSOR_EXISTS
+                };
+                match write_cursor_fetch_batch(
+                    &mut output,
+                    &columns,
+                    &batch,
+                    ResultSetOptions {
+                        status_flags: status,
+                        ..options
+                    },
+                ) {
+                    Ok(()) => {
+                        if exhausted {
+                            prepared.close_cursor(statement_id);
+                        }
+                        commands.stmt_fetch_successes += 1;
+                    }
+                    Err(message) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_UNKNOWN_ERROR,
+                            *b"HY000",
+                            message,
+                            protocol_41,
+                        )?;
+                    }
+                }
+            }
             Command::InitDb(_)
             | Command::FieldList(_)
-            | Command::StmtFetch(_)
             | Command::SetOption(_)
             | Command::ResetConnection
             | Command::Unknown { .. } => write_error(
@@ -979,6 +1206,100 @@ fn prepared_parameter_column() -> ColumnInfo {
         type_code: MYSQL_TYPE_LONGLONG,
         default_value: None,
     }
+}
+
+/// MySQL `SERVER_STATUS_CURSOR_EXISTS` (0x0040): a read-only cursor is open
+/// on the statement, and rows arrive through `COM_STMT_FETCH`.
+const SERVER_STATUS_CURSOR_EXISTS: u16 = 0x0040;
+/// MySQL `SERVER_STATUS_LAST_ROW_SEND` (0x0080): the fetch that carried this
+/// flag exhausted the cursor.
+const SERVER_STATUS_LAST_ROW_SEND: u16 = 0x0080;
+
+/// Materializes every remaining row of a general execute's result, which the
+/// cursor holds for later fetches -- Go's eager cursor fetch fills a row
+/// container the same way.
+fn drain_result_rows(
+    result: &mut crate::sql_node::QueryResult<'_>,
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+    let mut rows = Vec::new();
+    loop {
+        let batch = result.source().next_batch(RESULT_BATCH_SIZE.max(1))?;
+        if batch.is_empty() {
+            result.source().finish()?;
+            return Ok(rows);
+        }
+        rows.extend(batch);
+    }
+}
+
+/// Writes one packet with an explicit sequence number.
+fn write_packet_to(
+    output: &mut TcpStream,
+    sequence: u8,
+    payload: &[u8],
+) -> Result<(), MysqlConnectionError> {
+    let mut writer = PacketWriter::with_sequence(output, sequence);
+    writer
+        .write_packet(payload)
+        .and_then(|()| writer.flush())
+        .map_err(|error| MysqlConnectionError::PartialResult(error.to_string()))
+}
+
+/// Writes the terminal EOF (or its deprecate-EOF OK form) carrying the given
+/// options' status flags.
+fn write_eof_or_ok(
+    output: &mut TcpStream,
+    sequence: u8,
+    options: ResultSetOptions,
+) -> Result<(), MysqlConnectionError> {
+    let payload = tidb_protocol::encode_eof_packet(&tidb_protocol::EofPacket {
+        warnings: options.warnings,
+        status_flags: options.status_flags,
+        deprecate_eof: options.deprecate_eof,
+        protocol_41: options.protocol_41,
+        info: Vec::new(),
+    });
+    write_packet_to(output, sequence, &payload)
+}
+
+/// Writes one `COM_STMT_FETCH` answer: up to the requested number of binary
+/// rows and the EOF whose status says whether the cursor survives.
+fn write_cursor_fetch_batch(
+    output: &mut TcpStream,
+    columns: &[tidb_protocol::ColumnInfo],
+    rows: &[Vec<tidb_datatype::Datum>],
+    options: ResultSetOptions,
+) -> Result<(), String> {
+    let mut stream = tidb_protocol::BinaryResultSetStream::new(columns.to_vec(), options)
+        .map_err(|error| error.to_string())?;
+    // The fetch answer has no metadata section: the client learned the
+    // columns at execute time. The stream still has to pass its own state
+    // machine, so the metadata packets are built and discarded.
+    let _ = stream
+        .metadata_packets()
+        .map_err(|error| error.to_string())?;
+    let mut sequence = 1;
+    for row in rows {
+        let cells: Vec<tidb_protocol::BinaryResultCell> = row
+            .iter()
+            .zip(columns)
+            .map(|(datum, column)| {
+                crate::connection_resultset::datum_to_binary_cell(datum.clone(), column.type_code)
+                    .ok_or_else(|| {
+                        format!(
+                            "cursor row datum does not match column type {}",
+                            column.type_code
+                        )
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let packet = stream
+            .row_packet(&cells)
+            .map_err(|error| error.to_string())?;
+        write_packet_to(output, sequence, &packet).map_err(|error| error.to_string())?;
+        sequence += 1;
+    }
+    write_eof_or_ok(output, sequence, options).map_err(|error| error.to_string())
 }
 
 fn write_unknown_statement(

@@ -25,8 +25,8 @@ use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use tidb_protocol::{
-    PacketReader, PacketWriter, COM_QUERY, COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE,
-    COM_STMT_RESET, DEFAULT_MAX_ALLOWED_PACKET,
+    PacketReader, PacketWriter, COM_QUERY, COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH,
+    COM_STMT_PREPARE, COM_STMT_RESET, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
@@ -452,6 +452,115 @@ fn execute_statement_typed(
     rows
 }
 
+/// Sends a cursor-mode COM_STMT_EXECUTE (CURSOR_TYPE_READ_ONLY) and returns
+/// the status flags of the metadata-terminating EOF/OK, consuming the column
+/// definitions. In cursor mode the execute answers with NO rows.
+fn execute_with_cursor(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    statement_id: u32,
+    parameters: &[i64],
+) -> (usize, u16) {
+    let mut command = vec![COM_STMT_EXECUTE];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.push(0x01); // CURSOR_TYPE_READ_ONLY
+    command.extend_from_slice(&1u32.to_le_bytes());
+    if !parameters.is_empty() {
+        let null_bitmap_len = parameters.len().div_ceil(8);
+        command.extend(std::iter::repeat_n(0u8, null_bitmap_len));
+        command.push(1);
+        for _ in parameters {
+            command.push(8);
+            command.push(0);
+        }
+        for value in parameters {
+            command.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let first = reader.read_packet().unwrap();
+    assert_ne!(first[0], 0xff, "cursor execute errored: {first:?}");
+    let column_count = usize::from(first[0]);
+    for _ in 0..column_count {
+        reader.read_packet().unwrap();
+    }
+    // The terminator carries the cursor bit; in deprecate-EOF mode it is an
+    // OK-as-EOF (0xfe header) whose status sits after two length-encoded
+    // ints; the status of a legacy EOF sits at bytes 3..5.
+    let terminator = reader.read_packet().unwrap();
+    assert_eq!(terminator[0], 0xfe, "metadata terminator: {terminator:?}");
+    let status = terminator_status(&terminator);
+    (column_count, status)
+}
+
+/// The status flags of a 0xfe-headed terminator, in both its legacy-EOF and
+/// its OK-as-EOF (deprecate-EOF) encodings.
+fn terminator_status(packet: &[u8]) -> u16 {
+    if packet.len() == 5 {
+        return u16::from_le_bytes([packet[3], packet[4]]);
+    }
+    // OK-as-EOF: header, affected-rows lenenc, last-insert-id lenenc, status.
+    let mut remaining = &packet[1..];
+    let _ = read_length_encoded_string_int(&mut remaining);
+    let _ = read_length_encoded_string_int(&mut remaining);
+    u16::from_le_bytes([remaining[0], remaining[1]])
+}
+
+/// Reads one length-encoded integer (the small forms the tests produce).
+fn read_length_encoded_string_int(packet: &mut &[u8]) -> u64 {
+    let first = packet[0];
+    match first {
+        0xfc => {
+            let value = u64::from(u16::from_le_bytes([packet[1], packet[2]]));
+            *packet = &packet[3..];
+            value
+        }
+        other => {
+            *packet = &packet[1..];
+            u64::from(other)
+        }
+    }
+}
+
+/// Sends COM_STMT_FETCH and returns the decoded rows plus the terminating
+/// status flags.
+fn fetch_rows(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    statement_id: u32,
+    fetch_size: u32,
+    column_types: &[u8],
+) -> (Vec<Vec<String>>, u16) {
+    let mut command = vec![COM_STMT_FETCH];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.extend_from_slice(&fetch_size.to_le_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let mut rows = Vec::new();
+    loop {
+        let packet = reader.read_packet().unwrap();
+        assert_ne!(packet[0], 0xff, "fetch errored: {packet:?}");
+        if packet[0] == 0xfe && packet.len() < 9 + 4 {
+            return (rows, terminator_status(&packet));
+        }
+        let column_count = column_types.len();
+        let null_bitmap_len = (column_count + 7 + 2) / 8;
+        let null_bitmap = &packet[1..1 + null_bitmap_len];
+        let mut remaining = &packet[1 + null_bitmap_len..];
+        let mut row = Vec::new();
+        for (index, column_type) in column_types.iter().enumerate() {
+            let bit = index + 2;
+            if null_bitmap[bit / 8] & (1 << (bit % 8)) != 0 {
+                row.push("NULL".to_owned());
+                continue;
+            }
+            row.push(read_binary_value(&mut remaining, *column_type));
+        }
+        rows.push(row);
+    }
+}
+
 /// The deployment-ladder proof: a raw MySQL client speaks the real wire
 /// protocol to the new engine and reads its own data back.
 #[test]
@@ -732,6 +841,44 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         "login user: {identities:?}"
     );
     assert_eq!(identities[0][2], identities[0][1], "SESSION_USER is USER");
+
+    // A read-only server-side cursor, which a useCursorFetch JDBC client
+    // drives: the execute answers with only the column definitions and a
+    // status advertising the cursor; the rows arrive in fetch-sized batches,
+    // and the final batch's status drops the cursor bit and sets
+    // SERVER_STATUS_LAST_ROW_SEND.
+    let (cursor_stmt, _, _) =
+        prepare_statement(&mut client, &mut reader, "SELECT a, b FROM t ORDER BY a");
+    let (cursor_columns, execute_status) =
+        execute_with_cursor(&mut client, &mut reader, cursor_stmt, &[]);
+    assert_eq!(cursor_columns, 2);
+    assert_ne!(execute_status & 0x0040, 0, "cursor advertised: {execute_status:#06x}");
+    // t currently holds rows (1,10),(2,20),(3,30),(4,40) from the earlier
+    // stages of this test; fetch two at a time.
+    let types = [0x08u8, 0x08];
+    let (batch1, status1) = fetch_rows(&mut client, &mut reader, cursor_stmt, 2, &types);
+    assert_eq!(
+        batch1,
+        vec![
+            vec!["1".to_owned(), "10".to_owned()],
+            vec!["2".to_owned(), "20".to_owned()]
+        ]
+    );
+    assert_ne!(status1 & 0x0040, 0, "cursor still open: {status1:#06x}");
+    assert_eq!(status1 & 0x0080, 0, "not the last batch: {status1:#06x}");
+    let (batch2, status2) = fetch_rows(&mut client, &mut reader, cursor_stmt, 10, &types);
+    assert_eq!(batch2.len(), 2, "{batch2:?}");
+    assert_eq!(batch2[1], vec!["4".to_owned(), "40".to_owned()]);
+    assert_eq!(status2 & 0x0040, 0, "cursor closed: {status2:#06x}");
+    assert_ne!(status2 & 0x0080, 0, "last row sent: {status2:#06x}");
+    // A fetch after exhaustion is Go's ErrSpCursorNotOpen.
+    let mut dead_fetch = vec![COM_STMT_FETCH];
+    dead_fetch.extend_from_slice(&cursor_stmt.to_le_bytes());
+    dead_fetch.extend_from_slice(&5u32.to_le_bytes());
+    write_packet(&mut client, 0, &dead_fetch);
+    reader.set_sequence(1);
+    let dead = reader.read_packet().unwrap();
+    assert_eq!(dead[0], 0xff, "fetch on a closed cursor errors: {dead:?}");
 
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);

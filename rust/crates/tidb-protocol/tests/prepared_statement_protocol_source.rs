@@ -161,12 +161,14 @@ fn execute_rejects_every_unowned_packet_variant_without_fallback() {
             },
         ),
         (
-            // A multi-marker execute is now decoded, so the only rejected
-            // count is zero: every admitted template binds at least one value.
-            "zero parameter count",
+            // A zero-parameter execute is legal now (the general prepared
+            // path produces them routinely) and ends right after the
+            // iteration count -- so a payload that still carries bitmap,
+            // type and value bytes has trailing garbage.
+            "zero parameter count with trailing bytes",
             execute_payload(1, true, 1),
             None,
-            PreparedStatementError::UnsupportedParameterCount { count: 0 },
+            PreparedStatementError::TrailingBytes { bytes: 12 },
         ),
         (
             "zero statement id",
@@ -175,14 +177,26 @@ fn execute_rejects_every_unowned_packet_variant_without_fallback() {
             PreparedStatementError::ZeroStatementId,
         ),
         (
-            "cursor",
+            // CURSOR_TYPE_READ_ONLY (0x01) is accepted now; ForUpdate (0x02)
+            // and Scrollable (0x04) are what Go still rejects by name.
+            "for-update cursor",
             {
                 let mut packet = execute_payload(1, true, 1);
-                packet[4] = 1;
+                packet[4] = 2;
                 packet
             },
             None,
-            PreparedStatementError::UnsupportedCursorFlag(1),
+            PreparedStatementError::UnsupportedCursorFlag(2),
+        ),
+        (
+            "scrollable cursor",
+            {
+                let mut packet = execute_payload(1, true, 1);
+                packet[4] = 4;
+                packet
+            },
+            None,
+            PreparedStatementError::UnsupportedCursorFlag(4),
         ),
         (
             "non-one iteration count",
@@ -258,9 +272,12 @@ fn execute_rejects_every_unowned_packet_variant_without_fallback() {
         ),
     ];
     for (name, packet, types, expected) in cases {
-        let parameter_count = match &expected {
-            PreparedStatementError::UnsupportedParameterCount { count } => *count,
-            _ => 1,
+        // The zero-count case decodes with a DECLARED count of zero against a
+        // payload that still carries one parameter's bytes.
+        let parameter_count = if name.starts_with("zero parameter count") {
+            0
+        } else {
+            1
         };
         assert_eq!(
             decode_prepared_statement_execute(&packet, parameter_count, types),
