@@ -3127,6 +3127,66 @@ mod tests {
         }
     }
 
+    /// `GROUP_CONCAT`, checked against captured TiDB output.
+    ///
+    /// NOT SUPPORTED YET, and refused rather than ignored: the aggregate's
+    /// own `ORDER BY` (which orders rows WITHIN the concatenation, a
+    /// separate scope from the query's own ORDER BY) and the multi-argument
+    /// form that concatenates several values per row.
+    #[test]
+    fn group_concat() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (g BIGINT, v VARCHAR(10), n BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,'b',2),(1,'a',1),(2,'c',3),(2,NULL,4),(1,'a',5)")
+            .unwrap();
+
+        // Captured: every non-NULL value joined by a comma, in row order.
+        assert_eq!(
+            row_text(session.run("SELECT GROUP_CONCAT(v) FROM t")),
+            [["b,a,c,a"]]
+        );
+        // Captured: per group, with the NULL contributing nothing.
+        assert_eq!(
+            row_text(session.run("SELECT g, GROUP_CONCAT(v) FROM t GROUP BY g ORDER BY g")),
+            [["1", "b,a,a"], ["2", "c"]]
+        );
+        // Captured: an explicit separator.
+        assert_eq!(
+            row_text(
+                session.run("SELECT g, GROUP_CONCAT(v SEPARATOR '-') FROM t GROUP BY g ORDER BY g")
+            ),
+            [["1", "b-a-a"], ["2", "c"]]
+        );
+        // Captured: DISTINCT folds the repeat. TiDB's own output for this
+        // group is `a,b`; MySQL documents the order of a GROUP_CONCAT
+        // without ORDER BY as undefined, so only the membership is asserted.
+        let distinct = row_text(
+            session.run("SELECT g, GROUP_CONCAT(DISTINCT v) FROM t GROUP BY g ORDER BY g"),
+        );
+        let mut first: Vec<&str> = distinct[0][1].split(',').collect();
+        first.sort_unstable();
+        assert_eq!(first, ["a", "b"]);
+        assert_eq!(distinct[1][1], "c");
+        // Captured: numbers are stringified.
+        assert_eq!(
+            row_text(session.run("SELECT GROUP_CONCAT(n) FROM t")),
+            [["2,1,3,4,5"]]
+        );
+        // Captured: an empty group is NULL, not an empty string.
+        assert_eq!(
+            row_text(session.run("SELECT GROUP_CONCAT(v) FROM t WHERE g = 99")),
+            [["NULL"]]
+        );
+
+        // The refusals are refusals, not wrong answers.
+        assert!(session
+            .run("SELECT GROUP_CONCAT(v ORDER BY v) FROM t")
+            .is_err());
+    }
+
     /// Prepared-statement parameters: the marker count a PREPARE reports and
     /// the values an EXECUTE binds.
     ///
@@ -4107,7 +4167,12 @@ mod tests {
 
         // The refusals above are refusals, not wrong answers. (CAST used to
         // be this example; it is built now -- see `cast_and_convert`.)
-        for sql in ["SELECT CURRENT_USER()", "SELECT GROUP_CONCAT(b) FROM t"] {
+        // (GROUP_CONCAT used to be this example; it is built now -- see
+        // `group_concat`. Its inner ORDER BY is the part still refused.)
+        for sql in [
+            "SELECT CURRENT_USER()",
+            "SELECT GROUP_CONCAT(b ORDER BY b) FROM t",
+        ] {
             assert!(session.run(sql).is_err(), "{sql} should still be refused");
         }
     }

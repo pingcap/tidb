@@ -50,7 +50,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
 /// The aggregate function kinds this seed supports.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AggKind {
     /// `COUNT(expr)` / `COUNT(*)` (no argument).
     Count,
@@ -65,6 +65,13 @@ pub enum AggKind {
     Max,
     /// `AVG(expr)`.
     Avg,
+    /// `GROUP_CONCAT([DISTINCT] arg [ORDER BY ...] [SEPARATOR sep])`, whose
+    /// separator travels with the kind because it is part of the aggregate
+    /// rather than an argument.
+    GroupConcat {
+        /// The text placed between rows; Go defaults it to a comma.
+        separator: String,
+    },
 }
 
 /// One aggregate: a kind plus its argument (`None` only for `COUNT(*)`).
@@ -116,6 +123,12 @@ enum Partial {
         sum: f64,
         count: i64,
     },
+    /// `GROUP_CONCAT`: the values seen so far, in row order. Go keeps the
+    /// same buffer and joins it when the group is finalized.
+    GroupConcat {
+        values: Vec<Vec<u8>>,
+        separator: String,
+    },
 }
 
 /// One aggregate's per-group state: its partial result plus, for `DISTINCT`,
@@ -128,7 +141,7 @@ struct AggState {
 impl AggState {
     fn new(func: &AggFunc) -> AggState {
         AggState {
-            partial: Partial::new(func.kind),
+            partial: Partial::new(&func.kind),
             seen: func.distinct.then(HashSet::new),
         }
     }
@@ -156,12 +169,34 @@ impl AggState {
     }
 }
 
+/// The bytes one `GROUP_CONCAT` input contributes, which Go produces by
+/// casting the argument to a string.
+fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
+    Ok(match value {
+        Datum::Bytes(bytes) => bytes.clone(),
+        Datum::String(text) => text.bytes().to_vec(),
+        Datum::Int(number) => number.to_string().into_bytes(),
+        Datum::UInt(number) => number.to_string().into_bytes(),
+        Datum::Real(number) => number.to_string().into_bytes(),
+        Datum::Decimal(number) => number.to_string().into_bytes(),
+        _ => {
+            return Err(ExecError::Unsupported(
+                "GROUP_CONCAT over this datum kind is not yet supported",
+            ))
+        }
+    })
+}
+
 impl Partial {
-    fn new(kind: AggKind) -> Partial {
+    fn new(kind: &AggKind) -> Partial {
         match kind {
             AggKind::Count => Partial::Count(0),
             // The sum's domain is chosen lazily from the first non-NULL input.
             AggKind::Sum => Partial::SumDecimal(None),
+            AggKind::GroupConcat { separator } => Partial::GroupConcat {
+                values: Vec::new(),
+                separator: separator.clone(),
+            },
             AggKind::FirstRow => Partial::FirstRow(None),
             AggKind::Min => Partial::MaxMin {
                 value: None,
@@ -221,6 +256,15 @@ impl Partial {
                 return Err(ExecError::Unsupported(
                     "SUM over this datum kind is not yet supported",
                 ))
+            }
+            // Go `builtinGroupConcat`: a NULL input contributes nothing at
+            // all, and every other value is stringified before it is joined.
+            (Partial::GroupConcat { .. }, None) => {
+                return Err(ExecError::Unsupported("GROUP_CONCAT requires an argument"))
+            }
+            (Partial::GroupConcat { .. }, Some(Datum::Null)) => {}
+            (Partial::GroupConcat { values, .. }, Some(input)) => {
+                values.push(group_concat_bytes(&input)?);
             }
             (Partial::FirstRow(slot), value) => {
                 if slot.is_none() {
@@ -288,6 +332,18 @@ impl Partial {
     fn finish(&self) -> Datum {
         match self {
             Partial::Count(n) => Datum::Int(*n),
+            // An empty group concatenates to NULL, not an empty string.
+            Partial::GroupConcat { values, .. } if values.is_empty() => Datum::Null,
+            Partial::GroupConcat { values, separator } => {
+                let mut joined = Vec::new();
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        joined.extend_from_slice(separator.as_bytes());
+                    }
+                    joined.extend_from_slice(value);
+                }
+                Datum::Bytes(joined)
+            }
             Partial::SumDecimal(None) | Partial::SumReal(None) => Datum::Null,
             Partial::SumDecimal(Some(v)) => Datum::Decimal(v.clone()),
             Partial::SumReal(Some(v)) => Datum::Real(*v),

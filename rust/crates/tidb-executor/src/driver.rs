@@ -1085,7 +1085,7 @@ fn run_select_stmt(
             matches!(
                 f,
                 SelectField::Expr {
-                    expr: tidb_ast::Expr::Aggregate { .. },
+                    expr: tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. },
                     ..
                 }
             )
@@ -2389,7 +2389,9 @@ fn substitute_aggregates(
             types.push(ftype);
             Expr::Column(vec![name])
         }
-        Expr::Aggregate { .. } => {
+        // GROUP_CONCAT is substituted the same way: the aggregate is hoisted
+        // and the field becomes a reference to its output column.
+        Expr::Aggregate { .. } | Expr::GroupConcat { .. } => {
             let text = expr.restore();
             if !names.iter().any(|name| name.eq_ignore_ascii_case(&text)) {
                 let (func, ftype) = build_agg_func(expr, resolver)?;
@@ -2447,6 +2449,40 @@ fn build_agg_func(
     expr: &tidb_ast::Expr,
     resolver: &ScopeResolver<'_>,
 ) -> Result<(AggFunc, FieldType), DriverError> {
+    // GROUP_CONCAT is its own AST shape: it carries a separator and its own
+    // row ORDER BY rather than being a one-argument aggregate.
+    if let tidb_ast::Expr::GroupConcat {
+        distinct,
+        args,
+        order_by,
+        separator,
+    } = expr
+    {
+        if !order_by.is_empty() {
+            return Err(DriverError::Unsupported(
+                "GROUP_CONCAT ... ORDER BY is not supported yet",
+            ));
+        }
+        let [arg] = args.as_slice() else {
+            return Err(DriverError::Unsupported(
+                "multi-argument GROUP_CONCAT is not supported yet",
+            ));
+        };
+        let arg = rewrite_expr_resolved(arg, resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        let mut ret_type = FieldType::new(FieldTypeCode::VarString);
+        ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        return Ok((
+            AggFunc {
+                kind: AggKind::GroupConcat {
+                    separator: separator.value.clone(),
+                },
+                arg: Some(arg),
+                distinct: *distinct,
+            },
+            ret_type,
+        ));
+    }
     let tidb_ast::Expr::Aggregate {
         name,
         distinct,
@@ -4133,24 +4169,11 @@ fn run_aggregate_select(
         };
         let display = alias.clone().unwrap_or_else(|| expr.restore());
         match expr {
-            tidb_ast::Expr::Aggregate {
-                name,
-                distinct,
-                args,
-            } => {
-                let [arg] = args.as_slice() else {
-                    return Err(DriverError::Unsupported(
-                        "multi-argument aggregates are deferred",
-                    ));
-                };
-                let arg = rewrite_expr_resolved(arg, resolver)
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                let (kind, ftype) = agg_kind_and_type(name, &arg)?;
-                agg_funcs.push(AggFunc {
-                    kind,
-                    arg: Some(arg),
-                    distinct: *distinct,
-                });
+            // Both aggregate shapes lower through the same builder, which
+            // knows GROUP_CONCAT's separator and DISTINCT.
+            tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. } => {
+                let (func, ftype) = build_agg_func(expr, resolver)?;
+                agg_funcs.push(func);
                 names.push(display);
                 types.push(ftype);
             }
