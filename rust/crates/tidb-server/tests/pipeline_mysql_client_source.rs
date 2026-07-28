@@ -867,6 +867,42 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         .expect("scan operator present");
     assert_eq!(scan_row[2], "4", "actRows counts the real scanned rows");
 
+    // Roles over the wire: create, grant, activate, and read the active set.
+    assert_eq!(run_write(&mut client, &mut reader, "CREATE ROLE wirerole"), 0);
+    // GRANT is an Admin statement, which this tier answers as a one-column
+    // affected-rows result set (see grants_wire_protocol_source.rs).
+    assert_eq!(
+        run_query(&mut client, &mut reader, "GRANT wirerole TO 'alice'@'%'"),
+        vec![vec!["0".to_owned()]]
+    );
+    assert_eq!(run_write(&mut client, &mut reader, "SET ROLE wirerole"), 0);
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT CURRENT_ROLE()"),
+        vec![vec!["`wirerole`@`%`".to_owned()]]
+    );
+
+    // Charset resolution over the wire: a VARBINARY column reports the binary
+    // charset while VARCHAR reports the session default, and BINARY(3) pads.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "CREATE TABLE cs (v VARCHAR(4), b BINARY(3))"
+        ),
+        0
+    );
+    assert_eq!(
+        run_write(&mut client, &mut reader, "INSERT INTO cs VALUES ('ab', 'ab')"),
+        1
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT HEX(b), LENGTH(b) FROM cs"),
+        vec![vec!["616200".to_owned(), "3".to_owned()]]
+    );
+    let columns = run_query(&mut client, &mut reader, "SHOW FULL COLUMNS FROM cs");
+    assert_eq!(columns[0][2], "utf8mb4_bin", "{columns:?}");
+    assert_eq!(columns[1][2], "NULL", "binary column has no collation");
+
     // The processlist virtual table sees this very connection.
     let processes = run_query(
         &mut client,
