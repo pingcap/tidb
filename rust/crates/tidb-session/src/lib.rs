@@ -461,6 +461,53 @@ impl Session {
                     let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                     Ok(Some(string_column_output("Database", names)))
                 }
+                // Go `fetchShowIndex`: one row per index COLUMN, ordered
+                // with the clustered primary key first, then the table's own
+                // indexes in definition order.
+                //
+                // NOT MODELLED, and each reported the way Go reports an
+                // absent value rather than invented: Cardinality is 0 (no
+                // statistics tier), Sub_part and Packed are NULL (no prefix
+                // or packed indexes here), Comment/Index_comment are empty,
+                // Expression is NULL (no expression indexes), and Global is
+                // NO (no partitioned global indexes).
+                tidb_ast::AdminStmt::ShowIndex(show) => {
+                    if show.filter.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "SHOW INDEX filters are not supported yet",
+                        ));
+                    }
+                    let current = self.require_current_database()?.to_owned();
+                    let (database, table_name) = match show.table.as_slice() {
+                        [table] => (current, table.clone()),
+                        [database, table] => (database.clone(), table.clone()),
+                        _ => return Err(DriverError::Unsupported("empty table name")),
+                    };
+                    let rows = self.with_catalog_mut(|catalog| {
+                        let Some(entry) = catalog.table_in(&database, &table_name) else {
+                            return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
+                                format!("{database}.{table_name}"),
+                            )));
+                        };
+                        let tidb_executor::TableEntry::Kv(table) = entry else {
+                            return Err(DriverError::Unsupported(
+                                "SHOW INDEX needs a storage-backed table",
+                            ));
+                        };
+                        Ok(show_index_rows(&table_name, table))
+                    })?;
+                    let text =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    let number =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+                    let columns = SHOW_INDEX_COLUMNS
+                        .iter()
+                        .map(|(name, numeric)| {
+                            ((*name).to_owned(), if *numeric { number() } else { text() })
+                        })
+                        .collect();
+                    Ok(Some(StmtOutput::Rows { columns, rows }))
+                }
                 // Go `ShowExec` with `ShowVariables`: one row per variable,
                 // as `Variable_name` and `Value`, filtered by LIKE.
                 //
@@ -1319,6 +1366,83 @@ impl Session {
             )),
         }
     }
+}
+
+/// The `SHOW INDEX` header, with the columns Go reports as numbers marked.
+const SHOW_INDEX_COLUMNS: &[(&str, bool)] = &[
+    ("Table", false),
+    ("Non_unique", true),
+    ("Key_name", false),
+    ("Seq_in_index", true),
+    ("Column_name", false),
+    ("Collation", false),
+    ("Cardinality", true),
+    ("Sub_part", true),
+    ("Packed", false),
+    ("Null", false),
+    ("Index_type", false),
+    ("Comment", false),
+    ("Index_comment", false),
+    ("Visible", false),
+    ("Expression", false),
+    ("Clustered", false),
+    ("Global", false),
+];
+
+/// One `SHOW INDEX` row per index column, in Go's own order: the clustered
+/// primary key first, then each index in definition order.
+fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+    let mut push = |key_name: &str,
+                    unique: bool,
+                    clustered: bool,
+                    sequence: usize,
+                    column: &str,
+                    nullable: bool| {
+        rows.push(vec![
+            text(table_name),
+            Datum::Int(i64::from(!unique)),
+            text(key_name),
+            Datum::Int(sequence as i64),
+            text(column),
+            text("A"),
+            // No statistics tier, so Go's estimate is simply absent.
+            Datum::Int(0),
+            Datum::Null,
+            Datum::Null,
+            text(if nullable { "YES" } else { "" }),
+            text("BTREE"),
+            text(""),
+            text(""),
+            text("YES"),
+            Datum::Null,
+            text(if clustered { "YES" } else { "NO" }),
+            text("NO"),
+        ]);
+    };
+    // The clustered primary key is not in the index list, the same way
+    // SHOW CREATE TABLE prints it separately.
+    if let Some(offset) = table.pk_handle_offset() {
+        push("PRIMARY", true, true, 1, &table.columns[offset].name, false);
+    }
+    for index in table.indexes() {
+        let clustered =
+            index.name.eq_ignore_ascii_case("PRIMARY") && !table.common_handle_offsets().is_empty();
+        for (position, offset) in index.column_offsets.iter().enumerate() {
+            let column = &table.columns[*offset];
+            let nullable = column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
+            push(
+                &index.name,
+                index.unique,
+                clustered,
+                position + 1,
+                &column.name,
+                nullable,
+            );
+        }
+    }
+    rows
 }
 
 /// The column names a `SHOW VARIABLES` row carries, which its `WHERE` filter
@@ -2966,6 +3090,77 @@ mod tests {
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
         }
+    }
+
+    /// `SHOW INDEX` / `SHOW KEYS`, checked against captured TiDB output --
+    /// the full 17-column header and one row per index column.
+    #[test]
+    fn show_index_reports_each_index_column() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10), c BIGINT, \
+                 UNIQUE KEY ub (b), KEY bc (b,c))",
+            )
+            .unwrap();
+
+        match session.run_with_columns("SHOW INDEX FROM t").unwrap() {
+            StmtOutput::Rows { columns, .. } => assert_eq!(
+                columns
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "Table",
+                    "Non_unique",
+                    "Key_name",
+                    "Seq_in_index",
+                    "Column_name",
+                    "Collation",
+                    "Cardinality",
+                    "Sub_part",
+                    "Packed",
+                    "Null",
+                    "Index_type",
+                    "Comment",
+                    "Index_comment",
+                    "Visible",
+                    "Expression",
+                    "Clustered",
+                    "Global",
+                ]
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // Captured: the clustered primary key first, then each index in
+        // definition order, one row per index column with its 1-based
+        // position. Non_unique is 0 for a unique index.
+        let rows = row_text(session.run("SHOW INDEX FROM t"));
+        let summary: Vec<Vec<&str>> = rows
+            .iter()
+            .map(|row| {
+                vec![
+                    row[1].as_str(),  // Non_unique
+                    row[2].as_str(),  // Key_name
+                    row[3].as_str(),  // Seq_in_index
+                    row[4].as_str(),  // Column_name
+                    row[9].as_str(),  // Null
+                    row[15].as_str(), // Clustered
+                ]
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ["0", "PRIMARY", "1", "a", "", "YES"],
+                ["0", "ub", "1", "b", "YES", "NO"],
+                ["1", "bc", "1", "b", "YES", "NO"],
+                ["1", "bc", "2", "c", "YES", "NO"],
+            ]
+        );
+        // Captured: SHOW KEYS is the same statement.
+        assert_eq!(row_text(session.run("SHOW KEYS FROM t")), rows);
     }
 
     /// One connection sends everything through one door: the transaction
