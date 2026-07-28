@@ -430,6 +430,58 @@ mod tests {
         );
     }
 
+    /// The lifecycle a multi-statement transaction needs: read, read again, and
+    /// only then prewrite -- all on one transaction, so the prewrite carries
+    /// the timestamp the first read used. Re-entering `Reading` is what makes
+    /// a session hold one `start_ts` across its statements, and it must not
+    /// become a way around the publication boundaries.
+    #[test]
+    fn a_read_phase_may_be_re_entered_and_still_reach_the_write_phase() {
+        let mut state = CoordinatorState::New;
+        for _ in 0..4 {
+            state
+                .transition(CoordinatorState::Reading)
+                .expect("a further statement of the same transaction reads again");
+        }
+        state
+            .transition(CoordinatorState::Prewriting)
+            .expect("COMMIT prewrites the transaction the statements read on");
+        state.transition(CoordinatorState::Prewritten).unwrap();
+        state
+            .transition(CoordinatorState::PrimaryCommitting)
+            .unwrap();
+        state
+            .transition(CoordinatorState::PrimaryCommitted)
+            .unwrap();
+        state.transition(CoordinatorState::Committed).unwrap();
+    }
+
+    /// Re-entry ends where the transaction does: once a terminal state is
+    /// reached, no further read or write may reuse this `start_ts`.
+    #[test]
+    fn a_finished_transaction_can_never_re_enter_the_read_phase() {
+        for terminal in [
+            CoordinatorState::ReadOnly,
+            CoordinatorState::Committed,
+            CoordinatorState::RolledBack,
+            CoordinatorState::CleanupFailed,
+            CoordinatorState::Undetermined,
+        ] {
+            for next in [
+                CoordinatorState::Reading,
+                CoordinatorState::Prewriting,
+                CoordinatorState::PrimaryCommitting,
+            ] {
+                let mut state = terminal;
+                assert!(
+                    state.transition(next).is_err(),
+                    "{terminal:?} -> {next:?} must be refused"
+                );
+                assert_eq!(state, terminal, "a refused transition changes nothing");
+            }
+        }
+    }
+
     #[test]
     fn coordinator_state_machine_rejects_skipped_publication_boundaries() {
         let mut state = CoordinatorState::New;

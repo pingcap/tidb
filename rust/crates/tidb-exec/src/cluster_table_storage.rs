@@ -18,24 +18,32 @@
 //!
 //! # The transaction lifecycle this chooses
 //!
-//! One statement opens one read-only transaction, reads every key it needs at
-//! that transaction's single `start_ts`, and finishes without writes; the
-//! statement's writes stay in the session's [`MutationBuffer`]. COMMIT opens a
-//! second, writing transaction and publishes the whole buffer as one mutation
-//! set.
+//! There are two lifecycles here, and which one applies is exactly Go's rule.
 //!
-//! That is Go's `MemBuffer`-in-front-of-snapshot read path exactly, with one
-//! honest divergence: Go's session keeps *one* `kv.Transaction`, so its writes
-//! prewrite at the same `start_ts` its reads used, and a concurrent writer is
-//! caught by the write conflict check against that `start_ts`. Here the COMMIT
-//! timestamp is newer than the statements' read timestamps, so a
-//! read-then-write race is caught only by the mutation assertions, not by
-//! `start_ts` conflict detection. Reads within a statement are still one
-//! consistent snapshot, which is what the wide-SQL driver depends on. Closing
-//! the gap means holding one transaction open across the whole session, which
-//! the coordinator's state machine does not admit today: `commit` and
-//! `finish_without_writes` both consume the transaction and reach a terminal
-//! state that cannot re-enter `Reading`.
+//! **Autocommit.** One statement opens one read-only transaction
+//! ([`StatementSnapshot`]), reads every key it needs at that transaction's
+//! single `start_ts`, and finishes without writes; the statement's writes stay
+//! in the session's [`MutationBuffer`] and are published by
+//! [`commit_staged_buffer`] as one transaction at the end of the statement.
+//! Each autocommit statement therefore gets its own fresh timestamp, which is
+//! what Go's autocommit does too: `BEGIN` is implicit and ends with the
+//! statement.
+//!
+//! **Explicit `BEGIN` ... `COMMIT`.** [`SessionTransaction`] opens *one*
+//! transaction at `BEGIN` and keeps it open. Every statement in between reads
+//! through [`SessionTransaction::snapshot`], which serves reads on that one
+//! transaction at its original `start_ts`, and `COMMIT` prewrites the whole
+//! staged buffer on that same transaction — so the prewrite carries the
+//! `BEGIN` timestamp. That is what makes conflict detection faithful: TiKV
+//! rejects a prewrite whose key has a commit newer than `start_ts`, so a writer
+//! that raced this transaction between its read and its commit is reported as
+//! `WriteConflict` (9007) rather than silently overwritten. It is also
+//! repeatable read: a statement inside the transaction cannot see a commit made
+//! after `BEGIN`, because there is no newer timestamp to see it at.
+//!
+//! The read path in both lifecycles is Go's `MemBuffer`-in-front-of-snapshot:
+//! the session's staged writes win, and only an unstaged key reaches the
+//! snapshot.
 //!
 //! [`ClusterSnapshot`]: tidb_executor::cluster_storage::ClusterSnapshot
 //! [`MutationBuffer`]: tidb_executor::cluster_storage::MutationBuffer
@@ -53,28 +61,14 @@ use tidb_executor::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticCoordinatorError, OptimisticMutation,
-    ProductionOptimisticTransaction, RealOptimisticTransactionOpener,
+    ProductionOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::Key;
 
-/// One statement's read snapshot: a real read-only transaction at one PD
-/// timestamp, owned by the thread that opened it.
-///
-/// The production transport is deliberately worker-local (`Rc<RefCell<..>>`),
-/// while `TableStorage` is `Send` because a `KvTable` lives in a catalog the
-/// server shares between workers. Both constraints hold at once here: the
-/// transaction is created, used and finished on one dedicated thread, and what
-/// crosses threads is this handle -- a channel and a timestamp. No borrow of
-/// the transport ever leaves its thread.
-pub struct StatementSnapshot {
-    requests: Option<Sender<SnapshotRequest>>,
-    worker: Option<JoinHandle<()>>,
-    start_ts: u64,
-}
-
-/// One read the snapshot's thread performs, with the channel its answer goes
-/// back on.
-enum SnapshotRequest {
+/// One request the transaction's own thread serves, with the channel its answer
+/// goes back on.
+enum TransactionRequest {
     Get {
         key: Vec<u8>,
         reply: Sender<Result<Option<Vec<u8>>, StorageError>>,
@@ -84,37 +78,60 @@ enum SnapshotRequest {
         end: Vec<u8>,
         reply: Sender<Result<SnapshotPairs, StorageError>>,
     },
+    /// Publishes `mutations` at the transaction's original `start_ts` and ends
+    /// the thread, whatever the outcome.
+    Commit {
+        mutations: Vec<OptimisticMutation>,
+        reply: Sender<Result<OptimisticCommitOutcome, String>>,
+    },
     Finish {
         reply: Sender<Result<(), StorageError>>,
     },
 }
 
-impl fmt::Debug for StatementSnapshot {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StatementSnapshot")
-            .field("start_ts", &self.start_ts)
-            .field("open", &self.requests.is_some())
-            .finish()
-    }
+/// One real transaction pinned to the thread that opened it.
+///
+/// The production transport is deliberately worker-local (`Rc<RefCell<..>>`),
+/// while `TableStorage` is `Send` because a `KvTable` lives in a catalog the
+/// server shares between workers. Both constraints hold at once here: the
+/// transaction is created, used and ended on one dedicated thread, and what
+/// crosses threads is this handle -- a channel and a timestamp. No borrow of
+/// the transport ever leaves its thread.
+struct TransactionThread {
+    requests: Option<Sender<TransactionRequest>>,
+    worker: Option<JoinHandle<()>>,
+    start_ts: u64,
 }
 
-impl StatementSnapshot {
-    /// Opens one read-only transaction on its own thread, spending exactly one
-    /// PD timestamp.
+impl TransactionThread {
+    /// Opens one transaction on its own thread, spending exactly one PD
+    /// timestamp.
+    ///
+    /// `writable` decides the publication budget the coordinator opens with: a
+    /// read-only transaction is opened with the tightest possible one (zero),
+    /// so a later attempt to publish a mutation through it is refused rather
+    /// than admitted by accident.
     ///
     /// The call returns only once the transaction exists, so `start_ts` is an
     /// allocated timestamp rather than a promise.
-    pub fn open(
-        opener: Arc<RealOptimisticTransactionOpener>,
+    fn open(
+        opener: &Arc<RealOptimisticTransactionOpener>,
         timeout: Duration,
+        writable: bool,
+        name: &str,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        let (requests, incoming) = mpsc::channel::<SnapshotRequest>();
+        let (requests, incoming) = mpsc::channel::<TransactionRequest>();
         let (opened, opened_reply) = mpsc::channel::<Result<u64, OptimisticCoordinatorError>>();
+        let opener = Arc::clone(opener);
         let worker = thread::Builder::new()
-            .name("cluster-statement-snapshot".to_owned())
+            .name(name.to_owned())
             .spawn(move || {
-                let mut transaction = match opener.begin_read_only() {
+                let begun = if writable {
+                    opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+                } else {
+                    opener.begin_read_only()
+                };
+                let transaction = match begun {
                     Ok(transaction) => {
                         // A caller that stopped waiting leaves no lock behind:
                         // the transaction ends here instead.
@@ -130,122 +147,323 @@ impl StatementSnapshot {
                     }
                 };
                 let call = UnaryCallContext::with_timeout(timeout);
-                serve_snapshot(&mut transaction, &incoming, &call);
-                let _ = transaction.finish_without_writes();
+                serve_transaction(transaction, &incoming, &call);
             })
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         let start_ts = opened_reply
             .recv()
             .map_err(|_| {
                 OptimisticCoordinatorError::SnapshotGet(
-                    "the snapshot thread ended before opening a transaction".to_owned(),
+                    "the transaction thread ended before opening a transaction".to_owned(),
                 )
             })
             .and_then(|result| result)?;
-        Ok(StatementSnapshot {
+        Ok(Self {
             requests: Some(requests),
             worker: Some(worker),
             start_ts,
         })
     }
 
-    /// The timestamp every read of this statement is served at.
-    #[must_use]
-    pub const fn start_ts(&self) -> u64 {
-        self.start_ts
-    }
-
-    /// Ends the statement's read transaction, leaving no locks behind.
-    ///
-    /// Calling it twice is a no-op: the statement is already finished.
-    pub fn finish(&mut self) -> Result<(), StorageError> {
+    /// Ends the transaction without publishing anything, leaving no locks
+    /// behind. Calling it twice is a no-op.
+    fn finish(&mut self) -> Result<(), StorageError> {
         let Some(requests) = self.requests.take() else {
             return Ok(());
         };
         let (reply, answer) = mpsc::channel();
-        let outcome = match requests.send(SnapshotRequest::Finish { reply }) {
+        let outcome = match requests.send(TransactionRequest::Finish { reply }) {
             Ok(()) => answer.recv().unwrap_or(Ok(())),
             // The thread is already gone, which means it already finished the
             // transaction on its way out.
             Err(_) => Ok(()),
         };
         drop(requests);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.join();
         outcome
     }
 
-    fn ask<T>(
-        &self,
-        request: impl FnOnce(Sender<Result<T, StorageError>>) -> SnapshotRequest,
-    ) -> Result<T, StorageError> {
-        let requests = self.requests.as_ref().ok_or_else(|| {
-            StorageError::Backend("the statement's read snapshot is already finished".to_owned())
-        })?;
+    /// Publishes `mutations` on this very transaction, so the prewrite carries
+    /// the timestamp the transaction opened at.
+    fn commit(
+        &mut self,
+        mutations: Vec<OptimisticMutation>,
+    ) -> Result<OptimisticCommitOutcome, String> {
+        let requests = self
+            .requests
+            .take()
+            .ok_or_else(|| "the transaction is already finished".to_owned())?;
         let (reply, answer) = mpsc::channel();
-        requests.send(request(reply)).map_err(|_| {
-            StorageError::Backend("the statement's snapshot thread is gone".to_owned())
-        })?;
-        answer.recv().map_err(|_| {
-            StorageError::Backend("the statement's snapshot thread stopped mid-read".to_owned())
-        })?
+        let outcome = match requests.send(TransactionRequest::Commit { mutations, reply }) {
+            Ok(()) => answer
+                .recv()
+                .unwrap_or_else(|_| Err("the transaction thread stopped mid-commit".to_owned())),
+            Err(_) => Err("the transaction thread is gone".to_owned()),
+        };
+        drop(requests);
+        self.join();
+        outcome
+    }
+
+    fn join(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+
+    fn sender(&self) -> Result<Sender<TransactionRequest>, StorageError> {
+        self.requests
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| StorageError::Backend("the transaction is already finished".to_owned()))
     }
 }
 
-impl Drop for StatementSnapshot {
+impl Drop for TransactionThread {
     fn drop(&mut self) {
         // Dropping the request channel is what tells the thread to finish the
         // transaction; joining orders that cleanup before the handle's owner
         // moves on.
         self.requests = None;
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.join();
     }
 }
 
-/// Serves reads on the transaction's own thread until the handle goes away.
-fn serve_snapshot(
-    transaction: &mut ProductionOptimisticTransaction,
-    incoming: &Receiver<SnapshotRequest>,
+/// Sends one request to a transaction's thread and waits for its answer.
+fn ask<T>(
+    requests: &Sender<TransactionRequest>,
+    request: impl FnOnce(Sender<Result<T, StorageError>>) -> TransactionRequest,
+) -> Result<T, StorageError> {
+    let (reply, answer) = mpsc::channel();
+    requests
+        .send(request(reply))
+        .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
+    answer
+        .recv()
+        .map_err(|_| StorageError::Backend("the transaction thread stopped mid-read".to_owned()))?
+}
+
+/// Serves the transaction on its own thread until it is committed, finished, or
+/// its last handle goes away.
+fn serve_transaction(
+    mut transaction: ProductionOptimisticTransaction,
+    incoming: &Receiver<TransactionRequest>,
     call: &UnaryCallContext,
 ) {
     while let Ok(request) = incoming.recv() {
         match request {
-            SnapshotRequest::Get { key, reply } => {
+            TransactionRequest::Get { key, reply } => {
                 let answer = transaction
                     .snapshot_get(&key, call)
                     .map(|result| result.value)
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
-            SnapshotRequest::Scan { start, end, reply } => {
+            TransactionRequest::Scan { start, end, reply } => {
                 let answer = transaction
                     .snapshot_scan(&start, &end, call)
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
-            SnapshotRequest::Finish { reply } => {
-                // The caller's return path finishes the transaction; the
-                // acknowledgement here is what makes `finish` synchronous.
-                let _ = reply.send(Ok(()));
+            TransactionRequest::Commit { mutations, reply } => {
+                // The coordinator re-enters the write phase from the read
+                // phase, so this prewrite carries the transaction's original
+                // start timestamp -- the whole point of holding one open.
+                let _ = reply.send(
+                    transaction
+                        .commit(mutations, call)
+                        .map_err(|error| error.to_string()),
+                );
+                return;
+            }
+            TransactionRequest::Finish { reply } => {
+                let _ = reply.send(
+                    transaction
+                        .finish_without_writes()
+                        .map(|_| ())
+                        .map_err(|error| StorageError::Backend(error.to_string())),
+                );
                 return;
             }
         }
+    }
+    let _ = transaction.finish_without_writes();
+}
+
+/// One statement's read snapshot: a real read-only transaction at one PD
+/// timestamp, owned by the thread that opened it.
+///
+/// This is the autocommit shape. Inside an explicit transaction the session
+/// reads through [`SessionTransaction::snapshot`] instead, so every statement
+/// shares the one timestamp `BEGIN` took.
+pub struct StatementSnapshot {
+    thread: TransactionThread,
+}
+
+impl fmt::Debug for StatementSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StatementSnapshot")
+            .field("start_ts", &self.thread.start_ts)
+            .field("open", &self.thread.requests.is_some())
+            .finish()
+    }
+}
+
+impl StatementSnapshot {
+    /// Opens one read-only transaction on its own thread, spending exactly one
+    /// PD timestamp.
+    pub fn open(
+        opener: Arc<RealOptimisticTransactionOpener>,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Ok(Self {
+            thread: TransactionThread::open(&opener, timeout, false, "cluster-statement-snapshot")?,
+        })
+    }
+
+    /// The timestamp every read of this statement is served at.
+    #[must_use]
+    pub const fn start_ts(&self) -> u64 {
+        self.thread.start_ts
+    }
+
+    /// Ends the statement's read transaction, leaving no locks behind.
+    ///
+    /// Calling it twice is a no-op: the statement is already finished.
+    pub fn finish(&mut self) -> Result<(), StorageError> {
+        self.thread.finish()
     }
 }
 
 impl ClusterSnapshot for StatementSnapshot {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         let bytes = key.as_bytes().to_vec();
-        self.ask(|reply| SnapshotRequest::Get { key: bytes, reply })
+        ask(&self.thread.sender()?, |reply| TransactionRequest::Get {
+            key: bytes,
+            reply,
+        })
     }
 
     fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
         let start = start.as_bytes().to_vec();
         let end = end.as_bytes().to_vec();
-        self.ask(|reply| SnapshotRequest::Scan { start, end, reply })
+        ask(&self.thread.sender()?, |reply| TransactionRequest::Scan {
+            start,
+            end,
+            reply,
+        })
+    }
+}
+
+/// One connection's open `BEGIN` ... `COMMIT`: a single transaction that every
+/// statement in between reads through and that `COMMIT` prewrites on.
+///
+/// Holding one transaction is what makes conflict detection Go's. The prewrite
+/// carries the timestamp `BEGIN` took, so TiKV refuses it when a key this
+/// transaction touched was committed by someone else after that timestamp, and
+/// every statement in between reads at that timestamp, which is repeatable
+/// read.
+pub struct SessionTransaction {
+    thread: TransactionThread,
+}
+
+impl fmt::Debug for SessionTransaction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionTransaction")
+            .field("start_ts", &self.thread.start_ts)
+            .field("open", &self.thread.requests.is_some())
+            .finish()
+    }
+}
+
+impl SessionTransaction {
+    /// Opens the transaction `BEGIN` holds, spending exactly one PD timestamp.
+    ///
+    /// The publication budget is the transaction-size limit itself, because a
+    /// multi-statement transaction cannot know its mutation set at `BEGIN`; the
+    /// commit still enforces the same limits against the buffer it publishes.
+    pub fn begin(
+        opener: Arc<RealOptimisticTransactionOpener>,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Ok(Self {
+            thread: TransactionThread::open(&opener, timeout, true, "cluster-session-transaction")?,
+        })
+    }
+
+    /// The one timestamp every statement of this transaction reads at.
+    #[must_use]
+    pub const fn start_ts(&self) -> u64 {
+        self.thread.start_ts
+    }
+
+    /// A read handle onto this transaction, for one statement to bind.
+    ///
+    /// Dropping it ends the statement, not the transaction: that is the
+    /// re-entry the shape exists for.
+    pub fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        Ok(Box::new(SessionSnapshot {
+            requests: self.thread.sender()?,
+        }))
+    }
+
+    /// Publishes every staged write of the transaction at its own `start_ts`.
+    ///
+    /// An empty buffer publishes nothing and takes no commit timestamp, as
+    /// Go's `COMMIT` of a transaction that wrote nothing does.
+    pub fn commit(
+        mut self,
+        buffer: &MutationBuffer,
+    ) -> Result<Option<OptimisticCommitOutcome>, String> {
+        let (mutations, _) = staged_mutations(buffer).map_err(|error| error.to_string())?;
+        if mutations.is_empty() {
+            self.thread.finish().map_err(|error| error.to_string())?;
+            return Ok(None);
+        }
+        let outcome = self.thread.commit(mutations)?;
+        buffer.reset();
+        Ok(Some(outcome))
+    }
+
+    /// Ends the transaction without publishing anything.
+    pub fn rollback(mut self) -> Result<(), String> {
+        self.thread.finish().map_err(|error| error.to_string())
+    }
+}
+
+/// One statement's view of an open session transaction.
+///
+/// It carries no ownership of the transaction: dropping it is the end of the
+/// statement, and the transaction stays open for the next one.
+struct SessionSnapshot {
+    requests: Sender<TransactionRequest>,
+}
+
+impl fmt::Debug for SessionSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("SessionSnapshot").finish()
+    }
+}
+
+impl ClusterSnapshot for SessionSnapshot {
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        let bytes = key.as_bytes().to_vec();
+        ask(&self.requests, |reply| TransactionRequest::Get {
+            key: bytes,
+            reply,
+        })
+    }
+
+    fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
+        let start = start.as_bytes().to_vec();
+        let end = end.as_bytes().to_vec();
+        ask(&self.requests, |reply| TransactionRequest::Scan {
+            start,
+            end,
+            reply,
+        })
     }
 }
 
@@ -285,22 +503,15 @@ pub fn statement_storage(
     Ok((ClusterTableStorage::new(buffer, handle), snapshot))
 }
 
-/// Publishes every staged write of the session as one optimistic transaction.
+/// The buffer's staged writes as one mutation set, with the bytes they carry.
 ///
 /// The mutations carry no existence assertion (`Op_Put`/`Op_Del` only): the
 /// buffer holds raw row and index keys whose prior state the storage seam does
-/// not record, and asserting the wrong one would fail a correct commit. An
-/// empty buffer commits nothing and consumes no timestamp, as Go's COMMIT of a
-/// transaction that wrote nothing does.
-pub fn commit_staged_buffer(
-    opener: &RealOptimisticTransactionOpener,
+/// not record, and asserting the wrong one would fail a correct commit.
+fn staged_mutations(
     buffer: &MutationBuffer,
-    timeout: Duration,
-) -> Result<Option<OptimisticCommitOutcome>, OptimisticCoordinatorError> {
+) -> Result<(Vec<OptimisticMutation>, usize), OptimisticCoordinatorError> {
     let staged = buffer.staged();
-    if staged.is_empty() {
-        return Ok(None);
-    }
     let mut mutations = Vec::with_capacity(staged.len());
     let mut planned_bytes = 0usize;
     for (key, value) in staged {
@@ -311,6 +522,27 @@ pub fn commit_staged_buffer(
         }
         .map_err(OptimisticCoordinatorError::Mutations)?;
         mutations.push(mutation);
+    }
+    Ok((mutations, planned_bytes))
+}
+
+/// Publishes every staged write of one autocommit statement as its own
+/// optimistic transaction.
+///
+/// This is the autocommit path only: the statement's own read transaction has
+/// already ended, so the publication takes a fresh timestamp, exactly as Go's
+/// implicit per-statement transaction does. Inside `BEGIN` ... `COMMIT` the
+/// publication goes through [`SessionTransaction::commit`] instead, at the
+/// timestamp `BEGIN` took. An empty buffer commits nothing and consumes no
+/// timestamp.
+pub fn commit_staged_buffer(
+    opener: &RealOptimisticTransactionOpener,
+    buffer: &MutationBuffer,
+    timeout: Duration,
+) -> Result<Option<OptimisticCommitOutcome>, OptimisticCoordinatorError> {
+    let (mutations, planned_bytes) = staged_mutations(buffer)?;
+    if mutations.is_empty() {
+        return Ok(None);
     }
     let transaction = opener.begin(mutations.len(), planned_bytes)?;
     let call = UnaryCallContext::with_timeout(timeout);

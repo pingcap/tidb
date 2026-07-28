@@ -34,18 +34,26 @@
 //!
 //! # The statement lifecycle
 //!
-//! One statement is one read snapshot. The connection's tables are built once,
-//! against a [`SwappableSnapshot`] slot every table shares; before a statement
-//! the connection opens a [`StatementSnapshot`] into that slot, and afterwards
-//! it takes it back and finishes the read transaction -- whether the statement
-//! succeeded or failed, so a failure never leaves a lock behind.
+//! The connection's tables are built once, against a [`SwappableSnapshot`] slot
+//! every table shares; before a statement the connection binds a snapshot into
+//! that slot and afterwards takes it back -- whether the statement succeeded or
+//! failed, so a failure never leaves a lock behind.
+//!
+//! *Which* snapshot is the connection's transaction state. Outside `BEGIN` the
+//! connection opens one [`StatementSnapshot`] per statement, at its own
+//! timestamp, and publishes that statement's writes right after: Go's implicit
+//! per-statement transaction. Inside `BEGIN` ... `COMMIT` the connection holds
+//! one [`SessionTransaction`], every statement reads through it at the single
+//! timestamp `BEGIN` took, and `COMMIT` prewrites the accumulated buffer on
+//! that same transaction. That is Go's one `kv.Transaction` per session: later
+//! statements do not see commits made after `BEGIN` (repeatable read), and a
+//! writer that raced the transaction is rejected at prewrite as a write
+//! conflict instead of being silently overwritten.
 //!
 //! Writes never touch the slot: they stage into the connection's
-//! [`MutationBuffer`], which outlives the statement. Autocommit publishes that
-//! buffer at the end of each successful statement; inside `BEGIN` ... `COMMIT`
-//! it accumulates and is published once. A failed statement is rolled back to
-//! the buffer snapshot taken before it ran, so an explicit transaction keeps
-//! exactly the writes of its statements that succeeded.
+//! [`MutationBuffer`], which outlives the statement. A failed statement is
+//! rolled back to the buffer snapshot taken before it ran, so an explicit
+//! transaction keeps exactly the writes of its statements that succeeded.
 //!
 //! # What this mode refuses, and why
 //!
@@ -66,12 +74,15 @@
 //!
 //! [`ClusterTableStorage`]: tidb_executor::cluster_storage::ClusterTableStorage
 //! [`StatementSnapshot`]: tidb_exec::cluster_table_storage::StatementSnapshot
+//! [`SessionTransaction`]: tidb_exec::cluster_table_storage::SessionTransaction
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_exec::cluster_table_storage::{commit_staged_buffer, StatementSnapshot};
+use tidb_exec::cluster_table_storage::{
+    commit_staged_buffer, SessionTransaction, StatementSnapshot,
+};
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, RealOptimisticTransactionOpener};
 use tidb_executor::cluster_storage::{
@@ -99,20 +110,43 @@ use crate::sql_node::{
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Everything a connection needs from the cluster's transaction tier: one
-/// fresh read snapshot per statement, and one publication of its staged
-/// writes.
+/// fresh read snapshot per autocommit statement, one publication of its staged
+/// writes, and the single transaction an explicit `BEGIN` holds open.
 ///
 /// The seam exists so the statement lifecycle -- which is the correctness core
 /// of this mode -- is exercised without a cluster. The production
 /// implementation is [`RealClusterTransactions`]; the tests drive the same
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
-    /// Opens one statement's read snapshot at a single timestamp.
+    /// Opens one autocommit statement's read snapshot at its own timestamp.
     fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
 
-    /// Publishes every staged write as one transaction, then empties the
-    /// buffer. An empty buffer publishes nothing.
+    /// Publishes one autocommit statement's staged writes as its own
+    /// transaction, then empties the buffer. An empty buffer publishes nothing.
     fn commit(&self, buffer: &MutationBuffer) -> Result<(), String>;
+
+    /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
+    /// `ROLLBACK`.
+    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
+}
+
+/// The transaction an explicit `BEGIN` holds open across its statements.
+///
+/// Every statement of the transaction reads through [`Self::snapshot`], so they
+/// all share the timestamp `BEGIN` took, and [`Self::commit`] prewrites at that
+/// same timestamp -- which is what makes a racing writer a write conflict
+/// instead of a silent overwrite.
+pub trait OpenClusterTransaction: Send {
+    /// One statement's read handle. Dropping it ends the statement, never the
+    /// transaction.
+    fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
+
+    /// Publishes the staged writes at the transaction's own start timestamp and
+    /// empties the buffer.
+    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), String>;
+
+    /// Ends the transaction without publishing anything.
+    fn rollback(self: Box<Self>) -> Result<(), String>;
 }
 
 /// The production transaction tier: real read-only transactions and the
@@ -144,6 +178,26 @@ impl ClusterTransactions for RealClusterTransactions {
         commit_staged_buffer(&self.opener, buffer, self.timeout)
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+
+    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
+            .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl OpenClusterTransaction for SessionTransaction {
+    fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        SessionTransaction::snapshot(self).map_err(|error| error.to_string())
+    }
+
+    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), String> {
+        SessionTransaction::commit(*self, buffer).map(|_| ())
+    }
+
+    fn rollback(self: Box<Self>) -> Result<(), String> {
+        SessionTransaction::rollback(*self)
     }
 }
 
@@ -250,6 +304,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             buffer,
             slot,
             transactions: Arc::clone(&self.transactions),
+            explicit: None,
             skipped: Arc::new(built.skipped),
         })
     }
@@ -264,6 +319,9 @@ pub struct ClusterServerSession {
     /// The slot every table of `session` reads through; rebound per statement.
     slot: Arc<Mutex<SwappableSnapshot>>,
     transactions: Arc<dyn ClusterTransactions>,
+    /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
+    /// where each statement gets its own timestamp.
+    explicit: Option<Box<dyn OpenClusterTransaction>>,
     /// Tables of the cluster this connection's catalog could not include,
     /// answered by name when a statement names one.
     skipped: Arc<Vec<SkippedTable>>,
@@ -279,18 +337,26 @@ impl ClusterServerSession {
     /// Runs one statement inside the snapshot/buffer lifecycle this mode is
     /// built around.
     ///
-    /// The ordering is the correctness core: bind a fresh snapshot, take a
-    /// buffer savepoint, run, always finish the read transaction, and only
-    /// then decide what happens to the staged writes.
+    /// The ordering is the correctness core: bind a snapshot, take a buffer
+    /// savepoint, run, always unbind the snapshot, and only then decide what
+    /// happens to the staged writes.
+    ///
+    /// Which snapshot is the whole `start_ts` question. Inside an explicit
+    /// transaction the statement reads through the one transaction `BEGIN`
+    /// opened, so it sees exactly what `BEGIN` saw -- repeatable read, and the
+    /// timestamp the eventual prewrite will carry. Outside one, autocommit
+    /// opens a fresh read transaction per statement, which is Go's implicit
+    /// per-statement transaction.
     fn with_statement<T>(
         &mut self,
         run: impl FnOnce(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         let savepoint = self.buffer.staged();
-        let snapshot = self
-            .transactions
-            .open_snapshot()
-            .map_err(SqlQueryError::unknown)?;
+        let snapshot = match self.explicit.as_ref() {
+            Some(transaction) => transaction.snapshot(),
+            None => self.transactions.open_snapshot(),
+        }
+        .map_err(SqlQueryError::unknown)?;
         if let Some(stale) = self.bind(snapshot) {
             // A previous statement that did not unbind would otherwise leave
             // its read transaction open for the rest of the connection.
@@ -320,15 +386,18 @@ impl ClusterServerSession {
             .bind(snapshot)
     }
 
-    /// Unbinds the statement's snapshot and ends its read transaction.
+    /// Unbinds the statement's snapshot, ending the statement.
+    ///
+    /// Dropping an autocommit statement's handle finishes its read transaction
+    /// on its own thread; dropping an explicit transaction's handle ends only
+    /// the statement, because the transaction outlives it. Either way the drop
+    /// is what makes the ordering unconditional.
     fn finish_snapshot(&self) -> Result<(), SqlQueryError> {
         let bound = self
             .slot
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .unbind();
-        // Dropping the handle finishes the transaction on its own thread; the
-        // drop is what makes that ordering unconditional.
         drop(bound);
         Ok(())
     }
@@ -338,21 +407,51 @@ impl ClusterServerSession {
     /// An empty buffer -- every read statement -- publishes nothing and spends
     /// no timestamp, as a Go COMMIT of a transaction that wrote nothing does.
     fn flush_if_autocommit(&mut self) -> Result<(), SqlQueryError> {
-        if self.session.in_transaction() {
+        if self.explicit.is_some() || self.session.in_transaction() {
             return Ok(());
         }
-        self.commit_buffer()
+        self.commit_autocommit_buffer()
     }
 
-    /// Publishes the staged writes as one optimistic transaction. A failed
-    /// publication discards them, which is what a failed COMMIT does.
-    fn commit_buffer(&mut self) -> Result<(), SqlQueryError> {
+    /// Publishes one autocommit statement's staged writes as its own
+    /// transaction. A failed publication discards them, which is what a failed
+    /// COMMIT does.
+    fn commit_autocommit_buffer(&mut self) -> Result<(), SqlQueryError> {
         match self.transactions.commit(&self.buffer) {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.buffer.reset();
                 Err(SqlQueryError::unknown(error))
             }
+        }
+    }
+
+    /// Ends the explicit transaction by publishing its buffer at its own start
+    /// timestamp.
+    ///
+    /// A `COMMIT` with no transaction open is the autocommit path: it can only
+    /// find writes the previous statement already published, so the buffer is
+    /// empty and nothing is spent.
+    fn commit_explicit(&mut self) -> Result<(), SqlQueryError> {
+        let Some(transaction) = self.explicit.take() else {
+            return self.commit_autocommit_buffer();
+        };
+        match transaction.commit(&self.buffer) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.buffer.reset();
+                Err(SqlQueryError::unknown(error))
+            }
+        }
+    }
+
+    /// Drops the explicit transaction without publishing anything, along with
+    /// every write it staged.
+    fn discard_explicit(&mut self) -> Result<(), SqlQueryError> {
+        self.buffer.reset();
+        match self.explicit.take() {
+            Some(transaction) => transaction.rollback().map_err(SqlQueryError::unknown),
+            None => Ok(()),
         }
     }
 
@@ -389,12 +488,16 @@ impl QuerySession for ClusterServerSession {
             return Ok(None);
         };
         match control {
-            Some(TransactionControl::Commit) => self.commit_buffer()?,
-            // A ROLLBACK drops the staged writes. So does a BEGIN: a leftover
-            // buffer at that point could only come from a statement outside
-            // any transaction whose autocommit already published it.
-            Some(TransactionControl::Rollback | TransactionControl::Begin { .. }) => {
-                self.buffer.reset();
+            Some(TransactionControl::Commit) => self.commit_explicit()?,
+            Some(TransactionControl::Rollback) => self.discard_explicit()?,
+            // A BEGIN drops the staged writes too: a leftover buffer at that
+            // point could only come from a statement outside any transaction
+            // whose autocommit already published it. Then it takes the one
+            // timestamp every statement of the new transaction reads at, and
+            // that its COMMIT will prewrite at.
+            Some(TransactionControl::Begin { .. }) => {
+                self.discard_explicit()?;
+                self.explicit = Some(self.transactions.begin().map_err(SqlQueryError::unknown)?);
             }
             Some(TransactionControl::Unsupported(_)) | None => {}
         }
@@ -635,7 +738,7 @@ mod tests {
     use sha1::{Digest, Sha1};
     use std::collections::BTreeMap;
     use std::net::SocketAddr;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
@@ -658,10 +761,19 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockCluster {
         committed: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
-        /// Snapshots opened, so "one statement, one snapshot" is countable.
+        /// The timestamp of the last commit that touched each key, which is
+        /// what a prewrite at `start_ts` is checked against -- TiKV's own
+        /// write-conflict rule in miniature.
+        versions: Mutex<BTreeMap<Vec<u8>, u64>>,
+        /// Stands in for PD: every transaction and every commit takes one.
+        clock: AtomicU64,
+        /// Autocommit read transactions opened, so "one statement, one
+        /// snapshot" stays countable.
         opened: AtomicUsize,
-        /// Snapshots still bound. A statement that leaks one leaves this above
-        /// zero, which is the lock-left-behind failure in miniature.
+        /// Explicit transactions opened by `BEGIN`.
+        begun: AtomicUsize,
+        /// Read handles still bound. A statement that leaks one leaves this
+        /// above zero, which is the lock-left-behind failure in miniature.
         live: AtomicUsize,
         /// Publications that actually carried mutations.
         publications: AtomicUsize,
@@ -671,6 +783,50 @@ mod tests {
     impl MockCluster {
         fn rows(&self) -> usize {
             self.committed.lock().expect("committed").len()
+        }
+
+        fn timestamp(&self) -> u64 {
+            self.clock.fetch_add(1, Ordering::AcqRel) + 1
+        }
+
+        fn snapshot(&self) -> BTreeMap<Vec<u8>, Vec<u8>> {
+            self.committed.lock().expect("committed").clone()
+        }
+
+        /// Publishes `staged` at `commit_ts`, refusing any key another
+        /// transaction committed after `start_ts`.
+        fn publish(
+            self: &Arc<Self>,
+            staged: Vec<(Key, Option<Vec<u8>>)>,
+            start_ts: u64,
+        ) -> Result<(), String> {
+            if self.fail_commit.load(Ordering::Acquire) {
+                return Err("the mock cluster refused this publication".to_owned());
+            }
+            let mut versions = self.versions.lock().expect("versions");
+            for (key, _) in &staged {
+                if versions
+                    .get(key.as_bytes())
+                    .is_some_and(|last| *last > start_ts)
+                {
+                    return Err(format!(
+                        "[kv:9007]Write conflict, startTS={start_ts} [try again later]"
+                    ));
+                }
+            }
+            let commit_ts = self.timestamp();
+            let mut committed = self.committed.lock().expect("committed");
+            for (key, value) in staged {
+                versions.insert(key.as_bytes().to_vec(), commit_ts);
+                match value {
+                    Some(value) => committed.insert(key.into_bytes(), value),
+                    None => committed.remove(key.as_bytes()),
+                };
+            }
+            drop(committed);
+            drop(versions);
+            self.publications.fetch_add(1, Ordering::AcqRel);
+            Ok(())
         }
     }
 
@@ -709,8 +865,9 @@ mod tests {
         fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
             self.0.opened.fetch_add(1, Ordering::AcqRel);
             self.0.live.fetch_add(1, Ordering::AcqRel);
+            let _ = self.0.timestamp();
             Ok(Box::new(MockSnapshot {
-                data: self.0.committed.lock().expect("committed").clone(),
+                data: self.0.snapshot(),
                 cluster: Arc::clone(&self.0),
             }))
         }
@@ -720,19 +877,55 @@ mod tests {
             if staged.is_empty() {
                 return Ok(());
             }
-            if self.0.fail_commit.load(Ordering::Acquire) {
-                return Err("the mock cluster refused this publication".to_owned());
-            }
-            let mut committed = self.0.committed.lock().expect("committed");
-            for (key, value) in staged {
-                match value {
-                    Some(value) => committed.insert(key.into_bytes(), value),
-                    None => committed.remove(key.as_bytes()),
-                };
-            }
-            drop(committed);
-            self.0.publications.fetch_add(1, Ordering::AcqRel);
+            // Autocommit publishes at a fresh timestamp, so nothing committed
+            // before it can conflict -- exactly what an implicit
+            // single-statement transaction does.
+            let start_ts = self.0.timestamp();
+            self.0.publish(staged, start_ts)?;
             buffer.reset();
+            Ok(())
+        }
+
+        fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+            self.0.begun.fetch_add(1, Ordering::AcqRel);
+            Ok(Box::new(MockSessionTransaction {
+                start_ts: self.0.timestamp(),
+                data: self.0.snapshot(),
+                cluster: Arc::clone(&self.0),
+            }))
+        }
+    }
+
+    /// One `BEGIN` ... `COMMIT` over the mock cluster: the rows it saw at
+    /// `start_ts`, served to every statement, and a publication checked against
+    /// that same `start_ts`.
+    #[derive(Debug)]
+    struct MockSessionTransaction {
+        start_ts: u64,
+        data: BTreeMap<Vec<u8>, Vec<u8>>,
+        cluster: Arc<MockCluster>,
+    }
+
+    impl OpenClusterTransaction for MockSessionTransaction {
+        fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+            self.cluster.live.fetch_add(1, Ordering::AcqRel);
+            Ok(Box::new(MockSnapshot {
+                data: self.data.clone(),
+                cluster: Arc::clone(&self.cluster),
+            }))
+        }
+
+        fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), String> {
+            let staged = buffer.staged();
+            if staged.is_empty() {
+                return Ok(());
+            }
+            self.cluster.publish(staged, self.start_ts)?;
+            buffer.reset();
+            Ok(())
+        }
+
+        fn rollback(self: Box<Self>) -> Result<(), String> {
             Ok(())
         }
     }
@@ -809,6 +1002,14 @@ mod tests {
     /// handle the test inspects.
     fn open_session() -> (ClusterServerSession, Arc<MockCluster>) {
         let cluster = Arc::new(MockCluster::default());
+        let session = open_session_on(&cluster);
+        (session, cluster)
+    }
+
+    /// A second connection to the same mock cluster, which is what makes a
+    /// racing writer expressible in SQL rather than in raw keys.
+    fn open_session_on(cluster: &Arc<MockCluster>) -> ClusterServerSession {
+        let cluster = Arc::clone(cluster);
         let factory = ClusterSessionFactory::new(
             Arc::new(MockTransactions(Arc::clone(&cluster))),
             Arc::new(SharedClusterCatalog::new(loaded_catalog())),
@@ -833,7 +1034,7 @@ mod tests {
         // The catalog is loaded, not created here: `USE` is how a connection
         // reaches it, exactly as it does over the wire.
         session.execute_write("USE app").expect("USE app");
-        (session, cluster)
+        session
     }
 
     fn rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {
@@ -955,6 +1156,139 @@ mod tests {
         assert_eq!(cluster.rows(), 2);
         assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
         assert_eq!(cluster.live.load(Ordering::Acquire), 0);
+    }
+
+    /// One `BEGIN` takes one timestamp, and every statement until `COMMIT`
+    /// reads through that same transaction rather than opening its own.
+    #[test]
+    fn an_explicit_transaction_holds_one_transaction_for_every_statement() {
+        let (mut session, cluster) = open_session();
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+        let autocommit_snapshots = cluster.opened.load(Ordering::Acquire);
+
+        session.control_transaction("BEGIN").expect("begin");
+        assert_eq!(cluster.begun.load(Ordering::Acquire), 1);
+        assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 1);
+        assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 1);
+        session
+            .execute_write("UPDATE t SET v = 11 WHERE id = 1")
+            .expect("update");
+        // Not one of those statements opened a transaction of its own.
+        assert_eq!(cluster.begun.load(Ordering::Acquire), 1);
+        assert_eq!(
+            cluster.opened.load(Ordering::Acquire),
+            autocommit_snapshots,
+            "a statement inside BEGIN must not take a timestamp of its own"
+        );
+        session.control_transaction("COMMIT").expect("commit");
+        assert_eq!(cluster.live.load(Ordering::Acquire), 0);
+    }
+
+    /// Repeatable read, which holding one transaction is what buys: a statement
+    /// inside `BEGIN` cannot see a commit made after `BEGIN`, because there is
+    /// no newer timestamp for it to see it at. Go's default isolation level.
+    #[test]
+    fn a_statement_inside_begin_does_not_see_a_commit_made_after_it() {
+        let (mut reader, cluster) = open_session();
+        reader
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+
+        reader.control_transaction("BEGIN").expect("begin");
+        assert_eq!(
+            rows(&mut reader, "SELECT v FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(10)]]
+        );
+
+        let mut writer = open_session_on(&cluster);
+        writer
+            .execute_write("UPDATE t SET v = 99 WHERE id = 1")
+            .expect("the outside writer commits");
+        assert_eq!(
+            rows(&mut writer, "SELECT v FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(99)]],
+            "the outside writer's own commit is durable"
+        );
+
+        assert_eq!(
+            rows(&mut reader, "SELECT v FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(10)]],
+            "a repeatable read must not see a commit made after BEGIN"
+        );
+        reader.control_transaction("ROLLBACK").expect("rollback");
+        // And once the transaction is over, the session is back at the newest
+        // committed state.
+        assert_eq!(
+            rows(&mut reader, "SELECT v FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(99)]]
+        );
+    }
+
+    /// The conflict detection the single `start_ts` exists for: an optimistic
+    /// transaction that read a row another transaction then committed cannot
+    /// publish over it. Go reports 9007 at COMMIT, and the writes are gone.
+    #[test]
+    fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
+        let (mut loser, cluster) = open_session();
+        loser
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+
+        loser.control_transaction("BEGIN").expect("begin");
+        assert_eq!(
+            rows(&mut loser, "SELECT v FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(10)]]
+        );
+
+        let mut winner = open_session_on(&cluster);
+        winner
+            .execute_write("UPDATE t SET v = 99 WHERE id = 1")
+            .expect("the racing writer commits first");
+
+        loser
+            .execute_write("UPDATE t SET v = 50 WHERE id = 1")
+            .expect("the statement itself succeeds; nothing is published yet");
+        let error = loser
+            .control_transaction("COMMIT")
+            .expect_err("a prewrite at the BEGIN timestamp must lose to a newer commit");
+        assert!(
+            error.message.contains("9007"),
+            "a lost race is a write conflict, got: {}",
+            error.message
+        );
+
+        // The winner's row stands, and the loser staged nothing for the next
+        // statement to publish by accident.
+        assert_eq!(
+            rows(&mut loser, "SELECT v FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(99)]]
+        );
+        assert_eq!(cluster.publications.load(Ordering::Acquire), 2);
+    }
+
+    /// The same race under autocommit publishes normally: each statement is its
+    /// own transaction at its own timestamp, so there is no older `start_ts` to
+    /// conflict with. Nothing about autocommit changed.
+    #[test]
+    fn autocommit_takes_a_fresh_timestamp_and_does_not_conflict() {
+        let (mut first, cluster) = open_session();
+        first
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+        let mut second = open_session_on(&cluster);
+        second
+            .execute_write("UPDATE t SET v = 99 WHERE id = 1")
+            .expect("second writer");
+        first
+            .execute_write("UPDATE t SET v = 50 WHERE id = 1")
+            .expect("an autocommit write reads and publishes at fresh timestamps");
+        assert_eq!(
+            rows(&mut first, "SELECT v FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(50)]]
+        );
+        assert_eq!(cluster.begun.load(Ordering::Acquire), 0);
     }
 
     #[test]

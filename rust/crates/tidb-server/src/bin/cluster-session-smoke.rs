@@ -23,18 +23,29 @@
 //! cluster-session-smoke --pd <addr> --schema <db> --sql "<statement>"
 //! ```
 //!
-//! Every statement runs at its own snapshot. Writes are staged and, with
-//! `--commit`, published as one optimistic transaction at the end.
+//! By default every statement runs at its own snapshot, and writes are staged
+//! and — with `--commit` — published as one optimistic transaction at the end:
+//! the autocommit shape.
+//!
+//! With `--transaction` the run is one explicit `BEGIN` ... `COMMIT` instead:
+//! a single transaction is opened up front, every statement reads through it at
+//! that one `start_ts`, and `--commit` prewrites the staged buffer on that same
+//! transaction. That is the shape a racing writer is caught by, because the
+//! prewrite carries the `BEGIN` timestamp.
 
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_exec::cluster_catalog::{configure_loaded_table, ClusterCatalog};
-use tidb_exec::cluster_table_storage::{commit_staged_buffer, statement_storage};
+use tidb_exec::cluster_table_storage::{
+    commit_staged_buffer, statement_storage, SessionTransaction,
+};
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
-use tidb_executor::cluster_storage::MutationBuffer;
+use tidb_executor::cluster_storage::{
+    ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
+};
 use tidb_server::cluster_session::session_with_cluster_storage;
 use tidb_session::StmtResult;
 
@@ -55,6 +66,7 @@ struct Arguments {
     schema: String,
     statements: Vec<String>,
     commit: bool,
+    transaction: bool,
 }
 
 fn parse_arguments() -> Result<Arguments, String> {
@@ -62,6 +74,7 @@ fn parse_arguments() -> Result<Arguments, String> {
     let mut schema = None;
     let mut statements = Vec::new();
     let mut commit = false;
+    let mut transaction = false;
     let mut argv = std::env::args().skip(1);
     while let Some(flag) = argv.next() {
         match flag.as_str() {
@@ -69,6 +82,7 @@ fn parse_arguments() -> Result<Arguments, String> {
             "--schema" => schema = Some(argv.next().ok_or("--schema needs a database name")?),
             "--sql" => statements.push(argv.next().ok_or("--sql needs a statement")?),
             "--commit" => commit = true,
+            "--transaction" => transaction = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -81,6 +95,7 @@ fn parse_arguments() -> Result<Arguments, String> {
             statements
         },
         commit,
+        transaction,
     })
 }
 
@@ -116,20 +131,11 @@ fn run() -> Result<(), String> {
 
     let opener = Arc::new(authority.transaction_opener());
     let buffer = MutationBuffer::new();
-    let mut failure = None;
-    for sql in &arguments.statements {
-        if let Err(error) = run_statement(&opener, &buffer, &catalog, &arguments.schema, sql) {
-            failure = Some(error);
-            break;
-        }
-    }
-    if failure.is_none() && arguments.commit {
-        match commit_staged_buffer(&opener, &buffer, TIMEOUT) {
-            Ok(None) => println!("commit: nothing staged"),
-            Ok(Some(outcome)) => println!("commit: {outcome:?}"),
-            Err(error) => failure = Some(error.to_string()),
-        }
-    }
+    let failure = if arguments.transaction {
+        run_explicit_transaction(&opener, &buffer, &catalog, &arguments)
+    } else {
+        run_autocommit(&opener, &buffer, &catalog, &arguments)
+    };
     // The opener clone holds PD request handles; the authority's shutdown
     // drains and refuses to stop while any are live (the drain footgun only a
     // real cluster exposes) -- release ours before asking it to stop.
@@ -140,6 +146,111 @@ fn run() -> Result<(), String> {
         Some(error) => Err(error),
         None => shutdown,
     }
+}
+
+/// The autocommit shape: one read transaction per statement, and a publication
+/// at its own fresh timestamp.
+fn run_autocommit(
+    opener: &Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
+    buffer: &MutationBuffer,
+    catalog: &ClusterCatalog,
+    arguments: &Arguments,
+) -> Option<String> {
+    for sql in &arguments.statements {
+        if let Err(error) = run_statement(opener, buffer, catalog, &arguments.schema, sql) {
+            return Some(error);
+        }
+    }
+    if !arguments.commit {
+        return None;
+    }
+    match commit_staged_buffer(opener, buffer, TIMEOUT) {
+        Ok(None) => {
+            println!("commit: nothing staged");
+            None
+        }
+        Ok(Some(outcome)) => {
+            println!("commit: {outcome:?}");
+            None
+        }
+        Err(error) => Some(error.to_string()),
+    }
+}
+
+/// The explicit shape: one transaction for the whole run, every statement read
+/// at its `start_ts`, and the commit prewritten at that same timestamp.
+fn run_explicit_transaction(
+    opener: &Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
+    buffer: &MutationBuffer,
+    catalog: &ClusterCatalog,
+    arguments: &Arguments,
+) -> Option<String> {
+    let transaction = match SessionTransaction::begin(Arc::clone(opener), TIMEOUT) {
+        Ok(transaction) => transaction,
+        Err(error) => return Some(error.to_string()),
+    };
+    let start_ts = transaction.start_ts();
+    println!("BEGIN at start_ts {start_ts}");
+    let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+    let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
+    let storage = ClusterTableStorage::new(buffer.clone(), handle);
+    for sql in &arguments.statements {
+        let snapshot = match transaction.snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => return Some(error.to_string()),
+        };
+        drop(slot.lock().expect("snapshot slot").bind(snapshot));
+        let outcome = run_in_transaction(catalog, &storage, &arguments.schema, sql, start_ts);
+        // The statement ends here; the transaction does not.
+        drop(slot.lock().expect("snapshot slot").unbind());
+        if let Err(error) = outcome {
+            let _ = transaction.rollback();
+            return Some(error);
+        }
+    }
+    if !arguments.commit {
+        return transaction.rollback().err();
+    }
+    match transaction.commit(buffer) {
+        Ok(None) => {
+            println!("commit: nothing staged");
+            None
+        }
+        Ok(Some(outcome)) => {
+            println!("commit: {outcome:?}");
+            None
+        }
+        Err(error) => Some(error),
+    }
+}
+
+/// Runs one statement of the explicit transaction over its already-bound
+/// snapshot.
+fn run_in_transaction(
+    catalog: &ClusterCatalog,
+    storage: &ClusterTableStorage,
+    schema: &str,
+    sql: &str,
+    start_ts: u64,
+) -> Result<(), String> {
+    let (mut session, skipped) = session_with_cluster_storage(catalog, storage);
+    for table in &skipped {
+        println!("skipped {}: {}", table.name, table.reason);
+    }
+    session
+        .run(&format!("USE {schema}"))
+        .map_err(|error| format!("{error:?}"))?;
+    match session.run(sql).map_err(|error| format!("{error:?}"))? {
+        StmtResult::Rows(rows) => {
+            println!("[start_ts {start_ts}] {sql}");
+            for row in rows {
+                let cells: Vec<String> = row.iter().map(|value| format!("{value:?}")).collect();
+                println!("  {}", cells.join("\t"));
+            }
+        }
+        other => println!("[start_ts {start_ts}] {sql} -> {other:?}"),
+    }
+    Ok(())
 }
 
 /// Runs one statement at its own snapshot, over the session's staged writes.
