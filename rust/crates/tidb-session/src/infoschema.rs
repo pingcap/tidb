@@ -238,6 +238,48 @@ const PROCESSLIST_COLUMNS: &[(&str, bool)] = &[
     ("TIKV_CPU", true),
 ];
 
+/// Go `infoschema.tableSchemaPrivilegesCols`.
+///
+/// CAPTURED: this table -- and its `TABLE_PRIVILEGES` / `COLUMN_PRIVILEGES`
+/// siblings below -- is DECLARED in `pkg/infoschema/tables.go` but has NO
+/// retriever anywhere in `pkg/executor`, so real TiDB serves the header and
+/// never a row. Verified against `testkit.CreateMockStore` with grants
+/// actually present (`GRANT SELECT, INSERT ON db1.* TO 'u1'@'%'`,
+/// `GRANT ALL PRIVILEGES ON db1.* TO 'u2'@'localhost'`, plus table-scope
+/// grants): `SELECT COUNT(*)` returns `0`. Populating these from the
+/// privilege registry would be a DIVERGENCE from Go, not a completion --
+/// so the emptiness is the behavior being transcreated.
+const SCHEMA_PRIVILEGES_COLUMNS: &[(&str, bool)] = &[
+    ("GRANTEE", false),
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("PRIVILEGE_TYPE", false),
+    ("IS_GRANTABLE", false),
+];
+
+/// Go `infoschema.tableTablePrivilegesCols`. Always empty -- see
+/// `SCHEMA_PRIVILEGES_COLUMNS`.
+const TABLE_PRIVILEGES_COLUMNS: &[(&str, bool)] = &[
+    ("GRANTEE", false),
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("PRIVILEGE_TYPE", false),
+    ("IS_GRANTABLE", false),
+];
+
+/// Go `infoschema.tableColumnPrivilegesCols`. Always empty -- see
+/// `SCHEMA_PRIVILEGES_COLUMNS`.
+const COLUMN_PRIVILEGES_COLUMNS: &[(&str, bool)] = &[
+    ("GRANTEE", false),
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("COLUMN_NAME", false),
+    ("PRIVILEGE_TYPE", false),
+    ("IS_GRANTABLE", false),
+];
+
 /// The column names of one `information_schema` table, or `None` when the
 /// table is not one this tier implements.
 #[must_use]
@@ -260,6 +302,12 @@ pub fn table_columns(name: &str) -> Option<&'static [(&'static str, bool)]> {
         Some(REFERENTIAL_CONSTRAINTS_COLUMNS)
     } else if name.eq_ignore_ascii_case("PROCESSLIST") {
         Some(PROCESSLIST_COLUMNS)
+    } else if name.eq_ignore_ascii_case("SCHEMA_PRIVILEGES") {
+        Some(SCHEMA_PRIVILEGES_COLUMNS)
+    } else if name.eq_ignore_ascii_case("TABLE_PRIVILEGES") {
+        Some(TABLE_PRIVILEGES_COLUMNS)
+    } else if name.eq_ignore_ascii_case("COLUMN_PRIVILEGES") {
+        Some(COLUMN_PRIVILEGES_COLUMNS)
     } else {
         None
     }
@@ -297,6 +345,14 @@ pub fn table_rows(name: &str, catalog: &Catalog) -> Option<Vec<Vec<Datum>>> {
     if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
         // No foreign keys in this tier: the header exists, the body never
         // does.
+        return Some(Vec::new());
+    }
+    if name.eq_ignore_ascii_case("SCHEMA_PRIVILEGES")
+        || name.eq_ignore_ascii_case("TABLE_PRIVILEGES")
+        || name.eq_ignore_ascii_case("COLUMN_PRIVILEGES")
+    {
+        // Declared but never retrieved in Go, even with grants present --
+        // the header exists, the body never does.
         return Some(Vec::new());
     }
     None

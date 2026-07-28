@@ -5102,6 +5102,160 @@ mod tests {
         assert_eq!(rows.len(), 2);
     }
 
+    /// The `information_schema` PRIVILEGES family: `SCHEMA_PRIVILEGES`,
+    /// `TABLE_PRIVILEGES`, `COLUMN_PRIVILEGES`.
+    ///
+    /// The surprising part, and the reason this test exists: these three are
+    /// DECLARED in Go's `pkg/infoschema/tables.go` but have NO retriever in
+    /// `pkg/executor`, so real TiDB serves the header and NEVER a row --
+    /// even when grants exist. CAPTURED from `testkit.CreateMockStore` after
+    /// `GRANT SELECT, INSERT ON db1.* TO 'u1'@'%'`,
+    /// `GRANT ALL PRIVILEGES ON db1.* TO 'u2'@'localhost'`,
+    /// `GRANT SELECT ON db1.t1 TO 'u1'@'%' WITH GRANT OPTION` and
+    /// `GRANT UPDATE, DELETE ON db1.t1 TO 'u2'@'localhost'`: every
+    /// `SELECT *` came back empty and `SELECT COUNT(*)` came back `0`.
+    ///
+    /// So filling these in from the privilege registry -- which HAS all the
+    /// grant data -- would be a DIVERGENCE from Go, not a completion. The
+    /// emptiness is the transcreated behavior.
+    #[test]
+    fn infoschema_privileges_tables_are_header_only() {
+        let mut session = Session::new();
+        session.attach_privileges(privilege::PrivilegeRegistry::default());
+        session.run("CREATE DATABASE db1").unwrap();
+        session.run("CREATE TABLE db1.t1 (a INT)").unwrap();
+        session.run("CREATE USER 'u1'@'%'").unwrap();
+        session.run("CREATE USER 'u2'@'localhost'").unwrap();
+        session
+            .run("GRANT SELECT, INSERT ON db1.* TO 'u1'@'%'")
+            .unwrap();
+        session
+            .run("GRANT ALL PRIVILEGES ON db1.* TO 'u2'@'localhost'")
+            .unwrap();
+        // Table scope too, so the emptiness is not just a DB-scope artifact.
+        // (Go's capture also used `WITH GRANT OPTION` here; this tier does
+        // not model that yet, and it makes no difference to the result --
+        // the table is empty either way.)
+        session.run("GRANT SELECT ON db1.t1 TO 'u1'@'%'").unwrap();
+
+        let query = |session: &mut Session, sql: &str| match session.run_with_columns(sql).unwrap()
+        {
+            StmtOutput::Rows { columns, rows } => (
+                columns
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+                rows,
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        };
+
+        let (names, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.schema_privileges",
+        );
+        assert_eq!(
+            names,
+            [
+                "GRANTEE",
+                "TABLE_CATALOG",
+                "TABLE_SCHEMA",
+                "PRIVILEGE_TYPE",
+                "IS_GRANTABLE",
+            ]
+        );
+        assert!(rows.is_empty(), "grants must NOT surface here");
+
+        let (names, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.table_privileges",
+        );
+        assert_eq!(
+            names,
+            [
+                "GRANTEE",
+                "TABLE_CATALOG",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "PRIVILEGE_TYPE",
+                "IS_GRANTABLE",
+            ]
+        );
+        assert!(rows.is_empty(), "grants must NOT surface here");
+
+        let (names, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.column_privileges",
+        );
+        assert_eq!(
+            names,
+            [
+                "GRANTEE",
+                "TABLE_CATALOG",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "COLUMN_NAME",
+                "PRIVILEGE_TYPE",
+                "IS_GRANTABLE",
+            ]
+        );
+        assert!(rows.is_empty(), "grants must NOT surface here");
+
+        // Go returns `0`, not an error, for the aggregate over the empty
+        // body -- so the tables are real relations, not stubs that fail.
+        for table in ["schema_privileges", "table_privileges", "column_privileges"] {
+            let (_, rows) = query(
+                &mut session,
+                &format!("SELECT COUNT(*) FROM information_schema.{table}"),
+            );
+            assert_eq!(rows, vec![vec![Datum::Int(0)]], "COUNT(*) over {table}");
+        }
+
+        // A WHERE filter over the empty body also runs the ordinary plan
+        // path rather than erroring on an unknown table.
+        let (_, rows) = query(
+            &mut session,
+            "SELECT grantee FROM information_schema.schema_privileges WHERE table_schema = 'db1'",
+        );
+        assert!(rows.is_empty());
+    }
+
+    /// `JSON_TABLE` is REFUSED, and this test records WHY rather than
+    /// leaving it looking like an unfinished port.
+    ///
+    /// The Go side of this branch does not parse it AT ALL. Captured from
+    /// `testkit.CreateMockStore` on `hparser-integration`:
+    ///
+    /// ```text
+    /// SQL:  select * from json_table('[1,2]', '$[*]' columns (v int path '$')) jt
+    /// ERR:  [parser:1064]You have an error in your SQL syntax; ... near
+    ///       "'[1,2]', '$[*]' columns (v int path '$')) jt"
+    /// ```
+    ///
+    /// The `FOR ORDINALITY` and lateral (`FROM t, JSON_TABLE(t.j, ...)`)
+    /// forms fail the same way, and `grep -rni json_table pkg/` finds only
+    /// the UNRELATED statistics-dump `JSONTable` struct -- no grammar rule,
+    /// no AST node, no executor. There is therefore no Go source to
+    /// transcreate; this is a HARD SKIP, not a deferral.
+    #[test]
+    fn json_table_is_unsupported_upstream() {
+        let mut session = Session::new();
+        assert!(
+            session
+                .run(r#"SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (v INT PATH '$')) t"#)
+                .is_err(),
+            "JSON_TABLE does not parse in Go either -- it must stay refused"
+        );
+        assert!(
+            session
+                .run(
+                    r#"SELECT * FROM JSON_TABLE('[{"a":1}]', '$[*]' COLUMNS (o FOR ORDINALITY, a INT PATH '$.a')) AS jt"#
+                )
+                .is_err(),
+            "FOR ORDINALITY form is a Go parse error too"
+        );
+    }
+
     /// DROP TABLE, checked against captured TiDB behavior: a missing name is
     /// 1051, IF EXISTS suppresses it, and a mixed list still drops the tables
     /// that exist BEFORE reporting the error.
@@ -11365,10 +11519,12 @@ mod tests {
             "Invalid JSON path expression. The error is around character position 1."
         );
 
-        // OUT OF SLICE, and refused rather than half-built: `JSON_TABLE` is
-        // a TABLE function, so it needs a row source this tier has no plan
-        // node for. The mutation family graduated -- see
-        // `json_mutation_functions` and `json_column_type` below.
+        // REFUSED because UPSTREAM GO DOES NOT PARSE IT: `JSON_TABLE` has no
+        // grammar rule, AST node, or executor anywhere in `pkg/`, so there is
+        // no source to transcreate. Evidence and the captured Go parse error
+        // live in `json_table_is_unsupported_upstream` below. The mutation
+        // family graduated -- see `json_mutation_functions` and
+        // `json_column_type` below.
         assert!(
             session
                 .run(r#"SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (v INT PATH '$')) t"#)
