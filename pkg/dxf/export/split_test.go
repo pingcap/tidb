@@ -15,6 +15,7 @@
 package export
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -56,32 +57,45 @@ func TestGroupBoundaries(t *testing.T) {
 	}
 }
 
-func TestSpanCntFor(t *testing.T) {
-	// Explicit subtaskRegions overrides: ceil(regionCnt/batch).
-	require.Equal(t, 5, spanCntFor(100, 4, 20))
-	require.Equal(t, 1, spanCntFor(10, 4, 100))
-	// Auto: batch = ceil(regionCnt/nodeCnt), spans = ceil(regionCnt/batch) ~ nodeCnt.
-	require.Equal(t, 4, spanCntFor(100, 4, 0))
+func TestSubtaskCntFor(t *testing.T) {
+	// About one subtask per node.
+	require.Equal(t, 4, subtaskCntFor(100, 4))
+	// Fewer chunks than nodes → one subtask per chunk, no empties.
+	require.Equal(t, 3, subtaskCntFor(3, 8))
 	// Never zero.
-	require.Equal(t, 1, spanCntFor(0, 0, 0))
-	require.GreaterOrEqual(t, spanCntFor(1, 1, 0), 1)
-	// Capped by maxRegionsPerSubtask: huge table on one node still splits.
-	require.GreaterOrEqual(t, spanCntFor(10*maxRegionsPerSubtask, 1, 0), 10)
+	require.Equal(t, 1, subtaskCntFor(0, 0))
+	// Capped: many chunks on one node still spread so no subtask exceeds the cap.
+	got := subtaskCntFor(10*maxChunksPerSubtask, 1)
+	require.GreaterOrEqual(t, got, 10)
 }
 
-func TestSpansToUnits(t *testing.T) {
-	g0 := [][]kv.Key{keys("a", "c"), keys("c", "z")} // 2 spans of table part pid=100
-	units, next := spansToUnits(2, 100, g0, 0)
-	require.Len(t, units, 2)
-	require.Equal(t, Unit{TableIdx: 2, PhysicalID: 100, Start: []byte("a"), End: []byte("c"), NameOrdinal: 0}, units[0])
-	require.Equal(t, Unit{TableIdx: 2, PhysicalID: 100, Start: []byte("c"), End: []byte("z"), NameOrdinal: 1}, units[1])
-	require.Equal(t, 2, next)
+func TestPackSubtasks(t *testing.T) {
+	chunks := make([]Chunk, 10)
+	for i := range chunks {
+		chunks[i] = Chunk{TableIdx: 0, Ordinal: i}
+	}
+	// 10 chunks across 4 nodes → 4 subtasks, covering all chunks in order once.
+	metas, err := packSubtasks(chunks, 4)
+	require.NoError(t, err)
+	require.Len(t, metas, 4)
+	var seen []int
+	for _, bs := range metas {
+		st := &SubtaskMeta{}
+		require.NoError(t, json.Unmarshal(bs, st))
+		require.NotEmpty(t, st.Chunks) // no empty subtask
+		for _, c := range st.Chunks {
+			seen = append(seen, c.Ordinal)
+		}
+	}
+	require.Equal(t, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, seen)
 
-	// A second partition of the same table continues the table-local ordinal,
-	// so file names never collide across partitions of one table.
-	g1 := [][]kv.Key{keys("a", "z")}
-	units2, next2 := spansToUnits(2, 200, g1, next)
-	require.Equal(t, 2, units2[0].NameOrdinal)
-	require.Equal(t, int64(200), units2[0].PhysicalID)
-	require.Equal(t, 3, next2)
+	empty, err := packSubtasks(nil, 4)
+	require.NoError(t, err)
+	require.Nil(t, empty)
+}
+
+func TestRegionsPerChunk(t *testing.T) {
+	// chunkSize / defaultRegionSize, at least one.
+	require.Equal(t, chunkSize/defaultRegionSize, regionsPerChunk())
+	require.GreaterOrEqual(t, regionsPerChunk(), 1)
 }

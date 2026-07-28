@@ -32,66 +32,106 @@ import (
 
 const (
 	loadRegionMaxRetry = 8
-	// maxRegionsPerSubtask caps the span size when auto-splitting.
-	maxRegionsPerSubtask = 4000
+	// defaultRegionSize approximates a TiKV region's size, used to size a chunk
+	// by region count without querying PD. A later refinement can sum PD region
+	// approximate sizes for an accurate estimate.
+	defaultRegionSize = 96 * 1024 * 1024
+	// chunkSize is the target key-range size of one chunk — the unit of work a
+	// worker pulls and exports. It is deliberately larger than FileSize (the
+	// within-chunk file-cut size): a worker reads a chunk and rotates a new
+	// output file every FileSize, so e.g. a 1 GiB chunk with a 256 MiB FileSize
+	// emits about four files.
+	chunkSize = 1024 * 1024 * 1024
+	// maxChunksPerSubtask caps how many chunks one subtask carries, so a schema
+	// of many small tables still spreads across subtasks.
+	maxChunksPerSubtask = 4000
 )
 
-// splitTableSet builds the Dump-step subtasks for the whole table set. It
-// iterates the tables in order and region-splits each into key-ordered spans;
-// each span becomes one subtask with a single unit, stamped with a table-local
-// NameOrdinal. The sort + continuity check runs per table (cross-table key gaps
-// are expected). The result is deterministic given the same region layout.
-//
-// The SubtaskMeta.Units list already supports packing several whole small tables
-// into one subtask; that packing is added by a later increment and does not
-// change this meta shape.
+// splitTableSet builds the Dump-step subtasks for the whole table set. It first
+// carves every table into key-ordered chunks (each ≈ one output file), then
+// packs the chunks into subtasks. A chunk is the atomic unit of work with a
+// fixed, worker-independent file name; a subtask is a batch of chunks whose
+// worker pool exports them concurrently. The result is deterministic given the
+// same region layout.
 func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCnt int) ([][]byte, error) {
-	var subtasks [][]byte
+	var chunks []Chunk
 	for tableIdx := range meta.Tables {
-		tblInfo := meta.Tables[tableIdx].TableInfo
-		// nameOrdinal is table-local and runs across all of the table's spans
-		// (including partitions), so file names never collide within a table.
-		nameOrdinal := 0
-		for _, pid := range physicalIDs(tblInfo) {
-			start, end := physicalTableRange(tblInfo, pid)
-			boundaries, err := loadRegionBoundaries(ctx, store, start, end)
-			if err != nil {
-				return nil, err
-			}
-			regionCnt := len(boundaries) - 1
-			groups := groupBoundaries(boundaries, spanCntFor(regionCnt, nodeCnt, meta.SubtaskRegions))
-			var units []Unit
-			units, nameOrdinal = spansToUnits(tableIdx, pid, groups, nameOrdinal)
-			for i := range units {
-				bs, err := json.Marshal(&SubtaskMeta{Units: units[i : i+1]})
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				subtasks = append(subtasks, bs)
-			}
+		tableChunks, err := chunkTable(ctx, store, meta, tableIdx)
+		if err != nil {
+			return nil, err
 		}
+		chunks = append(chunks, tableChunks...)
+	}
+	return packSubtasks(chunks, nodeCnt)
+}
+
+// chunkTable carves one table into key-ordered chunks of ≈ chunkSize each,
+// stamping a running table-local Ordinal across all of its partitions so file
+// names never collide within the table. The sort + continuity check runs per
+// physical table (cross-partition key gaps are expected).
+func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
+	tblInfo := meta.Tables[tableIdx].TableInfo
+	perChunk := regionsPerChunk()
+	var chunks []Chunk
+	ordinal := 0
+	for _, pid := range physicalIDs(tblInfo) {
+		start, end := physicalTableRange(tblInfo, pid)
+		boundaries, err := loadRegionBoundaries(ctx, store, start, end)
+		if err != nil {
+			return nil, err
+		}
+		regionCnt := len(boundaries) - 1
+		chunkCnt := max(1, (regionCnt+perChunk-1)/perChunk)
+		for _, g := range groupBoundaries(boundaries, chunkCnt) {
+			chunks = append(chunks, Chunk{
+				TableIdx:   tableIdx,
+				PhysicalID: pid,
+				Start:      g[0],
+				End:        g[len(g)-1],
+				Ordinal:    ordinal,
+			})
+			ordinal++
+		}
+	}
+	return chunks, nil
+}
+
+// packSubtasks distributes the chunks across subtasks in key order. It aims for
+// about one subtask per node while capping chunks per subtask, so both a few
+// big tables and a schema of many small tables spread reasonably.
+func packSubtasks(chunks []Chunk, nodeCnt int) ([][]byte, error) {
+	if len(chunks) == 0 {
+		return nil, nil
+	}
+	subtaskCnt := subtaskCntFor(len(chunks), nodeCnt)
+	sizes := mathutil.Divide2Batches(len(chunks), subtaskCnt)
+	subtasks := make([][]byte, 0, len(sizes))
+	lo := 0
+	for _, sz := range sizes {
+		bs, err := json.Marshal(&SubtaskMeta{Chunks: chunks[lo : lo+sz]})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		subtasks = append(subtasks, bs)
+		lo += sz
 	}
 	return subtasks, nil
 }
 
-// spansToUnits turns one physical table's grouped boundaries into span units in
-// key order, continuing the table-local name ordinal from startOrdinal, and
-// returns the next ordinal. Each group's first and last boundary are the unit's
-// [Start, End).
-func spansToUnits(tableIdx int, pid int64, groups [][]kv.Key, startOrdinal int) ([]Unit, int) {
-	units := make([]Unit, 0, len(groups))
-	ord := startOrdinal
-	for _, g := range groups {
-		units = append(units, Unit{
-			TableIdx:    tableIdx,
-			PhysicalID:  pid,
-			Start:       g[0],
-			End:         g[len(g)-1],
-			NameOrdinal: ord,
-		})
-		ord++
+// regionsPerChunk approximates how many regions make up one ≈ chunkSize chunk.
+func regionsPerChunk() int {
+	return max(1, chunkSize/defaultRegionSize)
+}
+
+// subtaskCntFor targets about one subtask per node, but caps chunks per subtask
+// so a schema of many small tables does not collapse into a few huge subtasks.
+func subtaskCntFor(chunkCnt, nodeCnt int) int {
+	if nodeCnt <= 0 {
+		nodeCnt = 1
 	}
-	return units, ord
+	cnt := min(nodeCnt, chunkCnt)
+	minCnt := (chunkCnt + maxChunksPerSubtask - 1) / maxChunksPerSubtask
+	return max(cnt, minCnt, 1)
 }
 
 // physicalIDs returns the physical table ids to export: one per partition for a
@@ -184,20 +224,4 @@ func groupBoundaries(boundaries []kv.Key, groupCnt int) [][]kv.Key {
 		lo += size
 	}
 	return groups
-}
-
-// spanCntFor decides how many spans to emit for one physical table. The region
-// batch mirrors add-index's CalculateRegionBatch (cloud branch):
-// batch = min(maxRegionsPerSubtask, ceil(regionCnt/nodeCnt)).
-func spanCntFor(regionCnt, nodeCnt, subtaskRegions int) int {
-	batch := subtaskRegions
-	if batch <= 0 {
-		if nodeCnt <= 0 {
-			nodeCnt = 1
-		}
-		avgTasksPerNode := (regionCnt + nodeCnt - 1) / nodeCnt
-		batch = min(maxRegionsPerSubtask, avgTasksPerNode)
-	}
-	batch = max(batch, 1)
-	return max(1, (regionCnt+batch-1)/batch)
 }

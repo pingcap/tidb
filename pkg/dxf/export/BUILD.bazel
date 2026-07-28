@@ -36,7 +36,7 @@ go_test(
     ],
     embed = [":export"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/kv",

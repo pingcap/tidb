@@ -48,13 +48,13 @@ func TestTaskMetaRoundTrip(t *testing.T) {
 }
 
 func TestSubtaskMetaRoundTrip(t *testing.T) {
-	meta := &SubtaskMeta{Units: []Unit{
-		{TableIdx: 0, PhysicalID: 100, Start: []byte("a"), End: []byte("m"), NameOrdinal: 0},
-		{TableIdx: 3, PhysicalID: 401, Start: []byte("m"), End: []byte("z"), NameOrdinal: 5},
+	meta := &SubtaskMeta{Chunks: []Chunk{
+		{TableIdx: 0, PhysicalID: 100, Start: []byte("a"), End: []byte("m"), Ordinal: 0},
+		{TableIdx: 3, PhysicalID: 401, Start: []byte("m"), End: []byte("z"), Ordinal: 5},
 	}}
 	bs, err := json.Marshal(meta)
 	require.NoError(t, err)
 	got := &SubtaskMeta{}
 	require.NoError(t, json.Unmarshal(bs, got))
-	require.Equal(t, meta.Units, got.Units)
+	require.Equal(t, meta.Chunks, got.Chunks)
 }
