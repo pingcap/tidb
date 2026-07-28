@@ -1111,7 +1111,7 @@ fn run_select_stmt(
             )
         });
     if is_aggregate {
-        return run_aggregate_select(select, from_source, &resolver, catalog, ctx);
+        return run_aggregate_select(select, from_source, &resolver, catalog, current_db, ctx);
     }
 
     // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
@@ -1154,7 +1154,7 @@ fn run_select_stmt(
             // The Apply's schema is the source's columns plus the subquery's.
             let mut applied = scope.clone();
             let mut value_type = FieldType::new(FieldTypeCode::LongLong);
-            if correlated.exists.is_none() {
+            if matches!(correlated.kind, SubqueryKind::Scalar) {
                 value_type = subquery_result_type(&correlated, catalog, current_db, ctx)
                     .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             }
@@ -1255,7 +1255,7 @@ fn run_select_stmt(
         )?;
         if let Some(correlated) = correlated {
             let mut value_type = FieldType::new(FieldTypeCode::LongLong);
-            if correlated.exists.is_none() {
+            if matches!(correlated.kind, SubqueryKind::Scalar) {
                 value_type = subquery_result_type(&correlated, catalog, current_db, ctx)
                     .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             }
@@ -2732,11 +2732,34 @@ fn driver_error_text(error: &DriverError) -> &'static str {
     }
 }
 
+/// What the outer expression asks of a correlated subquery's result.
+///
+/// Go builds a different plan for each: `handleScalarSubquery` for a scalar
+/// read, and a semi join (`LogicalJoin` with `SemiJoin`/`AntiSemiJoin`/
+/// `LeftOuterSemiJoin`) for `EXISTS`, `IN` and `ANY`/`ALL`. Here they all ride
+/// one Apply, because the join's answer for one outer row is exactly what
+/// running the inner query for that row and folding the result yields.
+enum SubqueryKind {
+    /// A scalar read: the one value the subquery selects, NULL if no row.
+    Scalar,
+    /// `[NOT] EXISTS`.
+    Exists { not: bool },
+    /// `lhs [NOT] IN (subquery)`. `lhs` belongs to the OUTER scope and is
+    /// evaluated per outer row against that row's inner result.
+    In { lhs: tidb_ast::Expr, not: bool },
+    /// `lhs <op> ANY|ALL (subquery)`.
+    Compare {
+        op: tidb_ast::BinaryOp,
+        lhs: tidb_ast::Expr,
+        all: bool,
+    },
+}
+
 /// A correlated subquery found in an outer expression: the subquery itself and
-/// whether it is an `EXISTS` test rather than a scalar read.
+/// what its result is asked for.
 struct CorrelatedSubquery {
     select: tidb_ast::SelectStmt,
-    exists: Option<bool>,
+    kind: SubqueryKind,
     columns: Vec<Vec<String>>,
 }
 
@@ -2947,10 +2970,10 @@ fn run_correlated_subquery(
 
     let bound = bind_subquery_columns(&correlated.select, &bindings)?;
     let (_, rows) = run_select_stmt(&bound, catalog, current_db, ctx)?;
-    match correlated.exists {
+    match &correlated.kind {
         // EXISTS folds to 1/0 per outer row.
-        Some(not) => Ok(Datum::Int(i64::from(!rows.is_empty() != not))),
-        None => match rows.len() {
+        SubqueryKind::Exists { not } => Ok(Datum::Int(i64::from(!rows.is_empty() != *not))),
+        SubqueryKind::Scalar => match rows.len() {
             0 => Ok(Datum::Null),
             1 => {
                 let [value] = rows[0].as_slice() else {
@@ -2962,7 +2985,110 @@ fn run_correlated_subquery(
             }
             _ => Err(DriverError::SubqueryReturnsMoreThanOneRow),
         },
+        // The semi-join shapes: this outer row's inner result becomes a value
+        // list, and the test is evaluated over it exactly as the uncorrelated
+        // fold evaluates its own folded list -- same `IN`, same comparisons,
+        // so the same three-valued answers.
+        SubqueryKind::In { lhs, not } => {
+            let list = subquery_value_list(
+                &rows,
+                "an IN subquery selecting several columns is not supported yet",
+            )?;
+            let test = in_list_expr(lhs.clone(), list, *not);
+            eval_expr_on_row(&test, outer_scope, outer_values, ctx)
+        }
+        SubqueryKind::Compare { op, lhs, all } => {
+            let list = subquery_value_list(
+                &rows,
+                "an ANY/ALL subquery selecting several columns is not supported yet",
+            )?;
+            let test = any_all_expr(*op, lhs.clone(), *all, list);
+            eval_expr_on_row(&test, outer_scope, outer_values, ctx)
+        }
     }
+}
+
+/// A subquery result's single column, as the literals a value list needs.
+fn subquery_value_list(
+    rows: &[Vec<Datum>],
+    several_columns: &'static str,
+) -> Result<Vec<tidb_ast::Expr>, DriverError> {
+    let mut list = Vec::with_capacity(rows.len());
+    for row in rows {
+        let [value] = row.as_slice() else {
+            return Err(DriverError::Unsupported(several_columns));
+        };
+        list.push(datum_to_literal(value)?);
+    }
+    Ok(list)
+}
+
+/// `lhs [NOT] IN (list)`, with the empty list written as the constant it is.
+///
+/// `x IN ()` is not sayable in SQL: an empty subquery result makes `IN` false
+/// and `NOT IN` true for every x INCLUDING NULL, because MySQL evaluates the
+/// semi join, which finds no row to match. The non-empty case keeps the
+/// ordinary `IN`, whose NULL rules are the three-valued ones (an unmatched x
+/// against a list holding NULL is NULL, not false).
+fn in_list_expr(lhs: tidb_ast::Expr, list: Vec<tidb_ast::Expr>, not: bool) -> tidb_ast::Expr {
+    if list.is_empty() {
+        return tidb_ast::Expr::Int(i64::from(not).to_string());
+    }
+    tidb_ast::Expr::In {
+        expr: Box::new(lhs),
+        list,
+        not,
+    }
+}
+
+/// `lhs <op> ANY|ALL (list)` as the OR/AND chain it is defined to be.
+///
+/// Go's `buildSemiApply` for a comparison subquery builds the same disjunction
+/// (`ANY`) or conjunction (`ALL`) of per-value comparisons, which is where the
+/// three-valued behaviour comes from: `20 > ANY (25, NULL)` is
+/// `false OR NULL` = NULL, while `20 > ALL (25, NULL)` is `false AND NULL` =
+/// false. An empty list has no comparison at all, so `ALL` is vacuously TRUE
+/// and `ANY` is FALSE -- both for a NULL `lhs` too.
+fn any_all_expr(
+    op: tidb_ast::BinaryOp,
+    lhs: tidb_ast::Expr,
+    all: bool,
+    list: Vec<tidb_ast::Expr>,
+) -> tidb_ast::Expr {
+    use tidb_ast::{BinaryOp, Expr};
+    let compare = |value: Expr| Expr::Binary(op, Box::new(lhs.clone()), Box::new(value));
+    let mut values = list.into_iter();
+    let Some(first) = values.next() else {
+        return Expr::Int(i64::from(all).to_string());
+    };
+    let combine = if all {
+        BinaryOp::LogicAnd
+    } else {
+        BinaryOp::LogicOr
+    };
+    values.fold(compare(first), |acc, value| {
+        Expr::Binary(combine, Box::new(acc), Box::new(compare(value)))
+    })
+}
+
+/// Evaluates an expression over the OUTER scope's columns for one outer row.
+///
+/// The semi-join folds keep their left operand in the outer scope rather than
+/// binding it to a literal, so the comparison runs through the very same
+/// expression evaluator the uncorrelated path uses.
+fn eval_expr_on_row(
+    expr: &tidb_ast::Expr,
+    scope: &FromScope,
+    values: &[Datum],
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
+    let types: Vec<FieldType> = scope.column_list().into_iter().map(|(_, ft)| ft).collect();
+    let rewritten = rewrite_expr_resolved(expr, &ScopeResolver { scope })
+        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+    let chunk = row_chunk(values, &types)?;
+    rewritten
+        .eval(ctx, chunk.get_row(0))
+        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))
 }
 
 /// Finds the one correlated subquery in `expr`, replacing it with a reference
@@ -3003,21 +3129,73 @@ fn extract_correlated_subquery(
                     "more than one correlated subquery in an expression is not supported yet",
                 ));
             }
-            let exists = match expr {
-                Expr::Exists { not, .. } => Some(*not),
-                _ => None,
+            let kind = match expr {
+                Expr::Exists { not, .. } => SubqueryKind::Exists { not: *not },
+                _ => SubqueryKind::Scalar,
             };
             *found = Some(CorrelatedSubquery {
                 select: (**select).clone(),
-                exists,
+                kind,
                 columns,
             });
             placeholder(index)
         }
-        Expr::InSubquery { .. } | Expr::CompareSubquery { .. } => {
-            // Correlated IN / ANY / ALL become semi-joins in Go, not the
-            // one-appended-column Apply shape this builds.
-            expr.clone()
+        // Go turns a correlated IN / ANY / ALL into a semi join; the Apply
+        // here answers the same question one outer row at a time, with the
+        // tested left operand staying in the outer expression.
+        Expr::InSubquery {
+            expr: lhs,
+            subquery,
+            not,
+        } => {
+            let select = subquery_select(subquery)?;
+            let mut columns = Vec::new();
+            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
+            if columns.is_empty() {
+                return Ok(expr.clone());
+            }
+            if found.is_some() || expr_has_subquery(lhs) {
+                return Err(DriverError::Unsupported(
+                    "more than one correlated subquery in an expression is not supported yet",
+                ));
+            }
+            *found = Some(CorrelatedSubquery {
+                select: select.clone(),
+                kind: SubqueryKind::In {
+                    lhs: (**lhs).clone(),
+                    not: *not,
+                },
+                columns,
+            });
+            placeholder(index)
+        }
+        Expr::CompareSubquery {
+            op,
+            left,
+            all,
+            subquery,
+        } => {
+            let select = subquery_select(subquery)?;
+            let mut columns = Vec::new();
+            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
+            if columns.is_empty() {
+                return Ok(expr.clone());
+            }
+            if found.is_some() || expr_has_subquery(left) {
+                return Err(DriverError::Unsupported(
+                    "more than one correlated subquery in an expression is not supported yet",
+                ));
+            }
+            *found = Some(CorrelatedSubquery {
+                select: select.clone(),
+                kind: SubqueryKind::Compare {
+                    op: *op,
+                    lhs: (**left).clone(),
+                    all: *all,
+                },
+                columns,
+            });
+            placeholder(index)
         }
         Expr::Paren(inner) => Expr::Paren(Box::new(extract_correlated_subquery(
             inner, outer, catalog, current_db, index, found, ctx,
@@ -3046,6 +3224,16 @@ fn extract_correlated_subquery(
         ),
         other => other.clone(),
     })
+}
+
+/// The `SELECT` a subquery carries, rejecting the set-operation body.
+fn subquery_select(query: &tidb_ast::QueryStmt) -> Result<&tidb_ast::SelectStmt, DriverError> {
+    match query {
+        tidb_ast::QueryStmt::Select(select) => Ok(select),
+        _ => Err(DriverError::Unsupported(
+            "set-operation subqueries are not supported yet",
+        )),
+    }
 }
 
 /// The scope a subquery inside `select` sees as its OUTER scope: `select`'s
@@ -3181,14 +3369,15 @@ fn fold_select_subqueries(
 /// wrapper is the "more than one row" check below; a subquery producing no
 /// rows yields NULL.
 ///
-/// `EXISTS` folds to 1 or 0, and `x IN (subquery)` folds to `x IN (values)`,
-/// which evaluates identically for an uncorrelated subquery -- including the
-/// NULL rules, since the folded list is compared by the same `IN` code.
+/// `EXISTS` folds to 1 or 0, `x IN (subquery)` folds to `x IN (values)` and
+/// `x <op> ANY|ALL (subquery)` to the OR/AND chain of comparisons, all of
+/// which evaluate identically for an uncorrelated subquery -- including the
+/// NULL rules, since the folded list is compared by the same code.
 ///
 /// DEFERRED (documented): CORRELATED subqueries, which Go turns into an Apply
-/// operator rather than folding, and which this rejects rather than silently
-/// evaluating the inner query against the wrong row; `ANY`/`ALL` comparison
-/// subqueries; and row constructors (a subquery selecting several columns).
+/// operator rather than folding, and which this leaves for the Apply path
+/// rather than silently evaluating the inner query against the wrong row; and
+/// row constructors (a subquery selecting several columns).
 fn fold_subqueries(
     expr: &tidb_ast::Expr,
     outer: &FromScope,
@@ -3201,6 +3390,12 @@ fn fold_subqueries(
     // to: it is the Apply path's job, one run per outer row.
     if let Expr::Subquery(query)
     | Expr::Exists {
+        subquery: query, ..
+    }
+    | Expr::InSubquery {
+        subquery: query, ..
+    }
+    | Expr::CompareSubquery {
         subquery: query, ..
     } = expr
     {
@@ -3242,31 +3437,33 @@ fn fold_subqueries(
             not,
         } => {
             let rows = run_subquery(subquery, catalog, current_db, ctx)?;
-            let mut list = Vec::with_capacity(rows.len());
-            for row in &rows {
-                let [value] = row.as_slice() else {
-                    return Err(DriverError::Unsupported(
-                        "an IN subquery selecting several columns is not supported yet",
-                    ));
-                };
-                list.push(datum_to_literal(value)?);
-            }
-            if list.is_empty() {
-                // `x IN ()` is not sayable in SQL: an empty subquery result is
-                // false, and `NOT IN` over it is true, for every x including
-                // NULL (MySQL evaluates the semi join, which finds nothing).
-                return Ok(Expr::Int(i64::from(*not).to_string()));
-            }
-            Expr::In {
-                expr: Box::new(fold_subqueries(expr, outer, catalog, current_db, ctx)?),
+            let list = subquery_value_list(
+                &rows,
+                "an IN subquery selecting several columns is not supported yet",
+            )?;
+            in_list_expr(
+                fold_subqueries(expr, outer, catalog, current_db, ctx)?,
                 list,
-                not: *not,
-            }
+                *not,
+            )
         }
-        Expr::CompareSubquery { .. } => {
-            return Err(DriverError::Unsupported(
-                "ANY/ALL comparison subqueries are not supported yet",
-            ))
+        Expr::CompareSubquery {
+            op,
+            left,
+            all,
+            subquery,
+        } => {
+            let rows = run_subquery(subquery, catalog, current_db, ctx)?;
+            let list = subquery_value_list(
+                &rows,
+                "an ANY/ALL subquery selecting several columns is not supported yet",
+            )?;
+            any_all_expr(
+                *op,
+                fold_subqueries(left, outer, catalog, current_db, ctx)?,
+                *all,
+                list,
+            )
         }
         // Walk the forms the expression rewriter itself supports; anything
         // else is returned unchanged and fails to rewrite as it already does.
@@ -4529,6 +4726,48 @@ fn add_grouping_column(
     Ok(display)
 }
 
+/// Where one select field of an aggregate query reads its value from.
+enum OutputSlot {
+    /// An aggregation output column, by index.
+    Agg(usize),
+    /// The column the n-th Apply appends above the aggregation.
+    Apply(usize),
+}
+
+/// The correlated subquery an aggregate select field IS, if any.
+///
+/// Only a bare subquery field is supported: Go evaluates a larger expression
+/// over the projection above the Apply, which this seed does not build, so
+/// `(SELECT ...) + 1` in a grouped select list is rejected rather than
+/// silently mis-evaluated. `EXISTS`, `IN` and `ANY`/`ALL` ride the same slot,
+/// because the Apply appends whatever [`run_correlated_subquery`] folds.
+fn aggregate_field_subquery(
+    expr: &tidb_ast::Expr,
+    outer: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<CorrelatedSubquery>, DriverError> {
+    let mut expr = expr;
+    while let tidb_ast::Expr::Paren(inner) = expr {
+        expr = inner;
+    }
+    if !expr_has_subquery(expr) {
+        return Ok(None);
+    }
+    let mut found = None;
+    let rewritten =
+        extract_correlated_subquery(expr, outer, catalog, current_db, 0, &mut found, ctx)?;
+    if found.is_some()
+        && !matches!(&rewritten, tidb_ast::Expr::Column(path) if path == &["__apply_0".to_owned()])
+    {
+        return Err(DriverError::Unsupported(
+            "a correlated subquery nested inside a larger aggregate select field is not supported yet",
+        ));
+    }
+    Ok(found)
+}
+
 /// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
 /// through [`HashAggExec`].
 ///
@@ -4547,7 +4786,8 @@ fn run_aggregate_select(
     select: &tidb_ast::SelectStmt,
     from_source: Option<Box<dyn Executor>>,
     resolver: &ScopeResolver<'_>,
-    _catalog: &Catalog,
+    catalog: &Catalog,
+    current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     // The grouped column names, which GROUPING() arguments resolve against and
@@ -4567,6 +4807,11 @@ fn run_aggregate_select(
     let mut names: Vec<String> = Vec::new();
     let mut types: Vec<FieldType> = Vec::new();
     let mut grouping_specs: Vec<GroupingSpec> = Vec::new();
+    // Where each select field's value comes from, in field order: an
+    // aggregation output column, or the column an Apply appends above the
+    // aggregation for a correlated subquery.
+    let mut slots: Vec<OutputSlot> = Vec::new();
+    let mut applies: Vec<(CorrelatedSubquery, String, FieldType)> = Vec::new();
     for field in select.fields.fields() {
         let SelectField::Expr { expr, alias } = field else {
             return Err(DriverError::Unsupported(
@@ -4574,6 +4819,25 @@ fn run_aggregate_select(
             ));
         };
         let display = alias.clone().unwrap_or_else(|| expr.restore());
+        // A correlated subquery in an aggregate select list reads the GROUPED
+        // value, so it runs once per OUTPUT row rather than per source row --
+        // Go's Apply sits above the aggregation for the same reason. The
+        // subquery must be the whole field: this seed has no projection over
+        // the aggregation's output to compute a larger expression in.
+        if let Some(correlated) =
+            aggregate_field_subquery(expr, resolver.scope, catalog, current_db, ctx)?
+        {
+            let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
+                subquery_result_type(&correlated, catalog, current_db, ctx)
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+            } else {
+                FieldType::new(FieldTypeCode::LongLong)
+            };
+            slots.push(OutputSlot::Apply(applies.len()));
+            applies.push((correlated, display, value_type));
+            continue;
+        }
+        slots.push(OutputSlot::Agg(names.len()));
         match expr {
             // Both aggregate shapes lower through the same builder, which
             // knows GROUP_CONCAT's separator and DISTINCT.
@@ -4632,9 +4896,33 @@ fn run_aggregate_select(
         }
     }
 
-    // Every select field has an output column; anything HAVING/ORDER BY adds
-    // beyond this point is hidden and trimmed at the end.
-    let visible_columns = names.len();
+    // An Apply binds its correlated columns from the AGGREGATION's output row,
+    // so every column such a subquery reads must be carried out of the
+    // aggregation. A grouped column the select list does not project rides the
+    // same hidden FIRST_ROW carrier HAVING's aggregates use.
+    for (correlated, _, _) in &applies {
+        for path in &correlated.columns {
+            let Some(name) = path.last() else { continue };
+            if names.iter().any(|have| have.eq_ignore_ascii_case(name)) {
+                continue;
+            }
+            let carrier = rewrite_expr_resolved(&tidb_ast::Expr::Column(path.clone()), resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            let ftype = carrier
+                .static_type()
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            agg_funcs.push(AggFunc {
+                kind: AggKind::FirstRow,
+                arg: Some(carrier),
+                extra_args: Vec::new(),
+                distinct: false,
+                order_by: Vec::new(),
+            });
+            names.push(name.clone());
+            types.push(ftype);
+        }
+    }
 
     // HAVING / ORDER BY aggregates -> aggregation output columns.
     let having_expr = match &select.having {
@@ -4778,37 +5066,96 @@ fn run_aggregate_select(
         ));
     }
 
-    // Aggregates that only HAVING or ORDER BY needed are computed but not
-    // selected, so a projection trims them back to the select list (Go's
-    // final projection over the aggregation's schema).
-    if visible_columns < names.len() {
-        let visible: Vec<Expression> = (0..visible_columns)
-            .map(|i| {
+    // A correlated subquery field becomes an Apply over the aggregation's
+    // output rows: the outer row is the GROUP row, so the subquery sees the
+    // grouped value, and it runs once per group rather than once per source
+    // row. The columns it binds are the aggregation's own output columns.
+    let agg_width = names.len();
+    for (correlated, display, value_type) in applies {
+        let outer_scope = FromScope {
+            tables: vec![FromTable {
+                name: String::new(),
+                columns: names.iter().cloned().zip(types.iter().cloned()).collect(),
+                offset: 0,
+            }],
+        };
+        types.push(value_type);
+        names.push(display);
+        let columns: Vec<Column> = types
+            .iter()
+            .enumerate()
+            .map(|(i, ft)| {
+                let mut col = Column::new((i + 1) as i64, ft.clone());
+                col.index = i as i64;
+                col
+            })
+            .collect();
+        // The callback outlives this borrow of the catalog, so it owns a
+        // snapshot (see ApplyExec::new).
+        let inner_catalog = catalog.clone();
+        let inner_db = current_db.to_owned();
+        let inner_ctx = ctx.clone();
+        let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
+            run_correlated_subquery(
+                &correlated,
+                values,
+                &outer_scope,
+                &inner_catalog,
+                &inner_db,
+                &inner_ctx,
+            )
+            .map_err(|e| match e {
+                DriverError::Exec(exec) => exec,
+                DriverError::SubqueryReturnsMoreThanOneRow => {
+                    ExecError::SubqueryReturnsMoreThanOneRow
+                }
+                other => ExecError::Unsupported(driver_error_text(&other)),
+            })
+        });
+        root = Box::new(crate::apply::ApplyExec::new(
+            ExecutorMeta::new(Schema::new(columns), 7, INIT_CAP, MAX_CHUNK_SIZE),
+            root,
+            runner,
+        ));
+    }
+
+    // The select list's own columns, in field order: the aggregates and
+    // carriers HAVING/ORDER BY needed but nothing selected are trimmed here,
+    // and an Apply's appended column is read from where it landed (Go's final
+    // projection over the aggregation's schema).
+    let sources: Vec<usize> = slots
+        .iter()
+        .map(|slot| match slot {
+            OutputSlot::Agg(index) => *index,
+            OutputSlot::Apply(k) => agg_width + k,
+        })
+        .collect();
+    if !sources.iter().copied().eq(0..types.len()) {
+        let visible: Vec<Expression> = sources
+            .iter()
+            .map(|&i| {
                 let mut col = Column::new((i + 1) as i64, types[i].clone());
                 col.index = i as i64;
                 Expression::Column(col)
             })
             .collect();
-        let visible_columns_schema: Vec<Column> = (0..visible_columns)
-            .map(|i| {
-                let mut col = Column::new((i + 1) as i64, types[i].clone());
-                col.index = i as i64;
+        let visible_schema: Vec<Column> = sources
+            .iter()
+            .enumerate()
+            .map(|(out, &i)| {
+                let mut col = Column::new((out + 1) as i64, types[i].clone());
+                col.index = out as i64;
                 col
             })
             .collect();
         root = Box::new(ProjectionExec::new(
-            ExecutorMeta::new(
-                Schema::new(visible_columns_schema),
-                5,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
+            ExecutorMeta::new(Schema::new(visible_schema), 5, INIT_CAP, MAX_CHUNK_SIZE),
             visible,
             root,
             ctx.clone(),
         ));
-        names.truncate(visible_columns);
-        types.truncate(visible_columns);
+        names = sources.iter().map(|&i| names[i].clone()).collect();
+        types = sources.iter().map(|&i| types[i].clone()).collect();
     }
     let ret_types: Vec<FieldType> = types.clone();
 
@@ -5964,14 +6311,49 @@ mod tests {
             vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
         );
 
-        // A CORRELATED subquery runs through Apply (see the apply tests).
-        // ANY/ALL comparison subqueries are not supported yet.
-        assert!(run_select_on(
-            "SELECT a FROM s WHERE a > ANY (SELECT a FROM u)",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .is_err());
+        // ANY is the OR chain over the folded values, ALL the AND chain:
+        // `a > ANY (2, 3)` holds only for 3, and `a > ALL (2, 3)` for nothing.
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s WHERE a > ANY (SELECT a FROM u)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(3)]]
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s WHERE a > ALL (SELECT a FROM u)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        // An empty inner result: ALL is vacuously true, ANY is false.
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s WHERE a > ALL (SELECT a FROM u WHERE a > 100)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(1)],
+                vec![Datum::Int(2)],
+                vec![Datum::Int(3)]
+            ]
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM s WHERE a > ANY (SELECT a FROM u WHERE a > 100)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
     }
 
     /// A correlated subquery becomes an Apply: the inner query re-runs once
@@ -6072,13 +6454,45 @@ mod tests {
             Err(DriverError::SubqueryReturnsMoreThanOneRow)
         ));
 
-        // Correlated IN and ANY/ALL are still the deferred semi-join shapes.
-        assert!(run_select_on(
-            "SELECT id FROM o WHERE v IN (SELECT w FROM i WHERE i.id = o.id)",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .is_err());
+        // Correlated IN / NOT IN and ANY / ALL: the same Apply, folding this
+        // outer row's inner result into the three-valued answer. id 3's inner
+        // result is EMPTY, which is why NOT IN and ALL keep it.
+        assert_eq!(
+            run_select_on(
+                "SELECT id FROM o WHERE v IN (SELECT w FROM i WHERE i.id = o.id)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(1)]]
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT id FROM o WHERE v NOT IN (SELECT w FROM i WHERE i.id = o.id)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT id FROM o WHERE v > ANY (SELECT w FROM i WHERE i.id = o.id)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(2)]]
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT id FROM o WHERE v > ALL (SELECT w FROM i WHERE i.id = o.id)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(3)]]
+        );
     }
 
     /// A single-column integer PRIMARY KEY becomes the row handle (Go's
