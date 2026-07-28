@@ -95,6 +95,15 @@ pub trait Columns {
         None
     }
 
+    /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports as an
+    /// unsigned `LongLong`. Go treats a missing `SessionVars` as an error
+    /// rather than NULL (`builtinConnectionIDSig.evalInt`), but that case is
+    /// unreachable from a real session; `None` here is only the no-session
+    /// resolver (`NoColumns`), which reports NULL like `CURRENT_USER` does.
+    fn connection_id(&self) -> Option<u64> {
+        None
+    }
+
     /// Reads a supported system variable.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);

@@ -842,6 +842,15 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     );
     assert_eq!(identities[0][2], identities[0][1], "SESSION_USER is USER");
 
+    // CONNECTION_ID() must reach the session the same way the identity did:
+    // the factory once discarded `SessionContext` entirely, which would leave
+    // this NULL instead of the accepted connection's id.
+    let connection_id = run_query(&mut client, &mut reader, "SELECT CONNECTION_ID()");
+    let id: u64 = connection_id[0][0]
+        .parse()
+        .unwrap_or_else(|_| panic!("CONNECTION_ID() should be numeric: {connection_id:?}"));
+    assert!(id > 0, "CONNECTION_ID() should be positive: {id}");
+
     // A read-only server-side cursor, which a useCursorFetch JDBC client
     // drives: the execute answers with only the column definitions and a
     // status advertising the cursor; the rows arrive in fetch-sized batches,

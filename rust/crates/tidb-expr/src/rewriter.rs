@@ -170,6 +170,12 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // Go reads these from `SessionVars`; each returns a string.
         "database" | "schema" | "version" | "current_user" | "user" | "session_user"
         | "system_user" => text(),
+        // Go `connectionIDFunctionClass` fixes an unsigned `LongLong`.
+        "connection_id" => {
+            let mut ft = int();
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft
+        }
         // String in, number out.
         "length" | "octet_length" | "char_length" | "character_length" | "bit_length" | "ascii"
         | "instr" | "locate" | "position" | "find_in_set" | "strcmp" | "field" => int(),

@@ -111,6 +111,11 @@ impl QuerySessionFactory for PipelineSessionFactory {
             format!("{}@{}", identity.username(), identity.host()),
             format!("{}@{}", identity.username(), context.peer_addr.ip()),
         );
+// Go sets `SessionVars.ConnectionID` from the connection the front
+        // end accepted; `CONNECTION_ID()` reads it back. This was once
+        // dropped entirely when `SessionContext` was threaded through here --
+        // double-check it actually arrives (see the TCP-level test below).
+        session.session.set_connection_id(context.connection_id);
         // Go registers the connection with the session manager right after
         // authentication, which is what puts it in `SHOW PROCESSLIST` and
         // makes it reachable by `KILL`. The registration is owned by the

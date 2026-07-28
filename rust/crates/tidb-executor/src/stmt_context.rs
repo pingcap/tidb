@@ -41,6 +41,7 @@ pub struct StmtContext {
     version: Option<String>,
     current_user: Option<String>,
     login_user: Option<String>,
+    connection_id: Option<u64>,
     /// Go `StatementContext`'s fixed statement time as
     /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
     /// statement reads the same instant.
@@ -60,6 +61,7 @@ impl StmtContext {
             version: None,
             current_user: None,
             login_user: None,
+            connection_id: None,
             now: None,
             time_zone: None,
         }
@@ -85,6 +87,15 @@ impl StmtContext {
     pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
         self.current_user = current_user;
         self.login_user = login_user;
+        self
+    }
+
+    /// Attaches the connection identifier `CONNECTION_ID()` reports, which Go
+    /// keeps on `SessionVars.ConnectionID`. `None` is a session with no
+    /// connection identity, where the builtin answers NULL.
+    #[must_use]
+    pub fn with_connection_id(mut self, connection_id: Option<u64>) -> Self {
+        self.connection_id = connection_id;
         self
     }
 
@@ -122,6 +133,7 @@ impl StmtContext {
             version: None,
             current_user: None,
             login_user: None,
+            connection_id: None,
             now: None,
             time_zone: None,
         }
@@ -183,6 +195,10 @@ impl Columns for StmtContext {
         self.login_user.clone()
     }
 
+    fn connection_id(&self) -> Option<u64> {
+        self.connection_id
+    }
+
     fn current_database(&self) -> Option<String> {
         self.current_db.clone()
     }
@@ -205,5 +221,21 @@ impl Columns for StmtContext {
 
     fn append_warning(&self, code: u16, message: &str) {
         self.warnings.borrow_mut().push((code, message.to_owned()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_id_absent_by_default() {
+        assert_eq!(StmtContext::for_query().connection_id(), None);
+    }
+
+    #[test]
+    fn connection_id_reports_the_attached_value() {
+        let ctx = StmtContext::for_query().with_connection_id(Some(7));
+        assert_eq!(ctx.connection_id(), Some(7));
     }
 }

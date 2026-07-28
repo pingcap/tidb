@@ -104,6 +104,10 @@ pub struct Session {
     /// reports. Empty until a front end authenticates one.
     current_user: Option<String>,
     login_user: Option<String>,
+    /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
+    /// `None` for a session with no connection identity, where the builtin
+    /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
+    connection_id: Option<u64>,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     last_insert_id: u64,
@@ -115,7 +119,6 @@ pub struct Session {
     current_db: String,
     /// Go `SessionVars.ConnectionID`. 0 for a session with no server front,
     /// which is also what Go leaves it at for an internal session.
-    connection_id: u64,
     /// This connection's registration in the server's process list, which the
     /// front end installs. `None` for a session with no server front; such a
     /// session still answers `SHOW PROCESSLIST` -- with the single row it can
@@ -134,10 +137,10 @@ impl Default for Session {
             warnings: Vec::new(),
             current_user: None,
             login_user: None,
+            connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
-            connection_id: 0,
             process: None,
         }
     }
@@ -1047,7 +1050,7 @@ impl Session {
                         tidb_ast::KillTarget::Expr(tidb_ast::Expr::Func { name, args, .. })
                             if name.eq_ignore_ascii_case("connection_id") && args.is_empty() =>
                         {
-                            self.connection_id
+                            self.connection_id.unwrap_or(0)
                         }
                         tidb_ast::KillTarget::Expr(_) => {
                             return Err(DriverError::Unsupported(
@@ -1600,10 +1603,10 @@ impl Session {
             warnings: Vec::new(),
             current_user: None,
             login_user: None,
+            connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
-            connection_id: 0,
             process: None,
         }
     }
@@ -1684,14 +1687,23 @@ impl Session {
     /// after authentication; `guard` is that registration, and dropping the
     /// session removes the row.
     pub fn attach_process(&mut self, connection_id: u64, guard: process::ProcessGuard) {
-        self.connection_id = connection_id;
+        self.connection_id = Some(connection_id);
         self.process = Some(guard);
     }
 
-    /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
+    /// Records the connection identifier `CONNECTION_ID()` reports, which Go
+    /// sets on `SessionVars.ConnectionID` when the front end opens the
+    /// connection. `attach_process` sets it too; this exists for a front end
+    /// that has an id but no process registry.
+    pub fn set_connection_id(&mut self, connection_id: u64) {
+        self.connection_id = Some(connection_id);
+    }
+
+    /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports; zero
+    /// for a session no front end opened.
     #[must_use]
-    pub const fn connection_id(&self) -> u64 {
-        self.connection_id
+    pub fn connection_id(&self) -> u64 {
+        self.connection_id.unwrap_or(0)
     }
 
     /// Go `serverStatus2Str` over this session's status bits: the `State`
@@ -2284,7 +2296,7 @@ impl Session {
         let rows: Vec<process::ProcessRow> = match &self.process {
             Some(guard) => guard.registry().snapshot(),
             None => vec![process::ProcessRow {
-                id: self.connection_id,
+                id: self.connection_id.unwrap_or(0),
                 user: self.process_list_user(),
                 host: String::new(),
                 db: self.current_db.clone(),
@@ -2492,6 +2504,7 @@ impl Session {
             return tidb_executor::StmtContext::for_query()
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())
+                .with_connection_id(self.connection_id)
                 .with_clock(clock, zone);
         }
         let mode = self
@@ -2506,6 +2519,7 @@ impl Session {
         )
         .with_session_state(current_db, version)
         .with_user(self.current_user.clone(), self.login_user.clone())
+        .with_connection_id(self.connection_id)
         .with_clock(clock, zone)
     }
 
@@ -6120,6 +6134,15 @@ mod tests {
             row_text(session.run("SELECT CURRENT_USER(), USER(), SESSION_USER()")),
             [["bob@%", "bob@10.0.0.1", "bob@10.0.0.1"]]
         );
+
+        // CONNECTION_ID() is NULL until a front end attaches one (Go itself
+        // errors here rather than reporting NULL, but that path is
+        // unreachable in practice -- see `Columns::connection_id`'s doc); once
+        // set, the same value keeps reporting on later statements.
+        assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["NULL"]]);
+        session.set_connection_id(42);
+        assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["42"]]);
+        assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["42"]]);
 
         // The refusals above are refusals, not wrong answers. (CAST,
         // GROUP_CONCAT, CURRENT_USER, GROUP_CONCAT's inner ORDER BY, and

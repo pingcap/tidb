@@ -412,6 +412,12 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
+                "connection_id" => {
+                    return Ok(match ctx.connection_id() {
+                        Some(id) => Datum::UInt(id),
+                        None => Datum::Null,
+                    })
+                }
                 _ => {}
             }
         }
