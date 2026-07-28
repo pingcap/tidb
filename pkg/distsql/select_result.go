@@ -463,6 +463,7 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 					return err
 				}
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -673,7 +674,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
+			r.ctx.RuntimeStatsColl.RecordCopStats(
+				r.copPlanIDs[len(r.copPlanIDs)-1],
+				r.storeType,
+				copStats.ScanDetail,
+				copStats.TimeDetail,
+				copStats.ReadPoolTaskDetails,
+				nil,
+			)
 		}
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
 		// report MPP cross AZ network traffic bytes to resource control manager.
@@ -707,7 +715,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(
+					planID,
+					r.storeType,
+					copStats.ScanDetail,
+					copStats.TimeDetail,
+					copStats.ReadPoolTaskDetails,
+					summary,
+				)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
@@ -757,6 +772,7 @@ func (r *selectResult) close() error {
 			for _, copStats := range unconsumedCopStats {
 				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
+				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 			}
 		}
 	}
