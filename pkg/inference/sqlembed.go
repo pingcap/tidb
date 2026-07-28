@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/inference/embedding/tidbcloud"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -244,7 +245,7 @@ func (e *EmbedFn) EmbedWithContext(
 		optsJSON,
 		vardef.EmbeddingConfigVersion.Load(),
 	)
-	call, cached, cacheHit, err := e.acquireCall(cacheKey, modelWithProvider, text, optsSnapshot)
+	call, cached, cacheHit, err := e.acquireCall(ctx, cacheKey, modelWithProvider, text, optsSnapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -299,6 +300,7 @@ func contextWithCancelCheck(parent context.Context, shouldCancel func() bool) (c
 }
 
 func (e *EmbedFn) acquireCall(
+	ctx context.Context,
 	key string,
 	modelWithProvider string,
 	text string,
@@ -319,7 +321,9 @@ func (e *EmbedFn) acquireCall(
 		return call, nil, false, nil
 	}
 
-	reqCtx, cancel := context.WithCancel(context.Background())
+	// The shared request has its own cancellation lifecycle, but retaining the
+	// first caller's context values keeps tracing and other request metadata.
+	reqCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	call := &embeddingCall{
 		done:    make(chan struct{}),
 		cancel:  cancel,
@@ -343,6 +347,10 @@ func (e *EmbedFn) runCall(
 	if err == nil {
 		if len(embeddings) == 0 {
 			err = fmt.Errorf("embedding provider returned no result for model %q", modelWithProvider)
+		} else if validationErr := types.CheckVectorDimValid(len(embeddings[0])); validationErr != nil {
+			// Reject values that TiDB cannot represent before they can consume
+			// space in the process-local cache.
+			err = validationErr
 		} else {
 			embedding = cloneEmbedding(embeddings[0])
 		}

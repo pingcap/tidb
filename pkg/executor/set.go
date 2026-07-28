@@ -179,7 +179,12 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
-				auditPlugin.OnGlobalVariableEvent(context.Background(), e.Ctx().GetSessionVars(), name, valStr)
+				auditPlugin.OnGlobalVariableEvent(
+					context.Background(),
+					e.Ctx().GetSessionVars(),
+					name,
+					redactGlobalSysVarValueForAudit(name, valStr),
+				)
 			}
 			return nil
 		})
@@ -278,23 +283,35 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	return nil
 }
 
+func redactGlobalSysVarValueForAudit(name, value string) string {
+	if isEmbeddingAPIKeySysVar(name) {
+		return redactAPIKey(value)
+	}
+	return value
+}
+
 func redactGlobalSysVarValueForLog(name, value string) string {
+	if isEmbeddingAPIKeySysVar(name) {
+		return redactAPIKey(value)
+	}
 	switch name {
 	case vardef.TiDBCloudStorageURI:
 		return ast.RedactURL(value)
-	case vardef.TiDBExpEmbedJinaAIAPIKey,
-		vardef.TiDBExpEmbedOpenAIAPIKey,
-		vardef.TiDBExpEmbedCohereAPIKey,
-		vardef.TiDBExpEmbedHuggingFaceAPIKey,
-		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
-		vardef.TiDBExpEmbedGeminiAPIKey:
-		if value == "" {
-			return ""
-		}
-		return "******"
 	default:
 		return value
 	}
+}
+
+func isEmbeddingAPIKeySysVar(name string) bool {
+	name = strings.ToLower(name)
+	return strings.HasPrefix(name, "tidb_exp_embed_") && strings.HasSuffix(name, "_api_key")
+}
+
+func redactAPIKey(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "******"
 }
 
 func notifyExternalWorkloadGCLifeTime(ctx context.Context, sctx sessionctx.Context, setValue string) {

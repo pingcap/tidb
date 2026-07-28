@@ -21,6 +21,7 @@ go_library(
         "//pkg/inference/embedding/tidbcloud",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
+        "//pkg/types",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_dgraph_io_ristretto//:ristretto",

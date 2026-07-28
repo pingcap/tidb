@@ -46,12 +46,18 @@ type controlledEmbedder struct {
 	release     chan struct{}
 	canceled    chan struct{}
 	cancelOnce  sync.Once
+	contextVals chan any
 	calls       atomic.Int64
 }
+
+type embeddingTestContextKey struct{}
 
 func (c *controlledEmbedder) CreateEmbeddings(ctx context.Context, _ string, _ []string, _ map[string]any) ([][]float32, error) {
 	c.calls.Add(1)
 	c.startedOnce.Do(func() { close(c.started) })
+	if c.contextVals != nil {
+		c.contextVals <- ctx.Value(embeddingTestContextKey{})
+	}
 	select {
 	case <-c.release:
 		return [][]float32{{1, 2, 3}}, nil
@@ -91,6 +97,14 @@ func TestEmbedFnProvidersAndErrors(t *testing.T) {
 	embedFn.MustRegisterEmbedder("fail", &staticEmbedder{err: errors.New("embed failed")})
 	_, err = embedFn.Embed(nil, "fail/model", "hello", nil)
 	require.ErrorContains(t, err, "embed failed")
+
+	oversized := &staticEmbedder{embeddings: [][]float32{make([]float32, 16384)}}
+	embedFn.MustRegisterEmbedder("oversized", oversized)
+	for range 2 {
+		_, err = embedFn.Embed(nil, "oversized/model", "hello", nil)
+		require.ErrorContains(t, err, "vector cannot have more than 16383 dimensions")
+	}
+	require.Equal(t, int64(2), oversized.calls.Load(), "invalid vectors must not be cached")
 }
 
 func TestEmbedFnCacheIsolationAndInvalidation(t *testing.T) {
@@ -127,7 +141,7 @@ func TestEmbedFnCacheIsolationAndInvalidation(t *testing.T) {
 	cacheKey := embeddingCacheKey("static/model", "already cached", opts, optsJSON, vardef.EmbeddingConfigVersion.Load())
 	require.True(t, embedFn.cache.Set(cacheKey, []float32{4, 5, 6}, 1))
 	embedFn.cache.Wait()
-	call, cached, cacheHit, err := embedFn.acquireCall(cacheKey, "static/model", "already cached", opts)
+	call, cached, cacheHit, err := embedFn.acquireCall(context.Background(), cacheKey, "static/model", "already cached", opts)
 	require.NoError(t, err)
 	require.Nil(t, call)
 	require.True(t, cacheHit)
@@ -171,13 +185,18 @@ func TestEmbedFnSharedCallCancellation(t *testing.T) {
 	embedFn := NewEmbedFn()
 	t.Cleanup(embedFn.Close)
 	provider := &controlledEmbedder{
-		started:  make(chan struct{}),
-		release:  make(chan struct{}),
-		canceled: make(chan struct{}),
+		started:     make(chan struct{}),
+		release:     make(chan struct{}),
+		canceled:    make(chan struct{}),
+		contextVals: make(chan any, 1),
 	}
 	embedFn.MustRegisterEmbedder("controlled", provider)
 
-	ctx1, cancel1 := context.WithCancelCause(context.Background())
+	ctx1, cancel1 := context.WithCancelCause(context.WithValue(
+		context.Background(),
+		embeddingTestContextKey{},
+		"first-caller-trace",
+	))
 	ctx2, cancel2 := context.WithCancelCause(context.Background())
 	t.Cleanup(func() {
 		cancel1(context.Canceled)
@@ -194,6 +213,7 @@ func TestEmbedFnSharedCallCancellation(t *testing.T) {
 		result1 <- result{embedding: embedding, err: err}
 	}()
 	waitForChannel(t, provider.started, "provider request to start")
+	require.Equal(t, "first-caller-trace", receiveFromChannel(t, provider.contextVals, "provider context value"))
 	go func() {
 		embedding, err := embedFn.EmbedWithContext(ctx2, nil, "controlled/model", "hello", nil)
 		result2 <- result{embedding: embedding, err: err}

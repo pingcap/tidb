@@ -80,13 +80,41 @@ func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {
 		ctx,
 		ast.EmbedText,
 		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
-		stringConst("mock/json"),
 		nullStringConst(),
+		stringConst("[1,2,3]"),
 	)
 	require.NoError(t, err)
 	_, isNull, err := fn.EvalVectorFloat32(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
+
+	fn, err = NewFunction(
+		ctx,
+		ast.EmbedText,
+		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+		stringConst("mock/json"),
+		nullStringConst(),
+	)
+	require.NoError(t, err)
+	_, isNull, err = fn.EvalVectorFloat32(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, isNull)
+
+	for _, options := range []*Constant{nullStringConst(), stringConst("")} {
+		fn, err = NewFunction(
+			ctx,
+			ast.EmbedText,
+			types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+			stringConst("mock/json"),
+			stringConst("[1,2,3]"),
+			options,
+		)
+		require.NoError(t, err)
+		vec, isNull, err := fn.EvalVectorFloat32(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, "[1,2,3]", vec.String())
+	}
 
 	fn, err = NewFunction(
 		ctx,

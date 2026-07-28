@@ -32,6 +32,13 @@ func TestRedactGlobalSysVarValueForLog(t *testing.T) {
 	} {
 		require.Equal(t, "******", redactGlobalSysVarValueForLog(name, "secret-api-key"))
 		require.Empty(t, redactGlobalSysVarValueForLog(name, ""))
+		require.Equal(t, "******", redactGlobalSysVarValueForAudit(name, "secret-api-key"))
+		require.Empty(t, redactGlobalSysVarValueForAudit(name, ""))
 	}
 	require.Equal(t, "ordinary-value", redactGlobalSysVarValueForLog("ordinary-variable", "ordinary-value"))
+	require.Equal(t, "ordinary-value", redactGlobalSysVarValueForAudit("ordinary-variable", "ordinary-value"))
+	require.Equal(t, "s3://bucket?secret-access-key=secret", redactGlobalSysVarValueForAudit(
+		vardef.TiDBCloudStorageURI,
+		"s3://bucket?secret-access-key=secret",
+	))
 }

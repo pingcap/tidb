@@ -448,6 +448,32 @@ func TestRedactTrafficStmt(t *testing.T) {
 	}
 }
 
+func TestSetStmtSecureTextRedactsEmbeddingAPIKeys(t *testing.T) {
+	p := parser.New()
+	for _, name := range []string{
+		"tidb_exp_embed_jina_ai_api_key",
+		"tidb_exp_embed_openai_api_key",
+		"tidb_exp_embed_cohere_api_key",
+		"tidb_exp_embed_huggingface_api_key",
+		"tidb_exp_embed_nvidia_nim_api_key",
+		"tidb_exp_embed_gemini_api_key",
+	} {
+		input := fmt.Sprintf("SET @@GLOBAL.%s = 'secret-api-key'", name)
+		node, err := p.ParseOneStmt(input, "", "")
+		require.NoError(t, err, input)
+		stmt, ok := node.(*ast.SetStmt)
+		require.True(t, ok, input)
+		require.Equal(t, fmt.Sprintf("SET @@GLOBAL.`%s`='******'", name), stmt.SecureText(), input)
+	}
+
+	// A similarly named user variable is not a system API-key configuration.
+	node, err := p.ParseOneStmt("SET @tidb_exp_embed_openai_api_key = 'ordinary-user-value'", "", "")
+	require.NoError(t, err)
+	stmt := node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-user-value")
+	require.NotContains(t, stmt.SecureText(), "******")
+}
+
 func TestSetPwdStmtSecureText(t *testing.T) {
 	// Direct construction: SetPwdStmt.User can be nil (current-user form),
 	// matching what Restore handles. SecureText must not leak "<nil>".

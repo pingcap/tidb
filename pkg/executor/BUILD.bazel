@@ -480,6 +480,7 @@ go_test(
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/coretestsdk",
+        "//pkg/plugin",
         "//pkg/privilege",
         "//pkg/resourcegroup",
         "//pkg/server",
