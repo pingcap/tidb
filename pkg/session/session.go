@@ -120,6 +120,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -4409,7 +4410,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
-		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
+		systemKSVer := waitSystemBootVersion()
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
 		} else if targetVer > systemKSVer {
@@ -4928,11 +4929,42 @@ const (
 	notBootstrapped = 0
 )
 
+// User keyspace startup waits for the SYSTEM keyspace to finish bootstrapping;
+// on exhaustion, notBootstrapped is returned for bootstrapSessionImpl to reject.
+// Note: we will wait nearly 30 minutes as long as the inner txn reports retryable
+// error, and will not respond kill signal during this time. Since the caller
+// is using a background context and won't cancel on kill signal anyway, pass it
+// won't help here. And do kill during bootstrap seems not that common, we can
+// enhance it later.
+func waitSystemBootVersion() int64 {
+	store := kvstore.GetSystemStorage()
+	const (
+		maxRetryCount = 360
+		maxInterval   = 5 * time.Second
+	)
+	backoffer := backoff.NewExponential(time.Second, 2, maxInterval)
+	var ver int64
+	// total backoff time is around ∑(1, 2, 4, 5...) ~= 30 minutes
+	start := time.Now()
+	for i := range maxRetryCount {
+		ver = mustGetStoreBootstrapVersion(store)
+		if ver != notBootstrapped {
+			break
+		}
+		if (i+1)%5 == 0 {
+			logutil.BgLogger().Info("waiting for the SYSTEM keyspace bootstrap to complete",
+				zap.Duration("total-waited", time.Since(start)))
+		}
+		time.Sleep(backoffer.Backoff(i))
+	}
+	return ver
+}
+
 func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 	var ver int64
 	// check in kv store
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		t := meta.NewReader(txn)
 		ver, err = t.GetBootstrapVersion()
