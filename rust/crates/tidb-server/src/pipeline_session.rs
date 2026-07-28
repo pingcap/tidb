@@ -38,6 +38,7 @@ use std::sync::Arc;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata};
 use tidb_protocol::ColumnInfo;
+use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
 
@@ -88,6 +89,11 @@ pub struct PipelineSessionFactory {
     /// into, shared by every connection this factory opens -- Go's one
     /// `sessmgr.Manager` per TiDB instance.
     processes: ProcessRegistry,
+    /// The account/global-privilege registry every connection this factory
+    /// opens shares -- Go's one `privilege.Manager` per `Domain`. Bootstraps
+    /// with `root`@`%` holding every privilege, as Go's `mysql.user` table
+    /// does on a fresh cluster.
+    privileges: PrivilegeRegistry,
 }
 
 impl PipelineSessionFactory {
@@ -95,6 +101,13 @@ impl PipelineSessionFactory {
     #[must_use]
     pub fn processes(&self) -> ProcessRegistry {
         self.processes.clone()
+    }
+
+    /// The account/global-privilege registry every connection this factory
+    /// opens shares.
+    #[must_use]
+    pub fn privileges(&self) -> PrivilegeRegistry {
+        self.privileges.clone()
     }
 }
 
@@ -131,6 +144,7 @@ impl QuerySessionFactory for PipelineSessionFactory {
             ))),
         );
         session.session.attach_process(context.connection_id, guard);
+        session.session.attach_privileges(self.privileges.clone());
         Ok(session)
     }
 }

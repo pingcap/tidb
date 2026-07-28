@@ -633,6 +633,46 @@ pub enum DriverError {
     /// Go `ErrViewWrongList` (1353): the `CREATE VIEW v (...)` column list
     /// and the body's select list have different widths.
     ViewWrongList,
+    /// Go `ErrCannotUser` (1396): `CREATE USER` named an account that
+    /// already exists. Go quotes the account as `'user'@'host'`.
+    CreateUserAlreadyExists {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
+    /// Go `ErrCannotUser` (1396): `DROP USER` named one or more accounts that
+    /// do not exist. Go collects every missing account across the statement,
+    /// rolls back (nothing is dropped), and reports them comma-joined,
+    /// unquoted `user@host` each (`auth.UserIdentity.String`,
+    /// `strings.Join(failedUsers, ",")`).
+    DropUserMissing {
+        /// The missing accounts, already formatted and comma-joined.
+        accounts: String,
+    },
+    /// Go's plain `errors.Errorf("Unknown user: %s", user)` (`REVOKE` on an
+    /// account that does not exist), unquoted `user@host`.
+    RevokeUnknownUser {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
+    /// Go `ErrCantCreateUserWithGrant` (1410): `GRANT` named an account that
+    /// does not exist and TiDB refuses to implicitly create one.
+    GrantToUnknownUser,
+    /// Go `ErrDynamicPrivilegeNotRegistered` (3929): a `GRANT`/`REVOKE`
+    /// privilege name is not one of the standard static privileges and is
+    /// not a registered dynamic privilege either.
+    DynamicPrivilegeNotRegistered(String),
+    /// Go `ErrNonexistingGrant` (1141): `SHOW GRANTS FOR` an account with no
+    /// grant row at all (also raised for an account that does not exist).
+    NonexistingGrant {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
 }
 
 /// Why a schema statement failed.
@@ -8872,6 +8912,43 @@ impl DriverError {
             1288,
             *b"HY000",
             format!("The target table {name} of the UPDATE is not updatable"),
+        ),
+        // Go `ErrCannotUser` (1396): "Operation %s failed for %.256s", quoted
+        // `'user'@'host'` for CREATE USER.
+        DriverError::CreateUserAlreadyExists { user, host } => MysqlError::new(
+            1396,
+            *b"HY000",
+            format!("Operation CREATE USER failed for '{user}'@'{host}'"),
+        ),
+        // Go `ErrCannotUser` (1396): DROP USER prints every failed account
+        // through `auth.UserIdentity.String`, unquoted `user@host`, joined
+        // by commas.
+        DriverError::DropUserMissing { accounts } => MysqlError::new(
+            1396,
+            *b"HY000",
+            format!("Operation DROP USER failed for {accounts}"),
+        ),
+        // Go: `errors.Errorf("Unknown user: %s", user)` in `RevokeExec.Next`.
+        DriverError::RevokeUnknownUser { user, host } => {
+            MysqlError::unknown(format!("Unknown user: {user}@{host}"))
+        }
+        // Go `ErrCantCreateUserWithGrant` (1410).
+        DriverError::GrantToUnknownUser => MysqlError::new(
+            1410,
+            *b"HY000",
+            "You are not allowed to create a user with GRANT".to_owned(),
+        ),
+        // Go `ErrDynamicPrivilegeNotRegistered` (3929).
+        DriverError::DynamicPrivilegeNotRegistered(name) => MysqlError::new(
+            3929,
+            *b"HY000",
+            format!("Dynamic privilege '{name}' is not registered with the server."),
+        ),
+        // Go `ErrNonexistingGrant` (1141).
+        DriverError::NonexistingGrant { user, host } => MysqlError::new(
+            1141,
+            *b"42000",
+            format!("There is no such grant defined for user '{user}' on host '{host}'"),
         ),
         // Go: "Unknown database '%-.192s'".
         DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(

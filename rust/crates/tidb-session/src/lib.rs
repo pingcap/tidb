@@ -135,6 +135,12 @@ pub struct Session {
     /// per-session privilege state needed to make the visibility rule
     /// testable ahead of a real grant table.
     has_process_priv: bool,
+    /// The server's account/global-privilege registry, shared by every
+    /// session a front end opens (see [`privilege::PrivilegeRegistry`]).
+    /// `None` for a session with no front end (unit tests, internal use),
+    /// which is why every check through it falls back to the pre-existing
+    /// bit above rather than treating an absent registry as "no privilege".
+    privileges: Option<privilege::PrivilegeRegistry>,
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
@@ -158,6 +164,7 @@ impl Default for Session {
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
+            privileges: None,
             rand: new_time_seeded_rand(),
         }
     }
@@ -194,6 +201,7 @@ struct Transaction {
 pub use tidb_executor::TxnErrorKind;
 
 pub mod infoschema;
+pub mod privilege;
 pub mod process;
 pub mod sysvar;
 pub mod vars;
@@ -628,6 +636,28 @@ impl Session {
                     }
                     Ok(Some(StmtOutput::Affected(0)))
                 }
+                tidb_ast::DdlStmt::CreateUser {
+                    if_not_exists,
+                    users,
+                    tls_options,
+                    resource_options,
+                    password_options,
+                    comment_or_attribute,
+                    resource_group,
+                } => Ok(Some(self.create_user_stmt(
+                    *if_not_exists,
+                    users,
+                    tls_options,
+                    resource_options,
+                    password_options,
+                    comment_or_attribute,
+                    resource_group,
+                )?)),
+                tidb_ast::DdlStmt::DropUser {
+                    is_role: false,
+                    if_exists,
+                    users,
+                } => Ok(Some(self.drop_user_stmt(*if_exists, users)?)),
                 _ => Ok(None),
             },
             Stmt::Admin(admin) => match &**admin {
@@ -732,6 +762,9 @@ impl Session {
                     };
                     Ok(Some(StmtOutput::Rows { columns, rows }))
                 }
+                tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
+                tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
+                tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
                 tidb_ast::AdminStmt::ShowDatabases(show) => {
                     if show.filter.is_some() {
                         return Err(DriverError::Unsupported(
@@ -1852,6 +1885,7 @@ impl Session {
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
+            privileges: None,
             rand: new_time_seeded_rand(),
         }
     }
@@ -1943,6 +1977,268 @@ impl Session {
     pub fn attach_process(&mut self, connection_id: u64, guard: process::ProcessGuard) {
         self.connection_id = Some(connection_id);
         self.process = Some(guard);
+    }
+
+    /// Joins this session to the server's account/global-privilege registry.
+    ///
+    /// Go's session reads `privilege.Manager` off the `Domain` every
+    /// connection shares; this is the equivalent handle, installed by the
+    /// front end the same way [`Session::attach_process`] installs the
+    /// process-list registry.
+    pub fn attach_privileges(&mut self, registry: privilege::PrivilegeRegistry) {
+        self.privileges = Some(registry);
+    }
+
+    /// Splits the `CURRENT_USER()` identity (`user@host`) this session
+    /// authenticated as, for privilege-registry lookups. `None` for a
+    /// session with no front end.
+    fn current_identity(&self) -> Option<(&str, &str)> {
+        let identity = self.current_user.as_deref()?;
+        identity.split_once('@')
+    }
+
+    /// `CREATE USER` at the GLOBAL scope this tier models: an account
+    /// identity and nothing else. Go `simple.go`'s `executeCreateUser`,
+    /// minus authentication, resource limits, and account annotations, which
+    /// this tier has no storage for and therefore refuses rather than
+    /// silently drops.
+    #[allow(clippy::too_many_arguments)]
+    fn create_user_stmt(
+        &mut self,
+        if_not_exists: bool,
+        users: &[tidb_ast::CreateUserSpec],
+        tls_options: &[tidb_ast::AlterUserTlsOption],
+        resource_options: &[tidb_ast::AlterUserResourceOption],
+        password_options: &[tidb_ast::CreateUserPasswordOption],
+        comment_or_attribute: &Option<tidb_ast::CreateUserCommentOrAttribute>,
+        resource_group: &Option<String>,
+    ) -> Result<StmtOutput, DriverError> {
+        if !tls_options.is_empty()
+            || !resource_options.is_empty()
+            || !password_options.is_empty()
+            || comment_or_attribute.is_some()
+            || resource_group.is_some()
+        {
+            return Err(DriverError::Unsupported(
+                "CREATE USER options beyond the account list are not supported yet",
+            ));
+        }
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "CREATE USER requires a server front end with a privilege registry",
+            ));
+        };
+        for spec in users {
+            if spec.auth.is_some() {
+                return Err(DriverError::Unsupported(
+                    "CREATE USER ... IDENTIFIED BY/WITH is not supported yet",
+                ));
+            }
+            let user = spec.user.user.as_str();
+            let host = spec.user.host.as_str();
+            // Go processes each account in source order and fails on the
+            // FIRST duplicate rather than batching, unlike DROP USER below.
+            if !registry.create_user(user, host) && !if_not_exists {
+                return Err(DriverError::CreateUserAlreadyExists {
+                    user: user.to_owned(),
+                    host: host.to_owned(),
+                });
+            }
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `DROP USER` at the GLOBAL scope this tier models. Go's
+    /// `executeDropUser` checks every named account exists BEFORE dropping
+    /// any of them, rolling the whole statement back and reporting every
+    /// missing account together if one is missing.
+    fn drop_user_stmt(
+        &mut self,
+        if_exists: bool,
+        users: &[tidb_ast::UserSpec],
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "DROP USER requires a server front end with a privilege registry",
+            ));
+        };
+        if !if_exists {
+            let missing: Vec<String> = users
+                .iter()
+                .filter(|spec| !registry.user_exists(&spec.user, &spec.host))
+                .map(|spec| format!("{}@{}", spec.user, spec.host))
+                .collect();
+            if !missing.is_empty() {
+                return Err(DriverError::DropUserMissing {
+                    accounts: missing.join(","),
+                });
+            }
+        }
+        for spec in users {
+            registry.drop_user(&spec.user, &spec.host);
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `GRANT <static privs> ON *.* TO <user>...` -- the GLOBAL-scope slice
+    /// of Go's `grant.go`. Roles, dynamic privileges, `WITH GRANT OPTION`,
+    /// column lists, and any level but `*.*` are refused rather than
+    /// silently accepted or dropped.
+    fn grant_stmt(&mut self, grant: &tidb_ast::GrantStmt) -> Result<StmtOutput, DriverError> {
+        if !matches!(grant.level, tidb_ast::GrantLevel::Global) {
+            return Err(DriverError::Unsupported(
+                "GRANT at database or table scope is not supported yet",
+            ));
+        }
+        if grant.object_type.is_some() {
+            return Err(DriverError::Unsupported(
+                "GRANT ... ON FUNCTION/PROCEDURE is not supported yet",
+            ));
+        }
+        if grant.with_grant {
+            return Err(DriverError::Unsupported(
+                "GRANT ... WITH GRANT OPTION is not supported yet",
+            ));
+        }
+        if !grant.tls_options.is_empty() {
+            return Err(DriverError::Unsupported(
+                "GRANT ... REQUIRE is not supported yet",
+            ));
+        }
+        let mask = self.resolve_global_priv_mask(&grant.privileges)?;
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "GRANT requires a server front end with a privilege registry",
+            ));
+        };
+        for spec in &grant.users {
+            let user = spec.user.user.as_str();
+            let host = spec.user.host.as_str();
+            // Go's default sql_mode forbids GRANT from implicitly creating
+            // the target account (captured: `ErrCantCreateUserWithGrant`,
+            // 1410).
+            if !registry.user_exists(user, host) {
+                return Err(DriverError::GrantToUnknownUser);
+            }
+            registry.grant(user, host, mask);
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `REVOKE <static privs> ON *.* FROM <user>...`. Go's `revoke.go`
+    /// requires every named account to already exist (`errors.Errorf("Unknown
+    /// user: %s", ...)`, captured); this tier does too.
+    fn revoke_stmt(&mut self, revoke: &tidb_ast::RevokeStmt) -> Result<StmtOutput, DriverError> {
+        if !matches!(revoke.level, tidb_ast::GrantLevel::Global) {
+            return Err(DriverError::Unsupported(
+                "REVOKE at database or table scope is not supported yet",
+            ));
+        }
+        if revoke.object_type.is_some() {
+            return Err(DriverError::Unsupported(
+                "REVOKE ... ON FUNCTION/PROCEDURE is not supported yet",
+            ));
+        }
+        let mask = self.resolve_global_priv_mask(&revoke.privileges)?;
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "REVOKE requires a server front end with a privilege registry",
+            ));
+        };
+        for spec in &revoke.users {
+            let user = spec.user.user.as_str();
+            let host = spec.user.host.as_str();
+            if !registry.user_exists(user, host) {
+                return Err(DriverError::RevokeUnknownUser {
+                    user: user.to_owned(),
+                    host: host.to_owned(),
+                });
+            }
+            registry.revoke(user, host, mask);
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// Resolves a `GRANT`/`REVOKE` privilege list to the bitmask this tier's
+    /// registry stores. `ALL [PRIVILEGES]` expands to every modeled global
+    /// privilege (Go: `mysql.AllGlobalPrivs`, minus the roles/GRANT OPTION
+    /// this tier does not model). A name that is not one of the standard
+    /// privileges this tier recognizes is refused with the same error Go
+    /// raises for an unregistered dynamic privilege (captured: 3929),
+    /// because `tidb-parser` accepts any bare identifier there through its
+    /// `ExtendedPriv`/dynamic-privilege grammar branch.
+    fn resolve_global_priv_mask(
+        &self,
+        privileges: &[tidb_ast::GrantPrivilege],
+    ) -> Result<u64, DriverError> {
+        let mut mask = 0u64;
+        for privilege in privileges {
+            if privilege.name == "ALL" {
+                mask |= privilege::all_privs_mask();
+                continue;
+            }
+            if !privilege.columns.is_empty() {
+                return Err(DriverError::Unsupported(
+                    "GRANT/REVOKE with a column list is not supported yet",
+                ));
+            }
+            match privilege::GlobalPriv::from_grant_name(&privilege.name) {
+                Some(priv_) if !privilege.dynamic => mask |= priv_.bit(),
+                _ => {
+                    return Err(DriverError::DynamicPrivilegeNotRegistered(
+                        privilege.name.clone(),
+                    ));
+                }
+            }
+        }
+        Ok(mask)
+    }
+
+    /// `SHOW GRANTS [FOR <user>]` at GLOBAL scope. `USING <roles>` is refused
+    /// rather than silently ignored, since active-role expansion is not
+    /// modeled here.
+    fn show_grants_stmt(
+        &mut self,
+        show: &tidb_ast::ShowGrantsStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        if !show.roles.is_empty() {
+            return Err(DriverError::Unsupported(
+                "SHOW GRANTS ... USING is not supported yet",
+            ));
+        }
+        let (user, host) = match &show.user {
+            None => {
+                let Some((user, host)) = self.current_identity() else {
+                    return Err(DriverError::Unsupported(
+                        "SHOW GRANTS requires an authenticated session",
+                    ));
+                };
+                (user.to_owned(), host.to_owned())
+            }
+            Some(spec) if spec.current_user => {
+                let Some((user, host)) = self.current_identity() else {
+                    return Err(DriverError::Unsupported(
+                        "SHOW GRANTS requires an authenticated session",
+                    ));
+                };
+                (user.to_owned(), host.to_owned())
+            }
+            Some(spec) => (spec.user.clone(), spec.host.clone()),
+        };
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "SHOW GRANTS requires a server front end with a privilege registry",
+            ));
+        };
+        let Some(line) = registry.show_grants(&user, &host) else {
+            return Err(DriverError::NonexistingGrant { user, host });
+        };
+        // Go: `fmt.Sprintf("Grants for %s", s.User)` -- `s.User.String()` is
+        // unquoted `user@host`.
+        Ok(string_column_output(
+            &format!("Grants for {user}@{host}"),
+            vec![line],
+        ))
     }
 
     /// Records the connection identifier `CONNECTION_ID()` reports, which Go
@@ -2654,7 +2950,12 @@ impl Session {
                 }),
             }],
         };
-        if self.has_process_priv || self.login_user.is_none() {
+        let has_process_via_registry = self.privileges.as_ref().is_some_and(|registry| {
+            self.current_identity().is_some_and(|(user, host)| {
+                registry.has_global_priv(user, host, privilege::GlobalPriv::Process)
+            })
+        });
+        if self.has_process_priv || has_process_via_registry || self.login_user.is_none() {
             return rows;
         }
         let me = self.process_list_user();
@@ -9816,5 +10117,188 @@ mod tests {
                 ["b", "bigint(20)", "YES", "", "<nil>", ""],
             ]
         );
+    }
+
+    /// A session with a GLOBAL-scope privilege registry attached, over a
+    /// fresh catalog. Root is bootstrapped with every privilege, matching
+    /// what `PipelineSessionFactory` gives every connection.
+    fn session_with_privileges() -> Session {
+        let mut session = Session::new();
+        session.attach_privileges(privilege::PrivilegeRegistry::default());
+        session
+    }
+
+    /// CAPTURED end to end (`pkg/executor/grant.go`, `revoke.go`,
+    /// `simple.go`, `show.go`): `CREATE USER` -> fresh `SHOW GRANTS` reports
+    /// `USAGE` -> `GRANT` in scrambled order prints in Go's fixed
+    /// `mysql.AllGlobalPrivs` order -> `REVOKE` removes exactly the one
+    /// privilege -> `DROP USER` then a missing-user error, matching the Go
+    /// source's `ErrCannotUser`/1396 wording exactly (`user@host`, unquoted).
+    #[test]
+    fn grant_revoke_and_show_grants_round_trip() {
+        let mut session = session_with_privileges();
+
+        session.run("CREATE USER 'u1'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [["GRANT USAGE ON *.* TO 'u1'@'%'"]]
+        );
+
+        session
+            .run("GRANT SELECT, PROCESS, INSERT, SUPER, UPDATE ON *.* TO 'u1'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [["GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO 'u1'@'%'"]]
+        );
+
+        session.run("REVOKE SUPER ON *.* FROM 'u1'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [["GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO 'u1'@'%'"]]
+        );
+
+        session.run("DROP USER 'u1'@'%'").unwrap();
+        match session.run("DROP USER 'nosuchuser'@'%'") {
+            Err(DriverError::DropUserMissing { accounts }) => {
+                assert_eq!(accounts, "nosuchuser@%");
+            }
+            other => panic!("expected DropUserMissing, got {other:?}"),
+        }
+    }
+
+    /// CAPTURED: `SHOW GRANTS` with no `FOR` reports the current session's
+    /// own account, and a fresh cluster's bootstrap `root`@`%` carries
+    /// `ALL PRIVILEGES ... WITH GRANT OPTION`.
+    #[test]
+    fn show_grants_for_current_user_reports_root_bootstrap() {
+        let mut session = session_with_privileges();
+        session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS")),
+            [["GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"]]
+        );
+    }
+
+    /// CAPTURED: re-creating an existing account is `ErrCannotUser`/1396,
+    /// quoted `'user'@'host'` (unlike `DROP USER`'s unquoted form).
+    #[test]
+    fn create_user_rejects_a_duplicate_account() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'dup1'@'%'").unwrap();
+        match session.run("CREATE USER 'dup1'@'%'") {
+            Err(DriverError::CreateUserAlreadyExists { user, host }) => {
+                assert_eq!(user, "dup1");
+                assert_eq!(host, "%");
+            }
+            other => panic!("expected CreateUserAlreadyExists, got {other:?}"),
+        }
+    }
+
+    /// CAPTURED: `GRANT ... TO` an account that was never created is
+    /// `ErrCantCreateUserWithGrant`/1410 -- TiDB's default sql_mode refuses
+    /// to implicitly create the target.
+    #[test]
+    fn grant_to_an_unknown_user_is_refused() {
+        let mut session = session_with_privileges();
+        assert!(matches!(
+            session.run("GRANT SELECT ON *.* TO 'nouser'@'%'"),
+            Err(DriverError::GrantToUnknownUser)
+        ));
+    }
+
+    /// CAPTURED: an unrecognized privilege name parses (through
+    /// `tidb-parser`'s dynamic-privilege grammar branch) but is refused at
+    /// execution with `ErrDynamicPrivilegeNotRegistered`/3929, naming the
+    /// privilege.
+    #[test]
+    fn granting_an_unregistered_privilege_name_is_refused() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'dup1'@'%'").unwrap();
+        match session.run("GRANT FOOBAR ON *.* TO 'dup1'@'%'") {
+            Err(DriverError::DynamicPrivilegeNotRegistered(name)) => assert_eq!(name, "FOOBAR"),
+            other => panic!("expected DynamicPrivilegeNotRegistered, got {other:?}"),
+        }
+    }
+
+    /// CAPTURED: `REVOKE ... FROM` an account that does not exist is Go's
+    /// plain `errors.Errorf("Unknown user: %s", user)`.
+    #[test]
+    fn revoke_from_an_unknown_user_is_refused() {
+        let mut session = session_with_privileges();
+        match session.run("REVOKE SELECT ON *.* FROM 'nouser'@'%'") {
+            Err(DriverError::RevokeUnknownUser { user, host }) => {
+                assert_eq!(user, "nouser");
+                assert_eq!(host, "%");
+            }
+            other => panic!("expected RevokeUnknownUser, got {other:?}"),
+        }
+    }
+
+    /// `ALL PRIVILEGES` grants every modeled global privilege, which folds
+    /// `SHOW GRANTS` to the `ALL PRIVILEGES` literal (Go `userPrivToString`).
+    #[test]
+    fn grant_all_privileges_collapses_show_grants() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'dup1'@'%'").unwrap();
+        session
+            .run("GRANT ALL PRIVILEGES ON *.* TO 'dup1'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'dup1'@'%'")),
+            [["GRANT ALL PRIVILEGES ON *.* TO 'dup1'@'%'"]]
+        );
+    }
+
+    /// OUT OF SCOPE, refused rather than faked: database/table-level grants,
+    /// `WITH GRANT OPTION`, and roles.
+    #[test]
+    fn out_of_scope_grant_forms_are_refused() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'dup1'@'%'").unwrap();
+        assert!(matches!(
+            session.run("GRANT SELECT ON test.* TO 'dup1'@'%'"),
+            Err(DriverError::Unsupported(_))
+        ));
+        assert!(matches!(
+            session.run("GRANT SELECT ON *.* TO 'dup1'@'%' WITH GRANT OPTION"),
+            Err(DriverError::Unsupported(_))
+        ));
+        assert!(matches!(
+            session.run("DROP ROLE 'r1'"),
+            Err(DriverError::Unsupported(_))
+        ));
+    }
+
+    /// `PROCESS` granted through `GRANT` (not the test-only
+    /// [`Session::set_process_privilege`] override) gates `SHOW PROCESSLIST`
+    /// visibility exactly the same way, wiring the registry all the way to
+    /// the process-list filter.
+    #[test]
+    fn grant_process_gates_processlist_visibility() {
+        let registry = process::ProcessRegistry::default();
+        let mut session = session_with_privileges();
+        session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
+        let guard = registry.register(
+            1,
+            "bob".to_owned(),
+            "10.0.0.1:1".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        session.attach_process(1, guard);
+        let _alice = registry.register(
+            2,
+            "alice".to_owned(),
+            "10.0.0.2:2".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+
+        session.run("CREATE USER 'bob'@'%'").unwrap();
+        assert_eq!(row_text(session.run("show processlist")).len(), 1);
+
+        session.run("GRANT PROCESS ON *.* TO 'bob'@'%'").unwrap();
+        assert_eq!(row_text(session.run("show processlist")).len(), 2);
     }
 }
