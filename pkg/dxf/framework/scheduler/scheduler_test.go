@@ -141,7 +141,7 @@ func TestTaskFailInManager(t *testing.T) {
 	taskID, err := mgr.CreateTask(ctx, "test", "test-type", "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		task, err := mgr.GetTaskByID(ctx, taskID)
+		task, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
 		require.NoError(t, err)
 		return task.State == proto.TaskStateFailed &&
 			strings.Contains(task.Error.Error(), "unknown task type")
@@ -155,7 +155,7 @@ func TestTaskFailInManager(t *testing.T) {
 	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, ks, 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		task, err := mgr.GetTaskByID(ctx, taskID)
+		task, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
 		require.NoError(t, err)
 		return task.State == proto.TaskStateFailed &&
 			strings.Contains(task.Error.Error(), "mock scheduler init error")
