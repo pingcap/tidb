@@ -19,8 +19,16 @@
 //! region modules provide one real BatchCommands transport and one PD-backed
 //! region route. One concrete process authority now shares its PD worker,
 //! maintained RegionCache, lock resolver, and TiKV transport across reads and
-//! normal optimistic 2PC writes. Pessimistic transactions, async commit, 1PC,
-//! large-transaction TTL management, and TLS remain outside this boundary.
+//! writes, for both optimistic and pessimistic transactions: a pessimistic
+//! transaction acquires statement-scoped locks at its own `for_update_ts` and
+//! then finishes through the same two-phase commit.
+//!
+//! Async commit, 1PC, fair (aggressive) locking's `WakeUpModeForceLock`,
+//! pessimistic value caching (`return_values`/`check_existence`), and TLS
+//! remain outside this boundary. So does the SQL seam: `BEGIN PESSIMISTIC` and
+//! `@@tidb_txn_mode` are not wired to [`transaction::RealPessimisticTransaction`]
+//! yet — the txnkv API is complete and tested, and the executor-side binding is
+//! a separate unit.
 
 mod assertion;
 mod batch_getter;

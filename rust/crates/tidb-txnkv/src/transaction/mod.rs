@@ -18,23 +18,33 @@ mod command_client;
 mod coordinator;
 mod mutation;
 mod mutation_buffer;
+mod pessimistic;
 mod region_batches;
 mod state;
+mod ttl;
 
 pub use command_client::{PublishedCommand, TransactionCommandClient};
 pub use coordinator::{
     OptimisticCoordinatorError, PdLockTimestampSource, ProductionOptimisticTransaction,
-    RealOptimisticTransaction, RealOptimisticTransactionOpener, SnapshotGetResult,
+    ProductionPessimisticTransaction, RealOptimisticTransaction, RealOptimisticTransactionOpener,
+    SnapshotGetResult,
 };
 pub use mutation::{
     MutationSetError, OptimisticMutation, OptimisticMutationKind, MAX_OPTIMISTIC_KEY_BYTES,
     MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES, MAX_OPTIMISTIC_VALUE_BYTES,
 };
 pub use mutation_buffer::{MutationBufferError, TransactionMutationBuffer};
+pub use pessimistic::{
+    AcquiredLocks, DeadlockDetail, LockWaitTime, PessimisticLockFailure, RealPessimisticTransaction,
+};
 pub use region_batches::RegionMutationBatch;
 pub use state::{
     CleanupBatchFailure, CleanupFailedTransaction, CommittedTransaction, OptimisticCommitOutcome,
     OptimisticTransactionReceipt, OptimisticTransactionState, ReadOnlyTransaction,
     RolledBackTransaction, SecondaryCommitFailure, SnapshotReadReceipt, TransactionAttemptPhase,
     TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause, UndeterminedTransaction,
+};
+pub use ttl::{
+    HeartBeatFailure, KeepAliveReport, KeepAliveStop, LockKeepAlive, TxnHeartBeatSender,
+    MANAGED_LOCK_TTL_MS, MAX_CONSECUTIVE_FAILURES, MAX_TXN_TTL_MS,
 };

@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 use tidb_pd_client::PdClient;
 use tidb_proto::{
     KvrpcAssertionLevel, KvrpcBatchRollbackRequest, KvrpcCommitRequest, KvrpcCommitRole,
-    KvrpcCommitTsExpired, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcPrewriteRequest,
-    KvrpcPrewriteResponse,
+    KvrpcCommitTsExpired, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcPessimisticAction,
+    KvrpcPrewriteRequest, KvrpcPrewriteResponse,
 };
 
 use crate::lock::{
@@ -45,9 +45,10 @@ use super::state::{
     TransactionAttemptPhase, TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
     UndeterminedTransaction,
 };
+use super::ttl::{HeartBeatFailure, LockKeepAlive, TxnHeartBeatSender, MANAGED_LOCK_TTL_MS};
 
 const DEFAULT_LOCK_TTL_MS: u64 = 3_000;
-const MAX_LOCK_ATTEMPTS: usize = 4;
+pub(super) const MAX_LOCK_ATTEMPTS: usize = 4;
 const TSO_LOGICAL_BITS: u32 = 18;
 const MAX_COMMIT_TS_DRIFT_MS: u64 = 60 * 60 * 1_000;
 
@@ -188,7 +189,130 @@ impl RealOptimisticTransactionOpener {
             planned_aggregate_bytes,
         )
     }
+
+    /// Opens a pessimistic transaction over the same process authorities.
+    ///
+    /// It shares the optimistic opener because a pessimistic transaction *is*
+    /// an optimistic two-phase commit preceded by statement-level locking; only
+    /// the conflict-detection point differs.
+    pub fn begin_pessimistic(
+        &self,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<ProductionPessimisticTransaction, OptimisticCoordinatorError> {
+        let opened_at = Instant::now();
+        let two_pc = self.begin(planned_mutation_count, planned_aggregate_bytes)?;
+        super::RealPessimisticTransaction::from_transaction(two_pc, opened_at)
+    }
+
+    /// Starts refreshing `primary`'s lock TTL until the handle is dropped.
+    ///
+    /// A pessimistic transaction must call this once its primary key is
+    /// locked, because that lock then has to survive every later statement.
+    /// The keep-alive runs on its own thread with its own session opened from
+    /// these same process authorities — the caller's session is thread-local
+    /// and cannot be shared.
+    pub fn start_lock_keep_alive(
+        &self,
+        primary: Vec<u8>,
+        start_ts: u64,
+    ) -> Result<LockKeepAlive, String> {
+        // client-go refreshes at half the managed TTL, so a lock is renewed
+        // once before it could expire even if one heartbeat is lost.
+        self.start_lock_keep_alive_with_tick(
+            primary,
+            start_ts,
+            Duration::from_millis(MANAGED_LOCK_TTL_MS / 2),
+        )
+    }
+
+    /// Same as [`Self::start_lock_keep_alive`] with an explicit refresh
+    /// interval, so a proof can observe several refreshes without waiting the
+    /// production interval.
+    pub fn start_lock_keep_alive_with_tick(
+        &self,
+        primary: Vec<u8>,
+        start_ts: u64,
+        tick: Duration,
+    ) -> Result<LockKeepAlive, String> {
+        let opener = self.opener.clone();
+        let pd = self.pd.clone();
+        let timeout = self.timeout;
+        LockKeepAlive::start(primary, start_ts, tick, move || {
+            let runtime = opener
+                .open_session()
+                .map_err(|error| format!("cannot open a keep-alive session: {error}"))?;
+            Ok(SessionHeartBeatSender {
+                runtime,
+                pd,
+                timeout,
+            })
+        })
+    }
 }
+
+/// Production TxnHeartBeat sender bound to one keep-alive thread's session.
+struct SessionHeartBeatSender {
+    runtime: SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>,
+    pd: PdClient,
+    timeout: Duration,
+}
+
+impl TxnHeartBeatSender for SessionHeartBeatSender {
+    fn current_ts(&self) -> Result<u64, String> {
+        self.pd.get_timestamp().map_err(|error| error.to_string())
+    }
+
+    fn send_heart_beat(
+        &mut self,
+        primary: &[u8],
+        start_ts: u64,
+        advise_ttl_ms: u64,
+    ) -> Result<u64, HeartBeatFailure> {
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        let route = point_route(&self.runtime, primary)
+            .map_err(|error| HeartBeatFailure::Transport(error.to_string()))?;
+        let request = tidb_proto::KvrpcTxnHeartBeatRequest {
+            primary_lock: primary.to_vec(),
+            start_version: start_ts,
+            advise_lock_ttl: advise_ttl_ms,
+            ..tidb_proto::KvrpcTxnHeartBeatRequest::default()
+        };
+        let published = self
+            .runtime
+            .client()
+            .try_borrow_mut()
+            .map_err(|_| {
+                HeartBeatFailure::Transport("keep-alive session is already borrowed".to_owned())
+            })?
+            .publish_txn_heart_beat(route.address(), &request, route.context(), &call);
+        match published {
+            PublishedCommand::BeforePublication(error)
+            | PublishedCommand::AfterPublication { error, .. } => {
+                Err(HeartBeatFailure::Transport(error))
+            }
+            PublishedCommand::Response(response) => {
+                // A region error is transient: the next tick reroutes. A key
+                // error is not — it means the lock this heartbeat exists to
+                // refresh is gone.
+                if let Some(region_error) = response.response.region_error.as_ref() {
+                    return Err(HeartBeatFailure::Transport(format!("{region_error:?}")));
+                }
+                if let Some(error) = response.response.error.as_ref() {
+                    return Err(HeartBeatFailure::Rejected(format!("{error:?}")));
+                }
+                Ok(response.response.lock_ttl)
+            }
+        }
+    }
+}
+
+/// The one production pessimistic transaction.
+pub type ProductionPessimisticTransaction = super::RealPessimisticTransaction<
+    TonicCoprocessorClient,
+    PdRegionLoader,
+    PdLockTimestampSource,
+>;
 
 /// The one production transaction: real TiKV transport, real PD-backed region
 /// topology, and real PD timestamps.
@@ -216,6 +340,23 @@ pub struct RealOptimisticTransaction<C, L, T> {
     forward_backoff: RegionBackoffBudget,
     secondary_backoff: RegionBackoffBudget,
     cleanup_backoff: RegionBackoffBudget,
+    pessimistic: Option<PessimisticPrewritePlan>,
+}
+
+/// What a pessimistic transaction already proved before it reached Prewrite.
+///
+/// Prewrite of a pessimistic transaction is not a second conflict check: for
+/// every key whose pessimistic lock this transaction still holds, TiKV must
+/// verify the lock instead of re-checking for write conflicts, which is what
+/// makes the statement-level `for_update_ts` retry safe. A key that was never
+/// locked — a pure insert of a new row, for instance — keeps the optimistic
+/// check.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PessimisticPrewritePlan {
+    /// Latest statement timestamp under which locks were acquired.
+    pub(super) for_update_ts: u64,
+    /// Exact encoded keys this transaction holds a pessimistic lock on.
+    pub(super) locked_keys: std::collections::BTreeSet<Vec<u8>>,
 }
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
@@ -265,7 +406,25 @@ where
             forward_backoff: RegionBackoffBudget::campaign_default(),
             secondary_backoff: RegionBackoffBudget::campaign_default(),
             cleanup_backoff: RegionBackoffBudget::campaign_default(),
+            pessimistic: None,
         })
+    }
+
+    /// Binds the pessimistic locks a caller already acquired at `start_ts`.
+    pub(super) fn set_pessimistic_prewrite(&mut self, plan: PessimisticPrewritePlan) {
+        self.pessimistic = Some(plan);
+    }
+
+    pub(super) const fn runtime(&self) -> &SharedReadRuntime<C, L> {
+        &self.runtime
+    }
+
+    pub(super) const fn timestamps(&self) -> &T {
+        &self.timestamps
+    }
+
+    pub(super) const fn call_timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// Snapshot timestamp allocated before any read or write.
@@ -760,6 +919,21 @@ where
             assertion_level: KvrpcAssertionLevel::Strict as i32,
             ..KvrpcPrewriteRequest::default()
         };
+        if let Some(plan) = self.pessimistic.as_ref() {
+            request.for_update_ts = plan.for_update_ts;
+            request.min_commit_ts = plan.for_update_ts.saturating_add(1);
+            request.pessimistic_actions = batch
+                .mutations()
+                .iter()
+                .map(|mutation| {
+                    if plan.locked_keys.contains(mutation.key()) {
+                        KvrpcPessimisticAction::DoPessimisticCheck as i32
+                    } else {
+                        KvrpcPessimisticAction::SkipPessimisticCheck as i32
+                    }
+                })
+                .collect();
+        }
         request.context = None;
         let mut context = batch.context().clone();
         context.is_retry_request = is_retry;
@@ -830,7 +1004,7 @@ where
         }
     }
 
-    fn recover_region_error(
+    pub(super) fn recover_region_error(
         &mut self,
         phase: RecoveryPhase,
         error: &tidb_proto::RegionError,
@@ -1597,13 +1771,13 @@ fn record_attempt(
 }
 
 #[derive(Clone, Copy)]
-enum RecoveryPhase {
+pub(super) enum RecoveryPhase {
     Forward,
     Secondary,
     Cleanup,
 }
 
-fn classify_key_error(error: &KvrpcKeyError) -> TransactionCause {
+pub(super) fn classify_key_error(error: &KvrpcKeyError) -> TransactionCause {
     if let Some(already_exists) = error.already_exist.as_ref() {
         return TransactionCause::AlreadyExists {
             key: already_exists.key.clone(),
@@ -1659,7 +1833,7 @@ fn validate_commit_ts_expired(
     Ok(expired.min_commit_ts)
 }
 
-fn transaction_lock_ttl_ms(opened_at: Instant, transaction_bytes: usize) -> u64 {
+pub(super) fn transaction_lock_ttl_ms(opened_at: Instant, transaction_bytes: usize) -> u64 {
     const BYTES_PER_MIB: f64 = (1024 * 1024) as f64;
     const TTL_FACTOR_MS: f64 = 6_000.0;
     const MANAGED_LOCK_TTL_MS: u64 = 20_000;
@@ -1676,7 +1850,10 @@ fn transaction_lock_ttl_ms(opened_at: Instant, transaction_bytes: usize) -> u64 
     base.saturating_add(elapsed_ms)
 }
 
-fn wait_with_call(call: &UnaryCallContext, delay: Duration) -> Result<(), TransactionCause> {
+pub(super) fn wait_with_call(
+    call: &UnaryCallContext,
+    delay: Duration,
+) -> Result<(), TransactionCause> {
     if call.cancellation().is_cancelled() || delay > call.timeout() {
         return Err(TransactionCause::Transport {
             detail: "transaction wait exceeded its deadline or was cancelled".to_owned(),
@@ -1695,7 +1872,7 @@ fn wait_with_call(call: &UnaryCallContext, delay: Duration) -> Result<(), Transa
     Ok(())
 }
 
-fn alive_retry_delay(remaining_ttl: Duration) -> Duration {
+pub(super) fn alive_retry_delay(remaining_ttl: Duration) -> Duration {
     remaining_ttl.max(Duration::from_millis(10))
 }
 
