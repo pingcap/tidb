@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "export",
+    srcs = [
+        "doc.go",
+        "proto.go",
+        "scheduler.go",
+        "split.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/export",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/store/helper",
+        "//pkg/tablecodec",
+        "//pkg/util/logutil",
+        "//pkg/util/mathutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "export_test",
+    timeout = "short",
+    srcs = [
+        "proto_test.go",
+        "scheduler_test.go",
+        "split_test.go",
+    ],
+    embed = [":export"],
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "@com_github_stretchr_testify//require",
+    ],
+)
