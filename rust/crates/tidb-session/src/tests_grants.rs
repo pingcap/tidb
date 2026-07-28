@@ -1,0 +1,1247 @@
+#![cfg(test)]
+
+use crate::tests_support::*;
+use crate::*;
+
+/// The `information_schema` PRIVILEGES family: `SCHEMA_PRIVILEGES`,
+/// `TABLE_PRIVILEGES`, `COLUMN_PRIVILEGES`.
+///
+/// The surprising part, and the reason this test exists: these three are
+/// DECLARED in Go's `pkg/infoschema/tables.go` but have NO retriever in
+/// `pkg/executor`, so real TiDB serves the header and NEVER a row --
+/// even when grants exist. CAPTURED from `testkit.CreateMockStore` after
+/// `GRANT SELECT, INSERT ON db1.* TO 'u1'@'%'`,
+/// `GRANT ALL PRIVILEGES ON db1.* TO 'u2'@'localhost'`,
+/// `GRANT SELECT ON db1.t1 TO 'u1'@'%' WITH GRANT OPTION` and
+/// `GRANT UPDATE, DELETE ON db1.t1 TO 'u2'@'localhost'`: every
+/// `SELECT *` came back empty and `SELECT COUNT(*)` came back `0`.
+///
+/// So filling these in from the privilege registry -- which HAS all the
+/// grant data -- would be a DIVERGENCE from Go, not a completion. The
+/// emptiness is the transcreated behavior.
+#[test]
+fn infoschema_privileges_tables_are_header_only() {
+    let mut session = Session::new();
+    session.attach_privileges(privilege::PrivilegeRegistry::default());
+    session.run("CREATE DATABASE db1").unwrap();
+    session.run("CREATE TABLE db1.t1 (a INT)").unwrap();
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+    session.run("CREATE USER 'u2'@'localhost'").unwrap();
+    session
+        .run("GRANT SELECT, INSERT ON db1.* TO 'u1'@'%'")
+        .unwrap();
+    session
+        .run("GRANT ALL PRIVILEGES ON db1.* TO 'u2'@'localhost'")
+        .unwrap();
+    // Table scope too, so the emptiness is not just a DB-scope artifact.
+    // (Go's capture also used `WITH GRANT OPTION` here; this tier does
+    // not model that yet, and it makes no difference to the result --
+    // the table is empty either way.)
+    session.run("GRANT SELECT ON db1.t1 TO 'u1'@'%'").unwrap();
+
+    let query = |session: &mut Session, sql: &str| match session.run_with_columns(sql).unwrap() {
+        StmtOutput::Rows { columns, rows } => (
+            columns
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            rows,
+        ),
+        other => panic!("expected rows, got {other:?}"),
+    };
+
+    let (names, rows) = query(
+        &mut session,
+        "SELECT * FROM information_schema.schema_privileges",
+    );
+    assert_eq!(
+        names,
+        [
+            "GRANTEE",
+            "TABLE_CATALOG",
+            "TABLE_SCHEMA",
+            "PRIVILEGE_TYPE",
+            "IS_GRANTABLE",
+        ]
+    );
+    assert!(rows.is_empty(), "grants must NOT surface here");
+
+    let (names, rows) = query(
+        &mut session,
+        "SELECT * FROM information_schema.table_privileges",
+    );
+    assert_eq!(
+        names,
+        [
+            "GRANTEE",
+            "TABLE_CATALOG",
+            "TABLE_SCHEMA",
+            "TABLE_NAME",
+            "PRIVILEGE_TYPE",
+            "IS_GRANTABLE",
+        ]
+    );
+    assert!(rows.is_empty(), "grants must NOT surface here");
+
+    let (names, rows) = query(
+        &mut session,
+        "SELECT * FROM information_schema.column_privileges",
+    );
+    assert_eq!(
+        names,
+        [
+            "GRANTEE",
+            "TABLE_CATALOG",
+            "TABLE_SCHEMA",
+            "TABLE_NAME",
+            "COLUMN_NAME",
+            "PRIVILEGE_TYPE",
+            "IS_GRANTABLE",
+        ]
+    );
+    assert!(rows.is_empty(), "grants must NOT surface here");
+
+    // Go returns `0`, not an error, for the aggregate over the empty
+    // body -- so the tables are real relations, not stubs that fail.
+    for table in ["schema_privileges", "table_privileges", "column_privileges"] {
+        let (_, rows) = query(
+            &mut session,
+            &format!("SELECT COUNT(*) FROM information_schema.{table}"),
+        );
+        assert_eq!(rows, vec![vec![Datum::Int(0)]], "COUNT(*) over {table}");
+    }
+
+    // A WHERE filter over the empty body also runs the ordinary plan
+    // path rather than erroring on an unknown table.
+    let (_, rows) = query(
+        &mut session,
+        "SELECT grantee FROM information_schema.schema_privileges WHERE table_schema = 'db1'",
+    );
+    assert!(rows.is_empty());
+}
+
+/// SHOW WARNINGS / SHOW ERRORS, checked against captured TiDB output.
+///
+/// NOT PORTED from Go's own suites: the warnings raised by evaluation
+/// (`1/0` is 1365 there) and by write-time truncation, because this tier
+/// does not yet produce those warnings -- only the preprocessor gate and
+/// the failed-statement error reach the buffer here. The filter forms of
+/// both statements are refused, not ignored.
+/// Captured from TiDB (`show processlist` on a fresh testkit session):
+///
+/// ```text
+/// Id  User  Host  db    Command  Time  State       Info
+/// 1               test  Query    0     autocommit  show processlist
+/// ```
+///
+/// with column types `Id BIGINT`, `User/Host/db/Command/State VARCHAR`,
+/// `Time INT`, `Info STRING` -- and `show full processlist` differing only
+/// in that `Info` is not truncated to 100 runes.
+///
+/// A session with no server front lists exactly itself, which is what
+/// this checks; the whole-server list is covered over TCP in
+/// `tidb-server`'s `pipeline_mysql_client_source` test.
+#[test]
+fn show_processlist_lists_this_session() {
+    let mut session = Session::new();
+    let StmtOutput::Rows { columns, rows } = session.run_with_columns("show processlist").unwrap()
+    else {
+        panic!("SHOW PROCESSLIST answers with rows");
+    };
+    assert_eq!(
+        columns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Id", "User", "Host", "db", "Command", "Time", "State", "Info"]
+    );
+    let text: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|v| datum_text(v).unwrap_or_else(|| "NULL".to_owned()))
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        text,
+        vec![vec![
+            "0".to_owned(),
+            String::new(),
+            String::new(),
+            "test".to_owned(),
+            "Query".to_owned(),
+            "0".to_owned(),
+            "autocommit".to_owned(),
+            "show processlist".to_owned(),
+        ]]
+    );
+}
+
+/// Captured from TiDB: `SHOW PROCESSLIST` truncates `Info` to 100 runes
+/// and `SHOW FULL PROCESSLIST` does not.
+#[test]
+fn show_full_processlist_does_not_truncate_info() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    let guard = registry.register(1, String::new(), String::new(), "test".to_owned(), None);
+    session.attach_process(1, guard);
+    // A peer connection, which is the row whose Info the SHOW truncates
+    // (the running SHOW is this session's own Info).
+    let _peer = registry.register(
+        9,
+        "alice".to_owned(),
+        "10.0.0.1:33".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    let long = format!("select /* {} */ 1", "x".repeat(200));
+    registry.statement_started(9, &long, "autocommit");
+    let short = row_text(session.run("show processlist"));
+    assert_eq!(short.len(), 2);
+    assert_eq!(short[1][0], "9");
+    assert_eq!(short[1][1], "alice");
+    assert_eq!(short[1][2], "10.0.0.1:33");
+    assert_eq!(short[1][4], "Query");
+    assert_eq!(short[1][7].chars().count(), 100);
+    // This session's own row reports the SHOW it is running.
+    assert_eq!(short[0][7], "show processlist");
+    let full = row_text(session.run("show full processlist"));
+    assert_eq!(full[1][7], long);
+    assert_eq!(full[0][7], "show full processlist");
+}
+
+/// Go `setDataForProcessList` / `fetchShowProcessList`: without the
+/// `PROCESS` privilege a session sees only its own connections, on both
+/// `SHOW PROCESSLIST` and `information_schema.PROCESSLIST`; with it, all
+/// of them.
+#[test]
+fn process_privilege_gates_visibility_on_both_surfaces() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
+    let guard = registry.register(
+        1,
+        "bob".to_owned(),
+        "10.0.0.1:1".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    session.attach_process(1, guard);
+    let _alice = registry.register(
+        2,
+        "alice".to_owned(),
+        "10.0.0.2:2".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+
+    // No PROCESS privilege: only bob's own row.
+    let show = row_text(session.run("show processlist"));
+    assert_eq!(show.len(), 1);
+    assert_eq!(show[0][1], "bob");
+    let table = row_text(session.run("select * from information_schema.processlist"));
+    assert_eq!(table.len(), 1);
+    assert_eq!(table[0][1], "bob");
+
+    // With PROCESS: every connection, on both surfaces.
+    session.set_process_privilege(true);
+    let show = row_text(session.run("show processlist"));
+    assert_eq!(show.len(), 2);
+    let table = row_text(session.run("select * from information_schema.processlist"));
+    assert_eq!(table.len(), 2);
+}
+
+/// CAPTURED (`pkg/infoschema/tables.go` `tableProcesslistCols`): the
+/// exact column list and order of `information_schema.PROCESSLIST`,
+/// which is 12 columns wider than `SHOW PROCESSLIST`'s 8.
+#[test]
+fn information_schema_processlist_has_the_captured_column_list() {
+    let mut session = Session::new();
+    let StmtOutput::Rows { columns, rows } = session
+        .run_with_columns("select * from information_schema.processlist")
+        .unwrap()
+    else {
+        panic!("PROCESSLIST answers with rows");
+    };
+    assert_eq!(
+        columns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "ID",
+            "USER",
+            "HOST",
+            "DB",
+            "COMMAND",
+            "TIME",
+            "STATE",
+            "INFO",
+            "DIGEST",
+            "MEM",
+            "MEM_ARBITRATION",
+            "MEM_WAIT_ARBITRATE_START",
+            "MEM_WAIT_ARBITRATE_BYTES",
+            "DISK",
+            "TxnStart",
+            "RESOURCE_GROUP",
+            "SESSION_ALIAS",
+            "ROWS_AFFECTED",
+            "TIDB_CPU",
+            "TIKV_CPU",
+        ]
+    );
+    assert_eq!(rows.len(), 1);
+}
+
+/// `WHERE` over the virtual table runs through the ordinary plan, exactly
+/// as it does for the other `information_schema` tables.
+#[test]
+fn information_schema_processlist_where_filters_by_user() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+    session.set_process_privilege(true);
+    let guard = registry.register(
+        1,
+        "root".to_owned(),
+        "127.0.0.1:1".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    session.attach_process(1, guard);
+    let _alice = registry.register(
+        2,
+        "alice".to_owned(),
+        "10.0.0.2:2".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    let rows = row_text(
+        session.run("select id, user from information_schema.processlist where user = 'alice'"),
+    );
+    assert_eq!(rows, vec![vec!["2".to_owned(), "alice".to_owned()]]);
+}
+
+/// Captured from TiDB: `KILL <unknown id>` is NOT an error -- it answers
+/// OK having done nothing (1094 belongs to EXPLAIN FOR CONNECTION).
+#[test]
+fn kill_answers_ok_and_reaches_only_live_connections() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[derive(Default)]
+    struct Counter {
+        queries: AtomicUsize,
+        connections: AtomicUsize,
+    }
+    impl process::ProcessKillTarget for Counter {
+        fn cancel_query(&self) {
+            self.queries.fetch_add(1, Ordering::AcqRel);
+        }
+        fn kill_connection(&self) {
+            self.connections.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+    let registry = process::ProcessRegistry::default();
+    let target = Arc::new(Counter::default());
+    let mut session = Session::new();
+    let guard = registry.register(
+        5,
+        "alice".to_owned(),
+        String::new(),
+        "test".to_owned(),
+        Some(target.clone()),
+    );
+    session.attach_process(5, guard);
+    // KILL answers with an affected-row count, which the wire front turns
+    // into the OK packet Go sends.
+    assert_eq!(
+        session.statement_kind("kill 999999").unwrap(),
+        StmtKind::Write
+    );
+    assert_eq!(session.run("kill 999999").unwrap(), StmtResult::Affected(0));
+    assert_eq!(target.connections.load(Ordering::Acquire), 0);
+    // Killing one's own query is legal and only cancels the statement.
+    assert_eq!(
+        session.run("kill query 5").unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(target.queries.load(Ordering::Acquire), 1);
+    assert_eq!(
+        session.run("kill connection 5").unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(target.connections.load(Ordering::Acquire), 1);
+    // Go accepts CONNECTION_ID() and rejects any other expression.
+    assert_eq!(
+        session.run("kill query connection_id()").unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(target.queries.load(Ordering::Acquire), 2);
+    assert!(session.run("kill query 1 + 1").is_err());
+}
+
+/// CAPTURED end to end (`pkg/executor/grant.go`, `revoke.go`,
+/// `simple.go`, `show.go`): `CREATE USER` -> fresh `SHOW GRANTS` reports
+/// `USAGE` -> `GRANT` in scrambled order prints in Go's fixed
+/// `mysql.AllGlobalPrivs` order -> `REVOKE` removes exactly the one
+/// privilege -> `DROP USER` then a missing-user error, matching the Go
+/// source's `ErrCannotUser`/1396 wording exactly (`user@host`, unquoted).
+#[test]
+fn grant_revoke_and_show_grants_round_trip() {
+    let mut session = session_with_privileges();
+
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [["GRANT USAGE ON *.* TO 'u1'@'%'"]]
+    );
+
+    session
+        .run("GRANT SELECT, PROCESS, INSERT, SUPER, UPDATE ON *.* TO 'u1'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [["GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO 'u1'@'%'"]]
+    );
+
+    session.run("REVOKE SUPER ON *.* FROM 'u1'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [["GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO 'u1'@'%'"]]
+    );
+
+    session.run("DROP USER 'u1'@'%'").unwrap();
+    match session.run("DROP USER 'nosuchuser'@'%'") {
+        Err(DriverError::DropUserMissing { accounts }) => {
+            assert_eq!(accounts, "nosuchuser@%");
+        }
+        other => panic!("expected DropUserMissing, got {other:?}"),
+    }
+}
+
+/// DYNAMIC privileges through `GRANT`/`REVOKE`/`SHOW GRANTS`, captured
+/// from `pkg/executor/zz_dump_dynpriv_test.go` against
+/// `testkit.CreateMockStore`.
+///
+/// The captured ordering rule: dynamic lines come LAST, after every
+/// static scope, as at most two lines -- the non-grantable privileges
+/// first, then the grantable ones with the ` WITH GRANT OPTION` suffix
+/// -- each an alphabetically sorted comma-joined list on `*.*`. The
+/// `GRANT USAGE ON *.*` global line is still printed for an account
+/// whose only privileges are dynamic.
+#[test]
+fn dynamic_privileges_grant_revoke_and_show_grants() {
+    let mut session = session_with_privileges();
+    session.run("CREATE DATABASE db1").unwrap();
+    session.run("CREATE TABLE db1.t (a INT)").unwrap();
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+
+    // A dynamic privilege is GLOBAL-only: `ErrIllegalPrivilegeLevel`
+    // (3619) at DB and TABLE scope, and it fires BEFORE the
+    // is-it-registered check.
+    for level in ["db1.*", "db1.t"] {
+        match session.run(&format!("GRANT BACKUP_ADMIN ON {level} TO 'u1'@'%'")) {
+            Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "BACKUP_ADMIN"),
+            other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
+        }
+    }
+    match session.run("REVOKE BACKUP_ADMIN ON db1.* FROM 'u1'@'%'") {
+        Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "BACKUP_ADMIN"),
+        other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
+    }
+    // An UNREGISTERED name is 3929 at `*.*` -- and 3619 elsewhere, since
+    // the level check runs first.
+    match session.run("GRANT NOT_A_REAL_PRIV ON *.* TO 'u1'@'%'") {
+        Err(DriverError::DynamicPrivilegeNotRegistered(name)) => {
+            assert_eq!(name, "NOT_A_REAL_PRIV");
+        }
+        other => panic!("expected DynamicPrivilegeNotRegistered, got {other:?}"),
+    }
+    match session.run("GRANT NOT_A_REAL_PRIV ON db1.* TO 'u1'@'%'") {
+        Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "NOT_A_REAL_PRIV"),
+        other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
+    }
+
+    // The registered names are accepted case-insensitively.
+    session
+        .run("GRANT BACKUP_ADMIN ON *.* TO 'u1'@'%'")
+        .unwrap();
+    session
+        .run("GRANT connection_admin ON *.* TO 'u1'@'%'")
+        .unwrap();
+    session
+        .run("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' WITH GRANT OPTION")
+        .unwrap();
+    session
+        .run("GRANT RESTRICTED_USER_ADMIN ON *.* TO 'u1'@'%' WITH GRANT OPTION")
+        .unwrap();
+    session
+        .run("GRANT SELECT, PROCESS ON *.* TO 'u1'@'%'")
+        .unwrap();
+    session.run("GRANT INSERT ON db1.* TO 'u1'@'%'").unwrap();
+    session.run("GRANT UPDATE ON db1.t TO 'u1'@'%'").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [
+            ["GRANT SELECT,PROCESS ON *.* TO 'u1'@'%'"],
+            ["GRANT INSERT ON `db1`.* TO 'u1'@'%'"],
+            ["GRANT UPDATE ON `db1`.`t` TO 'u1'@'%'"],
+            ["GRANT BACKUP_ADMIN,CONNECTION_ADMIN ON *.* TO 'u1'@'%'"],
+            [
+                "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' \
+                     WITH GRANT OPTION"
+            ],
+        ]
+    );
+
+    // REVOKE of a registered privilege the account holds; of one it does
+    // not hold (silent); of an unregistered name (3929 as a WARNING, the
+    // statement still succeeding).
+    session
+        .run("REVOKE BACKUP_ADMIN ON *.* FROM 'u1'@'%'")
+        .unwrap();
+    session
+        .run("REVOKE ROLE_ADMIN ON *.* FROM 'u1'@'%'")
+        .unwrap();
+    session
+        .run("REVOKE NOT_A_REAL_PRIV ON *.* FROM 'u1'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "3929",
+            "Dynamic privilege 'NOT_A_REAL_PRIV' is not registered with the server."
+        ]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [
+            ["GRANT SELECT,PROCESS ON *.* TO 'u1'@'%'"],
+            ["GRANT INSERT ON `db1`.* TO 'u1'@'%'"],
+            ["GRANT UPDATE ON `db1`.`t` TO 'u1'@'%'"],
+            ["GRANT CONNECTION_ADMIN ON *.* TO 'u1'@'%'"],
+            [
+                "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' \
+                     WITH GRANT OPTION"
+            ],
+        ]
+    );
+
+    // An account whose ONLY privileges are dynamic still gets the
+    // `USAGE` global line ahead of them.
+    session.run("CREATE USER 'u2'@'%'").unwrap();
+    session
+        .run("GRANT DASHBOARD_CLIENT, ROLE_ADMIN ON *.* TO 'u2'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
+        [
+            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
+            ["GRANT DASHBOARD_CLIENT,ROLE_ADMIN ON *.* TO 'u2'@'%'"],
+        ]
+    );
+
+    // `GRANT ALL` confers no dynamic privilege, but `REVOKE ALL` clears
+    // every one of them (Go's unqualified `DELETE FROM
+    // mysql.global_grants`).
+    session.run("REVOKE ALL ON *.* FROM 'u2'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
+        [["GRANT USAGE ON *.* TO 'u2'@'%'"]]
+    );
+    session.run("GRANT ALL ON *.* TO 'u2'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
+        [["GRANT ALL PRIVILEGES ON *.* TO 'u2'@'%'"]]
+    );
+}
+
+/// The SUPER fallback: Go's `RequestDynamicVerification` passes a dynamic
+/// check for any account holding SUPER, even with no `global_grants` row
+/// -- while `HasExplicitlyGrantedDynamicPrivilege` does not. The only
+/// no-fallback case in Go is SEM's `RESTRICTED_*` family, and SEM is not
+/// modelled here.
+#[test]
+fn super_is_the_fallback_for_every_dynamic_privilege() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'su'@'%'").unwrap();
+    session.run("GRANT SUPER ON *.* TO 'su'@'%'").unwrap();
+    let registry = session.privileges.clone().unwrap();
+
+    for name in privilege::DYNAMIC_PRIVS {
+        assert!(
+            registry.has_dynamic_priv("su", "%", name, false),
+            "SUPER satisfies {name}"
+        );
+        assert!(
+            !registry.has_explicit_dynamic_priv("su", "%", name, false),
+            "{name} is not explicitly granted"
+        );
+    }
+
+    // SUPER alone does not satisfy a GRANTABLE dynamic check: the
+    // account must also hold GRANT OPTION.
+    assert!(!registry.has_dynamic_priv("su", "%", "BACKUP_ADMIN", true));
+    session
+        .run("GRANT SUPER ON *.* TO 'su'@'%' WITH GRANT OPTION")
+        .unwrap();
+    assert!(registry.has_dynamic_priv("su", "%", "BACKUP_ADMIN", true));
+
+    // An account with neither SUPER nor a row fails every check, and
+    // `SHOW GRANTS` for a SUPER account prints no dynamic line -- the
+    // fallback is a check-time rule, not stored state.
+    session.run("CREATE USER 'plain'@'%'").unwrap();
+    assert!(!registry.has_dynamic_priv("plain", "%", "BACKUP_ADMIN", false));
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'su'@'%'")),
+        [["GRANT SUPER ON *.* TO 'su'@'%' WITH GRANT OPTION"]]
+    );
+
+    // Re-granting without `WITH GRANT OPTION` is a REPLACE, not an OR:
+    // it downgrades a previously grantable dynamic privilege.
+    session
+        .run("GRANT BACKUP_ADMIN ON *.* TO 'plain'@'%' WITH GRANT OPTION")
+        .unwrap();
+    assert!(registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", true));
+    session
+        .run("GRANT BACKUP_ADMIN ON *.* TO 'plain'@'%'")
+        .unwrap();
+    assert!(!registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", true));
+    assert!(registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", false));
+}
+
+/// `information_schema.USER_PRIVILEGES` -- the one member of the
+/// PRIVILEGES family that Go actually populates. Captured: every
+/// account's static rows first (username order, `AllGlobalPrivs` print
+/// order, a lone `USAGE` row for an account with none), then every
+/// account's dynamic rows; `IS_GRANTABLE` is the account's `GRANT
+/// OPTION` on a static row and the privilege's own flag on a dynamic
+/// one.
+#[test]
+fn user_privileges_table_reports_static_and_dynamic_rows() {
+    let mut session = session_with_privileges();
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+    session.run("CREATE USER 'zz'@'%'").unwrap();
+    session.run("CREATE USER 'aa'@'%'").unwrap();
+    session.run("GRANT SELECT ON *.* TO 'aa'@'%'").unwrap();
+    session.run("GRANT ROLE_ADMIN ON *.* TO 'aa'@'%'").unwrap();
+    session
+        .run("GRANT BACKUP_ADMIN ON *.* TO 'zz'@'%' WITH GRANT OPTION")
+        .unwrap();
+
+    let rows = row_text(session.run(
+        "SELECT grantee, table_catalog, privilege_type, is_grantable \
+             FROM information_schema.user_privileges WHERE grantee <> '''root''@''%'''",
+    ));
+    assert_eq!(
+        rows,
+        [
+            ["'aa'@'%'", "def", "SELECT", "NO"],
+            ["'zz'@'%'", "def", "USAGE", "NO"],
+            ["'aa'@'%'", "def", "ROLE_ADMIN", "NO"],
+            ["'zz'@'%'", "def", "BACKUP_ADMIN", "YES"],
+        ]
+    );
+}
+
+/// CAPTURED: `SHOW GRANTS` with no `FOR` reports the current session's
+/// own account, and a fresh cluster's bootstrap `root`@`%` carries
+/// `ALL PRIVILEGES ... WITH GRANT OPTION`.
+#[test]
+fn show_grants_for_current_user_reports_root_bootstrap() {
+    let mut session = session_with_privileges();
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS")),
+        [["GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"]]
+    );
+}
+
+/// CAPTURED: re-creating an existing account is `ErrCannotUser`/1396,
+/// quoted `'user'@'host'` (unlike `DROP USER`'s unquoted form).
+#[test]
+fn create_user_rejects_a_duplicate_account() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'dup1'@'%'").unwrap();
+    match session.run("CREATE USER 'dup1'@'%'") {
+        Err(DriverError::CreateUserAlreadyExists { user, host }) => {
+            assert_eq!(user, "dup1");
+            assert_eq!(host, "%");
+        }
+        other => panic!("expected CreateUserAlreadyExists, got {other:?}"),
+    }
+}
+
+/// CAPTURED: `GRANT ... TO` an account that was never created is
+/// `ErrCantCreateUserWithGrant`/1410 -- TiDB's default sql_mode refuses
+/// to implicitly create the target.
+#[test]
+fn grant_to_an_unknown_user_is_refused() {
+    let mut session = session_with_privileges();
+    assert!(matches!(
+        session.run("GRANT SELECT ON *.* TO 'nouser'@'%'"),
+        Err(DriverError::GrantToUnknownUser)
+    ));
+}
+
+/// CAPTURED: an unrecognized privilege name parses (through
+/// `tidb-parser`'s dynamic-privilege grammar branch) but is refused at
+/// execution with `ErrDynamicPrivilegeNotRegistered`/3929, naming the
+/// privilege.
+#[test]
+fn granting_an_unregistered_privilege_name_is_refused() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'dup1'@'%'").unwrap();
+    match session.run("GRANT FOOBAR ON *.* TO 'dup1'@'%'") {
+        Err(DriverError::DynamicPrivilegeNotRegistered(name)) => assert_eq!(name, "FOOBAR"),
+        other => panic!("expected DynamicPrivilegeNotRegistered, got {other:?}"),
+    }
+}
+
+/// CAPTURED: `REVOKE ... FROM` an account that does not exist is Go's
+/// plain `errors.Errorf("Unknown user: %s", user)`.
+#[test]
+fn revoke_from_an_unknown_user_is_refused() {
+    let mut session = session_with_privileges();
+    match session.run("REVOKE SELECT ON *.* FROM 'nouser'@'%'") {
+        Err(DriverError::RevokeUnknownUser { user, host }) => {
+            assert_eq!(user, "nouser");
+            assert_eq!(host, "%");
+        }
+        other => panic!("expected RevokeUnknownUser, got {other:?}"),
+    }
+}
+
+/// `ALL PRIVILEGES` grants every modeled global privilege, which folds
+/// `SHOW GRANTS` to the `ALL PRIVILEGES` literal (Go `userPrivToString`).
+#[test]
+fn grant_all_privileges_collapses_show_grants() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'dup1'@'%'").unwrap();
+    session
+        .run("GRANT ALL PRIVILEGES ON *.* TO 'dup1'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'dup1'@'%'")),
+        [["GRANT ALL PRIVILEGES ON *.* TO 'dup1'@'%'"]]
+    );
+}
+
+/// OUT OF SCOPE, refused rather than faked: column lists and roles.
+/// (Database/table-level grants and `WITH GRANT OPTION` are now modeled
+/// -- see the `db_scope_*`/`table_scope_*`/`grant_option_*` tests.)
+#[test]
+fn out_of_scope_grant_forms_are_refused() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'dup1'@'%'").unwrap();
+    assert!(matches!(
+        session.run("GRANT SELECT (a) ON test.t TO 'dup1'@'%'"),
+        Err(DriverError::Unsupported(_))
+    ));
+    assert!(matches!(
+        session.run("DROP ROLE 'r1'"),
+        Err(DriverError::Unsupported(_))
+    ));
+}
+
+/// CAPTURED (`pkg/executor/zz_dump_authlc_test.go`): `WITH GRANT OPTION`
+/// at all three scopes, its ` WITH GRANT OPTION` suffix printing at the
+/// END of each affected `SHOW GRANTS` line (never inside the privilege
+/// list), and `REVOKE GRANT OPTION ON <level>` clearing exactly that one
+/// scope's bit and nothing else.
+#[test]
+fn grant_option_is_a_per_scope_bit_printed_as_a_line_suffix() {
+    let mut session = session_with_privileges();
+    session.run("CREATE TABLE test.t (a int)").unwrap();
+    session.run("CREATE USER 'bob'@'%'").unwrap();
+
+    session
+        .run("GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION")
+        .unwrap();
+    session
+        .run("GRANT SELECT ON test.* TO 'bob'@'%' WITH GRANT OPTION")
+        .unwrap();
+    session
+        .run("GRANT SELECT ON test.t TO 'bob'@'%' WITH GRANT OPTION")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
+        [
+            ["GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION"],
+            ["GRANT SELECT ON `test`.* TO 'bob'@'%' WITH GRANT OPTION"],
+            ["GRANT SELECT ON `test`.`t` TO 'bob'@'%' WITH GRANT OPTION"],
+        ]
+    );
+
+    // Each REVOKE clears one scope, innermost first, leaving the others
+    // untouched -- the captured Go sequence exactly.
+    session
+        .run("REVOKE GRANT OPTION ON test.t FROM 'bob'@'%'")
+        .unwrap();
+    session
+        .run("REVOKE GRANT OPTION ON test.* FROM 'bob'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
+        [
+            ["GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION"],
+            ["GRANT SELECT ON `test`.* TO 'bob'@'%'"],
+            ["GRANT SELECT ON `test`.`t` TO 'bob'@'%'"],
+        ]
+    );
+    session
+        .run("REVOKE GRANT OPTION ON *.* FROM 'bob'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
+        [
+            ["GRANT SELECT ON *.* TO 'bob'@'%'"],
+            ["GRANT SELECT ON `test`.* TO 'bob'@'%'"],
+            ["GRANT SELECT ON `test`.`t` TO 'bob'@'%'"],
+        ]
+    );
+}
+
+/// CAPTURED: `GRANT ALL` does NOT confer `GRANT OPTION` (the `ALL
+/// PRIVILEGES` literal still prints with no suffix), and naming
+/// `GRANT OPTION` as an ordinary privilege confers exactly that bit --
+/// which is why `mysql.GrantPriv` must live outside every `ALL_*` list.
+#[test]
+fn grant_all_withholds_grant_option_but_the_named_privilege_confers_it() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'occupied'@'%'").unwrap();
+    session.run("GRANT ALL ON *.* TO 'occupied'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'occupied'@'%'")),
+        [["GRANT ALL PRIVILEGES ON *.* TO 'occupied'@'%'"]]
+    );
+    session
+        .run("GRANT GRANT OPTION ON *.* TO 'occupied'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'occupied'@'%'")),
+        [["GRANT ALL PRIVILEGES ON *.* TO 'occupied'@'%' WITH GRANT OPTION"]]
+    );
+}
+
+/// CAPTURED: `CREATE USER ... IDENTIFIED BY` stores Go
+/// `auth.EncodePassword`'s `*<40 UPPERCASE HEX>` double-SHA-1 in
+/// `mysql.user.authentication_string`; a passwordless account stores the
+/// EMPTY string, not a hash of the empty string. `ALTER USER ...
+/// IDENTIFIED BY` and `SET PASSWORD FOR` both rewrite the same column to
+/// the identical value.
+#[test]
+fn account_authentication_strings_follow_go_encode_password() {
+    assert_eq!(
+        privilege::encode_password("bobpw"),
+        "*6793F32F5FAF66A40EFA6B5E9887765E983829BC"
+    );
+    assert_eq!(privilege::encode_password(""), "");
+
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut session = Session::new();
+    session.attach_privileges(registry.clone());
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+
+    session
+        .run("CREATE USER 'bob'@'%' IDENTIFIED BY 'bobpw'")
+        .unwrap();
+    assert_eq!(
+        registry.auth_string("bob", "%").as_deref(),
+        Some("*6793F32F5FAF66A40EFA6B5E9887765E983829BC")
+    );
+    session.run("CREATE USER 'nopw'@'%'").unwrap();
+    assert_eq!(registry.auth_string("nopw", "%").as_deref(), Some(""));
+
+    session
+        .run("ALTER USER 'bob'@'%' IDENTIFIED BY 'bobpw2'")
+        .unwrap();
+    assert_eq!(
+        registry.auth_string("bob", "%").as_deref(),
+        Some("*35141DF602B302AB26CD0E9930DDBAF0E5865904")
+    );
+    session
+        .run("SET PASSWORD FOR 'bob'@'%' = 'bobpw3'")
+        .unwrap();
+    assert_eq!(
+        registry.auth_string("bob", "%").as_deref(),
+        Some("*DBED499ADC8B1C308546E054BE45BEA463AC68B9")
+    );
+
+    // Captured error wording: ALTER USER quotes the account like CREATE
+    // USER and is silenced by IF EXISTS; SET PASSWORD reports 1133
+    // instead of reusing ErrCannotUser.
+    assert!(matches!(
+        session.run("ALTER USER 'nosuch'@'%' IDENTIFIED BY 'p'"),
+        Err(DriverError::AlterUserMissing { .. })
+    ));
+    session
+        .run("ALTER USER IF EXISTS 'nosuch'@'%' IDENTIFIED BY 'p'")
+        .unwrap();
+    assert!(matches!(
+        session.run("SET PASSWORD FOR 'nosuch'@'%' = 'p'"),
+        Err(DriverError::SetPasswordNoMatchingRow)
+    ));
+}
+
+/// CAPTURED: `RENAME USER` carries the authentication string AND every
+/// scoped grant row to the new identity, leaves the old identity with no
+/// grant row at all, and reports Go's two distinct reason clauses.
+#[test]
+fn rename_user_moves_the_whole_account_row() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut session = Session::new();
+    session.attach_privileges(registry.clone());
+    session.run("CREATE TABLE test.t (a int)").unwrap();
+    session
+        .run("CREATE USER 'bob'@'%' IDENTIFIED BY 'bobpw'")
+        .unwrap();
+    session.run("GRANT SELECT ON *.* TO 'bob'@'%'").unwrap();
+    session.run("GRANT SELECT ON test.* TO 'bob'@'%'").unwrap();
+    session.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+    session.run("CREATE USER 'occupied'@'%'").unwrap();
+
+    session.run("RENAME USER 'bob'@'%' TO 'bobby'@'%'").unwrap();
+    assert_eq!(
+        registry.auth_string("bobby", "%").as_deref(),
+        Some("*6793F32F5FAF66A40EFA6B5E9887765E983829BC")
+    );
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'bobby'@'%'")),
+        [
+            ["GRANT SELECT ON *.* TO 'bobby'@'%'"],
+            ["GRANT SELECT ON `test`.* TO 'bobby'@'%'"],
+            ["GRANT SELECT ON `test`.`t` TO 'bobby'@'%'"],
+        ]
+    );
+    assert!(session.run("SHOW GRANTS FOR 'bob'@'%'").is_err());
+
+    match session.run("RENAME USER 'nosuch'@'%' TO 'x'@'%'") {
+        Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(old_missing),
+        other => panic!("expected RenameUserFailed, got {other:?}"),
+    }
+    match session.run("RENAME USER 'bobby'@'%' TO 'occupied'@'%'") {
+        Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(!old_missing),
+        other => panic!("expected RenameUserFailed, got {other:?}"),
+    }
+}
+
+/// CAPTURED: `DROP USER` clears the account's scoped grant rows too, so
+/// an account later recreated under the same identity starts from USAGE
+/// rather than inheriting the dropped account's grants.
+#[test]
+fn drop_user_clears_scoped_grant_rows() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'gone'@'%'").unwrap();
+    session.run("GRANT SELECT ON test.* TO 'gone'@'%'").unwrap();
+    session.run("DROP USER 'gone'@'%'").unwrap();
+    session.run("CREATE USER 'gone'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'gone'@'%'")),
+        [["GRANT USAGE ON *.* TO 'gone'@'%'"]]
+    );
+}
+
+/// CAPTURED end to end (`pkg/executor/grant.go`/`revoke.go`,
+/// `pkg/privilege/privileges/cache.go`'s `showGrants`): DB-scope
+/// `GRANT`/`REVOKE`/`SHOW GRANTS`, including the `ALL PRIVILEGES`
+/// literal and the lexical (not insertion, not plain-name) sort order
+/// across multiple databases.
+#[test]
+fn db_scope_grant_revoke_and_show_grants_round_trip() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+    session.run("CREATE DATABASE db1").unwrap();
+    session.run("CREATE DATABASE aaadb").unwrap();
+
+    session.run("GRANT SELECT ON db1.* TO 'u1'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [
+            vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `db1`.* TO 'u1'@'%'".to_owned()],
+        ]
+    );
+
+    // A second DB, granted later, still sorts before `db1` (captured:
+    // Go sorts DB-scope lines lexically by their formatted text).
+    session.run("GRANT SELECT ON aaadb.* TO 'u1'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [
+            vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `aaadb`.* TO 'u1'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `db1`.* TO 'u1'@'%'".to_owned()],
+        ]
+    );
+
+    // Once `db1`'s line becomes `GRANT ALL PRIVILEGES ...`, it sorts
+    // *before* `aaadb`'s `GRANT SELECT ...` line: the sort key is the
+    // whole formatted string, which starts with the privilege text, not
+    // the database name ('A' < 'S').
+    session.run("GRANT ALL ON db1.* TO 'u1'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
+        vec!["GRANT ALL PRIVILEGES ON `db1`.* TO 'u1'@'%'".to_owned()]
+    );
+
+    session.run("REVOKE ALL ON db1.* FROM 'u1'@'%'").unwrap();
+    session.run("REVOKE SELECT ON db1.* FROM 'u1'@'%'").unwrap();
+    // Back to `GRANT USAGE ...`, which sorts after `aaadb`'s `SELECT`
+    // line again ('U' > 'S').
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[2],
+        vec!["GRANT USAGE ON `db1`.* TO 'u1'@'%'".to_owned()]
+    );
+}
+
+/// CAPTURED: `GRANT PROCESS ON db.*` (a global-only privilege) is Go's
+/// `ErrWrongUsage`/1221, "Incorrect usage of DB GRANT and GLOBAL
+/// PRIVILEGES".
+#[test]
+fn db_scope_grant_rejects_global_only_privilege() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+    session.run("CREATE DATABASE db1").unwrap();
+    assert!(matches!(
+        session.run("GRANT PROCESS ON db1.* TO 'u1'@'%'"),
+        Err(DriverError::DbGrantGlobalOnlyPriv)
+    ));
+}
+
+/// CAPTURED: `REVOKE ... ON db.*` for an account with no `mysql.DB` row
+/// for that database at all is Go's plain "There is no such grant
+/// defined for user '%s' on host '%s' on database %s".
+#[test]
+fn db_scope_revoke_without_any_grant_row_is_refused() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+    session.run("CREATE DATABASE emptydb").unwrap();
+    match session.run("REVOKE SELECT ON emptydb.* FROM 'u1'@'%'") {
+        Err(DriverError::RevokeNoDbGrant {
+            user,
+            host,
+            database,
+        }) => {
+            assert_eq!(user, "u1");
+            assert_eq!(host, "%");
+            assert_eq!(database, "emptydb");
+        }
+        other => panic!("expected RevokeNoDbGrant, got {other:?}"),
+    }
+}
+
+/// CAPTURED end to end: TABLE-scope `GRANT`/`REVOKE`/`SHOW GRANTS`,
+/// including the `ALL PRIVILEGES` literal, backtick-quoted
+/// `` `db`.`table` `` (both segments escaped, same as Go's
+/// `stringutil.Escape`), and the invalid-scope-privilege / missing-table
+/// error split (Go checks privilege validity before table existence).
+#[test]
+fn table_scope_grant_revoke_and_show_grants_round_trip() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+    session.run("CREATE DATABASE db1").unwrap();
+    session.run("CREATE TABLE db1.t1 (a INT)").unwrap();
+
+    session
+        .run("GRANT SELECT, INSERT ON db1.t1 TO 'u1'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+        [
+            vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
+            vec!["GRANT SELECT,INSERT ON `db1`.`t1` TO 'u1'@'%'".to_owned()],
+        ]
+    );
+
+    session.run("GRANT ALL ON db1.t1 TO 'u1'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
+        vec!["GRANT ALL PRIVILEGES ON `db1`.`t1` TO 'u1'@'%'".to_owned()]
+    );
+
+    session.run("REVOKE ALL ON db1.t1 FROM 'u1'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
+        vec!["GRANT USAGE ON `db1`.`t1` TO 'u1'@'%'".to_owned()]
+    );
+
+    // Invalid-scope privilege: refused before the table-existence
+    // check runs (captured `ErrIllegalGrantForTable`/1144).
+    assert!(matches!(
+        session.run("GRANT PROCESS ON db1.t1 TO 'u1'@'%'"),
+        Err(DriverError::IllegalGrantForTable)
+    ));
+
+    // A valid privilege on a table that does not exist: refused with
+    // `ErrTableNotExists`/1146 (captured), unless `CREATE` is among the
+    // granted privileges (Go's issue #28533/#29268 exception).
+    assert!(matches!(
+        session.run("GRANT SELECT ON db1.nosuchtable TO 'u1'@'%'"),
+        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(ref name)))
+            if name == "db1.nosuchtable"
+    ));
+    session
+        .run("GRANT CREATE ON db1.nosuchtable TO 'u1'@'%'")
+        .unwrap();
+
+    // REVOKE for an account with no `mysql.Tables_priv` row at all.
+    session.run("CREATE TABLE db1.t2 (a INT)").unwrap();
+    match session.run("REVOKE SELECT ON db1.t2 FROM 'u1'@'%'") {
+        Err(DriverError::RevokeNoTableGrant {
+            user,
+            host,
+            database,
+            table,
+        }) => {
+            assert_eq!(user, "u1");
+            assert_eq!(host, "%");
+            assert_eq!(database, "db1");
+            assert_eq!(table, "t2");
+        }
+        other => panic!("expected RevokeNoTableGrant, got {other:?}"),
+    }
+}
+
+/// Go `planbuilder.go`'s `*ast.KillStmt` case: a session may always KILL
+/// its OWN connection, but killing a peer logged in as a DIFFERENT user
+/// is refused with `ErrSpecificAccessDenied` (1227) unless the caller
+/// holds SUPER. Granting SUPER then lets the same KILL through.
+#[test]
+fn kill_of_another_users_connection_requires_super() {
+    let registry = process::ProcessRegistry::default();
+    let mut victim = session_with_privileges();
+    victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
+    let victim_guard = registry.register(
+        1,
+        "root".to_owned(),
+        "10.0.0.1:1".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    victim.attach_process(1, victim_guard);
+
+    let mut bob = session_with_privileges();
+    bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
+    let bob_guard = registry.register(
+        2,
+        "bob".to_owned(),
+        "10.0.0.2:2".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    bob.attach_process(2, bob_guard);
+    bob.run("CREATE USER 'bob'@'%'").unwrap();
+
+    // Killing one's own connection never needs a privilege.
+    assert_eq!(
+        bob.run("kill 2").unwrap(),
+        StmtResult::Affected(0),
+        "KILL of one's own connection is always allowed"
+    );
+
+    // Killing root's connection without SUPER is refused.
+    match bob.run("kill 1") {
+        Err(DriverError::KillAccessDenied) => {}
+        other => panic!("expected KillAccessDenied, got {other:?}"),
+    }
+
+    // Granting SUPER lets the same KILL through.
+    bob.run("GRANT SUPER ON *.* TO 'bob'@'%'").unwrap();
+    assert_eq!(bob.run("kill 1").unwrap(), StmtResult::Affected(0));
+}
+
+/// The gate Go actually writes is the DYNAMIC `CONNECTION_ADMIN`; SUPER
+/// passes only as its fallback. So `CONNECTION_ADMIN` ALONE -- with no
+/// SUPER anywhere -- must open the same KILL, and revoking it must close
+/// it again.
+#[test]
+fn kill_of_another_users_connection_accepts_connection_admin() {
+    let registry = process::ProcessRegistry::default();
+    let mut victim = session_with_privileges();
+    victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
+    let victim_guard = registry.register(
+        1,
+        "root".to_owned(),
+        "10.0.0.1:1".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    victim.attach_process(1, victim_guard);
+
+    let mut bob = session_with_privileges();
+    bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
+    let bob_guard = registry.register(
+        2,
+        "bob".to_owned(),
+        "10.0.0.2:2".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    bob.attach_process(2, bob_guard);
+    bob.run("CREATE USER 'bob'@'%'").unwrap();
+
+    match bob.run("kill 1") {
+        Err(DriverError::KillAccessDenied) => {}
+        other => panic!("expected KillAccessDenied, got {other:?}"),
+    }
+
+    bob.run("GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'")
+        .unwrap();
+    assert_eq!(
+        bob.run("kill 1").unwrap(),
+        StmtResult::Affected(0),
+        "CONNECTION_ADMIN alone authorizes KILL of a peer's connection"
+    );
+    // The dynamic privilege is the ONLY thing bob holds: no static
+    // privilege was granted along the way.
+    assert_eq!(
+        row_text(bob.run("SHOW GRANTS FOR 'bob'@'%'")),
+        [
+            ["GRANT USAGE ON *.* TO 'bob'@'%'"],
+            ["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'"],
+        ]
+    );
+
+    bob.run("REVOKE CONNECTION_ADMIN ON *.* FROM 'bob'@'%'")
+        .unwrap();
+    match bob.run("kill 1") {
+        Err(DriverError::KillAccessDenied) => {}
+        other => panic!("expected KillAccessDenied after REVOKE, got {other:?}"),
+    }
+}
+
+/// `PROCESS` granted through `GRANT` (not the test-only
+/// [`Session::set_process_privilege`] override) gates `SHOW PROCESSLIST`
+/// visibility exactly the same way, wiring the registry all the way to
+/// the process-list filter.
+#[test]
+fn grant_process_gates_processlist_visibility() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = session_with_privileges();
+    session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
+    let guard = registry.register(
+        1,
+        "bob".to_owned(),
+        "10.0.0.1:1".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    session.attach_process(1, guard);
+    let _alice = registry.register(
+        2,
+        "alice".to_owned(),
+        "10.0.0.2:2".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+
+    session.run("CREATE USER 'bob'@'%'").unwrap();
+    assert_eq!(row_text(session.run("show processlist")).len(), 1);
+
+    session.run("GRANT PROCESS ON *.* TO 'bob'@'%'").unwrap();
+    assert_eq!(row_text(session.run("show processlist")).len(), 2);
+}
