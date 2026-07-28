@@ -151,4 +151,37 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		require.Equal(t, []int64{childTbl.Meta().ID}, mgr.registeredTTLTables())
 		require.Empty(t, mgr.deletedTTLTables())
 	})
+
+	t.Run("drop table deletes ttl metadata", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		tk.MustExec(`create table t(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+
+		tbl := external.GetTableByName(t, tk, "test", "t")
+		tk.MustExec("drop table t")
+
+		require.Equal(t, []int64{tbl.Meta().ID}, mgr.deletedTTLTables())
+	})
+
+	t.Run("truncate table refreshes ttl metadata", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		tk.MustExec(`create table t(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+
+		oldTbl := external.GetTableByName(t, tk, "test", "t")
+		tk.MustExec("truncate table t")
+		newTbl := external.GetTableByName(t, tk, "test", "t")
+
+		require.NotEqual(t, oldTbl.Meta().ID, newTbl.Meta().ID)
+		require.Equal(t, []int64{oldTbl.Meta().ID}, mgr.deletedTTLTables())
+		require.Equal(t, []int64{oldTbl.Meta().ID, newTbl.Meta().ID}, mgr.registeredTTLTables())
+	})
 }

@@ -140,6 +140,9 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		if err := w.dropMaskingPoliciesOnTable(jobCtx, tblInfo.ID); err != nil {
 			return ver, errors.Wrapf(err, "failed to drop masking policies on table %d", tblInfo.ID)
 		}
+		if jobCtx.oldDDLCtx != nil && tblInfo.TTLInfo != nil {
+			jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID)
+		}
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
@@ -625,6 +628,14 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, noSubJob, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if jobCtx.oldDDLCtx != nil {
+		if oldTblInfo.TTLInfo != nil {
+			jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, oldTblInfo.ID)
+		}
+		if tblInfo.TTLInfo != nil && tblInfo.TTLInfo.Enable {
+			jobCtx.oldDDLCtx.tryRegisterTTLTableToExternalWorkload(jobCtx.ctx, tblInfo)
+		}
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
