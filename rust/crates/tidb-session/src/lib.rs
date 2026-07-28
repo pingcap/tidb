@@ -282,6 +282,27 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
 /// `DESCRIBE` produce.
 const COL_DESC_FIELD_NAMES: &[&str] = &["Field", "Type", "Null", "Key", "Default", "Extra"];
 
+/// Go `table.ColDescFieldNames(true)`: the extra columns `SHOW FULL COLUMNS`
+/// inserts between `Type` and `Null`, plus the trailing `Privileges` and
+/// `Comment` columns.
+const FULL_COL_DESC_FIELD_NAMES: &[&str] = &[
+    "Field",
+    "Type",
+    "Collation",
+    "Null",
+    "Key",
+    "Default",
+    "Extra",
+    "Privileges",
+    "Comment",
+];
+
+/// Go's mock session's fixed grant string for every column of every table
+/// (`fetchShowColumns`): this tier grants no per-column privileges of its
+/// own, so it reports the same static capture MySQL/TiDB print for a column
+/// the current user can select, insert, update, and reference.
+const FULL_COL_DESC_PRIVILEGES: &str = "select,insert,update,references";
+
 /// Go `table.NewColDesc`, restricted to the facts this seed's metadata holds.
 ///
 /// `Null` is NO when the column carries `NotNullFlag`; `Key` is PRI for a
@@ -300,6 +321,7 @@ fn column_description(
     column: &tidb_executor::KvColumn,
     offset: usize,
     table: &tidb_executor::KvTable,
+    full: bool,
 ) -> Vec<Datum> {
     let null_flag = if column.field_type.flags() & NOT_NULL_FLAG != 0 {
         "NO"
@@ -313,20 +335,45 @@ fn column_description(
         ""
     };
     let key_flag = column_key_flag(table, offset);
+    let default = match &column.default_value {
+        Some(value) => match datum_text(value) {
+            Some(text) => Datum::Bytes(text.into_bytes()),
+            None => Datum::Null,
+        },
+        None => Datum::Null,
+    };
+    if !full {
+        return vec![
+            Datum::Bytes(column.name.clone().into_bytes()),
+            Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
+            Datum::Bytes(null_flag.as_bytes().to_vec()),
+            Datum::Bytes(key_flag.into_bytes()),
+            default,
+            Datum::Bytes(extra.as_bytes().to_vec()),
+        ];
+    }
+    // Go `NewColDesc`: `Collation` is NULL for a non-string type (numerics,
+    // temporals, ...), and the column's own collation name otherwise.
+    //
+    // NOT MODELLED (documented): a per-column charset/collation override.
+    // This tier's DDL does not track one, so every string column reports the
+    // schema default (`utf8mb4_bin`), which is what a plain `VARCHAR` column
+    // with no explicit `CHARACTER SET`/`COLLATE` actually gets in Go too.
+    let collation = if column.field_type.is_string() {
+        Datum::Bytes(tidb_datatype::Collation::DEFAULT.name().as_bytes().to_vec())
+    } else {
+        Datum::Null
+    };
     vec![
         Datum::Bytes(column.name.clone().into_bytes()),
         Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
+        collation,
         Datum::Bytes(null_flag.as_bytes().to_vec()),
         Datum::Bytes(key_flag.into_bytes()),
-        // Go prints the stored default; a column without one shows NULL.
-        match &column.default_value {
-            Some(value) => match datum_text(value) {
-                Some(text) => Datum::Bytes(text.into_bytes()),
-                None => Datum::Null,
-            },
-            None => Datum::Null,
-        },
+        default,
         Datum::Bytes(extra.as_bytes().to_vec()),
+        Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
+        Datum::Bytes(Vec::new()), // Comment: no per-column comments modelled.
     ]
 }
 
@@ -1008,16 +1055,17 @@ impl Session {
                 }
                 // Go `fetchShowColumns`.
                 tidb_ast::AdminStmt::ShowColumns(show) => {
-                    if show.filter.is_some() || show.full || show.extended {
+                    if show.filter.is_some() || show.extended {
                         return Err(DriverError::Unsupported(
-                            "SHOW FULL/EXTENDED COLUMNS and column filters are not supported yet",
+                            "SHOW EXTENDED COLUMNS and column filters are not supported yet",
                         ));
                     }
                     let database = match &show.database {
                         Some(name) => name.clone(),
                         None => self.require_current_database()?.to_owned(),
                     };
-                    self.show_columns(&database, &show.table, None).map(Some)
+                    self.show_columns(&database, &show.table, None, show.full)
+                        .map(Some)
                 }
                 // Go's parser rewrites `DESCRIBE tbl [col]` into a SHOW
                 // COLUMNS statement; this parser keeps a node of its own, so
@@ -1025,8 +1073,13 @@ impl Session {
                 tidb_ast::AdminStmt::DescribeTable(describe) => {
                     let database = self.require_current_database()?.to_owned();
                     let column = describe.column.as_ref().and_then(|path| path.last());
-                    self.show_columns(&database, &describe.table, column.map(String::as_str))
-                        .map(Some)
+                    self.show_columns(
+                        &database,
+                        &describe.table,
+                        column.map(String::as_str),
+                        false,
+                    )
+                    .map(Some)
                 }
                 tidb_ast::AdminStmt::ShowTables(show) => {
                     if show.filter.is_some() || show.full {
@@ -1129,6 +1182,7 @@ impl Session {
         database: &str,
         table_path: &[String],
         column: Option<&str>,
+        full: bool,
     ) -> Result<StmtOutput, DriverError> {
         // A `db.tbl` path names its own schema, as everywhere else.
         let (database, table_name) = match table_path {
@@ -1154,12 +1208,17 @@ impl Session {
                 .filter(|(_, candidate)| {
                     column.is_none_or(|name| candidate.name.eq_ignore_ascii_case(name))
                 })
-                .map(|(offset, candidate)| column_description(candidate, offset, table))
+                .map(|(offset, candidate)| column_description(candidate, offset, table, full))
                 .collect::<Vec<_>>())
         })?;
         let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let field_names = if full {
+            FULL_COL_DESC_FIELD_NAMES
+        } else {
+            COL_DESC_FIELD_NAMES
+        };
         Ok(StmtOutput::Rows {
-            columns: COL_DESC_FIELD_NAMES
+            columns: field_names
                 .iter()
                 .map(|name| ((*name).to_owned(), field_type.clone()))
                 .collect(),
@@ -3253,6 +3312,85 @@ mod tests {
 
         // An unknown table is an error, not empty output.
         assert!(session.run("SHOW COLUMNS FROM nope").is_err());
+    }
+
+    /// SHOW FULL COLUMNS, checked against a capture from real TiDB
+    /// (`SHOW FULL COLUMNS FROM t` over `create table t (a int, b
+    /// varchar(20))`):
+    /// `[a int(11) <nil> YES  <nil>  select,insert,update,references ]`
+    /// `[b varchar(20) utf8mb4_bin YES  <nil>  select,insert,update,references ]`
+    #[test]
+    fn show_full_columns() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT, b VARCHAR(20))")
+            .unwrap();
+
+        let (names, rows) = match session
+            .run_with_columns("SHOW FULL COLUMNS FROM t")
+            .unwrap()
+        {
+            StmtOutput::Rows { columns, rows } => (
+                columns
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+                rows.into_iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|value| match value {
+                                Datum::Null => "NULL".to_owned(),
+                                other => datum_text(other).unwrap_or_default(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        };
+        assert_eq!(
+            names,
+            [
+                "Field",
+                "Type",
+                "Collation",
+                "Null",
+                "Key",
+                "Default",
+                "Extra",
+                "Privileges",
+                "Comment",
+            ]
+        );
+        assert_eq!(
+            rows,
+            vec![
+                // A numeric column's Collation is NULL.
+                vec![
+                    "a",
+                    "int(11)",
+                    "NULL",
+                    "YES",
+                    "",
+                    "NULL",
+                    "",
+                    "select,insert,update,references",
+                    "",
+                ],
+                // A string column's Collation is its own collation name.
+                vec![
+                    "b",
+                    "varchar(20)",
+                    "utf8mb4_bin",
+                    "YES",
+                    "",
+                    "NULL",
+                    "",
+                    "select,insert,update,references",
+                    "",
+                ],
+            ]
+        );
     }
 
     /// SHOW CREATE TABLE, checked against output captured from real TiDB by
