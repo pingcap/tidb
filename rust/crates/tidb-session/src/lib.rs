@@ -459,6 +459,53 @@ impl Session {
                 _ => Ok(None),
             },
             Stmt::Admin(admin) => match &**admin {
+                // `EXPLAIN <select>`: plan the statement and report the plan,
+                // running nothing. Go's EXPLAIN plans without executing (an
+                // `EXPLAIN INSERT` inserts no row, captured), and so does
+                // this: `tidb_executor::explain_select_stmt` re-runs the
+                // driver's own read-path decisions without touching storage.
+                //
+                // See `tidb_executor::explain`'s module doc for every place
+                // this tier's plan text diverges from Go's and why.
+                tidb_ast::AdminStmt::Explain(explain) => {
+                    if explain.analyze {
+                        // ANALYZE reports per-operator runtime counters this
+                        // tier does not collect; inventing them would be
+                        // worse than refusing.
+                        return Err(DriverError::Unsupported(
+                            "EXPLAIN ANALYZE is not supported yet",
+                        ));
+                    }
+                    if !explain.format.eq_ignore_ascii_case("row") {
+                        return Err(DriverError::Unsupported(
+                            "only the default EXPLAIN row format is supported yet",
+                        ));
+                    }
+                    let Some(target) = explain.statement() else {
+                        return Err(DriverError::Unsupported(
+                            "EXPLAIN of a plan digest is not supported yet",
+                        ));
+                    };
+                    let Stmt::Query(query) = target else {
+                        // A write's plan would have to be built by the write
+                        // path, which in this tier only exists as "execute
+                        // it". Refusing is the only answer that keeps
+                        // EXPLAIN side-effect free.
+                        return Err(DriverError::Unsupported(
+                            "only EXPLAIN of a SELECT is supported yet",
+                        ));
+                    };
+                    let tidb_ast::QueryStmt::Select(select) = &**query else {
+                        return Err(DriverError::Unsupported(
+                            "EXPLAIN of a set operation is not supported yet",
+                        ));
+                    };
+                    let current_db = self.current_db.clone();
+                    let (columns, rows) = self.with_catalog_mut(|catalog| {
+                        tidb_executor::explain_select_stmt(select, catalog, &current_db)
+                    })?;
+                    Ok(Some(StmtOutput::Rows { columns, rows }))
+                }
                 tidb_ast::AdminStmt::ShowDatabases(show) => {
                     if show.filter.is_some() {
                         return Err(DriverError::Unsupported(
@@ -2184,6 +2231,232 @@ fn collect_noop_in_expr(expr: &tidb_ast::Expr, out: &mut Vec<&'static str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `EXPLAIN <select>` reports the plan this tier would run, in Go's five
+    /// columns, without executing anything.
+    ///
+    /// Every row here was compared against a `testkit.CreateMockStore`
+    /// capture of real TiDB's `EXPLAIN` on the same schema with no analyzed
+    /// statistics. Where a row differs, the divergence is named in the
+    /// assertion's own comment and in `tidb_executor::explain`'s module doc.
+    #[test]
+    fn explain_select() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(64), c INT, INDEX ub(b))")
+            .unwrap();
+
+        // The Point_Get row is byte-identical to the TiDB capture:
+        //   Point_Get_1 | 1.00 | root | table:t | handle:1
+        // DIVERGENCE (explain module doc, items 3 and 7): TiDB's fast plan
+        // REPLACES the whole pipeline, so it prints that one row. This tier's
+        // point get only narrows the source -- `run_select_stmt` keeps the
+        // WHERE as a Selection above it (deliberately: an extra conjunct the
+        // handle did not pin still has to filter) and always builds a
+        // Projection. Both re-check rows the handle lookup already returned,
+        // so neither reduces the 1.00.
+        assert_eq!(
+            row_text(session.run("EXPLAIN SELECT * FROM t WHERE a = 1")),
+            vec![
+                vec![
+                    "Projection_3".to_owned(),
+                    "1.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "*".to_owned(),
+                ],
+                vec![
+                    "└─Selection_2".to_owned(),
+                    "1.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "eq(test.t.a, 1)".to_owned(),
+                ],
+                vec![
+                    "  └─Point_Get_1".to_owned(),
+                    "1.00".to_owned(),
+                    "root".to_owned(),
+                    "table:t".to_owned(),
+                    "handle:1".to_owned(),
+                ],
+            ]
+        );
+
+        // Same shape, same reason. The Batch_Point_Get row itself matches the
+        // capture byte for byte:
+        //   Batch_Point_Get_1 | 3.00 | root | table:t |
+        //     handle:[1 2 3], keep order:false, desc:false
+        assert_eq!(
+            row_text(session.run("EXPLAIN SELECT * FROM t WHERE a IN (1,2,3)"))[2],
+            vec![
+                "  └─Batch_Point_Get_1".to_owned(),
+                "3.00".to_owned(),
+                "root".to_owned(),
+                "table:t".to_owned(),
+                "handle:[1 2 3], keep order:false, desc:false".to_owned(),
+            ]
+        );
+
+        // DIVERGENCE (explain module doc, items 1/3/5): TiDB prints
+        //   TableReader_5 | 10000.00 | root | | data:TableFullScan_4
+        //   └─TableFullScan_4 | 10000.00 | cop[tikv] | table:t | keep order:false, stats:pseudo
+        // This tier has no coprocessor, so there is no TableReader and no
+        // cop task; and the driver always builds a projection, which Go
+        // elides here. The scan row's estRows/access/info match exactly.
+        assert_eq!(
+            row_text(session.run("EXPLAIN SELECT * FROM t")),
+            vec![
+                vec![
+                    "Projection_2".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "*".to_owned(),
+                ],
+                vec![
+                    "└─TableFullScan_1".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    "table:t".to_owned(),
+                    "keep order:false, stats:pseudo".to_owned(),
+                ],
+            ]
+        );
+
+        // An indexed column's range scan. TiDB prints the same 3333.33 and
+        // the same `table:t, index:ub(b)` access object; it wraps the scan in
+        // a TableReader/cop task (divergence 1) and its Selection sits in the
+        // cop task rather than above the scan.
+        assert_eq!(
+            row_text(session.run("EXPLAIN SELECT * FROM t WHERE b > 'x'")),
+            vec![
+                vec![
+                    "Projection_3".to_owned(),
+                    "3333.33".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "*".to_owned(),
+                ],
+                vec![
+                    "└─Selection_2".to_owned(),
+                    "3333.33".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    // Go's own function-call rendering, captured:
+                    // gt(test.t.b, "x").
+                    "gt(test.t.b, \"x\")".to_owned(),
+                ],
+                vec![
+                    "  └─IndexRangeScan_1".to_owned(),
+                    "3333.33".to_owned(),
+                    "root".to_owned(),
+                    "table:t, index:ub(b)".to_owned(),
+                    "range:(\"x\",+inf], keep order:false, stats:pseudo".to_owned(),
+                ],
+            ]
+        );
+
+        // ORDER BY + LIMIT. DIVERGENCE (item 2): TiDB merges these into one
+        // TopN_7 (10.00). This tier builds a Sort and a Limit, so both show.
+        // The Limit's 10.00 and its `offset:0, count:10` match Go's.
+        assert_eq!(
+            row_text(session.run("EXPLAIN SELECT * FROM t ORDER BY c LIMIT 10")),
+            vec![
+                vec![
+                    "Limit_4".to_owned(),
+                    "10.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "offset:0, count:10".to_owned(),
+                ],
+                vec![
+                    "└─Projection_3".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "*".to_owned(),
+                ],
+                vec![
+                    "  └─Sort_2".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "test.t.c".to_owned(),
+                ],
+                vec![
+                    "    └─TableFullScan_1".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    "table:t".to_owned(),
+                    "keep order:false, stats:pseudo".to_owned(),
+                ],
+            ]
+        );
+
+        // GROUP BY. The 8000.00 is Go's own stats-less distinctFactor result,
+        // captured. DIVERGENCE (item 4): TiDB splits this into a cop-side
+        // HashAgg_5 (`funcs:count(1)->Column#6`) and a root HashAgg_9 under a
+        // Projection_4; this tier has one aggregate and no Column#N slots.
+        assert_eq!(
+            row_text(session.run("EXPLAIN SELECT c, COUNT(*) FROM t GROUP BY c")),
+            vec![
+                vec![
+                    "HashAgg_2".to_owned(),
+                    "8000.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    // The parser normalizes COUNT(*) to COUNT(1), so this
+                    // half is byte-identical to the cop-side funcs: text.
+                    "group by:test.t.c, funcs:test.t.c, count(1)".to_owned(),
+                ],
+                vec![
+                    "└─TableFullScan_1".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    "table:t".to_owned(),
+                    "keep order:false, stats:pseudo".to_owned(),
+                ],
+            ]
+        );
+    }
+
+    /// EXPLAIN plans; it must never run the statement, and it refuses the
+    /// forms this tier cannot plan honestly.
+    #[test]
+    fn explain_refuses_what_it_cannot_plan() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+            .unwrap();
+
+        // TiDB answers `EXPLAIN INSERT` with `Insert_1 | N/A | root | | N/A`
+        // and inserts nothing. This tier has no plan object for the write
+        // path, so it refuses rather than risk executing the insert.
+        assert!(matches!(
+            session.run("EXPLAIN INSERT INTO t VALUES (1)"),
+            Err(DriverError::Unsupported(
+                "only EXPLAIN of a SELECT is supported yet"
+            ))
+        ));
+        // The refusal really did not write the row.
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(*) FROM t")),
+            vec![vec!["0".to_owned()]]
+        );
+
+        assert!(matches!(
+            session.run("EXPLAIN ANALYZE SELECT * FROM t"),
+            Err(DriverError::Unsupported(
+                "EXPLAIN ANALYZE is not supported yet"
+            ))
+        ));
+        assert!(matches!(
+            session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM t"),
+            Err(DriverError::Unsupported(
+                "only the default EXPLAIN row format is supported yet"
+            ))
+        ));
+    }
 
     /// A whole session lifecycle from SQL strings alone: DDL, writes, reads.
     #[test]

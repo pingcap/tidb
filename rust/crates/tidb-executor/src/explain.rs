@@ -1,0 +1,818 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! `EXPLAIN <select>`: the plan this tier would execute, printed in the five
+//! columns Go's row format uses (`id | estRows | task | access object |
+//! operator info`).
+//!
+//! # What this is, and what it deliberately is not
+//!
+//! This tier has no plan object and no cost model: [`crate::driver`] decides
+//! point-get vs batch-point-get vs index-range vs full scan, and whether a
+//! selection/sort/projection/aggregate/limit is needed, WHILE it builds the
+//! executor pipeline. So EXPLAIN here is a **plan recorder**, not an
+//! optimizer trace: it re-runs the very same decision functions
+//! ([`crate::driver::try_batch_point_get`], [`crate::driver::try_point_get`],
+//! [`crate::driver::try_index_ranges`]) that the executing path calls and
+//! records the operator each one selects. Nothing is executed -- no row is
+//! read -- which is also what Go does (`EXPLAIN INSERT` plans without
+//! inserting).
+//!
+//! # Divergences from Go's EXPLAIN, each deliberate and named
+//!
+//! 1. **No `cop[tikv]` task, no `TableReader`.** Go pushes scans, selections,
+//!    limits and the first aggregate phase into a coprocessor task under a
+//!    `TableReader_N` root operator. This tier reads rows in-process through
+//!    [`crate::kv_table::KvTable`]; there is no coprocessor and no
+//!    `TableReader` executor. Every row therefore reports task `root`, and
+//!    the scan appears directly under its parent. Printing `cop[tikv]` would
+//!    describe an executor that does not exist here.
+//! 2. **`Sort` + `Limit`, never `TopN`.** Go's optimizer merges `ORDER BY` +
+//!    `LIMIT` into one `TopN`. The driver builds a
+//!    [`crate::sort::SortExec`] and a [`crate::limit::LimitExec`], so the
+//!    plan shows both.
+//! 3. **`Projection` is always present.** Go elides the projection when a
+//!    query selects exactly the source columns (`select * from t` shows no
+//!    `Projection`). The driver always builds a
+//!    [`crate::projection::ProjectionExec`], so the recorder prints it.
+//! 4. **One-phase `HashAgg`.** Go splits an aggregate into a cop-side and a
+//!    root-side `HashAgg` communicating through `Column#N` slots allocated by
+//!    the planner. This tier has one [`crate::hash_agg::HashAggExec`] and no
+//!    column-id allocator, so `funcs:` prints the aggregate as written
+//!    (`count(*)`) rather than Go's `count(1)->Column#6`.
+//! 5. **Operator ids are build-order, not Go's plan-construction order.**
+//!    Ids are assigned bottom-up in the order the driver builds executors,
+//!    starting at 1. Go's counter also advances for logical operators that
+//!    optimization later removes, so `TableFullScan_4` (Go) is
+//!    `TableFullScan_1` here. The NAMES are Go's.
+//! 6. **Join `estRows` is `N/A`.** Go's `12500.00` for a two-table equi-join
+//!    comes from NDV-based cardinality estimation, which needs statistics
+//!    this tier does not have. Rather than invent a number, the recorder
+//!    prints Go's own not-available sentinel, the same one Go prints for
+//!    `Insert_1`.
+//! 7. **A point get keeps its Selection.** Go's fast plan REPLACES the whole
+//!    pipeline, so `explain select * from t where a = 1` is one
+//!    `Point_Get_1` row. Here the point get only narrows the SOURCE:
+//!    `run_select_stmt` deliberately leaves the WHERE in place so a conjunct
+//!    the handle did not pin still filters. The plan therefore shows
+//!    `Projection > Selection > Point_Get`. Because the access path already
+//!    priced those conditions, the selection does not reduce the estimate
+//!    again -- see `plan_select`.
+//!
+//! # Where the estRows numbers come from
+//!
+//! Every value printed is a stats-less default read from Go's source, not a
+//! guess, and each was confirmed against a `testkit.CreateMockStore` capture
+//! of the real `EXPLAIN` output on a table with no analyzed statistics:
+//!
+//! * table row count: `statistics.PseudoRowCount = 10000`
+//!   (`pkg/statistics/table.go`).
+//! * a comparison filter (`>`, `>=`, `<`, `<=`): `1.0 / pseudoLessRate` with
+//!   `pseudoLessRate = 3` (`pkg/planner/cardinality/pseudo.go`), giving
+//!   10000/3 = 3333.33 -- matching the capture.
+//! * an equality filter: `1.0 / pseudoEqualRate` with
+//!   `pseudoEqualRate = 1000` (same file).
+//! * anything else: `SelectivityFactor`, whose default is 0.8
+//!   (`vardef.DefOptSelectivityFactor`).
+//! * a GROUP BY's output cardinality: `distinctFactor = 0.8`
+//!   (`pkg/planner/cardinality/ndv.go`), giving 8000.00 -- matching the
+//!   capture.
+//! * a point get: 1.00; a batch point get: the number of handles -- both
+//!   exact, not estimates.
+
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+use crate::driver::{
+    eval_limit_bound, single_kv_table, split_table_path_pub, try_batch_point_get, try_index_ranges,
+    try_point_get, Catalog, DriverError, FromScope, FromTable, SelectMeta, TableEntry,
+};
+use crate::kv_table::TableHandle;
+
+/// Go `statistics.PseudoRowCount` (`pkg/statistics/table.go`): the row count
+/// assumed for a table with no analyzed statistics.
+const PSEUDO_ROW_COUNT: f64 = 10000.0;
+/// Go `pseudoLessRate` (`pkg/planner/cardinality/pseudo.go`).
+const PSEUDO_LESS_RATE: f64 = 3.0;
+/// Go `pseudoEqualRate` (same file).
+const PSEUDO_EQUAL_RATE: f64 = 1000.0;
+/// Go `vardef.DefOptSelectivityFactor`, the fallback selectivity for a
+/// condition the pseudo model cannot classify.
+const SELECTIVITY_FACTOR: f64 = 0.8;
+/// Go `distinctFactor` (`pkg/planner/cardinality/ndv.go`): the assumed NDV
+/// ratio of a grouping key without statistics.
+const DISTINCT_FACTOR: f64 = 0.8;
+
+/// One node of the recorded plan, before ids are assigned.
+struct PlanNode {
+    /// Go's operator name without the `_N` suffix (`TableFullScan`).
+    name: &'static str,
+    /// The `estRows` cell; `None` prints Go's `N/A`.
+    est_rows: Option<f64>,
+    /// The `access object` cell.
+    access: String,
+    /// The `operator info` cell.
+    info: String,
+    /// Children, in the order Go prints them (build side first for a join).
+    children: Vec<PlanNode>,
+}
+
+impl PlanNode {
+    fn leaf(name: &'static str, est_rows: Option<f64>, access: String, info: String) -> Self {
+        Self {
+            name,
+            est_rows,
+            access,
+            info,
+            children: Vec::new(),
+        }
+    }
+
+    /// A unary operator over `child`, inheriting its estimate unless one is
+    /// given.
+    fn unary(name: &'static str, est_rows: Option<f64>, info: String, child: PlanNode) -> Self {
+        Self {
+            name,
+            est_rows,
+            access: String::new(),
+            info,
+            children: vec![child],
+        }
+    }
+}
+
+/// The header Go's row-format EXPLAIN reports, captured from TiDB.
+const EXPLAIN_COLUMNS: [&str; 5] = ["id", "estRows", "task", "access object", "operator info"];
+
+/// Plans `select` and reports the plan as EXPLAIN rows, executing nothing.
+pub fn explain_select_stmt(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<SelectMeta, DriverError> {
+    let plan = plan_select(select, catalog, current_db)?;
+    Ok(render(plan))
+}
+
+/// Assigns ids bottom-up and flattens the tree into the five text columns.
+fn render(plan: PlanNode) -> SelectMeta {
+    let mut counter = 0;
+    let plan = assign_ids(plan, &mut counter);
+    let mut rows = Vec::new();
+    flatten(&plan, String::new(), true, true, &mut rows);
+    let field_type = FieldType::new(FieldTypeCode::VarString);
+    let columns = EXPLAIN_COLUMNS
+        .iter()
+        .map(|name| ((*name).to_owned(), field_type.clone()))
+        .collect();
+    (columns, rows)
+}
+
+/// A plan node whose id is fixed.
+struct IdNode {
+    id: String,
+    est_rows: Option<f64>,
+    access: String,
+    info: String,
+    children: Vec<IdNode>,
+}
+
+/// Numbers the tree bottom-up in the driver's own build order: a node's
+/// children are built before it, so they take the lower ids.
+fn assign_ids(node: PlanNode, counter: &mut usize) -> IdNode {
+    let children: Vec<IdNode> = node
+        .children
+        .into_iter()
+        .map(|child| assign_ids(child, counter))
+        .collect();
+    *counter += 1;
+    IdNode {
+        id: format!("{}_{}", node.name, counter),
+        est_rows: node.est_rows,
+        access: node.access,
+        info: node.info,
+        children,
+    }
+}
+
+/// Go's tree drawing: the last child gets `└─`, an earlier sibling `├─`, and
+/// a non-last child's descendants are prefixed with `│ ` so the branch line
+/// continues past them.
+fn flatten(node: &IdNode, prefix: String, is_root: bool, is_last: bool, out: &mut Vec<Vec<Datum>>) {
+    let id = if is_root {
+        node.id.clone()
+    } else if is_last {
+        format!("{prefix}└─{}", node.id)
+    } else {
+        format!("{prefix}├─{}", node.id)
+    };
+    let est = match node.est_rows {
+        Some(value) => format!("{value:.2}"),
+        None => "N/A".to_owned(),
+    };
+    out.push(vec![
+        text(&id),
+        text(&est),
+        // Divergence 1: every operator here runs in the TiDB process.
+        text("root"),
+        text(&node.access),
+        text(&node.info),
+    ]);
+    let child_prefix = if is_root {
+        String::new()
+    } else if is_last {
+        format!("{prefix}  ")
+    } else {
+        format!("{prefix}│ ")
+    };
+    let last = node.children.len().saturating_sub(1);
+    for (i, child) in node.children.iter().enumerate() {
+        flatten(child, child_prefix.clone(), false, i == last, out);
+    }
+}
+
+fn text(value: &str) -> Datum {
+    Datum::Bytes(value.as_bytes().to_vec())
+}
+
+/// Builds the plan tree, mirroring `driver::run_select_stmt`'s decisions in
+/// the same order it makes them.
+fn plan_select(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<PlanNode, DriverError> {
+    if select.with.is_some() {
+        return Err(DriverError::Unsupported(
+            "EXPLAIN of a WITH clause is not supported yet",
+        ));
+    }
+    let scope = explain_scope(&select.from, catalog, current_db)?;
+    let Source { mut node, consumed } = plan_source(select, catalog, current_db, &scope)?;
+
+    let qualify = Qualifier {
+        db: current_db,
+        scope: &scope,
+    };
+
+    // Aggregate path: GROUP BY, or any aggregate in the select list. It
+    // consumes the whole tail of the pipeline in the driver, so it is
+    // recorded the same way.
+    let is_aggregate = !select.group_by.is_empty()
+        || select.fields.fields().iter().any(|f| {
+            matches!(
+                f,
+                tidb_ast::SelectField::Expr {
+                    expr: tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. },
+                    ..
+                }
+            )
+        });
+
+    // WHERE: a selection over the source.
+    if let Some(predicate) = &select.where_clause {
+        // The access path's own estimate already reflects the conditions it
+        // consumed (Go's DetachCondAndBuildRange split: access conditions are
+        // priced once, by the read). A selection above such a path re-checks
+        // them, so it must not multiply the estimate a second time. Only a
+        // plain full scan consumed nothing, so only there does the filter
+        // reduce the estimate -- which is exactly how Go's 10000 -> 3333.33
+        // arises.
+        let rows = node.est_rows.map(|r| {
+            if consumed {
+                r
+            } else {
+                r * selectivity(predicate)
+            }
+        });
+        node = PlanNode::unary("Selection", rows, qualify.expr(predicate), node);
+    }
+
+    if is_aggregate {
+        let mut info = String::new();
+        if !select.group_by.is_empty() {
+            info.push_str("group by:");
+            let keys: Vec<String> = select
+                .group_by
+                .iter()
+                .map(|e| qualify.expr(&e.expr))
+                .collect();
+            info.push_str(&keys.join(", "));
+            info.push_str(", ");
+        }
+        // Divergence 4: one phase, and the function as written.
+        let funcs: Vec<String> = select
+            .fields
+            .fields()
+            .iter()
+            .filter_map(|f| match f {
+                tidb_ast::SelectField::Expr { expr, .. } => Some(qualify.expr(expr)),
+                tidb_ast::SelectField::Wildcard(_) => None,
+            })
+            .collect();
+        info.push_str("funcs:");
+        info.push_str(&funcs.join(", "));
+        let rows = if select.group_by.is_empty() {
+            // A whole-table aggregate collapses to one row.
+            Some(1.0)
+        } else {
+            node.est_rows.map(|r| r * DISTINCT_FACTOR)
+        };
+        node = PlanNode::unary("HashAgg", rows, info, node);
+        return Ok(apply_limit(select, node));
+    }
+
+    // ORDER BY: a sort below the projection (divergence 2: never a TopN).
+    if !select.order_by.is_empty() {
+        let items: Vec<String> = select
+            .order_by
+            .iter()
+            .map(|item| {
+                let rendered = qualify.expr(&item.expr);
+                if item.desc {
+                    format!("{rendered}:desc")
+                } else {
+                    rendered
+                }
+            })
+            .collect();
+        let rows = node.est_rows;
+        node = PlanNode::unary("Sort", rows, items.join(", "), node);
+    }
+
+    // Divergence 3: the driver always builds a projection.
+    let fields: Vec<String> = select
+        .fields
+        .fields()
+        .iter()
+        .map(|f| match f {
+            tidb_ast::SelectField::Expr { expr, .. } => qualify.expr(expr),
+            tidb_ast::SelectField::Wildcard(path) => match path.last() {
+                Some(table) => format!("{table}.*"),
+                None => "*".to_owned(),
+            },
+        })
+        .collect();
+    let rows = node.est_rows;
+    node = PlanNode::unary("Projection", rows, fields.join(", "), node);
+
+    if select.distinct {
+        // Go's buildDistinct is an aggregation grouping by every projected
+        // column, so it carries the same NDV assumption.
+        let rows = node.est_rows.map(|r| r * DISTINCT_FACTOR);
+        let info = format!("group by:{}, funcs:firstrow", fields.join(", "));
+        node = PlanNode::unary("HashAgg", rows, info, node);
+    }
+
+    Ok(apply_limit(select, node))
+}
+
+/// LIMIT caps the child's estimate at the requested count, as Go's does.
+fn apply_limit(select: &tidb_ast::SelectStmt, node: PlanNode) -> PlanNode {
+    let Some(limit) = &select.limit else {
+        return node;
+    };
+    let (Ok(count), offset) = (
+        eval_limit_bound(&limit.count),
+        limit
+            .offset
+            .as_ref()
+            .and_then(|e| eval_limit_bound(e).ok())
+            .unwrap_or(0),
+    ) else {
+        return node;
+    };
+    let rows = node.est_rows.map(|r| r.min(count as f64));
+    PlanNode::unary(
+        "Limit",
+        rows,
+        format!("offset:{offset}, count:{count}"),
+        node,
+    )
+}
+
+/// A source operator plus whether its access path already priced the WHERE.
+struct Source {
+    node: PlanNode,
+    /// True when the read itself consumed the conditions that selected it (a
+    /// handle lookup or an index range), so a selection above it re-checks
+    /// rather than filters further.
+    consumed: bool,
+}
+
+/// The source operator: whichever read `run_select_stmt` would pick, decided
+/// by the same functions it calls, in the same order.
+fn plan_source(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    scope: &FromScope,
+) -> Result<Source, DriverError> {
+    if select.from.is_none() {
+        return Ok(Source {
+            node: PlanNode::leaf("TableDual", Some(1.0), String::new(), "rows:1".to_owned()),
+            consumed: false,
+        });
+    }
+    if let Some(table) = single_kv_table(&select.from, catalog, current_db) {
+        let columns = scope.column_list();
+        let access = format!("table:{}", visible_name(scope, &table.name));
+        if let Some(handles) = try_batch_point_get(select, &table, &columns)? {
+            let printed: Vec<String> = handles.iter().map(handle_text).collect();
+            return Ok(Source {
+                consumed: true,
+                node: PlanNode::leaf(
+                    "Batch_Point_Get",
+                    Some(handles.len() as f64),
+                    access,
+                    format!(
+                        "handle:[{}], keep order:false, desc:false",
+                        printed.join(" ")
+                    ),
+                ),
+            });
+        }
+        if let Some(handle) = try_point_get(select, &table, &columns)? {
+            let printed = match &handle {
+                Some(handle) => handle_text(handle),
+                // The WHERE pinned a handle no row can carry (Go still plans
+                // a Point_Get and reads nothing).
+                None => "NULL".to_owned(),
+            };
+            return Ok(Source {
+                consumed: true,
+                node: PlanNode::leaf("Point_Get", Some(1.0), access, format!("handle:{printed}")),
+            });
+        }
+        if let Some((index_id, ranges)) = try_index_ranges(select, &table, &columns) {
+            let index = table
+                .indexes()
+                .iter()
+                .find(|i| i.id == index_id)
+                .expect("try_index_ranges returns an index of this table");
+            let index_columns: Vec<&str> = index
+                .column_offsets
+                .iter()
+                .map(|offset| columns[*offset].0.as_str())
+                .collect();
+            let access = format!(
+                "{access}, index:{}({})",
+                index.name,
+                index_columns.join(", ")
+            );
+            let printed: Vec<String> = ranges.iter().map(range_text).collect();
+            return Ok(Source {
+                consumed: true,
+                node: PlanNode::leaf(
+                    "IndexRangeScan",
+                    // The ranges narrow the read, but by how much needs the
+                    // per-column histogram this tier has no statistics for, so
+                    // the estimate is the same stats-less one Go falls back to.
+                    Some(PSEUDO_ROW_COUNT / PSEUDO_LESS_RATE),
+                    access,
+                    format!(
+                        "range:{}, keep order:false, stats:pseudo",
+                        printed.join(", ")
+                    ),
+                ),
+            });
+        }
+        return Ok(Source {
+            consumed: false,
+            node: PlanNode::leaf(
+                "TableFullScan",
+                Some(PSEUDO_ROW_COUNT),
+                access,
+                "keep order:false, stats:pseudo".to_owned(),
+            ),
+        });
+    }
+    let node = plan_from(
+        select.from.as_ref().expect("checked above"),
+        catalog,
+        current_db,
+        scope,
+    )?;
+    Ok(Source {
+        node,
+        consumed: false,
+    })
+}
+
+/// A join, or a single non-KV (in-memory) table.
+fn plan_from(
+    join: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_db: &str,
+    scope: &FromScope,
+) -> Result<PlanNode, DriverError> {
+    let left = plan_join_node(&join.left, catalog, current_db)?;
+    let Some(right_node) = &join.right else {
+        return Ok(left);
+    };
+    if join.natural || !join.using.is_empty() {
+        return Err(DriverError::Unsupported(
+            "NATURAL and USING joins are not supported yet",
+        ));
+    }
+    let right = plan_join_node(right_node, catalog, current_db)?;
+    let qualify = Qualifier {
+        db: current_db,
+        scope,
+    };
+    let kind = match join.tp {
+        tidb_ast::JoinType::Cross => "inner join",
+        tidb_ast::JoinType::Left => "left outer join",
+        tidb_ast::JoinType::Right => "right outer join",
+    };
+    let info = match &join.on {
+        Some(expr) => format!("{kind}, conditions:{}", qualify.expr(expr)),
+        None => kind.to_owned(),
+    };
+    Ok(PlanNode {
+        // The driver builds a nested-loop JoinExec; Go's own name for the
+        // shape with no hash or merge structure.
+        name: "HashJoin",
+        // Divergence 6: an equi-join's cardinality needs statistics.
+        est_rows: None,
+        access: String::new(),
+        info,
+        children: vec![left, right],
+    })
+}
+
+fn plan_join_node(
+    node: &tidb_ast::JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<PlanNode, DriverError> {
+    match node {
+        tidb_ast::JoinNode::Table(table_ref) => {
+            let (database, name) = split_table_path_pub(&table_ref.name, current_db)?;
+            catalog
+                .get_in(database, name)
+                .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+            let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+            Ok(PlanNode::leaf(
+                "TableFullScan",
+                Some(PSEUDO_ROW_COUNT),
+                format!("table:{visible}"),
+                "keep order:false, stats:pseudo".to_owned(),
+            ))
+        }
+        tidb_ast::JoinNode::Join(join) => {
+            let scope = explain_scope(&Some((**join).clone()), catalog, current_db)?;
+            plan_from(join, catalog, current_db, &scope)
+        }
+        tidb_ast::JoinNode::Derived { .. } => Err(DriverError::Unsupported(
+            "derived tables are not supported yet",
+        )),
+    }
+}
+
+/// The FROM scope, computed exactly as `driver::build_join` computes it but
+/// without building any executor -- EXPLAIN must not read a row.
+fn explain_scope(
+    from: &Option<tidb_ast::Join>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<FromScope, DriverError> {
+    let Some(join) = from else {
+        return Ok(FromScope::default());
+    };
+    scope_of_join(join, catalog, current_db)
+}
+
+fn scope_of_join(
+    join: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<FromScope, DriverError> {
+    let left = scope_of_node(&join.left, catalog, current_db)?;
+    let Some(right_node) = &join.right else {
+        return Ok(left);
+    };
+    let right = scope_of_node(right_node, catalog, current_db)?;
+    let left_width = left.width();
+    let mut scope = left;
+    for table in right.tables {
+        scope.tables.push(FromTable {
+            name: table.name,
+            columns: table.columns,
+            offset: table.offset + left_width,
+        });
+    }
+    Ok(scope)
+}
+
+fn scope_of_node(
+    node: &tidb_ast::JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<FromScope, DriverError> {
+    match node {
+        tidb_ast::JoinNode::Table(table_ref) => {
+            let (database, name) = split_table_path_pub(&table_ref.name, current_db)?;
+            let entry: &TableEntry = catalog
+                .get_in(database, name)
+                .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+            let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+            Ok(FromScope {
+                tables: vec![FromTable {
+                    name: visible,
+                    columns: entry.column_list(),
+                    offset: 0,
+                }],
+            })
+        }
+        tidb_ast::JoinNode::Join(join) => scope_of_join(join, catalog, current_db),
+        tidb_ast::JoinNode::Derived { .. } => Err(DriverError::Unsupported(
+            "derived tables are not supported yet",
+        )),
+    }
+}
+
+/// The name the `access object` prints: the alias when the FROM gave one,
+/// which is what Go prints too.
+fn visible_name<'a>(scope: &'a FromScope, table: &'a str) -> &'a str {
+    match scope.tables.first() {
+        Some(first) => &first.name,
+        None => table,
+    }
+}
+
+fn handle_text(handle: &TableHandle) -> String {
+    match handle {
+        TableHandle::Int(value) => value.to_string(),
+        // A clustered-index handle is a byte string; Go prints its decoded
+        // datums, which needs the handle codec this printer does not carry.
+        TableHandle::Common(_) => "<common handle>".to_owned(),
+    }
+}
+
+/// Go's range notation: a square bracket includes the bound, a parenthesis
+/// excludes it, and an absent bound is an infinity.
+fn range_text(range: &crate::kv_table::IndexRange) -> String {
+    let low = bound_text(&range.low, "-inf");
+    let high = bound_text(&range.high, "+inf");
+    let open = if range.low_exclusive { '(' } else { '[' };
+    let close = if range.high_exclusive { ')' } else { ']' };
+    format!("{open}{low},{high}{close}")
+}
+
+fn bound_text(values: &[Datum], infinity: &str) -> String {
+    if values.is_empty() {
+        return infinity.to_owned();
+    }
+    values
+        .iter()
+        .map(datum_go_text)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A constant as Go's explain prints it: a string in double quotes, a number
+/// bare.
+fn datum_go_text(value: &Datum) -> String {
+    match value {
+        Datum::Null => "NULL".to_owned(),
+        // Go's range printer spells the open-ended bounds this way.
+        Datum::MaxValue => "+inf".to_owned(),
+        Datum::MinNotNull => "-inf".to_owned(),
+        Datum::Int(v) => v.to_string(),
+        Datum::UInt(v) => v.to_string(),
+        Datum::Real(v) => v.to_string(),
+        Datum::Decimal(d) => d.to_string(),
+        Datum::String(s) => format!("\"{}\"", String::from_utf8_lossy(s.bytes())),
+        Datum::Bytes(b) => format!("\"{}\"", String::from_utf8_lossy(b)),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Go's stats-less selectivity for one predicate, from
+/// `cardinality.pseudoSelectivity`: the minimum over the conjuncts of the
+/// per-operator rate, starting at `SelectivityFactor`.
+fn selectivity(predicate: &tidb_ast::Expr) -> f64 {
+    let mut factor = SELECTIVITY_FACTOR;
+    let mut conjuncts = Vec::new();
+    collect_and(predicate, &mut conjuncts);
+    for conjunct in conjuncts {
+        let rate = match conjunct {
+            tidb_ast::Expr::Binary(op, _, _) => match op {
+                tidb_ast::BinaryOp::Eq | tidb_ast::BinaryOp::NullEq => 1.0 / PSEUDO_EQUAL_RATE,
+                tidb_ast::BinaryOp::Ge
+                | tidb_ast::BinaryOp::Gt
+                | tidb_ast::BinaryOp::Le
+                | tidb_ast::BinaryOp::Lt => 1.0 / PSEUDO_LESS_RATE,
+                _ => continue,
+            },
+            tidb_ast::Expr::In { .. } => 1.0 / PSEUDO_EQUAL_RATE,
+            _ => continue,
+        };
+        factor = factor.min(rate);
+    }
+    factor
+}
+
+fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+    if let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) = expr {
+        collect_and(lhs, out);
+        collect_and(rhs, out);
+        return;
+    }
+    out.push(expr);
+}
+
+/// Renders an expression the way Go's `ExplainInfo` does: a comparison as its
+/// function name (`gt(a, b)`), a column fully qualified as `db.table.column`,
+/// a string constant in double quotes.
+struct Qualifier<'a> {
+    db: &'a str,
+    scope: &'a FromScope,
+}
+
+impl Qualifier<'_> {
+    fn expr(&self, expr: &tidb_ast::Expr) -> String {
+        match expr {
+            tidb_ast::Expr::Column(path) => self.column(path),
+            tidb_ast::Expr::Int(text) => text.clone(),
+            tidb_ast::Expr::Decimal(text) => text.clone(),
+            tidb_ast::Expr::Float(value) => value.to_string(),
+            tidb_ast::Expr::String(value) => format!("\"{value}\""),
+            tidb_ast::Expr::Binary(op, lhs, rhs) => match binary_func_name(*op) {
+                Some(name) => format!("{name}({}, {})", self.expr(lhs), self.expr(rhs)),
+                // A shape Go prints differently is restored from the AST
+                // rather than mislabelled with an invented function name.
+                None => expr.restore(),
+            },
+            tidb_ast::Expr::Aggregate {
+                name,
+                distinct,
+                args,
+            } => {
+                let rendered: Vec<String> = args.iter().map(|a| self.expr(a)).collect();
+                let prefix = if *distinct { "distinct " } else { "" };
+                format!(
+                    "{}({prefix}{})",
+                    name.to_lowercase(),
+                    if rendered.is_empty() {
+                        "*".to_owned()
+                    } else {
+                        rendered.join(", ")
+                    }
+                )
+            }
+            other => other.restore(),
+        }
+    }
+
+    /// `db.table.column`, resolving an unqualified name against the scope --
+    /// the qualification Go's explain always prints in full.
+    fn column(&self, path: &[String]) -> String {
+        match path {
+            [name] => {
+                let owner = self
+                    .scope
+                    .tables
+                    .iter()
+                    .find(|t| t.columns.iter().any(|(c, _)| c.eq_ignore_ascii_case(name)));
+                match owner {
+                    Some(table) => format!("{}.{}.{}", self.db, table.name, name),
+                    None => name.clone(),
+                }
+            }
+            [table, name] => format!("{}.{table}.{name}", self.db),
+            _ => path.join("."),
+        }
+    }
+}
+
+/// Go's function name for a comparison operator, which is what `ExplainInfo`
+/// prints instead of the infix spelling.
+fn binary_func_name(op: tidb_ast::BinaryOp) -> Option<&'static str> {
+    Some(match op {
+        tidb_ast::BinaryOp::Eq => "eq",
+        tidb_ast::BinaryOp::NullEq => "nulleq",
+        tidb_ast::BinaryOp::Ge => "ge",
+        tidb_ast::BinaryOp::Gt => "gt",
+        tidb_ast::BinaryOp::Le => "le",
+        tidb_ast::BinaryOp::Lt => "lt",
+        tidb_ast::BinaryOp::Ne => "ne",
+        tidb_ast::BinaryOp::LogicAnd => "and",
+        tidb_ast::BinaryOp::LogicOr => "or",
+        tidb_ast::BinaryOp::Plus => "plus",
+        tidb_ast::BinaryOp::Minus => "minus",
+        tidb_ast::BinaryOp::Mul => "mul",
+        tidb_ast::BinaryOp::Div => "div",
+        _ => return None,
+    })
+}

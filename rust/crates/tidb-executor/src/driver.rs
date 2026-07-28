@@ -161,7 +161,7 @@ pub enum TableEntry {
 
 impl TableEntry {
     /// The table's columns as `(name, type)` in schema order.
-    fn column_list(&self) -> Vec<(String, FieldType)> {
+    pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
         match self {
             TableEntry::Mem(mem) => mem.columns.clone(),
             TableEntry::Kv(kv) => kv
@@ -291,7 +291,7 @@ impl Catalog {
     }
 
     /// Resolves a table in `database`.
-    fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
+    pub(crate) fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
         self.databases
             .get(&database.to_lowercase())?
             .tables
@@ -3219,7 +3219,7 @@ fn range_for_comparison(op: tidb_ast::BinaryOp, value: Datum) -> Option<IndexRan
 /// equalities pin leading columns), `IN` lists and `BETWEEN` as ranges, `OR`
 /// unions across ranges, and cost-based choice among several usable indexes --
 /// this takes the first index whose leading column the `WHERE` constrains.
-fn try_index_ranges(
+pub(crate) fn try_index_ranges(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -3356,7 +3356,7 @@ fn compare_bounds(left: &[Datum], right: &[Datum]) -> std::cmp::Ordering {
 
 /// The single TiKV-backed table a `FROM` names, when it names exactly one.
 /// A point get applies only to that shape (Go `getSingleTableNameAndAlias`).
-fn single_kv_table(
+pub(crate) fn single_kv_table(
     from: &Option<tidb_ast::Join>,
     catalog: &Catalog,
     current_db: &str,
@@ -3387,7 +3387,7 @@ fn single_kv_table(
 ///
 /// DEFERRED (documented): Go's row form, `(a, b) IN ((1, 2), (3, 4))`, which
 /// needs multi-column key lookup.
-fn try_batch_point_get(
+pub(crate) fn try_batch_point_get(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -3533,7 +3533,7 @@ fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValuePair>) -> bo
 ///
 /// Returns `Ok(None)` when the statement does not qualify, so the caller
 /// falls back to the ordinary scan.
-fn try_point_get(
+pub(crate) fn try_point_get(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -3607,29 +3607,29 @@ fn try_point_get(
 /// when it has one, as in Go's `TableSource`), its columns, and the offset of
 /// its first column in the joined row.
 #[derive(Clone, Debug)]
-struct FromTable {
-    name: String,
-    columns: Vec<(String, FieldType)>,
-    offset: usize,
+pub(crate) struct FromTable {
+    pub(crate) name: String,
+    pub(crate) columns: Vec<(String, FieldType)>,
+    pub(crate) offset: usize,
 }
 
 /// The joined `FROM` scope: every table's columns concatenated left to right,
 /// which is the row layout [`JoinExec`] produces.
 #[derive(Clone, Debug, Default)]
-struct FromScope {
-    tables: Vec<FromTable>,
+pub(crate) struct FromScope {
+    pub(crate) tables: Vec<FromTable>,
 }
 
 impl FromScope {
     /// Every column of the scope in row order.
-    fn column_list(&self) -> Vec<(String, FieldType)> {
+    pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
         self.tables
             .iter()
             .flat_map(|t| t.columns.iter().cloned())
             .collect()
     }
 
-    fn width(&self) -> usize {
+    pub(crate) fn width(&self) -> usize {
         self.tables.iter().map(|t| t.columns.len()).sum()
     }
 }
@@ -4593,7 +4593,7 @@ fn distinct_over(
 }
 
 /// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
-fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
+pub(crate) fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
     match expr {
         tidb_ast::Expr::Int(text) => text
             .parse::<u64>()
