@@ -1081,6 +1081,7 @@ type HostedEmbedding struct {
 
 	// APIEndpoint is the base URL for the hosted embedding service. TiDB appends
 	// /api/v1/inference/embeddings/<billing-id> when sending a request.
+	// If it is empty, hosted embedding requests fail without preventing TiDB from starting.
 	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint,omitempty"`
 
 	// APIKeyPath is the path to the Bearer API key file for accessing the hosted embedding service.
@@ -1762,9 +1763,6 @@ func (c *Config) Valid() error {
 	}
 	if c.HostedEmbedding.configured() && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
-	}
-	if c.HostedEmbedding.Enabled && strings.TrimSpace(c.HostedEmbedding.APIEndpoint) == "" {
-		return fmt.Errorf("hosted-embedding.api-endpoint must be configured when hosted-embedding.enabled is true")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")

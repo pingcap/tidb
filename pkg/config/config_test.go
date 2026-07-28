@@ -984,7 +984,7 @@ func TestConfig(t *testing.T) {
 		conf = NewConfig()
 		conf.DeployMode = deploymode.Starter
 		conf.HostedEmbedding.Enabled = true
-		require.ErrorContains(t, conf.Valid(), "hosted-embedding.api-endpoint must be configured")
+		require.NoError(t, conf.Valid())
 	}
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
