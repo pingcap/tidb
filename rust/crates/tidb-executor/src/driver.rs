@@ -469,6 +469,26 @@ pub enum DriverError {
     },
     /// Go `ErrWrongParamCount` (1210).
     WrongParamCount,
+    /// Go `plannererrors.ErrWrongArguments` (1210), carrying the function
+    /// name the arguments were wrong for (`ntile`).
+    WrongArguments(&'static str),
+    /// Go `plannererrors.ErrWindowInvalidWindowFuncUse` (3593): a window
+    /// function written outside the select list / `ORDER BY`, carrying its
+    /// lowercased name.
+    WindowInvalidWindowFuncUse(String),
+    /// Go `plannererrors.ErrWindowNoSuchWindow` (3579): an `OVER` clause named
+    /// a window the `WINDOW` clause does not define.
+    WindowNoSuchWindow(String),
+    /// Go `plannererrors.ErrWindowCircularityInWindowGraph` (3580): a named
+    /// window's `base` chain loops back on itself.
+    WindowCircularity,
+    /// Go `plannererrors.ErrWindowNoChildPartitioning` (3581): a window that
+    /// extends another defined its own `PARTITION BY`.
+    WindowNoChildPartitioning,
+    /// Go `plannererrors.ErrWindowNoRedefineOrderBy` (3583): a window that
+    /// extends another added an `ORDER BY` the base already has, carrying the
+    /// base's name.
+    WindowNoRedefineOrderBy(String),
     /// Go `ErrUnknownColumn` (1054) naming the clause it was written in.
     UnknownColumnInClause {
         /// The name as written.
@@ -1099,6 +1119,10 @@ fn run_select_stmt(
         return Err(DriverError::InvalidGroupFuncUse);
     }
 
+    // A window function outside the select list / ORDER BY is Go's
+    // ErrWindowInvalidWindowFuncUse (3593), whichever path runs below.
+    crate::window::reject_windows_outside_select_list(select)?;
+
     // Aggregate path: GROUP BY, or any select field that is an aggregate call.
     let is_aggregate = !select.group_by.is_empty()
         || select.fields.fields().iter().any(|f| {
@@ -1111,6 +1135,10 @@ fn run_select_stmt(
             )
         });
     if is_aggregate {
+        if crate::window::select_has_window(select) {
+            // A window over post-aggregation rows is outside this slice.
+            return Err(DriverError::Unsupported(crate::window::SLICE_MESSAGE));
+        }
         return run_aggregate_select(select, from_source, &resolver, catalog, current_db, ctx);
     }
 
@@ -1222,6 +1250,44 @@ fn run_select_stmt(
             ctx.clone(),
         ));
     }
+
+    // Window functions: the source rows are materialized here, each window
+    // call is computed over them (see `crate::window`), and its values are
+    // appended as one synthetic source column per call. Every `Expr::Window`
+    // in the select list / ORDER BY is then rewritten to read that column, so
+    // everything below -- projection, outer ORDER BY, DISTINCT, LIMIT -- runs
+    // unchanged, and the outer ORDER BY sorts the already-computed values.
+    let window_rewritten;
+    let select = if crate::window::select_has_window(select) {
+        let calls = crate::window::collect_window_calls(select)?;
+        let source_types: Vec<FieldType> = current_scope
+            .column_list()
+            .into_iter()
+            .map(|(_, field_type)| field_type)
+            .collect();
+        let rows = drain_executor_rows(source, &source_types)?;
+        let (rows, scope_with_windows) =
+            crate::window::compute_windows(&calls, rows, &current_scope, ctx)?;
+        let columns: Vec<Column> = scope_with_windows
+            .column_list()
+            .iter()
+            .enumerate()
+            .map(|(i, (_, ft))| {
+                let mut col = Column::new((i + 1) as i64, ft.clone());
+                col.index = i as i64;
+                col
+            })
+            .collect();
+        source = Box::new(MemTableSourceExec::new(
+            ExecutorMeta::new(Schema::new(columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+            rows,
+        ));
+        current_scope = scope_with_windows;
+        window_rewritten = crate::window::rewrite_windows(select, &calls);
+        &window_rewritten
+    } else {
+        select
+    };
 
     // A correlated subquery in the SELECT list becomes an Apply above the
     // WHERE's selection, appending the column the rewritten field reads --
@@ -4050,6 +4116,11 @@ struct ScopeResolver<'a> {
     scope: &'a FromScope,
 }
 
+/// A resolver over `scope`, for the modules that build their own expressions.
+pub(crate) fn scope_resolver(scope: &FromScope) -> impl ColumnResolver + '_ {
+    ScopeResolver { scope }
+}
+
 impl ColumnResolver for ScopeResolver<'_> {
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let (qualifier, name) = match path {
@@ -4555,7 +4626,7 @@ fn row_is_selected(
 }
 
 /// A one-row chunk holding `row`, so an expression can be evaluated over it.
-fn row_chunk(
+pub(crate) fn row_chunk(
     row: &[Datum],
     field_types: &[FieldType],
 ) -> Result<tidb_chunk::chunk::Chunk, DriverError> {
@@ -8400,6 +8471,48 @@ impl DriverError {
             1210,
             *b"HY000",
             "Incorrect arguments to EXECUTE".to_owned(),
+        ),
+        // Go: "Incorrect arguments to %s".
+        DriverError::WrongArguments(function) => MysqlError::new(
+            1210,
+            *b"HY000",
+            format!("Incorrect arguments to {function}"),
+        ),
+        // Go: "You cannot use the window function '%s' in this context.'"
+        // (the trailing quote is in Go's own message text).
+        DriverError::WindowInvalidWindowFuncUse(name) => MysqlError::new(
+            3593,
+            *b"HY000",
+            format!("You cannot use the window function '{name}' in this context.'"),
+        ),
+        // Go: "Window name '%s' is not defined."
+        DriverError::WindowNoSuchWindow(name) => MysqlError::new(
+            3579,
+            *b"HY000",
+            format!("Window name '{name}' is not defined."),
+        ),
+        // Go: "There is a circularity in the window dependency graph."
+        DriverError::WindowCircularity => MysqlError::new(
+            3580,
+            *b"HY000",
+            "There is a circularity in the window dependency graph.".to_owned(),
+        ),
+        // Go: "A window which depends on another cannot define partitioning."
+        DriverError::WindowNoChildPartitioning => MysqlError::new(
+            3581,
+            *b"HY000",
+            "A window which depends on another cannot define partitioning.".to_owned(),
+        ),
+        // Go: "Window '%s' cannot inherit '%s' since both contain an ORDER BY
+        // clause." -- an inline `OVER (w ORDER BY ...)` has no name of its
+        // own, which Go reports as `<unnamed window>`.
+        DriverError::WindowNoRedefineOrderBy(base) => MysqlError::new(
+            3583,
+            *b"HY000",
+            format!(
+                "Window '<unnamed window>' cannot inherit '{base}' since both contain an \
+                 ORDER BY clause."
+            ),
         ),
         // Go: "Invalid use of group function".
         DriverError::InvalidGroupFuncUse => MysqlError::new(

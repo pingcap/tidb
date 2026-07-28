@@ -7970,4 +7970,456 @@ mod tests {
             .unwrap();
         session
     }
+
+    /// A session seeded with the ranking-window fixture: duplicate `v` values
+    /// inside each `g` group, so ties are exercised in every direction.
+    fn window_session() -> Session {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (g BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,10),(1,20),(1,20),(1,30),(1,40),(2,5),(2,5),(2,7)")
+            .unwrap();
+        session
+    }
+
+    /// `ROW_NUMBER`/`RANK`/`DENSE_RANK` over ties, checked against captured
+    /// TiDB output.
+    ///
+    /// The three differ only on peers: `ROW_NUMBER` numbers every row,
+    /// `RANK` gives peers the same rank and then SKIPS to the next row's
+    /// 1-based position, `DENSE_RANK` gives peers the same rank and never
+    /// skips.
+    #[test]
+    fn window_ranking_functions_over_ties() {
+        let mut session = window_session();
+
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) AS rn \
+                 FROM t ORDER BY g, v, rn"
+            )),
+            [
+                ["1", "10", "1"],
+                ["1", "20", "2"],
+                ["1", "20", "3"],
+                ["1", "30", "4"],
+                ["1", "40", "5"],
+                ["2", "5", "1"],
+                ["2", "5", "2"],
+                ["2", "7", "3"],
+            ]
+        );
+
+        // Captured: the tied 20s both rank 2, and 30 jumps to 4.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, RANK() OVER (PARTITION BY g ORDER BY v) AS r \
+                 FROM t ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "1"],
+                ["1", "20", "2"],
+                ["1", "20", "2"],
+                ["1", "30", "4"],
+                ["1", "40", "5"],
+                ["2", "5", "1"],
+                ["2", "5", "1"],
+                ["2", "7", "3"],
+            ]
+        );
+
+        // Captured: the same ties, but 30 is 3, not 4.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, DENSE_RANK() OVER (PARTITION BY g ORDER BY v) AS r \
+                 FROM t ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "1"],
+                ["1", "20", "2"],
+                ["1", "20", "2"],
+                ["1", "30", "3"],
+                ["1", "40", "4"],
+                ["2", "5", "1"],
+                ["2", "5", "1"],
+                ["2", "7", "2"],
+            ]
+        );
+
+        // No window ORDER BY at all: every row of the partition is a peer,
+        // so both rank functions return 1 for all of them (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, RANK() OVER (PARTITION BY g) AS r, \
+                 DENSE_RANK() OVER (PARTITION BY g) AS d FROM t ORDER BY g, r, d"
+            )),
+            [
+                ["1", "1", "1"],
+                ["1", "1", "1"],
+                ["1", "1", "1"],
+                ["1", "1", "1"],
+                ["1", "1", "1"],
+                ["2", "1", "1"],
+                ["2", "1", "1"],
+                ["2", "1", "1"],
+            ]
+        );
+
+        // DESC reverses the window's own order, independently of the outer
+        // ORDER BY (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, ROW_NUMBER() OVER (PARTITION BY g ORDER BY v DESC) AS rn \
+                 FROM t WHERE g = 2 ORDER BY rn"
+            )),
+            [["2", "7", "1"], ["2", "5", "2"], ["2", "5", "3"]]
+        );
+    }
+
+    /// `NTILE(n)`'s bucket sizing, checked against captured TiDB output.
+    ///
+    /// With `n` buckets over `rows` rows the FIRST `rows % n` buckets take
+    /// one extra row (`quotient + 1`) and the rest take `quotient`; when
+    /// `n > rows` the surplus buckets stay empty.
+    #[test]
+    fn window_ntile_bucket_distribution() {
+        let mut session = window_session();
+
+        // 5 rows into 2 buckets -> 3 then 2; 3 rows into 2 -> 2 then 1.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, NTILE(2) OVER (PARTITION BY g ORDER BY v) AS b \
+                 FROM t ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "1"],
+                ["1", "20", "1"],
+                ["1", "20", "1"],
+                ["1", "30", "2"],
+                ["1", "40", "2"],
+                ["2", "5", "1"],
+                ["2", "5", "1"],
+                ["2", "7", "2"],
+            ]
+        );
+
+        // 5 rows into 3 buckets -> 2, 2, 1 (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, NTILE(3) OVER (PARTITION BY g ORDER BY v) AS b \
+                 FROM t WHERE g = 1 ORDER BY v"
+            )),
+            [
+                ["10", "1"],
+                ["20", "1"],
+                ["20", "2"],
+                ["30", "2"],
+                ["40", "3"]
+            ]
+        );
+
+        // More buckets than rows: one row each, the rest empty (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, NTILE(5) OVER (PARTITION BY g ORDER BY v) AS b \
+                 FROM t WHERE g = 2 ORDER BY b"
+            )),
+            [["5", "1"], ["5", "2"], ["7", "3"]]
+        );
+
+        // One bucket holds everything (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT NTILE(1) OVER (PARTITION BY g ORDER BY v) AS b \
+                 FROM t WHERE g = 2 ORDER BY b"
+            )),
+            [["1"], ["1"], ["1"]]
+        );
+
+        // Without PARTITION BY the whole result is one partition: 8 rows
+        // into 2 buckets -> 4 then 4 (captured).
+        assert_eq!(
+            row_text(session.run("SELECT v, NTILE(2) OVER (ORDER BY v) AS b FROM t ORDER BY v")),
+            [
+                ["5", "1"],
+                ["5", "1"],
+                ["7", "1"],
+                ["10", "1"],
+                ["20", "2"],
+                ["20", "2"],
+                ["30", "2"],
+                ["40", "2"],
+            ]
+        );
+    }
+
+    /// The empty and partition-less specs, plus named windows, checked
+    /// against captured TiDB output.
+    #[test]
+    fn window_specs_and_named_windows() {
+        let mut session = window_session();
+
+        // `OVER ()`: one partition, no order -- the rows keep their source
+        // order and are numbered through it (captured).
+        assert_eq!(
+            row_text(session.run("SELECT g, v, ROW_NUMBER() OVER () AS rn FROM t ORDER BY rn")),
+            [
+                ["1", "10", "1"],
+                ["1", "20", "2"],
+                ["1", "20", "3"],
+                ["1", "30", "4"],
+                ["1", "40", "5"],
+                ["2", "5", "6"],
+                ["2", "5", "7"],
+                ["2", "7", "8"],
+            ]
+        );
+
+        // No PARTITION BY, just an order: one partition across the table.
+        assert_eq!(
+            row_text(
+                session.run("SELECT v, ROW_NUMBER() OVER (ORDER BY v) AS rn FROM t ORDER BY rn")
+            ),
+            [
+                ["5", "1"],
+                ["5", "2"],
+                ["7", "3"],
+                ["10", "4"],
+                ["20", "5"],
+                ["20", "6"],
+                ["30", "7"],
+                ["40", "8"],
+            ]
+        );
+
+        // One named window feeding two calls (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, ROW_NUMBER() OVER w AS rn, RANK() OVER w AS r \
+                 FROM t WINDOW w AS (PARTITION BY g ORDER BY v) ORDER BY g, v, rn"
+            )),
+            [
+                ["1", "10", "1", "1"],
+                ["1", "20", "2", "2"],
+                ["1", "20", "3", "2"],
+                ["1", "30", "4", "4"],
+                ["1", "40", "5", "5"],
+                ["2", "5", "1", "1"],
+                ["2", "5", "2", "1"],
+                ["2", "7", "3", "3"],
+            ]
+        );
+
+        // `OVER (w ...)`: a parenthesized reference may EXTEND the named
+        // window with an ORDER BY the base does not have (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, ROW_NUMBER() OVER (w ORDER BY v) AS rn \
+                 FROM t WHERE g = 2 WINDOW w AS (PARTITION BY g) ORDER BY rn"
+            )),
+            [["5", "1"], ["5", "2"], ["7", "3"]]
+        );
+
+        // A window function alongside plain columns and expressions
+        // (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v + 1, ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) AS rn \
+                 FROM t WHERE g = 2 ORDER BY rn"
+            )),
+            [["2", "6", "1"], ["2", "6", "2"], ["2", "8", "3"]]
+        );
+    }
+
+    /// The outer `ORDER BY` runs AFTER the window is computed, checked
+    /// against captured TiDB output: the ranking reflects the WINDOW's order,
+    /// while the rows come out in the OUTER order.
+    #[test]
+    fn window_outer_order_by_applies_after_computation() {
+        let mut session = window_session();
+
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, g, ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) AS rn \
+                 FROM t ORDER BY v DESC, g, rn"
+            )),
+            [
+                ["40", "1", "5"],
+                ["30", "1", "4"],
+                ["20", "1", "2"],
+                ["20", "1", "3"],
+                ["10", "1", "1"],
+                ["7", "2", "3"],
+                ["5", "2", "1"],
+                ["5", "2", "2"],
+            ]
+        );
+
+        // Ordering by the window column's POSITION works the same way
+        // (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) \
+                 FROM t ORDER BY 3 DESC, g"
+            )),
+            [
+                ["1", "40", "5"],
+                ["1", "30", "4"],
+                ["1", "20", "3"],
+                ["2", "7", "3"],
+                ["1", "20", "2"],
+                ["2", "5", "2"],
+                ["1", "10", "1"],
+                ["2", "5", "1"],
+            ]
+        );
+    }
+
+    /// The ranking functions' result types, checked against captured TiDB
+    /// metadata: `BIGINT(21)` for all four, `NOT NULL` for the three ranking
+    /// ones and `UNSIGNED`/binary for `NTILE`.
+    #[test]
+    fn window_result_types() {
+        let mut session = window_session();
+
+        match session
+            .run_with_columns("SELECT ROW_NUMBER() OVER (ORDER BY v) FROM t")
+            .unwrap()
+        {
+            StmtOutput::Rows { columns, .. } => {
+                let (_, ftype) = &columns[0];
+                assert_eq!(ftype.code(), tidb_datatype::FieldTypeCode::LongLong);
+                assert_eq!(ftype.flen(), 21);
+                assert!(!ftype.is_unsigned());
+                assert_ne!(ftype.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL, 0);
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        match session
+            .run_with_columns("SELECT NTILE(2) OVER (ORDER BY v) FROM t")
+            .unwrap()
+        {
+            StmtOutput::Rows { columns, .. } => {
+                let (_, ftype) = &columns[0];
+                assert_eq!(ftype.code(), tidb_datatype::FieldTypeCode::LongLong);
+                assert_eq!(ftype.flen(), 21);
+                assert!(ftype.is_unsigned());
+                assert_eq!(ftype.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL, 0);
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+    }
+
+    /// Every window error this slice reproduces, checked against captured
+    /// TiDB errors.
+    #[test]
+    fn window_errors_and_refusals() {
+        let mut session = window_session();
+
+        // Captured: "[planner:3593]You cannot use the window function
+        // 'row_number' in this context.'" -- WHERE and HAVING alike.
+        assert!(matches!(
+            session.run("SELECT g FROM t WHERE ROW_NUMBER() OVER (ORDER BY v) > 1"),
+            Err(DriverError::WindowInvalidWindowFuncUse(ref name)) if name == "row_number"
+        ));
+        assert!(matches!(
+            session.run("SELECT g FROM t GROUP BY g HAVING RANK() OVER (ORDER BY g) > 1"),
+            Err(DriverError::WindowInvalidWindowFuncUse(ref name)) if name == "rank"
+        ));
+
+        // Captured: "[planner:1210]Incorrect arguments to ntile" for a zero,
+        // a negative, and a non-constant bucket count.
+        for sql in [
+            "SELECT NTILE(0) OVER (ORDER BY v) FROM t",
+            "SELECT NTILE(-1) OVER (ORDER BY v) FROM t",
+            "SELECT NTILE(v) OVER (ORDER BY v) FROM t",
+        ] {
+            assert!(
+                matches!(session.run(sql), Err(DriverError::WrongArguments("ntile"))),
+                "expected ErrWrongArguments for {sql}"
+            );
+        }
+
+        // Captured: "[planner:3579]Window name 'w' is not defined."
+        assert!(matches!(
+            session.run("SELECT ROW_NUMBER() OVER w FROM t"),
+            Err(DriverError::WindowNoSuchWindow(ref name)) if name == "w"
+        ));
+
+        // Captured: "[planner:3581]A window which depends on another cannot
+        // define partitioning."
+        assert!(matches!(
+            session.run(
+                "SELECT ROW_NUMBER() OVER (w PARTITION BY g) FROM t \
+                 WINDOW w AS (PARTITION BY g)"
+            ),
+            Err(DriverError::WindowNoChildPartitioning)
+        ));
+
+        // Captured: "[planner:3583]Window '<unnamed window>' cannot inherit
+        // 'w' since both contain an ORDER BY clause."
+        assert!(matches!(
+            session.run(
+                "SELECT ROW_NUMBER() OVER (w ORDER BY v) FROM t \
+                 WINDOW w AS (PARTITION BY g ORDER BY v)"
+            ),
+            Err(DriverError::WindowNoRedefineOrderBy(ref base)) if base == "w"
+        ));
+
+        // Outside this slice: window aggregates, the value family, and a
+        // window combined with GROUP BY -- all refused by naming the slice.
+        for sql in [
+            "SELECT g, SUM(v) OVER (PARTITION BY g) FROM t",
+            "SELECT g, LAG(v) OVER (ORDER BY v) FROM t",
+            "SELECT g, FIRST_VALUE(v) OVER (ORDER BY v) FROM t",
+            "SELECT g, PERCENT_RANK() OVER (ORDER BY v) FROM t",
+            "SELECT g, ROW_NUMBER() OVER (ORDER BY v) FROM t GROUP BY g",
+        ] {
+            match session.run(sql) {
+                Err(DriverError::Unsupported(message)) => {
+                    assert!(
+                        message.contains("ROW_NUMBER"),
+                        "refusal for {sql} should name this slice, got {message}"
+                    );
+                }
+                other => panic!("expected a slice refusal for {sql}, got {other:?}"),
+            }
+        }
+    }
+
+    /// The pipeline ABOVE the window stage -- an `ORDER BY`-only window,
+    /// `DISTINCT`, and `LIMIT` -- checked against captured TiDB output.
+    #[test]
+    fn window_feeds_the_ordinary_pipeline() {
+        let mut session = window_session();
+
+        // The window is never projected, only sorted by: `v` descending
+        // through its ROW_NUMBER, so the two `g = 2` rows with the smallest
+        // `v` come last (captured).
+        assert_eq!(
+            row_text(session.run("SELECT g FROM t ORDER BY ROW_NUMBER() OVER (ORDER BY v) DESC")),
+            [["1"], ["1"], ["1"], ["1"], ["1"], ["2"], ["2"], ["2"]]
+        );
+
+        // DISTINCT deduplicates the already-computed window column
+        // (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT DISTINCT g, NTILE(2) OVER (PARTITION BY g ORDER BY v) \
+                 FROM t ORDER BY 1, 2"
+            )),
+            [["1", "1"], ["1", "2"], ["2", "1"], ["2", "2"]]
+        );
+
+        // LIMIT applies after the outer ORDER BY over the window column
+        // (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) rn \
+                 FROM t ORDER BY rn DESC, g LIMIT 3"
+            )),
+            [["1", "40", "5"], ["1", "30", "4"], ["1", "20", "3"]]
+        );
+    }
 }

@@ -45,6 +45,7 @@ pub mod selection;
 pub mod sort;
 mod stmt_context;
 pub mod table_dual;
+mod window;
 
 pub use apply::ApplyExec;
 pub use ddl::{
