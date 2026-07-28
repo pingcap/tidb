@@ -1310,7 +1310,7 @@ func (hg *Histogram) ScaleOutOfRangeShape(
 		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
 	if shape.MaxTotalPercent > 0 {
-		// Always apply maxTotalPercent to maxAddedRows to limit scaling when the predicate has an upper bound
+		// Always apply MaxTotalPercent to maxAddedRows to limit scaling when the predicate has an upper bound
 		maxAddedRows *= shape.MaxTotalPercent
 	}
 
