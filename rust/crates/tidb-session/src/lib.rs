@@ -726,15 +726,39 @@ impl Session {
                                         )
                                     })?
                                 }
+                                tidb_ast::DmlStmt::Update(update) => {
+                                    self.with_catalog_mut(|catalog| {
+                                        tidb_executor::explain_analyze_update_stmt(
+                                            update,
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                            format,
+                                        )
+                                    })?
+                                }
+                                tidb_ast::DmlStmt::Delete(delete) => {
+                                    self.with_catalog_mut(|catalog| {
+                                        tidb_executor::explain_analyze_delete_stmt(
+                                            delete,
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                            format,
+                                        )
+                                    })?
+                                }
                                 _ => {
                                     return Err(DriverError::Unsupported(
-                                        "only EXPLAIN ANALYZE of a SELECT or INSERT is supported yet",
+                                        "only EXPLAIN ANALYZE of a SELECT, INSERT, UPDATE, or \
+                                         DELETE is supported yet",
                                     ));
                                 }
                             },
                             _ => {
                                 return Err(DriverError::Unsupported(
-                                    "only EXPLAIN ANALYZE of a SELECT or INSERT is supported yet",
+                                    "only EXPLAIN ANALYZE of a SELECT, INSERT, UPDATE, or DELETE \
+                                     is supported yet",
                                 ));
                             }
                         };
@@ -3927,6 +3951,155 @@ mod tests {
         );
     }
 
+    /// `EXPLAIN ANALYZE <update>` really updates -- captured against
+    /// `testkit.CreateMockStore`: `explain analyze update t set b = 111
+    /// where c = 200` on a 4-row table leaves `Update_3`'s own `actRows` at
+    /// `0` (a write is a side effect, same as `Insert_1`), with a
+    /// `Selection` (`actRows` `1`, the real number of `WHERE`-matching
+    /// rows) over a `TableFullScan` (`actRows` `4`, the real pre-write row
+    /// count) beneath it -- the write path always full-scans here (`explain`
+    /// module doc, divergence 8), never a `Point_Get`, even for a
+    /// primary-key equality.
+    #[test]
+    fn explain_analyze_update_executes() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,10,100),(2,20,200),(3,30,300),(4,40,400)")
+            .unwrap();
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE UPDATE t SET b = 111 WHERE c = 200"));
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0][0], "Update_3");
+        assert_eq!(rows[0][2], "0");
+        assert_eq!(rows[1][0], "└─Selection_2");
+        assert_eq!(rows[1][2], "1");
+        assert_eq!(rows[2][0], "  └─TableFullScan_1");
+        assert_eq!(rows[2][2], "4");
+
+        // The inverse of the plain-EXPLAIN test: the table really changed.
+        assert_eq!(
+            row_text(session.run("SELECT b FROM t WHERE a = 2")),
+            vec![vec!["111".to_owned()]]
+        );
+    }
+
+    /// `EXPLAIN ANALYZE <delete>` really deletes -- same real read-then-write
+    /// shape as [`explain_analyze_update_executes`], over `Delete_N`.
+    #[test]
+    fn explain_analyze_delete_executes() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,10),(2,20),(3,30)")
+            .unwrap();
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE DELETE FROM t WHERE a = 2"));
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0][0], "Delete_3");
+        assert_eq!(rows[0][2], "0");
+        assert_eq!(rows[1][0], "└─Selection_2");
+        assert_eq!(rows[1][2], "1");
+        assert_eq!(rows[2][0], "  └─TableFullScan_1");
+        assert_eq!(rows[2][2], "3");
+
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t ORDER BY a")),
+            vec![vec!["1".to_owned()], vec!["3".to_owned()]]
+        );
+    }
+
+    /// `EXPLAIN ANALYZE` of a `Point_Get`/`Batch_Point_Get`/`IndexRangeScan`
+    /// access path: real `actRows`, not `N/A` (divergence 7: the point get
+    /// keeps its `Selection`/`Projection` above it here, so the access-path
+    /// row is the LAST one, at the bottom of the tree). `Point_Get_1`'s
+    /// `actRows` is `1` for a hit and `0` for a miss, `Batch_Point_Get_1`'s
+    /// is the number of handles actually found, and `IndexRangeScan`'s is
+    /// the real number of rows the range covers -- all confirmed by
+    /// capture against `testkit.CreateMockStore`.
+    #[test]
+    fn explain_analyze_fast_paths_real_act_rows() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE pg (a INT PRIMARY KEY, b INT, KEY idx_b(b))")
+            .unwrap();
+        session
+            .run("INSERT INTO pg VALUES (1,10),(2,20),(3,30),(4,40)")
+            .unwrap();
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a = 2"));
+        assert_eq!(rows[2][0], "  └─Point_Get_1");
+        assert_eq!(rows[2][2], "1");
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a = 999"));
+        assert_eq!(rows[2][0], "  └─Point_Get_1");
+        assert_eq!(rows[2][2], "0");
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a IN (1,2,3)"));
+        assert_eq!(rows[2][0], "  └─Batch_Point_Get_1");
+        assert_eq!(rows[2][2], "3");
+
+        let rows =
+            row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE b > 15 AND b < 35"));
+        assert_eq!(rows[2][0], "  └─IndexRangeScan_1");
+        assert_eq!(rows[2][2], "2");
+    }
+
+    /// `EXPLAIN ANALYZE` of a grouped aggregate/`DISTINCT`: real `actRows`
+    /// -- captured: a `GROUP BY` on `(1,1),(1,2),(2,3),(2,4),(3,5)` groups
+    /// into 3 real groups, and `SELECT DISTINCT a` over the same rows
+    /// dedups to the same 3 real distinct values.
+    #[test]
+    fn explain_analyze_grouped_agg_and_distinct_real_act_rows() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE g (a INT, b INT)").unwrap();
+        session
+            .run("INSERT INTO g VALUES (1,1),(1,2),(2,3),(2,4),(3,5)")
+            .unwrap();
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT a, COUNT(*) FROM g GROUP BY a"));
+        assert_eq!(rows[0][0], "HashAgg_2");
+        assert_eq!(rows[0][2], "3");
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT DISTINCT a FROM g"));
+        assert_eq!(rows[0][2], "3");
+    }
+
+    /// `EXPLAIN ANALYZE INSERT ... SELECT`'s source gets the SAME real
+    /// `actRows` a plain `EXPLAIN ANALYZE SELECT` of that query would --
+    /// captured: `insert into dst select * from src where a > 1` on
+    /// `src = (1),(2),(3)` reports `2` for the `Projection`/`Selection`
+    /// (the `WHERE`-matching rows) over the real `3`-row `TableFullScan`,
+    /// computed before the insert writes anything.
+    #[test]
+    fn explain_analyze_insert_select_source_real_act_rows() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE src (a INT)").unwrap();
+        session.run("CREATE TABLE dst (a INT)").unwrap();
+        session.run("INSERT INTO src VALUES (1),(2),(3)").unwrap();
+
+        let rows =
+            row_text(session.run("EXPLAIN ANALYZE INSERT INTO dst SELECT * FROM src WHERE a > 1"));
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0][0], "Insert_4");
+        assert_eq!(rows[0][2], "0");
+        assert_eq!(rows[1][0], "└─Projection_3");
+        assert_eq!(rows[1][2], "2");
+        assert_eq!(rows[2][0], "  └─Selection_2");
+        assert_eq!(rows[2][2], "2");
+        assert_eq!(rows[3][0], "    └─TableFullScan_1");
+        assert_eq!(rows[3][2], "3");
+
+        assert_eq!(
+            row_text(session.run("SELECT a FROM dst ORDER BY a")),
+            vec![vec!["2".to_owned()], vec!["3".to_owned()]]
+        );
+    }
+
     /// `EXPLAIN` of a write: it must never run the statement. Captured
     /// against real TiDB: `EXPLAIN INSERT INTO t VALUES (1)` answers
     /// `Insert_1 | N/A | root | | N/A` and inserts nothing.
@@ -4090,13 +4263,14 @@ mod tests {
             .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
             .unwrap();
 
-        // `EXPLAIN ANALYZE` of a `SELECT`/`INSERT` really runs (see
-        // `explain_analyze_select`/`explain_analyze_insert_executes`); an
-        // `UPDATE`/`DELETE` is not implemented yet.
+        // `EXPLAIN ANALYZE` of a `SELECT`/`INSERT`/`UPDATE`/`DELETE` really
+        // runs (see `explain_analyze_select`/`explain_analyze_insert_executes`/
+        // `explain_analyze_update_executes`/`explain_analyze_delete_executes`);
+        // only a set-operation query is refused.
         assert!(matches!(
-            session.run("EXPLAIN ANALYZE UPDATE t SET a = a + 1"),
+            session.run("EXPLAIN ANALYZE (SELECT a FROM t) UNION (SELECT a FROM t)"),
             Err(DriverError::Unsupported(
-                "only EXPLAIN ANALYZE of a SELECT or INSERT is supported yet"
+                "EXPLAIN ANALYZE of a set operation is not supported yet"
             ))
         ));
         assert!(matches!(

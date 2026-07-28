@@ -4929,6 +4929,21 @@ pub fn run_update_in(
         },
         _ => return Err(DriverError::Unsupported("only UPDATE is supported here")),
     };
+    run_update_stmt(update, catalog, current_db, ctx)
+}
+
+/// [`run_update_in`]'s body, taking the already-parsed AST directly so
+/// `explain::explain_analyze_update_stmt` (which already holds a parsed
+/// `UpdateStmt` from the `EXPLAIN ANALYZE` wrapper) can execute the SAME
+/// write path real `EXPLAIN ANALYZE UPDATE` runs, rather than re-deriving
+/// it or re-parsing the statement text (which `explain`'s callers do not
+/// keep around).
+pub(crate) fn run_update_stmt(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
     // planner and executor never read `UpdateStmt.Returning`.
     if update.ignore {
@@ -5115,6 +5130,18 @@ pub fn run_delete_in(
         },
         _ => return Err(DriverError::Unsupported("only DELETE is supported here")),
     };
+    run_delete_stmt(delete, catalog, current_db, ctx)
+}
+
+/// [`run_delete_in`]'s body, taking the already-parsed AST directly -- see
+/// [`run_update_stmt`]'s doc for why `explain::explain_analyze_delete_stmt`
+/// needs this split.
+pub(crate) fn run_delete_stmt(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
     if delete.ignore || delete.quick {
         return Err(DriverError::Unsupported(
             "only plain DELETE FROM t [WHERE ...] is supported",

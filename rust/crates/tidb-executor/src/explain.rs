@@ -214,13 +214,19 @@ pub fn explain_select_stmt(
 /// stage produced -- never an estimate, never fabricated.
 ///
 /// [`compute_act_rows`] computes those real counts for a single
-/// (non-`JOIN`) `KV`-backed table read through a plain `TableFullScan`
-/// (the access path a bare `WHERE` on a non-indexed column takes); every
-/// other shape (a `JOIN`, a `Point_Get`/`Batch_Point_Get`/
-/// `IndexRangeScan` access path, or a grouped aggregate/`DISTINCT`) prints
-/// `actRows` as `N/A` for the nodes it cannot count precisely rather than
-/// guess -- the same honest-placeholder choice `EXPLAIN` itself already
-/// makes for a join's `estRows`.
+/// (non-`JOIN`) `KV`-backed table, whichever access path
+/// `run_select_stmt`'s own fast-path order picks -- `Batch_Point_Get`,
+/// `IndexRangeScan`, `Point_Get`, or a plain `TableFullScan` -- by fetching
+/// the SAME rows that path would (mirroring `try_batch_point_get`/
+/// `try_index_ranges`/`try_point_get`'s own calls and, for a hit,
+/// `KvTable::get_row_by_handle`/`scan_index_range`), so a `Selection` above
+/// any of them, a grouped aggregate's real group count (an actual `HashMap`
+/// keyed on the real grouping values, not an estimate), and `DISTINCT`'s
+/// real deduplicated tuple count are all exact. Only a `JOIN` (or a
+/// non-`KV` single table) prints `actRows` as `N/A` for every node in its
+/// tree -- the same honest-placeholder choice `EXPLAIN` itself already
+/// makes for a join's `estRows`, because this function does not re-derive
+/// that node shape at all.
 pub fn explain_analyze_select_stmt(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
@@ -272,6 +278,13 @@ pub fn explain_insert_stmt(
 /// `actRows` `0` too (captured), because the insert executor's `Next()`
 /// produces no rows of its own -- the write is a side effect, not this
 /// operator's row-producing interface.
+///
+/// An `INSERT ... SELECT` source's own `actRows` is [`compute_act_rows`]'s
+/// real count for the `SELECT`, computed BEFORE `run_insert_stmt` writes
+/// anything -- both so a row this very statement is about to insert is
+/// never counted as already having been read, and so the source is not
+/// scanned twice (real capture: `TableReader`/`Selection` above a `src`
+/// table both show the real matching-row count).
 pub fn explain_analyze_insert_stmt(
     insert: &tidb_ast::InsertStmt,
     catalog: &mut Catalog,
@@ -279,16 +292,18 @@ pub fn explain_analyze_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let children = match &insert.source {
+    let (children, source_act_rows) = match &insert.source {
         Some(query) => {
             let tidb_ast::QueryStmt::Select(select) = &**query else {
                 return Err(DriverError::Unsupported(
                     "EXPLAIN of a set-operation INSERT source is not supported yet",
                 ));
             };
-            vec![plan_select(select, catalog, current_db)?]
+            let plan = plan_select(select, catalog, current_db)?;
+            let act_rows = compute_act_rows(select, catalog, current_db, ctx)?;
+            (vec![plan], act_rows)
         }
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
     run_insert_stmt(insert, catalog, current_db, ctx)?;
     let plan = PlanNode {
@@ -299,14 +314,9 @@ pub fn explain_analyze_insert_stmt(
         children,
     };
     // Bottom-up numbering (`assign_ids`) builds every child before the
-    // `Insert` node itself, so `Insert`'s own entry is always the LAST slot;
-    // an `INSERT ... SELECT` source's real per-stage counts are not
-    // recovered here (the source already ran, inside `run_insert_stmt`, so
-    // re-deriving them would mean running the query twice) -- `N/A`, same
-    // as every other not-precisely-tracked operator.
-    let total = count_nodes(&plan);
-    let mut act_rows = vec![None; total];
-    act_rows[total - 1] = Some(0);
+    // `Insert` node itself, so `Insert`'s own entry is always the LAST slot.
+    let mut act_rows = source_act_rows;
+    act_rows.push(Some(0));
     Ok(render_analyze(plan, &act_rows, format))
 }
 
@@ -370,6 +380,71 @@ pub fn explain_delete_stmt(
     Ok(render(plan, format))
 }
 
+/// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really
+/// runs the `UPDATE` (captured: the table's rows change afterward, both for
+/// a primary-key `WHERE` and an ordinary-column one), through the very same
+/// [`crate::driver::run_update_stmt`] `driver::run_update_in` calls after
+/// parsing. The read child's real `actRows` is computed FIRST, against the
+/// table's pre-write state, by [`analyze_dml_source`]: `TableFullScan`'s is
+/// the table's real row count and `Selection`'s (when there is a `WHERE`)
+/// the real number of matching rows -- both confirmed by capture. Like
+/// [`explain_analyze_insert_stmt`]'s `Insert_1`, `Update_N`'s own `actRows`
+/// is always `0` (captured): the write is a side effect, not a row this
+/// operator's `Next()` produces.
+pub fn explain_analyze_update_stmt(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
+        return Err(DriverError::Unsupported(
+            "EXPLAIN ANALYZE of a multi-table UPDATE is not supported yet",
+        ));
+    };
+    let (child, mut act_rows) =
+        analyze_dml_source(table_ref, &update.where_clause, catalog, current_db, ctx)?;
+    crate::driver::run_update_stmt(update, catalog, current_db, ctx)?;
+    act_rows.push(Some(0));
+    let plan = PlanNode {
+        name: "Update",
+        est_rows: None,
+        access: String::new(),
+        info: "N/A".to_owned(),
+        children: vec![child],
+    };
+    Ok(render_analyze(plan, &act_rows, format))
+}
+
+/// `EXPLAIN ANALYZE <delete>`: see [`explain_analyze_update_stmt`] -- the
+/// same real read-then-write shape, over [`crate::driver::run_delete_stmt`].
+pub fn explain_analyze_delete_stmt(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
+        return Err(DriverError::Unsupported(
+            "EXPLAIN ANALYZE of a multi-table DELETE is not supported yet",
+        ));
+    };
+    let (child, mut act_rows) =
+        analyze_dml_source(table_ref, &delete.where_clause, catalog, current_db, ctx)?;
+    crate::driver::run_delete_stmt(delete, catalog, current_db, ctx)?;
+    act_rows.push(Some(0));
+    let plan = PlanNode {
+        name: "Delete",
+        est_rows: None,
+        access: String::new(),
+        info: "N/A".to_owned(),
+        children: vec![child],
+    };
+    Ok(render_analyze(plan, &act_rows, format))
+}
+
 /// The read plan an `UPDATE`/`DELETE` builds to find its target rows.
 ///
 /// Unlike a `SELECT`, the write drivers (`driver::run_update_in`,
@@ -420,6 +495,90 @@ fn plan_dml_source(
         node = PlanNode::unary("Selection", rows, qualify.expr(predicate), node);
     }
     Ok(node)
+}
+
+/// [`plan_dml_source`]'s plan tree, plus the REAL `actRows` for each node in
+/// it -- for [`explain_analyze_update_stmt`]/[`explain_analyze_delete_stmt`],
+/// called against the table's state BEFORE the write that follows mutates
+/// it, so a `TableFullScan`'s count is the real pre-write row count and a
+/// `Selection`'s is the real number of rows the `WHERE` matches -- the same
+/// values the write path (`run_update_stmt`/`run_delete_stmt`) itself reads
+/// off, since both unconditionally full-scan (see `plan_dml_source`'s own
+/// doc, divergence 8). The returned `Vec` is pushed in the same order
+/// `assign_ids` numbers `plan_dml_source`'s tree (scan first, then the
+/// selection wrapping it), so the caller can append the write node's own
+/// (always `0`) `actRows` and pass the whole vector straight to
+/// [`render_analyze`].
+fn analyze_dml_source(
+    table_ref: &tidb_ast::TableRef,
+    where_clause: &Option<tidb_ast::Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(PlanNode, Vec<Option<u64>>), DriverError> {
+    let (database, name) = crate::driver::single_table_name(table_ref, current_db)?;
+    let entry = catalog
+        .get_in(&database, &name)
+        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+    let visible = table_ref.alias.clone().unwrap_or_else(|| name.clone());
+    let columns = entry.column_list();
+    let rows: Vec<Vec<Datum>> = match entry {
+        TableEntry::Mem(mem) => mem.rows.clone(),
+        TableEntry::Kv(kv) => {
+            let mut kv = kv.clone();
+            kv.scan_rows()
+                .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?
+        }
+        // A view stores no rows to scan; the write itself (called right
+        // after this) raises Go's `ErrNonUpdatableTable` for the same
+        // target, so this only needs to avoid claiming a row count here.
+        TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
+    };
+    let scope = FromScope {
+        tables: vec![FromTable {
+            name: visible.clone(),
+            database: table_ref.alias.is_none().then(|| database.clone()),
+            columns: columns.clone(),
+            offset: 0,
+        }],
+    };
+    let mut node = PlanNode::leaf(
+        "TableFullScan",
+        Some(PSEUDO_ROW_COUNT),
+        format!("table:{visible}"),
+        "keep order:false, stats:pseudo".to_owned(),
+    );
+    let mut act_rows = vec![Some(rows.len() as u64)];
+    if let Some(predicate) = where_clause {
+        let qualify = Qualifier {
+            db: current_db,
+            scope: &scope,
+        };
+        let est = node.est_rows.map(|r| r * selectivity(predicate));
+        node = PlanNode::unary("Selection", est, qualify.expr(predicate), node);
+
+        let resolver = RowResolver {
+            table_name: &visible,
+            columns: &columns,
+        };
+        let expr = rewrite_expr_resolved(predicate, &resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        let field_types: Vec<FieldType> = columns.iter().map(|(_, ft)| ft.clone()).collect();
+        let mut matched = 0u64;
+        for row in &rows {
+            let chunk = row_chunk(row, &field_types)?;
+            let value = expr
+                .eval(ctx, chunk.get_row(0))
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            if crate::truthy_of(&value).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
+                == Some(true)
+            {
+                matched += 1;
+            }
+        }
+        act_rows.push(Some(matched));
+    }
+    Ok((node, act_rows))
 }
 
 /// Assigns ids bottom-up and flattens the tree into the five text columns.
@@ -704,15 +863,63 @@ fn compute_act_rows(
     let mut rows: Option<Vec<Vec<Datum>>> = if select.from.is_none() {
         counts.push(Some(1));
         None
-    } else if let Some(mut table) = single_kv_table(&select.from, catalog, current_db) {
+    } else if let Some(table) = single_kv_table(&select.from, catalog, current_db) {
         let columns = scope.column_list();
-        if try_batch_point_get(select, &table, &columns)?.is_some()
-            || try_point_get(select, &table, &columns)?.is_some()
-            || try_index_ranges(select, &table, &columns).is_some()
+        // Mirror `run_select_stmt`'s own fast-path order (batch point get,
+        // then index range, then single point get) and actually fetch the
+        // rows each one reads, exactly like the real read path does -- so
+        // `Point_Get`/`Batch_Point_Get`/`IndexRangeScan` (and any
+        // `Selection` above them) get a real `actRows` instead of the
+        // honest-but-avoidable `N/A` an untracked shape needs.
+        if let Some(handles) = try_batch_point_get(select, &table, &columns)? {
+            let mut table = table.clone();
+            let mut fetched = Vec::with_capacity(handles.len());
+            for handle in &handles {
+                if let Some(row) = table
+                    .get_row_by_handle(handle)
+                    .map_err(|e| DriverError::Parse(format!("batch point get failed: {e:?}")))?
+                {
+                    fetched.push(row);
+                }
+            }
+            counts.push(Some(fetched.len() as u64));
+            Some(fetched)
+        } else if let Some((index_id, ranges)) = (try_point_get(select, &table, &columns)?
+            .is_none())
+        .then(|| try_index_ranges(select, &table, &columns))
+        .flatten()
         {
-            counts.push(None);
-            None
+            let mut table = table.clone();
+            let mut fetched = Vec::new();
+            for range in &ranges {
+                for handle in table
+                    .scan_index_range(index_id, range)
+                    .map_err(|e| DriverError::Parse(format!("index scan failed: {e:?}")))?
+                {
+                    if let Some(row) = table
+                        .get_row_by_handle(&handle)
+                        .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
+                    {
+                        fetched.push(row);
+                    }
+                }
+            }
+            counts.push(Some(fetched.len() as u64));
+            Some(fetched)
+        } else if let Some(handle) = try_point_get(select, &table, &columns)? {
+            let mut table = table.clone();
+            let fetched = match handle {
+                Some(handle) => table
+                    .get_row_by_handle(&handle)
+                    .map_err(|e| DriverError::Parse(format!("point get failed: {e:?}")))?
+                    .map(|row| vec![row])
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            };
+            counts.push(Some(fetched.len() as u64));
+            Some(fetched)
         } else {
+            let mut table = table;
             let scanned = table
                 .scan_rows()
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
@@ -782,10 +989,29 @@ fn compute_act_rows(
             counts.push(Some(1));
             rows = rows.map(|_| Vec::new());
         } else {
-            // The real number of distinct groups needs the real grouping
-            // key values, which this function does not compute.
-            counts.push(None);
-            rows = None;
+            match &rows {
+                // The real number of distinct groups, evaluated from the
+                // real (already-filtered) rows -- exact, not an estimate.
+                Some(source_rows) => {
+                    let group_count = count_distinct_groups(
+                        &select.group_by,
+                        source_rows,
+                        &visible,
+                        &columns,
+                        ctx,
+                    )?;
+                    counts.push(Some(group_count));
+                    // Only the COUNT is real from here; `push_limit_count`
+                    // below only reads the row set's length, so a
+                    // same-length placeholder carries that count through
+                    // without pretending to know the aggregated values.
+                    rows = Some(vec![Vec::new(); group_count as usize]);
+                }
+                None => {
+                    counts.push(None);
+                    rows = None;
+                }
+            }
         }
         push_limit_count(select, &mut rows, &mut counts);
         return Ok(counts);
@@ -801,10 +1027,23 @@ fn compute_act_rows(
     counts.push(rows.as_ref().map(|r| r.len() as u64));
 
     if select.distinct {
-        // Real `DISTINCT` output needs the actual distinct projected
-        // tuples, not just an input row count.
-        counts.push(None);
-        rows = None;
+        // Real `DISTINCT` output: the projected fields evaluated over the
+        // real rows, deduplicated -- exact, not an estimate. `select.from`
+        // is `Some` in this branch (an untracked `JOIN`/non-KV source
+        // already returned above), so `visible`/`columns` describe the one
+        // FROM table every projected field resolves against.
+        match &rows {
+            Some(source_rows) => {
+                let distinct_count =
+                    count_distinct_projection(select, source_rows, &visible, &columns, ctx)?;
+                counts.push(Some(distinct_count));
+                rows = Some(vec![Vec::new(); distinct_count as usize]);
+            }
+            None => {
+                counts.push(None);
+                rows = None;
+            }
+        }
     }
 
     push_limit_count(select, &mut rows, &mut counts);
@@ -813,6 +1052,113 @@ fn compute_act_rows(
 
 /// Applies `plan_select`'s `apply_limit` to a real row set, pushing the
 /// `Limit` node's real `actRows` (or nothing, if there is no `LIMIT`).
+/// Evaluates every expression in `exprs` against every row in `rows`,
+/// producing one output tuple (in the same order) per input row -- the
+/// shared machinery [`count_distinct_groups`] and [`count_distinct_projection`]
+/// both key their dedup on.
+fn eval_exprs_per_row(
+    exprs: &[tidb_expr::expression::Expression],
+    rows: &[Vec<Datum>],
+    field_types: &[FieldType],
+    ctx: &crate::StmtContext,
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let chunk = row_chunk(row, field_types)?;
+        let mut values = Vec::with_capacity(exprs.len());
+        for expr in exprs {
+            let value = expr
+                .eval(ctx, chunk.get_row(0))
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            values.push(value);
+        }
+        out.push(values);
+    }
+    Ok(out)
+}
+
+/// Counts the distinct tuples in `keys` -- a plain O(n^2) linear-scan dedup,
+/// which is fine at this tier's `EXPLAIN ANALYZE` scale (a mock store with
+/// no real cardinality): `Datum` has no `Hash`/`Ord` (a float component has
+/// no total order), so a `HashSet`/sorted-dedup shortcut is not available
+/// without inventing a comparison rule this crate does not otherwise need.
+fn count_distinct(keys: &[Vec<Datum>]) -> u64 {
+    let mut seen: Vec<&Vec<Datum>> = Vec::new();
+    for key in keys {
+        if !seen.contains(&key) {
+            seen.push(key);
+        }
+    }
+    seen.len() as u64
+}
+
+/// The real number of distinct `GROUP BY` key combinations across `rows`
+/// (already the WHERE-filtered rows [`compute_act_rows`] fetched for real),
+/// for a grouped `HashAgg`'s `actRows`.
+fn count_distinct_groups(
+    group_by: &[tidb_ast::GroupByItem],
+    rows: &[Vec<Datum>],
+    visible: &str,
+    columns: &[(String, FieldType)],
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
+    let resolver = RowResolver {
+        table_name: visible,
+        columns,
+    };
+    let mut exprs = Vec::with_capacity(group_by.len());
+    for item in group_by {
+        exprs.push(
+            rewrite_expr_resolved(&item.expr, &resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+        );
+    }
+    let field_types: Vec<FieldType> = columns.iter().map(|(_, ft)| ft.clone()).collect();
+    let keys = eval_exprs_per_row(&exprs, rows, &field_types, ctx)?;
+    Ok(count_distinct(&keys))
+}
+
+/// The real number of distinct output tuples `SELECT DISTINCT`'s projected
+/// fields take across `rows` -- `*`/`t.*` expands to every column, exactly
+/// like `run_select_stmt`'s own projection loop does.
+fn count_distinct_projection(
+    select: &tidb_ast::SelectStmt,
+    rows: &[Vec<Datum>],
+    visible: &str,
+    columns: &[(String, FieldType)],
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
+    let resolver = RowResolver {
+        table_name: visible,
+        columns,
+    };
+    let mut exprs = Vec::new();
+    for field in select.fields.fields() {
+        match field {
+            tidb_ast::SelectField::Expr { expr, .. } => {
+                exprs.push(
+                    rewrite_expr_resolved(expr, &resolver)
+                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                );
+            }
+            tidb_ast::SelectField::Wildcard(_) => {
+                for (name, _) in columns {
+                    exprs.push(
+                        rewrite_expr_resolved(
+                            &tidb_ast::Expr::Column(vec![name.clone()]),
+                            &resolver,
+                        )
+                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                    );
+                }
+            }
+        }
+    }
+    let field_types: Vec<FieldType> = columns.iter().map(|(_, ft)| ft.clone()).collect();
+    let keys = eval_exprs_per_row(&exprs, rows, &field_types, ctx)?;
+    Ok(count_distinct(&keys))
+}
+
 fn push_limit_count(
     select: &tidb_ast::SelectStmt,
     rows: &mut Option<Vec<Vec<Datum>>>,
