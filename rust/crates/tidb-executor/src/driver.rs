@@ -2661,19 +2661,35 @@ fn build_agg_func(
     else {
         return Err(DriverError::Unsupported("not an aggregate function"));
     };
-    let [arg] = args.as_slice() else {
+    // `COUNT(DISTINCT a, b, ...)` is the one non-GROUP_CONCAT aggregate the
+    // parser lets through with more than one argument (`parse_aggregate`
+    // rejects a bare `COUNT(a, b)` and every multi-argument `SUM`/`AVG`/etc.
+    // at parse time), so only COUNT needs an `extra_args`-carrying path here.
+    let Some((first, rest)) = args.split_first() else {
         return Err(DriverError::Unsupported(
             "multi-argument aggregates are deferred",
         ));
     };
-    let arg =
-        rewrite_expr_resolved(arg, resolver).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+    if !rest.is_empty() && name != "COUNT" {
+        return Err(DriverError::Unsupported(
+            "multi-argument aggregates are deferred",
+        ));
+    }
+    let arg = rewrite_expr_resolved(first, resolver)
+        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+    let mut extra_args = Vec::with_capacity(rest.len());
+    for extra in rest {
+        extra_args.push(
+            rewrite_expr_resolved(extra, resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+        );
+    }
     let (kind, ftype) = agg_kind_and_type(name, &arg)?;
     Ok((
         AggFunc {
             kind,
             arg: Some(arg),
-            extra_args: Vec::new(),
+            extra_args,
             distinct: *distinct,
             order_by: Vec::new(),
         },

@@ -19,7 +19,12 @@
 //! Aggregates ported (from `pkg/executor/aggfuncs`): `COUNT` (NULL inputs
 //! skipped; `COUNT(*)` counts rows), `SUM` (NULL inputs skipped; an all-NULL /
 //! empty group sums to NULL), and `FIRST_ROW` (the planner's carrier for
-//! group-by columns in the output). Groups emit in first-seen order, matching
+//! group-by columns in the output). `COUNT(a, b, ...)` (only reachable as
+//! `COUNT(DISTINCT a, b, ...)` -- the parser rejects the non-DISTINCT form,
+//! `pkg/parser` `expr_func_parser.go`'s `parseAggregateFuncCall`) counts a row
+//! only when every argument is non-NULL, and its own DISTINCT dedupes over
+//! the whole argument tuple rather than a single column (Go
+//! `count4MultiArgs`). Groups emit in first-seen order, matching
 //! Go's `groupKeys` insertion order. The no-group-by/no-data case emits ONE
 //! empty group (`SELECT COUNT(c) FROM t` on empty `t` is `[0]`), while
 //! group-by/no-data emits none -- exactly Go's `unparallelExec` rule.
@@ -483,6 +488,32 @@ impl<C: Columns> Executor for HashAggExec<C> {
                             Some(expr) => Some(expr.eval(&self.ctx, row)?),
                             None => None,
                         }
+                    } else if matches!(f.kind, AggKind::Count) {
+                        // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`:
+                        // Go's `count4MultiArgs.UpdatePartialResult` skips the
+                        // row as soon as ANY argument is NULL (a row counts
+                        // only when EVERY argument is non-NULL). DISTINCT
+                        // dedupes over the whole tuple, so the per-argument
+                        // hash keys are length-prefixed and concatenated
+                        // (rather than joined with a fixed separator byte)
+                        // so no argument's encoding can bleed into the next
+                        // and manufacture a false collision or split.
+                        let mut tuple_key = Some(Vec::new());
+                        for expr in f.arg.iter().chain(f.extra_args.iter()) {
+                            let datum = expr.eval(&self.ctx, row)?;
+                            if datum == Datum::Null {
+                                tuple_key = None;
+                                break;
+                            }
+                            if let Some(buf) = &mut tuple_key {
+                                let key = datum.to_hash_key().map_err(|_| {
+                                    ExecError::Unsupported("COUNT over this datum kind")
+                                })?;
+                                buf.extend_from_slice(&(key.len() as u64).to_be_bytes());
+                                buf.extend_from_slice(&key);
+                            }
+                        }
+                        Some(tuple_key.map_or(Datum::Null, Datum::Bytes))
                     } else {
                         // Multi-argument GROUP_CONCAT: Go's `groupConcat`
                         // update loop stringifies and concatenates every

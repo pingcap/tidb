@@ -5924,8 +5924,47 @@ mod tests {
         // The refusals above are refusals, not wrong answers. (CAST,
         // GROUP_CONCAT, CURRENT_USER, GROUP_CONCAT's inner ORDER BY, and
         // multi-argument GROUP_CONCAT were each this example in turn; all of
-        // them work now. Multi-argument COUNT is the current stand-in.)
+        // them work now.) `COUNT(b, a)` without DISTINCT stays refused, but as
+        // a parser-level SQL syntax error, not a driver limitation: captured
+        // from TiDB, `COUNT(a, b)` is only valid SQL as `COUNT(DISTINCT a,
+        // b)` (see `multi_argument_count` below) -- the grammar itself
+        // rejects the non-DISTINCT, multi-argument form.
         assert!(session.run("SELECT COUNT(b, a) FROM t").is_err());
+    }
+
+    /// `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`, checked against
+    /// captured TiDB output. Only the `DISTINCT` form is valid SQL for more
+    /// than one argument (`pkg/parser` rejects a bare `COUNT(a, b)` at parse
+    /// time, matched by `tidb_parser`'s own `parse_aggregate`), so this test
+    /// only has `COUNT(DISTINCT ...)` to exercise: a row counts only when
+    /// EVERY argument is non-NULL, and DISTINCT dedupes over the whole
+    /// argument tuple rather than a single column.
+    #[test]
+    fn multi_argument_count() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (g INT, a INT, b INT)").unwrap();
+        session
+            .run(
+                "INSERT INTO t VALUES \
+                 (1, 1, 1), (1, 1, 1), (1, 1, NULL), (1, NULL, 1), (1, NULL, NULL), \
+                 (2, 2, 2), (2, 2, 2), (2, 3, 3)",
+            )
+            .unwrap();
+
+        // Captured: `count(distinct a, b)` over the whole table sees three
+        // distinct non-NULL pairs -- (1,1), (2,2), (3,3) -- with every row
+        // that has a NULL in either column excluded entirely.
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(DISTINCT a, b) FROM t")),
+            [["3"]]
+        );
+        // Captured: grouped, group 1 has one distinct non-NULL pair (1,1)
+        // (its NULL-containing rows don't count), group 2 has two: (2,2) and
+        // (3,3).
+        assert_eq!(
+            row_text(session.run("SELECT g, COUNT(DISTINCT a, b) FROM t GROUP BY g ORDER BY g")),
+            [["1", "1"], ["2", "2"]]
+        );
     }
 
     /// `[NOT] REGEXP` through the chunk (table-scan `WHERE`) path, checked
