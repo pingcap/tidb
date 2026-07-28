@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -58,28 +59,117 @@ func setRealTiFlashReplica(t *testing.T, tk *testkit.TestKit, tableName string) 
 		UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
 }
 
-// TestAlternativeEngineRestrictedRounds covers the tikv-only / tiflash-only
-// alternative logical plan rounds: they must arm only when round 1's plan mixes
-// TiKV and TiFlash reads, respect the missing-replica / hint / enforce-mpp
-// gates, and leave tidb_isolation_read_engines untouched after planning.
-func TestAlternativeEngineRestrictedRounds(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlashNodes(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+// createEngineRoundTables builds the fixtures shared by the engine-round
+// tests. alt_engine_flash has no index on the join column, so its only TiKV
+// path is a full scan and physical optimization favors its TiFlash replica.
+// alt_engine_kv joins through its non-indexed column b while the tests filter
+// on its primary key a: a point predicate on a makes unique-point-range
+// pruning keep only the TiKV point path, hiding the table's TiFlash path (and
+// with it any fully-TiFlash plan) from round 1, which then settles on a
+// mixed-engine plan. alt_engine_norep never gets a TiFlash replica.
+func createEngineRoundTables(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("create table alt_engine_flash(a int, b int, c int)")
-	tk.MustExec("create table alt_engine_kv(a int primary key, b int)")
 	valsFlash := make([]string, 0, 5000)
 	for i := range 5000 {
 		valsFlash = append(valsFlash, fmt.Sprintf("(%d, %d, %d)", i%50, i, i%10))
 	}
 	tk.MustExec("insert into alt_engine_flash values " + strings.Join(valsFlash, ","))
-	tk.MustExec("insert into alt_engine_kv values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("create table alt_engine_kv(a int primary key, b int)")
+	valsKV := make([]string, 0, 2000)
+	for i := range 2000 {
+		valsKV = append(valsKV, fmt.Sprintf("(%d, %d)", i, i%50))
+	}
+	tk.MustExec("insert into alt_engine_kv values " + strings.Join(valsKV, ","))
+	tk.MustExec("create table alt_engine_norep(a int primary key, b int)")
+	tk.MustExec("insert into alt_engine_norep values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("analyze table alt_engine_flash, alt_engine_kv, alt_engine_norep")
+	setRealTiFlashReplica(t, tk, "alt_engine_flash")
+	setRealTiFlashReplica(t, tk, "alt_engine_kv")
+}
+
+// engineRoundPointSQL mixes engines in round 1 (Point_Get on TiKV joined at
+// root with a TiFlash read) while the tiflash-only round finds a cheaper
+// fully-pushed MPP plan; see createEngineRoundTables for why round 1 cannot
+// see that plan itself.
+const engineRoundPointSQL = "select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv" +
+	" on alt_engine_flash.a = alt_engine_kv.b where alt_engine_kv.a = 5 group by alt_engine_flash.c"
+
+// TestAlternativeEngineRestrictedRounds compares plan shapes with the
+// tikv-only / tiflash-only alternative rounds off and on: the mixed-engine
+// round-1 plan must be replaced by the cheaper fully-TiFlash plan when the
+// rounds run, must survive unchanged under a READ_FROM_STORAGE hint or a
+// missing TiFlash replica, and the winning plan must execute correctly while
+// leaving tidb_isolation_read_engines untouched.
+func TestAlternativeEngineRestrictedRounds(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlashNodes(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	createEngineRoundTables(t, tk)
+	enginesBefore := tk.MustQuery("select @@tidb_isolation_read_engines").Rows()
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		if strings.HasPrefix(tt, "set ") {
+			tk.MustExec(tt)
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	// The last testdata case leaves the alternative rounds enabled, so the
+	// queries below execute the plans the rounds picked. Joining rows have
+	// alt_engine_flash.a = 5, i.e. b = 5+50k for k in 0..99, all in group
+	// c = 5: sum(b) = 500 + 50*4950 = 248000.
+	tk.MustQuery(engineRoundPointSQL).Check(testkit.Rows("248000"))
+	// Rows joining a=1..5, 100 rows per key: sum(b) = 247500 + 100*a per group.
+	tk.MustQuery("select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_norep"+
+		" on alt_engine_flash.a = alt_engine_norep.a group by alt_engine_flash.c").Sort().
+		Check(testkit.Rows("247600", "247700", "247800", "247900", "248000"))
+	tk.MustQuery("select @@tidb_isolation_read_engines").Check(enginesBefore)
+}
+
+// TestAlternativeEngineRestrictedRoundGates covers what plan shapes cannot
+// show: whether a round ran at all. The failpoint errors out planning when the
+// named round is attempted for the given statement, so a successful query
+// proves the round stayed disarmed and an error proves it was armed.
+func TestAlternativeEngineRestrictedRoundGates(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlashNodes(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table alt_engine_flash(a int, b int, c int)")
+	valsFlash := make([]string, 0, 5000)
+	for i := range 5000 {
+		valsFlash = append(valsFlash, fmt.Sprintf("(%d, %d, %d)", i%50, i, i%10))
+	}
+	tk.MustExec("insert into alt_engine_flash values " + strings.Join(valsFlash, ","))
+	tk.MustExec("create table alt_engine_kv(a int primary key, b int)")
+	valsKV := make([]string, 0, 2000)
+	for i := range 2000 {
+		valsKV = append(valsKV, fmt.Sprintf("(%d, %d)", i, i%50))
+	}
+	tk.MustExec("insert into alt_engine_kv values " + strings.Join(valsKV, ","))
 	tk.MustExec("analyze table alt_engine_flash, alt_engine_kv")
-	// Only alt_engine_flash gets a TiFlash replica for the first scenarios.
+	// Only alt_engine_flash gets a TiFlash replica at first, so the
+	// missing-replica gate can be exercised before alt_engine_kv's replica is
+	// added below.
 	setRealTiFlashReplica(t, tk, "alt_engine_flash")
 
 	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
-	enginesBefore := tk.MustQuery("select @@tidb_isolation_read_engines").Rows()
+	// See TestAlternativeEngineRestrictedRounds for the result derivation.
+	pointResult := testkit.Rows("248000")
 
 	// Each case below disables the failpoint itself so the next case can arm it
 	// with a different value. This cleanup only matters when a require assertion
@@ -89,82 +179,49 @@ func TestAlternativeEngineRestrictedRounds(t *testing.T) {
 		_ = failpoint.Disable(engineRoundFailpoint)
 	})
 
-	mixedSQL := "select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv" +
-		" on alt_engine_flash.a = alt_engine_kv.a group by alt_engine_flash.c"
-	// Rows joining a=1..5, 100 rows per key: sum(b) = 247500 + 100*a per group.
-	mixedResult := testkit.Rows("247600", "247700", "247800", "247900", "248000")
-
-	// Round 1's plan must mix engines: the aggregation over alt_engine_flash
-	// goes to TiFlash while alt_engine_kv (no replica) stays on TiKV. That
-	// arms the tikv-only round.
-	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+mixedSQL)))
-	err := tk.ExecToErr(mixedSQL)
-	stmtCtx := tk.Session().GetSessionVars().StmtCtx
-	require.True(t, stmtCtx.AlternativeLogicalPlanMixedStorageEngines)
-	require.True(t, stmtCtx.AlternativeLogicalPlanMissingTiFlashPath)
-	require.ErrorContains(t, err, "unexpected alternative logical plan round")
+	// Round 1's plan mixes engines (Point_Get on TiKV, TiFlash read for
+	// alt_engine_flash), so the tikv-only round must be armed.
+	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+engineRoundPointSQL)))
+	require.ErrorContains(t, tk.ExecToErr(engineRoundPointSQL), "unexpected alternative logical plan round")
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 
 	// The tiflash-only round must stay disarmed: alt_engine_kv has no TiFlash
-	// path, so a fully-TiFlash plan is impossible. The winning plan executes.
-	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tiflash-only:"+mixedSQL)))
-	tk.MustQuery(mixedSQL).Sort().Check(mixedResult)
+	// replica yet, so a fully-TiFlash plan is impossible. The winning plan
+	// executes.
+	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tiflash-only:"+engineRoundPointSQL)))
+	tk.MustQuery(engineRoundPointSQL).Check(pointResult)
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 
 	// With the feature variable off, no engine round runs.
 	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=off")
-	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+mixedSQL)))
-	tk.MustQuery(mixedSQL).Sort().Check(mixedResult)
+	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+engineRoundPointSQL)))
+	tk.MustQuery(engineRoundPointSQL).Check(pointResult)
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
 
 	// Enforced MPP skips the engine rounds: its cost discount would make the
 	// cross-round comparison meaningless.
 	tk.MustExec("set @@tidb_enforce_mpp=1")
-	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+mixedSQL)))
-	tk.MustQuery(mixedSQL).Sort().Check(mixedResult)
+	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+engineRoundPointSQL)))
+	tk.MustQuery(engineRoundPointSQL).Check(pointResult)
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 	tk.MustExec("set @@tidb_enforce_mpp=0")
-
-	// Give alt_engine_kv a replica too: a mixed plan where every table has a
-	// TiFlash path arms the tiflash-only round as well. The point read on the
-	// primary key keeps alt_engine_kv on TiKV in round 1 while the aggregation
-	// side stays on TiFlash.
-	setRealTiFlashReplica(t, tk, "alt_engine_kv")
-	bothSQL := "select sum(b) from alt_engine_flash group by c" +
-		" union all select b from alt_engine_kv where a = 5"
-	// Ten groups on c with sum(b) = 1247500 + 500*c, plus the b=5 point row.
-	bothResult := testkit.Rows("1247500", "1248000", "1248500", "1249000", "1249500",
-		"1250000", "1250500", "1251000", "1251500", "1252000", "5")
-	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tiflash-only:"+bothSQL)))
-	err = tk.ExecToErr(bothSQL)
-	stmtCtx = tk.Session().GetSessionVars().StmtCtx
-	require.True(t, stmtCtx.AlternativeLogicalPlanMixedStorageEngines)
-	// The tiflash-only trigger below also proves MissingTiFlashPath was false
-	// after round 1. The flag itself cannot be asserted here: the tikv-only
-	// round runs first and its TiKV-restricted rebuild re-marks it, which is
-	// harmless because round eligibility is precomputed from round 1's signals.
-	require.ErrorContains(t, err, "unexpected alternative logical plan round")
-	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 
 	// An explicit READ_FROM_STORAGE hint pins the engine choice; the rounds
 	// must not run, or the cost comparison could override the hint.
 	hintSQL := "select /*+ read_from_storage(tiflash[alt_engine_flash], tikv[alt_engine_kv]) */" +
 		" sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv" +
-		" on alt_engine_flash.a = alt_engine_kv.a group by alt_engine_flash.c"
+		" on alt_engine_flash.a = alt_engine_kv.b where alt_engine_kv.a = 5 group by alt_engine_flash.c"
 	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+hintSQL)))
-	tk.MustQuery(hintSQL).Sort().Check(mixedResult)
-	stmtCtx = tk.Session().GetSessionVars().StmtCtx
-	require.True(t, stmtCtx.AlternativeLogicalPlanHasStoreTypeHint)
+	tk.MustQuery(hintSQL).Check(pointResult)
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 
-	// Let the rounds actually run to completion (no failpoint): planning and
-	// execution must succeed and the session's isolation read engines must be
-	// untouched. Which plan wins the cost comparison is deliberately not
-	// asserted here — it may vary across cost model changes, and the round
-	// arm/disarm mechanism is already covered by the failpoint-gated cases
-	// above.
-	tk.MustQuery(mixedSQL).Sort().Check(mixedResult)
-	tk.MustQuery(bothSQL).Sort().Check(bothResult)
-	tk.MustQuery("select @@tidb_isolation_read_engines").Check(enginesBefore)
+	// Once alt_engine_kv has a TiFlash replica too, every table has a TiFlash
+	// path and the tiflash-only round must be armed as well: the point read on
+	// the primary key keeps alt_engine_kv on TiKV in round 1, so the plan
+	// still mixes engines.
+	setRealTiFlashReplica(t, tk, "alt_engine_kv")
+	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tiflash-only:"+engineRoundPointSQL)))
+	require.ErrorContains(t, tk.ExecToErr(engineRoundPointSQL), "unexpected alternative logical plan round")
+	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 }
