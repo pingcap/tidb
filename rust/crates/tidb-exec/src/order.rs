@@ -611,7 +611,9 @@ const fn scalar_type_admits(scalar_type: ConfiguredScalarType, datum: &Datum) ->
         ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => matches!(datum, Datum::Int(_)),
         ConfiguredScalarType::UnsignedBigInt => matches!(datum, Datum::UInt(_)),
         ConfiguredScalarType::Double => matches!(datum, Datum::Real(_)),
-        ConfiguredScalarType::Char { .. } => matches!(datum, Datum::Bytes(_)),
+        ConfiguredScalarType::Char { .. } | ConfiguredScalarType::Varchar { .. } => {
+            matches!(datum, Datum::Bytes(_))
+        }
         ConfiguredScalarType::Decimal { .. } => matches!(datum, Datum::Decimal(_)),
     }
 }

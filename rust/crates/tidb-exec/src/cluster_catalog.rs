@@ -287,6 +287,27 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
                 name, column.id, max_length,
             ))
         }
+        FieldTypeCode::Varchar | FieldTypeCode::VarString if !unsigned => {
+            let flen = column.get_flen();
+            let max_length = u32::try_from(flen).map_err(|_| {
+                format!("column `{name}` is VARCHAR with an unusable declared length {flen}")
+            })?;
+            // `binary`/`VARBINARY` is the only non-`utf8mb4` charset this node
+            // recognizes for a `VARCHAR`-family column; any other charset
+            // stays refused rather than guessing a collation.
+            let binary = match column.get_charset() {
+                "utf8mb4" => false,
+                "binary" => true,
+                other => {
+                    return Err(format!(
+                        "column `{name}` is VARCHAR with charset `{other}`, which this node cannot decode yet"
+                    ))
+                }
+            };
+            Ok(ConfiguredColumn::stored_varchar_not_null(
+                name, column.id, max_length, binary,
+            ))
+        }
         FieldTypeCode::NewDecimal if !unsigned => {
             let flen = column.get_flen();
             let decimal = column.get_decimal();

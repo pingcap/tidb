@@ -175,6 +175,7 @@ impl fmt::Display for ConfiguredWriteError {
                     ConfiguredScalarType::Int => "INT",
                     ConfiguredScalarType::Double => "DOUBLE",
                     ConfiguredScalarType::Char { .. } => "CHAR",
+                    ConfiguredScalarType::Varchar { .. } => "VARCHAR",
                     ConfiguredScalarType::Decimal { .. } => "DECIMAL",
                 };
                 write!(
@@ -205,6 +206,7 @@ impl fmt::Display for ConfiguredWriteError {
                     ConfiguredScalarType::Int => "INT",
                     ConfiguredScalarType::Double => "DOUBLE",
                     ConfiguredScalarType::Char { .. } => "CHAR",
+                    ConfiguredScalarType::Varchar { .. } => "VARCHAR",
                     ConfiguredScalarType::Decimal { .. } => "DECIMAL",
                 };
                 write!(
@@ -543,6 +545,7 @@ fn decode_stored_column_value(
         // Read-path-only scalar types (see `ConfiguredWriteError::UnsupportedScalarType`).
         scalar_type @ (ConfiguredScalarType::UnsignedBigInt
         | ConfiguredScalarType::Double
+        | ConfiguredScalarType::Varchar { .. }
         | ConfiguredScalarType::Decimal { .. }) => {
             Err(ConfiguredWriteError::UnsupportedScalarType {
                 column: column.name().to_owned(),
@@ -805,6 +808,14 @@ fn max_configured_row_value_len(table: &ConfiguredTable) -> usize {
                 ConfiguredScalarType::Char { max_length } => {
                     (max_length as usize).saturating_mul(UTF8MB4_MAX_BYTES_PER_CHAR)
                 }
+                ConfiguredScalarType::Varchar {
+                    max_length,
+                    binary: true,
+                } => max_length as usize,
+                ConfiguredScalarType::Varchar {
+                    max_length,
+                    binary: false,
+                } => (max_length as usize).saturating_mul(UTF8MB4_MAX_BYTES_PER_CHAR),
                 // Fixed-width `MyDecimal` binary encoding
                 // (`tidb_codec::column::MY_DECIMAL_BYTES`).
                 ConfiguredScalarType::Decimal { .. } => 40,

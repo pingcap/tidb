@@ -67,6 +67,11 @@ const PRI_KEY_FLAG: i32 = 1 << 1;
 const PHYSICAL_PLAN_ID: i32 = 1;
 
 const MYSQL_TYPE_STRING: i32 = 254;
+/// MySQL `TypeVarchar`/`TypeVarString`; Go's `column.ConvertColumnInfo`
+/// rewrites a `TypeVarchar` result column to `TypeVarString` (253) on the
+/// wire "to keep things compatible for old clients", so both the declared
+/// `VARCHAR` type and its wire type code collapse to this single value.
+const MYSQL_TYPE_VAR_STRING: i32 = 253;
 const MYSQL_TYPE_NEWDECIMAL: i32 = 246;
 /// MySQL `TypeDouble`, per Go `mysql.TypeDouble`.
 const MYSQL_TYPE_DOUBLE: i32 = 5;
@@ -119,6 +124,17 @@ pub enum ConfiguredScalarType {
         /// Declared character length.
         max_length: u32,
     },
+    /// Variable-length `VARCHAR(max_length)`, either at the default
+    /// `utf8mb4_bin` collation or, when `binary` is set, the `binary`
+    /// collation (a `VARCHAR ... CHARACTER SET binary` / `VARBINARY`
+    /// column). The chunk decoder (`tidb_codec::column::decode_column_datums`)
+    /// already branches on this via `FieldType::is_binary_string`.
+    Varchar {
+        /// Declared character length (`utf8mb4`) or byte length (`binary`).
+        max_length: u32,
+        /// Whether this column's charset is `binary` rather than `utf8mb4`.
+        binary: bool,
+    },
     /// Signed `DECIMAL(precision, scale)`.
     ///
     /// The persisted and coprocessor-chunk bytes are the self-describing
@@ -145,7 +161,11 @@ impl ConfiguredScalarType {
         match self {
             Self::BigInt => Some((i64::MIN, i64::MAX)),
             Self::Int => Some((i32::MIN as i64, i32::MAX as i64)),
-            Self::UnsignedBigInt | Self::Double | Self::Char { .. } | Self::Decimal { .. } => None,
+            Self::UnsignedBigInt
+            | Self::Double
+            | Self::Char { .. }
+            | Self::Varchar { .. }
+            | Self::Decimal { .. } => None,
         }
     }
 
@@ -156,6 +176,7 @@ impl ConfiguredScalarType {
             Self::Int => MYSQL_TYPE_LONG,
             Self::Double => MYSQL_TYPE_DOUBLE,
             Self::Char { .. } => MYSQL_TYPE_STRING,
+            Self::Varchar { .. } => MYSQL_TYPE_VAR_STRING,
             Self::Decimal { .. } => MYSQL_TYPE_NEWDECIMAL,
         }
     }
@@ -165,7 +186,12 @@ impl ConfiguredScalarType {
     const fn extra_flag(self) -> i32 {
         match self {
             Self::UnsignedBigInt => UNSIGNED_FLAG,
-            Self::BigInt | Self::Int | Self::Double | Self::Char { .. } | Self::Decimal { .. } => 0,
+            Self::BigInt
+            | Self::Int
+            | Self::Double
+            | Self::Char { .. }
+            | Self::Varchar { .. }
+            | Self::Decimal { .. } => 0,
         }
     }
 
@@ -183,7 +209,10 @@ impl ConfiguredScalarType {
             | Self::Int
             | Self::Double
             | Self::Decimal { .. } => BINARY_COLLATION_ID,
-            Self::Char { .. } => UTF8MB4_BIN_COPROCESSOR_COLLATION_ID,
+            Self::Varchar { binary: true, .. } => BINARY_COLLATION_ID,
+            Self::Char { .. } | Self::Varchar { binary: false, .. } => {
+                UTF8MB4_BIN_COPROCESSOR_COLLATION_ID
+            }
         }
     }
 
@@ -193,7 +222,7 @@ impl ConfiguredScalarType {
             Self::BigInt | Self::UnsignedBigInt => 20,
             Self::Int => 11,
             Self::Double => 22,
-            Self::Char { max_length } => max_length as i32,
+            Self::Char { max_length } | Self::Varchar { max_length, .. } => max_length as i32,
             Self::Decimal { precision, .. } => precision as i32,
         }
     }
@@ -223,13 +252,17 @@ impl ConfiguredScalarType {
             | Self::Int
             | Self::Double
             | Self::Decimal { .. } => BINARY_COLLATION_ID,
-            Self::Char { .. } => UTF8MB4_BIN_RESULT_COLLATION_ID,
+            Self::Varchar { binary: true, .. } => BINARY_COLLATION_ID,
+            Self::Char { .. } | Self::Varchar { binary: false, .. } => {
+                UTF8MB4_BIN_RESULT_COLLATION_ID
+            }
         }
     }
 
     /// Result-column length, per Go `column.ConvertColumnInfo`: a string
-    /// multiplies its declared length by the charset's max byte width (utf8mb4
-    /// is 4), so `CHAR(120)` reports 480.
+    /// multiplies its declared length by the charset's max byte width
+    /// (utf8mb4 is 4, binary is 1), so `CHAR(120)` reports 480 and
+    /// `VARBINARY(120)` reports 120.
     #[must_use]
     pub const fn result_column_length(self) -> i32 {
         match self {
@@ -237,6 +270,14 @@ impl ConfiguredScalarType {
             Self::Int => 11,
             Self::Double => 22,
             Self::Char { max_length } => max_length as i32 * UTF8MB4_MAX_BYTES_PER_CHAR,
+            Self::Varchar {
+                max_length,
+                binary: true,
+            } => max_length as i32,
+            Self::Varchar {
+                max_length,
+                binary: false,
+            } => max_length as i32 * UTF8MB4_MAX_BYTES_PER_CHAR,
             // Go `column.ConvertColumnInfo`: a DECIMAL column length adds one
             // byte for the sign, plus one more for the decimal point when the
             // scale is nonzero.
@@ -258,7 +299,12 @@ impl ConfiguredScalarType {
     #[must_use]
     pub const fn result_decimal(self) -> u8 {
         match self {
-            Self::BigInt | Self::UnsignedBigInt | Self::Int | Self::Double | Self::Char { .. } => 0,
+            Self::BigInt
+            | Self::UnsignedBigInt
+            | Self::Int
+            | Self::Double
+            | Self::Char { .. }
+            | Self::Varchar { .. } => 0,
             Self::Decimal { scale, .. } => scale as u8,
         }
     }
@@ -288,6 +334,13 @@ impl ConfiguredScalarType {
             Self::Double => FieldType::new(FieldTypeCode::Double),
             Self::Char { max_length } => FieldType::new(FieldTypeCode::String)
                 .with_collation(Collation::Utf8Mb4Bin)
+                .with_flen(i64::from(max_length)),
+            Self::Varchar { max_length, binary } => FieldType::new(FieldTypeCode::VarString)
+                .with_collation(if binary {
+                    Collation::Binary
+                } else {
+                    Collation::Utf8Mb4Bin
+                })
                 .with_flen(i64::from(max_length)),
             // The chunk decoder reads `NewDecimal` from the self-describing
             // `MyDecimal` binary encoding (`tidb_codec::column::decode_column_datums`);
@@ -361,6 +414,24 @@ impl ConfiguredColumn {
             id,
             kind: ConfiguredColumnKind::StoredNotNull,
             scalar_type: ConfiguredScalarType::Char { max_length },
+        }
+    }
+
+    /// Configures one stored `VARCHAR(max_length) NOT NULL` column, at the
+    /// `utf8mb4_bin` collation or, when `binary` is set, `VARCHAR ...
+    /// CHARACTER SET binary` / `VARBINARY`.
+    #[must_use]
+    pub fn stored_varchar_not_null(
+        name: impl Into<String>,
+        id: i64,
+        max_length: u32,
+        binary: bool,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+            scalar_type: ConfiguredScalarType::Varchar { max_length, binary },
         }
     }
 
@@ -1877,6 +1948,7 @@ fn resolve_prepared_aggregate(
         // argument-shape-dependent); refuse rather than guess.
         ConfiguredScalarType::Double
         | ConfiguredScalarType::Char { .. }
+        | ConfiguredScalarType::Varchar { .. }
         | ConfiguredScalarType::Decimal { .. } => {
             return unsupported(UnsupportedReadOnlyFeature::Aggregate)
         }

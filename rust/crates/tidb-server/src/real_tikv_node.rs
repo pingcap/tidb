@@ -1058,6 +1058,9 @@ pub(crate) fn served_table_descriptor(table: &ConfiguredTable) -> String {
                 (_, ConfiguredScalarType::Char { max_length }) => {
                     format!("stored-char-not-null:{max_length}")
                 }
+                (_, ConfiguredScalarType::Varchar { max_length, binary }) => {
+                    format!("stored-varchar-not-null:{max_length}:{binary}")
+                }
                 (_, ConfiguredScalarType::Decimal { precision, scale }) => {
                     format!("stored-decimal-not-null:{precision}:{scale}")
                 }
