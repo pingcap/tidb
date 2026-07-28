@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/prometheus/client_golang/prometheus"
@@ -424,4 +425,68 @@ func TestNewStmtSummaryLoggerInitError(t *testing.T) {
 	ss, err := NewStmtSummary(&Config{Filename: dir})
 	require.Error(t, err)
 	require.Nil(t, ss)
+}
+
+// TestSetupDisablesPersistentOnLoggerInitError exercises the *startup call
+// chain* that produces the V2-11 nil-panic regression pointed out in review.
+//
+// When NewStmtSummary fails, Setup leaves GlobalStmtSummary == nil. The
+// cluster config still has `tidb_stmt_summary_enable_persistent = true`,
+// though, and every public proxy in this package (Add, Enabled, ...) reads
+// the persistent flag and then unconditionally dereferences GlobalStmtSummary.
+// On the buggy code the very first SQL call would dereference a nil
+// pointer and the server would crash again; the logger init error had traded
+// silent data loss for a hard boot-loop. Now Setup must remedy the half-
+// constructed state by explicitly disabling persistent mode so the wrappers
+// fall back to the in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
+//
+// The test goes end-to-end through:
+//   - the public Setup entrypoint (the same one cmd/tidb-server calls);
+//   - the post-Setup invariant that StmtSummaryEnablePersistent flipped off;
+//   - an actual Add() probe, which used to be the line that panicked.
+func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
+	// Preserve the global v2 instance; Setup will overwrite it and we want the
+	// previous value restored so neighbouring tests start from the same state.
+	prev := GlobalStmtSummary
+	t.Cleanup(func() { GlobalStmtSummary = prev })
+
+	// Preserve the cluster config too; Setup mutates it on the fix branch.
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	// Mirror the operator's intent: allocate persistent mode but point the log
+	// file at an *existing directory*. log.InitLogger refuses this with
+	// "can't use directory as log file name" deterministically across
+	// darwin/linux, so the chosen failure trigger does not depend on permission
+	// quirks of the CI container.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryEnablePersistent = true
+		conf.Instance.StmtSummaryFilename = t.TempDir()
+	})
+
+	// Simulate the startup call: cmd/tidb-server/main.go#setupStmtSummary.
+	err := Setup(&Config{
+		Filename: config.GetGlobalConfig().Instance.StmtSummaryFilename,
+	})
+	require.Error(t, err, "Setup must surface the logger init error")
+
+	// NewStmtSummary returned (nil, error); GlobalStmtSummary must not be
+	// left overwriting a previously good instance, and must NOT be the
+	// half-constructed value that triggered the bug.
+	require.Nil(t, GlobalStmtSummary)
+
+	// This is the invariant the reviewer asked for: persistent mode MUST be
+	// flipped off so the v2 proxy functions become no-ops and the v1 path
+	// (StmtSummaryByDigestMap, which is always available) absorbs traffic
+	// instead of dereferencing a nil GlobalStmtSummary.
+	require.False(t,
+		config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent,
+		"V2-11 follow-up: Setup must disable persistent mode on init failure to avoid nil deref in Add/Enabled wrappers")
+
+	// Direct evidence that the runtime no longer crashes: the Add() proxy is
+	// the line that panicked under the original (return-nil) fix. With the
+	// persistent flag flipped off it must route to v1 without panicking.
+	require.NotPanics(t, func() {
+		Add(GenerateStmtExecInfo4Test("digest_setup_fallback_does_not_panic"))
+	})
 }
