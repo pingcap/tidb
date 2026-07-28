@@ -130,6 +130,11 @@ fn run() -> Result<(), String> {
             Err(error) => failure = Some(error.to_string()),
         }
     }
+    // The opener clone holds PD request handles; the authority's shutdown
+    // drains and refuses to stop while any are live (the drain footgun only a
+    // real cluster exposes) -- release ours before asking it to stop.
+    drop(buffer);
+    drop(opener);
     let shutdown = authority.shutdown().map_err(|error| error.to_string());
     match failure {
         Some(error) => Err(error),

@@ -32,10 +32,23 @@ if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
   echo "SESSION_DRIVER_MYSQL_CLIENT must name an executable stock MySQL client" >&2
   exit 1
 fi
+# A MySQL 9 client dropped the built-in mysql_native_password plugin; resolve
+# a plugin dir the same way the other realtikv scripts do.
+MYSQL_PLUGIN_ARGS=()
+MYSQL_BIN_DIR=$(cd "$(dirname "$(command -v "${MYSQL_CLIENT}")")" && pwd)
+for candidate in \
+  "${MYSQL_BIN_DIR}/../opt/mysql-client/lib/plugin" \
+  /opt/homebrew/opt/mysql-client/lib/plugin \
+  /usr/local/opt/mysql-client/lib/plugin; do
+  if [[ -f "${candidate}/mysql_native_password.so" ]]; then
+    MYSQL_PLUGIN_ARGS=(--plugin-dir="${candidate}")
+    break
+  fi
+done
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TAG="session-driver-${$}-$(date +%s)"
-PORT_OFFSET=${SESSION_DRIVER_PORT_OFFSET:-46000}
+PORT_OFFSET=${SESSION_DRIVER_PORT_OFFSET:-41000}
 if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || [[ "${PORT_OFFSET}" -gt 45375 ]]; then
   echo "SESSION_DRIVER_PORT_OFFSET must be an unsigned integer no greater than 45375" >&2
   exit 1
@@ -72,20 +85,15 @@ wait_for_port() {
 }
 
 echo "starting playground (tag ${TAG})"
-tiup playground \
-  --tag "${TAG}" \
-  --pd.port "${PD_PORT}" \
-  --db.port "${GO_SQL_PORT}" \
-  --kv.port "${TIKV_SEED_PORT}" \
-  --db.binpath.status "${GO_STATUS_PORT}" \
-  --db 1 --kv 1 --pd 1 --tiflash 0 \
+tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+  --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
   >"${PLAYGROUND_LOG}" 2>&1 &
 PLAYGROUND_PID=$!
 wait_for_port "${PD_PORT}"
 wait_for_port "${GO_SQL_PORT}"
 
 echo "seeding the schema and rows with the playground's own TiDB"
-"${MYSQL_CLIENT}" -h 127.0.0.1 -P "${GO_SQL_PORT}" -u root --protocol=TCP <<'SQL'
+"${MYSQL_CLIENT}" "${MYSQL_PLUGIN_ARGS[@]}" -h 127.0.0.1 -P "${GO_SQL_PORT}" -u root --protocol=TCP <<'SQL'
 DROP DATABASE IF EXISTS driverdb;
 CREATE DATABASE driverdb;
 USE driverdb;
