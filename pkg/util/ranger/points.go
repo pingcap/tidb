@@ -50,6 +50,37 @@ type point struct {
 	start bool
 }
 
+type pointPairStorage struct {
+	values   [2]point
+	pointers [2]*point
+}
+
+func newPointPair(first, second point) []*point {
+	storage := &pointPairStorage{
+		values: [2]point{first, second},
+	}
+	storage.pointers = [2]*point{&storage.values[0], &storage.values[1]}
+	return storage.pointers[:]
+}
+
+type pointQuadStorage struct {
+	values   [4]point
+	pointers [4]*point
+}
+
+func newPointQuad(first, second, third, fourth point) []*point {
+	storage := &pointQuadStorage{
+		values: [4]point{first, second, third, fourth},
+	}
+	storage.pointers = [4]*point{
+		&storage.values[0],
+		&storage.values[1],
+		&storage.values[2],
+		&storage.values[3],
+	}
+	return storage.pointers[:]
+}
+
 func (rp *point) String() string {
 	val := rp.value.GetValue()
 	if rp.value.Kind() == types.KindMinNotNull {
@@ -408,36 +439,42 @@ func (r *builder) buildFromBinOp(
 	switch op {
 	case ast.NullEQ:
 		if value.IsNull() {
-			res = []*point{{start: true}, {}} // [null, null]
+			res = newPointPair(point{start: true}, point{}) // [null, null]
 			break
 		}
 		fallthrough
 	case ast.EQ:
-		startPoint := &point{value: value, start: true}
-		endPoint := &point{value: value}
-		res = []*point{startPoint, endPoint}
+		res = newPointPair(
+			point{value: value, start: true},
+			point{value: value},
+		)
 	case ast.NE:
-		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint1 := &point{value: value, excl: true}
-		startPoint2 := &point{value: value, start: true, excl: true}
-		endPoint2 := &point{value: types.MaxValueDatum()}
-		res = []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+		res = newPointQuad(
+			point{value: types.MinNotNullDatum(), start: true},
+			point{value: value, excl: true},
+			point{value: value, start: true, excl: true},
+			point{value: types.MaxValueDatum()},
+		)
 	case ast.LT:
-		startPoint := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint := &point{value: value, excl: true}
-		res = []*point{startPoint, endPoint}
+		res = newPointPair(
+			point{value: types.MinNotNullDatum(), start: true},
+			point{value: value, excl: true},
+		)
 	case ast.LE:
-		startPoint := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint := &point{value: value}
-		res = []*point{startPoint, endPoint}
+		res = newPointPair(
+			point{value: types.MinNotNullDatum(), start: true},
+			point{value: value},
+		)
 	case ast.GT:
-		startPoint := &point{value: value, start: true, excl: true}
-		endPoint := &point{value: types.MaxValueDatum()}
-		res = []*point{startPoint, endPoint}
+		res = newPointPair(
+			point{value: value, start: true, excl: true},
+			point{value: types.MaxValueDatum()},
+		)
 	case ast.GE:
-		startPoint := &point{value: value, start: true}
-		endPoint := &point{value: types.MaxValueDatum()}
-		res = []*point{startPoint, endPoint}
+		res = newPointPair(
+			point{value: value, start: true},
+			point{value: types.MaxValueDatum()},
+		)
 	}
 	cutPrefixForPoints(res, prefixLen, ft)
 	if convertToSortKey {
