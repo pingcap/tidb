@@ -151,6 +151,20 @@ impl PreparedStatementRegistry {
     fn remove(&mut self, statement_id: u32) {
         self.statements.remove(&statement_id);
     }
+
+    /// Go `stmt.Reset`: returns the statement to the state it had right after
+    /// PREPARE. The cursor and the `SEND_LONG_DATA` buffers Go also clears do
+    /// not exist here, so the remembered parameter-type vector -- the only
+    /// state an execute leaves behind -- is what a reset drops.
+    fn reset(&mut self, statement_id: u32) -> bool {
+        match self.statements.get_mut(&statement_id) {
+            Some(statement) => {
+                statement.parameter_types = None;
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Observable terminal state of one accepted connection.
@@ -184,6 +198,8 @@ pub struct ConnectionCommandCounts {
     pub stmt_execute_successes: u64,
     /// Number of `COM_STMT_CLOSE` commands, including malformed closes.
     pub stmt_close_commands: u64,
+    /// Number of `COM_STMT_RESET` commands, including unknown handles.
+    pub stmt_reset_commands: u64,
 }
 
 /// Successful lifecycle report.
@@ -861,9 +877,31 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     prepared.remove(statement_id);
                 }
             }
+            Command::StmtReset(bytes) => {
+                commands.stmt_reset_commands += 1;
+                match decode_prepared_statement_close(&bytes) {
+                    // The payload is the same four-byte statement id the
+                    // close command carries.
+                    Ok(statement_id) if prepared.reset(statement_id) => {
+                        write_affected_rows_ok(&mut output, 1, 0, 0, protocol_41)?;
+                    }
+                    Ok(statement_id) => {
+                        write_unknown_statement(&mut output, statement_id, protocol_41)?;
+                    }
+                    Err(error) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_WRONG_ARGUMENTS,
+                            *b"HY000",
+                            error.to_string(),
+                            protocol_41,
+                        )?;
+                    }
+                }
+            }
             Command::InitDb(_)
             | Command::FieldList(_)
-            | Command::StmtReset(_)
             | Command::StmtFetch(_)
             | Command::SetOption(_)
             | Command::ResetConnection

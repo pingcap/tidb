@@ -26,7 +26,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use tidb_protocol::{
     PacketReader, PacketWriter, COM_QUERY, COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE,
-    DEFAULT_MAX_ALLOWED_PACKET,
+    COM_STMT_RESET, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
@@ -689,6 +689,26 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         run_query(&mut client, &mut reader, "SELECT t FROM d"),
         vec![vec!["2020-03-05 06:07:08".to_owned()]]
     );
+
+    // COM_STMT_RESET returns a statement to its post-prepare state and
+    // answers with an OK packet; the statement still executes afterwards,
+    // which is the point of resetting rather than closing.
+    let mut reset = vec![COM_STMT_RESET];
+    reset.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &reset);
+    reader.set_sequence(1);
+    let reset_response = reader.read_packet().unwrap();
+    assert_eq!(reset_response[0], 0x00, "reset answers OK: {reset_response:?}");
+    assert_eq!(
+        execute_statement(&mut client, &mut reader, statement_id, &[2]),
+        vec![vec!["2".to_owned(), "20".to_owned()]]
+    );
+    // An unknown handle is the same error the execute path reports.
+    let mut bad_reset = vec![COM_STMT_RESET];
+    bad_reset.extend_from_slice(&9999_u32.to_le_bytes());
+    write_packet(&mut client, 0, &bad_reset);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0xff);
 
     let mut close = vec![COM_STMT_CLOSE];
     close.extend_from_slice(&statement_id.to_le_bytes());

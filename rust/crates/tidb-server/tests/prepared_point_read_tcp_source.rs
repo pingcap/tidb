@@ -108,8 +108,11 @@ fn close_is_silent_and_binary_writer_rejects_non_signed_bigint_rows() {
     let close_start = connection
         .find("Command::StmtClose(bytes) => {")
         .expect("close dispatch branch");
+    // The close branch ends at whatever dispatch arm follows it, which is not
+    // always the same one -- bounding it by a specific later arm would sweep
+    // that arm's own body into this assertion.
     let close_end = connection[close_start..]
-        .find("Command::InitDb(_)")
+        .find("\n            Command::")
         .map(|offset| close_start + offset)
         .expect("next dispatch branch");
     let close_branch = &connection[close_start..close_end];
