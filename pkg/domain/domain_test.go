@@ -37,11 +37,15 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -59,17 +63,17 @@ func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole {
 	return m.role
 }
 func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
-func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context) error {
+func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context, time.Duration) error {
 	return nil
 }
 func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
-func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, int64) error {
+func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, time.Duration) error {
 	return nil
 }
 func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
 	return nil
 }
-func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, int64) error {
+func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
 	return nil
 }
 func (*fakeExternalWorkloadManager) RegisterTTLTask(context.Context, int64, bool) error {
@@ -300,6 +304,74 @@ func unixSocketAvailable() bool {
 
 func mockFactory() (pools.Resource, error) {
 	return nil, errors.New("mock factory should not be called")
+}
+
+type stmtSummarySysVarContext struct {
+	*mock.Context
+	rows []chunk.Row
+}
+
+func (c *stmtSummarySysVarContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c
+}
+
+func (c *stmtSummarySysVarContext) ExecRestrictedSQL(context.Context, []sqlexec.OptionFuncAlias, string, ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return c.rows, nil, nil
+}
+
+// Regression coverage for issue #69913's repeated sysvar-cache rebuild path.
+func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
+	require.False(t, config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	ctx := &stmtSummarySysVarContext{
+		Context: mock.NewContext(),
+		rows: []chunk.Row{
+			chunk.MutRowFromValues(vardef.TiDBStmtSummaryInternalQuery, vardef.Off).ToRow(),
+			// This lightweight Domain does not start DDL, so keep the MDL callback
+			// from calling its DDL-owned hook while rebuilding unrelated sysvars.
+			chunk.MutRowFromValues(vardef.TiDBEnableMDL, variable.BoolToOnOff(vardef.IsMDLEnabled())).ToRow(),
+		},
+	}
+
+	originalInternalEnabled := stmtsummaryv2.EnabledInternal()
+	t.Cleanup(func() {
+		require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(originalInternalEnabled))
+	})
+	require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(false))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+
+	stmtSummarySysVar := variable.GetSysVar(vardef.TiDBStmtSummaryInternalQuery)
+	require.NotNil(t, stmtSummarySysVar)
+	wrappedStmtSummarySysVar := *stmtSummarySysVar
+	originalSetGlobal := wrappedStmtSummarySysVar.SetGlobal
+	appliedCount := 0
+	wrappedStmtSummarySysVar.SetGlobal = func(ctx context.Context, vars *variable.SessionVars, val string) error {
+		require.Equal(t, vardef.Off, val)
+		appliedCount++
+		return originalSetGlobal(ctx, vars, val)
+	}
+	variable.RegisterSysVar(&wrappedStmtSummarySysVar)
+	t.Cleanup(func() {
+		variable.RegisterSysVar(stmtSummarySysVar)
+	})
+
+	require.NoError(t, dom.LoadSysVarCacheLoop(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, 1, appliedCount)
+
+	// The persisted and local values both remain OFF. A second rebuild must still
+	// invoke the callback, which runs the internal-summary cleanup path again.
+	require.NoError(t, dom.rebuildSysVarCache(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, 2, appliedCount)
 }
 
 func sysMockFactory(*Domain) (pools.Resource, error) {

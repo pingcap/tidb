@@ -99,7 +99,7 @@ func GetSubtasksFromHistory(ctx context.Context, mgr *storage.TaskManager) (int,
 // GetSubtasksFromHistoryByTaskID gets subtasks by taskID from history table for test.
 func GetSubtasksFromHistoryByTaskID(ctx context.Context, mgr *storage.TaskManager, taskID int64) (int, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
+		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, storage.TaskIDToKey(taskID))
 	if err != nil {
 		return 0, err
 	}
@@ -109,7 +109,7 @@ func GetSubtasksFromHistoryByTaskID(ctx context.Context, mgr *storage.TaskManage
 // GetSubtasksByTaskID gets subtasks by taskID for test.
 func GetSubtasksByTaskID(ctx context.Context, mgr *storage.TaskManager, taskID int64) ([]*proto.Subtask, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
+		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, storage.TaskIDToKey(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func GetSubtaskNodes(ctx context.Context, mgr *storage.TaskManager, taskID int64
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select distinct(exec_id) from mysql.tidb_background_subtask where task_key=%?
 		union
-		select distinct(exec_id) from mysql.tidb_background_subtask_history where task_key=%?`, taskID, taskID)
+		select distinct(exec_id) from mysql.tidb_background_subtask_history where task_key=%?`, storage.TaskIDToKey(taskID), storage.TaskIDToKey(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, 
 // DeleteSubtasksByTaskID deletes the subtask of the given task ID.
 func DeleteSubtasksByTaskID(ctx context.Context, mgr *storage.TaskManager, taskID int64) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `delete from mysql.tidb_background_subtask
-		where task_key = %?`, taskID)
+		where task_key = %?`, storage.TaskIDToKey(taskID))
 	if err != nil {
 		return err
 	}
@@ -244,9 +244,9 @@ func IsTaskCancelling(ctx context.Context, mgr *storage.TaskManager, taskID int6
 // PrintSubtaskInfo log the subtask info by taskKey for test.
 func PrintSubtaskInfo(ctx context.Context, mgr *storage.TaskManager, taskID int64) {
 	rs, _ := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
+		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, storage.TaskIDToKey(taskID))
 	rs2, _ := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
+		`select `+storage.SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, storage.TaskIDToKey(taskID))
 	rs = append(rs, rs2...)
 
 	for _, r := range rs {

@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -960,12 +961,18 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	// /status HTTP endpoint
 	server.health.Store(true)
 	defer server.Close()
+	conn, peerConn := net.Pipe()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+		require.NoError(t, peerConn.Close())
+	})
 
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		bufReadConn:  serverutil.NewBufferedReadConn(conn),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -973,6 +980,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		capability:   capability,
 	}
 	cc.SetCtx(tc)
+	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Swap(true)
+	t.Cleanup(func() {
+		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+	})
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
@@ -1922,6 +1933,56 @@ func TestChangeUserAuth(t *testing.T) {
 	err = cc.handleChangeUser(ctx, data)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/ChangeUserAuthSwitch"))
 	require.EqualError(t, err, t.Name())
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+}
+
+func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		peerHost:     "localhost",
+		collation:    mysql.DefaultCollationID,
+		capability:   mysql.ClientProtocol41,
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		server:       srv,
+		user:         "root",
+		dbname:       "old_db",
+	}
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.SetCtx(tc)
+
+	data := []byte{}
+	data = append(data, "missing_user"...)
+	data = append(data, 0)
+	data = append(data, 0)
+	data = append(data, "new_db"...)
+	data = append(data, 0)
+	data = append(data, 0, 0)
+	err = cc.handleChangeUser(context.Background(), data)
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
 }
 
 func TestAuthPlugin2(t *testing.T) {

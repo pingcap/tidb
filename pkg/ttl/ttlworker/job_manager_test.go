@@ -49,17 +49,17 @@ func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole {
 	return m.role
 }
 func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
-func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context) error {
+func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context, time.Duration) error {
 	return nil
 }
 func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
-func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, int64) error {
+func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, time.Duration) error {
 	return nil
 }
 func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
 	return nil
 }
-func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, int64) error {
+func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
 	return nil
 }
 func (*fakeExternalWorkloadManager) RegisterTTLTask(context.Context, int64, bool) error {

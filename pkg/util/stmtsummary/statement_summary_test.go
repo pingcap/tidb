@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -926,6 +927,10 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		StorageKVStr,
 		StorageMPPStr,
 	}
+	return newStmtSummaryReaderWithColumnNamesForTest(ssMap, columnNames...)
+}
+
+func newStmtSummaryReaderWithColumnNamesForTest(ssMap *stmtSummaryByDigestMap, columnNames ...string) *stmtSummaryReader {
 	cols := make([]*model.ColumnInfo, len(columnNames))
 	for i := range columnNames {
 		cols[i] = &model.ColumnInfo{
@@ -937,6 +942,90 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 	reader := NewStmtSummaryReader(nil, true, cols, "", time.UTC)
 	reader.ssMap = ssMap
 	return reader
+}
+
+func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
+	const uintMetricSum = uint64(1 << 63)
+	stats := &stmtSummaryStats{
+		execCount:                    2,
+		commitCount:                  2,
+		sumRocksdbDeleteSkippedCount: uintMetricSum,
+		sumRocksdbKeySkippedCount:    uintMetricSum,
+		sumRocksdbBlockCacheHitCount: uintMetricSum,
+		sumRocksdbBlockReadCount:     uintMetricSum,
+		sumRocksdbBlockReadByte:      uintMetricSum,
+		sumIARemoteReadSegmentCount:  uintMetricSum,
+		sumIARemoteReadSegmentSize:   uintMetricSum,
+		sumWriteKeys:                 246,
+		sumWriteSize:                 468,
+		sumPrewriteRegionNum:         6,
+		sumTxnRetry:                  4,
+		sumAffectedRows:              uintMetricSum,
+	}
+	avgUintMetric := float64(uintMetricSum) / float64(stats.execCount)
+	cases := []struct {
+		name     string
+		expected any
+	}{
+		{name: RocksdbDeleteSkippedCountStr, expected: float64(uintMetricSum)},
+		{name: AvgRocksdbDeleteSkippedCountStr, expected: avgUintMetric},
+		{name: RocksdbKeySkippedCountStr, expected: float64(uintMetricSum)},
+		{name: AvgRocksdbKeySkippedCountStr, expected: avgUintMetric},
+		{name: RocksdbBlockCacheHitCountStr, expected: float64(uintMetricSum)},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: avgUintMetric},
+		{name: RocksdbBlockReadCountStr, expected: float64(uintMetricSum)},
+		{name: AvgRocksdbBlockReadCountStr, expected: avgUintMetric},
+		{name: RocksdbBlockReadByteStr, expected: float64(uintMetricSum)},
+		{name: AvgRocksdbBlockReadByteStr, expected: avgUintMetric},
+		{name: AvgIARemoteReadSegmentCountStr, expected: avgUintMetric},
+		{name: AvgIARemoteReadSegmentSizeStr, expected: avgUintMetric},
+		{name: WriteKeysStr, expected: float64(stats.sumWriteKeys)},
+		{name: AvgWriteKeysStr, expected: float64(stats.sumWriteKeys) / float64(stats.commitCount)},
+		{name: WriteSizeStr, expected: float64(stats.sumWriteSize)},
+		{name: AvgWriteSizeStr, expected: float64(stats.sumWriteSize) / float64(stats.commitCount)},
+		{name: PrewriteRegionsStr, expected: float64(stats.sumPrewriteRegionNum)},
+		{name: AvgPrewriteRegionsStr, expected: float64(stats.sumPrewriteRegionNum) / float64(stats.commitCount)},
+		{name: TxnRetryStr, expected: float64(stats.sumTxnRetry)},
+		{name: AvgTxnRetryStr, expected: float64(stats.sumTxnRetry) / float64(stats.commitCount)},
+		{name: AffectedRowsStr, expected: float64(uintMetricSum)},
+		{name: AvgAffectedRowsStr, expected: avgUintMetric},
+	}
+
+	for _, tc := range cases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		datum := types.NewDatum(factory(nil, nil, nil, stats))
+		require.Equal(t, tc.expected, datum.GetValue(), tc.name)
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
+	}
+
+	chunkStats := &stmtSummaryStats{
+		execCount:                    1,
+		commitCount:                  1,
+		sumRocksdbBlockCacheHitCount: 60,
+		sumRocksdbBlockReadCount:     21103,
+	}
+	chunkCases := []struct {
+		name     string
+		expected float64
+	}{
+		{name: RocksdbBlockCacheHitCountStr, expected: 60},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: 60},
+		{name: RocksdbBlockReadCountStr, expected: 21103},
+		{name: AvgRocksdbBlockReadCountStr, expected: 21103},
+	}
+	for _, tc := range chunkCases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		datum := types.NewDatum(factory(nil, nil, nil, chunkStats))
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
+	}
 }
 
 // Test stmtSummaryByDigest.ToDatum.
@@ -1051,6 +1140,221 @@ func TestToDatum(t *testing.T) {
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
 	match(t, datums[1], expectedEvictedDatum...)
+}
+
+func TestToDatumIAColumns(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	ssMap.beginTimeForCurInterval = now + 60
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
+
+	stmtExecInfo2 := generateAnyExecInfo()
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
+
+	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(stmtExecInfo2)
+	reader := newStmtSummaryReaderWithColumnNamesForTest(
+		ssMap,
+		AvgIARemoteReadSegmentCountStr,
+		MaxIARemoteReadSegmentCountStr,
+		AvgIARemoteReadSegmentSizeStr,
+		MaxIARemoteReadSegmentSizeStr,
+		AvgIARemoteReadSegmentWaitTimeStr,
+		MaxIARemoteReadSegmentWaitTimeStr,
+	)
+
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, 1)
+	require.Equal(t, 4.0, rows[0][0].GetFloat64())
+	require.Equal(t, uint64(5), rows[0][1].GetUint64())
+	require.Equal(t, 6144.0, rows[0][2].GetFloat64())
+	require.Equal(t, uint64(8192), rows[0][3].GetUint64())
+	require.Equal(t, int64(7*time.Millisecond), rows[0][4].GetInt64())
+	require.Equal(t, int64(9*time.Millisecond), rows[0][5].GetInt64())
+}
+
+func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	ssMap.beginTimeForCurInterval = now + 60
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
+	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
+
+	stmtExecInfo2 := generateAnyExecInfo()
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
+	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
+
+	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(stmtExecInfo2)
+
+	reader := newStmtSummaryReaderWithColumnNamesForTest(
+		ssMap,
+		AvgIARemoteReadSegmentCountStr,
+		MaxIARemoteReadSegmentCountStr,
+		AvgIARemoteReadSegmentSizeStr,
+		MaxIARemoteReadSegmentSizeStr,
+		AvgIARemoteReadSegmentWaitTimeStr,
+		MaxIARemoteReadSegmentWaitTimeStr,
+	)
+
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, 1)
+
+	maxUnsignedType := types.NewFieldType(mysql.TypeLonglong)
+	maxUnsignedType.SetFlag(mysql.UnsignedFlag)
+	retTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeDouble),
+		maxUnsignedType,
+		types.NewFieldType(mysql.TypeDouble),
+		maxUnsignedType.Clone(),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	mutRow := chunk.MutRowFromTypes(retTypes)
+	mutRow.SetDatums(rows[0]...)
+	row := mutRow.ToRow()
+
+	require.Equal(t, 4.0, row.GetFloat64(0))
+	require.Equal(t, uint64(5), row.GetUint64(1))
+	require.Equal(t, 6144.0, row.GetFloat64(2))
+	require.Equal(t, uint64(8192), row.GetUint64(3))
+	require.Equal(t, int64(7*time.Millisecond), row.GetInt64(4))
+	require.Equal(t, int64(9*time.Millisecond), row.GetInt64(5))
+}
+
+// Regression test for issue #69913.
+func TestCurrentRowsExcludePreviousIntervalEvictedOther(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	require.NoError(t, ssMap.SetMaxStmtCount(10))
+
+	interval := ssMap.refreshInterval()
+	// Use future interval boundaries so AddStatement does not rotate them based
+	// on the wall clock while the test advances the intervals explicitly.
+	previousBegin := time.Now().Unix() + interval
+	ssMap.beginTimeForCurInterval = previousBegin
+
+	previousStmt := generateAnyExecInfo()
+	for i := range 11 {
+		previousStmt.Digest = fmt.Sprintf("previous_digest_%d", i)
+		ssMap.AddStatement(previousStmt)
+	}
+	require.Equal(t, 10, ssMap.summaryMap.Size())
+	require.Equal(t, 1, ssMap.other.history.Len())
+
+	currentBegin := previousBegin + interval
+	ssMap.beginTimeForCurInterval = currentBegin
+	currentStmt := generateAnyExecInfo()
+	currentStmt.Digest = "current_digest"
+	ssMap.AddStatement(currentStmt)
+	require.Equal(t, 10, ssMap.summaryMap.Size())
+
+	reader := newStmtSummaryReaderForTest(ssMap)
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, 1)
+	require.Equal(t, currentStmt.Digest, rows[0][4].GetString())
+	currentBeginTime := types.NewTime(types.FromGoTime(time.Unix(currentBegin, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
+	require.Equal(t, currentBeginTime, rows[0][0].GetMysqlTime())
+}
+
+// Regression test for issue #69913.
+func TestDisablingInternalQueryPreservesLRUOrder(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	const capacity = 20
+	require.NoError(t, ssMap.SetMaxStmtCount(capacity))
+	require.NoError(t, ssMap.SetEnabledInternalQuery(true))
+
+	interval := ssMap.refreshInterval()
+	currentBegin := time.Now().Unix() + interval
+	ssMap.beginTimeForCurInterval = currentBegin
+
+	for i := range capacity - 2 {
+		stmt := generateAnyExecInfo()
+		stmt.Digest = fmt.Sprintf("digest_%02d", i)
+		ssMap.AddStatement(stmt)
+	}
+	pureInternal := generateAnyExecInfo()
+	pureInternal.Digest = "pure_internal_digest"
+	pureInternal.IsInternal = true
+	ssMap.AddStatement(pureInternal)
+
+	mixedInternal := generateAnyExecInfo()
+	mixedInternal.Digest = "mixed_digest"
+	mixedInternal.IsInternal = true
+	ssMap.AddStatement(mixedInternal)
+	mixedExternal := generateAnyExecInfo()
+	mixedExternal.Digest = mixedInternal.Digest
+	ssMap.AddStatement(mixedExternal)
+
+	hotDigests := []string{"digest_00", "digest_01"}
+	for _, digest := range hotDigests {
+		stmt := generateAnyExecInfo()
+		stmt.Digest = digest
+		ssMap.AddStatement(stmt)
+	}
+
+	lruDigests := func() []string {
+		values := ssMap.summaryMap.Values()
+		digests := make([]string, 0, len(values))
+		for _, value := range values {
+			digests = append(digests, value.(*stmtSummaryByDigest).digest)
+		}
+		return digests
+	}
+
+	before := lruDigests()
+	require.NoError(t, ssMap.SetEnabledInternalQuery(false))
+	expected := make([]string, 0, len(before)-1)
+	for _, digest := range before {
+		if digest != pureInternal.Digest {
+			expected = append(expected, digest)
+		}
+	}
+	require.Equal(t, expected, lruDigests())
+	require.NotContains(t, lruDigests(), pureInternal.Digest)
+	require.Contains(t, lruDigests(), mixedInternal.Digest)
+
+	for _, digest := range []string{"new_digest_0", "new_digest_1", "new_digest_2"} {
+		stmt := generateAnyExecInfo()
+		stmt.Digest = digest
+		ssMap.AddStatement(stmt)
+	}
+
+	evictedRows := ssMap.ToEvictedCountDatum()
+	require.Len(t, evictedRows, 1)
+	currentBeginTime := types.NewTime(types.FromGoTime(time.Unix(currentBegin, 0)), mysql.TypeTimestamp, 0)
+	require.Equal(t, currentBeginTime, evictedRows[0][0].GetMysqlTime())
+	require.Equal(t, int64(2), evictedRows[0][2].GetInt64())
+
+	reader := newStmtSummaryReaderForTest(ssMap)
+	rows := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, rows, capacity+1)
+	normalExecCounts := make(map[string]int64, capacity)
+	var othersExecCount int64
+	for _, row := range rows {
+		if row[4].IsNull() {
+			othersExecCount = row[11].GetInt64()
+			continue
+		}
+		normalExecCounts[row[4].GetString()] = row[11].GetInt64()
+	}
+	require.Len(t, normalExecCounts, capacity)
+	require.Equal(t, int64(2), normalExecCounts[hotDigests[0]])
+	require.Equal(t, int64(2), normalExecCounts[hotDigests[1]])
+	require.Equal(t, int64(2), normalExecCounts[mixedInternal.Digest])
+	require.NotContains(t, normalExecCounts, pureInternal.Digest)
+	require.NotContains(t, normalExecCounts, "digest_02")
+	require.NotContains(t, normalExecCounts, "digest_03")
+	require.Equal(t, int64(2), othersExecCount)
 }
 
 // Test AddStatement and ToDatum parallel.

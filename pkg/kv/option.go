@@ -194,7 +194,14 @@ const (
 	// InternalTxnCacheTable is the type of cache table usage.
 	InternalTxnCacheTable = InternalTxnOthers
 	// InternalTxnStats is the type of statistics txn.
+	// NOTE: This is only used for analyze requests to provide better resource control.
 	InternalTxnStats = "stats"
+	// InternalTxnStatsForegroundPriority is the type of statistics txn that
+	// should run at foreground priority.
+	// It separates non-analyze statistics requests, such as sync load, async load,
+	// and init stats, from analyze requests. These requests can affect user query
+	// latency, so resource control should not throttle them.
+	InternalTxnStatsForegroundPriority = "StatsForegroundPriority"
 	// InternalTxnBindInfo is the type of bind info txn.
 	InternalTxnBindInfo = InternalTxnOthers
 	// InternalTxnWorkloadLearning is the type of workload-based learning txn.

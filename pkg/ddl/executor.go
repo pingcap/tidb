@@ -1727,6 +1727,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
 	}
+	if err := CheckStorageClassConflictInAlterTableSpecs(validSpecs); err != nil {
+		return err
+	}
 	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || vardef.EnableRowLevelChecksum.Load()) {
 		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
 	}
@@ -1883,6 +1886,18 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTablePartition:
 			err = e.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
+			engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(spec.Options)
+			if engineAttributeErr != nil {
+				return engineAttributeErr
+			}
+			// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'.
+			// Validate it before handling any other option, so that no option
+			// takes effect for a statement with an invalid COMPRESSION value.
+			for _, opt := range spec.Options {
+				if opt.Tp == ast.TableOptionCompression && strings.ToUpper(opt.StrValue) != ast.TableOptionCompressionNone {
+					return dbterror.ErrUnsupportedAlterTableOption.GenWithStackByArgs()
+				}
+			}
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
 				switch opt.Tp {
@@ -1923,9 +1938,11 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						Name: ast.NewCIStr(opt.StrValue),
 					}
 				case ast.TableOptionEngine:
-				case ast.TableOptionEngineAttribute:
-					err = dbterror.ErrUnsupportedEngineAttribute
+				case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
 				case ast.TableOptionRowFormat:
+				case ast.TableOptionCompression:
+					// COMPRESSION='NONE' is supported but currently no-op.
+					// Other values are rejected before this loop.
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool
@@ -1947,6 +1964,13 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
 
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+
+			if hasEngineAttribute {
+				err = e.AlterTableEngineAttribute(sctx, ident, engineAttribute)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -2304,13 +2328,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		}
 	}
 
-	// partInfo contains only the new added partition, we have to combine it with the
-	// old partitions to check all partitions is strictly increasing.
-	clonedMeta := meta.Clone()
-	tmp := *partInfo
-	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	clonedMeta.Partition = &tmp
-	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
+	if err := CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), meta, partInfo, len(pi.Definitions)); err != nil {
 		if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
@@ -2682,6 +2700,13 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
 	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	definitionsOffset := 0
+	if action == model.ActionReorganizePartition {
+		definitionsOffset = firstPartIdx
+	}
+	if err := updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset); err != nil {
 		return errors.Trace(err)
 	}
 	if action == model.ActionReorganizePartition {
@@ -7535,6 +7560,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 // NewDDLReorgMeta create a DDL ReorgMeta.
 func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	useNewCollate := collate.NewCollationEnabled()
 	return &model.DDLReorgMeta{
 		SQLMode:           ctx.GetSessionVars().SQLMode,
 		Warnings:          make(map[errors.ErrorID]*terror.Error),
@@ -7542,6 +7568,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
+		UseNewCollate:     &useNewCollate,
 	}
 }
 

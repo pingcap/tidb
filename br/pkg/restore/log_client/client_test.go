@@ -50,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -1743,6 +1745,73 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	}
 }
 
+// TestRebaseAutoIncrementIDForSepAutoIncTables is a regression test for
+// https://github.com/pingcap/tidb/issues/69485: after PiTR log replay bumps the
+// persisted auto-increment counter of an AUTO_ID_CACHE=1 table directly in TiKV,
+// the autoid service's in-memory cache is stale and would hand out already-used
+// IDs. RebaseAutoIncrementIDForSepAutoIncTables must sync the service back to the
+// persisted value so the next allocation is persistedBase+1.
+func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint primary key auto_increment, data bigint) auto_id_cache=1")
+	// The first insert primes the autoid service's in-memory cache (a non-zero
+	// base with a reserved range) exactly like a snapshot restore would.
+	tk.MustExec("insert into t (data) values (0)")
+
+	tbl, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().SepAutoInc())
+	dbID := tbl.Meta().DBID
+	tableID := tbl.Meta().ID
+
+	alloc := tbl.Allocators(nil).Get(autoid.AutoIncrementType)
+	require.NotNil(t, alloc)
+
+	// Simulate PiTR log replay writing a higher auto-increment counter straight
+	// to TiKV, bypassing the autoid service. Choose a target well above the
+	// service's reserved range so the in-memory cache is guaranteed to be stale.
+	var target int64
+	require.NoError(t, kv.RunInNewTxn(ctx, s.Mock.Storage, false, func(_ context.Context, txn kv.Transaction) error {
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tableID).IncrementID(model.TableInfoVersion5)
+		cur, err1 := acc.Get()
+		if err1 != nil {
+			return err1
+		}
+		target = cur + 1000000
+		_, err1 = acc.Inc(target - cur)
+		return err1
+	}))
+
+	// Before the fix: the service still allocates from its stale cache, not from
+	// the persisted value, which is the bug that causes duplicate-key errors.
+	staleNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Less(t, staleNext, target, "expected stale in-memory allocation before rebase")
+
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, nil)
+	schemasReplace := &stream.SchemasReplace{
+		DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+			dbID: {
+				Name: "test",
+				DbID: dbID,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					tableID: {Name: "t", TableID: tableID},
+				},
+			},
+		},
+	}
+	require.NoError(t, client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace))
+
+	// After the fix: the service is synced to the persisted value, so the next
+	// allocation is target+1 and no longer collides with restored rows.
+	fixedNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, target+1, fixedNext)
+}
+
 type mockLogStrategy struct {
 	*logclient.LogSplitStrategy
 	expectSplitCount int
@@ -1910,6 +1979,83 @@ func TestCollectSSTFileSets(t *testing.T) {
 		require.Len(t, fileSets[0].SSTFiles, 1)
 		require.Equal(t, "1:201", fileSets[0].SSTFiles[0].Name)
 	})
+}
+
+func TestEstimateCompactedSSTFlowControl(t *testing.T) {
+	fileSets := restore.BatchBackupFileSet{
+		{
+			TableID: 1,
+			SSTFiles: []*backuppb.File{
+				{
+					Name:  "file-1",
+					Size_: 16 * units.MiB,
+				},
+				{
+					Name:       "file-2",
+					TotalBytes: 8 * units.MiB,
+				},
+			},
+		},
+	}
+
+	snapshotBytes, compactedSSTBytes, l6BytesPerStore, l5BytesPerStore, pendingBytes :=
+		logclient.TEST_EstimateCompactedSSTFlowControl(fileSets, 5, 3, 120*units.MiB, 6*units.MiB)
+	require.Equal(t, uint64(120*units.MiB), snapshotBytes)
+	require.Equal(t, uint64(30*units.MiB), compactedSSTBytes)
+	require.Equal(t, uint64(72*units.MiB), l6BytesPerStore)
+	require.Equal(t, uint64(18*units.MiB), l5BytesPerStore)
+	require.InDelta(t, 54*float64(units.MiB), float64(pendingBytes), float64(units.KiB))
+
+	require.Equal(t, uint(2), logclient.TEST_LiveTiKVStoreCount([]*metapb.Store{
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Offline},
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Tombstone},
+	}))
+}
+
+func TestEstimatePendingCompactionBytes(t *testing.T) {
+	require.Equal(t, uint64(0), logclient.TEST_EstimatePendingCompactionBytes(11*units.TiB, units.TiB))
+	pendingBytes := logclient.TEST_EstimatePendingCompactionBytes(units.TiB, 512*units.GiB)
+	expectedPendingBytes := (512*float64(units.GiB) - float64(units.TiB)/10) * 3
+	require.InDelta(t, expectedPendingBytes, float64(pendingBytes), float64(units.MiB))
+}
+
+func TestCompactedSSTFlowControlTarget(t *testing.T) {
+	soft, hard := logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(units.TiB), soft)
+	require.Equal(t, uint64(2*units.TiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		3*units.TiB,
+	)
+	require.Equal(t, uint64(3840*units.GiB), soft)
+	require.Equal(t, uint64(7680*units.GiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"4TiB"},
+		[]string{"9TiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(4*units.TiB), soft)
+	require.Equal(t, uint64(9*units.TiB), hard)
+
+	require.False(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "192GiB"}, 4*units.TiB))
+	require.True(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "5TiB"}, 4*units.TiB))
+	require.Equal(t, "1TiB", logclient.TEST_FormatBytes(units.TiB))
+	require.Equal(t, "1536GiB", logclient.TEST_FormatBytes(1536*units.GiB))
+
+	require.Equal(t, uint(5), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(5)}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(nil, errors.New("pd unavailable")))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": "bad"}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(0)}, nil))
 }
 
 func TestCompactedSplitStrategy(t *testing.T) {

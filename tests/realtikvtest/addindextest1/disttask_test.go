@@ -570,12 +570,12 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec("use test")
 			updateExecID := fmt.Sprintf(`
 				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in
-					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+					(select CAST(id AS CHAR) from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 			<-afterCancel
 			updateExecID = fmt.Sprintf(`
 				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in
-					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+					(select CAST(id AS CHAR) from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 		})
 	})
@@ -590,10 +590,10 @@ func TestAddIndexScheduleAway(t *testing.T) {
 }
 
 func TestAddIndexDistCleanUpBlock(t *testing.T) {
-	proto.MaxConcurrentTask = 1
+	t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
 		<-ch
 	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)

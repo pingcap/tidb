@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -58,7 +59,7 @@ func TestClusterSplit(t *testing.T) {
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
 		// TODO: Should use session's TimeZone instead of UTC.
 		rd := rowcodec.Encoder{Enable: true}
-		rowValue, err1 := tablecodec.EncodeRow(sc.TimeZone(), []types.Datum{colValue}, []int64{colID}, nil, nil, nil, &rd)
+		rowValue, err1 := tablecodec.EncodeRow(codec.NewEncoder(collate.NewCollationEnabled()), sc.TimeZone(), []types.Datum{colValue}, []int64{colID}, nil, nil, nil, &rd)
 		require.NoError(t, err1)
 		txn.Set(rowKey, rowValue)
 

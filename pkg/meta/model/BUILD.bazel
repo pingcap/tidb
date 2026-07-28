@@ -6,6 +6,7 @@ go_library(
         "bdr.go",
         "column.go",
         "db.go",
+        "engine_attribute.go",
         "flags.go",
         "index.go",
         "job.go",

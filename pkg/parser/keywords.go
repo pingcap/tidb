@@ -601,6 +601,7 @@ var Keywords = []KeywordsType{
 	{"STATS_SAMPLE_RATE", false, "unreserved"},
 	{"STATUS", false, "unreserved"},
 	{"STORAGE", false, "unreserved"},
+	{"STORAGE_CLASS", false, "unreserved"},
 	{"STRICT_FORMAT", false, "unreserved"},
 	{"SUBJECT", false, "unreserved"},
 	{"SUBPARTITION", false, "unreserved"},
