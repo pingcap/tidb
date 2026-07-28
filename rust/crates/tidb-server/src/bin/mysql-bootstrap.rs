@@ -24,6 +24,12 @@
 //!
 //! A keyspace that already carries any bootstrap object is refused, and nothing
 //! is written.
+//!
+//! The bootstrap publishes a schema version like any other catalog change, so
+//! it announces it on etcd afterwards exactly as a DDL commit does: a Go TiDB
+//! already watching this fresh keyspace then reloads at once instead of
+//! waiting out its lease. Failing to announce is a warning, because the
+//! version is already durable and every node's tick still finds it.
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -33,7 +39,9 @@ use tidb_exec::mysql_bootstrap::{
     bootstrap_mysql_schema, read_ddl_table_version, utc_now_timestamp, BootstrapEnvironment,
 };
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, TransactionMetaSnapshot};
+use tidb_exec::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
+use tidb_pd_client::EtcdClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, RealOptimisticTransactionOpener};
 use tidb_util::timeutil::infer_system_tz;
@@ -60,6 +68,9 @@ fn run() -> Result<(), String> {
         }
     }
     let pd = pd.ok_or("--pd is required")?;
+    // Connected before the authority so a bootstrap never fails for the sake
+    // of a notification it is allowed to skip.
+    let notifier = EtcdClient::connect([pd.as_str()], TIMEOUT).ok();
 
     // The bootstrap runs inside the catalog choice because a fresh keyspace has
     // no table to serve until this call has written one: the authority is
@@ -67,8 +78,14 @@ fn run() -> Result<(), String> {
     // just published -- which is also the first proof our own loader reads it.
     let mut authority =
         ProductionReadProcessAuthority::connect_with_catalog([pd], TIMEOUT, |opener| {
-            let outcome = publish_bootstrap(opener)?;
+            let (outcome, schema_version) = publish_bootstrap(opener)?;
             println!("bootstrap committed: {outcome:?}");
+            notify_schema_version(
+                notifier
+                    .as_ref()
+                    .map(|client| client as &dyn SchemaVersionNotifier),
+                schema_version,
+            );
             let catalog =
                 load_catalog_from_cluster(opener, TIMEOUT).map_err(|error| error.to_string())?;
             println!("schema version {}", catalog.schema_version);
@@ -94,7 +111,7 @@ fn run() -> Result<(), String> {
 /// commit share one `start_ts`.
 fn publish_bootstrap(
     opener: &RealOptimisticTransactionOpener,
-) -> Result<OptimisticCommitOutcome, String> {
+) -> Result<(OptimisticCommitOutcome, i64), String> {
     let call = UnaryCallContext::with_timeout(TIMEOUT);
     let mut sizing = opener
         .begin_read_only()
@@ -142,7 +159,9 @@ fn publish_bootstrap(
         write.created_tables.len(),
         write.schema_version
     );
-    transaction
+    let schema_version = write.schema_version;
+    let outcome = transaction
         .commit(write.mutations, &call)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok((outcome, schema_version))
 }

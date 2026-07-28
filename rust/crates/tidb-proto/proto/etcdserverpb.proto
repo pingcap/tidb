@@ -1,0 +1,221 @@
+// Dependency-closed projection of the vendored etcd v3 KV and Watch services.
+//
+// Source of truth: go.etcd.io/etcd/api/v3@v3.5.15/etcdserverpb/rpc.proto,
+// copied field-for-field with the original field numbers. PD embeds a real
+// etcd server and serves this gRPC surface on its own client port, which is
+// how TiDB's `clientv3` reaches `/tidb/ddl/global_schema_version`
+// (`pkg/store/etcd.go` `NewEtcdCli` dials `store.EtcdAddrs()`, the PD
+// addresses).
+//
+// Projection scope, and why each piece is here:
+//
+//   * `KV.Put`   — `pkg/ddl/schemaver/syncer.go` `OwnerUpdateGlobalVersion`
+//                  PUTs the decimal schema version to the global key.
+//   * `KV.Range` — reads that same key back, which is how a watcher seeds
+//                  itself and how a test can assert what was written.
+//   * `Watch.Watch` — `pkg/infoschema/issyncer/syncer.go` `SyncLoop` selects
+//                  on the watch channel for that key.
+//
+// Methods this tier does not call (Txn, Compact, DeleteRange, Lease, Cluster,
+// Maintenance, Auth) are omitted; omitting a method changes no method path of
+// the ones kept. `WatchRequest.request_union` keeps `create_request = 1` and
+// `cancel_request = 2`; `progress_request = 3` is omitted with its number
+// reserved by absence, since nothing here asks for progress notifications.
+//
+// The gogoproto options and their import are dropped: Go-codegen only.
+syntax = "proto3";
+
+package etcdserverpb;
+
+import "mvccpb.proto";
+
+service KV {
+  // Range gets the keys in the range from the key-value store.
+  rpc Range(RangeRequest) returns (RangeResponse) {}
+
+  // Put puts the given key into the key-value store.
+  rpc Put(PutRequest) returns (PutResponse) {}
+}
+
+service Watch {
+  // Watch watches for events happening or that have happened. Both input and
+  // output are streams; the input stream is for creating and canceling
+  // watchers and the output stream sends events.
+  rpc Watch(stream WatchRequest) returns (stream WatchResponse) {}
+}
+
+message ResponseHeader {
+  // cluster_id is the ID of the cluster which sent the response.
+  uint64 cluster_id = 1;
+  // member_id is the ID of the member which sent the response.
+  uint64 member_id = 2;
+  // revision is the key-value store revision when the request was applied.
+  int64 revision = 3;
+  // raft_term is the raft term when the request was applied.
+  uint64 raft_term = 4;
+}
+
+message RangeRequest {
+  enum SortOrder {
+    NONE = 0; // default, no sorting
+    ASCEND = 1; // lowest target value first
+    DESCEND = 2; // highest target value first
+  }
+  enum SortTarget {
+    KEY = 0;
+    VERSION = 1;
+    CREATE = 2;
+    MOD = 3;
+    VALUE = 4;
+  }
+
+  // key is the first key for the range. If range_end is not given, the request
+  // only looks up key.
+  bytes key = 1;
+  // range_end is the upper bound on the requested range [key, range_end).
+  bytes range_end = 2;
+  // limit is a limit on the number of keys returned for the request.
+  int64 limit = 3;
+  // revision is the point-in-time of the key-value store to use for the range.
+  int64 revision = 4;
+
+  // sort_order is the order for returned sorted results.
+  SortOrder sort_order = 5;
+
+  // sort_target is the key-value field to use for sorting.
+  SortTarget sort_target = 6;
+
+  // serializable sets the range request to use serializable member-local reads.
+  bool serializable = 7;
+
+  // keys_only when set returns only the keys and not the values.
+  bool keys_only = 8;
+
+  // count_only when set returns only the count of the keys in the range.
+  bool count_only = 9;
+
+  // min_mod_revision is the lower bound for returned key mod revisions.
+  int64 min_mod_revision = 10;
+
+  // max_mod_revision is the upper bound for returned key mod revisions.
+  int64 max_mod_revision = 11;
+
+  // min_create_revision is the lower bound for returned key create revisions.
+  int64 min_create_revision = 12;
+
+  // max_create_revision is the upper bound for returned key create revisions.
+  int64 max_create_revision = 13;
+}
+
+message RangeResponse {
+  ResponseHeader header = 1;
+  // kvs is the list of key-value pairs matched by the range request.
+  repeated mvccpb.KeyValue kvs = 2;
+  // more indicates if there are more keys to return in the requested range.
+  bool more = 3;
+  // count is set to the number of keys within the range when requested.
+  int64 count = 4;
+}
+
+message PutRequest {
+  // key is the key, in bytes, to put into the key-value store.
+  bytes key = 1;
+  // value is the value, in bytes, to associate with the key.
+  bytes value = 2;
+  // lease is the lease ID to associate with the key. A lease value of 0
+  // indicates no lease, which is what the global schema version key uses.
+  int64 lease = 3;
+
+  // If prev_kv is set, etcd gets the previous key-value pair before changing it.
+  bool prev_kv = 4;
+
+  // If ignore_value is set, etcd updates the key using its current value.
+  bool ignore_value = 5;
+
+  // If ignore_lease is set, etcd updates the key using its current lease.
+  bool ignore_lease = 6;
+}
+
+message PutResponse {
+  ResponseHeader header = 1;
+  // if prev_kv is set in the request, the previous key-value pair is returned.
+  mvccpb.KeyValue prev_kv = 2;
+}
+
+message WatchRequest {
+  // request_union is a request to either create a new watcher or cancel an
+  // existing watcher.
+  oneof request_union {
+    WatchCreateRequest create_request = 1;
+    WatchCancelRequest cancel_request = 2;
+  }
+}
+
+message WatchCreateRequest {
+  // key is the key to register for watching.
+  bytes key = 1;
+
+  // range_end is the end of the range [key, range_end) to watch. If range_end
+  // is not given, only the key argument is watched.
+  bytes range_end = 2;
+
+  // start_revision is an optional revision to watch from (inclusive). No
+  // start_revision is "now".
+  int64 start_revision = 3;
+
+  // progress_notify is set so that the etcd server will periodically send a
+  // WatchResponse with no events to the new watcher if there are no recent
+  // events.
+  bool progress_notify = 4;
+
+  enum FilterType {
+    // filter out put event.
+    NOPUT = 0;
+    // filter out delete event.
+    NODELETE = 1;
+  }
+
+  // filters filter the events at server side before it sends back to the
+  // watcher.
+  repeated FilterType filters = 5;
+
+  // If prev_kv is set, created watcher gets the previous KV before the event
+  // happens.
+  bool prev_kv = 6;
+
+  // If watch_id is provided and non-zero, it will be assigned to this watcher.
+  int64 watch_id = 7;
+
+  // fragment enables splitting large revisions into multiple watch responses.
+  bool fragment = 8;
+}
+
+message WatchCancelRequest {
+  // watch_id is the watcher id to cancel so that no more events are transmitted.
+  int64 watch_id = 1;
+}
+
+message WatchResponse {
+  ResponseHeader header = 1;
+  // watch_id is the ID of the watcher that corresponds to the response.
+  int64 watch_id = 2;
+
+  // created is set to true if the response is for a create watch request.
+  bool created = 3;
+
+  // canceled is set to true if the response is for a cancel watch request.
+  bool canceled = 4;
+
+  // compact_revision is set to the minimum index if a watcher tries to watch
+  // at a compacted index.
+  int64 compact_revision = 5;
+
+  // cancel_reason indicates the reason for canceling the watcher.
+  string cancel_reason = 6;
+
+  // fragment is true if a large watch response was split over multiple
+  // responses.
+  bool fragment = 7;
+
+  repeated mvccpb.Event events = 11;
+}

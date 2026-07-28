@@ -23,10 +23,12 @@ tidb-exec = { path = "../tidb-exec" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-model = { path = "../tidb-model" }
+tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-session = { path = "../tidb-session" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 prost.workspace = true

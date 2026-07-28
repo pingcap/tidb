@@ -2157,7 +2157,10 @@ fn normalize_plaintext_endpoint(endpoint: &str) -> Result<String, PdClientError>
     Ok(normalized)
 }
 
-fn normalize_endpoints<I, S>(endpoints: I, sort: bool) -> Result<Vec<String>, PdClientError>
+pub(crate) fn normalize_endpoints<I, S>(
+    endpoints: I,
+    sort: bool,
+) -> Result<Vec<String>, PdClientError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,

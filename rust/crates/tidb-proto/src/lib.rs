@@ -50,6 +50,19 @@ pub mod mpp {
     include!(concat!(env!("OUT_DIR"), "/mpp.rs"));
 }
 
+/// The generated dependency-closed etcd MVCC key/value package.
+pub mod mvccpb {
+    include!(concat!(env!("OUT_DIR"), "/mvccpb.rs"));
+}
+
+/// The generated dependency-closed etcd v3 KV/Watch service package.
+///
+/// PD serves this on its own client port, which is how a node PUTs and
+/// watches `/tidb/ddl/global_schema_version`.
+pub mod etcdserverpb {
+    include!(concat!(env!("OUT_DIR"), "/etcdserverpb.rs"));
+}
+
 pub use coprocessor::{
     ExecDetailsV2 as CoprocessorExecDetailsV2, KeyRange as CoprocessorKeyRange,
     Peer as CoprocessorPeer, RegionEpoch as CoprocessorRegionEpoch, Request as CoprocessorRequest,
@@ -298,6 +311,71 @@ mod tests {
         assert!(encoded.windows(2).any(|window| window == [0xa0, 0x06])); // field 100 key
         assert!(encoded.windows(2).any(|window| window == [0xf8, 0x07])); // field 127 key
         assert!(encoded.windows(2).any(|window| window == [0xb0, 0x09])); // field 150 key
+    }
+
+    #[test]
+    fn the_etcd_put_of_a_global_schema_version_matches_the_go_wire_shape() {
+        use crate::etcdserverpb::PutRequest;
+
+        // Exactly what `OwnerUpdateGlobalVersion` sends: the key bytes, the
+        // decimal ASCII text of the int64 version, and no lease.
+        let request = PutRequest {
+            key: b"/tidb/ddl/global_schema_version".to_vec(),
+            value: b"127".to_vec(),
+            ..Default::default()
+        };
+        let encoded = request.encode_to_vec();
+        let mut expected = vec![0x0a, 31];
+        expected.extend_from_slice(b"/tidb/ddl/global_schema_version");
+        expected.extend_from_slice(&[0x12, 0x03]);
+        expected.extend_from_slice(b"127");
+        assert_eq!(encoded, expected);
+        assert_eq!(PutRequest::decode(encoded.as_slice()).unwrap(), request);
+    }
+
+    #[test]
+    fn a_single_key_watch_create_keeps_its_oneof_and_field_numbers() {
+        use crate::etcdserverpb::{watch_request::RequestUnion, WatchCreateRequest, WatchRequest};
+
+        let request = WatchRequest {
+            request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
+                key: b"/k".to_vec(),
+                ..Default::default()
+            })),
+        };
+        // oneof create_request is field 1; the nested key is field 1 too.
+        assert_eq!(
+            request.encode_to_vec(),
+            vec![0x0a, 0x04, 0x0a, 0x02, b'/', b'k']
+        );
+        assert_eq!(
+            WatchRequest::decode(request.encode_to_vec().as_slice()).unwrap(),
+            request
+        );
+    }
+
+    #[test]
+    fn a_watch_response_carries_its_events_on_field_eleven() {
+        use crate::etcdserverpb::WatchResponse;
+        use crate::mvccpb::{event::EventType, Event, KeyValue};
+
+        let response = WatchResponse {
+            events: vec![Event {
+                r#type: EventType::Put as i32,
+                kv: Some(KeyValue {
+                    key: b"/k".to_vec(),
+                    value: b"9".to_vec(),
+                    ..Default::default()
+                }),
+                prev_kv: None,
+            }],
+            ..Default::default()
+        };
+        let encoded = response.encode_to_vec();
+        // Field 11, wire type 2 -> tag byte 0x5a: the upstream sparse number
+        // that a renumbered projection would silently break.
+        assert_eq!(encoded[0], 0x5a);
+        assert_eq!(WatchResponse::decode(encoded.as_slice()).unwrap(), response);
     }
 
     #[test]

@@ -8,6 +8,7 @@
 
 mod client;
 mod error;
+mod etcd;
 mod model;
 mod tso;
 
@@ -16,6 +17,10 @@ pub use client::{
     GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH, SCAN_REGIONS_PATH, TSO_PATH,
 };
 pub use error::{PdClientError, PdClientShutdownError, PdOperation};
+pub use etcd::{
+    EtcdClient, EtcdError, EtcdWatchEvent, EtcdWatchStats, EtcdWatcher,
+    DDL_GLOBAL_SCHEMA_VERSION_KEY, ETCD_PUT_PATH, ETCD_RANGE_PATH, ETCD_WATCH_PATH,
+};
 pub use model::{
     PdBucketStats, PdBuckets, PdKeyRange, PdMemberSet, PdNodeState, PdPeer, PdRegion,
     PdRegionEpoch, PdStore, PdStoreState,

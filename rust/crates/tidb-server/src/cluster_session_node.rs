@@ -131,7 +131,8 @@ use crate::cluster_session::{cluster_session_catalog, SkippedTable};
 use crate::node_config::NodeConfig;
 use crate::pipeline_session::MaterializedResultSetSource;
 use crate::real_tikv_node::{
-    node_accounts, run_with_process_shutdown, spawn_catalog_reloader, RunConfiguredNodeError,
+    node_accounts, run_with_process_shutdown, spawn_catalog_reloader, spawn_schema_version_watch,
+    RunConfiguredNodeError,
 };
 use crate::sql_node::{
     ConcurrentSqlNode, ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult,
@@ -879,6 +880,10 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             .map_err(|error| {
                 RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
             })?;
+    // The watch only makes the reload *prompt*; the tick above is what makes
+    // it correct. It is listed before the reloader in the tuple below so it is
+    // dropped first: a watch may not outlive the thread it nudges.
+    let watcher = spawn_schema_version_watch(&config, &reloader);
     let factory = Arc::new(ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             authority.transaction_opener(),
@@ -895,9 +900,9 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     let skipped = render_skipped(factory.boot_skipped_tables());
 
     run_with_process_shutdown(
-        (factory, reloader, privilege_reloader),
+        (factory, watcher, reloader, privilege_reloader),
         authority,
-        move |(factory, reloader, privilege_reloader)| {
+        move |(factory, watcher, reloader, privilege_reloader)| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                     crate::real_tikv_node::emit_connections_startup_failure(&error);
@@ -920,7 +925,9 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
             // The reload threads hold their own transaction openers; joining
             // them here releases those PD handles before the authority's
-            // shutdown drain.
+            // shutdown drain. The watch goes first: it nudges the reloader,
+            // so it must not outlive it.
+            drop(watcher);
             drop(reloader);
             drop(privilege_reloader);
             outcome

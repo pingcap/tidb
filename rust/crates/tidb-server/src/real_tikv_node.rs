@@ -29,7 +29,9 @@ use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, StagedRowOverlay, TransactionStatementError,
 };
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
-use tidb_exec::real_tikv_ddl::{commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport};
+use tidb_exec::real_tikv_ddl::{
+    commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier,
+};
 use tidb_exec::real_tikv_dml::{
     commit_configured_write, prepare_configured_write, prepare_text_write,
 };
@@ -39,6 +41,7 @@ use tidb_exec::real_tikv_read::{
     ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadSession,
     RealTiKvReadSessionOpener,
 };
+use tidb_pd_client::{EtcdClient, EtcdWatchStats, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::{
@@ -117,10 +120,18 @@ pub struct RealTiKvSessionFactory {
     /// The catalog is republished whole by [`Self::reloader`]; a reader takes
     /// one `Arc` and keeps it, so no query ever sees a half-updated catalog.
     catalog: Option<Arc<SharedCatalog>>,
+    /// The etcd watch that wakes `reloader` the moment any node publishes a
+    /// new schema version. Declared before `reloader` so it is dropped first:
+    /// a watch may not outlive the thread it nudges.
+    watcher: Option<EtcdWatcher>,
     /// The lease-cadence reload thread, stopped and joined when this factory
     /// is dropped. `None` for a command-line-described node, which has no
     /// cluster catalog to follow.
     reloader: Option<CatalogReloader>,
+    /// The etcd client this node announces its own catalog changes through.
+    /// `None` when etcd could not be reached at startup, which leaves peers
+    /// on their own lease tick rather than failing DDL.
+    schema_notifier: Option<Arc<EtcdClient>>,
 }
 
 impl RealTiKvSessionFactory {
@@ -148,7 +159,8 @@ impl RealTiKvSessionFactory {
             },
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let (catalog, reloader) = match loaded {
+        let schema_notifier = connect_schema_notifier(config);
+        let (catalog, watcher, reloader) = match loaded {
             Some(catalog) => {
                 let (catalog, reloader) = spawn_catalog_reloader(
                     catalog,
@@ -156,11 +168,19 @@ impl RealTiKvSessionFactory {
                     config.schema_lease,
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                (Some(catalog), Some(reloader))
+                let watcher = spawn_schema_version_watch(config, &reloader);
+                (Some(catalog), watcher, Some(reloader))
             }
-            None => (None, None),
+            None => (None, None, None),
         };
-        let factory = Self::from_authority_with_catalog(&authority, refusals, catalog, reloader);
+        let factory = Self::from_authority_with_catalog(
+            &authority,
+            refusals,
+            catalog,
+            watcher,
+            reloader,
+            schema_notifier,
+        );
         Ok((factory, authority))
     }
 
@@ -173,15 +193,25 @@ impl RealTiKvSessionFactory {
     pub(crate) fn from_authority(
         authority: &ProductionReadProcessAuthority,
         table_refusals: Vec<LoadedTableRefusal>,
+        schema_notifier: Option<Arc<EtcdClient>>,
     ) -> Self {
-        Self::from_authority_with_catalog(authority, table_refusals, None, None)
+        Self::from_authority_with_catalog(
+            authority,
+            table_refusals,
+            None,
+            None,
+            None,
+            schema_notifier,
+        )
     }
 
     fn from_authority_with_catalog(
         authority: &ProductionReadProcessAuthority,
         table_refusals: Vec<LoadedTableRefusal>,
         catalog: Option<Arc<SharedCatalog>>,
+        watcher: Option<EtcdWatcher>,
         reloader: Option<CatalogReloader>,
+        schema_notifier: Option<Arc<EtcdClient>>,
     ) -> Self {
         Self {
             opener: authority.opener(),
@@ -190,7 +220,9 @@ impl RealTiKvSessionFactory {
             read_authority_id: authority.read_authority_id(),
             table_refusals: Arc::new(table_refusals),
             catalog,
+            watcher,
             reloader,
+            schema_notifier,
         }
     }
 
@@ -239,6 +271,75 @@ impl RealTiKvSessionFactory {
     pub fn catalog_reload_stats(&self) -> Option<CatalogReloadStats> {
         self.reloader.as_ref().map(CatalogReloader::stats)
     }
+
+    /// What the schema-version watch has seen, `None` when there is no watch.
+    #[must_use]
+    pub fn schema_watch_stats(&self) -> Option<EtcdWatchStats> {
+        self.watcher.as_ref().map(EtcdWatcher::stats)
+    }
+}
+
+/// Connects the best-effort etcd client this node announces its DDL through.
+///
+/// A failure here is a warning, never a startup error: the announcement only
+/// makes peers reload *sooner*, and Go itself carries on when the PUT fails
+/// (`pkg/ddl/job_worker.go` logs "update latest schema version failed" and
+/// continues outside MDL). Refusing to start because etcd was unreachable
+/// would trade an availability property for a latency one.
+pub(crate) fn connect_schema_notifier(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
+    match EtcdClient::connect(
+        config.pd_endpoints.iter().map(String::as_str),
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+    ) {
+        Ok(client) => Some(Arc::new(client)),
+        Err(error) => {
+            emit_warning("schema_version_notifier_unavailable", &error.to_string());
+            None
+        }
+    }
+}
+
+/// Starts the etcd watch that wakes `reloader` as soon as any node publishes a
+/// new schema version.
+///
+/// Like the notifier, a failure is a warning: the `lease/2` tick still keeps
+/// this node current, only less promptly. That is exactly the relationship Go
+/// has between its watch channel and its ticker in `Syncer.SyncLoop`.
+pub(crate) fn spawn_schema_version_watch(
+    config: &NodeConfig,
+    reloader: &CatalogReloader,
+) -> Option<EtcdWatcher> {
+    let waker = reloader.waker();
+    match EtcdWatcher::spawn(
+        config.pd_endpoints.iter().map(String::as_str),
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        DDL_GLOBAL_SCHEMA_VERSION_KEY,
+        move |event| {
+            eprintln!(
+                "{{\"event\":\"schema_version_watch_fired\",\"mod_revision\":{},\"value\":{}}}",
+                event.mod_revision,
+                json_string(&String::from_utf8_lossy(&event.value))
+            );
+            waker.nudge();
+        },
+    ) {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            emit_warning("schema_version_watch_unavailable", &error.to_string());
+            None
+        }
+    }
+}
+
+fn emit_warning(event: &str, detail: &str) {
+    eprintln!(
+        "{{\"event\":\"{event}\",\"level\":\"warning\",\"error\":{}}}",
+        json_string(detail)
+    );
+}
+
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"unprintable\"".to_owned())
 }
 
 /// Publishes the startup catalog and starts following the cluster's schema.
@@ -292,6 +393,7 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             inner,
             transaction_opener: self.transaction_opener.clone(),
             table_refusals: Arc::clone(&self.table_refusals),
+            schema_notifier: self.schema_notifier.clone(),
             context,
             query_activity: Arc::clone(&self.query_activity),
             next_query_id: 1,
@@ -306,6 +408,9 @@ pub struct RealTiKvServerSession {
     transaction_opener: RealOptimisticTransactionOpener,
     /// Loaded-but-unservable tables, consulted when a statement names one.
     table_refusals: Arc<Vec<LoadedTableRefusal>>,
+    /// The factory's etcd client, so a catalog change this session commits
+    /// announces itself the way Go's DDL owner does.
+    schema_notifier: Option<Arc<EtcdClient>>,
     context: SessionContext,
     query_activity: Arc<QueryActivity>,
     next_query_id: u64,
@@ -693,6 +798,7 @@ pub(crate) fn execute_cluster_ddl(
     sql: &str,
     default_schema: &str,
     in_transaction: bool,
+    schema_notifier: Option<&Arc<EtcdClient>>,
 ) -> Result<Option<WriteOutcome>, SqlQueryError> {
     let Some(statement) = prepare_cluster_ddl(sql, default_schema)
         .map_err(|error| SqlQueryError::unknown(error.reason))?
@@ -705,8 +811,14 @@ pub(crate) fn execute_cluster_ddl(
              which this node does not implement; COMMIT or ROLLBACK first",
         ));
     }
-    let report = commit_cluster_ddl(opener, &statement, PRODUCTION_CONTROL_PLANE_TIMEOUT)
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    let notifier = schema_notifier.map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
+    let report = commit_cluster_ddl(
+        opener,
+        &statement,
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        notifier,
+    )
+    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     match report {
         ClusterDdlReport::Applied {
             schema_version,
@@ -864,6 +976,7 @@ impl QuerySession for RealTiKvServerSession {
             sql,
             self.inner.configured_table().schema(),
             self.transaction.is_active(),
+            self.schema_notifier.as_ref(),
         )? {
             return Ok(Some(outcome));
         }
@@ -1369,15 +1482,19 @@ pub(crate) enum LoadedCatalogAuthority {
 pub(crate) fn connect_loaded_catalog_authority(
     config: &NodeConfig,
 ) -> Result<LoadedCatalogAuthority, SqlQueryError> {
+    let schema_notifier = connect_schema_notifier(config);
     let mut refusals = Vec::new();
     let mut resolved: Option<Vec<ConfiguredTable>> = None;
     let authority = ProductionReadProcessAuthority::connect_with_catalog(
         config.pd_endpoints.clone(),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
         |transaction_opener| {
-            // The multi-relation surface does not follow catalog reloads yet
-            // (the reloader is single-factory-owned); the loaded snapshot is
-            // read and dropped here.
+            // Neither loaded-catalog surface follows catalog reloads yet (the
+            // reloader is single-factory-owned); the loaded snapshot is read
+            // and dropped here. Both still *announce* their own catalog
+            // changes through `schema_notifier`, so peers that do follow are
+            // not held back by this node's own gap. The watch side has
+            // nothing to nudge here, which is why only the notifier is wired.
             let mut loaded = None;
             let tables = served_tables(config, transaction_opener, &mut refusals, &mut loaded)?;
             let primary = tables
@@ -1401,12 +1518,17 @@ pub(crate) fn connect_loaded_catalog_authority(
                     [left, right],
                     config.max_topn_rows,
                     refusals,
+                    schema_notifier,
                 ),
             ),
             authority,
         )),
         Err(tables) if tables.len() == 1 => Ok(LoadedCatalogAuthority::Single(
-            Box::new(RealTiKvSessionFactory::from_authority(&authority, refusals)),
+            Box::new(RealTiKvSessionFactory::from_authority(
+                &authority,
+                refusals,
+                schema_notifier,
+            )),
             authority,
         )),
         Err(tables) => Err(SqlQueryError::unknown(format!(

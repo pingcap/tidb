@@ -39,11 +39,12 @@
 //! matches the snapshot's schema) and is a real gap for writes, which is why
 //! error 8027 is deliberately deferred rather than approximated.
 //!
-//! # No etcd watch-triggered reload (investigated, deferred)
+//! # Watch-triggered reload
 //!
 //! Go does not rely on the lease tick alone: after a DDL owner commits, it
 //! also PUTs the new version to etcd so every follower's watch fires
-//! immediately, instead of waiting up to `lease/2`. Source of truth:
+//! immediately, instead of waiting up to `lease/2`. This tier does the same.
+//! Source of truth:
 //!
 //! * `pkg/ddl/util/util.go`: `DDLGlobalSchemaVersion =
 //!   "/tidb/ddl/global_schema_version"` is the etcd key. The value is the
@@ -53,34 +54,36 @@
 //!   attached to that key).
 //! * `pkg/infoschema/issyncer/syncer.go` `Syncer.SyncLoop` selects on
 //!   `syncer.GlobalVersionCh()` (an etcd `Watch` on that same key) *and* the
-//!   `lease/2` ticker; either one triggers `s.Reload()`. The watch is the
-//!   promptness path, the ticker is the backstop this tier already has.
+//!   `lease/2` ticker; either one triggers `s.Reload()`. A closed channel is
+//!   logged as "schema syncer need rewatch" and re-watched, with the ticker
+//!   still reloading meanwhile.
+//!
+//! The shape here is the same, with the select replaced by a condvar because
+//! the reload thread is a plain thread and the watch lives on its own thread:
+//! [`CatalogReloader::waker`] hands out a [`CatalogReloadWaker`], the etcd
+//! watch thread calls [`CatalogReloadWaker::nudge`] on every event, and the
+//! reload thread wakes early and runs exactly the pass its tick would have
+//! run. Nothing about *which* version was published is read from the event:
+//! Go ignores the value too and simply reloads, so a spurious or duplicate
+//! event costs one comparison against `SchemaVersionKey` and nothing more.
+//! The tick is never disabled -- it is what keeps a node correct while the
+//! watch is disconnected, which is the same division of labour Go has.
 //!
 //! Reachability was checked, not assumed: TiDB's etcd client dials PD's own
 //! client port (`pkg/store/etcd.go` `NewEtcdCli` takes `store.EtcdAddrs()`,
-//! which are PD addresses) — PD embeds a real etcd server and exposes its
-//! full v3 KV/Watch gRPC surface on that same port. `tidb-pd-client`
-//! already dials that exact endpoint for `pdpb.PD`
-//! (`crates/tidb-pd-client/src/client.rs`), so an `etcdserverpb.KV/Put` and
-//! `etcdserverpb.Watch/Watch` call are wire-reachable in principle with no
-//! new crate dependency (proto files only). The message shapes were
-//! cross-checked against the vendored source at
-//! `go.etcd.io/etcd/api/v3@v3.5.15` (`etcdserverpb/rpc.proto`,
-//! `mvccpb/kv.proto`) rather than reconstructed from memory.
+//! which are PD addresses) -- PD embeds a real etcd server and exposes its
+//! full v3 KV/Watch gRPC surface on that same port, which is why
+//! `tidb-pd-client`'s `EtcdClient`/`EtcdWatcher` need no endpoint of their
+//! own. The message shapes are a dependency-closed projection of the
+//! vendored `go.etcd.io/etcd/api/v3@v3.5.15` (`etcdserverpb/rpc.proto`,
+//! `mvccpb/kv.proto`) in `tidb-proto`.
 //!
-//! What blocks wiring it up now is not the wire protocol, it is the call
-//! path: [`crate::real_tikv_ddl::commit_cluster_ddl`] is a plain
-//! synchronous function that only holds a TiKV transaction opener, and its
-//! caller (`RealTikvNode` in `tidb-server`) holds no PD/etcd client at all
-//! — this reload loop is driven purely by [`CatalogReloader`]'s tick, with
-//! nothing upstream of it able to nudge it early. Adding the etcd leg means
-//! plumbing a new PD/etcd client handle through `RealTikvNode`
-//! construction and through `commit_cluster_ddl`'s call site, then proving
-//! the `Watch` stream behaves against a real PD, which needs a live
-//! playground this investigation did not have exclusive access to. Rather
-//! than land that wiring unverified, it stays a documented divergence: this
-//! tier notices another node's DDL only on its next `lease/2` tick, never
-//! sooner.
+//! Out of scope, deliberately: the privilege reloader stays tick-only. Go
+//! notifies privilege changes over a *different* key entirely --
+//! `pkg/domain/domain.go`'s `notifyUpdatePrivilege` PUTs a JSON
+//! `PrivilegeEvent` to `privilegeKey = "/tidb/privilege"`, and
+//! `LoadPrivilegeLoop` watches that key, not this one -- so driving the
+//! privilege reloader from the schema-version key would be a guess.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -165,6 +168,8 @@ pub struct CatalogReloadStats {
     pub full_reloads: u64,
     /// Passes whose read failed; the previous catalog stays published.
     pub failures: u64,
+    /// Passes a watch event woke early, rather than the tick.
+    pub nudged: u64,
 }
 
 #[derive(Debug, Default)]
@@ -174,6 +179,7 @@ struct StatCounters {
     diff_reloads: AtomicU64,
     full_reloads: AtomicU64,
     failures: AtomicU64,
+    nudged: AtomicU64,
 }
 
 impl StatCounters {
@@ -184,6 +190,7 @@ impl StatCounters {
             diff_reloads: self.diff_reloads.load(Ordering::Acquire),
             full_reloads: self.full_reloads.load(Ordering::Acquire),
             failures: self.failures.load(Ordering::Acquire),
+            nudged: self.nudged.load(Ordering::Acquire),
         }
     }
 }
@@ -191,6 +198,11 @@ impl StatCounters {
 #[derive(Debug, Default)]
 struct ReloadSignal {
     shutdown: bool,
+    /// Set by a watch event, cleared by the pass it caused. One flag rather
+    /// than a count on purpose: several events arriving during one pass are
+    /// satisfied by the one following reload, exactly as Go's single-slot
+    /// watch channel collapses them.
+    nudged: bool,
 }
 
 /// One reload pass, as the caller performs it.
@@ -211,6 +223,33 @@ pub enum CatalogReloadPass {
     Diffs(ClusterCatalog),
     /// Publish this catalog; it was re-read whole.
     Full(ClusterCatalog),
+}
+
+/// Wakes a [`CatalogReloader`] before its next tick.
+///
+/// This is the whole coupling between the etcd watch and the reload loop: the
+/// watch thread owns no catalog and performs no read, it only says "something
+/// changed", exactly like the value-ignoring receive in Go's `SyncLoop`.
+/// Cloneable and inert once the reloader is gone, so a watch that outlives its
+/// reloader by a moment cannot panic or block.
+#[derive(Clone, Debug)]
+pub struct CatalogReloadWaker {
+    signal: Arc<(Mutex<ReloadSignal>, Condvar)>,
+}
+
+impl CatalogReloadWaker {
+    /// Asks for one reload pass as soon as the thread can run it.
+    pub fn nudge(&self) {
+        let (lock, condvar) = &*self.signal;
+        {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.nudged = true;
+        }
+        condvar.notify_all();
+    }
 }
 
 /// The running reload thread. Dropping it stops and joins the thread, so a
@@ -250,18 +289,26 @@ impl CatalogReloader {
                         Ok(state) => state,
                         Err(poisoned) => poisoned.into_inner(),
                     };
-                    if !state.shutdown {
+                    if !state.shutdown && !state.nudged {
                         state = match condvar.wait_timeout(state, interval) {
                             Ok((state, _)) => state,
                             Err(poisoned) => poisoned.into_inner().0,
                         };
                     }
                     let stopping = state.shutdown;
+                    // Clearing before the pass, not after, is what makes an
+                    // event that lands *during* a pass produce another one:
+                    // that event may describe a version this pass's snapshot
+                    // was taken too early to see.
+                    let nudged = std::mem::take(&mut state.nudged);
                     drop(state);
                     if stopping {
                         return;
                     }
-                    run_one_pass(&catalog, &worker_stats, &mut pass);
+                    if nudged {
+                        worker_stats.nudged.fetch_add(1, Ordering::AcqRel);
+                    }
+                    run_one_pass(&catalog, &worker_stats, &mut pass, nudged);
                 }
             })
             .map_err(|error| CatalogReloadError::Spawn(error.to_string()))?;
@@ -270,6 +317,14 @@ impl CatalogReloader {
             stats,
             worker: Some(worker),
         })
+    }
+
+    /// A handle the etcd watch uses to wake this thread before its tick.
+    #[must_use]
+    pub fn waker(&self) -> CatalogReloadWaker {
+        CatalogReloadWaker {
+            signal: Arc::clone(&self.signal),
+        }
     }
 
     /// What the thread has done so far.
@@ -311,7 +366,16 @@ impl Drop for CatalogReloader {
 ///
 /// A failed read is not fatal: the previously published catalog stays in force
 /// and the next tick tries again, exactly as Go's reload loop logs and retries.
-fn run_one_pass(catalog: &SharedCatalog, stats: &StatCounters, pass: &mut ReloadPass) {
+fn run_one_pass(
+    catalog: &SharedCatalog,
+    stats: &StatCounters,
+    pass: &mut ReloadPass,
+    nudged: bool,
+) {
+    // `trigger` is what makes the watch leg observable from outside the
+    // process: without it a prompt reload and a lucky tick look identical in
+    // a log, and the live proof would be asserting nothing.
+    let trigger = if nudged { "watch" } else { "tick" };
     let current = catalog.load();
     let outcome = pass(&current);
     stats.passes.fetch_add(1, Ordering::AcqRel);
@@ -320,12 +384,16 @@ fn run_one_pass(catalog: &SharedCatalog, stats: &StatCounters, pass: &mut Reload
             stats.unchanged.fetch_add(1, Ordering::AcqRel);
         }
         Ok(CatalogReloadPass::Diffs(next)) => {
+            let schema_version = next.schema_version;
             catalog.store(next);
             stats.diff_reloads.fetch_add(1, Ordering::AcqRel);
+            emit_reloaded(schema_version, "diffs", trigger);
         }
         Ok(CatalogReloadPass::Full(next)) => {
+            let schema_version = next.schema_version;
             catalog.store(next);
             stats.full_reloads.fetch_add(1, Ordering::AcqRel);
+            emit_reloaded(schema_version, "full", trigger);
         }
         Err(message) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
@@ -336,6 +404,12 @@ fn run_one_pass(catalog: &SharedCatalog, stats: &StatCounters, pass: &mut Reload
             );
         }
     }
+}
+
+fn emit_reloaded(schema_version: i64, how: &str, trigger: &str) {
+    eprintln!(
+        "{{\"event\":\"catalog_reloaded\",\"schema_version\":{schema_version},\"how\":\"{how}\",\"trigger\":\"{trigger}\"}}"
+    );
 }
 
 #[cfg(test)]
@@ -406,11 +480,80 @@ mod tests {
     }
 
     #[test]
+    fn a_watch_nudge_reloads_long_before_the_tick_would_have() {
+        let shared = Arc::new(SharedCatalog::new(catalog_at(1)));
+        let (sender, receiver) = mpsc::channel();
+        // An hour-long tick: anything that arrives here arrived because the
+        // nudge woke the thread, not because the lease elapsed.
+        let mut reloader = CatalogReloader::spawn(
+            Arc::clone(&shared),
+            Duration::from_secs(3600),
+            Box::new(move |current| {
+                let next = current.schema_version + 1;
+                sender.send(next).unwrap();
+                Ok(CatalogReloadPass::Diffs(catalog_at(next)))
+            }),
+        )
+        .unwrap();
+        let waker = reloader.waker();
+
+        let nudged = Instant::now();
+        waker.nudge();
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(5)).unwrap(), 2);
+        assert!(nudged.elapsed() < Duration::from_secs(5));
+        waker.nudge();
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(5)).unwrap(), 3);
+
+        reloader.shutdown().unwrap();
+        let stats = reloader.stats();
+        assert_eq!(stats.nudged, 2);
+        assert_eq!(stats.passes, 2);
+        assert_eq!(shared.load().schema_version, 3);
+    }
+
+    #[test]
+    fn a_nudge_that_arrives_before_the_thread_waits_is_not_lost() {
+        let shared = Arc::new(SharedCatalog::new(catalog_at(1)));
+        let (sender, receiver) = mpsc::channel();
+        let mut reloader = CatalogReloader::spawn(
+            Arc::clone(&shared),
+            Duration::from_secs(3600),
+            Box::new(move |_| {
+                sender.send(()).unwrap();
+                Ok(CatalogReloadPass::Unchanged)
+            }),
+        )
+        .unwrap();
+        // Racing the thread's first wait on purpose: the flag, not the
+        // notification, is what the thread reads, so the wake cannot be missed.
+        for _ in 0..64 {
+            reloader.waker().nudge();
+        }
+        assert!(receiver.recv_timeout(Duration::from_secs(5)).is_ok());
+        reloader.shutdown().unwrap();
+    }
+
+    #[test]
+    fn a_waker_outliving_its_reloader_is_inert() {
+        let mut reloader = CatalogReloader::spawn(
+            Arc::new(SharedCatalog::new(catalog_at(1))),
+            Duration::from_secs(3600),
+            Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
+        )
+        .unwrap();
+        let waker = reloader.waker();
+        reloader.shutdown().unwrap();
+        drop(reloader);
+        // The watch thread may still be draining one last event.
+        waker.nudge();
+    }
+
+    #[test]
     fn a_failed_pass_keeps_the_previous_catalog_published() {
         let shared = Arc::new(SharedCatalog::new(catalog_at(7)));
         let stats = Arc::new(StatCounters::default());
         let mut pass: ReloadPass = Box::new(|_| Err("snapshot read failed".to_owned()));
-        run_one_pass(&shared, &stats, &mut pass);
+        run_one_pass(&shared, &stats, &mut pass, false);
         assert_eq!(shared.load().schema_version, 7);
         assert_eq!(stats.snapshot().failures, 1);
     }
@@ -421,7 +564,7 @@ mod tests {
         let stats = Arc::new(StatCounters::default());
         let published = shared.load();
         let mut pass: ReloadPass = Box::new(|_| Ok(CatalogReloadPass::Unchanged));
-        run_one_pass(&shared, &stats, &mut pass);
+        run_one_pass(&shared, &stats, &mut pass, false);
         assert!(Arc::ptr_eq(&published, &shared.load()));
         assert_eq!(stats.snapshot().unchanged, 1);
     }

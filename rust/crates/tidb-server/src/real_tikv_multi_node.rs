@@ -75,6 +75,9 @@ pub struct RealTiKvMultiSessionFactory {
     /// command-line-only two-table shape, which has no cluster catalog to
     /// refuse anything from.
     table_refusals: Arc<Vec<LoadedTableRefusal>>,
+    /// The etcd client a catalog change committed here announces itself
+    /// through, so peers reload without waiting out their lease.
+    schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
 }
 
 impl RealTiKvMultiSessionFactory {
@@ -100,6 +103,7 @@ impl RealTiKvMultiSessionFactory {
             [left.clone(), right.clone()],
             config.max_topn_rows,
             Vec::new(),
+            crate::real_tikv_node::connect_schema_notifier(config),
         );
         Ok((factory, authority))
     }
@@ -117,6 +121,7 @@ impl RealTiKvMultiSessionFactory {
         tables: [tidb_planner::read_only_scan::ConfiguredTable; 2],
         max_topn_rows: usize,
         table_refusals: Vec<LoadedTableRefusal>,
+        schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
     ) -> Self {
         Self {
             opener: authority.opener(),
@@ -126,6 +131,7 @@ impl RealTiKvMultiSessionFactory {
             read_authority_id: authority.read_authority_id(),
             max_topn_rows,
             table_refusals: Arc::new(table_refusals),
+            schema_notifier,
         }
     }
 
@@ -179,6 +185,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             reader,
             transaction_opener: self.transaction_opener.clone(),
             table_refusals: Arc::clone(&self.table_refusals),
+            schema_notifier: self.schema_notifier.clone(),
             context,
             activity: Arc::clone(&self.activity),
             next_query_id: 1,
@@ -193,6 +200,9 @@ pub struct RealTiKvMultiServerSession {
     transaction_opener: RealOptimisticTransactionOpener,
     /// Loaded-but-unservable tables, consulted when a statement names one.
     table_refusals: Arc<Vec<LoadedTableRefusal>>,
+    /// The factory's etcd client, so a catalog change this session commits
+    /// announces itself the way Go's DDL owner does.
+    schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
     context: SessionContext,
     activity: Arc<QueryActivity>,
     next_query_id: u64,
@@ -413,7 +423,13 @@ impl QuerySession for RealTiKvMultiServerSession {
         let default_schema = self.reader.configured_tables()[0].schema().to_owned();
         // This surface has no explicit-transaction state of its own, so a
         // catalog change here is always its own autocommit transaction.
-        execute_cluster_ddl(&self.transaction_opener, sql, &default_schema, false)
+        execute_cluster_ddl(
+            &self.transaction_opener,
+            sql,
+            &default_schema,
+            false,
+            self.schema_notifier.as_ref(),
+        )
     }
 }
 

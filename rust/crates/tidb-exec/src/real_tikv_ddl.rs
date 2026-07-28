@@ -20,14 +20,13 @@
 //! ordering between transactions to get wrong: the object, the schema-version
 //! bump, and the diff that makes the version readable are one atom.
 //!
-//! [`commit_cluster_ddl`] publishes no schema-change notification: Go PUTs
-//! the new version to etcd here (`OwnerUpdateGlobalVersion`) so every other
-//! node's watch fires immediately, but this function holds only a TiKV
-//! transaction opener, no PD/etcd client. A peer Rust node — and a real
-//! TiDB, until its next lease tick — only notices this commit on its own
-//! next reload pass. See [`crate::catalog_watch`]'s module doc for the full
-//! investigation (etcd key, value encoding, and why the wiring is deferred
-//! rather than guessed at).
+//! After the commit, [`commit_cluster_ddl`] publishes the new version the way
+//! Go's owner does: `pkg/ddl/job_worker.go` calls
+//! `schemaVerSyncer.OwnerUpdateGlobalVersion` once the version is durable, so
+//! every other node's etcd watch fires instead of waiting out its lease. The
+//! notification is deliberately *after* the commit and deliberately not fatal
+//! — see [`SchemaVersionNotifier`] — and the etcd key, value encoding, and
+//! watch side are documented in [`crate::catalog_watch`]'s module doc.
 
 use std::fmt;
 use std::time::Duration;
@@ -147,15 +146,40 @@ pub enum ClusterDdlReport {
     },
 }
 
+/// Announces a committed schema version so peers reload without waiting for
+/// their lease tick.
+///
+/// A trait rather than a concrete etcd client because failing to announce is
+/// not a DDL failure, and the caller decides how loud that is. Go's
+/// `pkg/ddl/job_worker.go` logs `"update latest schema version failed"` at
+/// Info and carries on when the PUT fails (it only propagates the error when
+/// MDL is enabled, which this tier has no equivalent of): the version is
+/// already durable in TiKV, and every node's `lease/2` reload still finds it.
+pub trait SchemaVersionNotifier {
+    /// Publishes `version`. The error is for logging, never for the client.
+    fn notify(&self, version: i64) -> Result<(), String>;
+}
+
+impl SchemaVersionNotifier for tidb_pd_client::EtcdClient {
+    fn notify(&self, version: i64) -> Result<(), String> {
+        self.put_global_schema_version(version)
+            .map_err(|error| error.to_string())
+    }
+}
+
 /// Reads the catalog, plans one change against that snapshot, and publishes it.
 ///
 /// The planning read and the mutation share one transaction and therefore one
 /// `start_ts`, which is what lets the write set be derived from observed values
 /// (`NextGlobalID + 1`, `SchemaVersionKey + 1`) instead of guessed ones.
+///
+/// `notifier` is the etcd leg. `None` keeps the tick-only behaviour, which is
+/// what a node started without a reachable etcd falls back to.
 pub fn commit_cluster_ddl(
     opener: &RealOptimisticTransactionOpener,
     statement: &DdlStatement,
     timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     let call = UnaryCallContext::with_timeout(timeout);
     // How many mutations a change needs is only known after the catalog has
@@ -179,10 +203,13 @@ pub fn commit_cluster_ddl(
     };
     let planned_version = write.schema_version;
     match transaction.commit(write.mutations, &call)? {
-        OptimisticCommitOutcome::Committed(_) => Ok(ClusterDdlReport::Applied {
-            schema_version: planned_version,
-            created_id: write.created_id,
-        }),
+        OptimisticCommitOutcome::Committed(_) => {
+            notify_schema_version(notifier, planned_version);
+            Ok(ClusterDdlReport::Applied {
+                schema_version: planned_version,
+                created_id: write.created_id,
+            })
+        }
         OptimisticCommitOutcome::RolledBack(rolled_back) => {
             Err(classify(planned_version, &rolled_back.cause))
         }
@@ -193,6 +220,28 @@ pub fn commit_cluster_ddl(
             "{:?}",
             other.state()
         ))),
+    }
+}
+
+/// Publishes a committed version, downgrading every failure to a warning.
+///
+/// Only a committed version is ever announced: a rolled-back change must not
+/// make peers reload to a version that does not exist. The announcement is
+/// also never retried here — Go retries inside its own etcd helper, and a
+/// second attempt from this path would only delay a statement whose result is
+/// already durable.
+pub fn notify_schema_version(notifier: Option<&dyn SchemaVersionNotifier>, version: i64) {
+    let Some(notifier) = notifier else {
+        return;
+    };
+    match notifier.notify(version) {
+        Ok(()) => eprintln!(
+            "{{\"event\":\"schema_version_notified\",\"schema_version\":{version}}}"
+        ),
+        Err(error) => eprintln!(
+            "{{\"event\":\"schema_version_notify_failed\",\"level\":\"warning\",\"schema_version\":{version},\"error\":{}}}",
+            serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned())
+        ),
     }
 }
 
@@ -235,6 +284,37 @@ mod tests {
         assert!(error
             .to_string()
             .contains("refuses to interleave: optimistic write conflict"));
+    }
+
+    #[test]
+    fn a_failed_notification_is_a_warning_and_never_reaches_the_client() {
+        struct Broken;
+        impl SchemaVersionNotifier for Broken {
+            fn notify(&self, _: i64) -> Result<(), String> {
+                Err("etcd 127.0.0.1:2379 unreachable".to_owned())
+            }
+        }
+        // Go's `job_worker.go` logs this failure and continues (outside MDL):
+        // the version is already durable, and every node's lease tick still
+        // finds it. Returning nothing is the whole contract being asserted.
+        notify_schema_version(Some(&Broken), 61);
+        notify_schema_version(None, 61);
+    }
+
+    #[test]
+    fn only_the_committed_version_is_announced() {
+        use std::cell::RefCell;
+
+        struct Recording(RefCell<Vec<i64>>);
+        impl SchemaVersionNotifier for Recording {
+            fn notify(&self, version: i64) -> Result<(), String> {
+                self.0.borrow_mut().push(version);
+                Ok(())
+            }
+        }
+        let recording = Recording(RefCell::new(Vec::new()));
+        notify_schema_version(Some(&recording), 61);
+        assert_eq!(*recording.0.borrow(), vec![61]);
     }
 
     #[test]

@@ -10,6 +10,8 @@ fn main() {
     println!("cargo:rerun-if-changed=proto/metapb.proto");
     println!("cargo:rerun-if-changed=proto/pdpb.proto");
     println!("cargo:rerun-if-changed=proto/mpp.proto");
+    println!("cargo:rerun-if-changed=proto/mvccpb.proto");
+    println!("cargo:rerun-if-changed=proto/etcdserverpb.proto");
 
     tonic_prost_build::configure()
         .build_client(true)
@@ -25,6 +27,8 @@ fn main() {
                 "proto/metapb.proto",
                 "proto/pdpb.proto",
                 "proto/mpp.proto",
+                "proto/mvccpb.proto",
+                "proto/etcdserverpb.proto",
             ],
             &["proto"],
         )
