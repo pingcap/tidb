@@ -41,7 +41,7 @@ use crate::sort::{SortByItem, SortExec};
 use crate::table_dual::TableDualExec;
 use std::collections::HashMap;
 use tidb_ast::{JoinNode, QueryStmt, SelectField, Stmt};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver, NoResolver};
@@ -532,6 +532,13 @@ pub enum DriverError {
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
+    /// Go `plannererrors.ErrInvalidGroupFuncUse` (1111): `GROUPING()` written
+    /// in a query that has no `WITH ROLLUP`.
+    InvalidGroupFuncUse,
+    /// Go `plannererrors.ErrFieldInGroupingNotGroupBy` (3602): a `GROUPING()`
+    /// argument is not one of the `GROUP BY` expressions. The number Go prints
+    /// is the argument's 0-based position.
+    FieldInGroupingNotGroupBy(usize),
 }
 
 /// Why a schema statement failed.
@@ -1078,6 +1085,13 @@ fn run_select_stmt(
 
     // The column resolver for this query's scope.
     let resolver = ScopeResolver { scope: &scope };
+
+    // GROUPING() reads which grouping set produced a row, so it means nothing
+    // without WITH ROLLUP: Go rejects it with ErrInvalidGroupFuncUse (1111),
+    // whether or not the query groups at all.
+    if !select.rollup && select_has_grouping(select) {
+        return Err(DriverError::InvalidGroupFuncUse);
+    }
 
     // Aggregate path: GROUP BY, or any select field that is an aggregate call.
     let is_aggregate = !select.group_by.is_empty()
@@ -2362,10 +2376,28 @@ fn substitute_aggregates(
     agg_funcs: &mut Vec<AggFunc>,
     names: &mut Vec<String>,
     types: &mut Vec<FieldType>,
+    grouping_specs: &mut Vec<GroupingSpec>,
     group_by_names: &[String],
     resolver: &ScopeResolver<'_>,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
+    // GROUPING() is hoisted the same way an aggregate is: the value is
+    // computed by the rollup pass into an output column, and the clause reads
+    // that column. A GROUPING() only HAVING or ORDER BY needs becomes a hidden
+    // column and is trimmed by the final projection.
+    if let Some(args) = grouping_call_args(expr) {
+        let display = expr.restore();
+        let name = add_grouping_column(
+            args,
+            display,
+            agg_funcs,
+            names,
+            types,
+            grouping_specs,
+            group_by_names,
+        )?;
+        return Ok(Expr::Column(vec![name]));
+    }
     Ok(match expr {
         // A column that HAVING/ORDER BY references but the select list does
         // not project: Go carries it out of the aggregation as a hidden
@@ -2422,6 +2454,7 @@ fn substitute_aggregates(
             agg_funcs,
             names,
             types,
+            grouping_specs,
             group_by_names,
             resolver,
         )?)),
@@ -2432,6 +2465,7 @@ fn substitute_aggregates(
                 agg_funcs,
                 names,
                 types,
+                grouping_specs,
                 group_by_names,
                 resolver,
             )?),
@@ -2443,6 +2477,7 @@ fn substitute_aggregates(
                 agg_funcs,
                 names,
                 types,
+                grouping_specs,
                 group_by_names,
                 resolver,
             )?),
@@ -2451,6 +2486,7 @@ fn substitute_aggregates(
                 agg_funcs,
                 names,
                 types,
+                grouping_specs,
                 group_by_names,
                 resolver,
             )?),
@@ -4171,6 +4207,155 @@ fn datum_is_true(value: &Datum) -> bool {
     }
 }
 
+/// One `GROUPING(c1, ..., cn)` call hoisted into an aggregation output column.
+///
+/// Go computes `GROUPING` from the `gid` column Expand attaches to every
+/// replicated row; this seed's rollup runs one aggregation pass per grouping
+/// set, so the pass itself already knows which columns are rolled up and the
+/// bitmask is filled straight into the output row.
+#[derive(Clone, Debug)]
+struct GroupingSpec {
+    /// The aggregation output column this call's value is written into.
+    out_index: usize,
+    /// Each argument's position in the `GROUP BY` list, in argument order.
+    /// The LEFTMOST argument owns the HIGHEST bit (captured from real TiDB:
+    /// with `GROUP BY a, b WITH ROLLUP`, the `b`-only subtotal row reports
+    /// `GROUPING(a,b) = 1` and `GROUPING(b,a) = 2`).
+    group_positions: Vec<usize>,
+}
+
+impl GroupingSpec {
+    /// The bitmask this call reports for a pass that groups by the first `k`
+    /// `GROUP BY` expressions, i.e. one where positions `k..` are rolled up.
+    fn mask_for_prefix(&self, k: usize) -> u64 {
+        let width = self.group_positions.len();
+        self.group_positions
+            .iter()
+            .enumerate()
+            .filter(|(_, &position)| position >= k)
+            .map(|(arg, _)| 1u64 << (width - 1 - arg))
+            .sum()
+    }
+}
+
+/// The `GROUPING(...)` arguments when `expr` IS such a call, else `None`.
+fn grouping_call_args(expr: &tidb_ast::Expr) -> Option<&[tidb_ast::Expr]> {
+    match expr {
+        tidb_ast::Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("grouping") => {
+            Some(args)
+        }
+        _ => None,
+    }
+}
+
+/// Whether `expr` mentions `GROUPING()` anywhere the aggregate path can reach
+/// it. The recursion covers the same shapes [`substitute_aggregates`] walks;
+/// a `GROUPING` buried in a shape neither one descends into is not detected
+/// and simply evaluates as an unknown function, as it does today.
+fn expr_has_grouping(expr: &tidb_ast::Expr) -> bool {
+    use tidb_ast::Expr;
+    if grouping_call_args(expr).is_some() {
+        return true;
+    }
+    match expr {
+        Expr::Paren(inner) | Expr::Unary(_, inner) => expr_has_grouping(inner),
+        Expr::Binary(_, lhs, rhs) => expr_has_grouping(lhs) || expr_has_grouping(rhs),
+        Expr::Func { args, .. } => args.iter().any(expr_has_grouping),
+        _ => false,
+    }
+}
+
+/// Whether the statement writes `GROUPING()` in any clause the aggregate path
+/// evaluates.
+fn select_has_grouping(select: &tidb_ast::SelectStmt) -> bool {
+    select.fields.fields().iter().any(|field| match field {
+        SelectField::Expr { expr, .. } => expr_has_grouping(expr),
+        SelectField::Wildcard { .. } => false,
+    }) || select.having.as_ref().is_some_and(expr_has_grouping)
+        || select
+            .order_by
+            .iter()
+            .any(|item| expr_has_grouping(&item.expr))
+}
+
+/// The output type Go gives a `GROUPING()` column: `BIGINT UNSIGNED`, flen 20,
+/// with the binary flag (captured from real TiDB: `tp=8 flag=160 flen=20`).
+fn grouping_result_type() -> FieldType {
+    let mut ftype = FieldType::new(FieldTypeCode::LongLong);
+    ftype.add_flags(FieldTypeFlags::UNSIGNED | FieldTypeFlags::BINARY);
+    ftype.set_flen(20);
+    ftype
+}
+
+/// Resolves each `GROUPING()` argument to its position in the `GROUP BY` list.
+///
+/// Go rejects an argument that is not grouped with `ErrFieldInGroupingNotGroupBy`
+/// (3602), naming the argument's 0-based position.
+fn grouping_arg_positions(
+    args: &[tidb_ast::Expr],
+    group_by_names: &[String],
+) -> Result<Vec<usize>, DriverError> {
+    let mut positions = Vec::with_capacity(args.len());
+    for (arg, expr) in args.iter().enumerate() {
+        let tidb_ast::Expr::Column(path) = expr else {
+            return Err(DriverError::FieldInGroupingNotGroupBy(arg));
+        };
+        let name = path.last().cloned().unwrap_or_default();
+        let position = group_by_names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(&name))
+            .ok_or(DriverError::FieldInGroupingNotGroupBy(arg))?;
+        positions.push(position);
+    }
+    Ok(positions)
+}
+
+/// Adds a `GROUPING()` call as an aggregation output column and returns that
+/// column's name.
+///
+/// The column is a placeholder as far as the aggregation is concerned -- a
+/// `FIRST_ROW` over the constant `0`, so the column exists and every group
+/// produces exactly one value -- and [`run_rollup_aggregate`] overwrites it
+/// with the per-grouping-set bitmask. Repeating the same call text reuses the
+/// column already added, as the aggregate path does for a repeated aggregate.
+fn add_grouping_column(
+    args: &[tidb_ast::Expr],
+    display: String,
+    agg_funcs: &mut Vec<AggFunc>,
+    names: &mut Vec<String>,
+    types: &mut Vec<FieldType>,
+    grouping_specs: &mut Vec<GroupingSpec>,
+    group_by_names: &[String],
+) -> Result<String, DriverError> {
+    if let Some(index) = names
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(&display))
+    {
+        if grouping_specs.iter().any(|spec| spec.out_index == index) {
+            return Ok(display);
+        }
+    }
+    let group_positions = grouping_arg_positions(args, group_by_names)?;
+    let placeholder = Expression::Constant(tidb_expr::constant::Constant::new(
+        Datum::Int(0),
+        FieldType::new(FieldTypeCode::LongLong),
+    ));
+    agg_funcs.push(AggFunc {
+        kind: AggKind::FirstRow,
+        arg: Some(placeholder),
+        extra_args: Vec::new(),
+        distinct: false,
+        order_by: Vec::new(),
+    });
+    grouping_specs.push(GroupingSpec {
+        out_index: names.len(),
+        group_positions,
+    });
+    names.push(display.clone());
+    types.push(grouping_result_type());
+    Ok(display)
+}
+
 /// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
 /// through [`HashAggExec`].
 ///
@@ -4182,7 +4367,9 @@ fn datum_is_true(value: &Datum) -> bool {
 /// runs through [`run_rollup_aggregate`] (plain-column grouping only).
 /// `HAVING` and `ORDER BY` run over the aggregation's output, as in Go: an
 /// aggregate appearing only in those clauses is appended as a hidden output
-/// column and trimmed by a final projection.
+/// column and trimmed by a final projection. `GROUPING()` rides the same
+/// hidden-column path ([`add_grouping_column`]) but is filled in by the
+/// rollup pass rather than aggregated.
 fn run_aggregate_select(
     select: &tidb_ast::SelectStmt,
     from_source: Option<Box<dyn Executor>>,
@@ -4190,10 +4377,23 @@ fn run_aggregate_select(
     _catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
+    // The grouped column names, which GROUPING() arguments resolve against and
+    // which HAVING/ORDER BY may reference even when the select list does not
+    // project them.
+    let group_by_names: Vec<String> = select
+        .group_by
+        .iter()
+        .filter_map(|item| match &item.expr {
+            tidb_ast::Expr::Column(path) => path.last().cloned(),
+            _ => None,
+        })
+        .collect();
+
     // Fields -> aggregate functions (+ output names/types).
     let mut agg_funcs: Vec<AggFunc> = Vec::new();
     let mut names: Vec<String> = Vec::new();
     let mut types: Vec<FieldType> = Vec::new();
+    let mut grouping_specs: Vec<GroupingSpec> = Vec::new();
     for field in select.fields.fields() {
         let SelectField::Expr { expr, alias } = field else {
             return Err(DriverError::Unsupported(
@@ -4209,6 +4409,29 @@ fn run_aggregate_select(
                 agg_funcs.push(func);
                 names.push(display);
                 types.push(ftype);
+            }
+            // GROUPING() is not an aggregate: it reads the grouping set the
+            // output row came from, so it becomes an output column the rollup
+            // pass fills in rather than an expression over the row.
+            other if grouping_call_args(other).is_some() => {
+                let args = grouping_call_args(other).unwrap_or_default();
+                add_grouping_column(
+                    args,
+                    display,
+                    &mut agg_funcs,
+                    &mut names,
+                    &mut types,
+                    &mut grouping_specs,
+                    &group_by_names,
+                )?;
+            }
+            other if expr_has_grouping(other) => {
+                // Go evaluates `GROUPING(a) + 1` over the projection above the
+                // aggregation; this seed has no such projection for select
+                // fields, so only a bare GROUPING() field is supported.
+                return Err(DriverError::Unsupported(
+                    "GROUPING() nested inside a larger select expression is not supported yet",
+                ));
             }
             other => {
                 // A plain field in an aggregate query rides FIRST_ROW.
@@ -4240,17 +4463,6 @@ fn run_aggregate_select(
     // beyond this point is hidden and trimmed at the end.
     let visible_columns = names.len();
 
-    // The grouped column names, which HAVING/ORDER BY may reference even when
-    // the select list does not project them.
-    let group_by_names: Vec<String> = select
-        .group_by
-        .iter()
-        .filter_map(|item| match &item.expr {
-            tidb_ast::Expr::Column(path) => path.last().cloned(),
-            _ => None,
-        })
-        .collect();
-
     // HAVING / ORDER BY aggregates -> aggregation output columns.
     let having_expr = match &select.having {
         Some(having) => Some(substitute_aggregates(
@@ -4258,6 +4470,7 @@ fn run_aggregate_select(
             &mut agg_funcs,
             &mut names,
             &mut types,
+            &mut grouping_specs,
             &group_by_names,
             resolver,
         )?),
@@ -4271,6 +4484,7 @@ fn run_aggregate_select(
                 &mut agg_funcs,
                 &mut names,
                 &mut types,
+                &mut grouping_specs,
                 &group_by_names,
                 resolver,
             )?,
@@ -4325,7 +4539,15 @@ fn run_aggregate_select(
     let out_schema = Schema::new(out_columns);
 
     let mut root: Box<dyn Executor> = if select.rollup {
-        run_rollup_aggregate(source, &group_by, &agg_funcs, &out_schema, &types, ctx)?
+        run_rollup_aggregate(
+            source,
+            &group_by,
+            &agg_funcs,
+            &out_schema,
+            &types,
+            &grouping_specs,
+            ctx,
+        )?
     } else {
         Box::new(HashAggExec::new(
             ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
@@ -4463,10 +4685,11 @@ fn run_aggregate_select(
 /// materialized SOURCE rows, so every expression over them (the `FIRST_ROW`
 /// carriers, `a+1`, a `HAVING` reference) evaluates against NULL exactly as
 /// it does over Expand's replicated rows; a genuinely-NULL data value and a
-/// rollup NULL are indistinguishable in the output, as in TiDB (only
-/// `GROUPING()`, unsupported here, can tell them apart -- captured from real
-/// TiDB: `a=1` rows `(b=1,c=10)`/`(b=NULL,c=20)` yield both `[1 NULL 20]` and
-/// the subtotal `[1 NULL 30]`).
+/// rollup NULL are then indistinguishable in the output, as in TiDB (captured
+/// from real TiDB: `a=1` rows `(b=1,c=10)`/`(b=NULL,c=20)` yield both
+/// `[1 NULL 20]` and the subtotal `[1 NULL 30]`). `GROUPING()` is what tells
+/// the two apart, and each pass fills its `grouping_specs` columns with the
+/// bitmask for the grouping set that pass computes.
 ///
 /// Row order: Go's hash aggregation over Expand output emits rollup rows in a
 /// NONDETERMINISTIC order (verified against real TiDB -- the order changes
@@ -4481,6 +4704,7 @@ fn run_rollup_aggregate(
     agg_funcs: &[AggFunc],
     out_schema: &Schema,
     out_types: &[FieldType],
+    grouping_specs: &[GroupingSpec],
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     // Each rolled-up position must be a plain column so it can be NULLed in
@@ -4525,7 +4749,17 @@ fn run_rollup_aggregate(
                 pass_source,
                 ctx.clone(),
             );
-            out_rows.extend(drain_executor_rows(Box::new(agg), out_types)?);
+            // This pass rolls up positions `k..`, which IS the grouping bit
+            // each GROUPING() call reports -- the one thing that distinguishes
+            // a subtotal's NULL from a data NULL.
+            let mut pass_out = drain_executor_rows(Box::new(agg), out_types)?;
+            for spec in grouping_specs {
+                let mask = Datum::UInt(spec.mask_for_prefix(k));
+                for row in &mut pass_out {
+                    row[spec.out_index] = mask.clone();
+                }
+            }
+            out_rows.extend(pass_out);
         }
     }
     Ok(Box::new(MemTableSourceExec::new(
@@ -7577,6 +7811,18 @@ impl DriverError {
             1210,
             *b"HY000",
             "Incorrect arguments to EXECUTE".to_owned(),
+        ),
+        // Go: "Invalid use of group function".
+        DriverError::InvalidGroupFuncUse => MysqlError::new(
+            1111,
+            *b"HY000",
+            "Invalid use of group function".to_owned(),
+        ),
+        // Go: "Argument #%d of GROUPING function is not in GROUP BY".
+        DriverError::FieldInGroupingNotGroupBy(position) => MysqlError::new(
+            3602,
+            *b"HY000",
+            format!("Argument #{position} of GROUPING function is not in GROUP BY"),
         ),
         // Go: "Unknown column '%-.192s' in '%-.192s'".
         DriverError::UnknownColumnInTable { column, table } => MysqlError::new(

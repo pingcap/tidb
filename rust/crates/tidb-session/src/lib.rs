@@ -5451,8 +5451,8 @@ mod tests {
         // A genuinely-NULL data value is indistinguishable from a rollup
         // NULL in the output, exactly as in TiDB: a=1 has rows (b=1,c=10)
         // and (b=NULL,c=20), so both the data group [1 NULL 20] and the
-        // subtotal [1 NULL 30] appear (captured). Only GROUPING(), which
-        // this tier does not support, can tell them apart.
+        // subtotal [1 NULL 30] appear (captured). Only GROUPING() tells them
+        // apart -- see `grouping_with_rollup`.
         session
             .run("CREATE TABLE tn (a BIGINT, b BIGINT, c BIGINT)")
             .unwrap();
@@ -5484,6 +5484,142 @@ mod tests {
         // -- because Expand replicates zero rows (unlike a scalar aggregate).
         session.run("DELETE FROM t").unwrap();
         assert!(row_text(session.run("SELECT a, SUM(c) FROM t GROUP BY a WITH ROLLUP")).is_empty());
+    }
+
+    /// `GROUPING()` under `WITH ROLLUP`, checked against captured TiDB output.
+    ///
+    /// `GROUPING(c)` is 1 when `c` is rolled up in the grouping set that
+    /// produced the row and 0 otherwise, which is the ONLY way to tell a
+    /// subtotal's NULL from a data NULL. With several arguments it returns a
+    /// bitmask whose LEFTMOST argument owns the HIGHEST bit (captured:
+    /// `GROUPING(a,b) = 1` and `GROUPING(b,a) = 2` on the `b`-rolled-up row).
+    ///
+    /// Rows whose whole `ORDER BY` key ties -- a data-NULL row and the
+    /// subtotal that also reports `b = NULL` -- keep this tier's stable
+    /// emission order (data rows first, then subtotals); Go's order for such
+    /// ties is nondeterministic, so only the multiset is contractual there.
+    #[test]
+    fn grouping_with_rollup() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT, b BIGINT, c BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,1,10),(1,NULL,20),(1,2,30),(2,1,40)")
+            .unwrap();
+
+        // Captured row for row. The two `1 NULL` rows are the point: the
+        // first is a DATA NULL (grouping(b) = 0, sum 20), the second the
+        // rollup subtotal over a=1 (grouping(b) = 1, sum 60).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, GROUPING(a), GROUPING(b), SUM(c) FROM t \
+                 GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+            )),
+            [
+                ["NULL", "NULL", "1", "1", "100"],
+                ["1", "NULL", "0", "0", "20"],
+                ["1", "NULL", "0", "1", "60"],
+                ["1", "1", "0", "0", "10"],
+                ["1", "2", "0", "0", "30"],
+                ["2", "NULL", "0", "1", "40"],
+                ["2", "1", "0", "0", "40"],
+            ]
+        );
+
+        // Multi-argument bitmask, captured row for row.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, GROUPING(a,b), GROUPING(b,a), SUM(c) FROM t \
+                 GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+            )),
+            [
+                ["NULL", "NULL", "3", "3", "100"],
+                ["1", "NULL", "0", "0", "20"],
+                ["1", "NULL", "1", "2", "60"],
+                ["1", "1", "0", "0", "10"],
+                ["1", "2", "0", "0", "30"],
+                ["2", "NULL", "1", "2", "40"],
+                ["2", "1", "0", "0", "40"],
+            ]
+        );
+
+        // HAVING reads a GROUPING() the select list does not project: the
+        // column is computed, filtered on, and trimmed away. Captured.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, SUM(c) FROM t GROUP BY a, b WITH ROLLUP \
+                 HAVING GROUPING(b) = 0 ORDER BY a, b"
+            )),
+            [
+                ["1", "NULL", "20"],
+                ["1", "1", "10"],
+                ["1", "2", "30"],
+                ["2", "1", "40"],
+            ]
+        );
+
+        // ORDER BY reads one the same way.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, GROUPING(a), SUM(c) FROM t GROUP BY a, b WITH ROLLUP \
+                 ORDER BY GROUPING(a), a, b"
+            )),
+            [
+                ["1", "NULL", "0", "20"],
+                ["1", "NULL", "0", "60"],
+                ["1", "1", "0", "10"],
+                ["1", "2", "0", "30"],
+                ["2", "NULL", "0", "40"],
+                ["2", "1", "0", "40"],
+                ["NULL", "NULL", "1", "100"],
+            ]
+        );
+
+        // Captured result type: BIGINT UNSIGNED, flen 20, binary flag.
+        match session
+            .run_with_columns("SELECT GROUPING(a) FROM t GROUP BY a WITH ROLLUP")
+            .unwrap()
+        {
+            StmtOutput::Rows { columns, .. } => {
+                let (name, ftype) = &columns[0];
+                // Go names the column with the ORIGINAL text, `grouping(a)`;
+                // this tier names every unaliased field by its restored form,
+                // a pre-existing tier-wide naming gap rather than one this
+                // function introduces.
+                assert_eq!(name, "GROUPING(`a`)");
+                assert_eq!(ftype.code(), tidb_datatype::FieldTypeCode::LongLong);
+                assert!(ftype.is_unsigned());
+                assert_eq!(ftype.flen(), 20);
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // Captured: GROUPING() without WITH ROLLUP is
+        // "[planner:1111]Invalid use of group function", whether the query
+        // groups or not.
+        assert!(matches!(
+            session.run("SELECT a, GROUPING(a) FROM t GROUP BY a"),
+            Err(DriverError::InvalidGroupFuncUse)
+        ));
+        assert!(matches!(
+            session.run("SELECT a, GROUPING(a) FROM t"),
+            Err(DriverError::InvalidGroupFuncUse)
+        ));
+
+        // Captured: an argument that is not grouped is
+        // "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY".
+        assert!(matches!(
+            session.run("SELECT a, GROUPING(c) FROM t GROUP BY a, b WITH ROLLUP"),
+            Err(DriverError::FieldInGroupingNotGroupBy(0))
+        ));
+
+        // Deferred: Go evaluates `GROUPING(a) + 1` in the projection above
+        // the aggregation, which this tier does not build for select fields.
+        assert!(matches!(
+            session.run("SELECT GROUPING(a) + 1 FROM t GROUP BY a, b WITH ROLLUP"),
+            Err(DriverError::Unsupported(_))
+        ));
     }
 
     /// SHOW WARNINGS / SHOW ERRORS, checked against captured TiDB output.
