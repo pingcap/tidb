@@ -409,3 +409,19 @@ func TestDefaultConfig(t *testing.T) {
 	// Verify RefreshInterval (should be 1800 = 30 min)
 	require.Equal(t, uint32(1800), ss.RefreshInterval())
 }
+
+// TestNewStmtSummaryLoggerInitError closes V2-11 in the statement-summary
+// audit: when the configured stmt log file cannot be opened,
+// log.InitLogger returns an error and NewStmtSummary must surface that error
+// instead of silently degrading to a no-op logger. A no-op fallback would make
+// persistent mode look enabled while silently dropping every rotated window.
+//
+// We trigger the error by pointing Filename at an existing directory, which
+// `log.InitLogger` rejects with "can't use directory as log file name" without
+// relying on filesystem permission differences between platforms.
+func TestNewStmtSummaryLoggerInitError(t *testing.T) {
+	dir := t.TempDir()
+	ss, err := NewStmtSummary(&Config{Filename: dir})
+	require.Error(t, err)
+	require.Nil(t, ss)
+}
