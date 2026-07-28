@@ -2397,6 +2397,7 @@ fn substitute_aggregates(
             agg_funcs.push(AggFunc {
                 kind: AggKind::FirstRow,
                 arg: Some(carrier),
+                extra_args: Vec::new(),
                 distinct: false,
                 order_by: Vec::new(),
             });
@@ -2473,13 +2474,23 @@ fn build_agg_func(
         separator,
     } = expr
     {
-        let [arg] = args.as_slice() else {
+        // `GROUP_CONCAT(a, b, ...)` concatenates its arguments per row before
+        // the rows are joined; the first argument rides `arg` and the rest
+        // ride `extra_args`.
+        let Some((first, rest)) = args.split_first() else {
             return Err(DriverError::Unsupported(
-                "multi-argument GROUP_CONCAT is not supported yet",
+                "GROUP_CONCAT requires at least one argument",
             ));
         };
-        let arg = rewrite_expr_resolved(arg, resolver)
+        let arg = rewrite_expr_resolved(first, resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        let mut extra_args = Vec::with_capacity(rest.len());
+        for extra in rest {
+            extra_args.push(
+                rewrite_expr_resolved(extra, resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+            );
+        }
         // The aggregate's own ORDER BY items resolve against the SOURCE row,
         // the same scope the concatenated argument does.
         let mut order_items = Vec::with_capacity(order_by.len());
@@ -2496,6 +2507,7 @@ fn build_agg_func(
                     separator: separator.value.clone(),
                 },
                 arg: Some(arg),
+                extra_args,
                 distinct: *distinct,
                 order_by: order_items,
             },
@@ -2522,6 +2534,7 @@ fn build_agg_func(
         AggFunc {
             kind,
             arg: Some(arg),
+            extra_args: Vec::new(),
             distinct: *distinct,
             order_by: Vec::new(),
         },
@@ -4211,6 +4224,7 @@ fn run_aggregate_select(
                 agg_funcs.push(AggFunc {
                     kind: AggKind::FirstRow,
                     arg: Some(rewritten),
+                    extra_args: Vec::new(),
                     distinct: false,
                     order_by: Vec::new(),
                 });

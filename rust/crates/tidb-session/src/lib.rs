@@ -3346,9 +3346,6 @@ mod tests {
     }
 
     /// `GROUP_CONCAT`, checked against captured TiDB output.
-    ///
-    /// NOT SUPPORTED YET, and refused rather than ignored: the
-    /// multi-argument form that concatenates several values per row.
     #[test]
     fn group_concat() {
         let mut session = Session::new();
@@ -3415,8 +3412,45 @@ mod tests {
             [["1", "a|b|a"], ["2", "c"]]
         );
 
-        // The multi-argument form is what is still refused.
-        assert!(session.run("SELECT GROUP_CONCAT(v, n) FROM t").is_err());
+        // The multi-argument form: captured from TiDB, the arguments are
+        // concatenated PER ROW (like CONCAT) before the rows are joined, and
+        // a row is dropped as soon as ANY of its arguments is NULL -- not
+        // only when all of them are.
+        session.run("INSERT INTO t VALUES (2,'d',NULL)").unwrap();
+        session.run("INSERT INTO t VALUES (1,'a',1)").unwrap();
+        // (2,NULL,4) and (2,'d',NULL) each have one NULL argument: both drop.
+        assert_eq!(
+            row_text(session.run("SELECT g, GROUP_CONCAT(v, n) FROM t GROUP BY g ORDER BY g")),
+            [["1", "b2,a1,a5,a1"], ["2", "c3"]]
+        );
+        // ...while the one-argument form still keeps 'd' (its v is not NULL).
+        assert_eq!(
+            row_text(session.run("SELECT GROUP_CONCAT(v) FROM t WHERE g = 2")),
+            [["c,d"]]
+        );
+        // Captured: DISTINCT dedupes over the CONCATENATED per-row value, so
+        // the repeated ('a',1) folds while ('a',5) survives. Row order
+        // without ORDER BY is undefined; assert membership only.
+        let multi = row_text(
+            session.run("SELECT g, GROUP_CONCAT(DISTINCT v, n) FROM t GROUP BY g ORDER BY g"),
+        );
+        let mut first: Vec<&str> = multi[0][1].split(',').collect();
+        first.sort_unstable();
+        assert_eq!(first, ["a1", "a5", "b2"]);
+        assert_eq!(multi[1][1], "c3");
+        // Captured: a literal argument concatenates like any other.
+        assert_eq!(
+            row_text(session.run("SELECT g, GROUP_CONCAT(v, '-', n) FROM t GROUP BY g ORDER BY g")),
+            [["1", "b-2,a-1,a-5,a-1"], ["2", "c-3"]]
+        );
+        // Captured: multi-arg with the aggregate's own ORDER BY and separator.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, GROUP_CONCAT(v, n ORDER BY n DESC SEPARATOR '|') FROM t \
+                 GROUP BY g ORDER BY g"
+            )),
+            [["1", "a5|b2|a1|a1"], ["2", "c3"]]
+        );
     }
 
     /// Prepared-statement parameters: the marker count a PREPARE reports and
@@ -4513,9 +4547,10 @@ mod tests {
         );
 
         // The refusals above are refusals, not wrong answers. (CAST,
-        // GROUP_CONCAT, CURRENT_USER and GROUP_CONCAT's inner ORDER BY were
-        // each this example in turn; all of them work now.)
-        assert!(session.run("SELECT GROUP_CONCAT(b, a) FROM t").is_err());
+        // GROUP_CONCAT, CURRENT_USER, GROUP_CONCAT's inner ORDER BY, and
+        // multi-argument GROUP_CONCAT were each this example in turn; all of
+        // them work now. Multi-argument COUNT is the current stand-in.)
+        assert!(session.run("SELECT COUNT(b, a) FROM t").is_err());
     }
 
     /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is

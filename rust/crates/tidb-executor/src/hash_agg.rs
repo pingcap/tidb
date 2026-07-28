@@ -81,6 +81,11 @@ pub struct AggFunc {
     pub kind: AggKind,
     /// The argument expression; `None` means `COUNT(*)`.
     pub arg: Option<Expression>,
+    /// `GROUP_CONCAT(a, b, ...)`'s arguments past the first: Go concatenates
+    /// every argument per row (like `CONCAT`) before joining the rows with
+    /// the separator, and drops the row when ANY argument is NULL. Empty for
+    /// every other aggregate.
+    pub extra_args: Vec<Expression>,
     /// Go `AggFuncDesc.HasDistinct`: whether repeated input values are counted
     /// once per group.
     pub distinct: bool,
@@ -97,6 +102,7 @@ impl AggFunc {
         AggFunc {
             kind,
             arg,
+            extra_args: Vec::new(),
             order_by: Vec::new(),
             distinct: false,
         }
@@ -472,9 +478,29 @@ impl<C: Columns> Executor for HashAggExec<C> {
                     }
                 };
                 for (f, state) in self.agg_funcs.iter().zip(ordered[idx].iter_mut()) {
-                    let value = match &f.arg {
-                        Some(expr) => Some(expr.eval(&self.ctx, row)?),
-                        None => None,
+                    let value = if f.extra_args.is_empty() {
+                        match &f.arg {
+                            Some(expr) => Some(expr.eval(&self.ctx, row)?),
+                            None => None,
+                        }
+                    } else {
+                        // Multi-argument GROUP_CONCAT: Go's `groupConcat`
+                        // update loop stringifies and concatenates every
+                        // argument per row, and skips the row entirely as
+                        // soon as ANY argument evaluates to NULL. DISTINCT
+                        // then dedupes over this concatenated value.
+                        let mut concatenated = Some(Vec::new());
+                        for expr in f.arg.iter().chain(f.extra_args.iter()) {
+                            let datum = expr.eval(&self.ctx, row)?;
+                            if datum == Datum::Null {
+                                concatenated = None;
+                                break;
+                            }
+                            if let Some(buf) = &mut concatenated {
+                                buf.extend_from_slice(&group_concat_bytes(&datum)?);
+                            }
+                        }
+                        Some(concatenated.map_or(Datum::Null, Datum::Bytes))
                     };
                     // GROUP_CONCAT's own ORDER BY is evaluated over the same
                     // source row that produced the value, so the key travels
