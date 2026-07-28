@@ -134,7 +134,10 @@ var defaultQueryQuota = bytesLimits{
 // MemUsageTop1Tracker record the use memory top1 session's tracker for kill.
 var MemUsageTop1Tracker atomic.Pointer[Tracker]
 
-var mockDebugInject func()
+var (
+	mockDebugInject                  func()
+	mockConsumeAfterStateCheckInject func(*memArbitrator)
+)
 
 // InitTracker initializes a memory tracker.
 //  1. "label" is the label used in the usage string.
@@ -456,29 +459,39 @@ func (t *Tracker) Consume(bs int64) {
 		if tracker.IsRootTrackerOfSess {
 			sessionRootTracker = tracker
 		}
-		if m := tracker.MemArbitrator; m != nil && m.state.Load() != memArbitratorStateDown {
-			if bs > 0 {
-				if m.useBigBudget() {
-					if m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() {
-						m.growBigBudget()
-					}
-				} else { // fast path for small budget
-					if m.addSmallBudget(bs) > m.budget.smallLimit {
-						m.intoBigBudget()
-					} else {
-						b := m.smallBudget()
-						if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
-							b.setLastUsedTimeSec(t)
-						}
-						if b.Used.Load() > b.approxCapacity() && b.PullFromUpstream() != nil {
-							m.intoBigBudget()
-						}
-					}
+		if m := tracker.MemArbitrator; m != nil {
+			if m.state.Load() != memArbitratorStateDown {
+				if intest.InTest && mockConsumeAfterStateCheckInject != nil {
+					mockConsumeAfterStateCheckInject(m)
 				}
-			} else if m.useBigBudget() { // delta <= 0 && use big budget
-				m.addBigBudgetUsed(bs)
-			} else { // delta <= 0 && use small budget
-				m.addSmallBudget(bs)
+				if bs > 0 {
+					if m.useBigBudget() {
+						if m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() {
+							m.growBigBudget()
+						}
+					} else { // fast path for small budget
+						if m.addSmallBudget(bs) > m.budget.smallLimit {
+							m.intoBigBudget()
+						} else {
+							b := m.smallBudget()
+							if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
+								b.setLastUsedTimeSec(t)
+							}
+							if b.Used.Load() > b.approxCapacity() && b.PullFromUpstream() != nil {
+								m.intoBigBudget()
+							}
+						}
+					}
+				} else if m.useBigBudget() { // delta <= 0 && use big budget
+					m.addBigBudgetUsed(bs)
+				} else { // delta <= 0 && use small budget
+					m.addSmallBudget(bs)
+				}
+				if m.state.Load() == memArbitratorStateDown {
+					m.cleanSmallBudget()
+				}
+			} else if m.smallBudgetUsed() != 0 {
+				m.cleanSmallBudget()
 			}
 		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
@@ -1222,10 +1235,6 @@ func (t *Tracker) DetachMemArbitrator(exception bool) bool {
 }
 
 func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
-	if m.smallBudgetUsed() != 0 {
-		m.cleanSmallBudget()
-	}
-
 	if m.state.Load() == memArbitratorStateDown {
 		return false
 	}
@@ -1242,6 +1251,10 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		globalArbitrator.metrics.pools.big.Add(-1)
 	default:
 		return false
+	}
+
+	if m.smallBudgetUsed() != 0 {
+		m.cleanSmallBudget()
 	}
 
 	if m.isInternal {
