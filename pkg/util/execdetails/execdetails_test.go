@@ -26,6 +26,38 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+var percentileSumSink float64
+
+func BenchmarkPercentileAdd(b *testing.B) {
+	b.Run("Int64", func(b *testing.B) {
+		p := Percentile[Int64]{values: make([]Int64, 0, 32)}
+		b.ReportAllocs()
+		for b.Loop() {
+			p.values = p.values[:0]
+			p.size = 0
+			p.sumVal = 0
+			for i := range 32 {
+				p.Add(Int64(i))
+			}
+		}
+		percentileSumSink = p.sumVal
+	})
+	b.Run("DurationWithAddr", func(b *testing.B) {
+		p := Percentile[DurationWithAddr]{values: make([]DurationWithAddr, 0, 32)}
+		value := DurationWithAddr{D: time.Millisecond, Addr: "store-1"}
+		b.ReportAllocs()
+		for b.Loop() {
+			p.values = p.values[:0]
+			p.size = 0
+			p.sumVal = 0
+			for range 32 {
+				p.Add(value)
+			}
+		}
+		percentileSumSink = p.sumVal
+	})
+}
+
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
 		CopTime:      time.Second + 3*time.Millisecond,

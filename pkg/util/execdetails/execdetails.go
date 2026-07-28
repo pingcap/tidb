@@ -672,17 +672,18 @@ type Percentile[valueType canGetFloat64] struct {
 
 // Add adds a value to calculate the percentile.
 func (p *Percentile[valueType]) Add(value valueType) {
+	floatValue := value.GetFloat64()
 	p.isSorted = false
-	p.sumVal += value.GetFloat64()
+	p.sumVal += floatValue
 	p.size++
 	if p.dt == nil && len(p.values) == 0 {
 		p.minVal = value
 		p.maxVal = value
 	} else {
-		if value.GetFloat64() < p.minVal.GetFloat64() {
+		if floatValue < p.minVal.GetFloat64() {
 			p.minVal = value
 		}
-		if value.GetFloat64() > p.maxVal.GetFloat64() {
+		if floatValue > p.maxVal.GetFloat64() {
 			p.maxVal = value
 		}
 	}
@@ -697,7 +698,7 @@ func (p *Percentile[valueType]) Add(value valueType) {
 		}
 		return
 	}
-	p.dt.Add(value.GetFloat64(), 1)
+	p.dt.Add(floatValue, 1)
 }
 
 // GetPercentile returns the percentile `f` of the values.
