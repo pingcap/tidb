@@ -1168,6 +1168,34 @@ impl Session {
         })
     }
 
+    /// The number of `?` markers a statement carries, which
+    /// `COM_STMT_PREPARE` reports to the client.
+    pub fn parameter_count(&self, sql: &str) -> Result<usize, DriverError> {
+        tidb_executor::parameter_count(sql)
+    }
+
+    /// Runs one statement with its prepared-statement parameters bound.
+    ///
+    /// Go installs the execute-time values on the parsed statement's own
+    /// markers; this tier reaches execution through SQL text, so the markers
+    /// become literals and the statement is restored before it runs. A byte
+    /// string that is not UTF-8 becomes a hex literal, so no value is lost in
+    /// that round trip.
+    pub fn run_with_params(
+        &mut self,
+        sql: &str,
+        params: &[Datum],
+    ) -> Result<StmtOutput, DriverError> {
+        // The count is checked even when no values were sent, so a statement
+        // with an unbound marker is Go's ErrWrongParamCount rather than a
+        // parse-time surprise deeper in.
+        if params.is_empty() && self.parameter_count(sql)? == 0 {
+            return self.run_with_columns(sql);
+        }
+        let bound = tidb_executor::bind_parameters(sql, params)?;
+        self.run_with_columns(&bound)
+    }
+
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
     /// statement kind, and executes over the session catalog.
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {
@@ -3096,6 +3124,128 @@ mod tests {
                 })
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
+        }
+    }
+
+    /// Prepared-statement parameters: the marker count a PREPARE reports and
+    /// the values an EXECUTE binds.
+    ///
+    /// This is the session half of the binary protocol -- what a JDBC or Go
+    /// driver client needs to run anything at all. The wire half wires
+    /// `COM_STMT_PREPARE`/`EXECUTE` to it.
+    #[test]
+    fn prepared_statement_parameters() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(20), c BIGINT)")
+            .unwrap();
+
+        // The marker count is what PREPARE reports.
+        assert_eq!(
+            session
+                .parameter_count("SELECT a FROM t WHERE a = ?")
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            session
+                .parameter_count("INSERT INTO t (a,b,c) VALUES (?,?,?)")
+                .unwrap(),
+            3
+        );
+        assert_eq!(session.parameter_count("SELECT 1").unwrap(), 0);
+        assert_eq!(
+            session
+                .parameter_count("SELECT a FROM t WHERE b LIKE ? AND c BETWEEN ? AND ?")
+                .unwrap(),
+            3
+        );
+
+        // An INSERT binds its values positionally.
+        session
+            .run_with_params(
+                "INSERT INTO t (a,b,c) VALUES (?,?,?)",
+                &[Datum::Int(1), Datum::Bytes(b"one".to_vec()), Datum::Int(10)],
+            )
+            .unwrap();
+        session
+            .run_with_params(
+                "INSERT INTO t (a,b,c) VALUES (?,?,?)",
+                &[Datum::Int(2), Datum::Bytes(b"two".to_vec()), Datum::Int(20)],
+            )
+            .unwrap();
+
+        // A SELECT binds in WHERE, and the markers keep their source order.
+        let output = session
+            .run_with_params("SELECT b FROM t WHERE a = ?", &[Datum::Int(2)])
+            .unwrap();
+        match output {
+            StmtOutput::Rows { rows, .. } => {
+                assert_eq!(datum_text(&rows[0][0]).unwrap(), "two");
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+        let output = session
+            .run_with_params(
+                "SELECT a FROM t WHERE c BETWEEN ? AND ? ORDER BY a",
+                &[Datum::Int(5), Datum::Int(15)],
+            )
+            .unwrap();
+        match output {
+            StmtOutput::Rows { rows, .. } => assert_eq!(rows.len(), 1),
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // A value that is not UTF-8 survives the round trip as a hex literal
+        // rather than being mangled by a lossy conversion.
+        session
+            .run_with_params(
+                "INSERT INTO t (a,b,c) VALUES (?,?,?)",
+                &[
+                    Datum::Int(3),
+                    Datum::Bytes(vec![0xff, 0xfe, b'z']),
+                    Datum::Int(30),
+                ],
+            )
+            .unwrap();
+        match session
+            .run_with_params("SELECT b FROM t WHERE a = ?", &[Datum::Int(3)])
+            .unwrap()
+        {
+            StmtOutput::Rows { rows, .. } => {
+                let stored = match &rows[0][0] {
+                    Datum::Bytes(bytes) => bytes.clone(),
+                    Datum::String(text) => text.bytes().to_vec(),
+                    other => panic!("expected a string datum, got {other:?}"),
+                };
+                assert_eq!(stored, vec![0xff, 0xfe, b'z']);
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+
+        // A NULL parameter binds as NULL, not as the text "NULL".
+        session
+            .run_with_params(
+                "INSERT INTO t (a,b,c) VALUES (?,?,?)",
+                &[Datum::Int(4), Datum::Null, Datum::Int(40)],
+            )
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE b IS NULL")),
+            [["4"]]
+        );
+
+        // Too few or too many values is Go's ErrWrongParamCount (1210).
+        match session.run_with_params("SELECT a FROM t WHERE a = ?", &[]) {
+            Ok(_) => panic!("an unbound marker should fail"),
+            Err(error) => assert_eq!(error.to_mysql_error().code, 1210),
+        }
+        match session.run_with_params(
+            "SELECT a FROM t WHERE a = ?",
+            &[Datum::Int(1), Datum::Int(2)],
+        ) {
+            Ok(_) => panic!("an extra value should fail"),
+            Err(error) => assert_eq!(error.to_mysql_error().code, 1210),
         }
     }
 

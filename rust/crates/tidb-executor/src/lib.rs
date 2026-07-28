@@ -51,10 +51,11 @@ pub use ddl::{
     run_drop_index_in, run_drop_table_in, run_rename_table_in, run_truncate_table_in,
 };
 pub use driver::{
-    run_delete_in, run_delete_on, run_insert_in, run_insert_on, run_insert_reporting, run_select,
-    run_select_meta_in, run_select_meta_on, run_select_meta_stmt, run_select_on, run_set_opr_stmt,
-    run_update_in, run_update_on, Catalog, DriverError, MemTable, MysqlError, SchemaErrorKind,
-    SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, DEFAULT_DATABASE,
+    bind_parameters, parameter_count, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
+    run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
+    run_select_on, run_set_opr_stmt, run_update_in, run_update_on, Catalog, DriverError, MemTable,
+    MysqlError, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind,
+    DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
