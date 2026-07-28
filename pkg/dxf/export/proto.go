@@ -41,32 +41,35 @@ type TaskMeta struct {
 	SubtaskRegions int `json:"subtask_regions"`
 }
 
-// Unit is one export unit within a subtask: a contiguous key range of one
-// physical table, stamped with a table-local name ordinal at split time. A big
-// table yields one unit per region span; several whole small tables may be
-// packed as multiple units into a single subtask. The subtask executor loops
-// its units and exports each into that table's own files.
-type Unit struct {
-	// TableIdx indexes into TaskMeta.Tables; the executor pulls the table name
-	// and column types from there.
+// Chunk is the atomic unit of export work: a contiguous key range of one
+// physical table, sized to roughly one output file (~FileSize), that a worker
+// reads, encodes and uploads. A chunk emits a group of files that share its
+// name prefix — the encoder cuts a new file every FileSize, so an
+// underestimated chunk simply rotates the file index rather than overflowing.
+// The chunk's identity — the table-local Ordinal that fixes that name prefix —
+// is stamped at split time, independent of which worker (or how many) run it,
+// so any number of workers and any retry produce exactly the same files.
+type Chunk struct {
+	// TableIdx indexes into TaskMeta.Tables; the worker pulls the table name and
+	// column types from there.
 	TableIdx int `json:"table_idx"`
 	// PhysicalID is the partition's physical id, equal to the table id for a
 	// non-partitioned table.
 	PhysicalID int64 `json:"physical_id"`
-	// [Start, End) is the record-key range this unit exports.
+	// [Start, End) is the record-key range this chunk exports.
 	Start []byte `json:"start"`
 	End   []byte `json:"end"`
-	// NameOrdinal is the table-local span index used in the output file name;
-	// it is 0 for a whole (unsplit) small table. It is stamped at split time,
-	// not derived from the framework's global subtask ordinal, so file names
-	// stay a pure function of the unit and an idempotent retry rewrites the same
-	// files.
-	NameOrdinal int `json:"name_ordinal"`
+	// Ordinal is the table-local chunk index that fixes the name prefix of the
+	// chunk's output files (see the file-name scheme). It is stamped at split
+	// time, not derived from the worker or subtask, so the names are a pure
+	// function of the chunk.
+	Ordinal int `json:"ordinal"`
 }
 
-// SubtaskMeta is the subtask meta of the Dump step: the list of units a single
-// subtask exports. One unit for a big-table span; several whole-table units
-// when small tables are packed together.
+// SubtaskMeta is the subtask meta of the Dump step: a batch of chunks. A
+// subtask is the dispatch unit assigned to a node; its worker pool pulls these
+// chunks from a queue and exports them concurrently. Big tables contribute many
+// chunks; small tables contribute one chunk each and pack together.
 type SubtaskMeta struct {
-	Units []Unit `json:"units"`
+	Chunks []Chunk `json:"chunks"`
 }
