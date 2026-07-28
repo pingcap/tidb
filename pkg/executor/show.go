@@ -1859,6 +1859,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	userName, hostName := e.User.Username, e.User.Hostname
 	sessVars := e.Ctx().GetSessionVars()
 	if e.User.CurrentUser {
+		if sessVars.User == nil {
+			// The session is not authenticated (e.g. an internal session);
+			// there is no current user to show.
+			return errors.New("Session user is empty")
+		}
 		userName = sessVars.User.AuthUsername
 		hostName = sessVars.User.AuthHostname
 	} else {

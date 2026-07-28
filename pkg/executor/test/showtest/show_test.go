@@ -561,6 +561,10 @@ func TestShow2(t *testing.T) {
 func TestShowCreateUser(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// Regression: CURRENT_USER() in a session without an authenticated user
+	// must return an error instead of panicking on a nil session user.
+	err := tk.QueryToErr("show create user current_user()")
+	require.ErrorContains(t, err, "Session user is empty")
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
 	tk.MustQuery("show create user 'test_show_create_user'@'%'").
@@ -571,7 +575,7 @@ func TestShowCreateUser(t *testing.T) {
 		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*94BDCEBE19083CE2A1F959FD02F964C7AF4CFC29' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
 
 	// Case: the user exists but the host portion doesn't match
-	err := tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
+	err = tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
 	require.Equal(t, exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'test_show_create_user'@'asdf'").Error(), err.Error())
 
 	// Case: a user that doesn't exist
