@@ -84,7 +84,13 @@ impl Session {
                 let same_user = owner.as_deref() == Some(self.process_list_user().as_str());
                 let may_kill = self.privileges.as_ref().is_some_and(|registry| {
                     self.current_identity().is_some_and(|(user, host)| {
-                        registry.has_dynamic_priv(user, host, "CONNECTION_ADMIN", false)
+                        registry.has_dynamic_priv_with_roles(
+                            user,
+                            host,
+                            self.active_roles(),
+                            "CONNECTION_ADMIN",
+                            false,
+                        )
                     })
                 });
                 if owner.is_some() && !same_user && !may_kill {
@@ -207,7 +213,12 @@ impl Session {
         };
         let has_process_via_registry = self.privileges.as_ref().is_some_and(|registry| {
             self.current_identity().is_some_and(|(user, host)| {
-                registry.has_global_priv(user, host, privilege::GlobalPriv::Process)
+                registry.has_global_priv_with_roles(
+                    user,
+                    host,
+                    self.active_roles(),
+                    privilege::GlobalPriv::Process,
+                )
             })
         });
         if self.has_process_priv || has_process_via_registry || self.login_user.is_none() {

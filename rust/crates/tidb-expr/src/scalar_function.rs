@@ -406,6 +406,15 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
+                // Go `builtinCurrentRoleSig` reports the session's ACTIVE
+                // roles -- not the roles the account holds, which only
+                // `SHOW GRANTS` prints.
+                "current_role" => {
+                    return Ok(match ctx.current_role() {
+                        Some(roles) => Datum::Bytes(roles.into_bytes()),
+                        None => Datum::Null,
+                    })
+                }
                 "user" | "session_user" => {
                     return Ok(match ctx.login_user() {
                         Some(user) => Datum::Bytes(user.into_bytes()),

@@ -199,6 +199,14 @@ pub trait Columns {
         None
     }
 
+    /// Go `SessionVars.ActiveRoles` rendered the way `CURRENT_ROLE()` prints
+    /// it: the backtick-quoted role identities joined by bare commas, or the
+    /// literal `NONE` when no role is active. `None` is a resolver with no
+    /// session at all, which reports NULL like `CURRENT_USER()` does.
+    fn current_role(&self) -> Option<String> {
+        None
+    }
+
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports as an
     /// unsigned `LongLong`. Go treats a missing `SessionVars` as an error
     /// rather than NULL (`builtinConnectionIDSig.evalInt`), but that case is

@@ -171,3 +171,20 @@ pub(crate) fn session_with_privileges() -> Session {
     session.attach_privileges(privilege::PrivilegeRegistry::default());
     session
 }
+
+/// A second connection to the same server, authenticated as `user`@`host`.
+///
+/// The identity is installed BEFORE the registry, which is the order
+/// `PipelineSessionFactory` uses and the order that makes the account's
+/// DEFAULT roles activate -- exactly as Go's `Auth` does at login.
+pub(crate) fn session_as(
+    registry: &privilege::PrivilegeRegistry,
+    catalog: SharedCatalog,
+    user: &str,
+    host: &str,
+) -> Session {
+    let mut session = Session::with_catalog(catalog);
+    session.set_user(format!("{user}@{host}"), format!("{user}@{host}"));
+    session.attach_privileges(registry.clone());
+    session
+}

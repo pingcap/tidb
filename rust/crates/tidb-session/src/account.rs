@@ -23,6 +23,18 @@
 use crate::show::string_column_output;
 use crate::*;
 
+/// The account identity a written role names. Go's role grammar defaults the
+/// omitted host to `%`, the same wildcard host `CREATE USER r` gets, which is
+/// what makes `CREATE ROLE r` and `CREATE USER r` collide.
+fn role_identity(spec: &tidb_ast::RoleSpec) -> privilege::Account {
+    let host = if spec.host.is_empty() {
+        "%".to_owned()
+    } else {
+        spec.host.clone()
+    };
+    (spec.role.clone(), host)
+}
+
 impl Session {
     /// `CREATE USER [IF NOT EXISTS] <account> [IDENTIFIED BY '<password>']`.
     /// Go `simple.go`'s `executeCreateUser`, minus resource limits and
@@ -79,6 +91,253 @@ impl Session {
             }
         }
         Ok(StmtOutput::Affected(0))
+    }
+
+    /// `CREATE ROLE [IF NOT EXISTS] <role> [, ...]` -- Go's `executeCreateUser`
+    /// reached with `IsCreateRole`, which writes the same `mysql.user` row
+    /// with `account_locked = 'Y'` and no password.
+    ///
+    /// Roles and users share ONE namespace, so this reports `ErrCannotUser`
+    /// against a name already taken by either kind (captured both ways); the
+    /// only thing that differs from `CREATE USER`'s message is the operation
+    /// name it prints.
+    pub(crate) fn create_role_stmt(
+        &mut self,
+        if_not_exists: bool,
+        roles: &[tidb_ast::RoleSpec],
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "CREATE ROLE requires a server front end with a privilege registry",
+            ));
+        };
+        for spec in roles {
+            let (role, host) = role_identity(spec);
+            if !registry.create_role(&role, &host) && !if_not_exists {
+                return Err(DriverError::CannotUserRole {
+                    operation: "CREATE ROLE",
+                    target: format!("'{role}'@'{host}'"),
+                });
+            }
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `GRANT <role> [, ...] TO <account> [, ...]`: one `mysql.role_edges`
+    /// row per pair. Go validates every ROLE first (`ErrGrantRole`/3523 for a
+    /// role with no account row) and only then every target account
+    /// (`ErrCannotUser`/1396), so a statement naming both an unknown role and
+    /// an unknown user reports the ROLE (captured order).
+    ///
+    /// Nothing rejects a self-grant or a cycle: `GRANT r1 TO r1` reports OK
+    /// (captured).
+    pub(crate) fn grant_role_stmt(
+        &mut self,
+        grant: &tidb_ast::GrantRoleStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "GRANT <role> requires a server front end with a privilege registry",
+            ));
+        };
+        let roles =
+            self.resolve_roles(&grant.roles, |role, host| DriverError::GrantUnknownRole {
+                role: role.to_owned(),
+                host: host.to_owned(),
+            })?;
+        let grantees = self.resolve_role_grantees(&grant.users, "GRANT ROLE")?;
+        for grantee in &grantees {
+            for role in &roles {
+                registry.grant_role(role, grantee);
+            }
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `REVOKE <role> [, ...] FROM <account> [, ...]`. Unlike `GRANT`, a
+    /// missing ROLE here reports `ErrCannotUser`/1396 -- backtick-quoted, as
+    /// `auth.RoleIdentity.String` prints it -- rather than 3523. Revoking a
+    /// role the account never held is a silent no-op (captured).
+    pub(crate) fn revoke_role_stmt(
+        &mut self,
+        revoke: &tidb_ast::RevokeRoleStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "REVOKE <role> requires a server front end with a privilege registry",
+            ));
+        };
+        let roles =
+            self.resolve_roles(&revoke.roles, |role, host| DriverError::CannotUserRole {
+                operation: "REVOKE ROLE",
+                target: format!("`{role}`@`{host}`"),
+            })?;
+        let grantees = self.resolve_role_grantees(&revoke.users, "REVOKE ROLE")?;
+        for grantee in &grantees {
+            for role in &roles {
+                registry.revoke_role(role, grantee);
+            }
+        }
+        // Go drops a revoked role from the CURRENT session's active set in
+        // the same statement, so a session cannot keep using privileges it
+        // no longer holds.
+        if let Some((user, host)) = self.current_identity() {
+            let account = (user.to_owned(), host.to_owned());
+            if grantees.contains(&account) {
+                self.active_roles.retain(|role| !roles.contains(role));
+            }
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `SET ROLE <selection>`: replaces the session's active-role set.
+    ///
+    /// Activation is DIRECT-ONLY at every form -- `ALL` offers exactly the
+    /// roles granted to the account, and naming a role held only through
+    /// another role reports `ErrRoleNotGranted`/3530 (captured). What the
+    /// activated roles then CONFER is transitive, but that is a question for
+    /// the privilege check, not for this set.
+    ///
+    /// A rejected `SET ROLE` leaves the previous set untouched (captured).
+    pub(crate) fn set_role_stmt(
+        &mut self,
+        set_role: &tidb_ast::SetRoleStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "SET ROLE requires a server front end with a privilege registry",
+            ));
+        };
+        let account = self.own_account()?;
+        let active = match &set_role.selection {
+            tidb_ast::SetRoleSelection::None => Vec::new(),
+            tidb_ast::SetRoleSelection::All => registry.granted_roles(&account),
+            tidb_ast::SetRoleSelection::Default => registry.default_roles(&account),
+            tidb_ast::SetRoleSelection::AllExcept(excluded) => {
+                let excluded = self.granted_roles_or_error(&registry, &account, excluded)?;
+                registry
+                    .granted_roles(&account)
+                    .into_iter()
+                    .filter(|role| !excluded.contains(role))
+                    .collect()
+            }
+            tidb_ast::SetRoleSelection::Roles(roles) => {
+                self.granted_roles_or_error(&registry, &account, roles)?
+            }
+        };
+        self.active_roles = active;
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `SET DEFAULT ROLE <selection> TO <account> [, ...]`: replaces each
+    /// account's `mysql.default_roles` rows (never merges -- captured:
+    /// `SET DEFAULT ROLE r1` after `ALL` leaves r1 alone).
+    ///
+    /// `ALL` means every role granted to THAT account, resolved per account.
+    /// A named role that the account does not hold reports 3530, the same
+    /// gate `SET ROLE` uses.
+    pub(crate) fn set_default_role_stmt(
+        &mut self,
+        set_default: &tidb_ast::SetDefaultRoleStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "SET DEFAULT ROLE requires a server front end with a privilege registry",
+            ));
+        };
+        let accounts = self.resolve_role_grantees(&set_default.users, "SET DEFAULT ROLE")?;
+        for account in &accounts {
+            let roles = match &set_default.selection {
+                tidb_ast::DefaultRoleSelection::None => Vec::new(),
+                tidb_ast::DefaultRoleSelection::All => registry.granted_roles(account),
+                tidb_ast::DefaultRoleSelection::Roles(roles) => {
+                    self.granted_roles_or_error(&registry, account, roles)?
+                }
+            };
+            registry.set_default_roles(account, &roles);
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// Resolves written role identities to accounts, requiring each to have
+    /// an account row. `missing` builds the error, because `GRANT` and
+    /// `REVOKE` report a missing role differently (3523 vs 1396).
+    fn resolve_roles(
+        &self,
+        roles: &[tidb_ast::RoleSpec],
+        missing: impl Fn(&str, &str) -> DriverError,
+    ) -> Result<Vec<privilege::Account>, DriverError> {
+        let Some(registry) = &self.privileges else {
+            return Err(DriverError::Unsupported(
+                "roles require a server front end with a privilege registry",
+            ));
+        };
+        roles
+            .iter()
+            .map(|spec| {
+                let (role, host) = role_identity(spec);
+                if registry.user_exists(&role, &host) {
+                    Ok((role, host))
+                } else {
+                    Err(missing(&role, &host))
+                }
+            })
+            .collect()
+    }
+
+    /// Resolves the accounts a role statement targets, requiring each to
+    /// exist (`ErrCannotUser` naming `operation`, with the account printed
+    /// bare as `user@host`).
+    fn resolve_role_grantees(
+        &self,
+        users: &[tidb_ast::UserSpec],
+        operation: &'static str,
+    ) -> Result<Vec<privilege::Account>, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "roles require a server front end with a privilege registry",
+            ));
+        };
+        users
+            .iter()
+            .map(|spec| {
+                let (user, host) = self.resolve_account(spec)?;
+                if registry.user_exists(&user, &host) {
+                    Ok((user, host))
+                } else {
+                    Err(DriverError::CannotUserRole {
+                        operation,
+                        target: format!("{user}@{host}"),
+                    })
+                }
+            })
+            .collect()
+    }
+
+    /// Resolves roles that must be granted DIRECTLY to `account`, which is
+    /// the gate `SET ROLE` and `SET DEFAULT ROLE` share.
+    fn granted_roles_or_error(
+        &self,
+        registry: &privilege::PrivilegeRegistry,
+        account: &privilege::Account,
+        roles: &[tidb_ast::RoleSpec],
+    ) -> Result<Vec<privilege::Account>, DriverError> {
+        roles
+            .iter()
+            .map(|spec| {
+                let role = role_identity(spec);
+                if registry.has_role(account, &role) {
+                    Ok(role)
+                } else {
+                    Err(DriverError::RoleNotGranted {
+                        role: role.0.clone(),
+                        role_host: role.1.clone(),
+                        user: account.0.clone(),
+                        host: account.1.clone(),
+                    })
+                }
+            })
+            .collect()
     }
 
     /// The `mysql.user.authentication_string` one account specification's
@@ -223,12 +482,18 @@ impl Session {
         Ok((user.to_owned(), host.to_owned()))
     }
 
-    /// `DROP USER` at the GLOBAL scope this tier models. Go's
+    /// `DROP USER` / `DROP ROLE` at the GLOBAL scope this tier models. Go's
     /// `executeDropUser` checks every named account exists BEFORE dropping
     /// any of them, rolling the whole statement back and reporting every
     /// missing account together if one is missing.
+    ///
+    /// `is_role` selects the operation name the failure message prints and
+    /// NOTHING else: Go does not check that the account is really a role, so
+    /// `DROP ROLE` on a plain user and `DROP USER` on a role both succeed
+    /// (captured). One row, one delete.
     pub(crate) fn drop_user_stmt(
         &mut self,
+        is_role: bool,
         if_exists: bool,
         users: &[tidb_ast::UserSpec],
     ) -> Result<StmtOutput, DriverError> {
@@ -244,14 +509,28 @@ impl Session {
                 .map(|spec| format!("{}@{}", spec.user, spec.host))
                 .collect();
             if !missing.is_empty() {
-                return Err(DriverError::DropUserMissing {
-                    accounts: missing.join(","),
+                let accounts = missing.join(",");
+                return Err(if is_role {
+                    DriverError::CannotUserRole {
+                        operation: "DROP ROLE",
+                        target: accounts,
+                    }
+                } else {
+                    DriverError::DropUserMissing { accounts }
                 });
             }
         }
         for spec in users {
             registry.drop_user(&spec.user, &spec.host);
         }
+        // A dropped role stops being active in THIS session too; the edge it
+        // was activated through is gone, so keeping it would confer
+        // privileges from a row that no longer exists.
+        self.active_roles.retain(|(role, host)| {
+            !users
+                .iter()
+                .any(|spec| &spec.user == role && &spec.host == host)
+        });
         Ok(StmtOutput::Affected(0))
     }
 
@@ -611,18 +890,28 @@ impl Session {
         Ok((mask, dynamic))
     }
 
-    /// `SHOW GRANTS [FOR <user>]` at GLOBAL scope. `USING <roles>` is refused
-    /// rather than silently ignored, since active-role expansion is not
-    /// modeled here.
+    /// `SHOW GRANTS [FOR <account> [USING <role>...]]`.
+    ///
+    /// Which roles' privileges are folded in depends on the form (Go passes
+    /// exactly one role list to `showGrants`): the bare form and
+    /// `FOR CURRENT_USER` use the session's ACTIVE roles, `USING` names the
+    /// roles explicitly, and `SHOW GRANTS FOR <someone else>` folds in
+    /// nothing (captured: root's `SHOW GRANTS FOR 'u1'@'%'` omits the
+    /// database line that u1's own `SHOW GRANTS` shows through its active
+    /// role).
     pub(crate) fn show_grants_stmt(
         &mut self,
         show: &tidb_ast::ShowGrantsStmt,
     ) -> Result<StmtOutput, DriverError> {
-        if !show.roles.is_empty() {
-            return Err(DriverError::Unsupported(
-                "SHOW GRANTS ... USING is not supported yet",
-            ));
-        }
+        let is_own = match &show.user {
+            None => true,
+            Some(spec) => {
+                spec.current_user
+                    || self
+                        .current_identity()
+                        .is_some_and(|(user, host)| spec.user == user && spec.host == host)
+            }
+        };
         let (user, host) = match &show.user {
             None => {
                 let Some((user, host)) = self.current_identity() else {
@@ -647,7 +936,28 @@ impl Session {
                 "SHOW GRANTS requires a server front end with a privilege registry",
             ));
         };
-        let Some(lines) = registry.show_grants(&user, &host) else {
+        let roles = if show.roles.is_empty() {
+            if is_own {
+                self.active_roles.clone()
+            } else {
+                Vec::new()
+            }
+        } else {
+            // `USING` names roles through the account grammar, so the same
+            // omitted-host default applies.
+            show.roles
+                .iter()
+                .map(|spec| {
+                    let host = if spec.host.is_empty() {
+                        "%".to_owned()
+                    } else {
+                        spec.host.clone()
+                    };
+                    (spec.user.clone(), host)
+                })
+                .collect()
+        };
+        let Some(lines) = registry.show_grants(&user, &host, &roles) else {
             return Err(DriverError::NonexistingGrant { user, host });
         };
         // Go: `fmt.Sprintf("Grants for %s", s.User)` -- `s.User.String()` is

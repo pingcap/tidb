@@ -106,6 +106,11 @@ pub struct Session {
     /// reports. Empty until a front end authenticates one.
     current_user: Option<String>,
     login_user: Option<String>,
+    /// Go `SessionVars.ActiveRoles`: the roles this session has activated,
+    /// which every privilege check widens through and which `CURRENT_ROLE()`
+    /// reports. A fresh session starts with its account's DEFAULT roles
+    /// (Go activates them in `Auth`); `SET ROLE` replaces the set wholesale.
+    active_roles: Vec<privilege::Account>,
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
     /// `None` for a session with no connection identity, where the builtin
     /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
@@ -158,6 +163,7 @@ impl Default for Session {
             warnings: Vec::new(),
             current_user: None,
             login_user: None,
+            active_roles: Vec::new(),
             connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
@@ -227,16 +233,6 @@ fn var_error(error: VarError) -> DriverError {
 
 /// Go `mysql.DefaultCharset` and the collation `getDefaultCollate` returns for
 /// it, which is what a table with no explicit charset reports.
-/// The one refusal every ROLE statement reports. Roles parse (Go's grammar
-/// is transcreated) but nothing executes them: a role is an account that can
-/// be GRANTed to other accounts, and resolving what a user may do then
-/// depends on which of its roles are ACTIVE in the session -- a role graph
-/// and per-session active-role set that no part of this tier models. Faking
-/// any half of it would make privilege checks answer wrongly, so the
-/// statements are refused whole.
-const ROLES_UNSUPPORTED: &str =
-    "roles (CREATE/DROP ROLE, GRANT/REVOKE <role>, SET ROLE) are not supported yet";
-
 const TABLE_CHARSET: &str = "utf8mb4";
 const TABLE_COLLATE: &str = "utf8mb4_bin";
 
@@ -284,8 +280,9 @@ impl Session {
                     self.use_database(name)?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
-                SessionStmt::SetRole(_) | SessionStmt::SetDefaultRole(_) => {
-                    Err(DriverError::Unsupported(ROLES_UNSUPPORTED))
+                SessionStmt::SetRole(set_role) => Ok(Some(self.set_role_stmt(set_role)?)),
+                SessionStmt::SetDefaultRole(set_default) => {
+                    Ok(Some(self.set_default_role_stmt(set_default)?))
                 }
                 _ => Ok(None),
             },
@@ -345,25 +342,16 @@ impl Session {
                     resource_group,
                 )?)),
                 tidb_ast::DdlStmt::DropUser {
-                    is_role: false,
+                    is_role,
                     if_exists,
                     users,
-                } => Ok(Some(self.drop_user_stmt(*if_exists, users)?)),
+                } => Ok(Some(self.drop_user_stmt(*is_role, *if_exists, users)?)),
                 tidb_ast::DdlStmt::AlterUser(alter) => Ok(Some(self.alter_user_stmt(alter)?)),
                 tidb_ast::DdlStmt::RenameUser { pairs } => Ok(Some(self.rename_user_stmt(pairs)?)),
-                // ROLES parse but are refused by name rather than through the
-                // generic DDL fallback, so the message says which feature is
-                // missing. Go supports them fully (captured: `CREATE ROLE r1`
-                // succeeds, `GRANT r1 TO 'u1'@'%'` adds a
-                // `GRANT 'r1'@'%' TO 'u1'@'%'` line to `SHOW GRANTS` between
-                // the table-scope and dynamic lines, and a role's own
-                // privileges reach a user only through its ACTIVE roles);
-                // modelling that needs a role graph and active-role state,
-                // which is its own unit.
-                tidb_ast::DdlStmt::CreateRole { .. }
-                | tidb_ast::DdlStmt::DropUser { is_role: true, .. } => {
-                    Err(DriverError::Unsupported(ROLES_UNSUPPORTED))
-                }
+                tidb_ast::DdlStmt::CreateRole {
+                    if_not_exists,
+                    roles,
+                } => Ok(Some(self.create_role_stmt(*if_not_exists, roles)?)),
                 _ => Ok(None),
             },
             Stmt::Admin(admin) => self.dispatch_admin_stmt(admin),
@@ -773,6 +761,7 @@ impl Session {
             warnings: Vec::new(),
             current_user: None,
             login_user: None,
+            active_roles: Vec::new(),
             connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
@@ -880,7 +869,37 @@ impl Session {
     /// front end the same way [`Session::attach_process`] installs the
     /// process-list registry.
     pub fn attach_privileges(&mut self, registry: privilege::PrivilegeRegistry) {
+        // Go's `Auth` activates the account's DEFAULT roles the moment the
+        // connection is authenticated (captured: a fresh session reports its
+        // default roles from `CURRENT_ROLE()` with no `SET ROLE` at all).
+        // The registry is what makes that answerable, so attaching it is the
+        // one place that can do it -- the front end installs the identity
+        // first and the registry second.
+        if let Some((user, host)) = self.current_identity() {
+            self.active_roles = registry.default_roles(&(user.to_owned(), host.to_owned()));
+        }
         self.privileges = Some(registry);
+    }
+
+    /// Go `SessionVars.ActiveRoles`, for the privilege checks and the
+    /// `CURRENT_ROLE()` builtin.
+    fn active_roles(&self) -> &[privilege::Account] {
+        &self.active_roles
+    }
+
+    /// The text `CURRENT_ROLE()` reports: Go's `builtinCurrentRoleSig` joins
+    /// each active role's `RoleIdentity.String()` (backtick-quoted
+    /// ``\`role\`@\`host\```) with a bare comma, and answers the literal
+    /// `NONE` when no role is active (captured, both forms).
+    fn current_role_text(&self) -> String {
+        if self.active_roles.is_empty() {
+            return "NONE".to_owned();
+        }
+        self.active_roles
+            .iter()
+            .map(|(role, host)| format!("`{role}`@`{host}`"))
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     /// Splits the `CURRENT_USER()` identity (`user@host`) this session
@@ -1455,6 +1474,7 @@ impl Session {
             return tidb_executor::StmtContext::for_query()
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())
+                .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_clock(clock, zone);
@@ -1471,6 +1491,7 @@ impl Session {
         )
         .with_session_state(current_db, version)
         .with_user(self.current_user.clone(), self.login_user.clone())
+        .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_rand_session(Rc::clone(&self.rand))
         .with_clock(clock, zone)

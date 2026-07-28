@@ -215,6 +215,16 @@ impl ConfiguredUserStore {
             IdentityLookupResult::Matched(identity) => Some(identity),
             IdentityLookupResult::Bypassed(_) | IdentityLookupResult::NotFound => None,
         };
+        // A ROLE is a `mysql.user` row with `account_locked = 'Y'` and an
+        // empty password, so without this it would be the most loginable
+        // account on the server. Go refuses a locked account at the same
+        // point, before any password comparison.
+        if identity
+            .as_ref()
+            .is_some_and(|identity| self.accounts.is_role(identity.username(), identity.host()))
+        {
+            return None;
+        }
         let stored = identity.as_ref().and_then(|identity| {
             self.accounts
                 .auth_string(identity.username(), identity.host())

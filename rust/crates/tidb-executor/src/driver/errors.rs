@@ -305,6 +305,41 @@ pub enum DriverError {
     /// Go `ErrCantCreateUserWithGrant` (1410): `GRANT` named an account that
     /// does not exist and TiDB refuses to implicitly create one.
     GrantToUnknownUser,
+    /// Go `ErrCannotUser` (1396) raised by a ROLE statement. Each of them
+    /// names its own operation and formats the offending identity the way
+    /// that statement's Go code does, so both travel together rather than
+    /// being guessed at render time (all captured):
+    /// `CREATE ROLE` quotes `'r'@'h'`, `DROP ROLE`/`GRANT ROLE`/`REVOKE ROLE`
+    /// print an account bare as `u@h`, and `REVOKE ROLE` prints a missing
+    /// ROLE backtick-quoted as ``\`r\`@\`h\`` (`auth.RoleIdentity.String`).
+    CannotUserRole {
+        /// The operation name the message reports, e.g. `CREATE ROLE`.
+        operation: &'static str,
+        /// The already-formatted identity (or comma-joined identities).
+        target: String,
+    },
+    /// Go `ErrGrantRole` (3523): `GRANT <role> TO ...` named a role that has
+    /// no account row at all.
+    GrantUnknownRole {
+        /// The role name.
+        role: String,
+        /// The role host.
+        host: String,
+    },
+    /// Go `ErrRoleNotGranted` (3530): `SET ROLE`/`SET DEFAULT ROLE` named a
+    /// role that is not granted DIRECTLY to the account. A role held only
+    /// indirectly (granted to a role the account holds) lands here too --
+    /// activation never walks the graph.
+    RoleNotGranted {
+        /// The role name.
+        role: String,
+        /// The role host.
+        role_host: String,
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
     /// Go `ErrDynamicPrivilegeNotRegistered` (3929): a `GRANT`/`REVOKE`
     /// privilege name is not one of the standard static privileges and is
     /// not a registered dynamic privilege either.
@@ -879,6 +914,31 @@ impl DriverError {
         DriverError::RevokeUnknownUser { user, host } => {
             MysqlError::unknown(format!("Unknown user: {user}@{host}"))
         }
+        // Go `ErrCannotUser` (1396) for every ROLE statement; the caller
+        // already formatted the identity the way that statement does.
+        DriverError::CannotUserRole { operation, target } => MysqlError::new(
+            1396,
+            *b"HY000",
+            format!("Operation {operation} failed for {target}"),
+        ),
+        // Go `ErrGrantRole` (3523).
+        DriverError::GrantUnknownRole { role, host } => MysqlError::new(
+            3523,
+            *b"HY000",
+            format!("Unknown authorization ID `{role}`@`{host}`"),
+        ),
+        // Go `ErrRoleNotGranted` (3530): the role is backtick-quoted
+        // (`RoleIdentity.String`) and the account bare (`UserIdentity.String`).
+        DriverError::RoleNotGranted {
+            role,
+            role_host,
+            user,
+            host,
+        } => MysqlError::new(
+            3530,
+            *b"HY000",
+            format!("`{role}`@`{role_host}` is not granted to {user}@{host}"),
+        ),
         // Go `ErrCantCreateUserWithGrant` (1410).
         DriverError::GrantToUnknownUser => MysqlError::new(
             1410,

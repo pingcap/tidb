@@ -42,6 +42,8 @@ pub struct StmtContext {
     version: Option<String>,
     current_user: Option<String>,
     login_user: Option<String>,
+    /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
+    current_role: Option<String>,
     connection_id: Option<u64>,
     /// Go `StatementContext`'s fixed statement time as
     /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
@@ -71,6 +73,7 @@ impl StmtContext {
             current_db: None,
             version: None,
             current_user: None,
+            current_role: None,
             login_user: None,
             connection_id: None,
             now: None,
@@ -100,6 +103,14 @@ impl StmtContext {
     pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
         self.current_user = current_user;
         self.login_user = login_user;
+        self
+    }
+
+    /// Attaches the rendered `CURRENT_ROLE()` text, which Go derives from
+    /// `SessionVars.ActiveRoles`.
+    #[must_use]
+    pub fn with_current_role(mut self, current_role: Option<String>) -> Self {
+        self.current_role = current_role;
         self
     }
 
@@ -155,6 +166,7 @@ impl StmtContext {
             current_db: None,
             version: None,
             current_user: None,
+            current_role: None,
             login_user: None,
             connection_id: None,
             now: None,
@@ -218,6 +230,10 @@ impl Columns for StmtContext {
 
     fn login_user(&self) -> Option<String> {
         self.login_user.clone()
+    }
+
+    fn current_role(&self) -> Option<String> {
+        self.current_role.clone()
     }
 
     fn connection_id(&self) -> Option<u64> {

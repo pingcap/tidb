@@ -195,8 +195,8 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // whether the result is NULL.
         "nullif" => args.first()?.static_type()?.clone(),
         // Go reads these from `SessionVars`; each returns a string.
-        "database" | "schema" | "version" | "current_user" | "user" | "session_user"
-        | "system_user" => text(),
+        "database" | "schema" | "version" | "current_user" | "current_role" | "user"
+        | "session_user" | "system_user" => text(),
         // Go `connectionIDFunctionClass` fixes an unsigned `LongLong`.
         "connection_id" => {
             let mut ft = int();

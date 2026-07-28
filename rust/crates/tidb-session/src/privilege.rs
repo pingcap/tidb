@@ -48,13 +48,29 @@
 //! its own `WITH GRANT OPTION` flag, which is why `SHOW GRANTS` prints them
 //! on separate trailing lines.
 //!
-//! OUT OF SCOPE (refused rather than faked): column-level grants and roles
-//! (`CREATE ROLE`/`GRANT ROLE`/`DROP ROLE`).
+//! ROLES live here as well, because a role IS an account: Go's `CREATE ROLE`
+//! writes an ordinary `mysql.user` row whose `account_locked` is `Y`
+//! (captured), which is why `CREATE USER r` and `CREATE ROLE r` collide on the
+//! same name and why `DROP USER` removes a role exactly as `DROP ROLE` does.
+//! The two things a role adds on top of a locked account are the
+//! `mysql.role_edges` graph (which accounts hold which roles) and the
+//! `mysql.default_roles` table (which of them activate at login). Neither is a
+//! privilege by itself: an account reaches a role's privileges only while that
+//! role is ACTIVE in its session, and then TRANSITIVELY through roles granted
+//! to that role (Go `FindAllUserEffectiveRoles`, a breadth-first walk of the
+//! graph -- captured: activating `ra`, with `rb` granted to `ra`, confers
+//! `rb`'s `SELECT` even though `SET ROLE ALL` never names `rb`).
+//!
+//! OUT OF SCOPE (refused rather than faked): column-level grants.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
+
+/// One account identity, `(user, host)` -- the key of every table here, and
+/// the shape a role is named by too, since a role IS an account.
+pub type Account = (String, String);
 
 /// `mysql.DB` row key: `(user, host, database)`.
 type DbPrivKey = (String, String, String);
@@ -367,6 +383,11 @@ struct UserRecord {
     /// leaves `authentication_string` empty with plugin
     /// `mysql_native_password`).
     auth_string: String,
+    /// Go's `mysql.user.account_locked`, which `CREATE ROLE` sets to `Y`
+    /// (captured) and `CREATE USER` leaves `N`. A locked account cannot log
+    /// in, which is the whole difference between a role and a user at the
+    /// row level.
+    is_role: bool,
 }
 
 /// The server's account/global-privilege registry, shared by every session
@@ -385,6 +406,19 @@ pub struct PrivilegeRegistry {
     /// account. An account with none has no entry here at all, which is what
     /// keeps `SHOW GRANTS` from printing an empty dynamic line.
     dynamic_privs: Arc<Mutex<HashMap<(String, String), DynamicPrivs>>>,
+    /// Go `mysql.role_edges` / `MySQLPrivilege.roleGraph`, keyed by the
+    /// GRANTEE (`TO_USER`/`TO_HOST`) so "which roles does this account hold"
+    /// -- the question every reader asks -- is one lookup. The `BTreeSet`
+    /// makes `SHOW GRANTS`'s sorted role list structural.
+    ///
+    /// Only edges are stored, never a closure: Go re-walks the graph on every
+    /// check, so a role granted to a role takes effect immediately without
+    /// any cache to invalidate.
+    role_edges: Arc<Mutex<HashMap<Account, BTreeSet<Account>>>>,
+    /// Go `mysql.default_roles`: the roles a session activates at login.
+    /// An account with no row here starts with no active role at all
+    /// (captured: a fresh session reports `CURRENT_ROLE()` = `NONE`).
+    default_roles: Arc<Mutex<HashMap<Account, BTreeSet<Account>>>>,
 }
 
 impl std::fmt::Debug for PrivilegeRegistry {
@@ -434,7 +468,14 @@ impl PrivilegeRegistry {
                 } else {
                     0
                 };
-                ((user, host), UserRecord { privs, auth_string })
+                (
+                    (user, host),
+                    UserRecord {
+                        privs,
+                        auth_string,
+                        is_role: false,
+                    },
+                )
             })
             .collect();
         Self {
@@ -442,6 +483,8 @@ impl PrivilegeRegistry {
             db_privs: Arc::new(Mutex::new(HashMap::new())),
             table_privs: Arc::new(Mutex::new(HashMap::new())),
             dynamic_privs: Arc::new(Mutex::new(HashMap::new())),
+            role_edges: Arc::new(Mutex::new(HashMap::new())),
+            default_roles: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -471,6 +514,18 @@ impl PrivilegeRegistry {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn lock_role_edges(&self) -> std::sync::MutexGuard<'_, HashMap<Account, BTreeSet<Account>>> {
+        self.role_edges
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_default_roles(&self) -> std::sync::MutexGuard<'_, HashMap<Account, BTreeSet<Account>>> {
+        self.default_roles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Whether an account with this exact user/host pair has been created
     /// (`CREATE USER`) and not since dropped.
     #[must_use]
@@ -484,6 +539,19 @@ impl PrivilegeRegistry {
     /// `IF NOT EXISTS` itself. Returns `false` if the account already
     /// existed (no state changed), `true` if it was created.
     pub fn create_user(&self, user: &str, host: &str, auth_string: &str) -> bool {
+        self.create_account(user, host, auth_string, false)
+    }
+
+    /// `CREATE ROLE`, which is `CREATE USER` writing the same `mysql.user`
+    /// row with `account_locked = 'Y'` and no password. Roles and users share
+    /// one namespace, so this collides with an existing account of either
+    /// kind (captured: `CREATE USER r1` after `CREATE ROLE r1` reports
+    /// `Operation CREATE USER failed for 'r1'@'%'`, and vice versa).
+    pub fn create_role(&self, role: &str, host: &str) -> bool {
+        self.create_account(role, host, "", true)
+    }
+
+    fn create_account(&self, user: &str, host: &str, auth_string: &str, is_role: bool) -> bool {
         let key = (user.to_owned(), host.to_owned());
         let mut guard = self.lock();
         if guard.contains_key(&key) {
@@ -494,9 +562,20 @@ impl PrivilegeRegistry {
             UserRecord {
                 privs: 0,
                 auth_string: auth_string.to_owned(),
+                is_role,
             },
         );
         true
+    }
+
+    /// Whether this account is a ROLE (`account_locked = 'Y'`). A role cannot
+    /// log in, which is what keeps a passwordless role from being an open
+    /// door.
+    #[must_use]
+    pub fn is_role(&self, user: &str, host: &str) -> bool {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .is_some_and(|record| record.is_role)
     }
 
     /// The account's `authentication_string`, or `None` when no such account
@@ -606,7 +685,141 @@ impl PrivilegeRegistry {
             .retain(|(row_user, row_host, _, _), _| row_user != user || row_host != host);
         self.lock_dynamic()
             .remove(&(user.to_owned(), host.to_owned()));
+        // Go's `DROP USER`/`DROP ROLE` deletes the account's `role_edges`
+        // rows in BOTH directions and every `default_roles` row naming it
+        // (captured: after `DROP ROLE r1`, no edge mentions r1 and u1's
+        // default-role row for r1 is gone), so no dangling grant survives to
+        // be inherited by a later account of the same name.
+        let account = (user.to_owned(), host.to_owned());
+        let mut edges = self.lock_role_edges();
+        edges.remove(&account);
+        for roles in edges.values_mut() {
+            roles.remove(&account);
+        }
+        edges.retain(|_, roles| !roles.is_empty());
+        drop(edges);
+        let mut defaults = self.lock_default_roles();
+        defaults.remove(&account);
+        for roles in defaults.values_mut() {
+            roles.remove(&account);
+        }
+        defaults.retain(|_, roles| !roles.is_empty());
         removed
+    }
+
+    /// `GRANT <role> TO <account>`: one `mysql.role_edges` row. Go's
+    /// `INSERT IGNORE` makes a repeat grant a silent no-op, and nothing
+    /// rejects a self-grant or a cycle (captured: `GRANT r1 TO r1` reports
+    /// OK), so neither is special-cased here -- the breadth-first walk in
+    /// [`Self::effective_roles`] terminates on visited nodes regardless.
+    pub fn grant_role(&self, role: &Account, grantee: &Account) {
+        self.lock_role_edges()
+            .entry(grantee.clone())
+            .or_default()
+            .insert(role.clone());
+    }
+
+    /// `REVOKE <role> FROM <account>`: deletes the edge, and with it any
+    /// `default_roles` row that named the now-ungranted role (captured:
+    /// after `REVOKE r1 FROM 'u1'@'%'`, u1's default roles keep only r3).
+    /// Revoking an edge that was never there is a silent no-op, as in Go.
+    pub fn revoke_role(&self, role: &Account, grantee: &Account) {
+        let mut edges = self.lock_role_edges();
+        if let Some(roles) = edges.get_mut(grantee) {
+            roles.remove(role);
+            if roles.is_empty() {
+                edges.remove(grantee);
+            }
+        }
+        drop(edges);
+        let mut defaults = self.lock_default_roles();
+        if let Some(roles) = defaults.get_mut(grantee) {
+            roles.remove(role);
+            if roles.is_empty() {
+                defaults.remove(grantee);
+            }
+        }
+    }
+
+    /// The roles granted DIRECTLY to this account, sorted. This is the set
+    /// `SET ROLE ALL` activates and the one `SHOW GRANTS`'s role line prints
+    /// -- Go never expands the graph for either (captured: `SET ROLE ALL` for
+    /// an account holding `ra`, which itself holds `rb`, activates `ra`
+    /// alone).
+    #[must_use]
+    pub fn granted_roles(&self, account: &Account) -> Vec<Account> {
+        self.lock_role_edges()
+            .get(account)
+            .map(|roles| roles.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Go `MySQLPrivilege.FindRole`: whether `role` is granted directly to
+    /// `account`. `SET ROLE` and `SET DEFAULT ROLE` both gate on this, which
+    /// is why naming an indirectly-held role reports `ErrRoleNotGranted`
+    /// (3530) rather than activating it.
+    #[must_use]
+    pub fn has_role(&self, account: &Account, role: &Account) -> bool {
+        self.lock_role_edges()
+            .get(account)
+            .is_some_and(|roles| roles.contains(role))
+    }
+
+    /// Go `MySQLPrivilege.FindAllUserEffectiveRoles`: the identities whose
+    /// privileges `account` actually reaches through `active` -- each active
+    /// role that is really granted to `account`, plus everything reachable
+    /// from those by following further role grants (breadth-first, visiting
+    /// each identity once so a cycle terminates).
+    ///
+    /// This is deliberately NOT [`Self::granted_roles`]: activation is
+    /// direct-only, but INHERITANCE through an activated role is transitive.
+    #[must_use]
+    pub fn effective_roles(&self, account: &Account, active: &[Account]) -> Vec<Account> {
+        let edges = self.lock_role_edges();
+        let granted = edges.get(account);
+        let mut queue: Vec<Account> = active
+            .iter()
+            .filter(|role| granted.is_some_and(|roles| roles.contains(*role)))
+            .cloned()
+            .collect();
+        let mut visited: BTreeSet<Account> = BTreeSet::new();
+        let mut effective = Vec::new();
+        let mut head = 0;
+        while head < queue.len() {
+            let role = queue[head].clone();
+            head += 1;
+            if !visited.insert(role.clone()) {
+                continue;
+            }
+            if let Some(inherited) = edges.get(&role) {
+                queue.extend(inherited.iter().cloned());
+            }
+            effective.push(role);
+        }
+        effective
+    }
+
+    /// The account's `mysql.default_roles` rows, sorted -- the roles a fresh
+    /// session activates and the ones `SET ROLE DEFAULT` restores.
+    #[must_use]
+    pub fn default_roles(&self, account: &Account) -> Vec<Account> {
+        self.lock_default_roles()
+            .get(account)
+            .map(|roles| roles.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// `SET DEFAULT ROLE`: replaces the account's whole `default_roles` set
+    /// (Go deletes every row for the account and re-inserts, so this is a
+    /// replace and never a merge). An empty set leaves no row at all, which
+    /// is the `SET DEFAULT ROLE NONE` state.
+    pub fn set_default_roles(&self, account: &Account, roles: &[Account]) {
+        let mut defaults = self.lock_default_roles();
+        if roles.is_empty() {
+            defaults.remove(account);
+            return;
+        }
+        defaults.insert(account.clone(), roles.iter().cloned().collect());
     }
 
     /// Sets every bit in `mask`, on an account the caller has already
@@ -625,13 +838,47 @@ impl PrivilegeRegistry {
         }
     }
 
-    /// Whether the account holds `global_priv`, for privilege checks like
-    /// `SHOW PROCESSLIST`'s `PROCESS` gate.
+    /// Whether the account holds `global_priv` IN ITS OWN RIGHT, ignoring
+    /// roles -- the check for a caller that has no session and therefore no
+    /// active-role set.
     #[must_use]
     pub fn has_global_priv(&self, user: &str, host: &str, global_priv: GlobalPriv) -> bool {
         self.lock()
             .get(&(user.to_owned(), host.to_owned()))
             .is_some_and(|record| record.privs & global_priv.bit() != 0)
+    }
+
+    /// Go `MySQLPrivilege.RequestVerification`'s global-scope arm: the
+    /// account's own privileges OR those of every role it reaches through
+    /// `active_roles`. Go checks the user's own record first and each
+    /// effective role's afterwards; ORing the masks is the same answer in
+    /// the same order, since a privilege held anywhere satisfies the check.
+    #[must_use]
+    pub fn has_global_priv_with_roles(
+        &self,
+        user: &str,
+        host: &str,
+        active_roles: &[Account],
+        global_priv: GlobalPriv,
+    ) -> bool {
+        self.identities_for_check(user, host, active_roles)
+            .into_iter()
+            .any(|(role_user, role_host)| self.has_global_priv(&role_user, &role_host, global_priv))
+    }
+
+    /// The account itself followed by every role it effectively holds -- the
+    /// identity list Go's `RequestVerification` walks, in Go's order (self
+    /// first, then roles).
+    fn identities_for_check(
+        &self,
+        user: &str,
+        host: &str,
+        active_roles: &[Account],
+    ) -> Vec<Account> {
+        let account = (user.to_owned(), host.to_owned());
+        let mut identities = vec![account.clone()];
+        identities.extend(self.effective_roles(&account, active_roles));
+        identities
     }
 
     /// Go's `GRANT <dynamic> ON *.* TO`, which is a
@@ -715,6 +962,26 @@ impl PrivilegeRegistry {
         self.has_global_priv(user, host, GlobalPriv::Super)
     }
 
+    /// [`Self::has_dynamic_priv`] widened to the account's active roles, the
+    /// same way [`Self::has_global_priv_with_roles`] widens the static check
+    /// (captured: `SHOW GRANTS` merges a role's DYNAMIC privileges into the
+    /// account's own dynamic line once the role is active).
+    #[must_use]
+    pub fn has_dynamic_priv_with_roles(
+        &self,
+        user: &str,
+        host: &str,
+        active_roles: &[Account],
+        name: &str,
+        with_grant: bool,
+    ) -> bool {
+        self.identities_for_check(user, host, active_roles)
+            .into_iter()
+            .any(|(role_user, role_host)| {
+                self.has_dynamic_priv(&role_user, &role_host, name, with_grant)
+            })
+    }
+
     /// Sets every bit in `mask` on the account's `(database)` row, creating
     /// the row if this is its first DB-scope grant (Go's `checkAndInitDBPriv`
     /// inserting a fresh `mysql.DB` row before `grantDBLevel` sets bits on
@@ -794,24 +1061,45 @@ impl PrivilegeRegistry {
         }
     }
 
-    /// Go `MySQLPrivilege.showGrants`'s global-scope slice: `None` when the
-    /// account has no grant row at all (Go's `ErrNonexistingGrant`), `Some`
-    /// with the one `GRANT ... ON *.* TO '<user>'@'<host>'` line otherwise
-    /// (or the `GRANT USAGE ...` line Go prints for an account with zero
-    /// privileges -- "this is a mysql convention").
+    /// Go `MySQLPrivilege.showGrants`: `None` when the account has no grant
+    /// row at all (Go's `ErrNonexistingGrant`), `Some` with the newline-joined
+    /// lines otherwise.
+    ///
+    /// `active_roles` is the session's active-role set for a `SHOW GRANTS`
+    /// about the session's own account (and the `USING` list otherwise); the
+    /// privileges of every role reachable through it are MERGED into the
+    /// account's own lines, printed under the ACCOUNT's name (captured: with
+    /// a role holding `SELECT ON roledb.*` active, `SHOW GRANTS` prints
+    /// ``GRANT SELECT ON `roledb`.* TO 'u1'@'%'``). Pass an empty slice for
+    /// `SHOW GRANTS FOR <other account>`, which merges nothing.
     #[must_use]
-    pub fn show_grants(&self, user: &str, host: &str) -> Option<String> {
+    pub fn show_grants(&self, user: &str, host: &str, active_roles: &[Account]) -> Option<String> {
+        if !self.user_exists(user, host) {
+            return None;
+        }
+        // Every identity whose rows fold into this output. Go reads the
+        // account's own row and each effective role's, ORing the masks.
+        let identities = self.identities_for_check(user, host, active_roles);
+        let owns = |row_user: &str, row_host: &str| {
+            identities
+                .iter()
+                .any(|(id_user, id_host)| id_user == row_user && id_host == row_host)
+        };
+
         let global_line = {
             let guard = self.lock();
-            let record = guard.get(&(user.to_owned(), host.to_owned()))?;
-            let priv_text = if record.privs & !GlobalPriv::GrantOption.bit() == all_privs_mask() {
+            let privs = identities
+                .iter()
+                .filter_map(|key| guard.get(key))
+                .fold(0u64, |mask, record| mask | record.privs);
+            let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_privs_mask() {
                 "ALL PRIVILEGES".to_owned()
             } else {
-                priv_list(record.privs, ALL_GLOBAL_PRIVS)
+                priv_list(privs, ALL_GLOBAL_PRIVS)
             };
             format!(
                 "GRANT {priv_text} ON *.* TO '{user}'@'{host}'{}",
-                grant_option_suffix(record.privs)
+                grant_option_suffix(privs)
             )
         };
 
@@ -819,39 +1107,53 @@ impl PrivilegeRegistry {
         // formatted `GRANT ... ON db.* ...` string (captured: a grant on
         // `aaadb` prints before one on `db1`, even though `db1` was granted
         // first) -- not insertion order, not plain DB-name order.
-        let mut db_lines: Vec<String> = self
-            .lock_db()
-            .iter()
-            .filter(|((row_user, row_host, _), _)| row_user == user && row_host == host)
-            .map(|((_, _, database), privs)| {
+        //
+        // Rows of the account and of every effective role are merged PER
+        // DATABASE before formatting (Go's `dbPrivTable` map), so a database
+        // granted to both prints one line carrying the union.
+        let mut db_masks: BTreeMap<String, u64> = BTreeMap::new();
+        for ((row_user, row_host, database), privs) in self.lock_db().iter() {
+            if owns(row_user, row_host) {
+                *db_masks.entry(database.clone()).or_insert(0) |= *privs;
+            }
+        }
+        let mut db_lines: Vec<String> = db_masks
+            .into_iter()
+            .map(|(database, privs)| {
                 let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_db_privs_mask() {
                     "ALL PRIVILEGES".to_owned()
                 } else {
-                    priv_list(*privs, ALL_DB_PRIVS)
+                    priv_list(privs, ALL_DB_PRIVS)
                 };
                 format!(
                     "GRANT {priv_text} ON `{database}`.* TO '{user}'@'{host}'{}",
-                    grant_option_suffix(*privs)
+                    grant_option_suffix(privs)
                 )
             })
             .collect();
         db_lines.sort_unstable();
 
         // TABLE-scope lines: same lexical-sort rule as DB-scope.
-        let mut table_lines: Vec<String> = self
-            .lock_table()
-            .iter()
-            .filter(|((row_user, row_host, _, _), _)| row_user == user && row_host == host)
-            .map(|((_, _, database, table), privs)| {
+        let mut table_masks: BTreeMap<(String, String), u64> = BTreeMap::new();
+        for ((row_user, row_host, database, table), privs) in self.lock_table().iter() {
+            if owns(row_user, row_host) {
+                *table_masks
+                    .entry((database.clone(), table.clone()))
+                    .or_insert(0) |= *privs;
+            }
+        }
+        let mut table_lines: Vec<String> = table_masks
+            .into_iter()
+            .map(|((database, table), privs)| {
                 let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_table_privs_mask()
                 {
                     "ALL PRIVILEGES".to_owned()
                 } else {
-                    priv_list(*privs, ALL_TABLE_PRIVS)
+                    priv_list(privs, ALL_TABLE_PRIVS)
                 };
                 format!(
                     "GRANT {priv_text} ON `{database}`.`{table}` TO '{user}'@'{host}'{}",
-                    grant_option_suffix(*privs)
+                    grant_option_suffix(privs)
                 )
             })
             .collect();
@@ -865,15 +1167,50 @@ impl PrivilegeRegistry {
         // ` WITH GRANT OPTION` suffix. An account with no dynamic row emits
         // neither, and the `GRANT USAGE ON *.*` global line is printed
         // regardless (captured: a dynamic-only account shows both).
+        //
+        // The ROLE line sits between the static scopes and the dynamic ones
+        // (captured, and Go's `showGrants` appends it right after the
+        // column-scope block). It lists the roles granted DIRECTLY to the
+        // account -- all of them, active or not -- sorted by their printed
+        // `'role'@'host'` text and joined with `", "`.
+        let mut role_names: Vec<String> = self
+            .granted_roles(&(user.to_owned(), host.to_owned()))
+            .into_iter()
+            .map(|(role, role_host)| format!("'{role}'@'{role_host}'"))
+            .collect();
+        role_names.sort_unstable();
+        let role_line = (!role_names.is_empty())
+            .then(|| format!("GRANT {} TO '{user}'@'{host}'", role_names.join(", ")));
+
+        // A role's DYNAMIC privileges merge into the account's own dynamic
+        // lines. Go keeps an already-grantable entry rather than letting a
+        // non-grantable inherited one clobber it, so the account's own row
+        // is written first and a role only fills in what is missing or
+        // upgrades a non-grantable entry.
+        let mut merged: BTreeMap<String, bool> = BTreeMap::new();
+        {
+            let dynamic = self.lock_dynamic();
+            for key in &identities {
+                let Some(privs) = dynamic.get(key) else {
+                    continue;
+                };
+                for (name, with_grant) in privs {
+                    match merged.get(name) {
+                        Some(true) => {}
+                        _ => {
+                            merged.insert(name.clone(), *with_grant);
+                        }
+                    }
+                }
+            }
+        }
         let mut plain: Vec<String> = Vec::new();
         let mut grantable: Vec<String> = Vec::new();
-        if let Some(privs) = self.lock_dynamic().get(&(user.to_owned(), host.to_owned())) {
-            for (name, with_grant) in privs {
-                if *with_grant {
-                    grantable.push(name.clone());
-                } else {
-                    plain.push(name.clone());
-                }
+        for (name, with_grant) in merged {
+            if with_grant {
+                grantable.push(name);
+            } else {
+                plain.push(name);
             }
         }
         let mut dynamic_lines = Vec::new();
@@ -891,10 +1228,11 @@ impl PrivilegeRegistry {
         }
 
         let mut lines =
-            Vec::with_capacity(1 + db_lines.len() + table_lines.len() + dynamic_lines.len());
+            Vec::with_capacity(2 + db_lines.len() + table_lines.len() + dynamic_lines.len());
         lines.push(global_line);
         lines.extend(db_lines);
         lines.extend(table_lines);
+        lines.extend(role_line);
         lines.extend(dynamic_lines);
         Some(lines.join("\n"))
     }
@@ -989,7 +1327,7 @@ mod tests {
         let registry = PrivilegeRegistry::default();
         assert!(registry.user_exists("root", "%"));
         assert_eq!(
-            registry.show_grants("root", "%").as_deref(),
+            registry.show_grants("root", "%", &[]).as_deref(),
             Some("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
         );
     }
@@ -999,7 +1337,7 @@ mod tests {
         let registry = PrivilegeRegistry::default();
         assert!(registry.create_user("u1", "%", ""));
         assert_eq!(
-            registry.show_grants("u1", "%").as_deref(),
+            registry.show_grants("u1", "%", &[]).as_deref(),
             Some("GRANT USAGE ON *.* TO 'u1'@'%'")
         );
         // Creating it again is refused, not silently accepted.
@@ -1019,12 +1357,12 @@ mod tests {
         registry.grant("u1", "%", mask);
         // Captured from Go: SELECT,INSERT,UPDATE,PROCESS,SUPER.
         assert_eq!(
-            registry.show_grants("u1", "%").as_deref(),
+            registry.show_grants("u1", "%", &[]).as_deref(),
             Some("GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO 'u1'@'%'")
         );
         registry.revoke("u1", "%", GlobalPriv::Super.bit());
         assert_eq!(
-            registry.show_grants("u1", "%").as_deref(),
+            registry.show_grants("u1", "%", &[]).as_deref(),
             Some("GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO 'u1'@'%'")
         );
     }
@@ -1044,7 +1382,7 @@ mod tests {
         registry.create_user("u1", "%", "");
         registry.grant("u1", "%", all_privs_mask());
         assert_eq!(
-            registry.show_grants("u1", "%").as_deref(),
+            registry.show_grants("u1", "%", &[]).as_deref(),
             Some("GRANT ALL PRIVILEGES ON *.* TO 'u1'@'%'")
         );
     }
@@ -1081,7 +1419,7 @@ mod tests {
         registry.grant("u", "%", GlobalPriv::Select.bit());
         registry.grant_db("u", "%", "aaadb", GlobalPriv::Select.bit());
         assert_eq!(
-            registry.show_grants("u", "%").as_deref(),
+            registry.show_grants("u", "%", &[]).as_deref(),
             Some(
                 "GRANT SELECT ON *.* TO 'u'@'%'\n\
                  GRANT SELECT ON `aaadb`.* TO 'u'@'%'\n\
@@ -1097,7 +1435,7 @@ mod tests {
         registry.create_user("u", "%", "");
         registry.grant_db("u", "%", "db1", all_db_privs_mask());
         assert_eq!(
-            registry.show_grants("u", "%").as_deref(),
+            registry.show_grants("u", "%", &[]).as_deref(),
             Some(
                 "GRANT USAGE ON *.* TO 'u'@'%'\n\
                  GRANT ALL PRIVILEGES ON `db1`.* TO 'u'@'%'"
@@ -1111,7 +1449,7 @@ mod tests {
         registry.create_user("u", "%", "");
         registry.grant_table("u", "%", "db1", "t1", all_table_privs_mask());
         assert_eq!(
-            registry.show_grants("u", "%").as_deref(),
+            registry.show_grants("u", "%", &[]).as_deref(),
             Some(
                 "GRANT USAGE ON *.* TO 'u'@'%'\n\
                  GRANT ALL PRIVILEGES ON `db1`.`t1` TO 'u'@'%'"
@@ -1129,7 +1467,7 @@ mod tests {
         // Revoking a privilege the row never had is a silent no-op.
         registry.revoke_db("u", "%", "db1", GlobalPriv::Update.bit());
         assert_eq!(
-            registry.show_grants("u", "%").as_deref(),
+            registry.show_grants("u", "%", &[]).as_deref(),
             Some(
                 "GRANT USAGE ON *.* TO 'u'@'%'\n\
                  GRANT SELECT ON `db1`.* TO 'u'@'%'"
@@ -1140,7 +1478,7 @@ mod tests {
         // USAGE like a fresh account would.
         assert!(registry.db_grant_row_exists("u", "%", "db1"));
         assert_eq!(
-            registry.show_grants("u", "%").as_deref(),
+            registry.show_grants("u", "%", &[]).as_deref(),
             Some(
                 "GRANT USAGE ON *.* TO 'u'@'%'\n\
                  GRANT USAGE ON `db1`.* TO 'u'@'%'"

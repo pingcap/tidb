@@ -3271,35 +3271,3 @@ fn unsupported_kinds_error() {
         StmtResult::Affected(1)
     );
 }
-
-/// Every ROLE statement parses and is refused by name -- not through a
-/// generic "unsupported statement kind" fallback, which would leave a
-/// user guessing whether the syntax or the feature is missing.
-///
-/// Captured from Go for the FUTURE roles unit: `CREATE ROLE r1` and
-/// `GRANT r1 TO 'u1'@'%'` both succeed, after which `SHOW GRANTS FOR
-/// 'u1'@'%'` gains a `GRANT 'r1'@'%' TO 'u1'@'%'` line positioned AFTER
-/// the table-scope lines and BEFORE the dynamic ones; the role's own
-/// dynamic privileges do NOT appear in that output, because a role's
-/// privileges reach a user only through its ACTIVE roles. `SET ROLE r1`
-/// from a session that was not granted `r1` is
-/// `` `r1`@`%` is not granted to root@% `` (3530).
-#[test]
-fn role_statements_are_refused_by_name() {
-    let mut session = session_with_privileges();
-    for sql in [
-        "CREATE ROLE r1",
-        "DROP ROLE r1",
-        "GRANT r1 TO 'u1'@'%'",
-        "REVOKE r1 FROM 'u1'@'%'",
-        "SET ROLE r1",
-        "SET DEFAULT ROLE r1 TO 'u1'@'%'",
-    ] {
-        match session.run(sql) {
-            Err(DriverError::Unsupported(message)) => {
-                assert_eq!(message, ROLES_UNSUPPORTED, "{sql}");
-            }
-            other => panic!("expected the roles refusal for {sql}, got {other:?}"),
-        }
-    }
-}

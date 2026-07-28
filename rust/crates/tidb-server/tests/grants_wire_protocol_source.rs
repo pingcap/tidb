@@ -376,6 +376,58 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     let revoked = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
     assert_eq!(revoked.len(), 1, "PROCESS revoked, live: {revoked:?}");
 
+    // The SAME gate reached through a ROLE, over the same two live
+    // connections. `PROCESS` lives only on the role, so what bob may see
+    // follows ACTIVATION, not the grant: holding the role changes nothing
+    // until bob runs `SET ROLE`, and `SET ROLE NONE` takes it away again --
+    // all without reconnecting, because there is no per-session privilege
+    // cache on either side.
+    assert_eq!(run_write(&mut root, &mut root_reader, "CREATE ROLE watcher"), 0);
+    assert_eq!(
+        run_admin(&mut root, &mut root_reader, "GRANT PROCESS ON *.* TO watcher"),
+        0
+    );
+    assert_eq!(
+        run_admin(&mut root, &mut root_reader, "GRANT watcher TO 'bob'@'%'"),
+        0
+    );
+    let granted_not_active = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
+    assert_eq!(
+        granted_not_active.len(),
+        1,
+        "a granted but inactive role confers nothing: {granted_not_active:?}"
+    );
+    assert_eq!(
+        run_query(&mut bob, &mut bob_reader, "SELECT CURRENT_ROLE()"),
+        vec![vec!["NONE".to_owned()]]
+    );
+    assert_eq!(run_write(&mut bob, &mut bob_reader, "SET ROLE watcher"), 0);
+    assert_eq!(
+        run_query(&mut bob, &mut bob_reader, "SELECT CURRENT_ROLE()"),
+        vec![vec!["`watcher`@`%`".to_owned()]]
+    );
+    let via_role = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
+    assert_eq!(
+        via_role.len(),
+        2,
+        "the activated role's PROCESS reaches the process list: {via_role:?}"
+    );
+    // The role line reaches the wire too, and the role's own privileges are
+    // merged under bob's name while it is active.
+    assert_eq!(
+        run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
+        vec![
+            vec!["GRANT PROCESS ON *.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT 'watcher'@'%' TO 'bob'@'%'".to_owned()],
+        ]
+    );
+    assert_eq!(run_write(&mut bob, &mut bob_reader, "SET ROLE NONE"), 0);
+    let deactivated = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
+    assert_eq!(deactivated.len(), 1, "deactivated: {deactivated:?}");
+    // Restore the state the rest of this test continues from.
+    assert_eq!(run_write(&mut root, &mut root_reader, "DROP ROLE watcher"), 0);
+
     // Holding neither SUPER nor CONNECTION_ADMIN, bob cannot KILL root's
     // connection -- Go's `planbuilder.go` `*ast.KillStmt` case reports
     // `ErrSpecificAccessDenied` (1227), not the unused 1095 `ErrKillDenied`.
