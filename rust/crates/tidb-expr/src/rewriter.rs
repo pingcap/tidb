@@ -115,7 +115,8 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // String in, string out.
         "concat" | "concat_ws" | "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim"
         | "rtrim" | "reverse" | "left" | "right" | "substring" | "substr" | "mid" | "replace"
-        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "unhex" | "md5" | "elt" => text(),
+        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "unhex" | "md5" | "elt"
+        | "substring_index" | "insert_func" | "char_func" | "export_set" | "quote" => text(),
         // The date/time family. Every value this crate produces for them is
         // a formatted string or an integer -- see `time_fn`'s own doc for
         // why there is no `Time` value domain here -- so the result types
@@ -124,7 +125,9 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // divergence, the same one the temporal casts carry.
         "now" | "current_timestamp" | "utc_timestamp" | "curdate" | "current_date" | "utc_date"
         | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"
-        | "sec_to_time" | "maketime" | "makedate" | "from_days" => text(),
+        | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date" => {
+            text()
+        }
         "month" | "day" | "dayofmonth" | "dayofweek" | "dayofyear" | "weekday" | "quarter"
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"
         | "microsecond" | "time_to_sec" | "to_days" | "period_add" | "period_diff"

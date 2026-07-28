@@ -2214,6 +2214,54 @@ mod tests {
         );
     }
 
+    /// A handful of everyday string/date builtins that were previously
+    /// refused by the chunk rewriter's return-type gate (`builtin_return_type`
+    /// had no arm for them, even though `eval_func_values`/`time_fn::dispatch`
+    /// already implement them). Expected values captured from upstream Go
+    /// via `SELECT ...` in a mock-store testkit session.
+    #[test]
+    fn everyday_string_and_date_builtins() {
+        let mut session = Session::new();
+        assert_eq!(
+            session
+                .run("SELECT SUBSTRING_INDEX('a.b.c', '.', 2)")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string("a.b")]])
+        );
+        assert_eq!(
+            session.run("SELECT CHAR(77, 121, 83, 81, 76)").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string("MySQL")]])
+        );
+        assert_eq!(
+            session
+                .run("SELECT INSERT('Quadratic', 3, 4, 'What')")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string("QuWhattic")]])
+        );
+        assert_eq!(
+            session
+                .run("SELECT EXPORT_SET(5, 'Y', 'N', ',', 4)")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string("Y,N,Y,N")]])
+        );
+        assert_eq!(
+            session
+                .run("SELECT DATE_FORMAT('2024-01-01 10:00:00', '%Y-%m-%d %H:%i:%s')")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string("2024-01-01 10:00:00")]])
+        );
+        assert_eq!(
+            session
+                .run("SELECT STR_TO_DATE('01,5,2024','%d,%m,%Y')")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string("2024-05-01")]])
+        );
+        assert_eq!(
+            session.run("SELECT QUOTE('a''b')").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string("'a\\'b'")]])
+        );
+    }
+
     /// UPDATE and DELETE run through the session like any other write, and
     /// report their affected-row counts.
     #[test]
