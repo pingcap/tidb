@@ -320,6 +320,24 @@ pub(crate) fn derived_field_names(select: &tidb_ast::SelectStmt) -> Option<Vec<S
         .collect()
 }
 
+/// [`derived_field_names`], widened to a `QueryStmt`: a set operation's output
+/// is named after its LEFTMOST `SELECT` term, the same rule Go's `buildSetOpr`
+/// uses when it derives the result schema from the first child.
+pub(crate) fn derived_field_names_query(query: &QueryStmt) -> Option<Vec<String>> {
+    match query {
+        QueryStmt::Select(select) => derived_field_names(select),
+        QueryStmt::SetOpr(set_opr) => {
+            let first = set_opr.terms.first()?;
+            match &first.body {
+                tidb_ast::SetOprTermBody::Select(select) => derived_field_names(select),
+                tidb_ast::SetOprTermBody::Nested(nested) => {
+                    derived_field_names_query(&QueryStmt::SetOpr(nested.clone()))
+                }
+            }
+        }
+    }
+}
+
 /// A type-carrying stand-in value for a column of type `ft`.
 ///
 /// Type inference over the probe run needs a datum of the right KIND, and
@@ -348,8 +366,13 @@ pub(crate) fn probe_datum(ft: &FieldType) -> Datum {
 /// [`crate::apply::LateralApplyExec`] concatenates every inner row onto the
 /// outer row instead of appending one value.
 ///
-/// DEFERRED (documented): a `LATERAL` over a set operation (`UNION`), which
-/// this crate's correlated-column collector does not walk.
+/// A `LATERAL` over a set operation (`UNION`/`EXCEPT`/`INTERSECT`) walks the
+/// same path: [`collect_correlated_columns_query`] and
+/// [`bind_subquery_columns_query`] widen the collector and the binder to a
+/// `QueryStmt`, so every term of the set operation is re-run per outer row
+/// exactly like a lone `SELECT`'s clauses are, and the result's column names
+/// come from the set operation's leftmost term (`derived_field_names_query`),
+/// matching Go's `buildSetOpr`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_lateral_join(
     join: &tidb_ast::Join,
@@ -392,16 +415,13 @@ pub(crate) fn build_lateral_join(
     let Some(alias) = alias else {
         return Err(DriverError::DerivedMustHaveAlias);
     };
-    let QueryStmt::Select(select) = subquery else {
-        return Err(DriverError::Unsupported(
-            "a LATERAL derived table over a set operation is not supported yet",
-        ));
-    };
-
     // The columns the subquery's correlated references name in the left scope.
+    // A set-operation subquery's terms are walked the same as a lone
+    // `SELECT`'s clauses -- each term is re-run per outer row exactly like a
+    // plain `SELECT` would be.
     let mut correlated = Vec::new();
-    collect_correlated_columns(
-        select,
+    collect_correlated_columns_query(
+        subquery,
         &left_scope,
         catalog,
         current_db,
@@ -427,9 +447,9 @@ pub(crate) fn build_lateral_join(
             (path.clone(), datum)
         })
         .collect();
-    let typed = bind_subquery_columns(select, &probes)?;
-    let (probe_columns, _) = run_select_stmt(&typed, catalog, current_db, ctx)?;
-    let mut columns: Vec<(String, FieldType)> = match derived_field_names(select) {
+    let typed = bind_subquery_columns_query(subquery, &probes)?;
+    let (probe_columns, _) = run_query_stmt(&typed, catalog, current_db, ctx)?;
+    let mut columns: Vec<(String, FieldType)> = match derived_field_names_query(subquery) {
         Some(names) if names.len() == probe_columns.len() => names
             .into_iter()
             .zip(&probe_columns)
@@ -460,7 +480,7 @@ pub(crate) fn build_lateral_join(
     });
 
     let inner_width = columns.len();
-    let select = select.as_ref().clone();
+    let subquery = subquery.clone();
     let correlated_paths = correlated;
     let outer_scope = left_scope;
     // The callback outlives this borrow of the catalog, so it owns a snapshot
@@ -483,14 +503,13 @@ pub(crate) fn build_lateral_join(
                 .ok_or(ExecError::Unsupported("correlated column out of range"))?;
             bindings.push((path.clone(), value));
         }
-        let bound = bind_subquery_columns(&select, &bindings)
+        let bound = bind_subquery_columns_query(&subquery, &bindings)
             .map_err(|e| ExecError::Unsupported(driver_error_text(&e)))?;
-        let (_, rows) = run_select_stmt(&bound, &inner_catalog, &inner_db, &inner_ctx).map_err(
-            |e| match e {
+        let (_, rows) =
+            run_query_stmt(&bound, &inner_catalog, &inner_db, &inner_ctx).map_err(|e| match e {
                 DriverError::Exec(exec) => exec,
                 other => ExecError::Unsupported(driver_error_text(&other)),
-            },
-        )?;
+            })?;
         Ok(rows)
     });
 

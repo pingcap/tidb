@@ -833,6 +833,21 @@ fn materialize_ctes(
     Ok(scratch)
 }
 
+/// Runs a `QueryStmt` of either shape against the catalog: the same dispatch
+/// [`build_derived_source`] makes over a derived table's subquery, factored
+/// out so the lateral-over-set-operation path can share it.
+pub(crate) fn run_query_stmt(
+    query: &QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<SelectMeta, DriverError> {
+    match query {
+        QueryStmt::Select(select) => run_select_stmt(select, catalog, current_db, ctx),
+        QueryStmt::SetOpr(set_opr) => run_set_opr_stmt(set_opr, catalog, current_db, ctx),
+    }
+}
+
 /// Runs one parsed `SELECT` against the catalog, for a caller that has
 /// already rewritten the statement (session-variable binding, for instance)
 /// and must not go back through SQL text.
@@ -2595,6 +2610,44 @@ struct CorrelatedSubquery {
 /// A reference is correlated when the inner query's own `FROM` cannot resolve
 /// it but the outer scope can -- the same two-scope test Go's name resolver
 /// applies when it binds a column to an outer plan's schema.
+/// [`collect_correlated_columns`], widened to a `QueryStmt`: a set operation's
+/// correlated columns are the union of what each of its terms references,
+/// since every term is re-run per outer row exactly like a lone `SELECT` is.
+/// A statement-level `ORDER BY`/`LIMIT` names an output column or position
+/// (see `sort_rows_by_output`), never an outer one, so it contributes nothing
+/// here.
+pub(crate) fn collect_correlated_columns_query(
+    query: &QueryStmt,
+    outer: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    found: &mut Vec<Vec<String>>,
+    ctx: &crate::StmtContext,
+) {
+    match query {
+        QueryStmt::Select(select) => {
+            collect_correlated_columns(select, outer, catalog, current_db, found, ctx)
+        }
+        QueryStmt::SetOpr(set_opr) => {
+            for term in &set_opr.terms {
+                match &term.body {
+                    tidb_ast::SetOprTermBody::Select(select) => {
+                        collect_correlated_columns(select, outer, catalog, current_db, found, ctx)
+                    }
+                    tidb_ast::SetOprTermBody::Nested(nested) => collect_correlated_columns_query(
+                        &QueryStmt::SetOpr(nested.clone()),
+                        outer,
+                        catalog,
+                        current_db,
+                        found,
+                        ctx,
+                    ),
+                }
+            }
+        }
+    }
+}
+
 fn collect_correlated_columns(
     select: &tidb_ast::SelectStmt,
     outer: &FromScope,
@@ -2770,6 +2823,40 @@ fn bind_subquery_columns(
         item.expr = bind_correlated_columns(&item.expr, bindings)?;
     }
     Ok(bound)
+}
+
+/// [`bind_subquery_columns`], widened to a `QueryStmt`: every term of a set
+/// operation gets the same substitution, since each is re-run per outer row.
+pub(crate) fn bind_subquery_columns_query(
+    query: &QueryStmt,
+    bindings: &[(Vec<String>, Datum)],
+) -> Result<QueryStmt, DriverError> {
+    Ok(match query {
+        QueryStmt::Select(select) => {
+            QueryStmt::Select(Box::new(bind_subquery_columns(select, bindings)?))
+        }
+        QueryStmt::SetOpr(set_opr) => {
+            let mut bound = (**set_opr).clone();
+            for term in &mut bound.terms {
+                term.body = match &term.body {
+                    tidb_ast::SetOprTermBody::Select(select) => tidb_ast::SetOprTermBody::Select(
+                        Box::new(bind_subquery_columns(select, bindings)?),
+                    ),
+                    tidb_ast::SetOprTermBody::Nested(nested) => {
+                        let QueryStmt::SetOpr(nested) = bind_subquery_columns_query(
+                            &QueryStmt::SetOpr(nested.clone()),
+                            bindings,
+                        )?
+                        else {
+                            unreachable!("SetOpr input binds to SetOpr output")
+                        };
+                        tidb_ast::SetOprTermBody::Nested(nested)
+                    }
+                };
+            }
+            QueryStmt::SetOpr(Box::new(bound))
+        }
+    })
 }
 
 /// Binds every correlated column in `select` and runs it for one outer row.

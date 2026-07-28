@@ -209,6 +209,97 @@ fn lateral_derived_table_join_shapes() {
     assert_eq!(rows, [["1"]]);
 }
 
+/// A `LATERAL` derived table whose body is a set operation (`UNION`/
+/// `UNION ALL`), which the correlated-column collector previously did not
+/// walk (see `collect_correlated_columns_query` in `driver.rs`). Every case
+/// captured from Go's mock store.
+#[test]
+fn lateral_derived_table_over_set_operation() {
+    let mut session = lateral_session();
+
+    // A correlated column referenced in both arms, varying per outer row.
+    let (names, rows) = query_text(
+        &mut session,
+        "SELECT t.a, x.v FROM t, LATERAL \
+             (SELECT k AS v FROM s WHERE s.k = t.a \
+              UNION \
+              SELECT v FROM s WHERE s.v = t.a * 100) x \
+             ORDER BY t.a, x.v",
+    );
+    assert_eq!(names, ["a", "v"]);
+    assert_eq!(
+        rows,
+        [
+            ["1", "1"],
+            ["1", "100"],
+            ["2", "2"],
+            ["2", "200"],
+            ["3", "3"],
+            ["3", "300"],
+        ]
+    );
+
+    // UNION ALL keeps duplicates the lateral subquery itself produces;
+    // plain UNION (no ALL) dedups them -- both per outer row.
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT t.a, x.v FROM t, LATERAL (SELECT t.a AS v UNION ALL SELECT t.a AS v) x \
+             ORDER BY t.a",
+    );
+    assert_eq!(
+        rows,
+        [
+            ["1", "1"],
+            ["1", "1"],
+            ["2", "2"],
+            ["2", "2"],
+            ["3", "3"],
+            ["3", "3"],
+        ]
+    );
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT t.a, x.v FROM t, LATERAL (SELECT t.a AS v UNION SELECT t.a AS v) x \
+             ORDER BY t.a",
+    );
+    assert_eq!(rows, [["1", "1"], ["2", "2"], ["3", "3"]]);
+
+    // The set operation's own ORDER BY/LIMIT applies to the folded result,
+    // not to either arm alone, and still runs once per outer row.
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT t.a, x.v FROM t, LATERAL \
+             (SELECT v FROM s WHERE s.k = t.a \
+              UNION \
+              SELECT v FROM s WHERE v > 0 \
+              ORDER BY v DESC LIMIT 1) x \
+             ORDER BY t.a",
+    );
+    assert_eq!(rows, [["1", "302"], ["2", "302"], ["3", "302"]]);
+
+    // Correlation in only one arm: the other is a constant relation
+    // unioned in on every outer row.
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT t.a, x.v FROM t, LATERAL (SELECT t.a AS v UNION SELECT k AS v FROM s) x \
+             ORDER BY t.a, x.v",
+    );
+    assert_eq!(
+        rows,
+        [
+            ["1", "1"],
+            ["1", "2"],
+            ["1", "3"],
+            ["2", "1"],
+            ["2", "2"],
+            ["2", "3"],
+            ["3", "1"],
+            ["3", "2"],
+            ["3", "3"],
+        ]
+    );
+}
+
 /// The alias column list, which the grammar allows ONLY on a `LATERAL`
 /// derived table -- a plain `(SELECT ...) x(c1)` is a parse error, so the
 /// parser is the whole story there and only the lateral form reaches
