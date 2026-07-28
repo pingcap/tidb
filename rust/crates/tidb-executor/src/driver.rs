@@ -1402,13 +1402,12 @@ pub fn run_insert_reporting(
         _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
     };
 
-    if insert.set_syntax
-        || !insert.partitions.is_empty()
+    if !insert.partitions.is_empty()
         || !insert.returning.fields().is_empty()
         || (insert.replace && !insert.on_duplicate.is_empty())
     {
         return Err(DriverError::Unsupported(
-            "the SET insert syntax, partitions and RETURNING are not supported yet",
+            "partitions and RETURNING are not supported yet",
         ));
     }
 
@@ -1438,15 +1437,31 @@ pub fn run_insert_reporting(
 
     // Map an explicit column list to table offsets; without one, values map to
     // every column in order.
-    let target_offsets: Vec<usize> = if insert.columns_specified {
+    //
+    // `INSERT ... SET a = 1, b = 2` is the same statement as
+    // `INSERT (a, b) VALUES (1, 2)` -- Go normalizes its `Setlist` into
+    // `Columns` + one `Lists` entry, and the parser here does the same, so
+    // the assignment columns are simply another way to name the targets.
+    let named_columns: Vec<String> = if insert.set_syntax {
         insert
-            .columns
+            .set_columns
+            .iter()
+            .map(|path| path.last().cloned().unwrap_or_default())
+            .collect()
+    } else {
+        insert.columns.clone()
+    };
+    let target_offsets: Vec<usize> = if insert.set_syntax || insert.columns_specified {
+        named_columns
             .iter()
             .map(|name| {
                 column_list
                     .iter()
                     .position(|(n, _)| n.eq_ignore_ascii_case(name))
-                    .ok_or(DriverError::Unsupported("unknown column in column list"))
+                    .ok_or_else(|| DriverError::UnknownColumnInClause {
+                        column: name.clone(),
+                        clause: "field list".to_owned(),
+                    })
             })
             .collect::<Result<_, _>>()?
     } else {

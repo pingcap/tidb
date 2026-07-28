@@ -3148,6 +3148,69 @@ mod tests {
         }
     }
 
+    /// `INSERT ... SET col = value`, checked against captured TiDB output.
+    ///
+    /// Go normalizes the `SET` list into a column list plus one VALUES row,
+    /// so every rule the VALUES form obeys -- defaults, NOT NULL, the column
+    /// cast, ON DUPLICATE KEY UPDATE and REPLACE -- applies unchanged.
+    #[test]
+    fn insert_set_syntax() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10) DEFAULT 'dd', \
+                 c BIGINT NOT NULL DEFAULT 5)",
+            )
+            .unwrap();
+
+        // Captured: the columns it names are assigned, the rest take their
+        // defaults.
+        assert_eq!(
+            session.run("INSERT INTO t SET a = 1, b = 'x'").unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(row_text(session.run("SELECT * FROM t")), [["1", "x", "5"]]);
+        session.run("INSERT INTO t SET a = 2").unwrap();
+        // Captured: an assigned value may be an expression.
+        session.run("INSERT INTO t SET a = 3, c = 1+1").unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t ORDER BY a")),
+            [["1", "x", "5"], ["2", "dd", "5"], ["3", "dd", "2"]]
+        );
+
+        // Captured: a column with no default that the SET list omits is
+        // 1364, the same as in the VALUES form.
+        match session.run("INSERT INTO t SET b = 'nope'") {
+            Err(error) => assert_eq!(error.to_mysql_error().code, 1364),
+            Ok(other) => panic!("expected 1364, got {other:?}"),
+        }
+        // Captured: an unknown column names the field list.
+        match session.run("INSERT INTO t SET nosuch = 1") {
+            Err(error) => assert_eq!(error.to_mysql_error().code, 1054),
+            Ok(other) => panic!("expected 1054, got {other:?}"),
+        }
+
+        // Captured: the conflict policies compose with it.
+        assert_eq!(
+            session
+                .run("INSERT INTO t SET a = 1, b = 'dup' ON DUPLICATE KEY UPDATE b = 'updated'")
+                .unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT b FROM t WHERE a = 1")),
+            [["updated"]]
+        );
+        assert_eq!(
+            session.run("REPLACE INTO t SET a = 2, b = 'repl'").unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, b, c FROM t ORDER BY a")),
+            [["1", "updated", "5"], ["2", "repl", "5"], ["3", "dd", "2"]]
+        );
+    }
+
     /// `GROUP_CONCAT`, checked against captured TiDB output.
     ///
     /// NOT SUPPORTED YET, and refused rather than ignored: the aggregate's
@@ -3679,10 +3742,12 @@ mod tests {
             [["3"], ["7"]]
         );
 
-        // The SET insert syntax is the shape still refused here; REPLACE and
-        // ON DUPLICATE KEY UPDATE are implemented (see
-        // `insert_conflict_policies`).
-        assert!(session.run("INSERT INTO t SET a = 42").is_err());
+        // RETURNING is the shape still refused here; REPLACE, ON DUPLICATE
+        // KEY UPDATE and the SET form are implemented (see
+        // `insert_conflict_policies` and `insert_set_syntax`).
+        assert!(session
+            .run("INSERT INTO t (a) VALUES (42) RETURNING a")
+            .is_err());
     }
 
     /// `ORDER BY` resolved against the SELECT list, checked against captured
@@ -4929,6 +4994,8 @@ mod tests {
         // to be the examples here; both work now -- see
         // `insert_select_and_ordered_dml`.)
         assert!(session.run("DELETE QUICK FROM t").is_err());
-        assert!(session.run("INSERT INTO t SET a = 1").is_err());
+        assert!(session
+            .run("INSERT INTO t (a) VALUES (1) RETURNING a")
+            .is_err());
     }
 }
