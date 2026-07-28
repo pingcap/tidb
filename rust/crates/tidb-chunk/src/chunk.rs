@@ -214,6 +214,13 @@ impl Chunk {
         self.columns[col_idx].append_bytes(value);
     }
 
+    /// Go `AppendJSON`: a JSON cell is the var-length byte string
+    /// `type code || value`, exactly the encoding `BinaryJSON` carries on the
+    /// wire and in a row value.
+    pub fn append_json(&mut self, col_idx: usize, value: &tidb_datatype::BinaryJSON) {
+        self.append_bytes(col_idx, &value.encoded());
+    }
+
     /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
@@ -246,6 +253,7 @@ impl Chunk {
             Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
                 self.append_bytes(col_idx, literal.as_bytes());
             }
+            Datum::Json(value) => self.append_json(col_idx, value),
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
             Datum::Decimal(dec) => {

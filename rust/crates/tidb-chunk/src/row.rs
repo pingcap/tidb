@@ -175,6 +175,17 @@ impl<'a> Row<'a> {
                 d.set_string(self.get_bytes(col_idx).to_vec(), collation);
                 d
             }
+            // Go `GetJSON`: the cell's first byte is the type code and the
+            // rest is the value, which is what `BinaryJSON` stores.
+            FieldTypeCode::Json => {
+                let cell = self.get_bytes(col_idx);
+                let (type_code, value) = cell
+                    .split_first()
+                    .expect("a JSON cell always carries its type code");
+                Datum::Json(tidb_datatype::BinaryJSON::from_encoded_parts(
+                    *type_code, value,
+                ))
+            }
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
                 Datum::Time(self.get_time(col_idx))
             }

@@ -508,6 +508,10 @@ pub enum DriverError {
     },
     /// Go `ErrBlobKeyWithoutLength` (1170).
     BlobKeyWithoutLength(String),
+    /// Go `ErrJSONUsedAsKey` (3152): a JSON column in an index.
+    JsonUsedInKey(String),
+    /// Go `ErrBlobCantHaveDefault` (1101): a JSON column's default.
+    BlobCantHaveDefault(String),
     /// Go `ErrTruncatedWrongValue` (1292).
     TruncatedIncorrectValue {
         /// The numeric domain Go names.
@@ -2045,11 +2049,13 @@ fn cast_value_for_column(
     }
     let converted = value
         .convert_to(field_type, ctx.conversion_flags())
-        .map_err(|_| DriverError::IncorrectValue {
-            type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-            value: datum_error_text(&value),
-            column: column.to_owned(),
-            row: row_index + 1,
+        .map_err(|error| {
+            json_write_error(&error).unwrap_or(DriverError::IncorrectValue {
+                type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+                value: datum_error_text(&value),
+                column: column.to_owned(),
+                row: row_index + 1,
+            })
         })?;
     let Some(event) = converted.event else {
         return Ok(converted.value);
@@ -2087,6 +2093,27 @@ fn cast_value_for_column(
     let reported = error.to_mysql_error();
     ctx.append_warning_parts(reported.code, &reported.message);
     Ok(converted.value)
+}
+
+/// The `json`-class error a write into a JSON column reports as its own.
+///
+/// Go's `table.CastValue` returns the error `ParseBinaryJSONFromString`
+/// produced unchanged, so a malformed document written into a JSON column is
+/// 3140 with the parser's message -- NOT the generic 1366 "Incorrect json
+/// value" that every other failed column cast reports. That distinction is
+/// SQL-visible: it survives `sql_mode = ''` as an ERROR, because it is the
+/// document that cannot exist, not a value that can be clamped.
+fn json_write_error(error: &tidb_datatype::DatumValueError) -> Option<DriverError> {
+    let tidb_datatype::DatumValueError::Json(error) = error else {
+        return None;
+    };
+    let json = match error {
+        tidb_datatype::BinaryJSONError::EmptyDocument => tidb_expr::JsonError::EmptyText,
+        _ => tidb_expr::JsonError::InvalidText,
+    };
+    Some(DriverError::Exec(crate::ExecError::Eval(
+        tidb_expr::EvalError::Json(json),
+    )))
 }
 
 /// A value as MySQL prints it inside a conversion error message.
@@ -9461,6 +9488,18 @@ impl DriverError {
             1170,
             *b"42000",
             format!("BLOB/TEXT column '{column}' used in key specification without a key length"),
+        ),
+        // Go: "JSON column '%-.192s' cannot be used in key specification."
+        DriverError::JsonUsedInKey(column) => MysqlError::new(
+            3152,
+            *b"42000",
+            format!("JSON column '{column}' cannot be used in key specification."),
+        ),
+        // Go: "BLOB/TEXT/JSON column '%-.192s' can't have a default value".
+        DriverError::BlobCantHaveDefault(column) => MysqlError::new(
+            1101,
+            *b"42000",
+            format!("BLOB/TEXT/JSON column '{column}' can't have a default value"),
         ),
         // Go: "Truncated incorrect %-.32s value: '%-.128s'".
         DriverError::TruncatedIncorrectValue { kind, value } => MysqlError::new(

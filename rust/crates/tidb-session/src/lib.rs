@@ -566,6 +566,9 @@ fn datum_text(value: &Datum) -> Option<String> {
         Datum::Decimal(d) => Some(d.to_string()),
         Datum::String(s) => Some(String::from_utf8_lossy(s.bytes()).into_owned()),
         Datum::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        // `BinaryJSON.String`: the canonical document text a JSON column
+        // sends on the wire.
+        Datum::Json(j) => Some(j.to_string()),
         _ => None,
     }
 }
@@ -11362,16 +11365,380 @@ mod tests {
             "Invalid JSON path expression. The error is around character position 1."
         );
 
-        // OUT OF SLICE, and refused rather than half-built: the mutation
-        // family (JSON_SET/INSERT/REPLACE/REMOVE/MERGE*) and JSON_TABLE are a
-        // later unit, and there is still no JSON COLUMN TYPE -- the documents
-        // above live in a VARCHAR.
-        for sql in [
-            r#"SELECT JSON_SET('{"a":1}','$.a',2)"#,
-            r#"SELECT JSON_REMOVE('{"a":1}','$.a')"#,
-            r#"SELECT JSON_MERGE('{"a":1}','{"b":2}')"#,
-        ] {
-            assert!(session.run(sql).is_err(), "{sql} should still be refused");
+        // OUT OF SLICE, and refused rather than half-built: `JSON_TABLE` is
+        // a TABLE function, so it needs a row source this tier has no plan
+        // node for. The mutation family graduated -- see
+        // `json_mutation_functions` and `json_column_type` below.
+        assert!(
+            session
+                .run(r#"SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (v INT PATH '$')) t"#)
+                .is_err(),
+            "JSON_TABLE should still be refused"
+        );
+    }
+
+    /// The JSON MUTATION family, captured from real TiDB through
+    /// `testkit.CreateMockStore`.
+    ///
+    /// The rule that is easiest to get wrong -- and that many cases below
+    /// exist to pin -- is that a mutation's path/value pairs are applied
+    /// SEQUENTIALLY to the document the previous pair produced, not all
+    /// against the original. `JSON_REMOVE('[1,2,3]','$[0]','$[0]')` therefore
+    /// removes two DIFFERENT elements and leaves `[3]`.
+    ///
+    /// DOCUMENTED DIVERGENCE, unchanged from slice 1: a JSON-returning
+    /// BUILTIN reports column type `VarString` where TiDB says `JSON`,
+    /// because this tier's expression datum domain is textual. The VALUES are
+    /// byte-identical. A JSON COLUMN is a different story -- see
+    /// `json_column_type`.
+    #[test]
+    fn json_mutation_functions() {
+        let mut session = Session::new();
+        macro_rules! check {
+            ($sql:expr, $want:expr) => {
+                assert_eq!(
+                    row_text(session.run($sql)),
+                    vec![vec![($want).to_owned()]],
+                    "{}",
+                    $sql
+                );
+            };
         }
+
+        // JSON_SET replaces an existing path and creates a missing one;
+        // JSON_INSERT only creates; JSON_REPLACE only replaces.
+        check!(r#"SELECT JSON_SET('{"a":1}','$.a',2)"#, r#"{"a": 2}"#);
+        check!(
+            r#"SELECT JSON_SET('{"a":1}','$.b',2)"#,
+            r#"{"a": 1, "b": 2}"#
+        );
+        check!(r#"SELECT JSON_INSERT('{"a":1}','$.a',2)"#, r#"{"a": 1}"#);
+        check!(
+            r#"SELECT JSON_INSERT('{"a":1}','$.b',2)"#,
+            r#"{"a": 1, "b": 2}"#
+        );
+        check!(r#"SELECT JSON_REPLACE('{"a":1}','$.a',2)"#, r#"{"a": 2}"#);
+        check!(r#"SELECT JSON_REPLACE('{"a":1}','$.b',2)"#, r#"{"a": 1}"#);
+        // `$` alone replaces the whole document.
+        check!(r#"SELECT JSON_SET('{"a":1}','$',2)"#, "2");
+        // A VALUE argument does NOT carry ParseToJSONFlag, so an SQL string
+        // becomes a JSON STRING rather than a parsed document.
+        check!(
+            r#"SELECT JSON_SET('{}','$.a','{"x":1}')"#,
+            r#"{"a": "{\"x\":1}"}"#
+        );
+        // NAMED BOUNDARY, and the reason the value rule above matters: a
+        // JSON-typed value argument keeps its STRUCTURE in TiDB
+        // (`JSON_SET('{}','$.a',CAST('{"x":1}' AS JSON))` is
+        // `{"a": {"x": 1}}`), but this tier's CAST produces canonical TEXT,
+        // which is indistinguishable from a string literal here and so
+        // nests as a JSON string. A JSON COLUMN carries a real BinaryJSON
+        // and does keep its structure -- see `json_column_type`.
+        // DOCUMENTED DIVERGENCE (the `builtin_ext::json` module doc's typed
+        // boolean boundary): TiDB reads `TRUE` through the argument's
+        // `IsBooleanFlag` and stores the JSON boolean `true`. This tier's
+        // value domain has no boolean datum, so `TRUE` arrives as the
+        // integer 1 -- the same value a JSON COLUMN stores for `TRUE` in
+        // TiDB itself (`json_column_type` captures that).
+        check!(r#"SELECT JSON_SET('{"a":1}','$.a',TRUE)"#, r#"{"a": 1}"#);
+        check!(r#"SELECT JSON_SET('{"a":1}','$.a',1.5)"#, r#"{"a": 1.5}"#);
+        // An out-of-range array index appends rather than padding.
+        check!("SELECT JSON_SET('[1,2,3]','$[5]',9)", "[1, 2, 3, 9]");
+        // A scalar document indexes as a one-element array.
+        check!("SELECT JSON_SET('1','$.a',2)", "1");
+        check!("SELECT JSON_SET('1','$[0]',2)", "2");
+        // A missing INTERMEDIATE leg is a no-op: only the LAST leg is
+        // created, never a whole missing branch.
+        check!(
+            r#"SELECT JSON_SET('{"a":{"b":1}}','$.a.c.d',1)"#,
+            r#"{"a": {"b": 1}}"#
+        );
+
+        // SEQUENTIAL evaluation: the second pair sees the first pair's
+        // document. `$.b` does not exist for the first pair, so `$.b.c` is
+        // reachable only because the first pair created `$.b` -- and when it
+        // created a SCALAR there, `$.b.c` finds no object and does nothing.
+        check!(
+            r#"SELECT JSON_SET('{"a":1}','$.b',2,'$.b.c',3)"#,
+            r#"{"a": 1, "b": 2}"#
+        );
+        check!("SELECT JSON_SET('[1,2]','$[0]',9,'$[0][0]',8)", "[8, 2]");
+
+        // JSON_REMOVE, whose paths are also sequential: two identical `$[0]`
+        // paths remove the FIRST and then the SECOND original element.
+        check!("SELECT JSON_REMOVE('[1,2,3]','$[0]')", "[2, 3]");
+        check!("SELECT JSON_REMOVE('[1,2,3]','$[0]','$[0]')", "[3]");
+        check!("SELECT JSON_REMOVE('[1,2,3]','$[0]','$[1]')", "[2]");
+        check!(r#"SELECT JSON_REMOVE('{"a":1,"b":2}','$.a','$.b')"#, "{}");
+        check!(r#"SELECT JSON_REMOVE('{"a":1}','$.zz')"#, r#"{"a": 1}"#);
+        check!("SELECT JSON_REMOVE('[1,2,3]','$[9]')", "[1, 2, 3]");
+
+        // JSON_ARRAY_APPEND wraps a non-array target in an array first;
+        // JSON_ARRAY_INSERT needs an existing array CELL.
+        check!("SELECT JSON_ARRAY_APPEND('[1,2]','$',3)", "[1, 2, 3]");
+        check!(
+            r#"SELECT JSON_ARRAY_APPEND('{"a":[1]}','$.a',2)"#,
+            r#"{"a": [1, 2]}"#
+        );
+        check!(
+            r#"SELECT JSON_ARRAY_APPEND('{"a":1}','$.a',2)"#,
+            r#"{"a": [1, 2]}"#
+        );
+        check!("SELECT JSON_ARRAY_APPEND('1','$',2)", "[1, 2]");
+        check!(
+            "SELECT JSON_ARRAY_APPEND('[[1],[2]]','$[0]',9)",
+            "[[1, 9], [2]]"
+        );
+        check!(
+            r#"SELECT JSON_ARRAY_APPEND('{"a":1}','$.zz',2)"#,
+            r#"{"a": 1}"#
+        );
+        // Sequential again: `$` appended 3 first, and `$[0]` then wrapped
+        // the ORIGINAL first element.
+        check!(
+            "SELECT JSON_ARRAY_APPEND('[1,2]','$',3,'$[0]',4)",
+            "[[1, 4], 2, 3]"
+        );
+        check!(
+            "SELECT JSON_ARRAY_INSERT('[1,2,3]','$[1]',9)",
+            "[1, 9, 2, 3]"
+        );
+        check!(
+            "SELECT JSON_ARRAY_INSERT('[1,2,3]','$[0]',9,'$[0]',8)",
+            "[8, 9, 1, 2, 3]"
+        );
+        check!(
+            "SELECT JSON_ARRAY_INSERT('[1,2,3]','$[9]',9)",
+            "[1, 2, 3, 9]"
+        );
+        check!(
+            "SELECT JSON_ARRAY_INSERT('[[1,2]]','$[0][1]',9)",
+            "[[1, 9, 2]]"
+        );
+
+        // MERGE_PATCH deletes a key whose patch value is JSON null;
+        // MERGE_PRESERVE wraps two values for the same key in an array.
+        check!(
+            r#"SELECT JSON_MERGE_PATCH('{"a":1,"b":2}','{"a":null}')"#,
+            r#"{"b": 2}"#
+        );
+        check!(
+            r#"SELECT JSON_MERGE_PATCH('{"a":1}','{"b":2}')"#,
+            r#"{"a": 1, "b": 2}"#
+        );
+        check!("SELECT JSON_MERGE_PATCH('[1,2]','[3]')", "[3]");
+        check!("SELECT JSON_MERGE_PRESERVE('[1,2]','[3]')", "[1, 2, 3]");
+        check!(
+            r#"SELECT JSON_MERGE_PRESERVE('{"a":1}','{"a":2}')"#,
+            r#"{"a": [1, 2]}"#
+        );
+        // A MERGE argument IS parsed (unlike a mutation VALUE argument).
+        check!("SELECT JSON_MERGE_PRESERVE('1','2')", "[1, 2]");
+        check!(
+            r#"SELECT JSON_MERGE('{"a":1}','{"b":2}')"#,
+            r#"{"a": 1, "b": 2}"#
+        );
+
+        // NULL propagation, which differs PER ARGUMENT ROLE:
+        //  * a NULL DOCUMENT or a NULL PATH makes the whole call NULL;
+        //  * a NULL VALUE is the JSON null scalar and is stored;
+        //  * JSON_MERGE* is NULL as soon as ANY argument is NULL.
+        check!("SELECT JSON_SET(NULL,'$.a',1)", "NULL");
+        check!(r#"SELECT JSON_SET('{"a":1}',NULL,1)"#, "NULL");
+        check!(r#"SELECT JSON_SET('{"a":1}','$.a',NULL)"#, r#"{"a": null}"#);
+        check!(
+            r#"SELECT JSON_INSERT('{"a":1}','$.b',NULL)"#,
+            r#"{"a": 1, "b": null}"#
+        );
+        check!(
+            r#"SELECT JSON_REPLACE('{"a":1}','$.a',NULL)"#,
+            r#"{"a": null}"#
+        );
+        check!("SELECT JSON_REMOVE(NULL,'$.a')", "NULL");
+        check!(r#"SELECT JSON_REMOVE('{"a":1}',NULL)"#, "NULL");
+        check!("SELECT JSON_ARRAY_APPEND(NULL,'$',1)", "NULL");
+        check!("SELECT JSON_ARRAY_APPEND('[1]',NULL,1)", "NULL");
+        check!("SELECT JSON_ARRAY_APPEND('[1]','$',NULL)", "[1, null]");
+        check!("SELECT JSON_ARRAY_INSERT('[1]','$[0]',NULL)", "[null, 1]");
+        check!("SELECT JSON_ARRAY_INSERT('[1]',NULL,1)", "NULL");
+        check!("SELECT JSON_MERGE(NULL,'[1]')", "NULL");
+        check!(r#"SELECT JSON_MERGE_PATCH('{"a":1}',NULL)"#, "NULL");
+        check!(r#"SELECT JSON_MERGE_PATCH(NULL,'{"a":1}')"#, "NULL");
+        check!(
+            r#"SELECT JSON_MERGE_PATCH('{"a":1}',NULL,'{"b":2}')"#,
+            "NULL"
+        );
+        check!(r#"SELECT JSON_MERGE_PRESERVE('{"a":1}',NULL)"#, "NULL");
+
+        // The `json` error class, with TiDB's own codes.
+        let mut code = |sql: &str| match session.run(sql) {
+            Err(error) => error.to_mysql_error().code,
+            Ok(output) => panic!("expected an error from {sql}, got {output:?}"),
+        };
+        assert_eq!(code(r#"SELECT JSON_SET('{"a":1}','xx',1)"#), 3143);
+        assert_eq!(code(r#"SELECT JSON_SET('{"a":1}','$[*]',1)"#), 3149);
+        assert_eq!(code(r#"SELECT JSON_SET('{"a":1}','$.*',1)"#), 3149);
+        assert_eq!(code(r#"SELECT JSON_SET('{"a":1}','$**.a',1)"#), 3149);
+        assert_eq!(code("SELECT JSON_REMOVE('[1]','$[*]')"), 3149);
+        assert_eq!(code("SELECT JSON_ARRAY_APPEND('[1]','$[*]',1)"), 3149);
+        // `$` is vacuous for REMOVE and not an array cell for ARRAY_INSERT.
+        assert_eq!(code(r#"SELECT JSON_REMOVE('{"a":1}','$')"#), 3153);
+        assert_eq!(code("SELECT JSON_ARRAY_INSERT('[1]','$',1)"), 3165);
+        assert_eq!(code(r#"SELECT JSON_ARRAY_INSERT('{"a":1}','$.a',2)"#), 3165);
+        assert_eq!(code(r#"SELECT JSON_SET('nope','$.a',1)"#), 3140);
+        assert_eq!(code(r#"SELECT JSON_MERGE_PATCH('nope','{}')"#), 3140);
+        // A MERGE argument must be a JSON string or a JSON value.
+        assert_eq!(code("SELECT JSON_MERGE_PRESERVE('[1]',3)"), 3146);
+        assert_eq!(code(r#"SELECT JSON_MERGE_PATCH('{"a":1}',3)"#), 3146);
+
+        // JSON_MERGE is deprecated: it computes the same value as
+        // JSON_MERGE_PRESERVE and adds warning 1681.
+        assert_eq!(
+            row_text(session.run("SELECT JSON_MERGE('[1]','[2]')")),
+            vec![vec!["[1, 2]".to_owned()]]
+        );
+        assert_eq!(
+            row_text(session.run("SHOW WARNINGS")),
+            vec![vec![
+                "Warning".to_owned(),
+                "1681".to_owned(),
+                "JSON_MERGE is deprecated and will be removed in a future release.".to_owned(),
+            ]]
+        );
+        // A NULL argument returns before Go appends the warning.
+        assert_eq!(
+            row_text(session.run("SELECT JSON_MERGE(NULL,'[1]')")),
+            vec![vec!["NULL".to_owned()]]
+        );
+        assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    }
+
+    /// The JSON COLUMN TYPE, captured from real TiDB.
+    ///
+    /// NOT a divergence, unlike the JSON-returning BUILTINS above: a JSON
+    /// column stores a real `BinaryJSON` in its row and its chunk cell, so
+    /// the wire reports type `JSON` (245) with the binary charset exactly as
+    /// TiDB does. The write path is Go `table.CastValue`, which PARSES and
+    /// CANONICALIZES the written text -- which is why `{"b":2,"a":1}` reads
+    /// back key-sorted and spaced.
+    #[test]
+    fn json_column_type() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE tj (id BIGINT PRIMARY KEY, j JSON)")
+            .unwrap();
+        for sql in [
+            r#"INSERT INTO tj VALUES (1,'{"b":2,"a":1}')"#,
+            "INSERT INTO tj VALUES (2,'[1,2,3]')",
+            "INSERT INTO tj VALUES (3,NULL)",
+            "INSERT INTO tj VALUES (4,'null')",
+            r#"INSERT INTO tj VALUES (5,'"str"')"#,
+            // A non-string SQL value becomes its own JSON scalar; TRUE is
+            // the INTEGER 1, not the JSON boolean.
+            "INSERT INTO tj VALUES (6, 7)",
+            "INSERT INTO tj VALUES (7, TRUE)",
+            "INSERT INTO tj VALUES (8, 1.5)",
+        ] {
+            session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        }
+
+        assert_eq!(
+            row_text(session.run("SELECT id, j FROM tj ORDER BY id")),
+            vec![
+                vec!["1".to_owned(), r#"{"a": 1, "b": 2}"#.to_owned()],
+                vec!["2".to_owned(), "[1, 2, 3]".to_owned()],
+                vec!["3".to_owned(), "NULL".to_owned()],
+                vec!["4".to_owned(), "null".to_owned()],
+                vec!["5".to_owned(), r#""str""#.to_owned()],
+                vec!["6".to_owned(), "7".to_owned()],
+                vec!["7".to_owned(), "1".to_owned()],
+                vec!["8".to_owned(), "1.5".to_owned()],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT JSON_TYPE(j) FROM tj ORDER BY id")),
+            ["OBJECT", "ARRAY", "NULL", "NULL", "STRING", "INTEGER", "INTEGER", "DOUBLE",]
+                .map(|t| vec![t.to_owned()])
+                .to_vec()
+        );
+        // A JSON column feeds the JSON builtins as a document.
+        assert_eq!(
+            row_text(session.run(r#"SELECT JSON_SET(j,'$.c',3) FROM tj WHERE id=1"#)),
+            vec![vec![r#"{"a": 1, "b": 2, "c": 3}"#.to_owned()]]
+        );
+        assert_eq!(
+            row_text(session.run(r#"SELECT JSON_EXTRACT(j,'$.a') FROM tj WHERE id=1"#)),
+            vec![vec!["1".to_owned()]]
+        );
+        // A column VALUE argument keeps its structure, because it really is
+        // a JSON value rather than the canonical text a CAST produces here.
+        assert_eq!(
+            row_text(session.run(r#"SELECT JSON_SET('{}','$.a',j) FROM tj WHERE id=1"#)),
+            vec![vec![r#"{"a": {"a": 1, "b": 2}}"#.to_owned()]]
+        );
+        assert_eq!(
+            row_text(session.run(r#"SELECT id FROM tj WHERE JSON_EXTRACT(j,'$.a') = 1"#)),
+            vec![vec!["1".to_owned()]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT id FROM tj WHERE j IS NULL")),
+            vec![vec!["3".to_owned()]]
+        );
+
+        // The wire type: `JSON` (245), binary charset, like TiDB.
+        let StmtOutput::Rows { columns, .. } = session
+            .run_with_columns("SELECT j FROM tj WHERE id=1")
+            .unwrap()
+        else {
+            panic!("expected rows");
+        };
+        assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Json);
+        assert_eq!(columns[0].1.charset_name(), "binary");
+
+        // A malformed document is the PARSER's own 3140, not the generic
+        // 1366 every other bad column value reports -- and it stays an
+        // error, because there is no truncated document to store.
+        macro_rules! failure {
+            ($sql:expr) => {
+                match session.run($sql) {
+                    Err(error) => error.to_mysql_error(),
+                    Ok(output) => panic!("expected an error from {}, got {output:?}", $sql),
+                }
+            };
+        }
+        assert_eq!(failure!("INSERT INTO tj VALUES (9,'nope')").code, 3140);
+        assert_eq!(
+            failure!("INSERT INTO tj VALUES (10,'')").message,
+            "Invalid JSON text: The document is empty"
+        );
+        // A JSON column can be neither indexed nor given a default.
+        assert_eq!(failure!("CREATE TABLE tj3 (j JSON, KEY(j))").code, 3152);
+        assert_eq!(failure!("CREATE TABLE tj4 (j JSON PRIMARY KEY)").code, 3152);
+        assert_eq!(
+            failure!(r#"CREATE TABLE tj9 (j JSON DEFAULT '{}')"#).code,
+            1101
+        );
+        // DEFAULT NULL is the one default a JSON column may carry.
+        session
+            .run("CREATE TABLE tj2 (j JSON DEFAULT NULL, k JSON NOT NULL)")
+            .unwrap();
+
+        // UPDATE writes a mutated document back through the same cast.
+        session
+            .run(r#"UPDATE tj SET j = JSON_SET(j,'$.z',1) WHERE id=1"#)
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT j FROM tj WHERE id=1")),
+            vec![vec![r#"{"a": 1, "b": 2, "z": 1}"#.to_owned()]]
+        );
+
+        // SHOW reports the declared type.
+        assert_eq!(
+            row_text(session.run("SHOW COLUMNS FROM tj"))[1][..2],
+            ["j".to_owned(), "json".to_owned()]
+        );
+        assert!(
+            row_text(session.run("SHOW CREATE TABLE tj"))[0][1].contains("`j` json DEFAULT NULL")
+        );
     }
 }

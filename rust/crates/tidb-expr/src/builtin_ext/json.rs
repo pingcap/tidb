@@ -56,8 +56,8 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("JSON_SET", 3..) => Some(json_modify(vals, JsonModifyMode::Set)),
         ("JSON_INSERT", 3..) => Some(json_modify(vals, JsonModifyMode::Insert)),
         ("JSON_REPLACE", 3..) => Some(json_modify(vals, JsonModifyMode::Replace)),
-        ("JSON_MERGE", 2..) => Some(json_merge(vals)),
-        ("JSON_MERGE_PRESERVE", 2..) => Some(json_merge(vals)),
+        ("JSON_MERGE", 2..) => Some(json_merge(vals, "json_merge")),
+        ("JSON_MERGE_PRESERVE", 2..) => Some(json_merge(vals, "json_merge_preserve")),
         ("JSON_MERGE_PATCH", 2..) => Some(json_merge_patch(vals)),
         ("JSON_SEARCH", 3..) => Some(json_search(vals)),
         ("JSON_PRETTY", 1) => Some(json_pretty(&vals[0])),
@@ -90,6 +90,19 @@ fn json_sql_string(value: &Datum) -> Result<Option<&str>, EvalError> {
     std::str::from_utf8(bytes)
         .map(Some)
         .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))
+}
+
+/// The DOCUMENT text of an argument Go types `ETJson`: a SQL string (which
+/// carries `ParseToJSONFlag`, so it is parsed) or an already-typed JSON value
+/// such as a JSON COLUMN, whose canonical text re-parses to itself.
+///
+/// This is deliberately narrower than [`json_sql_string`], which is also the
+/// gate for signatures that demand a STRING specifically (`JSON_QUOTE`).
+fn json_document_string(value: &Datum) -> Result<Option<std::borrow::Cow<'_, str>>, EvalError> {
+    if let Datum::Json(document) = value {
+        return Ok(Some(std::borrow::Cow::Owned(document.to_string())));
+    }
+    Ok(json_sql_string(value)?.map(std::borrow::Cow::Borrowed))
 }
 
 /// `JSON_VALID(arg)`, port of `builtinJSONValid{JSON,String,Others}Sig`.
@@ -130,11 +143,13 @@ fn json_type(v: &Datum) -> Result<Datum, EvalError> {
     if v.is_null() {
         return Ok(Datum::Null);
     }
-    let Some(s) = json_sql_string(v)?.map(str::to_owned) else {
-        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
-            argument: 1,
-            function: "json_type",
-        }));
+    let Some(s) = json_document_string(v)?.map(std::borrow::Cow::into_owned) else {
+        return Err(crate::EvalError::Json(
+            crate::JsonError::InvalidTypeForJson {
+                argument: 1,
+                function: "json_type",
+            },
+        ));
     };
     let json = parse_json(&s)?;
     let ty = match json {
@@ -456,15 +471,18 @@ fn json_remove(vals: &[Datum]) -> Result<Datum, EvalError> {
             return Ok(Datum::Null);
         };
         let path = parse_path(&path)?;
-        if path.legs.is_empty()
-            || path.legs.iter().any(|leg| {
-                !matches!(
-                    leg,
-                    PathLeg::Key(_) | PathLeg::Array(ArraySelection::Index(_))
-                )
-            })
-        {
-            return Err(EvalError::Unsupported("JSON_REMOVE invalid path"));
+        // Go checks these in order: `$` alone is vacuous (3153), and any
+        // wildcard/range leg is a multiple selection (3149).
+        if path.legs.is_empty() {
+            return Err(EvalError::Json(JsonError::VacuousPath));
+        }
+        if path.legs.iter().any(|leg| {
+            !matches!(
+                leg,
+                PathLeg::Key(_) | PathLeg::Array(ArraySelection::Index(_))
+            )
+        }) {
+            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
         remove_path(&mut document, &path.legs);
     }
@@ -493,9 +511,7 @@ fn json_array_append(vals: &[Datum]) -> Result<Datum, EvalError> {
         };
         let path = parse_path(&path)?;
         if path.could_match_multiple {
-            return Err(EvalError::Unsupported(
-                "JSON_ARRAY_APPEND multiple selection",
-            ));
+            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
         let value = json_mutation_value_argument(&pair[1])?;
         append_at_path(&mut document, &path.legs, &value);
@@ -523,26 +539,20 @@ fn json_array_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
         };
         let path = parse_path(&path)?;
         if path.could_match_multiple {
-            return Err(EvalError::Unsupported(
-                "JSON_ARRAY_INSERT multiple selection",
-            ));
+            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
+        // The last leg must name an array CELL; `$` and a trailing object key
+        // both leave nothing to insert before (3165).
         let Some(PathLeg::Array(ArraySelection::Index(index))) = path.legs.last() else {
-            return Err(EvalError::Unsupported(
-                "JSON_ARRAY_INSERT invalid array cell",
-            ));
+            return Err(EvalError::Json(JsonError::InvalidPathArrayCell));
         };
-        if path.legs.is_empty()
-            || path.legs.iter().any(|leg| {
-                !matches!(
-                    leg,
-                    PathLeg::Key(_) | PathLeg::Array(ArraySelection::Index(_))
-                )
-            })
-        {
-            return Err(EvalError::Unsupported(
-                "JSON_ARRAY_INSERT invalid array cell",
-            ));
+        if path.legs.iter().any(|leg| {
+            !matches!(
+                leg,
+                PathLeg::Key(_) | PathLeg::Array(ArraySelection::Index(_))
+            )
+        }) {
+            return Err(EvalError::Json(JsonError::InvalidPathArrayCell));
         }
         let value = json_mutation_value_argument(&pair[1])?;
         insert_at_path(&mut document, &path.legs, *index, &value);
@@ -585,7 +595,7 @@ fn json_modify(vals: &[Datum], mode: JsonModifyMode) -> Result<Datum, EvalError>
                 )
             })
         {
-            return Err(EvalError::Unsupported("JSON modification invalid path"));
+            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
         let value = json_mutation_value_argument(&pair[1])?;
         let exists = descend_exact_mut(&mut document, &path.legs).is_some();
@@ -637,10 +647,14 @@ fn insert_missing_path(document: &mut Json, legs: &[PathLeg], value: &Json) {
 }
 
 /// `JSON_MERGE` and `JSON_MERGE_PRESERVE`, ports of `types.MergeBinaryJSON`.
-fn json_merge(vals: &[Datum]) -> Result<Datum, EvalError> {
+///
+/// The deprecation warning `builtinJSONMergeSig.evalJSON` appends for the
+/// `JSON_MERGE` spelling is raised by the caller, which owns the statement
+/// context; this function is the value.
+fn json_merge(vals: &[Datum], function: &'static str) -> Result<Datum, EvalError> {
     let mut values = Vec::with_capacity(vals.len());
-    for value in vals {
-        let Some(value) = parse_json_merge_argument(value, true)? else {
+    for (index, value) in vals.iter().enumerate() {
+        let Some(value) = parse_json_merge_argument(value, index, function)? else {
             return Ok(Datum::Null);
         };
         values.push(value);
@@ -648,31 +662,28 @@ fn json_merge(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::new_string(format_json(&merge_json_values(values))))
 }
 
+/// One document argument of the `JSON_MERGE*` family.
+///
+/// Go types every argument of these as `ETJson`, and `verifyJSONArgsType`
+/// (`jsonMergeFunctionClass.verifyArgs`) then demands that each argument be a
+/// JSON value or a STRING: `JSON_MERGE_PRESERVE('[1]', 3)` is 3146, not a
+/// merge with the number 3. A string argument carries `ParseToJSONFlag`, so
+/// `'1'` is the JSON number 1 and `'{}'` is the empty object -- unlike the
+/// VALUE arguments of `JSON_SET`/`JSON_ARRAY_APPEND`, which stay JSON strings.
 fn parse_json_merge_argument(
     value: &Datum,
-    preserve_scalar_text: bool,
+    index: usize,
+    function: &'static str,
 ) -> Result<Option<Json>, EvalError> {
-    if let Some(text) = json_sql_string(value)? {
-        let parsed = parse_json(text)?;
-        return if preserve_scalar_text && !matches!(parsed, Json::Object(_) | Json::Array(_)) {
-            Ok(Some(Json::String(text.to_owned())))
-        } else {
-            Ok(Some(parsed))
-        };
+    if let Some(text) = json_document_string(value)? {
+        return Ok(Some(parse_json(&text)?));
     }
     match value {
         Datum::Null => Ok(None),
-        Datum::Int(value) => Ok(Some(Json::Number((*value).into()))),
-        Datum::UInt(value) => Ok(Some(Json::Number((*value).into()))),
-        Datum::Real(value) => Number::from_f64(*value)
-            .map(Json::Number)
-            .map(Some)
-            .ok_or(EvalError::FloatOverflow),
-        Datum::Decimal(value) => Ok(Some(parse_json(&value.to_string())?)),
-        Datum::MinNotNull | Datum::MaxValue => {
-            Err(EvalError::Unsupported("range sentinel JSON value"))
-        }
-        other => datum_json_scalar(other).map(Some),
+        _ => Err(EvalError::Json(JsonError::InvalidTypeForJson {
+            argument: index + 1,
+            function,
+        })),
     }
 }
 
@@ -730,8 +741,8 @@ fn merge_json_objects(objects: &[Json]) -> Json {
 /// nil pointer that may truncate the merge, while the latter is a JSON scalar.
 fn json_merge_patch(vals: &[Datum]) -> Result<Datum, EvalError> {
     let mut values = Vec::with_capacity(vals.len());
-    for value in vals {
-        values.push(parse_json_merge_argument(value, false)?);
+    for (index, value) in vals.iter().enumerate() {
+        values.push(parse_json_merge_argument(value, index, "json_merge_patch")?);
     }
     let mut start = 0;
     for index in (0..values.len()).rev() {
@@ -1372,7 +1383,12 @@ fn descend_exact_mut<'a>(value: &'a mut Json, legs: &[PathLeg]) -> Option<&'a mu
     let Some((first, rest)) = legs.split_first() else {
         return Some(value);
     };
-    if matches!(first, PathLeg::Array(ArraySelection::Index(index)) if *index == 0 || *index == -1)
+    // `BinaryJSON.Extract`: `[0]` and `[last]` select a NON-ARRAY value
+    // itself. The array check has to come first -- reading it as a self
+    // selection for an array too would make `$[0]` on `[1, 2]` name the
+    // whole array instead of its first element.
+    if !matches!(value, Json::Array(_))
+        && matches!(first, PathLeg::Array(ArraySelection::Index(index)) if *index == 0 || *index == -1)
     {
         return descend_exact_mut(value, rest);
     }
@@ -3019,6 +3035,31 @@ mod tests {
             ),
             s(r#"{"a": null, "b": "nil"}"#)
         );
+        // `[0]` selects a NON-ARRAY value itself, but an ARRAY's `[0]` is
+        // its FIRST ELEMENT. Reading the shortcut as unconditional made
+        // `$[0]` on an array name the whole document, so the second pair
+        // here replaced everything with `8` instead of the first element.
+        assert_eq!(
+            call(
+                "JSON_SET",
+                &[
+                    s("[1,2]"),
+                    s("$[0]"),
+                    Datum::Int(9),
+                    s("$[0][0]"),
+                    Datum::Int(8)
+                ],
+            ),
+            s("[8, 2]")
+        );
+        assert_eq!(
+            call("JSON_SET", &[s("[1,2]"), s("$[1]"), Datum::Int(9)]),
+            s("[1, 9]")
+        );
+        assert_eq!(
+            call("JSON_SET", &[s("1"), s("$[0]"), Datum::Int(2)]),
+            s("2")
+        );
         assert!(dispatch("JSON_SET", &[s("{}"), s("$.a")]).is_none());
         assert!(call_result("JSON_SET", &[s("{}"), s("$InvalidPath"), Datum::Int(3)]).is_err());
         assert!(call_result("JSON_SET", &[s("{}"), s("$.*"), Datum::Int(3)]).is_err());
@@ -3026,20 +3067,95 @@ mod tests {
     }
 
     /// Source-shaped tables from `TestJSONMerge` and `TestJSONMergePreserve`
-    /// in `pkg/expression/builtin_json_test.go:317` and `:348`.  JSON_MERGE
-    /// is the deprecated synonym for JSON_MERGE_PRESERVE; adjacent objects
-    /// combine while arrays/scalars are preserved in an output array.
+    /// in `pkg/expression/builtin_json_test.go:317` and `:348`, re-captured
+    /// through SQL because the two disagree on what an argument IS: the Go
+    /// unit test hands the signature Go strings (JSON strings), while
+    /// `jsonMergeFunctionClass` types every SQL argument `ETJson`, so a
+    /// string LITERAL is PARSED (`'1'` merges as the number 1) and a
+    /// non-string scalar is rejected outright (3146) rather than merged.
+    ///
+    /// Adjacent objects combine; arrays and scalars are preserved in an
+    /// output array. JSON_MERGE is the deprecated synonym for
+    /// JSON_MERGE_PRESERVE and differs only in the 1681 warning its caller
+    /// raises (see `func::eval_func_values_in`).
     #[test]
     fn json_merge_go_vectors() {
         for name in ["JSON_MERGE", "JSON_MERGE_PRESERVE"] {
             assert_eq!(call(name, &[Datum::Null, Datum::Null]), Datum::Null);
             assert_eq!(call(name, &[s("{}"), s("[]")]), s("[{}]"));
+            assert_eq!(call(name, &[s("1"), s("2")]), s("[1, 2]"));
+            assert_eq!(call(name, &[s(r#""a""#), s(r#""b""#)]), s(r#"["a", "b"]"#));
             assert_eq!(
-                call(name, &[s("{}"), s("[]"), Datum::Int(3), s("4")]),
+                call(name, &[s(r#"{"a":1}"#), s(r#"{"a":2}"#)]),
+                s(r#"{"a": [1, 2]}"#)
+            );
+            assert_eq!(
+                call(name, &[s("{}"), s("[]"), s("3"), s(r#""4""#)]),
                 s(r#"[{}, 3, "4"]"#)
             );
             assert!(call_result(name, &[s("{}"), s("not-json")]).is_err());
             assert!(dispatch(name, &[s("{}")]).is_none());
+        }
+        // A non-string, non-JSON argument is 3146 at its own 1-based index,
+        // named for the function the user wrote.
+        for (name, function) in [
+            ("JSON_MERGE", "json_merge"),
+            ("JSON_MERGE_PRESERVE", "json_merge_preserve"),
+            ("JSON_MERGE_PATCH", "json_merge_patch"),
+        ] {
+            assert_eq!(
+                call_result(name, &[s("[1]"), Datum::Int(3)]),
+                Err(crate::EvalError::Json(
+                    crate::JsonError::InvalidTypeForJson {
+                        argument: 2,
+                        function,
+                    }
+                ))
+            );
+        }
+    }
+
+    /// The `json`-class codes the mutation family reports for a path it
+    /// cannot use, captured from real TiDB: `JSON_REMOVE` calls a bare `$`
+    /// vacuous (3153), `JSON_ARRAY_INSERT` needs an array CELL as its last
+    /// leg (3165), and every mutation refuses a wildcard leg (3149).
+    #[test]
+    fn json_mutation_path_error_codes() {
+        let code = |name: &str, args: &[Datum]| match call_result(name, args) {
+            Err(crate::EvalError::Json(error)) => error.code(),
+            other => panic!("expected a json error from {name}, got {other:?}"),
+        };
+        assert_eq!(code("JSON_REMOVE", &[s(r#"{"a":1}"#), s("$")]), 3153);
+        assert_eq!(
+            code("JSON_ARRAY_INSERT", &[s("[1]"), s("$"), Datum::Int(1)]),
+            3165
+        );
+        assert_eq!(
+            code(
+                "JSON_ARRAY_INSERT",
+                &[s(r#"{"a":1}"#), s("$.a"), Datum::Int(1)]
+            ),
+            3165
+        );
+        for (name, args) in [
+            ("JSON_REMOVE", vec![s("[1]"), s("$[*]")]),
+            ("JSON_SET", vec![s(r#"{"a":1}"#), s("$[*]"), Datum::Int(1)]),
+            ("JSON_SET", vec![s(r#"{"a":1}"#), s("$.*"), Datum::Int(1)]),
+            ("JSON_SET", vec![s(r#"{"a":1}"#), s("$**.a"), Datum::Int(1)]),
+            (
+                "JSON_INSERT",
+                vec![s(r#"{"a":1}"#), s("$.*"), Datum::Int(1)],
+            ),
+            (
+                "JSON_REPLACE",
+                vec![s(r#"{"a":1}"#), s("$.*"), Datum::Int(1)],
+            ),
+            (
+                "JSON_ARRAY_APPEND",
+                vec![s("[1]"), s("$[*]"), Datum::Int(1)],
+            ),
+        ] {
+            assert_eq!(code(name, &args), 3149, "{name} {args:?}");
         }
     }
 

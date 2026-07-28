@@ -447,6 +447,13 @@ fn normalize_column_default(
     field_type: &FieldType,
     column: &str,
 ) -> Result<Datum, DriverError> {
+    // Go `checkColumnDefaultValue`: a JSON column's only legal default is
+    // NULL. The default is stored as metadata TEXT, and a JSON document has
+    // no text form that survives that round trip, so TiDB refuses it up
+    // front rather than storing a document it cannot rebuild.
+    if !value.is_null() && field_type.code() == tidb_datatype::FieldTypeCode::Json {
+        return Err(DriverError::BlobCantHaveDefault(column.to_owned()));
+    }
     let invalid = || DriverError::InvalidDefault(column.to_owned());
     let normalized = match field_type.code() {
         tidb_datatype::FieldTypeCode::Tiny
@@ -883,13 +890,22 @@ fn table_indexes(
     columns: &[ColumnInfo],
     pk_is_handle: bool,
 ) -> Result<Vec<KvIndex>, DriverError> {
+    // Go `checkIndexColumn`: a JSON column can never be an index column, in
+    // any position of any index kind -- checked here, where every index part
+    // resolves its column, so the rule has exactly one home.
     let offset_of = |name: &str| -> Result<usize, DriverError> {
-        columns
+        let offset = columns
             .iter()
             .position(|col| col.name.original().eq_ignore_ascii_case(name))
             .ok_or(DriverError::Unsupported(
                 "an index names a column the table does not define",
-            ))
+            ))?;
+        if columns[offset].field_type.code() == FieldTypeCode::Json {
+            return Err(DriverError::JsonUsedInKey(
+                columns[offset].name.original().to_owned(),
+            ));
+        }
+        Ok(offset)
     };
     fn push(indexes: &mut Vec<KvIndex>, name: String, unique: bool, offsets: Vec<usize>) {
         indexes.push(KvIndex {
@@ -1061,6 +1077,16 @@ fn field_type_of(def: &ColumnDef) -> Result<FieldType, DriverError> {
         return Err(DriverError::Unsupported("unsupported column type"));
     }
     let mut builder = FieldTypeBuilder::new().with_code(code);
+    // Go `setCharsetCollationFlenDecimal`'s `TypeJSON` arm: a JSON column is
+    // a BINARY-charset column carrying `BinaryFlag`, which is what makes the
+    // wire report `charset=binary, flag=128` for it rather than the table's
+    // utf8mb4 default. The document's own text is still UTF-8.
+    if code == FieldTypeCode::Json {
+        builder = builder
+            .charset_set("binary")
+            .collation_set("binary")
+            .add_flags(FieldTypeFlags::BINARY);
+    }
     let mut numeric_args = def.ty.args.iter().filter_map(|arg| match arg {
         ColumnTypeArg::Text(text) => text.parse::<i64>().ok(),
         ColumnTypeArg::Bytes(_) => None,
@@ -1210,6 +1236,15 @@ pub fn run_create_table_in(
         pk_offsets.clone()
     };
     for offset in &pk_offsets {
+        // Go `checkIndexColumn` reaches a primary key too, and a clustered
+        // primary key never becomes an entry in `table_indexes` (its
+        // encoding IS the row key), so the JSON refusal has to be repeated
+        // on this path rather than being left to the index builder.
+        if columns[*offset].field_type.code() == FieldTypeCode::Json {
+            return Err(DriverError::JsonUsedInKey(
+                columns[*offset].name.original().to_owned(),
+            ));
+        }
         // A primary key column is implicitly NOT NULL, as in MySQL, and Go
         // marks it PRI (mysql.NotNullFlag, mysql.PriKeyFlag).
         columns[*offset].add_flag(NOT_NULL_FLAG | PRI_KEY_FLAG);

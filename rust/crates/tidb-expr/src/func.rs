@@ -135,7 +135,7 @@ pub(crate) fn eval_func(
     if let Some(result) = crate::math_fn::dispatch(name.as_str(), args, &vals, cols, function_key) {
         return result;
     }
-    if let Some(result) = eval_func_values(name.as_str(), &vals) {
+    if let Some(result) = eval_func_values_in(name.as_str(), &vals, cols) {
         return result;
     }
     match name.as_str() {
@@ -211,6 +211,29 @@ fn datum_truth(value: &Datum) -> Option<bool> {
         Datum::Decimal(d) => Some(!d.is_zero()),
         _ => Some(true),
     }
+}
+
+/// [`eval_func_values`] plus the statement-context side effects Go attaches
+/// to a builtin whose VALUE is still a pure function of its arguments.
+///
+/// Only `JSON_MERGE` has one today: `builtinJSONMergeSig.evalJSON` appends
+/// `errDeprecatedSyntaxNoReplacement` (1681) after computing the merge, so a
+/// NULL argument (which returns before that line) and a failed merge both
+/// leave the warning unraised. Both evaluators route through here so the
+/// warning cannot depend on which one ran.
+pub(crate) fn eval_func_values_in(
+    name: &str,
+    vals: &[Datum],
+    cols: &dyn Columns,
+) -> Option<Result<Datum, EvalError>> {
+    let result = eval_func_values(name, vals)?;
+    if name == "JSON_MERGE" && matches!(result, Ok(ref value) if *value != Datum::Null) {
+        cols.append_warning(
+            1681,
+            "JSON_MERGE is deprecated and will be removed in a future release.",
+        );
+    }
+    Some(result)
 }
 
 pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {

@@ -491,7 +491,7 @@ impl ScalarFunction {
             .map(|a| a.eval(ctx, row))
             .collect::<Result<_, _>>()?;
         let upper = name.to_ascii_uppercase();
-        if let Some(result) = crate::func::eval_func_values(&upper, &vals) {
+        if let Some(result) = crate::func::eval_func_values_in(&upper, &vals, ctx) {
             return result;
         }
         // The date/time family reads the statement clock and the session

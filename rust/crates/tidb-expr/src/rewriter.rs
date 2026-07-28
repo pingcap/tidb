@@ -180,11 +180,12 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // says `JSON`. Typing it as Go does would put a string into a JSON
         // cell, which panics rather than mistyping.
         //
-        // The mutation family (`JSON_SET`/`INSERT`/`REPLACE`/`REMOVE`/
-        // `MERGE*`) and `JSON_TABLE` are deliberately NOT listed: they are a
-        // later slice, so they keep falling through to the refusal below.
+        // `JSON_TABLE` is deliberately NOT listed: it is a table function,
+        // not a scalar, so it keeps falling through to the refusal below.
         "json_extract" | "json_object" | "json_array" | "json_keys" | "json_quote"
-        | "json_unquote" | "json_type" => text(),
+        | "json_unquote" | "json_type" | "json_set" | "json_insert" | "json_replace"
+        | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
+        | "json_merge_preserve" | "json_merge_patch" => text(),
         "json_valid" | "json_contains" | "json_length" | "json_depth" => int(),
         "conv" | "bin" | "oct" | "format" => text(),
         // Go merges the argument types of these the same way it merges the

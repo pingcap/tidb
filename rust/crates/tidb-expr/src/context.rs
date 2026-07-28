@@ -52,6 +52,11 @@ pub enum JsonError {
     /// message; every malformed document TiDB's `ParseBinaryJSONFromString`
     /// rejects reports the root-value variant, which is what this carries.
     InvalidText,
+    /// `ErrInvalidJSONText` (3140) for the OTHER `encoding/json` message
+    /// TiDB forwards: an argument that carries no value at all. Only the
+    /// column write path can produce it -- a SQL string literal reaching a
+    /// JSON builtin is never empty by the time it is parsed.
+    EmptyText,
     /// `ErrInvalidJSONPath` (3143), with the 1-based rune position Go's
     /// `parseJSONPathExpr` reports (`jsonPathStream.pos`, or a literal 1 when
     /// the expression does not begin with `$`).
@@ -76,6 +81,12 @@ pub enum JsonError {
     },
     /// `ErrJSONDocumentNULLKey` (3158): a NULL where an object key belongs.
     NullMemberName,
+    /// `ErrJSONVacuousPath` (3153): the root path `$` where the mutation
+    /// needs a path INTO the document (`JSON_REMOVE`'s only vacuous case).
+    VacuousPath,
+    /// `ErrInvalidJSONPathArrayCell` (3165): `JSON_ARRAY_INSERT`'s last leg
+    /// is not an array index, so there is no cell to insert before.
+    InvalidPathArrayCell,
 }
 
 impl JsonError {
@@ -83,12 +94,14 @@ impl JsonError {
     #[must_use]
     pub const fn code(&self) -> u16 {
         match self {
-            JsonError::InvalidText => 3140,
+            JsonError::InvalidText | JsonError::EmptyText => 3140,
             JsonError::InvalidPath(_) => 3143,
             JsonError::InvalidPathMultipleSelection => 3149,
             JsonError::InvalidTypeForJson { .. } => 3146,
             JsonError::IncorrectType { .. } => 3064,
             JsonError::NullMemberName => 3158,
+            JsonError::VacuousPath => 3153,
+            JsonError::InvalidPathArrayCell => 3165,
         }
     }
 
@@ -99,6 +112,7 @@ impl JsonError {
             JsonError::InvalidText => "Invalid JSON text: The document root must not be followed \
                  by other values."
                 .to_owned(),
+            JsonError::EmptyText => "Invalid JSON text: The document is empty".to_owned(),
             JsonError::InvalidPath(position) => format!(
                 "Invalid JSON path expression. The error is around character position {position}."
             ),
@@ -116,6 +130,12 @@ impl JsonError {
             }
             JsonError::NullMemberName => {
                 "JSON documents may not contain NULL member names.".to_owned()
+            }
+            JsonError::VacuousPath => {
+                "The path expression '$' is not allowed in this context.".to_owned()
+            }
+            JsonError::InvalidPathArrayCell => {
+                "A path expression is not a path to a cell in an array.".to_owned()
             }
         }
     }
