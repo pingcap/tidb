@@ -78,7 +78,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::encode_compact_bytes;
-use tidb_datatype::{BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType};
+use tidb_datatype::{BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, TimeType};
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -330,14 +330,22 @@ fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
 /// `COUNT(DISTINCT ...)` uses, because these bytes feed FarmHash directly
 /// and the sketch only matches Go's numbers if the hash INPUT matches too.
 ///
-/// `TIME`, `DURATION`, and `JSON` arguments fall back to the datum's generic
-/// hash key: Go encodes these as a raw in-memory struct copy
-/// (`appendTime`/`appendDuration`) or a recursive, type-tagged traversal
-/// (`BinaryJSON.HashValue`) that this seed does not reproduce byte for byte.
-/// The fallback still dedupes correctly -- equal values still collide and
-/// unequal ones still don't -- so the distinct COUNT is correct; only the
-/// exact large-cardinality extrapolation for groups keyed on these types can
-/// diverge from Go's.
+/// `TIME` encodes as Go's `appendTime`/`WriteTime`: a 16-byte struct-style
+/// layout (year as big-endian u16, then month/day/hour/minute/second as raw
+/// bytes, a zero pad byte, microsecond as big-endian u32, the MySQL type
+/// code, the fsp, and two zero pad bytes) rather than the datum's generic
+/// hash key, so large-cardinality sketches over DATE/DATETIME/TIMESTAMP
+/// columns extrapolate identically to Go's.
+///
+/// `DURATION` encodes as Go's `appendDuration`: a raw 16-byte copy of the
+/// Go `Duration` struct, which is `{ Duration int64 /* ns */; Fsp int }` --
+/// two 8-byte little-endian fields with no padding, because Go's `int` is
+/// 8 bytes on every platform TiDB ships.
+///
+/// `JSON` encodes via `BinaryJSON.HashValue`, a recursive type-tagged
+/// traversal that folds integers into doubles when no precision is lost (so
+/// `3` and `3.0` collide) and recurses into arrays/objects so structurally
+/// equal values hash equal.
 pub(crate) fn approx_count_distinct_encode(datum: &Datum) -> Result<Vec<u8>, ExecError> {
     let unsupported = || ExecError::Unsupported("APPROX_COUNT_DISTINCT over this datum kind");
     Ok(match datum {
@@ -367,8 +375,43 @@ pub(crate) fn approx_count_distinct_encode(datum: &Datum) -> Result<Vec<u8>, Exe
             vector.serialize_to(&mut encoded);
             encoded
         }
+        Datum::Time(time) => {
+            let core = time.core_time();
+            let mut encoded = [0u8; 16];
+            encoded[0..2].copy_from_slice(&(core.year() as u16).to_be_bytes());
+            encoded[2] = core.month();
+            encoded[3] = core.day();
+            encoded[4] = core.hour();
+            encoded[5] = core.minute();
+            encoded[6] = core.second();
+            // encoded[7] is Go's struct padding byte, left zero.
+            encoded[8..12].copy_from_slice(&core.microsecond().to_be_bytes());
+            encoded[12] = match time.kind() {
+                TimeType::Date => mysql_type::DATE,
+                TimeType::DateTime => mysql_type::DATETIME,
+                TimeType::Timestamp => mysql_type::TIMESTAMP,
+            };
+            encoded[13] = time.fsp();
+            // encoded[14..16] are Go's trailing struct padding bytes, left zero.
+            encoded.to_vec()
+        }
+        Datum::Duration(duration) => {
+            let mut encoded = Vec::with_capacity(16);
+            encoded.extend_from_slice(&duration.nanoseconds().to_le_bytes());
+            encoded.extend_from_slice(&(i64::from(duration.fsp())).to_le_bytes());
+            encoded
+        }
+        Datum::Json(json) => json.hash_value().map_err(|_| unsupported())?,
         other => other.to_hash_key().map_err(|_| unsupported())?,
     })
+}
+
+/// MySQL column type codes as embedded in the encoded TIME/DATETIME/
+/// TIMESTAMP byte tuple above (`pkg/parser/mysql/type.go`).
+mod mysql_type {
+    pub(super) const TIMESTAMP: u8 = 7;
+    pub(super) const DATE: u8 = 10;
+    pub(super) const DATETIME: u8 = 12;
 }
 
 impl Partial {
@@ -1367,5 +1410,142 @@ mod tests {
             NoColumns,
         );
         assert_eq!(run(agg), Vec::<Vec<Datum>>::new());
+    }
+
+    /// `APPROX_COUNT_DISTINCT` argument-encoding tests: golden counts
+    /// captured from Go (`TestZZDumpApxEnc`,
+    /// `pkg/executor/zz_dump_apxenc_test.go`) that exercise the TIME,
+    /// DURATION, and JSON encodings ported into `approx_count_distinct_encode`.
+    mod approx_count_distinct_encoding {
+        use super::*;
+        use tidb_datatype::{CoreTime, MySqlDuration, Time, TimeType};
+
+        /// Feeds `values` through `approx_count_distinct_encode` and the
+        /// BJKST sketch exactly as `Partial::ApproxCountDistinct` does, and
+        /// returns the resulting distinct count.
+        fn distinct_count(values: &[Datum]) -> u64 {
+            let mut sketch = ApproxCountDistinctSketch::new();
+            for value in values {
+                let encoded = approx_count_distinct_encode(value).unwrap();
+                sketch.insert(&encoded);
+            }
+            sketch.fixed_size()
+        }
+
+        fn date(y: u16, m: u8, d: u8) -> Datum {
+            let core = CoreTime::from_date(y, m, d, 0, 0, 0, 0);
+            Datum::Time(Time::new(core, TimeType::Date, 0).unwrap())
+        }
+
+        fn datetime_micros(base_micros: u32, offset: u32) -> Datum {
+            // 2000-01-01 00:00:00 plus `offset` microseconds, matching the
+            // Go capture's `date_add('2000-01-01 00:00:00', interval i
+            // microsecond)` -- carried by hand into hour/minute/second so
+            // CoreTime's fields never overflow their bit width.
+            let total = base_micros as u64 + offset as u64;
+            let micros = (total % 1_000_000) as u32;
+            let total_seconds = total / 1_000_000;
+            let second = (total_seconds % 60) as u8;
+            let total_minutes = total_seconds / 60;
+            let minute = (total_minutes % 60) as u8;
+            let total_hours = total_minutes / 60;
+            let hour = (total_hours % 24) as u8;
+            let day = 1 + (total_hours / 24) as u8;
+            let core = CoreTime::from_date(2000, 1, day, hour, minute, second, micros);
+            Datum::Time(Time::new(core, TimeType::DateTime, 6).unwrap())
+        }
+
+        fn duration(nanoseconds: i64, fsp: i64) -> Datum {
+            Datum::Duration(MySqlDuration::from_nanoseconds(nanoseconds, fsp).unwrap())
+        }
+
+        fn json(value: &BinaryJSONValue) -> Datum {
+            Datum::Json(BinaryJSON::from_typed_value(value).unwrap())
+        }
+
+        // Go: `insert into t_date values (1,'2020-01-01'),(2,'2020-01-01'),
+        // (3,'2020-01-02')` -> ZZDUMP date_small = 2.
+        #[test]
+        fn date_dedup_matches_go() {
+            let values = [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2)];
+            assert_eq!(distinct_count(&values), 2);
+        }
+
+        // Go: `insert into t_dur values (1,'01:02:03.400000'),
+        // (2,'01:02:03.400000'),(3,'11:22:33.000001')` -> ZZDUMP
+        // dur_small = 2.
+        #[test]
+        fn duration_dedup_matches_go() {
+            let a = (3600 + 2 * 60 + 3) as i64 * 1_000_000_000 + 400_000_000;
+            let b = (11 * 3600 + 22 * 60 + 33) as i64 * 1_000_000_000 + 1_000;
+            let values = [duration(a, 6), duration(a, 6), duration(b, 6)];
+            assert_eq!(distinct_count(&values), 2);
+        }
+
+        // Go: `insert into t_json values (1,'3'),(2,'3.0'),(3,'[1,2]'),
+        // (4,'[1,2]'),(5,'{"a":1,"b":2}')` -> ZZDUMP json_small = 3 (the
+        // integer and the equal-valued double collide, the array pair
+        // collides, the object is its own distinct value).
+        #[test]
+        fn json_dedup_matches_go() {
+            let array = || {
+                BinaryJSONValue::Array(vec![BinaryJSONValue::Int64(1), BinaryJSONValue::Int64(2)])
+            };
+            let object = BinaryJSONValue::Object(BTreeMap::from([
+                ("a".to_owned(), BinaryJSONValue::Int64(1)),
+                ("b".to_owned(), BinaryJSONValue::Int64(2)),
+            ]));
+            let values = [
+                json(&BinaryJSONValue::Int64(3)),
+                json(&BinaryJSONValue::Float64(3.0)),
+                json(&array()),
+                json(&array()),
+                json(&object),
+            ];
+            assert_eq!(distinct_count(&values), 3);
+        }
+
+        // Go: `insert into t_dt` with 75000 rows of
+        // `date_add('2000-01-01 00:00:00', interval i microsecond)` for
+        // `i` in `0..75000` -> ZZDUMP dt_large = 74710 (the BJKST sketch's
+        // extrapolated estimate once the exact-count threshold is
+        // exceeded). This is the encoding this module ports: without the
+        // 16-byte `appendTime` layout, TIME arguments would fall back to a
+        // different byte representation and this sketch would diverge from
+        // Go's for exactly this reason.
+        #[test]
+        fn datetime_large_cardinality_matches_go_estimate() {
+            let n: u32 = 75_000;
+            let values: Vec<Datum> = (0..n).map(|i| datetime_micros(0, i)).collect();
+            assert_eq!(distinct_count(&values), 74_710);
+        }
+
+        // A mixed-type multi-argument tuple: Go encodes each argument in
+        // turn into one shared byte buffer per row before hashing, so two
+        // rows with the same (INT, DATETIME, JSON) triple must encode to
+        // the same bytes.
+        //
+        // Go: `insert into t_mixed values (1,1,'2020-01-01 00:00:00','1'),
+        // (2,1,'2020-01-01 00:00:00','1'),(3,2,'2020-01-01 00:00:00','1')`
+        // -> ZZDUMP mixed_small = 2.
+        #[test]
+        fn mixed_tuple_dedup_matches_go() {
+            fn tuple_bytes(a: i64, b: Datum, c: Datum) -> Vec<u8> {
+                let mut encoded = approx_count_distinct_encode(&Datum::Int(a)).unwrap();
+                encoded.extend(approx_count_distinct_encode(&b).unwrap());
+                encoded.extend(approx_count_distinct_encode(&c).unwrap());
+                encoded
+            }
+            let dt = || datetime_micros(0, 0);
+            let mut sketch = ApproxCountDistinctSketch::new();
+            for row in [
+                tuple_bytes(1, dt(), json(&BinaryJSONValue::Int64(1))),
+                tuple_bytes(1, dt(), json(&BinaryJSONValue::Int64(1))),
+                tuple_bytes(2, dt(), json(&BinaryJSONValue::Int64(1))),
+            ] {
+                sketch.insert(&row);
+            }
+            assert_eq!(sketch.fixed_size(), 2);
+        }
     }
 }
