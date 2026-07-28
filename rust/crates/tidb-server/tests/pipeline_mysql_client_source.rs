@@ -1073,6 +1073,26 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     );
     assert_eq!(kcu, vec![vec!["id".to_owned()]], "key_column_usage over the wire");
 
+    // The fifth integration's query features, through the socket.
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT COUNT(DISTINCT g, n) FROM wr"
+        ),
+        vec![vec!["3".to_owned()]],
+        "distinct tuple count over the wire"
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT a FROM t WHERE a > ALL (SELECT id FROM co WHERE co.id < t.a) ORDER BY a LIMIT 1"
+        ),
+        vec![vec!["1".to_owned()]],
+        "correlated ALL over the wire (empty inner set is vacuously true)"
+    );
+
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
