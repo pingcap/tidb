@@ -123,8 +123,16 @@ pub struct NodeConfig {
     pub load_tables: Vec<LoadedTableName>,
     /// Maximum accepted logical MySQL packet size.
     pub max_allowed_packet: usize,
-    /// Required immutable native-password account file.
+    /// Immutable native-password account file. Empty when the accounts come
+    /// from the cluster's own `mysql.*` instead (see [`Self::load_privileges`]).
     pub auth_file: PathBuf,
+    /// Load accounts and grants from the cluster's `mysql.*` tables at
+    /// startup instead of from `--auth-file`.
+    ///
+    /// This is the bridge to a keyspace a Go TiDB bootstrapped: whatever
+    /// `CREATE USER`/`GRANT` wrote there is what this node admits. The load is
+    /// one-shot at startup, so a grant made afterwards needs a restart.
+    pub load_privileges: bool,
     /// Fixed connection-worker count and accepted-socket queue capacity.
     pub max_connections: usize,
     /// Handshake, idle-command, and socket-write deadline for one connection.
@@ -217,6 +225,7 @@ impl NodeConfig {
         let mut connection_timeout_ms = None;
         let mut max_topn_rows = None;
         let mut schema_lease_ms = None;
+        let mut load_privileges = false;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -228,6 +237,13 @@ impl NodeConfig {
                     .filter(|value| !value.starts_with('-'))
                     .ok_or_else(|| NodeConfigError::MissingValue("-P".to_owned()))?;
                 set_once(&mut port, "-P", value)?;
+                continue;
+            }
+            if argument == "--load-privileges" {
+                if load_privileges {
+                    return Err(NodeConfigError::DuplicateOption(argument));
+                }
+                load_privileges = true;
                 continue;
             }
             if argument == "--read-table" {
@@ -292,7 +308,20 @@ impl NodeConfig {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
         };
-        let auth_file = PathBuf::from(required(auth_file, "--auth-file")?);
+        // Exactly one account source. Accepting both would leave two answers
+        // to "may this user log in", and accepting neither would leave none.
+        let auth_file = match (auth_file, load_privileges) {
+            (Some(_), true) => {
+                return Err(invalid(
+                    "--load-privileges",
+                    "cannot be combined with --auth-file; the cluster's mysql.* is then \
+                     the only account source",
+                ))
+            }
+            (Some(file), false) => PathBuf::from(file),
+            (None, true) => PathBuf::new(),
+            (None, false) => return Err(NodeConfigError::MissingOption("--auth-file")),
+        };
         let max_connections = match max_connections {
             Some(value) => parse_positive_number("--max-connections", &value)?,
             None => DEFAULT_MAX_CONNECTIONS,
@@ -330,6 +359,7 @@ impl NodeConfig {
             connection_timeout,
             max_topn_rows,
             schema_lease,
+            load_privileges,
         })
     }
 
@@ -344,7 +374,7 @@ impl NodeConfig {
 [--load-table <database>.<table> ...] \
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
 [--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
---auth-file <mode-0600-tsv> \
+[--auth-file <mode-0600-tsv> | --load-privileges] \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>]"
     }
@@ -721,7 +751,7 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_column_descriptor, ConfiguredReadColumnKind};
+    use super::{parse_column_descriptor, ConfiguredReadColumnKind, NodeConfig, NodeConfigError};
 
     /// The command-line descriptor field must parse back to the same typed
     /// kind for every admitted shape, including the CHAR length as a fourth
@@ -760,5 +790,52 @@ mod tests {
             assert_eq!(parsed.id, 3);
             assert_eq!(parsed.kind, kind, "round-trip of {kind:?}");
         }
+    }
+
+    /// `--load-privileges` names the cluster's own `mysql.*` as the account
+    /// source, which is only meaningful in place of `--auth-file`: two
+    /// sources would be two answers to "may this user log in".
+    #[test]
+    fn the_account_source_is_exactly_one_of_the_auth_file_or_the_cluster() {
+        let base = [
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+        ];
+
+        let from_cluster = NodeConfig::parse(
+            base.iter()
+                .copied()
+                .chain(["--load-privileges"])
+                .collect::<Vec<_>>(),
+        )
+        .expect("--load-privileges alone is a complete account source");
+        assert!(from_cluster.load_privileges);
+        assert_eq!(from_cluster.auth_file.as_os_str(), "");
+
+        let from_file = NodeConfig::parse(
+            base.iter()
+                .copied()
+                .chain(["--auth-file", "/tmp/users.tsv"])
+                .collect::<Vec<_>>(),
+        )
+        .expect("--auth-file alone is a complete account source");
+        assert!(!from_file.load_privileges);
+
+        assert!(matches!(
+            NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain(["--load-privileges", "--auth-file", "/tmp/users.tsv"])
+                    .collect::<Vec<_>>(),
+            ),
+            Err(NodeConfigError::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            NodeConfig::parse(base),
+            Err(NodeConfigError::MissingOption("--auth-file"))
+        ));
     }
 }

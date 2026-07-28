@@ -1245,6 +1245,63 @@ pub(crate) fn run_bound_node(
     })
 }
 
+/// Builds this node's live account table from whichever source the
+/// command line named.
+///
+/// `--load-privileges` reads the cluster's own `mysql.*` through the
+/// already-connected authority, so the accounts this node admits are exactly
+/// the ones a Go TiDB wrote there. It is refused against a keyspace no TiDB
+/// ever bootstrapped: an empty account table would accept nobody, and
+/// reporting that as a successful load would hide the real cause.
+pub(crate) fn node_accounts(
+    config: &NodeConfig,
+    authority: &ProductionReadProcessAuthority,
+) -> Result<Arc<ConfiguredUserStore>, RunConfiguredNodeError> {
+    if !config.load_privileges {
+        return Ok(Arc::new(
+            ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?,
+        ));
+    }
+    let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
+        &authority.transaction_opener(),
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    if !accounts.bootstrap.already_bootstrapped() {
+        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            format!(
+                "--load-privileges needs a cluster whose mysql.* a TiDB bootstrapped, but {}",
+                accounts.bootstrap
+            ),
+        )));
+    }
+    let loaded = crate::cluster_privileges::registry_from_cluster(&accounts.privileges);
+    let skipped = loaded
+        .skipped
+        .iter()
+        .map(|skip| {
+            format!(
+                "{{\"source\":{:?},\"account\":{:?},\"privilege\":{:?}}}",
+                skip.source, skip.account, skip.privilege
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    eprintln!(
+        "{{\"event\":\"privileges_loaded\",\"bootstrap\":{:?},\"accounts\":{},\"db_grants\":{},\"table_grants\":{},\"column_grants\":{},\"dynamic_grants\":{},\"role_edges\":{},\"skipped\":[{skipped}]}}",
+        accounts.bootstrap.to_string(),
+        loaded.account_count,
+        accounts.privileges.db_grants.len(),
+        accounts.privileges.table_grants.len(),
+        accounts.privileges.column_grants.len(),
+        accounts.privileges.dynamic_grants.len(),
+        accounts.privileges.role_edges.len(),
+    );
+    Ok(Arc::new(ConfiguredUserStore::from_accounts(
+        loaded.registry,
+    )))
+}
+
 /// Every servable-table outcome a `--load-table` node can settle on, once its
 /// one cluster-catalog snapshot is in hand.
 pub(crate) enum LoadedCatalogAuthority {

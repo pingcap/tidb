@@ -1392,6 +1392,7 @@ mod tests {
             load_tables: Vec::new(),
             max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
             auth_file: PathBuf::from("unused"),
+            load_privileges: false,
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
             max_topn_rows: 1_024,

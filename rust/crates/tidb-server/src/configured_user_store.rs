@@ -212,6 +212,21 @@ impl ConfiguredUserStore {
         })
     }
 
+    /// Adopts an already-populated account table as this store's own.
+    ///
+    /// The TSV file is one way to provision the rows; a cluster whose
+    /// `mysql.*` a Go TiDB already wrote is another
+    /// ([`crate::cluster_privileges::registry_from_cluster`]). Both end at the
+    /// same live table, so the login path, `CREATE USER`, and `SHOW GRANTS`
+    /// cannot tell which one filled it.
+    #[must_use]
+    pub fn from_accounts(accounts: PrivilegeRegistry) -> Self {
+        Self {
+            accounts,
+            global_vars: GlobalSysvars::new(),
+        }
+    }
+
     /// The live account table, to be shared with the session factory so that
     /// `CREATE USER`/`DROP USER` and the login path see one set of rows.
     #[must_use]

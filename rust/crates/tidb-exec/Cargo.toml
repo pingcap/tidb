@@ -28,6 +28,7 @@ tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-protocol = { path = "../tidb-protocol" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 prost.workspace = true
 serde_json = { workspace = true }

@@ -174,6 +174,16 @@ impl GlobalPriv {
         1u64 << (self as u32)
     }
 
+    /// This privilege as a one-bit mask, the unit every `grant`/`revoke`
+    /// method on [`PrivilegeRegistry`] takes. Exposed so a caller that
+    /// resolved a privilege NAME (a `GRANT` statement, or a `mysql.*` row a
+    /// Go TiDB wrote) can build the same mask the parser path builds, rather
+    /// than inventing a second privilege encoding.
+    #[must_use]
+    pub fn mask(self) -> u64 {
+        self.bit()
+    }
+
     /// Go `mysql.Priv2Str`, uppercased -- the exact text `SHOW GRANTS` prints
     /// for this privilege.
     pub(crate) fn print_name(self) -> &'static str {

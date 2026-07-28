@@ -31,6 +31,7 @@ mod auth_plugin_registry;
 mod auth_session;
 mod auth_token;
 mod bootstrap;
+mod cluster_privileges;
 pub mod cluster_session;
 mod compressed_command_io;
 mod configured_user_store;
@@ -91,6 +92,7 @@ pub use bootstrap::{
     decide_start_mode, start_mode, BootstrapDecisionError, BootstrapFeatureGates, BootstrapMode,
     BootstrapPhase, BOOTSTRAP_PHASE_ORDER, NOT_BOOTSTRAPPED,
 };
+pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
 pub use compressed_command_io::{
     CommandIoError, CommandIoOutcome, CompressedCommandIo, NegotiatedCompression, CLIENT_COMPRESS,
 };
@@ -125,7 +127,9 @@ use real_tikv_multi_node::run_bound_multi_node;
 pub use real_tikv_multi_node::{
     run_configured_multi_node, RealTiKvMultiServerSession, RealTiKvMultiSessionFactory,
 };
-use real_tikv_node::{connect_loaded_catalog_authority, run_bound_node, LoadedCatalogAuthority};
+use real_tikv_node::{
+    connect_loaded_catalog_authority, node_accounts, run_bound_node, LoadedCatalogAuthority,
+};
 pub use real_tikv_node::{
     run_configured_node as run_single_configured_node, run_with_process_shutdown,
     ProcessReadAuthority, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
@@ -156,19 +160,28 @@ pub use sql_node::{
 /// connected-join surfaces its servable table count reaches.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     if !config.load_tables.is_empty() {
-        let users = std::sync::Arc::new(
-            ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?,
-        );
         return match connect_loaded_catalog_authority(&config)
             .map_err(RunConfiguredNodeError::Engine)?
         {
             LoadedCatalogAuthority::Single(factory, authority) => {
+                let users = node_accounts(&config, &authority)?;
                 run_bound_node(config, *factory, authority, users)
             }
             LoadedCatalogAuthority::Multi(factory, authority) => {
+                let users = node_accounts(&config, &authority)?;
                 run_bound_multi_node(config, *factory, authority, users)
             }
         };
+    }
+    if config.load_privileges {
+        // The account load rides the same authority a `--load-table` node
+        // connects; a command-line-only node never connects one, so there is
+        // nothing to read `mysql.*` through.
+        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "--load-privileges requires at least one --load-table, which is what connects this \
+             node to the cluster whose mysql.* holds the accounts"
+                .to_owned(),
+        )));
     }
     match config.read_tables.len() {
         1 => run_single_configured_node(config),
