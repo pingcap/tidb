@@ -36,11 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/memory"
->>>>>>> 2ddad9e3a5c (session: retry waiting for SYSTEM keyspace bootstrap (#70085))
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
