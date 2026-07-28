@@ -2607,11 +2607,17 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		resp.pbResp.Data = data
 		if worker.req.Paging.Enable || worker.req.Paging.PagingSizeBytes > 0 {
 			var start, end []byte
-			if cacheValue.PageStart != nil {
-				start = slices.Clone(cacheValue.PageStart)
-			}
-			if cacheValue.PageEnd != nil {
-				end = slices.Clone(cacheValue.PageEnd)
+			if cacheValue.PageStart != nil || cacheValue.PageEnd != nil {
+				startLen := len(cacheValue.PageStart)
+				keys := make([]byte, startLen+len(cacheValue.PageEnd))
+				if cacheValue.PageStart != nil {
+					start = keys[:startLen:startLen]
+					copy(start, cacheValue.PageStart)
+				}
+				if cacheValue.PageEnd != nil {
+					end = keys[startLen:len(keys):len(keys)]
+					copy(end, cacheValue.PageEnd)
+				}
 			}
 			// When paging protocol is used, the response key range is part of the cache data.
 			if start != nil || end != nil {
