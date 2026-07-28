@@ -1004,6 +1004,104 @@ fn rename_user_moves_the_whole_account_row() {
     }
 }
 
+/// CAPTURED: `RENAME USER` also moves `mysql.role_edges` (both directions)
+/// and `mysql.default_roles` rows, so a renamed grantee keeps every role it
+/// held, a renamed role keeps every grantee it was granted to (and those
+/// grantees' `SHOW GRANTS` still lists it), and default-role membership
+/// follows the rename too.
+#[test]
+fn rename_user_moves_role_edges_and_default_roles() {
+    let mut session = session_with_privileges();
+    session.run("CREATE ROLE 'r1'@'%'").unwrap();
+    session.run("CREATE USER 'u1'@'%'").unwrap();
+    session.run("GRANT 'r1'@'%' TO 'u1'@'%'").unwrap();
+    session.run("SET DEFAULT ROLE 'r1'@'%' TO 'u1'@'%'").ok();
+
+    // Renaming the GRANTEE: the new identity keeps the granted role.
+    session.run("RENAME USER 'u1'@'%' TO 'u2'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u2'@'%' USING 'r1'@'%'")),
+        [
+            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
+            ["GRANT 'r1'@'%' TO 'u2'@'%'"],
+        ]
+    );
+
+    // Renaming the ROLE: the existing grantee's edge follows to the new name.
+    session.run("RENAME USER 'r1'@'%' TO 'r2'@'%'").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'u2'@'%' USING 'r2'@'%'")),
+        [
+            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
+            ["GRANT 'r2'@'%' TO 'u2'@'%'"],
+        ]
+    );
+}
+
+/// CAPTURED: `ALTER USER ... IDENTIFIED WITH <plugin> [BY '<password>' | AS
+/// '<hash>']` rewrites BOTH `mysql.user.plugin` and `authentication_string`,
+/// the same as `CREATE USER`'s clause; a bare `IDENTIFIED BY` (no `WITH`)
+/// leaves the account's existing plugin untouched.
+#[test]
+fn alter_user_identified_with_changes_the_plugin_and_password() {
+    let mut session = session_with_privileges();
+    session
+        .run("CREATE USER 'bob'@'%' IDENTIFIED BY 'bobpw'")
+        .unwrap();
+    let registry = session.privileges.clone().unwrap();
+    assert_eq!(
+        registry.plugin("bob", "%").as_deref(),
+        Some("mysql_native_password")
+    );
+
+    // Plugin + password together.
+    session
+        .run("ALTER USER 'bob'@'%' IDENTIFIED WITH caching_sha2_password BY 'newpw'")
+        .unwrap();
+    assert_eq!(
+        registry.plugin("bob", "%").as_deref(),
+        Some("caching_sha2_password")
+    );
+    let auth = registry.auth_string("bob", "%").unwrap();
+    assert!(auth.starts_with("$A$"), "got {auth:?}");
+
+    // A bare IDENTIFIED BY afterwards keeps the now-current plugin rather
+    // than resetting it to mysql_native_password.
+    session
+        .run("ALTER USER 'bob'@'%' IDENTIFIED BY 'again'")
+        .unwrap();
+    assert_eq!(
+        registry.plugin("bob", "%").as_deref(),
+        Some("caching_sha2_password")
+    );
+}
+
+/// CAPTURED: `ALTER USER ... ACCOUNT LOCK` / `ACCOUNT UNLOCK` flips the same
+/// `account_locked` flag a role's password-less row uses, so a locked plain
+/// user refuses login exactly like a role does, and `ACCOUNT UNLOCK`
+/// reverses it.
+#[test]
+fn alter_user_account_lock_unlock() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'bob'@'%'").unwrap();
+    let registry = session.privileges.clone().unwrap();
+    assert!(!registry.is_role("bob", "%"));
+
+    session.run("ALTER USER 'bob'@'%' ACCOUNT LOCK").unwrap();
+    assert!(registry.is_role("bob", "%"));
+
+    session.run("ALTER USER 'bob'@'%' ACCOUNT UNLOCK").unwrap();
+    assert!(!registry.is_role("bob", "%"));
+
+    assert!(matches!(
+        session.run("ALTER USER 'nosuch'@'%' ACCOUNT LOCK"),
+        Err(DriverError::AlterUserMissing { .. })
+    ));
+    session
+        .run("ALTER USER IF EXISTS 'nosuch'@'%' ACCOUNT LOCK")
+        .unwrap();
+}
+
 /// CAPTURED: `DROP USER` clears the account's scoped grant rows too, so
 /// an account later recreated under the same identity starts from USAGE
 /// rather than inheriting the dropped account's grants.

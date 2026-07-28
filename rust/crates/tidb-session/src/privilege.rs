@@ -658,6 +658,30 @@ impl PrivilegeRegistry {
         }
     }
 
+    /// [`Self::set_auth_string`], also rewriting the account's `plugin` --
+    /// `ALTER USER ... IDENTIFIED WITH '<plugin>' [BY '<password>' | AS
+    /// '<hash>']`. Go always writes both columns together on any auth-clause
+    /// ALTER USER, backfilling `AuthPlugin` from the row's current plugin
+    /// when the statement wrote no explicit `WITH` (see
+    /// `resolve_auth_string_and_plugin`), so this is the one write path both
+    /// `IDENTIFIED BY` and `IDENTIFIED WITH` go through.
+    pub fn set_auth_string_and_plugin(
+        &self,
+        user: &str,
+        host: &str,
+        auth_string: &str,
+        plugin: &str,
+    ) -> bool {
+        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            Some(record) => {
+                record.auth_string = auth_string.to_owned();
+                record.plugin = plugin.to_owned();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Every account identity currently in the table, for the front end's
     /// host-pattern matching at login time (Go resolves a login against the
     /// live `mysql.user` rows, not a startup snapshot).
@@ -720,7 +744,51 @@ impl PrivilegeRegistry {
         if let Some(privs) = dynamic_guard.remove(&(old_user.to_owned(), old_host.to_owned())) {
             dynamic_guard.insert((new_user.to_owned(), new_host.to_owned()), privs);
         }
+        drop(dynamic_guard);
+        // Go's `executeRenameUser` also rewrites `mysql.role_edges` (both the
+        // FROM_USER and TO_USER sides) and `mysql.default_roles` (both the
+        // USER and DEFAULT_ROLE_USER sides): a renamed grantee keeps every
+        // role it was granted, a renamed role keeps every grantee it was
+        // granted to, and default-role membership follows the rename in both
+        // directions (captured).
+        let old_account = (old_user.to_owned(), old_host.to_owned());
+        let new_account = (new_user.to_owned(), new_host.to_owned());
+        let mut edges = self.lock_role_edges();
+        if let Some(roles) = edges.remove(&old_account) {
+            edges.insert(new_account.clone(), roles);
+        }
+        for roles in edges.values_mut() {
+            if roles.remove(&old_account) {
+                roles.insert(new_account.clone());
+            }
+        }
+        drop(edges);
+        let mut defaults = self.lock_default_roles();
+        if let Some(roles) = defaults.remove(&old_account) {
+            defaults.insert(new_account.clone(), roles);
+        }
+        for roles in defaults.values_mut() {
+            if roles.remove(&old_account) {
+                roles.insert(new_account.clone());
+            }
+        }
         true
+    }
+
+    /// `ALTER USER ... ACCOUNT LOCK` / `ACCOUNT UNLOCK`: flips
+    /// `mysql.user.account_locked`. Reuses the same flag [`Self::is_role`]
+    /// reads (Go stores both under one `account_locked` column; a role IS
+    /// simply an account row with `account_locked = 'Y'` and no password), so
+    /// a locked plain user refuses login exactly like a role does. Returns
+    /// whether the account existed.
+    pub fn set_locked(&self, user: &str, host: &str, locked: bool) -> bool {
+        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            Some(record) => {
+                record.is_role = locked;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Go's `ErrCannotUser("DROP USER", ...)`: dropping a missing account

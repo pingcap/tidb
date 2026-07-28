@@ -342,33 +342,7 @@ impl Session {
             .collect()
     }
 
-    /// The `mysql.user.authentication_string` one account specification's
-    /// authentication clause stores. `IDENTIFIED WITH <plugin>` is refused
-    /// rather than silently downgraded, because only
-    /// `mysql_native_password` is modelled; a missing clause means a
-    /// passwordless account, whose `authentication_string` is empty.
-    ///
-    /// Used by `ALTER USER`/`SET PASSWORD`, which never change an existing
-    /// account's plugin (Go `executeAlterUser` rewrites only
-    /// `authentication_string`, and this tier does not model `ALTER USER
-    /// ... IDENTIFIED WITH` at all) -- `CREATE USER` uses
-    /// [`Self::resolve_auth_string_and_plugin`] instead, which DOES accept
-    /// `IDENTIFIED WITH`.
-    pub(crate) fn resolve_auth_string(
-        auth: Option<&tidb_ast::CreateUserAuth>,
-    ) -> Result<String, DriverError> {
-        match auth {
-            None => Ok(String::new()),
-            Some(tidb_ast::CreateUserAuth::By(password)) => {
-                Ok(privilege::encode_password(password))
-            }
-            Some(tidb_ast::CreateUserAuth::With { .. }) => Err(DriverError::Unsupported(
-                "ALTER USER ... IDENTIFIED WITH is not supported yet",
-            )),
-        }
-    }
-
-    /// [`Self::resolve_auth_string`], widened to `CREATE USER`'s
+    /// `CREATE USER`'s
     /// `IDENTIFIED WITH <plugin> [BY '<password>' | AS '<hash>']` form.
     ///
     /// Returns the account's `(authentication_string, plugin)` pair. An
@@ -409,10 +383,14 @@ impl Session {
         }
     }
 
-    /// `ALTER USER [IF EXISTS] <account> IDENTIFIED BY '<password>'`, the one
-    /// `ALTER USER` action this tier stores: it rewrites the account's
-    /// `mysql.user.authentication_string` in place, so the NEXT login uses
-    /// the new password (Go `executeAlterUser`).
+    /// `ALTER USER [IF EXISTS] <account> [IDENTIFIED [WITH '<plugin>'] BY
+    /// '<password>'] [ACCOUNT LOCK | ACCOUNT UNLOCK]`, the `ALTER USER`
+    /// actions this tier stores: a password/plugin change rewrites the
+    /// account's `mysql.user.authentication_string` (and `plugin`) in place,
+    /// and `ACCOUNT LOCK`/`UNLOCK` flips `account_locked` (Go
+    /// `executeAlterUser`). Every other statement-level option (TLS,
+    /// resource limits, comment/attribute, resource group, and all other
+    /// `PASSWORD ...` clauses) remains unsupported.
     pub(crate) fn alter_user_stmt(
         &mut self,
         alter: &tidb_ast::AlterUserStmt,
@@ -421,13 +399,28 @@ impl Session {
             || alter.user_function_dual_password.is_some()
             || !alter.tls_options.is_empty()
             || !alter.resource_options.is_empty()
-            || !alter.password_options.is_empty()
             || alter.comment_or_attribute.is_some()
             || alter.resource_group.is_some()
         {
             return Err(DriverError::Unsupported(
-                "ALTER USER options beyond IDENTIFIED BY are not supported yet",
+                "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
             ));
+        }
+        // The statement-level PASSWORD OR LOCK options this tier understands
+        // are only ACCOUNT LOCK and ACCOUNT UNLOCK (last one written wins,
+        // matching Go's `passwordOrLockOptionsInfo.loadOptions`, which
+        // overwrites `lockAccount` on every matching option in source order).
+        let mut locked: Option<bool> = None;
+        for option in &alter.password_options {
+            match option {
+                tidb_ast::CreateUserPasswordOption::AccountLock => locked = Some(true),
+                tidb_ast::CreateUserPasswordOption::AccountUnlock => locked = Some(false),
+                _ => {
+                    return Err(DriverError::Unsupported(
+                        "ALTER USER PASSWORD/FAILED_LOGIN_ATTEMPTS options are not supported yet",
+                    ));
+                }
+            }
         }
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::Unsupported(
@@ -435,15 +428,43 @@ impl Session {
             ));
         };
         for spec in &alter.users {
-            if spec.auth.is_none() || spec.dual_password.is_some() {
+            if spec.dual_password.is_some() {
                 return Err(DriverError::Unsupported(
-                    "ALTER USER options beyond IDENTIFIED BY are not supported yet",
+                    "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
                 ));
             }
-            let auth_string = Self::resolve_auth_string(spec.auth.as_ref())?;
             let (user, host) = self.resolve_account(&spec.user)?;
-            if !registry.set_auth_string(&user, &host, &auth_string) && !alter.if_exists {
+            if let Some(auth) = spec.auth.as_ref() {
+                // A bare `IDENTIFIED BY` (no `WITH <plugin>`) keeps the
+                // account's CURRENT plugin (Go backfills
+                // `spec.AuthOpt.AuthPlugin` from `currentAuthPlugin` rather
+                // than resetting it to `mysql_native_password`); only an
+                // explicit `IDENTIFIED WITH` changes it.
+                let (auth_string, plugin) = match auth {
+                    tidb_ast::CreateUserAuth::By(password) => {
+                        let current_plugin = registry
+                            .plugin(&user, &host)
+                            .unwrap_or_else(|| tidb_mysql::consts::AuthNativePassword.to_owned());
+                        (privilege::encode_password(password), current_plugin)
+                    }
+                    tidb_ast::CreateUserAuth::With { .. } => {
+                        Self::resolve_auth_string_and_plugin(Some(auth))?
+                    }
+                };
+                if !registry.set_auth_string_and_plugin(&user, &host, &auth_string, &plugin)
+                    && !alter.if_exists
+                {
+                    return Err(DriverError::AlterUserMissing { user, host });
+                }
+            } else if locked.is_none() {
+                return Err(DriverError::Unsupported(
+                    "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
+                ));
+            } else if !registry.user_exists(&user, &host) && !alter.if_exists {
                 return Err(DriverError::AlterUserMissing { user, host });
+            }
+            if let Some(locked) = locked {
+                registry.set_locked(&user, &host, locked);
             }
         }
         Ok(StmtOutput::Affected(0))
