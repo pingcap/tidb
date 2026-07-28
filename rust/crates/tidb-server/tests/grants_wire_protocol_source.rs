@@ -628,3 +628,104 @@ fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
         "wrong password, stale password, and dropped account: {exits:?}"
     );
 }
+
+/// `CREATE USER ... IDENTIFIED WITH caching_sha2_password BY '<password>'`
+/// really does create the account (it shows up in `SHOW GRANTS`), but a
+/// client that authenticates the way every other login in this file does --
+/// `mysql_native_password`, the only plugin the wire front end's login path
+/// (`ConfiguredUserStore::authenticate_native`) actually verifies -- gets a
+/// clean, ordinary 1045/28000 access-denied over the real wire. No panic, no
+/// hang: the account's `authentication_string` is a `caching_sha2_password`
+/// shape (`$A$...`, 70 bytes), which never parses as a native stage-two
+/// hash, so the native verifier honestly fails it exactly like a wrong
+/// password would.
+///
+/// DEFERRED (documented): this crate's wire front end always auth-switches
+/// every client to `mysql_native_password` (see `mysql_connection.rs`), so
+/// there is no `caching_sha2_password` SCRAMBLE exchange to attempt in the
+/// first place -- the account's plugin is stored and displayed honestly, but
+/// only a native login is ever tried, by construction.
+#[test]
+fn a_caching_sha2_password_account_creates_but_native_login_fails_cleanly() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+
+    let acceptor_factory = Arc::clone(&factory);
+    let acceptor_store = Arc::clone(&store);
+    let acceptor_tracker = Arc::clone(&tracker);
+    // root's connection plus the one native login attempt below.
+    let acceptor = std::thread::spawn(move || {
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let factory = Arc::clone(&acceptor_factory);
+            let store = Arc::clone(&acceptor_store);
+            let tracker = Arc::clone(&acceptor_tracker);
+            workers.push(std::thread::spawn(move || {
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+            }));
+        }
+        workers
+    });
+
+    let mut root = TcpStream::connect(address).unwrap();
+    let root_read = root.try_clone().unwrap();
+    let mut root_reader = PacketReader::new(root_read);
+    authenticate(&mut root, &mut root_reader, "root", b"rootpw");
+
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "CREATE USER 'dana'@'%' IDENTIFIED WITH caching_sha2_password BY 'danapw'"
+        ),
+        0
+    );
+    // The account exists and prints like any other -- `IDENTIFIED WITH`
+    // does not stop it from being a real, grantable account.
+    let grants = run_query(&mut root, &mut root_reader, "SHOW GRANTS FOR 'dana'@'%'");
+    assert_eq!(
+        grants,
+        vec![vec!["GRANT USAGE ON *.* TO 'dana'@'%'".to_owned()]],
+        "a caching_sha2_password account is a real account: {grants:?}"
+    );
+
+    // A native login attempt -- with either the real password or the wrong
+    // one -- is refused the same clean way, because `dana`'s stored
+    // authentication_string is not native-shaped at all.
+    let mut dana = TcpStream::connect(address).unwrap();
+    let dana_read = dana.try_clone().unwrap();
+    let mut dana_reader = PacketReader::new(dana_read);
+    let reply = try_authenticate(&mut dana, &mut dana_reader, "dana", b"danapw");
+    assert_eq!(reply[0], 0xff, "must be a clean ERR, not a panic: {reply:?}");
+    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1045);
+    assert_eq!(&reply[4..9], b"28000");
+
+    write_packet(&mut root, 0, &[0x01]);
+    drop(root);
+    let workers = acceptor.join().unwrap();
+    let exits: Vec<ConnectionExit> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap().exit)
+        .collect();
+    assert_eq!(
+        exits
+            .iter()
+            .filter(|exit| **exit == ConnectionExit::AuthenticationRejected)
+            .count(),
+        1,
+        "dana's native login attempt: {exits:?}"
+    );
+}

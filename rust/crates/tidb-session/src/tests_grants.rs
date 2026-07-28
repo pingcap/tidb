@@ -883,6 +883,85 @@ fn account_authentication_strings_follow_go_encode_password() {
     ));
 }
 
+/// CAPTURED: `CREATE USER ... IDENTIFIED WITH <plugin> [BY '<password>' |
+/// AS '<hash>']`. An accepted plugin creates a real, gantable account
+/// regardless of whether this tier can verify a login against it; an
+/// unrecognized name is Go's `ErrPluginIsNotLoaded` (1524), and a
+/// malformed `AS` hash is Go's `ErrPasswordFormat` (1827).
+#[test]
+fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut session = Session::new();
+    session.attach_privileges(registry.clone());
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+
+    // `BY` hashes the caching_sha2 way and is a real 70-byte `$A$...` shape,
+    // not the native `*40HEX` shape.
+    session
+        .run("CREATE USER 'dana'@'%' IDENTIFIED WITH caching_sha2_password BY 'danapw'")
+        .unwrap();
+    assert_eq!(
+        registry.plugin("dana", "%").as_deref(),
+        Some("caching_sha2_password")
+    );
+    let dana_auth = registry.auth_string("dana", "%").unwrap();
+    assert_eq!(dana_auth.len(), 70);
+    assert!(dana_auth.starts_with("$A$"));
+    assert_eq!(
+        row_text(session.run("SHOW GRANTS FOR 'dana'@'%'")),
+        [["GRANT USAGE ON *.* TO 'dana'@'%'"]]
+    );
+
+    // A plugin-only clause (no BY/AS) is a passwordless account under that
+    // plugin.
+    session
+        .run("CREATE USER 'tok'@'%' IDENTIFIED WITH tidb_auth_token")
+        .unwrap();
+    assert_eq!(
+        registry.plugin("tok", "%").as_deref(),
+        Some("tidb_auth_token")
+    );
+    assert_eq!(registry.auth_string("tok", "%").as_deref(), Some(""));
+
+    // `AS '<hash>'` stores an already-hashed string once it is the right
+    // shape for the plugin.
+    let hash40 = format!("*{}", "F".repeat(40));
+    session
+        .run(&format!(
+            "CREATE USER 'preset'@'%' IDENTIFIED WITH mysql_native_password AS '{hash40}'"
+        ))
+        .unwrap();
+    assert_eq!(
+        registry.auth_string("preset", "%").as_deref(),
+        Some(hash40.as_str())
+    );
+
+    // A malformed `AS` hash is ErrPasswordFormat (1827), not a silent
+    // truncation or panic.
+    assert!(matches!(
+        session.run("CREATE USER 'bad'@'%' IDENTIFIED WITH mysql_native_password AS 'short'"),
+        Err(DriverError::PasswordFormat)
+    ));
+    assert!(!registry.user_exists("bad", "%"));
+
+    // An unrecognized plugin is ErrPluginIsNotLoaded (1524): this tier
+    // registers no extension auth plugins, so nothing outside Go's built-in
+    // CREATE USER switch can ever be loaded.
+    assert!(matches!(
+        session.run("CREATE USER 'nope'@'%' IDENTIFIED WITH 'no_such_plugin' BY 'x'"),
+        Err(DriverError::PluginIsNotLoaded { plugin }) if plugin == "no_such_plugin"
+    ));
+    assert!(!registry.user_exists("nope", "%"));
+
+    // `mysql_clear_password` and `tidb_session_token` are built-in plugin
+    // NAMES (reserved against extensions) but are not in Go's CREATE USER
+    // switch either, so they are refused the same way.
+    assert!(matches!(
+        session.run("CREATE USER 'clear'@'%' IDENTIFIED WITH mysql_clear_password BY 'x'"),
+        Err(DriverError::PluginIsNotLoaded { .. })
+    ));
+}
+
 /// CAPTURED: `RENAME USER` carries the authentication string AND every
 /// scoped grant row to the new identity, leaves the old identity with no
 /// grant row at all, and reports Go's two distinct reason clauses.

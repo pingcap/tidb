@@ -13,8 +13,11 @@ chrono = { workspace = true }
 chrono-tz = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-executor = { path = "../tidb-executor" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-util = { path = "../tidb-util" }
 sha1 = { workspace = true }
+sha2 = { workspace = true }
 
 [lints]
 workspace = true

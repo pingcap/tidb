@@ -294,6 +294,25 @@ pub enum DriverError {
     /// with no `mysql.user` row. `SET PASSWORD` does NOT reuse
     /// `ErrCannotUser` (captured).
     SetPasswordNoMatchingRow,
+    /// Go `ErrPluginIsNotLoaded` (1524): `CREATE`/`ALTER USER ... IDENTIFIED
+    /// WITH <plugin>` named a plugin that is neither one of Go's built-in
+    /// `CREATE USER`-accepted plugins (`mysql_native_password`,
+    /// `caching_sha2_password`, `tidb_sm3_password`, `auth_socket`,
+    /// `tidb_auth_token`, `authentication_ldap_simple`,
+    /// `authentication_ldap_sasl`) nor a registered extension auth plugin
+    /// (which this tier has none of).
+    PluginIsNotLoaded {
+        /// The unrecognized plugin name, as written.
+        plugin: String,
+    },
+    /// Go `ErrPasswordFormat` (1827): an `IDENTIFIED WITH <plugin> AS
+    /// '<hash>'` credential is not shaped like that plugin's stored
+    /// `authentication_string` -- captured: `mysql_native_password` needs
+    /// exactly `*` + 40 hex digits, `caching_sha2_password`/
+    /// `tidb_sm3_password` need exactly 70 bytes, and `tidb_auth_token`'s
+    /// `AS` form is refused outright (Go's `encodedPassword` has no case for
+    /// it, so it falls to the same `default: return "", false`).
+    PasswordFormat,
     /// Go's plain `errors.Errorf("Unknown user: %s", user)` (`REVOKE` on an
     /// account that does not exist), unquoted `user@host`.
     RevokeUnknownUser {
@@ -909,6 +928,20 @@ impl DriverError {
             1133,
             *b"42000",
             "Can't find any matching row in the user table".to_owned(),
+        ),
+        // Go `ErrPluginIsNotLoaded` (1524).
+        DriverError::PluginIsNotLoaded { plugin } => MysqlError::new(
+            1524,
+            *b"HY000",
+            format!("Plugin '{plugin}' is not loaded"),
+        ),
+        // Go `ErrPasswordFormat` (1827).
+        DriverError::PasswordFormat => MysqlError::new(
+            1827,
+            *b"HY000",
+            "The password hash doesn't have the expected format. Check if the correct \
+             password algorithm is being used with the PASSWORD() function."
+                .to_owned(),
         ),
         // Go: `errors.Errorf("Unknown user: %s", user)` in `RevokeExec.Next`.
         DriverError::RevokeUnknownUser { user, host } => {

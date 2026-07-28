@@ -1506,10 +1506,13 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "sha1",
+ "sha2",
  "tidb-ast",
  "tidb-datatype",
  "tidb-executor",
+ "tidb-mysql",
  "tidb-parser",
+ "tidb-util",
 ]
 
 [[package]]

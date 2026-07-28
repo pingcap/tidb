@@ -67,6 +67,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
+use tidb_executor::DriverError;
+use tidb_mysql::consts::{
+    AuthCachingSha2Password, AuthLDAPSASL, AuthLDAPSimple, AuthNativePassword, AuthSocket,
+    AuthTiDBAuthToken, AuthTiDBSM3Password, PWDHashLen, SHAPWDHashLen, SM3PWDHashLen,
+};
 
 /// One account identity, `(user, host)` -- the key of every table here, and
 /// the shape a role is named by too, since a role IS an account.
@@ -388,6 +393,17 @@ struct UserRecord {
     /// in, which is the whole difference between a role and a user at the
     /// row level.
     is_role: bool,
+    /// Go's `mysql.user.plugin`: the account's configured authentication
+    /// plugin, defaulting to `mysql_native_password` when `CREATE USER`
+    /// wrote no `IDENTIFIED WITH` clause. An account may be created and
+    /// shown with any plugin `IDENTIFIED WITH` accepts (see
+    /// `plugin::CREATE_USER_PLUGINS`), but the wire front end's login path
+    /// only VERIFIES the `mysql_native_password` shape of `auth_string` --
+    /// a non-native account still exists and prints correctly, it just
+    /// cannot complete that plugin's real handshake yet (see
+    /// `ConfiguredUserStore::authenticate_native`, which reports the
+    /// server's honest, clean access-denied for it rather than a panic).
+    plugin: String,
 }
 
 /// The server's account/global-privilege registry, shared by every session
@@ -474,6 +490,7 @@ impl PrivilegeRegistry {
                         privs,
                         auth_string,
                         is_role: false,
+                        plugin: tidb_mysql::consts::AuthNativePassword.to_owned(),
                     },
                 )
             })
@@ -538,8 +555,30 @@ impl PrivilegeRegistry {
     /// account that already exists fails unless the caller handles
     /// `IF NOT EXISTS` itself. Returns `false` if the account already
     /// existed (no state changed), `true` if it was created.
+    ///
+    /// Defaults the account's plugin to `mysql_native_password`, Go's
+    /// default when `CREATE USER` writes no `IDENTIFIED WITH` clause. Use
+    /// [`Self::create_user_with_plugin`] for an explicit one.
     pub fn create_user(&self, user: &str, host: &str, auth_string: &str) -> bool {
-        self.create_account(user, host, auth_string, false)
+        self.create_account(
+            user,
+            host,
+            auth_string,
+            tidb_mysql::consts::AuthNativePassword,
+            false,
+        )
+    }
+
+    /// [`Self::create_user`], recording an explicit authentication plugin --
+    /// the `CREATE USER ... IDENTIFIED WITH <plugin>` path.
+    pub fn create_user_with_plugin(
+        &self,
+        user: &str,
+        host: &str,
+        auth_string: &str,
+        plugin: &str,
+    ) -> bool {
+        self.create_account(user, host, auth_string, plugin, false)
     }
 
     /// `CREATE ROLE`, which is `CREATE USER` writing the same `mysql.user`
@@ -548,10 +587,17 @@ impl PrivilegeRegistry {
     /// kind (captured: `CREATE USER r1` after `CREATE ROLE r1` reports
     /// `Operation CREATE USER failed for 'r1'@'%'`, and vice versa).
     pub fn create_role(&self, role: &str, host: &str) -> bool {
-        self.create_account(role, host, "", true)
+        self.create_account(role, host, "", tidb_mysql::consts::AuthNativePassword, true)
     }
 
-    fn create_account(&self, user: &str, host: &str, auth_string: &str, is_role: bool) -> bool {
+    fn create_account(
+        &self,
+        user: &str,
+        host: &str,
+        auth_string: &str,
+        plugin: &str,
+        is_role: bool,
+    ) -> bool {
         let key = (user.to_owned(), host.to_owned());
         let mut guard = self.lock();
         if guard.contains_key(&key) {
@@ -563,6 +609,7 @@ impl PrivilegeRegistry {
                 privs: 0,
                 auth_string: auth_string.to_owned(),
                 is_role,
+                plugin: plugin.to_owned(),
             },
         );
         true
@@ -587,6 +634,15 @@ impl PrivilegeRegistry {
         self.lock()
             .get(&(user.to_owned(), host.to_owned()))
             .map(|record| record.auth_string.clone())
+    }
+
+    /// The account's configured authentication plugin, or `None` when no
+    /// such account exists.
+    #[must_use]
+    pub fn plugin(&self, user: &str, host: &str) -> Option<String> {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .map(|record| record.plugin.clone())
     }
 
     /// Replaces an existing account's `authentication_string`
@@ -1318,6 +1374,273 @@ pub fn encode_password(password: &str) -> String {
     encoded
 }
 
+/// Plugins `CREATE`/`ALTER USER ... IDENTIFIED WITH` accepts without a
+/// registered extension auth plugin -- Go `simple.go`'s account executor
+/// switch (`executor/simple.go`'s `executeCreateUser`). Any other name is
+/// Go's `ErrPluginIsNotLoaded` (1524), `Plugin '<name>' is not loaded`,
+/// since this tier registers no extension auth plugins to fall back to.
+pub const CREATE_USER_PLUGINS: &[&str] = &[
+    AuthNativePassword,
+    AuthCachingSha2Password,
+    AuthTiDBSM3Password,
+    AuthSocket,
+    AuthTiDBAuthToken,
+    AuthLDAPSimple,
+    AuthLDAPSASL,
+];
+
+/// Whether `plugin` is one [`CREATE_USER_PLUGINS`] accepts.
+#[must_use]
+pub fn is_create_user_plugin(plugin: &str) -> bool {
+    CREATE_USER_PLUGINS.contains(&plugin)
+}
+
+/// One account specification's `IDENTIFIED WITH <plugin> [BY '<password>' |
+/// AS '<hash>']` credential, already split into the shape Go's
+/// `encodedPassword` switches on.
+pub enum PluginCredential<'a> {
+    /// `BY '<password>'`: the plaintext the plugin hashes.
+    By(&'a str),
+    /// `AS '<hash>'`: an already-computed hash, validated for shape only.
+    As(&'a str),
+    /// Neither clause: a passwordless account.
+    None,
+}
+
+/// Go `executor/utils.go`'s `encodedPassword`, minus the extension-plugin
+/// branch: this tier registers no extension auth plugins, so
+/// `encodePasswordWithPlugin` always falls to this path.
+///
+/// Returns the `authentication_string` to store, or
+/// [`DriverError::PasswordFormat`] for an `AS` hash that does not match the
+/// plugin's expected shape (Go's `ErrPasswordFormat`, 1827).
+///
+/// DEFERRED (documented): `tidb_sm3_password`'s `BY` form, which needs an
+/// SM3 hasher this crate does not have and is refused outright rather than
+/// stored under a fabricated hash. Every other plugin's `BY`/`AS` form,
+/// including `tidb_sm3_password`'s `AS` form (a length check only, no
+/// hashing needed), is captured and implemented exactly -- ORDER matters: an
+/// LDAP plugin's `AS` form stores the `dn` verbatim before the general
+/// empty/length rules apply, but an LDAP plugin's `BY` form is NOT special
+/// (Go's `switch` only special-cases it in the `AS`/plugin-only arm) and
+/// falls to the same native SHA1 hash every other unlisted plugin's `BY`
+/// form does.
+pub fn encode_password_for_plugin(
+    plugin: &str,
+    credential: &PluginCredential<'_>,
+) -> Result<String, DriverError> {
+    match credential {
+        PluginCredential::By(password) => {
+            if plugin == AuthCachingSha2Password {
+                Ok(hash_caching_sha2(password))
+            } else if plugin == AuthTiDBSM3Password {
+                Err(DriverError::Unsupported(
+                    "IDENTIFIED WITH tidb_sm3_password BY '<password>' needs SM3 hashing, \
+                     not supported yet",
+                ))
+            } else if plugin == AuthSocket {
+                Ok(String::new())
+            } else {
+                // Go's `default` arm: every other accepted plugin (native,
+                // both LDAP forms, the token plugins) hashes a `BY`
+                // password the native way.
+                Ok(encode_password(password))
+            }
+        }
+        PluginCredential::As(hash) => {
+            if plugin == AuthLDAPSimple || plugin == AuthLDAPSASL {
+                return Ok((*hash).to_owned());
+            }
+            if hash.is_empty() {
+                return Ok(String::new());
+            }
+            let shaped = if plugin == AuthCachingSha2Password {
+                hash.len() == SHAPWDHashLen as usize
+            } else if plugin == AuthTiDBSM3Password {
+                hash.len() == SM3PWDHashLen as usize
+            } else if plugin == AuthNativePassword {
+                hash.len() == PWDHashLen as usize + 1 && hash.starts_with('*')
+            } else {
+                plugin == AuthSocket
+            };
+            if shaped {
+                Ok((*hash).to_owned())
+            } else {
+                Err(DriverError::PasswordFormat)
+            }
+        }
+        PluginCredential::None => Ok(String::new()),
+    }
+}
+
+/// SHA-crypt mixing width: Go's `MIXCHARS`, and also `sha256::Sum256`'s
+/// output width, which is why the loops below can reuse a whole digest as
+/// one "chunk".
+const SHA_CRYPT_MIXCHARS: usize = 32;
+/// Go's `SALT_LENGTH`.
+const SHA_CRYPT_SALT_LEN: usize = 20;
+/// Go's `ITERATION_MULTIPLIER`.
+const SHA_CRYPT_ITERATION_MULTIPLIER: u32 = 1000;
+/// Go's custom base64 alphabet for `b64From24bit`, distinct from RFC 4648.
+const SHA_CRYPT_B64_ALPHABET: &[u8; 64] =
+    b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+/// Go `pkg/parser/auth.b64From24bit`: packs three bytes into 24 bits and
+/// emits `n` base64 digits, LEAST-significant 6 bits first.
+fn sha_crypt_b64_from_24bit(bytes: [u8; 3], n: usize, out: &mut String) {
+    let mut word = (u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]);
+    for _ in 0..n {
+        out.push(SHA_CRYPT_B64_ALPHABET[(word & 0x3f) as usize] as char);
+        word >>= 6;
+    }
+}
+
+/// Go `pkg/parser/auth.NewHashPassword` for `caching_sha2_password`: a
+/// SHA256-crypt-family hash (<https://www.akkadia.org/drepper/SHA-crypt.txt>)
+/// with a random 20-byte salt and 5000 iterations, stored
+/// `$A$005$<20-byte salt><43-char digest>` -- 70 bytes total,
+/// `SHAPWDHashLen`. The salt excludes NUL and `$` exactly as Go's generator
+/// does (see [`tidb_util::fastrand::buf`]).
+fn hash_caching_sha2(password: &str) -> String {
+    let salt = tidb_util::fastrand::buf(SHA_CRYPT_SALT_LEN as isize);
+    sha_crypt(
+        password,
+        &salt,
+        5 * SHA_CRYPT_ITERATION_MULTIPLIER,
+        |input| Sha256Hash::digest(input).into(),
+    )
+}
+
+/// Go `pkg/parser/auth.hashCrypt`, ported 1:1 (see the numbered steps in
+/// Go's own comment referencing the akkadia.org SHA-crypt description).
+/// `hash` must be a 32-byte digest function (SHA-256 for
+/// `caching_sha2_password`; Go also drives this with SM3 for
+/// `tidb_sm3_password`, which this port does not implement -- see
+/// [`encode_password_for_plugin`]'s deferral note).
+fn sha_crypt(
+    plaintext: &str,
+    salt: &[u8],
+    iterations: u32,
+    hash: impl Fn(&[u8]) -> [u8; 32],
+) -> String {
+    let pt = plaintext.as_bytes();
+
+    // Steps 4-8: sumB = hash(pt + salt + pt).
+    let mut buf_b = Vec::with_capacity(pt.len() * 2 + salt.len());
+    buf_b.extend_from_slice(pt);
+    buf_b.extend_from_slice(salt);
+    buf_b.extend_from_slice(pt);
+    let sum_b = hash(&buf_b);
+
+    // Steps 1-3, 9-11: bufA = pt + salt, then sumB chunks and pt/sumB
+    // alternating by the bits of len(pt).
+    let mut buf_a = Vec::new();
+    buf_a.extend_from_slice(pt);
+    buf_a.extend_from_slice(salt);
+    let mut i = pt.len();
+    while i > SHA_CRYPT_MIXCHARS {
+        buf_a.extend_from_slice(&sum_b[..SHA_CRYPT_MIXCHARS]);
+        i -= SHA_CRYPT_MIXCHARS;
+    }
+    buf_a.extend_from_slice(&sum_b[..i]);
+    let mut i = pt.len();
+    while i > 0 {
+        if i.is_multiple_of(2) {
+            buf_a.extend_from_slice(pt);
+        } else {
+            buf_a.extend_from_slice(&sum_b);
+        }
+        i >>= 1;
+    }
+    // Step 12: sumA.
+    let mut sum_a = hash(&buf_a);
+
+    // Steps 13-16: sumDP = hash(pt repeated len(pt) times), then `p` built
+    // from sumDP chunks sized by len(pt).
+    let mut buf_dp = Vec::with_capacity(pt.len() * pt.len());
+    for _ in 0..pt.len() {
+        buf_dp.extend_from_slice(pt);
+    }
+    let sum_dp = hash(&buf_dp);
+    let mut p = Vec::new();
+    let mut i = pt.len();
+    while i > 0 {
+        if i > SHA_CRYPT_MIXCHARS {
+            p.extend_from_slice(&sum_dp);
+        } else {
+            p.extend_from_slice(&sum_dp[..i]);
+        }
+        i = i.saturating_sub(SHA_CRYPT_MIXCHARS);
+    }
+
+    // Steps 17-20: sumDS = hash(salt repeated 16+sumA[0] times), then `s`
+    // built from sumDS chunks sized by len(salt).
+    let mut buf_ds = Vec::new();
+    for _ in 0..(16 + usize::from(sum_a[0])) {
+        buf_ds.extend_from_slice(salt);
+    }
+    let sum_ds = hash(&buf_ds);
+    let mut s = Vec::new();
+    let mut i = salt.len();
+    while i > 0 {
+        if i > SHA_CRYPT_MIXCHARS {
+            s.extend_from_slice(&sum_ds);
+        } else {
+            s.extend_from_slice(&sum_ds[..i]);
+        }
+        i = i.saturating_sub(SHA_CRYPT_MIXCHARS);
+    }
+
+    // Step 21: the iterated mixing loop.
+    for round in 0..iterations {
+        let mut buf_c = Vec::new();
+        if round & 1 != 0 {
+            buf_c.extend_from_slice(&p);
+        } else {
+            buf_c.extend_from_slice(&sum_a);
+        }
+        if round % 3 != 0 {
+            buf_c.extend_from_slice(&s);
+        }
+        if round % 7 != 0 {
+            buf_c.extend_from_slice(&p);
+        }
+        if round & 1 != 0 {
+            buf_c.extend_from_slice(&sum_a);
+        } else {
+            buf_c.extend_from_slice(&p);
+        }
+        sum_a = hash(&buf_c);
+    }
+    let sum_c = sum_a;
+
+    // Step 22: `$A$<rounds>$<salt><permuted base64 of sumC>`.
+    let mut out = String::with_capacity(SHAPWDHashLen as usize);
+    out.push_str("$A$");
+    out.push_str(&format!(
+        "{:03X}",
+        iterations / SHA_CRYPT_ITERATION_MULTIPLIER
+    ));
+    out.push('$');
+    for &byte in salt {
+        out.push(byte as char);
+    }
+    sha_crypt_b64_from_24bit([sum_c[0], sum_c[10], sum_c[20]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[21], sum_c[1], sum_c[11]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[12], sum_c[22], sum_c[2]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[3], sum_c[13], sum_c[23]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[24], sum_c[4], sum_c[14]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[15], sum_c[25], sum_c[5]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[6], sum_c[16], sum_c[26]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[27], sum_c[7], sum_c[17]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[18], sum_c[28], sum_c[8]], 4, &mut out);
+    sha_crypt_b64_from_24bit([sum_c[9], sum_c[19], sum_c[29]], 4, &mut out);
+    sha_crypt_b64_from_24bit([0, sum_c[31], sum_c[30]], 3, &mut out);
+    out
+}
+
+type Sha256Hash = sha2::Sha256;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1494,5 +1817,165 @@ mod tests {
         assert!(!GlobalPriv::Process.is_valid_at_table_scope());
         assert!(!GlobalPriv::LockTables.is_valid_at_table_scope());
         assert!(GlobalPriv::CreateView.is_valid_at_table_scope());
+    }
+
+    #[test]
+    fn create_user_plugins_match_gos_accepted_set() {
+        assert!(is_create_user_plugin("mysql_native_password"));
+        assert!(is_create_user_plugin("caching_sha2_password"));
+        assert!(is_create_user_plugin("tidb_sm3_password"));
+        assert!(is_create_user_plugin("auth_socket"));
+        assert!(is_create_user_plugin("tidb_auth_token"));
+        assert!(is_create_user_plugin("authentication_ldap_simple"));
+        assert!(is_create_user_plugin("authentication_ldap_sasl"));
+        // Captured: `mysql_clear_password` and `tidb_session_token` are
+        // built-in plugin NAMES (reserved against extensions), but neither
+        // is in Go's CREATE USER switch, so they are NOT accepted here.
+        assert!(!is_create_user_plugin("mysql_clear_password"));
+        assert!(!is_create_user_plugin("tidb_session_token"));
+        assert!(!is_create_user_plugin("no_such_plugin"));
+    }
+
+    #[test]
+    fn native_password_as_form_validates_hash_shape() {
+        let hash40 = format!("*{}", "A".repeat(40));
+        assert_eq!(
+            encode_password_for_plugin("mysql_native_password", &PluginCredential::As(&hash40))
+                .unwrap(),
+            hash40
+        );
+        // Missing the leading `*`.
+        assert!(matches!(
+            encode_password_for_plugin(
+                "mysql_native_password",
+                &PluginCredential::As(&"A".repeat(41))
+            ),
+            Err(DriverError::PasswordFormat)
+        ));
+        // Wrong length.
+        assert!(matches!(
+            encode_password_for_plugin("mysql_native_password", &PluginCredential::As("*short")),
+            Err(DriverError::PasswordFormat)
+        ));
+        // `AS ''` (or no clause at all) is always a passwordless account,
+        // regardless of plugin.
+        assert_eq!(
+            encode_password_for_plugin("mysql_native_password", &PluginCredential::As("")).unwrap(),
+            ""
+        );
+        assert_eq!(
+            encode_password_for_plugin("mysql_native_password", &PluginCredential::None).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn caching_sha2_as_form_validates_length_only() {
+        let hash70 = "x".repeat(70);
+        assert_eq!(
+            encode_password_for_plugin("caching_sha2_password", &PluginCredential::As(&hash70))
+                .unwrap(),
+            hash70
+        );
+        assert!(matches!(
+            encode_password_for_plugin(
+                "caching_sha2_password",
+                &PluginCredential::As(&"x".repeat(69))
+            ),
+            Err(DriverError::PasswordFormat)
+        ));
+    }
+
+    #[test]
+    fn tidb_auth_token_as_form_always_rejects_a_nonempty_hash() {
+        // Go's `encodedPassword` has no case for `tidb_auth_token` in its
+        // AS/plugin-only switch, so it falls to `default: return "", false`
+        // -- captured: unlike LDAP, a token account can only be created
+        // passwordless (`IDENTIFIED WITH tidb_auth_token`, no BY/AS).
+        assert!(matches!(
+            encode_password_for_plugin("tidb_auth_token", &PluginCredential::As("anything")),
+            Err(DriverError::PasswordFormat)
+        ));
+        assert_eq!(
+            encode_password_for_plugin("tidb_auth_token", &PluginCredential::None).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn ldap_as_form_stores_the_dn_unvalidated() {
+        assert_eq!(
+            encode_password_for_plugin(
+                "authentication_ldap_simple",
+                &PluginCredential::As("cn=foo,dc=example,dc=com")
+            )
+            .unwrap(),
+            "cn=foo,dc=example,dc=com"
+        );
+    }
+
+    #[test]
+    fn ldap_by_form_is_not_special_and_hashes_natively() {
+        // Captured: Go's `ByAuthString` switch only special-cases
+        // `caching_sha2_password`/`tidb_sm3_password` (hash) and
+        // `auth_socket` (empty); LDAP's `BY` form falls to the SAME
+        // `default: EncodePassword` arm every other unlisted plugin's `BY`
+        // form does, even though LDAP normally authenticates via `AS` (a
+        // stored `dn`).
+        assert_eq!(
+            encode_password_for_plugin("authentication_ldap_simple", &PluginCredential::By("pw"))
+                .unwrap(),
+            encode_password("pw")
+        );
+    }
+
+    #[test]
+    fn auth_socket_by_form_is_always_empty() {
+        assert_eq!(
+            encode_password_for_plugin("auth_socket", &PluginCredential::By("ignored")).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn sm3_by_form_is_deferred_rather_than_fabricated() {
+        assert!(matches!(
+            encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("pw")),
+            Err(DriverError::Unsupported(_))
+        ));
+        // The AS form needs no hashing, only a length check, so it works.
+        let hash70 = "y".repeat(70);
+        assert_eq!(
+            encode_password_for_plugin("tidb_sm3_password", &PluginCredential::As(&hash70))
+                .unwrap(),
+            hash70
+        );
+    }
+
+    #[test]
+    fn caching_sha2_hash_is_70_bytes_shaped_like_go_and_round_trips_its_own_check() {
+        let hash = hash_caching_sha2("hunter2");
+        assert_eq!(hash.len(), SHAPWDHashLen as usize);
+        assert!(hash.starts_with("$A$005$"));
+        // Two hashes of the same password differ (random salt), the same
+        // way two `CREATE USER ... IDENTIFIED WITH caching_sha2_password
+        // BY` calls never store the same bytes twice.
+        assert_ne!(hash, hash_caching_sha2("hunter2"));
+
+        // Self-consistency: re-deriving the digest from the STORED salt and
+        // iteration count reproduces the stored hash exactly -- the same
+        // property Go's `CheckHashingPassword` relies on to verify a login,
+        // even though this port's wire front end does not call it yet (see
+        // `encode_password_for_plugin`'s deferral note).
+        let parts: Vec<&str> = hash.split('$').collect();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[1], "A");
+        let salt = &parts[3].as_bytes()[..SHA_CRYPT_SALT_LEN];
+        let iterations =
+            u32::from_str_radix(parts[2], 16).unwrap() * SHA_CRYPT_ITERATION_MULTIPLIER;
+        let rederived = sha_crypt("hunter2", salt, iterations, |input| {
+            Sha256Hash::digest(input).into()
+        });
+        assert_eq!(rederived, hash);
     }
 }

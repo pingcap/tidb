@@ -73,7 +73,7 @@ impl Session {
             ));
         };
         for spec in users {
-            let auth_string = Self::resolve_auth_string(spec.auth.as_ref())?;
+            let (auth_string, plugin) = Self::resolve_auth_string_and_plugin(spec.auth.as_ref())?;
             if spec.dual_password.is_some() {
                 return Err(DriverError::Unsupported(
                     "CREATE USER ... RETAIN CURRENT PASSWORD is not supported yet",
@@ -83,7 +83,9 @@ impl Session {
             let host = spec.user.host.as_str();
             // Go processes each account in source order and fails on the
             // FIRST duplicate rather than batching, unlike DROP USER below.
-            if !registry.create_user(user, host, &auth_string) && !if_not_exists {
+            if !registry.create_user_with_plugin(user, host, &auth_string, &plugin)
+                && !if_not_exists
+            {
                 return Err(DriverError::CreateUserAlreadyExists {
                     user: user.to_owned(),
                     host: host.to_owned(),
@@ -345,6 +347,13 @@ impl Session {
     /// rather than silently downgraded, because only
     /// `mysql_native_password` is modelled; a missing clause means a
     /// passwordless account, whose `authentication_string` is empty.
+    ///
+    /// Used by `ALTER USER`/`SET PASSWORD`, which never change an existing
+    /// account's plugin (Go `executeAlterUser` rewrites only
+    /// `authentication_string`, and this tier does not model `ALTER USER
+    /// ... IDENTIFIED WITH` at all) -- `CREATE USER` uses
+    /// [`Self::resolve_auth_string_and_plugin`] instead, which DOES accept
+    /// `IDENTIFIED WITH`.
     pub(crate) fn resolve_auth_string(
         auth: Option<&tidb_ast::CreateUserAuth>,
     ) -> Result<String, DriverError> {
@@ -354,8 +363,49 @@ impl Session {
                 Ok(privilege::encode_password(password))
             }
             Some(tidb_ast::CreateUserAuth::With { .. }) => Err(DriverError::Unsupported(
-                "CREATE/ALTER USER ... IDENTIFIED WITH is not supported yet",
+                "ALTER USER ... IDENTIFIED WITH is not supported yet",
             )),
+        }
+    }
+
+    /// [`Self::resolve_auth_string`], widened to `CREATE USER`'s
+    /// `IDENTIFIED WITH <plugin> [BY '<password>' | AS '<hash>']` form.
+    ///
+    /// Returns the account's `(authentication_string, plugin)` pair. An
+    /// unrecognized plugin name is Go's `ErrPluginIsNotLoaded` (1524): this
+    /// tier registers no extension auth plugins, so any name outside
+    /// [`privilege::CREATE_USER_PLUGINS`] can never be loaded. A missing
+    /// `IDENTIFIED` clause defaults to `mysql_native_password`, empty
+    /// (passwordless) -- Go's default when `CREATE USER` writes neither
+    /// `BY` nor `WITH`.
+    fn resolve_auth_string_and_plugin(
+        auth: Option<&tidb_ast::CreateUserAuth>,
+    ) -> Result<(String, String), DriverError> {
+        const DEFAULT_PLUGIN: &str = tidb_mysql::consts::AuthNativePassword;
+        match auth {
+            None => Ok((String::new(), DEFAULT_PLUGIN.to_owned())),
+            Some(tidb_ast::CreateUserAuth::By(password)) => Ok((
+                privilege::encode_password(password),
+                DEFAULT_PLUGIN.to_owned(),
+            )),
+            Some(tidb_ast::CreateUserAuth::With { plugin, credential }) => {
+                if !privilege::is_create_user_plugin(plugin) {
+                    return Err(DriverError::PluginIsNotLoaded {
+                        plugin: plugin.clone(),
+                    });
+                }
+                let credential = match credential {
+                    None => privilege::PluginCredential::None,
+                    Some(tidb_ast::CreateUserCredential::By(password)) => {
+                        privilege::PluginCredential::By(password)
+                    }
+                    Some(tidb_ast::CreateUserCredential::As(hash)) => {
+                        privilege::PluginCredential::As(hash)
+                    }
+                };
+                let auth_string = privilege::encode_password_for_plugin(plugin, &credential)?;
+                Ok((auth_string, plugin.clone()))
+            }
         }
     }
 
