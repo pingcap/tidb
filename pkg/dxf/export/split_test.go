@@ -109,8 +109,15 @@ func TestPackSubtasks(t *testing.T) {
 	require.Nil(t, empty)
 }
 
-func TestRegionsPerChunk(t *testing.T) {
-	// chunkSize / defaultRegionSize, at least one.
-	require.Equal(t, chunkSize/defaultRegionSize, regionsPerChunk())
-	require.GreaterOrEqual(t, regionsPerChunk(), 1)
+func TestChunkCntFor(t *testing.T) {
+	const oneGiB = 1024 * 1024 * 1024
+	// One chunk per ≈ chunkSize of data.
+	require.Equal(t, 4, chunkCntFor(4*oneGiB, 100))
+	// Rounded up.
+	require.Equal(t, 5, chunkCntFor(4*oneGiB+1, 100))
+	// Never more chunks than regions.
+	require.Equal(t, 3, chunkCntFor(10*oneGiB, 3))
+	// At least one.
+	require.Equal(t, 1, chunkCntFor(0, 5))
+	require.Equal(t, 1, chunkCntFor(1, 10))
 }

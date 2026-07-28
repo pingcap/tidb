@@ -75,11 +75,12 @@ func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCn
 // The sort + continuity check runs per physical table (cross-partition key gaps
 // are expected).
 //
-// Chunk size is currently estimated as region count × defaultRegionSize; a
-// follow-up replaces this with PD region approximate sizes.
+// The chunk count comes from the table's real byte size (PD region stats),
+// while the chunk boundaries come from the region cache; a chunk's size is that
+// total apportioned by its region count. When PD stats are unavailable (e.g. a
+// mock store) it falls back to a region-count estimate.
 func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
 	tblInfo := meta.Tables[tableIdx].TableInfo
-	perChunk := regionsPerChunk()
 	var chunks []Chunk
 	ordinal := 0
 	for _, pid := range physicalIDs(tblInfo) {
@@ -89,20 +90,42 @@ func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 			return nil, err
 		}
 		regionCnt := len(boundaries) - 1
-		chunkCnt := max(1, (regionCnt+perChunk-1)/perChunk)
+		totalSize := estimatePhysicalSize(ctx, store, pid, regionCnt)
+		chunkCnt := chunkCntFor(totalSize, regionCnt)
 		for _, g := range groupBoundaries(boundaries, chunkCnt) {
+			chunkRegions := len(g) - 1
 			chunks = append(chunks, Chunk{
 				TableIdx:   tableIdx,
 				PhysicalID: pid,
 				Start:      g[0],
 				End:        g[len(g)-1],
-				Size:       int64(len(g)-1) * defaultRegionSize,
+				Size:       totalSize * int64(chunkRegions) / int64(regionCnt),
 				Ordinal:    ordinal,
 			})
 			ordinal++
 		}
 	}
 	return chunks, nil
+}
+
+// estimatePhysicalSize returns the byte size of a physical table from PD region
+// stats, falling back to region count × defaultRegionSize when PD is unavailable.
+func estimatePhysicalSize(ctx context.Context, store kv.Storage, pid int64, regionCnt int) int64 {
+	if hStore, ok := store.(helper.Storage); ok {
+		h := helper.NewHelper(hStore)
+		// noIndexStats: size the record data only (no index KV).
+		if stats, err := h.GetPDRegionStats(ctx, pid, true); err == nil && stats.StorageSize > 0 {
+			return stats.StorageSize * 1024 * 1024
+		}
+	}
+	return int64(regionCnt) * defaultRegionSize
+}
+
+// chunkCntFor decides how many chunks a physical table splits into, one per
+// ≈ chunkSize of data but never more than its region count.
+func chunkCntFor(totalSize int64, regionCnt int) int {
+	n := int((totalSize + chunkSize - 1) / chunkSize)
+	return max(1, min(n, regionCnt))
 }
 
 // packSubtasks groups the chunks into subtasks in key order so each subtask
@@ -145,11 +168,6 @@ func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error
 		}
 	}
 	return subtasks, nil
-}
-
-// regionsPerChunk approximates how many regions make up one ≈ chunkSize chunk.
-func regionsPerChunk() int {
-	return max(1, chunkSize/defaultRegionSize)
 }
 
 // subtaskCntFor targets about one subtask per node, but caps chunks per subtask
