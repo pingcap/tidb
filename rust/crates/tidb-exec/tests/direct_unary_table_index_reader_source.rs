@@ -160,6 +160,16 @@ impl tidb_distsql::LockRecoveryClient for ReaderUnaryClient {
     ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
         panic!("reader test does not return locks")
     }
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_distsql::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        panic!("reader test does not return locks")
+    }
 }
 
 fn request(cancel: std::sync::Arc<tidb_distsql::CancelHandle>) -> TransportRequest {

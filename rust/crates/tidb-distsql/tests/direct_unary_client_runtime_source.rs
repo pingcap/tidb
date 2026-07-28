@@ -364,6 +364,16 @@ impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
         ))
     }
 
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        panic!("runtime test does not clean pessimistic locks")
+    }
     fn resolve_lock_for_read(
         &mut self,
         _address: &str,
@@ -2168,6 +2178,16 @@ impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
         ))
     }
 
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        panic!("runtime test does not clean pessimistic locks")
+    }
     fn resolve_lock_for_read(
         &mut self,
         _address: &str,
@@ -2301,6 +2321,16 @@ impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
         ))
     }
 
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        panic!("runtime test does not clean pessimistic locks")
+    }
     fn resolve_lock_for_read(
         &mut self,
         _address: &str,
