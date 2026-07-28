@@ -13,8 +13,9 @@
 #   run-live-concurrent-auth-*.sh   the MySQL wire front end authenticates
 #   run-realtikv-optimistic-2pc.sh  writes publish through the 2PC
 #
-# The last step closes the loop the other direction: the GO TiDB reads back the
-# row the RUST node committed.
+# The last steps close the loop the other direction: the GO TiDB reads back the
+# row the RUST node committed, then uses a TABLE the Rust node created through
+# its own cluster DDL path.
 #
 # Usage: rust/scripts/run-realtikv-convergence.sh
 
@@ -196,14 +197,54 @@ rust_sql -e "
 READBACK=$(go_sql -N -B -e "SELECT id, customer, amount FROM conv.orders WHERE id = 6;" | tr '\n' ';')
 expect "Go TiDB reads the Rust-committed row" $'6\t30\t999;' "${READBACK}"
 
-# What this mode refuses, on purpose: the catalog is a READ of the cluster's
-# schema, so DDL must not silently change this process's copy alone.
-if rust_sql -e "USE conv; CREATE TABLE refused (a BIGINT);" >"${WORK_DIR}/ddl.out" 2>&1; then
-  echo "DDL was accepted, but this mode must refuse it" >&2
+echo "DDL through the Rust node: the client creates a table, the Go TiDB uses it"
+
+# The client CREATEs a table through the RUST node. The catalog change goes
+# through the same 2PC the rows do, so this is a real cluster catalog write.
+rust_sql -e "USE conv; CREATE TABLE rust_made (id BIGINT PRIMARY KEY, note VARCHAR(32) NOT NULL);"
+
+# The SAME connection uses the table it just created: the connection's tables
+# are rebuilt because the node reloaded its catalog inline after the DDL.
+SAME_CONN=$(rust_sql -N -B -e "
+  USE conv;
+  CREATE TABLE rust_made_two (id BIGINT PRIMARY KEY, v BIGINT);
+  INSERT INTO rust_made_two VALUES (1, 11), (2, 22);
+  SELECT id, v FROM rust_made_two ORDER BY id;
+" | tr '\n' ';')
+expect "same connection uses the table it created" $'1\t11;2\t22;' "${SAME_CONN}"
+
+# The GO TiDB sees the Rust-created table AND writes it -- which it can only do
+# if the stored TableInfo is one a real TiDB accepts.
+GO_SEES=$(go_sql -N -B -e "SHOW TABLES IN conv LIKE 'rust_made';" | tr '\n' ';')
+expect "Go TiDB sees the Rust-created table" "rust_made;" "${GO_SEES}"
+go_sql -e "INSERT INTO conv.rust_made VALUES (1, 'written by go');"
+
+# And the Rust node reads back the row the Go TiDB wrote into that table.
+RUST_READS=$(rust_sql -N -B -e "SELECT id, note FROM conv.rust_made;" | tr '\n' ';')
+expect "Rust node reads the Go-written row" $'1\twritten by go;' "${RUST_READS}"
+
+# DROP through the Rust node, and the Go TiDB stops seeing the table.
+rust_sql -e "DROP TABLE conv.rust_made_two;"
+DROPPED=$(go_sql -N -B -e "SHOW TABLES IN conv LIKE 'rust_made_two';" | tr '\n' ';')
+expect "Go TiDB no longer sees the dropped table" "" "${DROPPED}"
+
+# What this mode still refuses, on purpose: a stored-schema change the cluster
+# DDL path cannot express, and every account change.
+if rust_sql -e "USE conv; ALTER TABLE rust_made ADD COLUMN extra BIGINT;" \
+  >"${WORK_DIR}/ddl.out" 2>&1; then
+  echo "ALTER was accepted, but this mode must refuse it" >&2
   exit 1
 fi
-grep -Fq "cannot change stored" "${WORK_DIR}/ddl.out" \
-  || { echo "DDL failed for the wrong reason:"; cat "${WORK_DIR}/ddl.out"; exit 1; }
-echo "  ok  DDL refused by name: $(cat "${WORK_DIR}/ddl.out" | tail -1)"
+grep -Fq "CREATE TABLE, DROP TABLE" "${WORK_DIR}/ddl.out" \
+  || { echo "ALTER failed for the wrong reason:"; cat "${WORK_DIR}/ddl.out"; exit 1; }
+echo "  ok  ALTER refused by name: $(tail -1 "${WORK_DIR}/ddl.out")"
+
+if rust_sql -e "CREATE USER 'refused'@'%';" >"${WORK_DIR}/account.out" 2>&1; then
+  echo "CREATE USER was accepted, but this mode must refuse it" >&2
+  exit 1
+fi
+grep -Fq "cannot write them" "${WORK_DIR}/account.out" \
+  || { echo "CREATE USER failed for the wrong reason:"; cat "${WORK_DIR}/account.out"; exit 1; }
+echo "  ok  account change refused by name: $(tail -1 "${WORK_DIR}/account.out")"
 
 echo "convergence proven: wide SQL, cluster storage, cluster accounts, one node"

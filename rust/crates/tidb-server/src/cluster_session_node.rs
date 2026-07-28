@@ -55,14 +55,44 @@
 //! rolled back to the buffer snapshot taken before it ran, so an explicit
 //! transaction keeps exactly the writes of its statements that succeeded.
 //!
+//! # DDL: the one stored-schema change this node performs
+//!
+//! `CREATE TABLE`, `DROP TABLE`, `CREATE DATABASE` and `DROP DATABASE` are not
+//! run by the session driver against its own in-memory catalog -- that copy is
+//! a *read* of the cluster's schema, so changing it alone would be a silently
+//! wrong answer. They are routed to the [`ClusterDdl`] seam, which publishes
+//! the meta-key mutations through the same optimistic 2PC the DML path uses
+//! ([`tidb_exec::real_tikv_ddl`]), and a Go TiDB then sees the object.
+//!
+//! Two catalogs have to catch up afterwards, and they do it at different
+//! moments for different reasons:
+//!
+//! * **The node's**, immediately. [`RealClusterDdl`] runs one reload pass
+//!   inline on the statement's own thread rather than waiting up to `lease/2`
+//!   for [`CatalogReloader`]'s tick -- this node is the one that wrote the
+//!   change, so it needs no notification to know about it. Both publishers
+//!   swap the whole catalog into the same slot, so they cannot interleave.
+//! * **The connection's**, at its next statement. A connection's tables are
+//!   built once, over the snapshot slot they share, so a table created after
+//!   the connection opened has no entry at all; [`ClusterServerSession`]
+//!   rebuilds that catalog -- against the same storage handles, leaving the
+//!   slot and the staged writes untouched -- whenever the node's schema
+//!   version has moved past the one the connection was built from. Never
+//!   inside an explicit transaction: its statements keep the schema its
+//!   `BEGIN` saw, exactly as they keep its snapshot.
+//!
 //! # What this mode refuses, and why
 //!
-//! * Every statement that changes stored schema or accounts (`CREATE TABLE`,
-//!   `ALTER`, `DROP`, `CREATE USER`, `GRANT`, ...). The catalog and the
-//!   registry here are *reads* of the cluster's state; executing such a
-//!   statement would change this process's copy alone, which is a silently
-//!   wrong answer. It is refused by name until the cluster DDL path is wired
-//!   in.
+//! * Every statement that changes stored accounts (`CREATE USER`, `GRANT`,
+//!   `REVOKE`, `SET PASSWORD`, ...). The privilege registry here is a read of
+//!   the cluster's `mysql.*` rows, and writing those rows through the session
+//!   is a separate unit of work from the catalog DDL above; until it lands,
+//!   such a statement is refused by name.
+//! * Every stored-schema change the cluster DDL path cannot express: `ALTER`,
+//!   `TRUNCATE`, `RENAME`, `CREATE VIEW`/`INDEX`/`SEQUENCE`, and the
+//!   `CREATE TABLE` clauses [`tidb_exec::table_info_build`] refuses (foreign
+//!   keys, partitions, ...). Each is refused with its own reason rather than a
+//!   generic unsupported error.
 //! * A table the storage tier cannot lay out (a view, a sequence, a
 //!   partitioned table, one mid-DDL). [`cluster_session_catalog`] reports each
 //!   by name with its exact reason, and the node prints them at boot rather
@@ -79,11 +109,14 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, SessionTransaction, StatementSnapshot,
 };
-use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
+use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
+use tidb_exec::real_tikv_ddl::{commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport};
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, RealOptimisticTransactionOpener};
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
@@ -92,7 +125,7 @@ use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
-use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult};
+use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
 
 use crate::cluster_session::{cluster_session_catalog, SkippedTable};
 use crate::node_config::NodeConfig;
@@ -201,14 +234,95 @@ impl OpenClusterTransaction for SessionTransaction {
     }
 }
 
+/// This node's one route to the cluster's stored schema.
+///
+/// The seam exists for the same reason [`ClusterTransactions`] does: the
+/// routing decision -- which statements become catalog changes, what happens
+/// to an open transaction, when the connection's tables are rebuilt -- is
+/// exercised without a cluster. The production implementation is
+/// [`RealClusterDdl`].
+pub trait ClusterDdl: Send + Sync {
+    /// Publishes one admitted catalog change, then brings this node's own
+    /// catalog up to it before answering.
+    ///
+    /// The two halves are one method because a caller that published without
+    /// refreshing would answer the next statement from a catalog it knows to
+    /// be stale.
+    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String>;
+}
+
+/// The production catalog writer: the optimistic 2PC over the node's one
+/// process authority, followed by an inline reload of the node's own catalog.
+pub struct RealClusterDdl {
+    opener: Arc<RealOptimisticTransactionOpener>,
+    catalog: Arc<SharedClusterCatalog>,
+    timeout: Duration,
+}
+
+impl RealClusterDdl {
+    /// Binds the writer to an already-connected authority and the catalog slot
+    /// the reload thread publishes into.
+    #[must_use]
+    pub fn new(
+        opener: RealOptimisticTransactionOpener,
+        catalog: Arc<SharedClusterCatalog>,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            opener: Arc::new(opener),
+            catalog,
+            timeout,
+        }
+    }
+
+    /// Runs one reload pass inline, on the statement's own thread.
+    ///
+    /// Go's DDL owner PUTs the new version to etcd so every *other* node's
+    /// watch fires; this node is the one that just wrote the change, so it
+    /// needs no notification -- it reloads at once instead of waiting up to
+    /// `lease/2` for the reload thread's tick. Both publishers replace the
+    /// catalog whole in the same slot, so neither can observe the other
+    /// half-applied.
+    ///
+    /// A failed reload is not a failed DDL: the change is committed in the
+    /// cluster, and the lease tick will pick it up. Reporting the statement as
+    /// failed would be a lie about what the cluster now holds, so the failure
+    /// is emitted and the statement stands.
+    fn refresh_catalog(&self) {
+        let current = self.catalog.load();
+        match reload_catalog_from_cluster(&self.opener, self.timeout, &current) {
+            Ok(ReloadedCatalog::Unchanged { .. }) => {}
+            Ok(ReloadedCatalog::Diffs { catalog, .. } | ReloadedCatalog::Full { catalog, .. }) => {
+                self.catalog.store(catalog);
+            }
+            Err(error) => eprintln!(
+                "{{\"event\":\"catalog_reload_after_ddl_failed\",\"schema_version\":{},\"error\":{:?}}}",
+                current.schema_version,
+                error.to_string()
+            ),
+        }
+    }
+}
+
+impl ClusterDdl for RealClusterDdl {
+    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String> {
+        let report = commit_cluster_ddl(&self.opener, statement, self.timeout)
+            .map_err(|error| error.to_string())?;
+        self.refresh_catalog();
+        Ok(report)
+    }
+}
+
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
 pub struct ClusterSessionFactory {
     /// The write/read capability every connection's statements open their
     /// snapshots and publish their commits through.
     transactions: Arc<dyn ClusterTransactions>,
-    /// The cluster catalog, republished whole by the reload thread. A
-    /// connection takes one `Arc` at open and keeps it, so no session ever
-    /// sees a half-updated catalog.
+    /// The route a stored-schema change this node can express takes.
+    ddl: Arc<dyn ClusterDdl>,
+    /// The cluster catalog, republished whole by the reload thread and by a
+    /// DDL's own inline reload. A connection takes one `Arc` per statement, so
+    /// no session ever sees a half-updated catalog.
     catalog: Arc<SharedClusterCatalog>,
     /// Go's one `privilege.Manager` per `Domain`, here loaded from the
     /// cluster's own `mysql.*`.
@@ -229,12 +343,14 @@ impl ClusterSessionFactory {
     #[must_use]
     pub fn new(
         transactions: Arc<dyn ClusterTransactions>,
+        ddl: Arc<dyn ClusterDdl>,
         catalog: Arc<SharedClusterCatalog>,
         privileges: PrivilegeRegistry,
     ) -> Self {
         let boot_skipped = cluster_session_catalog(&catalog.load(), &detached_storage()).skipped;
         Self {
             transactions,
+            ddl,
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
@@ -303,9 +419,13 @@ impl QuerySessionFactory for ClusterSessionFactory {
             session,
             buffer,
             slot,
+            storage,
             transactions: Arc::clone(&self.transactions),
+            ddl: Arc::clone(&self.ddl),
+            catalog: Arc::clone(&self.catalog),
+            schema_version: loaded.schema_version,
             explicit: None,
-            skipped: Arc::new(built.skipped),
+            skipped: built.skipped,
         })
     }
 }
@@ -318,13 +438,24 @@ pub struct ClusterServerSession {
     buffer: MutationBuffer,
     /// The slot every table of `session` reads through; rebound per statement.
     slot: Arc<Mutex<SwappableSnapshot>>,
+    /// The handles every table of `session` was built over, kept so the
+    /// connection's catalog can be rebuilt after a DDL without disturbing the
+    /// snapshot slot or the staged writes.
+    storage: ClusterTableStorage,
     transactions: Arc<dyn ClusterTransactions>,
+    /// The route a stored-schema change takes; see [`ClusterDdl`].
+    ddl: Arc<dyn ClusterDdl>,
+    /// The node's catalog, which this connection follows.
+    catalog: Arc<SharedClusterCatalog>,
+    /// The schema version `session`'s tables were built from. A move in
+    /// `catalog` past this is what makes the connection rebuild them.
+    schema_version: i64,
     /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
     /// where each statement gets its own timestamp.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
     /// Tables of the cluster this connection's catalog could not include,
-    /// answered by name when a statement names one.
-    skipped: Arc<Vec<SkippedTable>>,
+    /// answered by name when a statement names one. Rebuilt with the catalog.
+    skipped: Vec<SkippedTable>,
 }
 
 impl ClusterServerSession {
@@ -351,6 +482,7 @@ impl ClusterServerSession {
         &mut self,
         run: impl FnOnce(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
+        self.rebuild_catalog_if_stale();
         let savepoint = self.buffer.staged();
         let snapshot = match self.explicit.as_ref() {
             Some(transaction) => transaction.snapshot(),
@@ -455,23 +587,91 @@ impl ClusterServerSession {
         }
     }
 
-    /// Refuses a statement that would change stored schema or accounts.
+    /// Rebinds this connection's tables to the node's current catalog.
     ///
-    /// The refusal names the statement's effect rather than reporting a
-    /// generic parse or unsupported error, because the reason is specific to
-    /// this mode: the catalog here is a read of the cluster's schema.
-    fn refuse_stored_schema_change(&self, sql: &str) -> Result<(), SqlQueryError> {
-        let changes = self
-            .session
-            .statement_changes_stored_schema(sql)
-            .map_err(map_error)?;
-        if changes {
-            return Err(SqlQueryError::unknown(
-                "this node serves a catalog loaded from the cluster and cannot change stored \
-                 schema or accounts; run DDL, CREATE USER or GRANT on a TiDB server",
-            ));
+    /// A connection's tables are built once, so a table created after it
+    /// opened has no entry at all and one dropped still answers. Rebuilding
+    /// against the same [`ClusterTableStorage`] handles leaves the snapshot
+    /// slot and the staged writes exactly where they are -- the tables are new
+    /// objects over the same two shared halves.
+    ///
+    /// Not inside an explicit transaction: its statements read at one
+    /// timestamp, and a schema that moved under them would describe rows that
+    /// timestamp cannot see. Go holds the transaction's `InfoSchema` for the
+    /// same reason.
+    fn rebuild_catalog_if_stale(&mut self) {
+        if self.explicit.is_some() || self.session.in_transaction() {
+            return;
         }
-        Ok(())
+        let loaded = self.catalog.load();
+        if loaded.schema_version == self.schema_version {
+            return;
+        }
+        let built = cluster_session_catalog(&loaded, &self.storage);
+        let shared = self.session.shared_catalog();
+        let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+        *catalog = built.catalog;
+        drop(catalog);
+        self.schema_version = loaded.schema_version;
+        self.skipped = built.skipped;
+    }
+
+    /// Decides what this mode does with a statement that changes stored state:
+    /// run it as a cluster catalog change, or refuse it with its own reason.
+    ///
+    /// `None` means the statement changes nothing stored and takes its
+    /// ordinary path. Every refusal is specific, because the reasons are: an
+    /// account statement has no write path here at all, an `ALTER` is a DDL
+    /// shape the cluster path cannot express, and a `CREATE TABLE` with a
+    /// foreign key is a clause it refuses by name.
+    fn schema_route(&self, sql: &str) -> Result<Option<DdlStatement>, SqlQueryError> {
+        match self
+            .session
+            .statement_stored_state_change(sql)
+            .map_err(map_error)?
+        {
+            StoredStateChange::None => Ok(None),
+            StoredStateChange::Accounts => Err(SqlQueryError::unknown(
+                "this node reads the cluster's accounts and cannot write them; run CREATE USER, \
+                 GRANT, REVOKE or SET PASSWORD on a TiDB server",
+            )),
+            StoredStateChange::Schema => {
+                match prepare_cluster_ddl(sql, self.session.current_database()) {
+                    Ok(Some(statement)) => Ok(Some(statement)),
+                    Ok(None) => Err(SqlQueryError::unknown(
+                        "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
+                         CREATE DATABASE and DROP DATABASE only; run this statement on a TiDB \
+                         server",
+                    )),
+                    Err(refusal) => Err(SqlQueryError::unknown(refusal.to_string())),
+                }
+            }
+        }
+    }
+
+    /// Performs one cluster catalog change.
+    ///
+    /// An open transaction is committed first: MySQL and Go both commit
+    /// implicitly before DDL, and leaving one open here would be worse than
+    /// untidy -- its later statements read at a timestamp older than the
+    /// change, so they would plan against a schema the cluster no longer has.
+    ///
+    /// The connection's own tables are not rebuilt here; its next statement
+    /// finds the node's catalog moved and rebuilds them, which is the one
+    /// place that decision lives.
+    fn run_ddl(&mut self, statement: &DdlStatement) -> Result<WriteOutcome, SqlQueryError> {
+        if self.explicit.is_some() || self.session.in_transaction() {
+            self.control_transaction("COMMIT")?;
+        }
+        self.ddl
+            .execute(statement)
+            .map_err(SqlQueryError::unknown)?;
+        // Go answers a DDL with an OK packet carrying no rows and no insert
+        // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
     }
 }
 
@@ -505,9 +705,11 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        // Refused before anything else: a stored-schema change must not depend
-        // on which answer shape it would otherwise have taken.
-        self.refuse_stored_schema_change(sql)?;
+        // Routed before anything else: what happens to a stored-state change
+        // must not depend on which answer shape it would otherwise have taken.
+        if let Some(statement) = self.schema_route(sql)? {
+            return self.run_ddl(&statement).map(Some);
+        }
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
             return Ok(Some(WriteOutcome {
                 affected_rows: 0,
@@ -538,7 +740,10 @@ impl QuerySession for ClusterServerSession {
         let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
         let kind = self.session.statement_kind(sql).map_err(map_error)?;
         if kind == StmtKind::Write {
-            self.refuse_stored_schema_change(sql)?;
+            // A prepared DDL is admitted here and executed at EXECUTE, so a
+            // refusal -- an unsupported shape, an unsupported column type --
+            // is reported at PREPARE, where Go reports it too.
+            self.schema_route(sql)?;
             return Ok(PreparedGeneral::new(
                 sql.to_owned(),
                 parameter_count,
@@ -575,7 +780,9 @@ impl QuerySession for ClusterServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
-        self.refuse_stored_schema_change(statement.sql())?;
+        if let Some(ddl) = self.schema_route(statement.sql())? {
+            return self.run_ddl(&ddl).map(GeneralExecuteOutcome::Write);
+        }
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let output = self.with_statement(move |session| {
@@ -600,7 +807,15 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        self.refuse_stored_schema_change(sql)?;
+        // The text protocol reaches DDL through `execute_write`; this covers a
+        // front end that goes straight to the result-set path, so a routed
+        // statement runs exactly once either way.
+        if let Some(statement) = self.schema_route(sql)? {
+            self.run_ddl(&statement)?;
+            return Ok(QueryResult::new(Box::new(
+                crate::pipeline_session::affected_rows_source(0),
+            )));
+        }
         let owned = sql.to_owned();
         // The rows are materialized inside the statement's snapshot, because
         // the snapshot's read transaction ends when the statement does; a lazy
@@ -667,6 +882,11 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     let factory = Arc::new(ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             authority.transaction_opener(),
+            CONTROL_PLANE_TIMEOUT,
+        )),
+        Arc::new(RealClusterDdl::new(
+            authority.transaction_opener(),
+            Arc::clone(&catalog),
             CONTROL_PLANE_TIMEOUT,
         )),
         catalog,
@@ -738,7 +958,7 @@ mod tests {
     use sha1::{Digest, Sha1};
     use std::collections::BTreeMap;
     use std::net::SocketAddr;
-    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
@@ -930,6 +1150,151 @@ mod tests {
         }
     }
 
+    /// The catalog writer, offline: the meta-key encoding and the 2PC are
+    /// proven by `tidb-exec`'s own `cluster_ddl_source` tests, so what is
+    /// modelled here is the part this node owns -- the published catalog
+    /// moving, at a new schema version, from the statement's own thread.
+    ///
+    /// The `TableInfo` it publishes is not invented: it is the template
+    /// `lower_ddl`/`build_table_info` produced from the statement text, which
+    /// is what the real path writes too.
+    struct MockDdl {
+        catalog: Arc<SharedClusterCatalog>,
+        /// Stands in for `NextGlobalID`.
+        next_id: AtomicI64,
+        /// Catalog changes actually published.
+        applied: AtomicUsize,
+    }
+
+    impl MockDdl {
+        fn new(catalog: Arc<SharedClusterCatalog>) -> Self {
+            Self {
+                catalog,
+                next_id: AtomicI64::new(200),
+                applied: AtomicUsize::new(0),
+            }
+        }
+
+        fn allocate(&self) -> i64 {
+            self.next_id.fetch_add(1, Ordering::AcqRel) + 1
+        }
+    }
+
+    impl ClusterDdl for MockDdl {
+        fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String> {
+            let current = self.catalog.load();
+            let mut next = ClusterCatalog {
+                schema_version: current.schema_version + 1,
+                databases: current.databases.clone(),
+            };
+            let find = |databases: &mut Vec<LoadedDatabase>, name: &str| -> Option<usize> {
+                let name = name.to_lowercase();
+                databases
+                    .iter()
+                    .position(|database| database.info.name.lowercase() == name)
+            };
+            let mut created_id = None;
+            match statement {
+                DdlStatement::CreateDatabase {
+                    name,
+                    if_not_exists,
+                } => {
+                    if find(&mut next.databases, name).is_some() {
+                        if *if_not_exists {
+                            return Ok(ClusterDdlReport::AlreadySatisfied {
+                                detail: format!("database `{name}` already exists"),
+                            });
+                        }
+                        return Err(format!("Can't create database '{name}'; database exists"));
+                    }
+                    let id = self.allocate();
+                    created_id = Some(id);
+                    next.databases.push(LoadedDatabase {
+                        info: DBInfo {
+                            id,
+                            name: CiString::new(name.clone()),
+                            ..DBInfo::default()
+                        },
+                        tables: Vec::new(),
+                    });
+                }
+                DdlStatement::DropDatabase { name, if_exists } => {
+                    match find(&mut next.databases, name) {
+                        Some(at) => {
+                            next.databases.remove(at);
+                        }
+                        None if *if_exists => {
+                            return Ok(ClusterDdlReport::AlreadySatisfied {
+                                detail: format!("database `{name}` does not exist"),
+                            })
+                        }
+                        None => return Err(format!("Unknown database '{name}'")),
+                    }
+                }
+                DdlStatement::CreateTable {
+                    schema,
+                    table,
+                    if_not_exists,
+                    template,
+                } => {
+                    let at = find(&mut next.databases, schema)
+                        .ok_or_else(|| format!("Unknown database '{schema}'"))?;
+                    let lowered = table.to_lowercase();
+                    if next.databases[at]
+                        .tables
+                        .iter()
+                        .any(|stored| stored.name.lowercase() == lowered)
+                    {
+                        if *if_not_exists {
+                            return Ok(ClusterDdlReport::AlreadySatisfied {
+                                detail: format!("table `{schema}`.`{table}` already exists"),
+                            });
+                        }
+                        return Err(format!("Table '{schema}.{table}' already exists"));
+                    }
+                    let id = self.allocate();
+                    created_id = Some(id);
+                    let mut info = TableInfo::clone(template);
+                    info.id = id;
+                    next.databases[at].tables.push(info);
+                }
+                DdlStatement::DropTable {
+                    schema,
+                    table,
+                    if_exists,
+                } => {
+                    let at = find(&mut next.databases, schema)
+                        .ok_or_else(|| format!("Unknown database '{schema}'"))?;
+                    let lowered = table.to_lowercase();
+                    let found = next.databases[at]
+                        .tables
+                        .iter()
+                        .position(|stored| stored.name.lowercase() == lowered);
+                    match found {
+                        Some(index) => {
+                            next.databases[at].tables.remove(index);
+                        }
+                        None if *if_exists => {
+                            return Ok(ClusterDdlReport::AlreadySatisfied {
+                                detail: format!("table `{schema}`.`{table}` does not exist"),
+                            })
+                        }
+                        None => return Err(format!("Unknown table '{schema}.{table}'")),
+                    }
+                }
+            }
+            let schema_version = next.schema_version;
+            // The real writer refreshes the node's catalog inline, before it
+            // answers; so does this one.
+            self.catalog.store(next);
+            self.applied.fetch_add(1, Ordering::AcqRel);
+            Ok(ClusterDdlReport::Applied {
+                schema_version,
+                created_id,
+            })
+        }
+    }
+
     fn column(id: i64, offset: i32, name: &str, primary: bool) -> ModelColumnInfo {
         let mut field_type = FieldType::new(FieldTypeCode::LongLong);
         if primary {
@@ -998,21 +1363,53 @@ mod tests {
         response
     }
 
-    /// One authenticated connection over the mock cluster, plus the cluster
-    /// handle the test inspects.
-    fn open_session() -> (ClusterServerSession, Arc<MockCluster>) {
-        let cluster = Arc::new(MockCluster::default());
-        let session = open_session_on(&cluster);
-        (session, cluster)
+    /// One mock node: the committed rows, the published catalog, and the
+    /// catalog writer, all shared by every connection opened on it -- which is
+    /// what lets a test watch one connection's DDL reach another's.
+    struct MockNode {
+        cluster: Arc<MockCluster>,
+        catalog: Arc<SharedClusterCatalog>,
+        ddl: Arc<MockDdl>,
     }
 
-    /// A second connection to the same mock cluster, which is what makes a
-    /// racing writer expressible in SQL rather than in raw keys.
-    fn open_session_on(cluster: &Arc<MockCluster>) -> ClusterServerSession {
-        let cluster = Arc::clone(cluster);
+    /// The node IS its committed store as far as an assertion is concerned, so
+    /// a test that only cares about rows and timestamps reads them directly.
+    impl std::ops::Deref for MockNode {
+        type Target = MockCluster;
+
+        fn deref(&self) -> &Self::Target {
+            &self.cluster
+        }
+    }
+
+    impl MockNode {
+        fn start() -> Self {
+            let catalog = Arc::new(SharedClusterCatalog::new(loaded_catalog()));
+            Self {
+                cluster: Arc::new(MockCluster::default()),
+                ddl: Arc::new(MockDdl::new(Arc::clone(&catalog))),
+                catalog,
+            }
+        }
+    }
+
+    /// One authenticated connection over a fresh mock node, plus the node the
+    /// test inspects.
+    fn open_session() -> (ClusterServerSession, MockNode) {
+        let node = MockNode::start();
+        let session = open_session_on(&node);
+        (session, node)
+    }
+
+    /// A second connection to the same mock node, which is what makes a racing
+    /// writer -- or a peer that must notice a DDL -- expressible in SQL rather
+    /// than in raw keys.
+    fn open_session_on(node: &MockNode) -> ClusterServerSession {
+        let cluster = Arc::clone(&node.cluster);
         let factory = ClusterSessionFactory::new(
-            Arc::new(MockTransactions(Arc::clone(&cluster))),
-            Arc::new(SharedClusterCatalog::new(loaded_catalog())),
+            Arc::new(MockTransactions(cluster)),
+            Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+            Arc::clone(&node.catalog),
             PrivilegeRegistry::default(),
         );
         let users =
@@ -1375,25 +1772,23 @@ mod tests {
         );
     }
 
-    /// This node's catalog is a READ of the cluster's schema, so a statement
-    /// that would change stored schema or accounts is refused by name rather
-    /// than changing this process's copy alone.
+    /// The account statements stay refused: the privilege registry here is a
+    /// read of the cluster's `mysql.*` rows, and writing those rows through
+    /// the session is a separate piece of work from the catalog DDL below.
     #[test]
-    fn stored_schema_and_account_changes_are_refused() {
+    fn account_changes_are_refused_by_name() {
         let (mut session, _) = open_session();
         for sql in [
-            "CREATE TABLE made_up (a BIGINT)",
-            "DROP TABLE t",
-            "ALTER TABLE t ADD COLUMN w BIGINT",
             "CREATE USER 'bob'@'%'",
             "GRANT SELECT ON app.t TO 'bob'@'%'",
+            "SET PASSWORD FOR 'bob'@'%' = 'x'",
         ] {
             let error = session
                 .execute_write(sql)
-                .expect_err("a stored-schema change must be refused");
+                .expect_err("an account change must be refused");
             let message = error.message.clone();
             assert!(
-                message.contains("cannot change stored"),
+                message.contains("cannot write them"),
                 "unexpected refusal for {sql}: {message}"
             );
         }
@@ -1402,7 +1797,218 @@ mod tests {
         assert!(session
             .execute("GRANT SELECT ON app.t TO 'bob'@'%'")
             .is_err());
-        // And the loaded catalog is untouched: `t` still answers.
+        // `CREATE USER` is a DDL node in the parser, so it would otherwise
+        // reach the catalog writer; it must not.
+        let error = session
+            .execute_write("CREATE USER 'bob'@'%'")
+            .expect_err("CREATE USER is an account change, not a catalog change");
+        assert!(error.message.contains("CREATE USER"), "{}", error.message);
+    }
+
+    /// A stored-schema change the cluster DDL path cannot express keeps a
+    /// precise refusal -- and it names its own reason rather than a generic
+    /// unsupported error.
+    #[test]
+    fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
+        let (mut session, node) = open_session();
+        for (sql, expected) in [
+            (
+                "ALTER TABLE t ADD COLUMN w BIGINT",
+                "CREATE TABLE, DROP TABLE",
+            ),
+            ("TRUNCATE TABLE t", "CREATE TABLE, DROP TABLE"),
+            ("CREATE INDEX i ON t (v)", "CREATE TABLE, DROP TABLE"),
+            (
+                "CREATE TABLE fk (id BIGINT PRIMARY KEY, other BIGINT, \
+                 FOREIGN KEY (other) REFERENCES t (id))",
+                "not supported by this node",
+            ),
+            (
+                "CREATE TABLE parts (id BIGINT PRIMARY KEY) PARTITION BY HASH (id) PARTITIONS 2",
+                "not supported by this node",
+            ),
+        ] {
+            let error = session
+                .execute_write(sql)
+                .expect_err("an inexpressible schema change must be refused");
+            let message = error.message.clone();
+            assert!(
+                message.contains(expected),
+                "unexpected refusal for {sql}: {message}"
+            );
+        }
+        // Nothing was published: a refusal happens before the writer is
+        // reached at all.
+        assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+        assert_eq!(node.catalog.load().schema_version, 11);
+    }
+
+    /// The unit this mode gained: a `CREATE TABLE` issued through the wide-SQL
+    /// session executes as a cluster catalog change, and the SAME connection
+    /// can then write and read the new table -- which it can only do if its
+    /// own tables were rebuilt.
+    #[test]
+    fn create_table_runs_and_the_same_connection_uses_the_new_table() {
+        let (mut session, node) = open_session();
+        let outcome = session
+            .execute_write("CREATE TABLE fresh (id BIGINT PRIMARY KEY, v BIGINT)")
+            .expect("the catalog change runs")
+            .expect("a DDL answers with an OK packet");
+        assert_eq!(outcome.affected_rows, 0);
+        assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
+        assert_eq!(node.catalog.load().schema_version, 12);
+
+        session
+            .execute_write("INSERT INTO fresh (id, v) VALUES (1, 10), (2, 20)")
+            .expect("the new table takes writes on the same connection");
+        assert_eq!(
+            rows(&mut session, "SELECT id, v FROM fresh ORDER BY id"),
+            vec![
+                vec![Datum::Int(1), Datum::Int(10)],
+                vec![Datum::Int(2), Datum::Int(20)]
+            ]
+        );
+        // The rows went through the ordinary write path, into the mock
+        // cluster, and every statement's snapshot was finished.
+        assert_eq!(node.rows(), 2);
+        assert_eq!(node.live.load(Ordering::Acquire), 0);
+        // The connection's older tables survived the rebuild.
         assert!(rows(&mut session, "SELECT id FROM t").is_empty());
+    }
+
+    /// `DROP TABLE` removes the table from the connection's own catalog too,
+    /// so the next statement naming it fails as an unknown table rather than
+    /// reading a table the cluster no longer has.
+    #[test]
+    fn drop_table_removes_it_from_the_connections_own_catalog() {
+        let (mut session, node) = open_session();
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+        session
+            .execute_write("DROP TABLE t")
+            .expect("the catalog change runs");
+        assert_eq!(node.catalog.load().schema_version, 12);
+
+        let Err(error) = session.execute("SELECT id FROM t") else {
+            panic!("a dropped table must not answer");
+        };
+        assert!(
+            error.message.to_lowercase().contains("t"),
+            "unexpected error: {}",
+            error.message
+        );
+        // The sibling table is untouched.
+        assert!(rows(&mut session, "SELECT id FROM g").is_empty());
+    }
+
+    /// A second connection, opened before the DDL, notices it at its next
+    /// statement: the node's catalog moved, so the connection rebuilds its
+    /// tables rather than serving the schema it opened with.
+    #[test]
+    fn a_second_connection_sees_the_new_table_after_the_ddl() {
+        let node = MockNode::start();
+        let mut author = open_session_on(&node);
+        let mut peer = open_session_on(&node);
+        // The peer is live and bound to the pre-DDL catalog.
+        assert!(rows(&mut peer, "SELECT id FROM t").is_empty());
+
+        author
+            .execute_write("CREATE TABLE shared (id BIGINT PRIMARY KEY, v BIGINT)")
+            .expect("the catalog change runs");
+        author
+            .execute_write("INSERT INTO shared (id, v) VALUES (5, 50)")
+            .expect("the author writes the new table");
+
+        assert_eq!(
+            rows(&mut peer, "SELECT id, v FROM shared"),
+            vec![vec![Datum::Int(5), Datum::Int(50)]],
+            "a connection that outlived the DDL must serve the new table"
+        );
+    }
+
+    /// `CREATE DATABASE` and `DROP DATABASE` route the same way, and `USE`
+    /// reaches a database this node created.
+    #[test]
+    fn create_and_drop_database_route_to_the_catalog_writer() {
+        let (mut session, node) = open_session();
+        session
+            .execute_write("CREATE DATABASE extra")
+            .expect("the catalog change runs");
+        session.execute_write("USE extra").expect("USE extra");
+        session
+            .execute_write("CREATE TABLE here (id BIGINT PRIMARY KEY)")
+            .expect("a table in the new database");
+        assert!(rows(&mut session, "SELECT id FROM here").is_empty());
+
+        session
+            .execute_write("DROP DATABASE extra")
+            .expect("the catalog change runs");
+        assert!(session.execute("SELECT id FROM here").is_err());
+        assert_eq!(node.ddl.applied.load(Ordering::Acquire), 3);
+    }
+
+    /// `IF NOT EXISTS` on an object that already exists writes nothing and
+    /// still answers with an OK packet, as Go does.
+    #[test]
+    fn an_already_satisfied_ddl_publishes_nothing() {
+        let (mut session, node) = open_session();
+        let outcome = session
+            .execute_write("CREATE TABLE IF NOT EXISTS t (id BIGINT PRIMARY KEY)")
+            .expect("an IF NOT EXISTS no-op succeeds")
+            .expect("it answers with an OK packet");
+        assert_eq!(outcome.affected_rows, 0);
+        assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+        assert_eq!(node.catalog.load().schema_version, 11);
+    }
+
+    /// DDL commits an open transaction first, as MySQL and Go both do. The
+    /// staged writes are published rather than lost, and the transaction is
+    /// over when the DDL runs.
+    #[test]
+    fn a_ddl_implicitly_commits_the_open_transaction() {
+        let (mut session, node) = open_session();
+        session.control_transaction("BEGIN").expect("begin");
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("staged insert");
+        assert_eq!(node.rows(), 0);
+
+        session
+            .execute_write("CREATE TABLE after (id BIGINT PRIMARY KEY)")
+            .expect("the catalog change runs");
+        assert_eq!(node.rows(), 1, "the DDL committed the open transaction");
+        assert_eq!(node.publications.load(Ordering::Acquire), 1);
+        assert!(
+            !session.session.in_transaction(),
+            "the implicit commit ends the transaction"
+        );
+        // And the new table is usable straight away, which it could not be if
+        // the connection still believed it was inside the old transaction.
+        assert!(rows(&mut session, "SELECT id FROM after").is_empty());
+    }
+
+    /// Inside an explicit transaction the connection keeps the schema its
+    /// `BEGIN` saw, exactly as it keeps its snapshot: a peer's DDL must not
+    /// change the tables a running transaction reads.
+    #[test]
+    fn a_transaction_keeps_the_schema_its_begin_saw() {
+        let node = MockNode::start();
+        let mut reader = open_session_on(&node);
+        let mut author = open_session_on(&node);
+        reader.control_transaction("BEGIN").expect("begin");
+        assert!(rows(&mut reader, "SELECT id FROM t").is_empty());
+
+        author
+            .execute_write("DROP TABLE t")
+            .expect("the peer drops the table");
+
+        assert!(
+            rows(&mut reader, "SELECT id FROM t").is_empty(),
+            "a statement inside BEGIN must keep the schema BEGIN saw"
+        );
+        reader.control_transaction("COMMIT").expect("commit");
+        // Once the transaction is over the connection follows the node again.
+        assert!(reader.execute("SELECT id FROM t").is_err());
     }
 }

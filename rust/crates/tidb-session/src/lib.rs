@@ -85,6 +85,20 @@ pub enum StmtKind {
     Write,
 }
 
+/// Which piece of somebody else's persistent state a statement would change.
+///
+/// See [`Session::statement_stored_state_change`] for why the schema half and
+/// the account half are named apart rather than lumped into one boolean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredStateChange {
+    /// Nothing persistent outside this process.
+    None,
+    /// The stored schema: every `ast.DDLNode`.
+    Schema,
+    /// The stored accounts: `mysql.user`, `mysql.db` and the role edges.
+    Accounts,
+}
+
 /// A process-wide catalog shared by every session, as Go's domain-owned
 /// `infoschema` is shared by every session of a TiDB instance.
 pub type SharedCatalog = Arc<Mutex<Catalog>>;
@@ -936,40 +950,71 @@ impl Session {
         })
     }
 
-    /// Whether `sql` is a statement that changes persistent schema or account
-    /// state: Go's `ast.DDLNode` (which includes `CREATE USER` and friends),
-    /// plus the privilege and role statements TiDB's parser builds as
-    /// administrative rather than DDL.
+    /// Which persistent state `sql` would change: the stored schema (Go's
+    /// `ast.DDLNode`), the stored accounts (the privilege and role statements
+    /// TiDB's parser builds as administrative rather than DDL, plus `SET
+    /// PASSWORD`), or neither.
     ///
     /// A front end whose catalog and account table are a *read* of somebody
     /// else's stored state needs this: running such a statement would change
     /// only this process's in-memory copy, which is a silently wrong answer
-    /// rather than a slow one. Classifying it here keeps that decision on the
-    /// parse, next to [`Self::statement_kind`], instead of in each front end's
-    /// own matcher.
-    pub fn statement_changes_stored_schema(&self, sql: &str) -> Result<bool, DriverError> {
+    /// rather than a slow one. The two halves are named apart because a front
+    /// end can gain a route for one without gaining a route for the other --
+    /// the convergence node writes the cluster's catalog but not its `mysql.*`
+    /// rows. Classifying it here keeps that decision on the parse, next to
+    /// [`Self::statement_kind`], instead of in each front end's own matcher.
+    pub fn statement_stored_state_change(
+        &self,
+        sql: &str,
+    ) -> Result<StoredStateChange, DriverError> {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         Ok(match &stmt {
-            Stmt::Ddl(_) => true,
+            // The account statements the parser builds as DDL nodes, because
+            // Go's `ast.DDLNode` covers them too: they write `mysql.user` and
+            // the role edges, never the catalog.
+            Stmt::Ddl(ddl)
+                if matches!(
+                    ddl.as_ref(),
+                    tidb_ast::DdlStmt::CreateUser { .. }
+                        | tidb_ast::DdlStmt::CreateRole { .. }
+                        | tidb_ast::DdlStmt::AlterUser(_)
+                        | tidb_ast::DdlStmt::DropUser { .. }
+                        | tidb_ast::DdlStmt::RenameUser { .. }
+                ) =>
+            {
+                StoredStateChange::Accounts
+            }
+            Stmt::Ddl(_) => StoredStateChange::Schema,
             // The privilege/role statements: everything under `Admin` that
             // writes `mysql.user`, `mysql.db`, or the role edges. `SHOW
             // GRANTS` and the other inspections read and are left alone.
-            Stmt::Admin(admin) => matches!(
-                admin.as_ref(),
-                tidb_ast::AdminStmt::Grant(_)
-                    | tidb_ast::AdminStmt::GrantProxy(_)
-                    | tidb_ast::AdminStmt::GrantRole(_)
-                    | tidb_ast::AdminStmt::Revoke(_)
-                    | tidb_ast::AdminStmt::RevokeRole(_)
-            ),
+            Stmt::Admin(admin)
+                if matches!(
+                    admin.as_ref(),
+                    tidb_ast::AdminStmt::Grant(_)
+                        | tidb_ast::AdminStmt::GrantProxy(_)
+                        | tidb_ast::AdminStmt::GrantRole(_)
+                        | tidb_ast::AdminStmt::Revoke(_)
+                        | tidb_ast::AdminStmt::RevokeRole(_)
+                ) =>
+            {
+                StoredStateChange::Accounts
+            }
             // `SET PASSWORD` and `SET DEFAULT ROLE` write `mysql.user` and
             // `mysql.default_roles`; every other `SET` is session- or
             // process-local.
-            Stmt::Session(session) => matches!(
-                session.as_ref(),
-                tidb_ast::SessionStmt::SetPassword(_) | tidb_ast::SessionStmt::SetDefaultRole(_)
-            ),
-            Stmt::Query(_) | Stmt::Dml(_) => false,
+            Stmt::Session(session)
+                if matches!(
+                    session.as_ref(),
+                    tidb_ast::SessionStmt::SetPassword(_)
+                        | tidb_ast::SessionStmt::SetDefaultRole(_)
+                ) =>
+            {
+                StoredStateChange::Accounts
+            }
+            Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
+                StoredStateChange::None
+            }
         })
     }
 
