@@ -252,6 +252,58 @@ impl PreparedWrite {
 
 /// One connection-owned prepared statement of either admitted kind.
 ///
+/// A prepared statement of any shape, held as the SQL its markers will be
+/// bound into.
+///
+/// Go keeps the parsed statement and installs execute-time values on its
+/// markers; this tier binds them into the text before running, which is what
+/// `tidb_session::Session::run_with_params` does.
+#[derive(Clone, Debug)]
+pub struct PreparedGeneral {
+    sql: String,
+    parameter_count: usize,
+    result_columns: Vec<ColumnInfo>,
+}
+
+impl PreparedGeneral {
+    /// Creates one from its statement text and the metadata a PREPARE reports.
+    #[must_use]
+    pub fn new(sql: String, parameter_count: usize, result_columns: Vec<ColumnInfo>) -> Self {
+        Self {
+            sql,
+            parameter_count,
+            result_columns,
+        }
+    }
+
+    /// The statement text, whose markers an execute binds.
+    #[must_use]
+    pub fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    /// Positional markers the execute packet must supply.
+    #[must_use]
+    pub fn parameter_count(&self) -> usize {
+        self.parameter_count
+    }
+
+    /// Result metadata sent at prepare time; empty for a statement that
+    /// answers with an OK packet.
+    #[must_use]
+    pub fn result_columns(&self) -> &[ColumnInfo] {
+        &self.result_columns
+    }
+}
+
+/// What executing a general prepared statement produced.
+pub enum GeneralExecuteOutcome<'a> {
+    /// A result set, streamed the same way a COM_QUERY result is.
+    Rows(QueryResult<'a>),
+    /// An OK packet's affected-row count and last insert id.
+    Write(WriteOutcome),
+}
+
 /// A write returns an OK packet and never a result set, so the two kinds carry
 /// different response shapes and must stay distinguishable at execute time.
 #[derive(Clone, Debug)]
@@ -260,6 +312,8 @@ pub enum PreparedStatement {
     PointRead(PreparedPointRead),
     /// A bounded configured INSERT or point UPDATE returning affected rows.
     Write(PreparedWrite),
+    /// Any other statement, bound and run through the session.
+    General(PreparedGeneral),
 }
 
 impl PreparedStatement {
@@ -269,6 +323,7 @@ impl PreparedStatement {
         match self {
             Self::PointRead(_) => 1,
             Self::Write(write) => write.parameter_count(),
+            Self::General(general) => general.parameter_count(),
         }
     }
 
@@ -278,6 +333,7 @@ impl PreparedStatement {
         match self {
             Self::PointRead(read) => read.result_columns(),
             Self::Write(_) => &[],
+            Self::General(general) => general.result_columns(),
         }
     }
 }
@@ -357,6 +413,28 @@ pub struct SessionContext {
 pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
+
+    /// Prepares a statement of any shape, reporting the marker count and the
+    /// result columns a PREPARE sends.
+    ///
+    /// Sessions with their own specialized prepared paths keep them; this is
+    /// the general one every other statement takes.
+    fn prepare_general(&mut self, _sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "this session does not support general prepared statements",
+        ))
+    }
+
+    /// Binds and runs one general prepared statement.
+    fn execute_general<'a>(
+        &'a mut self,
+        _statement: &PreparedGeneral,
+        _values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "this session does not support general prepared statements",
+        ))
+    }
 
     /// Parses and types one bounded prepared point read without storage I/O.
     /// Sessions that have no real configured catalog fail closed.

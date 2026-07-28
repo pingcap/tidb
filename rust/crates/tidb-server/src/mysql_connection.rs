@@ -41,8 +41,8 @@ use crate::handshake::{
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::{
-    ConnectionCancellation, ConnectionTracker, PreparedStatement, QuerySession,
-    QuerySessionFactory, SessionContext, SqlQueryError,
+    ConnectionCancellation, ConnectionTracker, GeneralExecuteOutcome, PreparedStatement,
+    QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
 };
 use tidb_planner::prepared_dml::PreparedBindValue;
 
@@ -590,10 +590,26 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     Ok(point_read) => PreparedStatement::PointRead(point_read),
                     Err(read_error) => match engine.prepare_write(sql) {
                         Ok(write) => PreparedStatement::Write(write),
-                        Err(_) => {
-                            write_query_error(&mut output, &read_error, protocol_41)?;
-                            continue;
-                        }
+                        // Any other statement takes the general path, which
+                        // binds its markers and runs it through the session.
+                        Err(_) => match engine.prepare_general(sql) {
+                            Ok(general) => PreparedStatement::General(general),
+                            Err(general_error) => {
+                                // The configured read's own message is the
+                                // more specific one when the general path
+                                // simply has no session behind it.
+                                let reported = if general_error
+                                    .message
+                                    .contains("does not support general prepared statements")
+                                {
+                                    read_error
+                                } else {
+                                    general_error
+                                };
+                                write_query_error(&mut output, &reported, protocol_41)?;
+                                continue;
+                            }
+                        },
                     },
                 };
                 let result_columns = statement.result_columns().to_vec();
@@ -750,6 +766,56 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                             Err(error) => {
                                 return Err(MysqlConnectionError::PartialResult(error.message))
+                            }
+                        }
+                    }
+                    PreparedStatement::General(general) => {
+                        match engine.execute_general(&general, &values) {
+                            Ok(GeneralExecuteOutcome::Rows(mut result)) => {
+                                let write_result = {
+                                    let mut sink = TcpResultSetSink::new(&mut output, 1);
+                                    write_connection_binary_result_set_to_sink(
+                                        result.source(),
+                                        &mut sink,
+                                        options,
+                                        RESULT_BATCH_SIZE,
+                                    )
+                                };
+                                match write_result {
+                                    Ok(_) => {
+                                        queries += 1;
+                                        commands.stmt_execute_successes += 1;
+                                    }
+                                    Err(error) if !error.bytes_escaped => {
+                                        write_error(
+                                            &mut output,
+                                            1,
+                                            ER_UNKNOWN_ERROR,
+                                            *b"HY000",
+                                            error.message,
+                                            protocol_41,
+                                        )?;
+                                    }
+                                    Err(error) => {
+                                        return Err(MysqlConnectionError::PartialResult(
+                                            error.message,
+                                        ))
+                                    }
+                                }
+                            }
+                            Ok(GeneralExecuteOutcome::Write(outcome)) => {
+                                write_affected_rows_ok(
+                                    &mut output,
+                                    1,
+                                    outcome.affected_rows,
+                                    outcome.last_insert_id,
+                                    protocol_41,
+                                )?;
+                                queries += 1;
+                                commands.stmt_execute_successes += 1;
+                            }
+                            Err(error) => {
+                                write_query_error(&mut output, &error, protocol_41)?;
                             }
                         }
                     }

@@ -42,7 +42,8 @@ use tidb_session::{Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
 
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
+    GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory,
+    SessionContext, SqlQueryError, WriteOutcome,
 };
 
 /// One connection's pipeline-backed query session.
@@ -131,6 +132,71 @@ impl QuerySession for PipelineServerSession {
             affected_rows,
             last_insert_id: self.session.statement_insert_id(),
         }))
+    }
+
+    /// Go reports a prepared statement's marker count and result columns at
+    /// PREPARE time. The columns come from planning the statement with every
+    /// marker bound to NULL, which is side-effect free for a query; a
+    /// statement that answers with an OK packet reports none.
+    fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
+        let result_columns = match self.session.statement_kind(sql).map_err(map_error)? {
+            StmtKind::Query => {
+                let probe: Vec<tidb_datatype::Datum> =
+                    std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
+                match self.session.run_with_params(sql, &probe) {
+                    Ok(StmtOutput::Rows { columns, .. }) => select_columns(&columns),
+                    // A query whose metadata this tier cannot resolve without
+                    // real values reports no columns at prepare time; the
+                    // execute answer still carries its own metadata, which is
+                    // where a client reads it.
+                    _ => Vec::new(),
+                }
+            }
+            StmtKind::Write => Vec::new(),
+        };
+        Ok(PreparedGeneral::new(
+            sql.to_owned(),
+            parameter_count,
+            result_columns,
+        ))
+    }
+
+    fn execute_general<'a>(
+        &'a mut self,
+        statement: &PreparedGeneral,
+        values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let params: Vec<tidb_datatype::Datum> = values
+            .iter()
+            .map(|value| match value {
+                tidb_protocol::PreparedValue::SignedLongLong(value) => {
+                    tidb_datatype::Datum::Int(*value)
+                }
+                tidb_protocol::PreparedValue::String(bytes) => {
+                    tidb_datatype::Datum::Bytes(bytes.clone())
+                }
+            })
+            .collect();
+        let output = self
+            .session
+            .run_with_params(statement.sql(), &params)
+            .map_err(map_error)?;
+        Ok(match output {
+            StmtOutput::Rows { columns, rows } => {
+                GeneralExecuteOutcome::Rows(QueryResult::new(Box::new(
+                    MaterializedResultSetSource::new(select_columns(&columns), rows),
+                )))
+            }
+            StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: count,
+                last_insert_id: self.session.statement_insert_id(),
+            }),
+            StmtOutput::Done(_) => GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }),
+        })
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {

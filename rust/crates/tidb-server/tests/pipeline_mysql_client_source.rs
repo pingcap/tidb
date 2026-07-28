@@ -24,7 +24,10 @@
 use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
-use tidb_protocol::{PacketReader, PacketWriter, COM_QUERY, DEFAULT_MAX_ALLOWED_PACKET};
+use tidb_protocol::{
+    PacketReader, PacketWriter, COM_QUERY, COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE,
+    DEFAULT_MAX_ALLOWED_PACKET,
+};
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
     PipelineSessionFactory,
@@ -226,6 +229,146 @@ fn run_query(
     rows
 }
 
+/// Sends COM_STMT_PREPARE and returns `(statement_id, parameter_count,
+/// column_count)` from the prepare-OK packet, consuming the parameter and
+/// column definitions that follow it.
+fn prepare_statement(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> (u32, u16, u16) {
+    let mut command = vec![COM_STMT_PREPARE];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let response = reader.read_packet().unwrap();
+    assert_eq!(response[0], 0x00, "prepare errored: {response:?}");
+    let statement_id = u32::from_le_bytes(response[1..5].try_into().unwrap());
+    let column_count = u16::from_le_bytes(response[5..7].try_into().unwrap());
+    let parameter_count = u16::from_le_bytes(response[7..9].try_into().unwrap());
+    for _ in 0..parameter_count {
+        reader.read_packet().unwrap();
+    }
+    if parameter_count > 0 {
+        // EOF terminating the parameter definitions, when the server sends it.
+    }
+    for _ in 0..column_count {
+        reader.read_packet().unwrap();
+    }
+    (statement_id, parameter_count, column_count)
+}
+
+/// The column type byte a protocol-41 column definition carries, which a
+/// binary row's own encoding depends on.
+fn column_definition_type(packet: &[u8]) -> u8 {
+    let mut remaining = packet;
+    // catalog, schema, table, org_table, name, org_name.
+    for _ in 0..6 {
+        read_length_encoded_string(&mut remaining);
+    }
+    // The fixed-length block: 0x0c, charset(2), column_length(4), type(1).
+    remaining[1 + 2 + 4]
+}
+
+/// Reads one value of a binary result-set row, whose encoding is fixed by the
+/// column's own type rather than always length-encoded.
+fn read_binary_value(packet: &mut &[u8], column_type: u8) -> String {
+    match column_type {
+        // MYSQL_TYPE_LONGLONG.
+        8 => {
+            let value = i64::from_le_bytes(packet[..8].try_into().unwrap());
+            *packet = &packet[8..];
+            value.to_string()
+        }
+        // MYSQL_TYPE_LONG / INT24.
+        3 | 9 => {
+            let value = i32::from_le_bytes(packet[..4].try_into().unwrap());
+            *packet = &packet[4..];
+            value.to_string()
+        }
+        // MYSQL_TYPE_SHORT / YEAR.
+        2 | 13 => {
+            let value = i16::from_le_bytes(packet[..2].try_into().unwrap());
+            *packet = &packet[2..];
+            value.to_string()
+        }
+        // MYSQL_TYPE_TINY.
+        1 => {
+            let value = packet[0] as i8;
+            *packet = &packet[1..];
+            value.to_string()
+        }
+        // MYSQL_TYPE_DOUBLE.
+        5 => {
+            let value = f64::from_le_bytes(packet[..8].try_into().unwrap());
+            *packet = &packet[8..];
+            value.to_string()
+        }
+        // Everything else -- strings, decimals -- is length-encoded.
+        _ => String::from_utf8_lossy(&read_length_encoded_string(packet)).into_owned(),
+    }
+}
+
+/// Sends COM_STMT_EXECUTE with signed-BIGINT parameters and reads the binary
+/// result set back as strings.
+fn execute_statement(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    statement_id: u32,
+    parameters: &[i64],
+) -> Vec<Vec<String>> {
+    let mut command = vec![COM_STMT_EXECUTE];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.push(0); // no cursor
+    command.extend_from_slice(&1u32.to_le_bytes()); // iteration count
+    if !parameters.is_empty() {
+        let null_bitmap_len = parameters.len().div_ceil(8);
+        command.extend(std::iter::repeat_n(0u8, null_bitmap_len));
+        command.push(1); // a new parameter-type vector follows
+        for _ in parameters {
+            command.push(8); // MYSQL_TYPE_LONGLONG
+            command.push(0); // signed
+        }
+        for value in parameters {
+            command.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+
+    let first = reader.read_packet().unwrap();
+    assert_ne!(first[0], 0xff, "execute errored: {first:?}");
+    let column_count = usize::from(first[0]);
+    let mut column_types = Vec::with_capacity(column_count);
+    for _ in 0..column_count {
+        let definition = reader.read_packet().unwrap();
+        column_types.push(column_definition_type(&definition));
+    }
+    let mut rows = Vec::new();
+    loop {
+        let packet = reader.read_packet().unwrap();
+        if packet[0] == 0xfe && packet.len() < 9 + 4 {
+            break;
+        }
+        // A binary row is: 0x00 header, a NULL bitmap offset by two bits,
+        // then each value packed by its own column type.
+        let null_bitmap_len = (column_count + 7 + 2) / 8;
+        let null_bitmap = &packet[1..1 + null_bitmap_len];
+        let mut remaining = &packet[1 + null_bitmap_len..];
+        let mut row = Vec::new();
+        for (index, column_type) in column_types.iter().enumerate() {
+            let bit = index + 2;
+            if null_bitmap[bit / 8] & (1 << (bit % 8)) != 0 {
+                row.push("NULL".to_owned());
+                continue;
+            }
+            row.push(read_binary_value(&mut remaining, *column_type));
+        }
+        rows.push(row);
+    }
+    rows
+}
+
 /// The deployment-ladder proof: a raw MySQL client speaks the real wire
 /// protocol to the new engine and reads its own data back.
 #[test]
@@ -378,6 +521,26 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     // USE answers with an OK packet, as a client expects when it switches
     // schema.
     assert_eq!(run_write(&mut client, &mut reader, "USE test"), 0);
+
+    // The binary protocol: PREPARE reports the marker count, EXECUTE binds
+    // the values and answers with a real binary result set. This is how a
+    // JDBC or Go-driver client runs a parameterized statement.
+    let (statement_id, parameter_count, _columns) =
+        prepare_statement(&mut client, &mut reader, "SELECT a, b FROM t WHERE a = ?");
+    assert_eq!(parameter_count, 1);
+    assert_eq!(
+        execute_statement(&mut client, &mut reader, statement_id, &[2]),
+        vec![vec!["2".to_owned(), "20".to_owned()]]
+    );
+    // The same statement runs again with a different value, which is the
+    // point of preparing it.
+    assert_eq!(
+        execute_statement(&mut client, &mut reader, statement_id, &[3]),
+        vec![vec!["3".to_owned(), "30".to_owned()]]
+    );
+    let mut close = vec![COM_STMT_CLOSE];
+    close.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &close);
 
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);
