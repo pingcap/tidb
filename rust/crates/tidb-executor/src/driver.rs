@@ -1769,7 +1769,20 @@ pub fn run_insert_reporting(
         },
         _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
     };
+    run_insert_stmt(insert, catalog, current_db, ctx)
+}
 
+/// [`run_insert_reporting`], starting from an already-parsed `InsertStmt`
+/// rather than re-parsing a SQL string -- what `EXPLAIN ANALYZE INSERT`
+/// needs (it already holds the parsed statement the `EXPLAIN` wraps, and
+/// real `EXPLAIN ANALYZE` executes the wrapped statement, captured via
+/// `pkg/executor`: an `EXPLAIN ANALYZE INSERT` really inserts the row).
+pub(crate) fn run_insert_stmt(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(u64, Option<i64>), DriverError> {
     if !insert.partitions.is_empty() || (insert.replace && !insert.on_duplicate.is_empty()) {
         return Err(DriverError::Unsupported("partitions are not supported yet"));
     }

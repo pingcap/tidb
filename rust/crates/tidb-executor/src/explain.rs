@@ -102,11 +102,14 @@
 //!   exact, not estimates.
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
 use crate::driver::{
-    eval_limit_bound, single_kv_table, split_table_path_pub, try_batch_point_get, try_index_ranges,
-    try_point_get, Catalog, DriverError, FromScope, FromTable, SelectMeta, TableEntry,
+    eval_limit_bound, row_chunk, run_insert_stmt, single_kv_table, split_table_path_pub,
+    try_batch_point_get, try_index_ranges, try_point_get, Catalog, DriverError, FromScope,
+    FromTable, SelectMeta, TableEntry,
 };
+use crate::executor::ExecError;
 use crate::kv_table::TableHandle;
 
 /// Go `statistics.PseudoRowCount` (`pkg/statistics/table.go`): the row count
@@ -204,6 +207,32 @@ pub fn explain_select_stmt(
     Ok(render(plan, format))
 }
 
+/// `EXPLAIN ANALYZE <select>`: the same plan tree [`explain_select_stmt`]
+/// records, but the query actually RUNS (real `EXPLAIN ANALYZE` executes
+/// the wrapped statement to gather its runtime counters, confirmed by
+/// capture), and each operator's `actRows` is the REAL row count that
+/// stage produced -- never an estimate, never fabricated.
+///
+/// [`compute_act_rows`] computes those real counts for a single
+/// (non-`JOIN`) `KV`-backed table read through a plain `TableFullScan`
+/// (the access path a bare `WHERE` on a non-indexed column takes); every
+/// other shape (a `JOIN`, a `Point_Get`/`Batch_Point_Get`/
+/// `IndexRangeScan` access path, or a grouped aggregate/`DISTINCT`) prints
+/// `actRows` as `N/A` for the nodes it cannot count precisely rather than
+/// guess -- the same honest-placeholder choice `EXPLAIN` itself already
+/// makes for a join's `estRows`.
+pub fn explain_analyze_select_stmt(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let plan = plan_select(select, catalog, current_db)?;
+    let act_rows = compute_act_rows(select, catalog, current_db, ctx)?;
+    Ok(render_analyze(plan, &act_rows, format))
+}
+
 /// Plans an `INSERT` and reports the plan as EXPLAIN rows, executing
 /// nothing. Go's `Insert_N` row carries none of the estimate/access/info a
 /// read operator would (captured: `[Insert_1 N/A root  N/A]`, both for a
@@ -234,6 +263,57 @@ pub fn explain_insert_stmt(
         children,
     };
     Ok(render(plan, format))
+}
+
+/// `EXPLAIN ANALYZE <insert>`: unlike [`explain_insert_stmt`], this really
+/// inserts the row(s) -- real `EXPLAIN ANALYZE INSERT` executes the
+/// statement (captured: the table has the new row afterward). The
+/// `Insert_N` node's `actRows` is always `0`: Go's own `Insert_1` row shows
+/// `actRows` `0` too (captured), because the insert executor's `Next()`
+/// produces no rows of its own -- the write is a side effect, not this
+/// operator's row-producing interface.
+pub fn explain_analyze_insert_stmt(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let children = match &insert.source {
+        Some(query) => {
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                return Err(DriverError::Unsupported(
+                    "EXPLAIN of a set-operation INSERT source is not supported yet",
+                ));
+            };
+            vec![plan_select(select, catalog, current_db)?]
+        }
+        None => Vec::new(),
+    };
+    run_insert_stmt(insert, catalog, current_db, ctx)?;
+    let plan = PlanNode {
+        name: "Insert",
+        est_rows: None,
+        access: String::new(),
+        info: "N/A".to_owned(),
+        children,
+    };
+    // Bottom-up numbering (`assign_ids`) builds every child before the
+    // `Insert` node itself, so `Insert`'s own entry is always the LAST slot;
+    // an `INSERT ... SELECT` source's real per-stage counts are not
+    // recovered here (the source already ran, inside `run_insert_stmt`, so
+    // re-deriving them would mean running the query twice) -- `N/A`, same
+    // as every other not-precisely-tracked operator.
+    let total = count_nodes(&plan);
+    let mut act_rows = vec![None; total];
+    act_rows[total - 1] = Some(0);
+    Ok(render_analyze(plan, &act_rows, format))
+}
+
+/// The number of nodes in a plan tree, for sizing an `act_rows` vector that
+/// [`render_analyze`]/[`assign_ids`] will index by bottom-up build order.
+fn count_nodes(node: &PlanNode) -> usize {
+    1 + node.children.iter().map(count_nodes).sum::<usize>()
 }
 
 /// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing
@@ -356,6 +436,118 @@ fn render(plan: PlanNode, format: ExplainFormat) -> SelectMeta {
     (columns, rows)
 }
 
+/// The header real `EXPLAIN ANALYZE` reports (captured from TiDB): the same
+/// five `EXPLAIN` columns, with `actRows` inserted after `estRows` and
+/// `execution info`/`memory`/`disk` appended after `operator info`.
+const EXPLAIN_ANALYZE_COLUMNS: [&str; 9] = [
+    "id",
+    "estRows",
+    "actRows",
+    "task",
+    "access object",
+    "execution info",
+    "operator info",
+    "memory",
+    "disk",
+];
+
+/// Like [`render`], but for `EXPLAIN ANALYZE`: threads a real `actRows`
+/// value (or `None` for an operator this tier does not track precisely,
+/// see [`compute_act_rows`]) alongside each node, indexed by the SAME
+/// bottom-up `counter` [`assign_ids`] already assigns -- `act_rows[i]` is
+/// the `i`-th node built, exactly matching `compute_act_rows`'s own push
+/// order because it mirrors [`plan_select`]'s control flow node-for-node.
+///
+/// `execution info`, `memory`, and `disk` always print `N/A`: this tier
+/// collects no runtime timing, memory, or spill counters at all (captured
+/// Go values for those columns are non-deterministic timings/byte counts
+/// this tier has no machinery to produce, and inventing numbers for them
+/// would be worse than an honest placeholder -- the same reasoning
+/// `EXPLAIN`'s own `est_rows: None` -> `"N/A"` already uses for a join's
+/// cardinality).
+fn render_analyze(plan: PlanNode, act_rows: &[Option<u64>], format: ExplainFormat) -> SelectMeta {
+    let mut counter = 0;
+    let plan = assign_ids(plan, &mut counter);
+    let mut rows = Vec::new();
+    flatten_analyze(
+        &plan,
+        String::new(),
+        true,
+        true,
+        format,
+        act_rows,
+        &mut rows,
+    );
+    let field_type = FieldType::new(FieldTypeCode::VarString);
+    let columns = EXPLAIN_ANALYZE_COLUMNS
+        .iter()
+        .map(|name| ((*name).to_owned(), field_type.clone()))
+        .collect();
+    (columns, rows)
+}
+
+/// [`flatten`], plus the real `actRows`/`execution info`/`memory`/`disk`
+/// columns `EXPLAIN ANALYZE` adds.
+fn flatten_analyze(
+    node: &IdNode,
+    prefix: String,
+    is_root: bool,
+    is_last: bool,
+    format: ExplainFormat,
+    act_rows: &[Option<u64>],
+    out: &mut Vec<Vec<Datum>>,
+) {
+    let name = match format {
+        ExplainFormat::Row => format!("{}_{}", node.name, node.counter),
+        ExplainFormat::Brief => node.name.to_owned(),
+    };
+    let id = if is_root {
+        name
+    } else if is_last {
+        format!("{prefix}└─{name}")
+    } else {
+        format!("{prefix}├─{name}")
+    };
+    let est = match node.est_rows {
+        Some(value) => format!("{value:.2}"),
+        None => "N/A".to_owned(),
+    };
+    let act = match act_rows.get(node.counter - 1).copied().flatten() {
+        Some(value) => value.to_string(),
+        None => "N/A".to_owned(),
+    };
+    out.push(vec![
+        text(&id),
+        text(&est),
+        text(&act),
+        text("root"),
+        text(&node.access),
+        text("N/A"),
+        text(&node.info),
+        text("N/A"),
+        text("N/A"),
+    ]);
+    let child_prefix = if is_root {
+        String::new()
+    } else if is_last {
+        format!("{prefix}  ")
+    } else {
+        format!("{prefix}│ ")
+    };
+    let last = node.children.len().saturating_sub(1);
+    for (i, child) in node.children.iter().enumerate() {
+        flatten_analyze(
+            child,
+            child_prefix.clone(),
+            false,
+            i == last,
+            format,
+            act_rows,
+            out,
+        );
+    }
+}
+
 /// A plan node whose id is fixed.
 struct IdNode {
     /// Go's operator name without the `_N` suffix (`TableFullScan`).
@@ -438,6 +630,217 @@ fn flatten(
 
 fn text(value: &str) -> Datum {
     Datum::Bytes(value.as_bytes().to_vec())
+}
+
+/// Resolves an unqualified/`t.`-qualified column name against one table's
+/// schema, for evaluating a real `WHERE` predicate against real rows in
+/// [`compute_act_rows`] -- the same shape as `driver::TableResolver`,
+/// reimplemented locally rather than exposing that private type.
+struct RowResolver<'a> {
+    table_name: &'a str,
+    columns: &'a [(String, FieldType)],
+}
+
+impl ColumnResolver for RowResolver<'_> {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let (qualifier, name) = match path {
+            [name] => (None, name),
+            [table, name] => (Some(table), name),
+            _ => return None,
+        };
+        if let Some(q) = qualifier {
+            if !q.eq_ignore_ascii_case(self.table_name) {
+                return None;
+            }
+        }
+        self.columns
+            .iter()
+            .position(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|i| (i, self.columns[i].1.clone(), (i + 1) as i64))
+    }
+}
+
+/// Computes the real, per-node `actRows` for [`explain_analyze_select_stmt`],
+/// mirroring [`plan_select`]'s control flow node-for-node so the returned
+/// vector's order matches [`assign_ids`]'s bottom-up numbering exactly:
+/// this function pushes one entry per `PlanNode` that `plan_select` would
+/// build, in the same order (leaf/source, then `Selection`, then either
+/// `HashAgg` (+ `Limit`) or `Sort`/`Projection`/distinct-`HashAgg` (+
+/// `Limit`)), so [`render_analyze`] can index `act_rows[counter - 1]`
+/// directly.
+///
+/// Real counts are computed only for a `FROM`-less `SELECT` (`TableDual`,
+/// always exactly 1 real row) and a single (non-`JOIN`) KV-backed table
+/// read through a plain `TableFullScan` -- the access path an unindexed
+/// `WHERE` takes. For that shape, every downstream node's real row count
+/// can also be tracked exactly without re-running the query multiple
+/// times: `Selection` is the real predicate evaluated against the real
+/// scanned rows (via the same `rewrite_expr_resolved`/[`row_chunk`]
+/// machinery `UPDATE`/`DELETE` use to test a row for real), `Sort` and
+/// `Projection` never change the row count, a whole-table (no `GROUP BY`)
+/// `HashAgg` always collapses to exactly 1 row, and `Limit` is `min(rows,
+/// count)` after skipping `offset`.
+///
+/// Everything else -- a `JOIN`, a `Point_Get`/`Batch_Point_Get`/
+/// `IndexRangeScan` access path, a grouped `HashAgg`, or `DISTINCT` (whose
+/// real output needs the actual distinct projected tuples, not just an
+/// input row count) -- pushes `None` for the nodes it cannot count
+/// precisely rather than guess, and every node downstream of a `None`
+/// also gets `None`.
+fn compute_act_rows(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<Option<u64>>, DriverError> {
+    if select.with.is_some() {
+        return Err(DriverError::Unsupported(
+            "EXPLAIN of a WITH clause is not supported yet",
+        ));
+    }
+    let scope = explain_scope(&select.from, catalog, current_db)?;
+    let mut counts: Vec<Option<u64>> = Vec::new();
+
+    let mut rows: Option<Vec<Vec<Datum>>> = if select.from.is_none() {
+        counts.push(Some(1));
+        None
+    } else if let Some(mut table) = single_kv_table(&select.from, catalog, current_db) {
+        let columns = scope.column_list();
+        if try_batch_point_get(select, &table, &columns)?.is_some()
+            || try_point_get(select, &table, &columns)?.is_some()
+            || try_index_ranges(select, &table, &columns).is_some()
+        {
+            counts.push(None);
+            None
+        } else {
+            let scanned = table
+                .scan_rows()
+                .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+            counts.push(Some(scanned.len() as u64));
+            Some(scanned)
+        }
+    } else {
+        // A `JOIN` (or a non-KV single table) builds a node shape this
+        // function does not re-derive; report every node in the real tree
+        // as untracked rather than guess at it.
+        let plan = plan_select(select, catalog, current_db)?;
+        return Ok(vec![None; count_nodes(&plan)]);
+    };
+
+    let columns = scope.column_list();
+    let visible = scope
+        .tables
+        .first()
+        .map(|t| t.name.clone())
+        .unwrap_or_default();
+    let field_types: Vec<FieldType> = columns.iter().map(|(_, ft)| ft.clone()).collect();
+
+    if let Some(predicate) = &select.where_clause {
+        match rows.take() {
+            Some(source_rows) => {
+                let resolver = RowResolver {
+                    table_name: &visible,
+                    columns: &columns,
+                };
+                let expr = rewrite_expr_resolved(predicate, &resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                let mut filtered = Vec::with_capacity(source_rows.len());
+                for row in source_rows {
+                    let chunk = row_chunk(&row, &field_types)?;
+                    let value = expr
+                        .eval(ctx, chunk.get_row(0))
+                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                    if crate::truthy_of(&value)
+                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
+                        == Some(true)
+                    {
+                        filtered.push(row);
+                    }
+                }
+                counts.push(Some(filtered.len() as u64));
+                rows = Some(filtered);
+            }
+            None => counts.push(None),
+        }
+    }
+
+    let is_aggregate = !select.group_by.is_empty()
+        || select.fields.fields().iter().any(|f| {
+            matches!(
+                f,
+                tidb_ast::SelectField::Expr {
+                    expr: tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. },
+                    ..
+                }
+            )
+        });
+
+    if is_aggregate {
+        if select.group_by.is_empty() {
+            // A whole-table aggregate always collapses to exactly 1 row,
+            // whatever the input -- real, not an estimate.
+            counts.push(Some(1));
+            rows = rows.map(|_| Vec::new());
+        } else {
+            // The real number of distinct groups needs the real grouping
+            // key values, which this function does not compute.
+            counts.push(None);
+            rows = None;
+        }
+        push_limit_count(select, &mut rows, &mut counts);
+        return Ok(counts);
+    }
+
+    if !select.order_by.is_empty() {
+        // `Sort` never changes the row count.
+        counts.push(rows.as_ref().map(|r| r.len() as u64));
+    }
+
+    // `Projection` never changes the row count either (divergence 3: this
+    // tier always builds one).
+    counts.push(rows.as_ref().map(|r| r.len() as u64));
+
+    if select.distinct {
+        // Real `DISTINCT` output needs the actual distinct projected
+        // tuples, not just an input row count.
+        counts.push(None);
+        rows = None;
+    }
+
+    push_limit_count(select, &mut rows, &mut counts);
+    Ok(counts)
+}
+
+/// Applies `plan_select`'s `apply_limit` to a real row set, pushing the
+/// `Limit` node's real `actRows` (or nothing, if there is no `LIMIT`).
+fn push_limit_count(
+    select: &tidb_ast::SelectStmt,
+    rows: &mut Option<Vec<Vec<Datum>>>,
+    counts: &mut Vec<Option<u64>>,
+) {
+    let Some(limit) = &select.limit else {
+        return;
+    };
+    let (Ok(count), offset) = (
+        eval_limit_bound(&limit.count),
+        limit
+            .offset
+            .as_ref()
+            .and_then(|e| eval_limit_bound(e).ok())
+            .unwrap_or(0),
+    ) else {
+        counts.push(None);
+        *rows = None;
+        return;
+    };
+    match rows.take() {
+        Some(source_rows) => {
+            let remaining = (source_rows.len() as u64).saturating_sub(offset);
+            let limited = remaining.min(count);
+            counts.push(Some(limited));
+        }
+        None => counts.push(None),
+    }
 }
 
 /// Builds the plan tree, mirroring `driver::run_select_stmt`'s decisions in

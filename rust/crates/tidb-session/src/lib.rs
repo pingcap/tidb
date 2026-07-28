@@ -673,19 +673,6 @@ impl Session {
                 // See `tidb_executor::explain`'s module doc for every place
                 // this tier's plan text diverges from Go's and why.
                 tidb_ast::AdminStmt::Explain(explain) => {
-                    if explain.analyze {
-                        // ANALYZE reports per-operator runtime counters this
-                        // tier does not collect; inventing them would be
-                        // worse than refusing. (Go itself EXECUTES the
-                        // wrapped statement to gather those counters --
-                        // confirmed by capture -- so refusing rather than
-                        // silently planning-only also avoids answering with
-                        // a plan that looks like ANALYZE's richer output but
-                        // isn't.)
-                        return Err(DriverError::Unsupported(
-                            "EXPLAIN ANALYZE is not supported yet",
-                        ));
-                    }
                     // Go's preprocessor rejects an unrecognized format name
                     // with this exact message before the statement is even
                     // planned (captured: `explain format = 'bogus' ...` ->
@@ -699,6 +686,61 @@ impl Session {
                         ));
                     };
                     let current_db = self.current_db.clone();
+                    if explain.analyze {
+                        // Real `EXPLAIN ANALYZE` EXECUTES the wrapped
+                        // statement to gather its runtime counters
+                        // (confirmed by capture), so this tier does too --
+                        // see `tidb_executor::explain_analyze_select_stmt`/
+                        // `explain_analyze_insert_stmt`'s own docs for which
+                        // operators get a real `actRows` and which print the
+                        // honest `N/A` placeholder this tier uses for every
+                        // counter (timing, memory, disk) it does not
+                        // collect at all.
+                        let ctx = self.statement_context(true);
+                        let (columns, rows) = match target {
+                            Stmt::Query(query) => {
+                                let tidb_ast::QueryStmt::Select(select) = &**query else {
+                                    return Err(DriverError::Unsupported(
+                                        "EXPLAIN ANALYZE of a set operation is not supported yet",
+                                    ));
+                                };
+                                self.with_catalog_mut(|catalog| {
+                                    tidb_executor::explain_analyze_select_stmt(
+                                        select,
+                                        catalog,
+                                        &current_db,
+                                        &ctx,
+                                        format,
+                                    )
+                                })?
+                            }
+                            Stmt::Dml(dml) => match &**dml {
+                                tidb_ast::DmlStmt::Insert(insert) => {
+                                    self.with_catalog_mut(|catalog| {
+                                        tidb_executor::explain_analyze_insert_stmt(
+                                            insert,
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                            format,
+                                        )
+                                    })?
+                                }
+                                _ => {
+                                    return Err(DriverError::Unsupported(
+                                        "only EXPLAIN ANALYZE of a SELECT or INSERT is supported yet",
+                                    ));
+                                }
+                            },
+                            _ => {
+                                return Err(DriverError::Unsupported(
+                                    "only EXPLAIN ANALYZE of a SELECT or INSERT is supported yet",
+                                ));
+                            }
+                        };
+                        self.drain_eval_warnings(&ctx);
+                        return Ok(Some(StmtOutput::Rows { columns, rows }));
+                    }
                     let (columns, rows) = match target {
                         Stmt::Query(query) => {
                             let tidb_ast::QueryStmt::Select(select) = &**query else {
@@ -3816,6 +3858,75 @@ mod tests {
         );
     }
 
+    /// `EXPLAIN ANALYZE <select>` really executes the query, and reports the
+    /// REAL number of rows each operator produced -- not an estimate.
+    ///
+    /// Captured against `testkit.CreateMockStore`: real TiDB's
+    /// `actRows` column for `explain analyze select * from t where v > 2`
+    /// (table rows `(1,1),(2,2),(3,3),(4,10)`) is `4` for the
+    /// `TableFullScan` (it reads every row), `2` for the `Selection` (only
+    /// `v=3` and `v=10` pass `v > 2`), and `2` again for the `TableReader`
+    /// root (a pass-through). This tier has no `TableReader` (`explain`
+    /// module doc, divergence 1) and always builds a `Projection`
+    /// (divergence 3), so the real shape here is `Projection` over
+    /// `Selection` over `TableFullScan` -- the `Projection`'s `actRows` is
+    /// the same real `2`, matching the real row set, not a guess.
+    #[test]
+    fn explain_analyze_select() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id INT PRIMARY KEY, v INT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,10)")
+            .unwrap();
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 2"));
+        // Columns: id, estRows, actRows, task, access object, execution
+        // info, operator info, memory, disk.
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0][0], "Projection_3");
+        assert_eq!(rows[0][2], "2"); // actRows: real, not the 3333.33 estimate.
+        assert_eq!(rows[1][0], "└─Selection_2");
+        assert_eq!(rows[1][2], "2");
+        assert_eq!(rows[2][0], "  └─TableFullScan_1");
+        assert_eq!(rows[2][2], "4");
+        // Every operator here runs in-process (divergence 1), and this tier
+        // collects no runtime timing/memory/disk counters at all.
+        for row in &rows {
+            assert_eq!(row[3], "root");
+            assert_eq!(row[5], "N/A"); // execution info
+            assert_eq!(row[7], "N/A"); // memory
+            assert_eq!(row[8], "N/A"); // disk
+        }
+    }
+
+    /// `EXPLAIN ANALYZE <insert>` really inserts -- captured: real TiDB's
+    /// `EXPLAIN ANALYZE INSERT` leaves the row in the table afterward, the
+    /// inverse of `EXPLAIN INSERT`, which inserts nothing (see the
+    /// `explain_insert_never_executes` test below). The `Insert_1` row's
+    /// `actRows` is `0` (captured), since the insert executor's own
+    /// row-producing interface yields no rows -- the write is a side
+    /// effect, not this operator's output.
+    #[test]
+    fn explain_analyze_insert_executes() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id INT PRIMARY KEY, v INT)")
+            .unwrap();
+
+        let rows = row_text(session.run("EXPLAIN ANALYZE INSERT INTO t VALUES (1, 5)"));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], "Insert_1");
+        assert_eq!(rows[0][2], "0");
+
+        // The inverse of the EXPLAIN test: the row is really there now.
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t")),
+            vec![vec!["1".to_owned(), "5".to_owned()]]
+        );
+    }
+
     /// `EXPLAIN` of a write: it must never run the statement. Captured
     /// against real TiDB: `EXPLAIN INSERT INTO t VALUES (1)` answers
     /// `Insert_1 | N/A | root | | N/A` and inserts nothing.
@@ -3979,10 +4090,13 @@ mod tests {
             .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
             .unwrap();
 
+        // `EXPLAIN ANALYZE` of a `SELECT`/`INSERT` really runs (see
+        // `explain_analyze_select`/`explain_analyze_insert_executes`); an
+        // `UPDATE`/`DELETE` is not implemented yet.
         assert!(matches!(
-            session.run("EXPLAIN ANALYZE SELECT * FROM t"),
+            session.run("EXPLAIN ANALYZE UPDATE t SET a = a + 1"),
             Err(DriverError::Unsupported(
-                "EXPLAIN ANALYZE is not supported yet"
+                "only EXPLAIN ANALYZE of a SELECT or INSERT is supported yet"
             ))
         ));
         assert!(matches!(
