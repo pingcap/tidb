@@ -40,7 +40,7 @@ use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetada
 use tidb_protocol::ColumnInfo;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
-use tidb_session::{Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
+use tidb_session::{GlobalSysvars, Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
 
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -94,6 +94,13 @@ pub struct PipelineSessionFactory {
     /// with `root`@`%` holding every privilege, as Go's `mysql.user` table
     /// does on a fresh cluster.
     privileges: PrivilegeRegistry,
+    /// The `SET GLOBAL`-scope sysvar table every connection this factory
+    /// opens shares -- Go's one process-wide `GlobalVarsAccessor`. See
+    /// [`tidb_session::vars`] for what "shares" means here: a new session
+    /// snapshots this table's current overrides at open, but a live
+    /// session's own `@@x` never moves just because another connection ran
+    /// `SET GLOBAL`.
+    global_vars: GlobalSysvars,
 }
 
 impl PipelineSessionFactory {
@@ -111,6 +118,24 @@ impl PipelineSessionFactory {
         }
     }
 
+    /// Builds a factory over an existing account table AND an existing
+    /// GLOBAL-scope sysvar table -- the pairing [`ConfiguredUserStore`]
+    /// needs so `SET GLOBAL default_password_lifetime` and the login path
+    /// that reads it agree on one process-wide value.
+    ///
+    /// [`ConfiguredUserStore`]: crate::configured_user_store::ConfiguredUserStore
+    #[must_use]
+    pub fn with_accounts_and_globals(
+        accounts: PrivilegeRegistry,
+        global_vars: GlobalSysvars,
+    ) -> Self {
+        Self {
+            privileges: accounts,
+            global_vars,
+            ..Self::default()
+        }
+    }
+
     /// The process list of every connection this factory has open.
     #[must_use]
     pub fn processes(&self) -> ProcessRegistry {
@@ -122,6 +147,13 @@ impl PipelineSessionFactory {
     #[must_use]
     pub fn privileges(&self) -> PrivilegeRegistry {
         self.privileges.clone()
+    }
+
+    /// The `SET GLOBAL`-scope sysvar table every connection this factory
+    /// opens shares.
+    #[must_use]
+    pub fn global_vars(&self) -> GlobalSysvars {
+        self.global_vars.clone()
     }
 }
 
@@ -170,6 +202,12 @@ impl QuerySessionFactory for PipelineSessionFactory {
         // authentication and the privilege columns. `SHOW GRANTS` therefore
         // always finds at least USAGE for an authenticated session.
         session.session.attach_privileges(self.privileges.clone());
+        // Snapshots this factory's current GLOBAL-scope overrides into the
+        // new session's own copy -- Go's rule that a session's variables are
+        // copied from the global tier once, at connect (see
+        // `tidb_session::vars` for why a live session's `@@x` does not move
+        // when a later `SET GLOBAL` runs on another connection).
+        session.session.attach_globals(self.global_vars.clone());
         Ok(session)
     }
 }

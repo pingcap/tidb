@@ -427,3 +427,51 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
     accounts.set_password_expire("bob", "%", PasswordExpireSetting::Default);
     assert!(login().is_ok());
 }
+
+/// `default_password_lifetime` end to end: a `PASSWORD EXPIRE DEFAULT`
+/// account (the one this store's login path resolves a `NULL`
+/// `Password_lifetime` against) never ages out while the global stays at
+/// its factory-default `0` -- and does, once `SET GLOBAL
+/// default_password_lifetime` sets a nonzero value and enough time has
+/// actually elapsed. `store.global_vars()` is the same table
+/// `PipelineSessionFactory::with_accounts_and_globals` would share with the
+/// SQL executor's `SET GLOBAL`, so writing through it here is exactly what
+/// a real `SET GLOBAL default_password_lifetime = 1` on that shared
+/// executor would do to this store's next login.
+#[test]
+fn default_password_lifetime_ages_out_a_password_expire_default_account() {
+    use tidb_session::privilege::PasswordExpireSetting;
+
+    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
+    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
+    let accounts = store.accounts();
+    let response = scramble(b"abc", &SOURCE_SALT);
+    let login = || store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &response);
+
+    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Default);
+    // Nobody has run `SET GLOBAL default_password_lifetime` yet: the account
+    // never ages out, matching a cluster fresh out of the box.
+    assert!(login().is_ok());
+
+    // `SET GLOBAL default_password_lifetime = 1` (one day).
+    store
+        .global_vars()
+        .set("default_password_lifetime", "1".to_owned())
+        .expect("default_password_lifetime accepts a small positive day count");
+    // Not enough time has passed yet.
+    assert!(login().is_ok());
+
+    accounts.clock().advance(2 * 24 * 60 * 60);
+    assert_eq!(
+        login(),
+        Err(configured_user_store::AuthenticationFailure::PasswordExpired)
+    );
+
+    // Restoring the global to its default (`SET GLOBAL
+    // default_password_lifetime = DEFAULT`) stops the aging again.
+    store
+        .global_vars()
+        .reset("default_password_lifetime")
+        .unwrap();
+    assert!(login().is_ok());
+}

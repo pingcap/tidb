@@ -898,9 +898,11 @@ impl Session {
             // Go `ShowExec` with `ShowVariables`: one row per variable,
             // as `Variable_name` and `Value`, filtered by LIKE.
             //
-            // DEFERRED (documented): the GLOBAL/SESSION distinction,
-            // which reads the same value here because this tier keeps no
-            // persisted global tier (`SET GLOBAL` already documents it).
+            // `GLOBAL` reads the shared table live (a variable with no
+            // GLOBAL scope at all falls back to its registry default, as Go
+            // reports SOMETHING for every name `SHOW GLOBAL VARIABLES`
+            // lists rather than erroring); `SESSION`/unqualified reads this
+            // session's own copy, same as a plain `@@x`.
             tidb_ast::AdminStmt::ShowVariables(show) => {
                 let pattern = match &show.like {
                     Some(tidb_ast::Expr::String(text)) => Some(text.clone()),
@@ -927,10 +929,15 @@ impl Session {
                     if !matches {
                         continue;
                     }
-                    let value = self
-                        .vars
-                        .get_system(definition.name)
-                        .unwrap_or_else(|_| definition.value.to_owned());
+                    let value = if show.global {
+                        self.vars
+                            .get_global(definition.name)
+                            .unwrap_or_else(|_| definition.value.to_owned())
+                    } else {
+                        self.vars
+                            .get_system(definition.name)
+                            .unwrap_or_else(|_| definition.value.to_owned())
+                    };
                     let row = vec![
                         Datum::Bytes(definition.name.as_bytes().to_vec()),
                         Datum::Bytes(value.into_bytes()),

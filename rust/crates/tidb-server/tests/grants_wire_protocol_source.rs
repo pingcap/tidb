@@ -987,3 +987,107 @@ fn failed_login_attempts_auto_lock_reports_3955_over_the_wire_until_unlocked() {
         "the three refused attempts, and only those: {exits:?}"
     );
 }
+
+/// `SET GLOBAL` over the real wire: one connection's `SET GLOBAL
+/// autocommit = OFF` is invisible to an ALREADY-OPEN peer's plain `@@x` (its
+/// session copy, made at connect) but visible immediately through that same
+/// peer's `@@global.x` -- and a BRAND NEW connection opened afterward
+/// inherits the new value as its own session default. This is the wire-level
+/// proof of the rule `tidb_session::vars` documents and the in-process
+/// `tidb_session::tests_global_vars` module unit-tests: two independently
+/// authenticated connections must actually share ONE `GlobalSysvars` table
+/// (`PipelineSessionFactory::with_accounts_and_globals`), not two private
+/// copies that happen to start equal.
+#[test]
+fn set_global_is_visible_to_a_peer_only_through_the_global_form_over_tcp() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    // Same pairing `run_configured_node` uses in production: one
+    // `PipelineSessionFactory` sharing the SAME `GlobalSysvars` this store's
+    // own login path reads `default_password_lifetime` from.
+    let factory = Arc::new(PipelineSessionFactory::with_accounts_and_globals(
+        store.accounts(),
+        store.global_vars(),
+    ));
+
+    let acceptor_factory = Arc::clone(&factory);
+    let acceptor_store = Arc::clone(&store);
+    let acceptor_tracker = Arc::clone(&tracker);
+    let acceptor = std::thread::spawn(move || {
+        let mut workers = Vec::new();
+        for _ in 0..3 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let factory = Arc::clone(&acceptor_factory);
+            let store = Arc::clone(&acceptor_store);
+            let tracker = Arc::clone(&acceptor_tracker);
+            workers.push(std::thread::spawn(move || {
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+            }));
+        }
+        workers
+    });
+
+    let mut root = TcpStream::connect(address).unwrap();
+    let root_read = root.try_clone().unwrap();
+    let mut root_reader = PacketReader::new(root_read);
+    authenticate(&mut root, &mut root_reader, "root", b"rootpw");
+
+    // A peer connects BEFORE the SET GLOBAL.
+    let mut peer = TcpStream::connect(address).unwrap();
+    let peer_read = peer.try_clone().unwrap();
+    let mut peer_reader = PacketReader::new(peer_read);
+    authenticate(&mut peer, &mut peer_reader, "root", b"rootpw");
+    assert_eq!(
+        run_query(&mut peer, &mut peer_reader, "SELECT @@autocommit"),
+        vec![vec!["ON".to_owned()]]
+    );
+
+    // root has SUPER by default, so `SET GLOBAL` is not itself refused here
+    // -- that gate has its own coverage in `tests_global_vars`.
+    assert_eq!(
+        run_write(&mut root, &mut root_reader, "SET GLOBAL autocommit = OFF"),
+        0
+    );
+
+    // The already-open peer's own session copy did not move...
+    assert_eq!(
+        run_query(&mut peer, &mut peer_reader, "SELECT @@autocommit"),
+        vec![vec!["ON".to_owned()]]
+    );
+    // ...but its `@@global` read sees the new value immediately, over the
+    // real socket, with no reconnect.
+    assert_eq!(
+        run_query(&mut peer, &mut peer_reader, "SELECT @@global.autocommit"),
+        vec![vec!["OFF".to_owned()]]
+    );
+
+    // A THIRD, brand new connection opened AFTER the SET GLOBAL inherits it
+    // as its own session default.
+    let mut fresh = TcpStream::connect(address).unwrap();
+    let fresh_read = fresh.try_clone().unwrap();
+    let mut fresh_reader = PacketReader::new(fresh_read);
+    authenticate(&mut fresh, &mut fresh_reader, "root", b"rootpw");
+    assert_eq!(
+        run_query(&mut fresh, &mut fresh_reader, "SELECT @@autocommit"),
+        vec![vec!["OFF".to_owned()]]
+    );
+
+    write_packet(&mut root, 0, &[0x01]);
+    write_packet(&mut peer, 0, &[0x01]);
+    write_packet(&mut fresh, 0, &[0x01]);
+    drop(root);
+    drop(peer);
+    drop(fresh);
+    acceptor.join().unwrap();
+}

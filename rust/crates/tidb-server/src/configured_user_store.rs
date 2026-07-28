@@ -31,6 +31,7 @@ use std::io::Read;
 use std::path::Path;
 
 use tidb_session::privilege::{AccountLockout, PrivilegeRegistry};
+use tidb_session::GlobalSysvars;
 
 use crate::auth_identity::{
     IdentityCatalog, IdentityLookupRequest, IdentityLookupResult, MatchedIdentity,
@@ -115,6 +116,12 @@ impl AuthenticatedIdentity {
 #[derive(Clone)]
 pub struct ConfiguredUserStore {
     accounts: PrivilegeRegistry,
+    /// The shared `SET GLOBAL`-scope sysvar table, so a `default_password_lifetime`
+    /// a session sets is what this login path reads back for the NEXT login
+    /// (Go reads the same one process-wide `GlobalVarsAccessor`). Starts as
+    /// this store's own private table until [`Self::with_global_vars`]
+    /// points it at the one the session factory shares.
+    global_vars: GlobalSysvars,
 }
 
 impl ConfiguredUserStore {
@@ -201,6 +208,7 @@ impl ConfiguredUserStore {
         // row, and therefore no implicitly passwordless root login.
         Ok(Self {
             accounts: PrivilegeRegistry::bootstrapped_from(provisioned),
+            global_vars: GlobalSysvars::new(),
         })
     }
 
@@ -209,6 +217,25 @@ impl ConfiguredUserStore {
     #[must_use]
     pub fn accounts(&self) -> PrivilegeRegistry {
         self.accounts.clone()
+    }
+
+    /// The `SET GLOBAL`-scope sysvar table this store's login path reads
+    /// `default_password_lifetime` from, to be shared with the session
+    /// factory ([`crate::pipeline_session::PipelineSessionFactory`]) so a
+    /// `SET GLOBAL default_password_lifetime = n` on one connection is what
+    /// the NEXT connection's login sees.
+    #[must_use]
+    pub fn global_vars(&self) -> GlobalSysvars {
+        self.global_vars.clone()
+    }
+
+    /// Points this store's login path at the session factory's shared
+    /// GLOBAL-scope sysvar table instead of its own private one, so
+    /// `default_password_lifetime` is one setting rather than two.
+    #[must_use]
+    pub fn with_global_vars(mut self, global_vars: GlobalSysvars) -> Self {
+        self.global_vars = global_vars;
+        self
     }
 
     /// Returns the number of account rows currently in the table.
@@ -318,13 +345,24 @@ impl ConfiguredUserStore {
             .clear_failed_login_count(identity.username(), identity.host())
             .map_err(AuthenticationFailure::AutoLocked)?;
         // Go reads the global `default_password_lifetime` for an account
-        // whose own `Password_lifetime` is NULL. This tier does not persist
-        // GLOBAL-scope sysvars, so the value is always the unset default 0 --
-        // "no cluster-wide expiry" -- and only an account with its own
-        // explicit `PASSWORD EXPIRE ...` can age out.
+        // whose own `Password_lifetime` is NULL. `default_password_lifetime`
+        // is TypeInt (see `sysvar.rs`), so a value the registry's own
+        // validation admitted always parses; anything that somehow does not
+        // falls back to 0 -- "no cluster-wide expiry" -- rather than
+        // panicking the login path.
+        let default_password_lifetime = self
+            .global_vars
+            .get("default_password_lifetime")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
         let in_sandbox_mode = self
             .accounts
-            .check_password_expired(identity.username(), identity.host(), 0)
+            .check_password_expired(
+                identity.username(),
+                identity.host(),
+                default_password_lifetime,
+            )
             .map_err(|_| AuthenticationFailure::PasswordExpired)?;
         Ok(AuthenticatedIdentity {
             identity,

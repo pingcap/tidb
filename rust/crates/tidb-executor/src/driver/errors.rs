@@ -474,6 +474,19 @@ pub enum VarErrorKind {
     WrongTypeForVar(String),
     /// Go `ErrWrongValueForVar` (1231).
     WrongValueForVar(String, String),
+    /// Go `ErrLocalVariable` (1228): `SET GLOBAL` named a SESSION-only
+    /// variable.
+    SessionOnlyVariable(String),
+    /// Go `ErrGlobalVariable` (1229): `SET SESSION` (or plain `SET`) named a
+    /// GLOBAL-only variable.
+    GlobalOnlyVariable(String),
+    /// Go `ErrIncorrectGlobalLocalVar` (1238), read side: `SELECT
+    /// @@global.x` named a SESSION-only variable.
+    NoGlobalCopy(String),
+    /// Go `ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or
+    /// SYSTEM_VARIABLES_ADMIN")` (1227): `SET GLOBAL` without SUPER or the
+    /// dynamic `SYSTEM_VARIABLES_ADMIN` privilege.
+    SetGlobalAccessDenied,
 }
 
 /// Why a transaction statement failed (Go `kv.ErrWriteConflict` and friends).
@@ -1157,6 +1170,36 @@ impl DriverError {
                 format!("Variable '{name}' is a read only variable"),
             )
         }
+        // Go `ErrLocalVariable` (1228): "Variable '%-.64s' is a SESSION
+        // variable and can't be used with SET GLOBAL".
+        DriverError::Var(crate::VarErrorKind::SessionOnlyVariable(name)) => MysqlError::new(
+            1228,
+            *b"HY000",
+            format!("Variable '{name}' is a SESSION variable and can't be used with SET GLOBAL"),
+        ),
+        // Go `ErrGlobalVariable` (1229): "Variable '%-.64s' is a GLOBAL
+        // variable and should be set with SET GLOBAL".
+        DriverError::Var(crate::VarErrorKind::GlobalOnlyVariable(name)) => MysqlError::new(
+            1229,
+            *b"HY000",
+            format!("Variable '{name}' is a GLOBAL variable and should be set with SET GLOBAL"),
+        ),
+        // Go `ErrIncorrectGlobalLocalVar` (1238), read side: "Variable
+        // '%-.192s' is a SESSION variable".
+        DriverError::Var(crate::VarErrorKind::NoGlobalCopy(name)) => MysqlError::new(
+            ER_INCORRECT_GLOBAL_LOCAL_VAR,
+            *b"HY000",
+            format!("Variable '{name}' is a SESSION variable"),
+        ),
+        // Go `ErrSpecificAccessDenied` (1227): `SET GLOBAL` without SUPER or
+        // SYSTEM_VARIABLES_ADMIN.
+        DriverError::Var(crate::VarErrorKind::SetGlobalAccessDenied) => MysqlError::new(
+            1227,
+            *b"42000",
+            "Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN \
+             privilege(s) for this operation"
+                .to_owned(),
+        ),
         DriverError::SubqueryReturnsMoreThanOneRow => MysqlError::new(
             ER_SUBQUERY_NO_1_ROW,
             *b"21000",

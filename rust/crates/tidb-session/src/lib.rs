@@ -222,7 +222,7 @@ mod process_arm;
 mod show;
 pub mod sysvar;
 pub mod vars;
-pub use vars::{SessionVars, VarError};
+pub use vars::{GlobalSysvars, SessionVars, VarError};
 
 /// Maps a variable error onto the driver error the wire layer renders.
 fn var_error(error: VarError) -> DriverError {
@@ -235,6 +235,11 @@ fn var_error(error: VarError) -> DriverError {
         VarError::WrongValueForVar(name, value) => {
             tidb_executor::VarErrorKind::WrongValueForVar(name, value)
         }
+        VarError::SessionOnlyVariable(name) => {
+            tidb_executor::VarErrorKind::SessionOnlyVariable(name)
+        }
+        VarError::GlobalOnlyVariable(name) => tidb_executor::VarErrorKind::GlobalOnlyVariable(name),
+        VarError::NoGlobalCopy(name) => tidb_executor::VarErrorKind::NoGlobalCopy(name),
     })
 }
 
@@ -545,25 +550,77 @@ impl Session {
     }
 
     /// One `name = value` assignment.
+    ///
+    /// `GLOBAL` writes the shared table every session of this factory reads
+    /// (see [`vars::GlobalSysvars`]), gated on Go's `ErrSpecificAccessDenied`
+    /// (1227): SUPER or the dynamic `SYSTEM_VARIABLES_ADMIN` privilege.
+    /// `SESSION`/`INSTANCE`/unqualified write this session's own copy, as
+    /// today. Both directions reject a scope the variable does not have
+    /// (1228/1229), matching Go's `validateScope`.
     fn apply_assignment(
         &mut self,
         assignment: &tidb_ast::SystemVariableAssignment,
     ) -> Result<(), DriverError> {
+        let is_global = assignment.scope == tidb_ast::SystemVariableScope::Global;
+        if is_global {
+            self.require_set_global_privilege()?;
+        }
         let value = match &assignment.value {
             // Go restores a variable to its registry default by clearing the
-            // session override.
+            // session (or global) override.
             tidb_ast::SetVariableValue::Default => {
-                self.vars
-                    .reset_system(&assignment.name)
-                    .map_err(var_error)?;
+                if is_global {
+                    self.vars
+                        .reset_global(&assignment.name)
+                        .map_err(var_error)?;
+                } else {
+                    self.vars
+                        .reset_system(&assignment.name)
+                        .map_err(var_error)?;
+                }
                 return Ok(());
             }
             tidb_ast::SetVariableValue::Expr(expr) => self.eval_literal(expr)?,
         };
         // Go stores every system variable as a string.
-        self.vars
-            .set_system(&assignment.name, value.unwrap_or_default())
-            .map_err(var_error)
+        let value = value.unwrap_or_default();
+        if is_global {
+            self.vars
+                .set_global(&assignment.name, value)
+                .map_err(var_error)
+        } else {
+            self.vars
+                .set_system(&assignment.name, value)
+                .map_err(var_error)
+        }
+    }
+
+    /// Go's privilege gate on `SET GLOBAL`: SUPER, or the dynamic
+    /// `SYSTEM_VARIABLES_ADMIN` privilege (which `has_dynamic_priv` already
+    /// falls back to SUPER for, so this one call covers "at least one of").
+    /// No attached privilege registry (an in-process session with no
+    /// front end) is treated as unrestricted, matching every other
+    /// privilege check this session performs before a registry is attached.
+    fn require_set_global_privilege(&self) -> Result<(), DriverError> {
+        let Some(registry) = &self.privileges else {
+            return Ok(());
+        };
+        let Some((user, host)) = self.current_identity() else {
+            return Ok(());
+        };
+        if registry.has_dynamic_priv_with_roles(
+            user,
+            host,
+            self.active_roles(),
+            "SYSTEM_VARIABLES_ADMIN",
+            false,
+        ) {
+            Ok(())
+        } else {
+            Err(DriverError::Var(
+                tidb_executor::VarErrorKind::SetGlobalAccessDenied,
+            ))
+        }
     }
 
     /// `SET NAMES` / `SET CHARACTER SET`.
@@ -639,10 +696,16 @@ impl Session {
     fn bind_variables_in(&self, expr: &tidb_ast::Expr) -> Result<tidb_ast::Expr, DriverError> {
         use tidb_ast::Expr;
         Ok(match expr {
-            Expr::SysVar { name, .. } => {
-                // A scope prefix does not change the value here: there is no
-                // separate global tier yet (documented in `vars`).
-                match self.vars.get_system(name) {
+            Expr::SysVar { scope, name } => {
+                // `@@global.x` reads the shared table live; every other
+                // scope (unqualified, `@@session.x`, `@@instance.x`) reads
+                // this session's own copy.
+                let result = if *scope == Some(tidb_ast::SysVarScope::Global) {
+                    self.vars.get_global(name)
+                } else {
+                    self.vars.get_system(name)
+                };
+                match result {
                     Ok(value) => Expr::String(value),
                     Err(error) => return Err(var_error(error)),
                 }
@@ -882,6 +945,14 @@ impl Session {
             self.active_roles = registry.default_roles(&(user.to_owned(), host.to_owned()));
         }
         self.privileges = Some(registry);
+    }
+
+    /// Joins this session to the server's shared GLOBAL-scope sysvar table
+    /// and snapshots its current overrides into this session's own copy --
+    /// see [`vars::SessionVars::seed_from_globals`] for why that snapshot
+    /// happens exactly once, here, rather than on every read.
+    pub fn attach_globals(&mut self, globals: vars::GlobalSysvars) {
+        self.vars.seed_from_globals(globals);
     }
 
     /// Go `SessionVars.ActiveRoles`, for the privilege checks and the
@@ -1779,6 +1850,8 @@ mod tests_collation;
 mod tests_core;
 #[cfg(test)]
 mod tests_explain;
+#[cfg(test)]
+mod tests_global_vars;
 #[cfg(test)]
 mod tests_grants;
 #[cfg(test)]
