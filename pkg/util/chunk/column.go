@@ -72,11 +72,12 @@ func (c *Column) AppendSet(set types.Set) {
 // Column stores one column of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/format/Columnar.html#format-columnar
 type Column struct {
-	length     int
-	nullBitmap []byte  // bit 0 is null, 1 is not null
-	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
-	data       []byte
-	elemBuf    []byte
+	length           int
+	nullBitmap       []byte  // bit 0 is null, 1 is not null
+	sharedNullBitmap bool    // nullBitmap references the read-only all-not-null bitmap
+	offsets          []int64 // used for varLen column. Row i starts from data[offsets[i]]
+	data             []byte
+	elemBuf          []byte
 
 	avoidReusing bool // avoid reusing the Column by allocator
 }
@@ -210,7 +211,12 @@ func (c *Column) Rows() int {
 // reset resets the underlying data of this Column but doesn't modify its data type.
 func (c *Column) reset() {
 	c.length = 0
-	c.nullBitmap = c.nullBitmap[:0]
+	if c.sharedNullBitmap {
+		c.nullBitmap = nil
+		c.sharedNullBitmap = false
+	} else {
+		c.nullBitmap = c.nullBitmap[:0]
+	}
 	if len(c.offsets) > 0 {
 		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
 		c.offsets = c.offsets[:1]
@@ -231,6 +237,10 @@ func (c *Column) IsNull(rowIdx int) bool {
 func (c *Column) CopyConstruct(dst *Column) *Column {
 	if dst != nil {
 		dst.length = c.length
+		if dst.sharedNullBitmap {
+			dst.nullBitmap = nil
+			dst.sharedNullBitmap = false
+		}
 		dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
 		dst.offsets = append(dst.offsets[:0], c.offsets...)
 		dst.data = append(dst.data[:0], c.data...)
@@ -251,6 +261,7 @@ func (c *Column) AppendNullBitmap(notNull bool) {
 }
 
 func (c *Column) appendNullBitmap(notNull bool) {
+	c.ensureNullBitmapOwned()
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {
 		c.nullBitmap = append(c.nullBitmap, 0)
@@ -289,6 +300,7 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 // notNull means not null.
 // num means the number of bits that should be appended.
 func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
+	c.ensureNullBitmapOwned()
 	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
 	b := byte(0)
 	if notNull {
@@ -308,6 +320,14 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	numRedundantBits := uint(len(c.nullBitmap)*8 - c.length - num)
 	bitMask = byte(1<<(8-numRedundantBits)) - 1
 	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
+}
+
+func (c *Column) ensureNullBitmapOwned() {
+	if !c.sharedNullBitmap {
+		return
+	}
+	c.nullBitmap = append([]byte(nil), c.nullBitmap...)
+	c.sharedNullBitmap = false
 }
 
 // AppendNNulls append n nulls to the column
@@ -427,6 +447,10 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 
 	newNulls := false
 	sizeNulls := (n + 7) >> 3
+	if c.sharedNullBitmap {
+		c.nullBitmap = nil
+		c.sharedNullBitmap = false
+	}
 	if cap(c.nullBitmap) >= sizeNulls {
 		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
 	} else {
@@ -474,6 +498,10 @@ func (c *Column) reserve(n, estElemSize int) {
 	}
 
 	sizeNulls := (n + 7) >> 3
+	if c.sharedNullBitmap {
+		c.nullBitmap = nil
+		c.sharedNullBitmap = false
+	}
 	if cap(c.nullBitmap) >= sizeNulls {
 		c.nullBitmap = c.nullBitmap[:0]
 	} else {
@@ -493,6 +521,7 @@ func (c *Column) reserve(n, estElemSize int) {
 
 // SetNull sets the rowIdx to null.
 func (c *Column) SetNull(rowIdx int, isNull bool) {
+	c.ensureNullBitmapOwned()
 	if isNull {
 		c.nullBitmap[rowIdx>>3] &= ^(1 << uint(rowIdx&7))
 	} else {
@@ -502,6 +531,7 @@ func (c *Column) SetNull(rowIdx int, isNull bool) {
 
 // SetNulls sets rows in [begin, end) to null.
 func (c *Column) SetNulls(begin, end int, isNull bool) {
+	c.ensureNullBitmapOwned()
 	i := ((begin + 7) >> 3) << 3
 	for ; begin < i && begin < end; begin++ {
 		c.SetNull(begin, isNull)
@@ -763,6 +793,7 @@ func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
 		return
 	}
+	c.ensureNullBitmapOwned()
 	if c.isFixed() {
 		elemLen := len(c.elemBuf)
 		for dst, src := range sel {
@@ -872,6 +903,7 @@ func (c *Column) MergeNulls(cols ...*Column) {
 			panic(fmt.Sprintf("should ensure all columns have the same length, expect %v, but got %v", c.length, col.length))
 		}
 	}
+	c.ensureNullBitmapOwned()
 	for _, col := range cols {
 		for i := range c.nullBitmap {
 			// bit 0 is null, 1 is not null, so do AND operations here.

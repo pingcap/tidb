@@ -73,6 +73,28 @@ func TestCodec(t *testing.T) {
 	}
 }
 
+func TestDecodeAllNotNullBitmapCopyOnWrite(t *testing.T) {
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	source := NewChunkWithCapacity(colTypes, 10)
+	for i := range 10 {
+		source.AppendInt64(0, int64(i))
+	}
+	codec := NewCodec(colTypes)
+	buffer := codec.Encode(source)
+
+	first, remained := codec.Decode(buffer)
+	require.Empty(t, remained)
+	second, remained := codec.Decode(buffer)
+	require.Empty(t, remained)
+	require.False(t, first.Column(0).IsNull(0))
+	require.False(t, second.Column(0).IsNull(0))
+
+	first.Column(0).SetNull(0, true)
+	require.True(t, first.Column(0).IsNull(0))
+	require.False(t, second.Column(0).IsNull(0))
+	require.False(t, source.Column(0).IsNull(0))
+}
+
 func TestEstimateTypeWidth(t *testing.T) {
 	var colType *types.FieldType
 
@@ -154,6 +176,27 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		codec.DecodeToChunk(buffer, chk)
+	}
+}
+
+func BenchmarkDecodeAllNotNullRows(b *testing.B) {
+	const rows = 510
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	source := NewChunkWithCapacity(colTypes, rows)
+	for i := range rows {
+		source.AppendInt64(0, int64(i))
+	}
+	codec := NewCodec(colTypes)
+	buffer := codec.Encode(source)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(buffer)))
+	b.ResetTimer()
+	for b.Loop() {
+		destination := NewChunkWithCapacity(colTypes, InitialCapacity)
+		if remained := codec.DecodeToChunk(buffer, destination); len(remained) != 0 {
+			b.Fatalf("unexpected %d remaining bytes", len(remained))
+		}
 	}
 }
 

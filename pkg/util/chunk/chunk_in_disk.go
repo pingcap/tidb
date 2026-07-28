@@ -328,6 +328,10 @@ func (d *DataInDiskByChunks) deserializeColumns(chk *Chunk, pos *int64) {
 	for _, col := range chk.columns {
 		length, nullMapSize, dataSize, offsetSize := d.deserializeColMeta(pos)
 
+		if col.sharedNullBitmap {
+			col.nullBitmap = nil
+			col.sharedNullBitmap = false
+		}
 		if int64(cap(col.nullBitmap)) < nullMapSize {
 			col.nullBitmap = make([]byte, nullMapSize)
 		} else {

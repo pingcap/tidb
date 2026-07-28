@@ -120,6 +120,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
 		col.nullBitmap = buffer[:numNullBitmapBytes:numNullBitmapBytes]
+		col.sharedNullBitmap = false
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
 		c.setAllNotNull(col)
@@ -149,6 +150,15 @@ var allNotNullBitmap [128]byte
 
 func (*Codec) setAllNotNull(col *Column) {
 	numNullBitmapBytes := (col.length + 7) / 8
+	if numNullBitmapBytes <= len(allNotNullBitmap) {
+		col.nullBitmap = allNotNullBitmap[:numNullBitmapBytes:numNullBitmapBytes]
+		col.sharedNullBitmap = true
+		return
+	}
+	if col.sharedNullBitmap {
+		col.nullBitmap = nil
+	}
+	col.sharedNullBitmap = false
 	col.nullBitmap = col.nullBitmap[:0]
 	for i := 0; i < numNullBitmapBytes; {
 		numAppendBytes := min(numNullBitmapBytes-i, cap(allNotNullBitmap))
@@ -321,6 +331,7 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 	}
 
 	numNullBitmapBytes := (requiredRows + 7) >> 3
+	destCol.ensureNullBitmapOwned()
 	if destCol.length%8 == 0 {
 		destCol.nullBitmap = append(destCol.nullBitmap, srcCol.nullBitmap[:numNullBitmapBytes]...)
 	} else {

@@ -187,7 +187,11 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		return 0
 	}
 	for _, col := range c.columns {
-		sum += int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
+		nullBitmapCapacity := cap(col.nullBitmap)
+		if col.sharedNullBitmap {
+			nullBitmapCapacity = 0
+		}
+		sum += int64(unsafe.Sizeof(*col)) + int64(nullBitmapCapacity) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 	}
 	return
 }
@@ -535,6 +539,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 func (c *Chunk) TruncateTo(numRows int) {
 	c.Reconstruct()
 	for _, col := range c.columns {
+		col.ensureNullBitmapOwned()
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
 			col.data = col.data[:numRows*elemLen]
