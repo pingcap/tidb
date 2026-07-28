@@ -212,9 +212,9 @@ func (d *Deleter) gatherAndDeleteKeysWithRetry(ctx context.Context, pairs []comm
 //     group in multiple routines, and we can use a relatively stale snapshot to check
 //     existence of the KVs to be deleted to avoid the overhead to refresh the TS
 //     every time.
-//   - for unique MV index: 2 UK might point to the same row, if they are dispatched
-//     to different deleters, the delete txn might report write conflict, but we will
-//     retry, and using a relatively stale snapshot is ok too.
+//   - for unique MV index: 2 UK might point to the same row, so the caller dispatches
+//     them to the same deleter to avoid write conflicts. Using a relatively stale
+//     snapshot is ok too.
 func (d *Deleter) gatherKeysToDelete(ctx context.Context, pairs []common.KvPair) (err error) {
 	allKeys := make([]tidbkv.Key, 0, len(pairs))
 	for _, p := range pairs {

@@ -461,7 +461,14 @@ func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOn
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
+	var deleterDispatchCount atomic.Int32
+	testfailpoint.EnableCall(
+		s.T(),
+		"github.com/pingcap/tidb/pkg/dxf/importinto/beforeResolveMVIndexByHandleDispatch",
+		func() {
+			deleterDispatchCount.Add(1)
+		},
+	)
 	bak := conflictedkv.BufferedHandleLimit
 	conflictedkv.BufferedHandleLimit = 2
 	s.T().Cleanup(func() {
@@ -479,6 +486,7 @@ func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOn
 		"1,\"[1000,2000]\"\n2,\"[1000]\"\n3,\"[2000]\"\n",
 		[]string{},
 	)
+	s.Greater(deleterDispatchCount.Load(), int32(0))
 }
 
 func (s *mockGCSSuite) TestGlobalSortResolvesGlobalIndexConflictsAcrossPartitions() {

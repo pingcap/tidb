@@ -133,6 +133,41 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 		MVIndex: true,
 		Columns: []*model.IndexColumn{{}},
 	}
+	t.Run("channel selection", func(t *testing.T) {
+		pairCh := make(chan *simplesst.KVPair)
+		testCases := []struct {
+			name         string
+			concurrency  int
+			targetIdx    *model.IndexInfo
+			needDispatch bool
+		}{
+			{name: "MV index", concurrency: 4, targetIdx: targetIdx, needDispatch: true},
+			{name: "single MV index handler", concurrency: 1, targetIdx: targetIdx},
+			{name: "normal index", concurrency: 4, targetIdx: &model.IndexInfo{}},
+			{name: "data KV", concurrency: 4},
+		}
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				handlerChs, needDispatch := createConflictHandlerChannels(
+					pairCh,
+					testCase.concurrency,
+					testCase.targetIdx,
+				)
+				require.Equal(t, testCase.needDispatch, needDispatch)
+				require.Len(t, handlerChs, testCase.concurrency)
+				for i, handlerCh := range handlerChs {
+					if testCase.needDispatch {
+						require.NotEqual(t, pairCh, handlerCh)
+						for j := range i {
+							require.NotEqual(t, handlerChs[j], handlerCh)
+						}
+					} else {
+						require.Equal(t, pairCh, handlerCh)
+					}
+				}
+			})
+		}
+	})
 
 	commonHandleBytes, err := codec.EncodeKey(time.UTC, nil, types.NewStringDatum("common-handle"))
 	require.NoError(t, err)
@@ -148,7 +183,6 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &codecStorage{codec: tikvCodec}
-			executor := &collectConflictsStepExecutor{store: store}
 			pairCh := make(chan *simplesst.KVPair, len(handles)*2)
 			for i, handle := range handles {
 				pairCh <- makeUniqueIndexKVPair(t, store, int64(i*2+1), handle)
@@ -156,34 +190,35 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 			}
 			close(pairCh)
 
-			const collectorCount = 4
-			collectorChs := make([]chan *simplesst.KVPair, collectorCount)
-			for i := range collectorChs {
-				collectorChs[i] = make(chan *simplesst.KVPair, len(handles)*2)
+			const handlerCount = 4
+			handlerChs := make([]chan *simplesst.KVPair, handlerCount)
+			for i := range handlerChs {
+				handlerChs[i] = make(chan *simplesst.KVPair, len(handles)*2)
 			}
-			require.NoError(t, executor.dispatchMVIndexKVPairs(
+			require.NoError(t, dispatchMVIndexKVPairs(
 				context.Background(),
+				store,
 				pairCh,
-				collectorChs,
+				handlerChs,
 				targetIdx,
 			))
 
 			routes := make(map[string][]int, len(handles))
-			for collectorIdx, collectorCh := range collectorChs {
-				drainClosedKVPairChannel(t, collectorCh, func(pair *simplesst.KVPair) {
+			for handlerIdx, handlerCh := range handlerChs {
+				drainClosedKVPairChannel(t, handlerCh, func(pair *simplesst.KVPair) {
 					key, err := store.GetCodec().DecodeKey(pair.Key)
 					require.NoError(t, err)
 					handle, err := tablecodec.DecodeIndexHandle(key, pair.Value, len(targetIdx.Columns))
 					require.NoError(t, err)
 					handleKey := string(handle.Encoded())
-					routes[handleKey] = append(routes[handleKey], collectorIdx)
+					routes[handleKey] = append(routes[handleKey], handlerIdx)
 				})
 			}
 
 			require.Len(t, routes, len(handles))
 			for _, handle := range handles {
-				expectedCollector := int(crc32.ChecksumIEEE(handle.Encoded()) % collectorCount)
-				require.Equal(t, []int{expectedCollector, expectedCollector}, routes[string(handle.Encoded())])
+				expectedHandler := int(crc32.ChecksumIEEE(handle.Encoded()) % handlerCount)
+				require.Equal(t, []int{expectedHandler, expectedHandler}, routes[string(handle.Encoded())])
 			}
 		})
 	}
@@ -200,20 +235,18 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 		codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1})
 		require.NoError(t, err)
 		store := &codecStorage{codec: codecV2}
-		executor := &collectConflictsStepExecutor{store: store}
 		pairCh := make(chan *simplesst.KVPair, 1)
 		pairCh <- &simplesst.KVPair{Key: []byte("key")}
 		close(pairCh)
-		collectorChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
+		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
 
-		err = executor.dispatchMVIndexKVPairs(context.Background(), pairCh, collectorChs, targetIdx)
+		err = dispatchMVIndexKVPairs(context.Background(), store, pairCh, handlerChs, targetIdx)
 		require.Error(t, err)
-		requireKVPairChannelClosed(t, collectorChs[0])
+		requireKVPairChannelClosed(t, handlerChs[0])
 	})
 
 	t.Run("decode index handle error", func(t *testing.T) {
 		store := &codecStorage{codec: tikv.NewCodecV1(tikv.ModeTxn)}
-		executor := &collectConflictsStepExecutor{store: store}
 		pairCh := make(chan *simplesst.KVPair, 1)
 		badKey := tablecodec.EncodeIndexSeekKey(1, 2, []byte{0xff})
 		pairCh <- &simplesst.KVPair{
@@ -221,28 +254,28 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 			Value: tablecodec.EncodeHandleInUniqueIndexValue(tidbkv.IntHandle(1), false),
 		}
 		close(pairCh)
-		collectorChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
+		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
 
-		err := executor.dispatchMVIndexKVPairs(context.Background(), pairCh, collectorChs, targetIdx)
+		err := dispatchMVIndexKVPairs(context.Background(), store, pairCh, handlerChs, targetIdx)
 		require.Error(t, err)
-		requireKVPairChannelClosed(t, collectorChs[0])
+		requireKVPairChannelClosed(t, handlerChs[0])
 	})
 
 	t.Run("canceled context", func(t *testing.T) {
 		store := &codecStorage{codec: tikv.NewCodecV1(tikv.ModeTxn)}
-		executor := &collectConflictsStepExecutor{store: store}
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		collectorChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
+		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
 
-		err := executor.dispatchMVIndexKVPairs(
+		err := dispatchMVIndexKVPairs(
 			ctx,
+			store,
 			make(chan *simplesst.KVPair),
-			collectorChs,
+			handlerChs,
 			targetIdx,
 		)
 		require.ErrorIs(t, err, context.Canceled)
-		requireKVPairChannelClosed(t, collectorChs[0])
+		requireKVPairChannelClosed(t, handlerChs[0])
 	})
 
 	t.Run("canceled while sending", func(t *testing.T) {
@@ -251,16 +284,15 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 			Codec:   tikv.NewCodecV1(tikv.ModeTxn),
 			decoded: decoded,
 		}}
-		executor := &collectConflictsStepExecutor{store: store}
 		pairCh := make(chan *simplesst.KVPair, 1)
 		pairCh <- makeUniqueIndexKVPair(t, store, 1, tidbkv.IntHandle(1))
 		close(pairCh)
-		collectorChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair)}
+		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair)}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		errCh := make(chan error, 1)
 		go func() {
-			errCh <- executor.dispatchMVIndexKVPairs(ctx, pairCh, collectorChs, targetIdx)
+			errCh <- dispatchMVIndexKVPairs(ctx, store, pairCh, handlerChs, targetIdx)
 		}()
 
 		select {
@@ -275,6 +307,6 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("dispatcher did not exit after cancellation")
 		}
-		requireKVPairChannelClosed(t, collectorChs[0])
+		requireKVPairChannelClosed(t, handlerChs[0])
 	})
 }

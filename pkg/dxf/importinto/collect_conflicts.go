@@ -188,22 +188,14 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	}
 
 	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
-	needDispatch := concurrency > 1 && targetIdx != nil && targetIdx.MVIndex
-	var collectorChs []chan *simplesst.KVPair
-	if needDispatch {
-		collectorChs = make([]chan *simplesst.KVPair, concurrency)
-	}
+	collectorChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
 
 	var (
 		mu             sync.Mutex
 		mergedLocalSet = conflictedkv.NewBoundedKeySet(e.logger, &e.sizeOfRowKeysFromIndex, e.sizeLimitOfRowKeysFromIndex)
 	)
 	for i := range concurrency {
-		collectorCh := pairCh
-		if needDispatch {
-			collectorCh = make(chan *simplesst.KVPair, conflictedkv.BufferedHandleLimit)
-			collectorChs[i] = collectorCh
-		}
+		collectorCh := collectorChs[i]
 		encoder := encoders[i]
 		uid := uuid.New().String()
 		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
@@ -238,7 +230,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	}
 	if needDispatch {
 		eg.Go(func() error {
-			return e.dispatchMVIndexKVPairs(egCtx, pairCh, collectorChs, targetIdx)
+			return dispatchMVIndexKVPairs(egCtx, e.store, pairCh, collectorChs, targetIdx)
 		})
 	}
 
@@ -251,6 +243,10 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 }
 
 func (e *collectConflictsStepExecutor) getKVGroupIndexInfo(kvGroup string) (*model.IndexInfo, error) {
+	return getKVGroupIndexInfo(e.tableImporter, kvGroup)
+}
+
+func getKVGroupIndexInfo(tableImporter *importer.TableImporter, kvGroup string) (*model.IndexInfo, error) {
 	if kvGroup == globalsort.DataKVGroup {
 		return nil, nil
 	}
@@ -259,7 +255,7 @@ func (e *collectConflictsStepExecutor) getKVGroupIndexInfo(kvGroup string) (*mod
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tblMeta := e.tableImporter.Table.Meta()
+	tblMeta := tableImporter.Table.Meta()
 	targetIdx := model.FindIndexInfoByID(tblMeta.Indices, indexID)
 	if targetIdx == nil {
 		// should not happen
@@ -268,15 +264,32 @@ func (e *collectConflictsStepExecutor) getKVGroupIndexInfo(kvGroup string) (*mod
 	return targetIdx, nil
 }
 
-func (e *collectConflictsStepExecutor) dispatchMVIndexKVPairs(
+func createConflictHandlerChannels(
+	pairCh chan *simplesst.KVPair,
+	concurrency int,
+	targetIdx *model.IndexInfo,
+) ([]chan *simplesst.KVPair, bool) {
+	handlerChs := make([]chan *simplesst.KVPair, concurrency)
+	needDispatch := concurrency > 1 && targetIdx != nil && targetIdx.MVIndex
+	for i := range handlerChs {
+		handlerChs[i] = pairCh
+		if needDispatch {
+			handlerChs[i] = make(chan *simplesst.KVPair, conflictedkv.BufferedHandleLimit)
+		}
+	}
+	return handlerChs, needDispatch
+}
+
+func dispatchMVIndexKVPairs(
 	ctx context.Context,
+	store tidbkv.Storage,
 	pairCh <-chan *simplesst.KVPair,
-	collectorChs []chan *simplesst.KVPair,
+	handlerChs []chan *simplesst.KVPair,
 	targetIdx *model.IndexInfo,
 ) error {
 	defer func() {
-		for _, collectorCh := range collectorChs {
-			close(collectorCh)
+		for _, handlerCh := range handlerChs {
+			close(handlerCh)
 		}
 	}()
 
@@ -292,7 +305,7 @@ func (e *collectConflictsStepExecutor) dispatchMVIndexKVPairs(
 			pair = p
 		}
 
-		key, err := e.store.GetCodec().DecodeKey(pair.Key)
+		key, err := store.GetCodec().DecodeKey(pair.Key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -300,14 +313,13 @@ func (e *collectConflictsStepExecutor) dispatchMVIndexKVPairs(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// Keep all index KVs for one row in the same collector so its local
-		// handled-row set can deduplicate them.
-		collectorIdx := int(crc32.ChecksumIEEE(handle.Encoded()) % uint32(len(collectorChs)))
+		// Keep all index KVs for one row in the same handler.
+		handlerIdx := int(crc32.ChecksumIEEE(handle.Encoded()) % uint32(len(handlerChs)))
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case collectorChs[collectorIdx] <- pair:
+		case handlerChs[handlerIdx] <- pair:
 		}
 	}
 }
