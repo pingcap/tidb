@@ -29,9 +29,10 @@
 //! NOT MODELLED (documented): the statistics columns are reported as TiDB
 //! reports them for a table it has not analyzed -- `TABLE_ROWS`,
 //! `DATA_LENGTH` and friends are 0 and `CREATE_TIME` is NULL rather than a
-//! fabricated timestamp; the other `information_schema` tables; and the
-//! `mysql`, `performance_schema`, `sys` and `metrics_schema` databases, whose
-//! contents are separate tiers.
+//! fabricated timestamp; `REFERENTIAL_CONSTRAINTS` always has zero rows,
+//! since this tier has no foreign keys; the other `information_schema`
+//! tables; and the `mysql`, `performance_schema`, `sys` and `metrics_schema`
+//! databases, whose contents are separate tiers.
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::{Catalog, KvTable, TableEntry};
@@ -123,6 +124,77 @@ pub fn is_information_schema(name: &str) -> bool {
     name.eq_ignore_ascii_case(INFORMATION_SCHEMA)
 }
 
+/// Go `infoschema.tableKeyColumnUsageCols`, captured from a running TiDB:
+/// one row per column of a `PRIMARY KEY` or `UNIQUE` index (a plain, non-unique
+/// `KEY` does not appear here -- it only shows up in `STATISTICS`).
+const KEY_COLUMN_USAGE_COLUMNS: &[(&str, bool)] = &[
+    ("CONSTRAINT_CATALOG", false),
+    ("CONSTRAINT_SCHEMA", false),
+    ("CONSTRAINT_NAME", false),
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("COLUMN_NAME", false),
+    ("ORDINAL_POSITION", true),
+    ("POSITION_IN_UNIQUE_CONSTRAINT", true),
+    ("REFERENCED_TABLE_SCHEMA", false),
+    ("REFERENCED_TABLE_NAME", false),
+    ("REFERENCED_COLUMN_NAME", false),
+];
+
+/// Go `infoschema.tableTableConstraintsCols`, captured: one row per
+/// `PRIMARY KEY` or `UNIQUE` constraint (not per column).
+const TABLE_CONSTRAINTS_COLUMNS: &[(&str, bool)] = &[
+    ("CONSTRAINT_CATALOG", false),
+    ("CONSTRAINT_SCHEMA", false),
+    ("CONSTRAINT_NAME", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("CONSTRAINT_TYPE", false),
+];
+
+/// Go `infoschema.tableStatisticsCols`, captured: one row per indexed
+/// column, the same population `SHOW INDEX` reports (see
+/// `show_index_rows` in `lib.rs`), but under this table's own column set
+/// -- no `Clustered`/`Global` columns, and `TABLE_CATALOG`/`TABLE_SCHEMA`/
+/// `INDEX_SCHEMA` in their place.
+const STATISTICS_COLUMNS: &[(&str, bool)] = &[
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("NON_UNIQUE", true),
+    ("INDEX_SCHEMA", false),
+    ("INDEX_NAME", false),
+    ("SEQ_IN_INDEX", true),
+    ("COLUMN_NAME", false),
+    ("COLLATION", false),
+    ("CARDINALITY", true),
+    ("SUB_PART", true),
+    ("PACKED", false),
+    ("NULLABLE", false),
+    ("INDEX_TYPE", false),
+    ("COMMENT", false),
+    ("INDEX_COMMENT", false),
+    ("IS_VISIBLE", false),
+    ("Expression", false),
+];
+
+/// Go `infoschema.tableReferentialConstraintsCols`. This tier has no foreign
+/// keys, so the table always has zero rows; only the header is captured.
+const REFERENTIAL_CONSTRAINTS_COLUMNS: &[(&str, bool)] = &[
+    ("CONSTRAINT_CATALOG", false),
+    ("CONSTRAINT_SCHEMA", false),
+    ("CONSTRAINT_NAME", false),
+    ("UNIQUE_CONSTRAINT_CATALOG", false),
+    ("UNIQUE_CONSTRAINT_SCHEMA", false),
+    ("UNIQUE_CONSTRAINT_NAME", false),
+    ("MATCH_OPTION", false),
+    ("UPDATE_RULE", false),
+    ("DELETE_RULE", false),
+    ("TABLE_NAME", false),
+    ("REFERENCED_TABLE_NAME", false),
+];
+
 /// The column names of one `information_schema` table, or `None` when the
 /// table is not one this tier implements.
 #[must_use]
@@ -133,6 +205,14 @@ pub fn table_columns(name: &str) -> Option<&'static [(&'static str, bool)]> {
         Some(TABLES_COLUMNS)
     } else if name.eq_ignore_ascii_case("COLUMNS") {
         Some(COLUMNS_COLUMNS)
+    } else if name.eq_ignore_ascii_case("KEY_COLUMN_USAGE") {
+        Some(KEY_COLUMN_USAGE_COLUMNS)
+    } else if name.eq_ignore_ascii_case("STATISTICS") {
+        Some(STATISTICS_COLUMNS)
+    } else if name.eq_ignore_ascii_case("TABLE_CONSTRAINTS") {
+        Some(TABLE_CONSTRAINTS_COLUMNS)
+    } else if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
+        Some(REFERENTIAL_CONSTRAINTS_COLUMNS)
     } else {
         None
     }
@@ -155,7 +235,236 @@ pub fn table_rows(name: &str, catalog: &Catalog) -> Option<Vec<Vec<Datum>>> {
     if name.eq_ignore_ascii_case("COLUMNS") {
         return Some(columns_rows(catalog));
     }
+    if name.eq_ignore_ascii_case("KEY_COLUMN_USAGE") {
+        return Some(key_column_usage_rows(catalog));
+    }
+    if name.eq_ignore_ascii_case("STATISTICS") {
+        return Some(statistics_rows(catalog));
+    }
+    if name.eq_ignore_ascii_case("TABLE_CONSTRAINTS") {
+        return Some(table_constraints_rows(catalog));
+    }
+    if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
+        // No foreign keys in this tier: the header exists, the body never
+        // does.
+        return Some(Vec::new());
+    }
     None
+}
+
+/// One row per column of every `PRIMARY KEY` or `UNIQUE` index.
+fn key_column_usage_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for schema in catalog.database_names() {
+        let Some(tables) = catalog.table_names(&schema) else {
+            continue;
+        };
+        for table_name in tables {
+            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+                continue;
+            };
+            // The clustered handle, reported as a one-column PRIMARY KEY not
+            // present in `table.indexes()`.
+            if let Some(offset) = table.pk_handle_offset() {
+                push_key_column_usage_row(
+                    &mut rows,
+                    &schema,
+                    &table_name,
+                    "PRIMARY",
+                    true,
+                    1,
+                    &table.columns[offset].name,
+                );
+            }
+            for index in table.indexes() {
+                if !index.unique {
+                    continue;
+                }
+                let is_primary = index.name.eq_ignore_ascii_case("PRIMARY");
+                for (position, offset) in index.column_offsets.iter().enumerate() {
+                    push_key_column_usage_row(
+                        &mut rows,
+                        &schema,
+                        &table_name,
+                        &index.name,
+                        is_primary,
+                        (position + 1) as i64,
+                        &table.columns[*offset].name,
+                    );
+                }
+            }
+        }
+    }
+    rows
+}
+
+/// One `KEY_COLUMN_USAGE` row.
+///
+/// `POSITION_IN_UNIQUE_CONSTRAINT` was captured as the column's own ordinal
+/// for a `PRIMARY KEY` and `NULL` for every other `UNIQUE` key -- an
+/// asymmetry this reproduces rather than smooths over, since Go's own value
+/// is what a client reads.
+fn push_key_column_usage_row(
+    rows: &mut Vec<Vec<Datum>>,
+    schema: &str,
+    table_name: &str,
+    constraint_name: &str,
+    is_primary: bool,
+    ordinal_position: i64,
+    column_name: &str,
+) {
+    rows.push(vec![
+        text(CATALOG),
+        text(schema),
+        text(constraint_name),
+        text(CATALOG),
+        text(schema),
+        text(table_name),
+        text(column_name),
+        Datum::Int(ordinal_position),
+        if is_primary {
+            Datum::Int(ordinal_position)
+        } else {
+            Datum::Null
+        },
+        Datum::Null,
+        Datum::Null,
+        Datum::Null,
+    ]);
+}
+
+/// One row per indexed column, the `STATISTICS` table's own column set over
+/// the same population `SHOW INDEX` reports.
+fn statistics_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for schema in catalog.database_names() {
+        let Some(tables) = catalog.table_names(&schema) else {
+            continue;
+        };
+        for table_name in tables {
+            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+                continue;
+            };
+            if let Some(offset) = table.pk_handle_offset() {
+                rows.push(statistics_row(
+                    &schema,
+                    &table_name,
+                    "PRIMARY",
+                    true,
+                    1,
+                    &table.columns[offset].name,
+                    false,
+                ));
+            }
+            for index in table.indexes() {
+                for (position, offset) in index.column_offsets.iter().enumerate() {
+                    let column = &table.columns[*offset];
+                    let nullable =
+                        column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
+                    rows.push(statistics_row(
+                        &schema,
+                        &table_name,
+                        &index.name,
+                        index.unique,
+                        position + 1,
+                        &column.name,
+                        nullable,
+                    ));
+                }
+            }
+        }
+    }
+    rows
+}
+
+/// One `STATISTICS` row.
+fn statistics_row(
+    schema: &str,
+    table_name: &str,
+    index_name: &str,
+    unique: bool,
+    sequence: usize,
+    column_name: &str,
+    nullable: bool,
+) -> Vec<Datum> {
+    vec![
+        text(CATALOG),
+        text(schema),
+        text(table_name),
+        Datum::Int(i64::from(!unique)),
+        text(schema),
+        text(index_name),
+        Datum::Int(sequence as i64),
+        text(column_name),
+        text("A"),
+        // No statistics tier, so Go's cardinality estimate is simply absent.
+        Datum::Int(0),
+        Datum::Null,
+        Datum::Null,
+        text(if nullable { "YES" } else { "" }),
+        text("BTREE"),
+        text(""),
+        text(""),
+        text("YES"),
+        Datum::Null,
+    ]
+}
+
+/// One row per `PRIMARY KEY` or `UNIQUE` constraint (not per column).
+fn table_constraints_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for schema in catalog.database_names() {
+        let Some(tables) = catalog.table_names(&schema) else {
+            continue;
+        };
+        for table_name in tables {
+            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+                continue;
+            };
+            if table.pk_handle_offset().is_some() {
+                rows.push(table_constraint_row(
+                    &schema,
+                    &table_name,
+                    "PRIMARY",
+                    "PRIMARY KEY",
+                ));
+            }
+            for index in table.indexes() {
+                if !index.unique {
+                    continue;
+                }
+                let constraint_type = if index.name.eq_ignore_ascii_case("PRIMARY") {
+                    "PRIMARY KEY"
+                } else {
+                    "UNIQUE"
+                };
+                rows.push(table_constraint_row(
+                    &schema,
+                    &table_name,
+                    &index.name,
+                    constraint_type,
+                ));
+            }
+        }
+    }
+    rows
+}
+
+/// One `TABLE_CONSTRAINTS` row.
+fn table_constraint_row(
+    schema: &str,
+    table_name: &str,
+    constraint_name: &str,
+    constraint_type: &str,
+) -> Vec<Datum> {
+    vec![
+        text(CATALOG),
+        text(schema),
+        text(constraint_name),
+        text(schema),
+        text(table_name),
+        text(constraint_type),
+    ]
 }
 
 /// Every schema, including the virtual one, which is why `SHOW DATABASES`

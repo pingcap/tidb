@@ -3353,8 +3353,201 @@ mod tests {
         // An unimplemented information_schema table is an error, not empty
         // output that would look like a table with no rows.
         assert!(session
-            .run("SELECT * FROM information_schema.statistics")
+            .run("SELECT * FROM information_schema.views")
             .is_err());
+    }
+
+    /// KEY_COLUMN_USAGE, STATISTICS, TABLE_CONSTRAINTS and
+    /// REFERENTIAL_CONSTRAINTS -- the introspection tables JDBC/ORM drivers
+    /// query -- checked against output captured from a running TiDB for a
+    /// table with a BIGINT primary key, a UNIQUE column, and a two-column
+    /// plain KEY.
+    #[test]
+    fn information_schema_jdbc_tables() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE t (id BIGINT PRIMARY KEY, u INT UNIQUE, a INT, b INT, \
+                 KEY idx_ab (a, b))",
+            )
+            .unwrap();
+
+        let query = |session: &mut Session, sql: &str| match session.run_with_columns(sql).unwrap()
+        {
+            StmtOutput::Rows { columns, rows } => (
+                columns
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+                rows.into_iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|value| match value {
+                                Datum::Null => "<nil>".to_owned(),
+                                Datum::Int(v) => v.to_string(),
+                                other => datum_text(other).unwrap_or_default(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        };
+
+        // KEY_COLUMN_USAGE: captured header, and one row per PRIMARY/UNIQUE
+        // column -- the plain KEY idx_ab does not appear here.
+        let (names, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.key_column_usage WHERE table_schema = 'test'",
+        );
+        assert_eq!(
+            names,
+            [
+                "CONSTRAINT_CATALOG",
+                "CONSTRAINT_SCHEMA",
+                "CONSTRAINT_NAME",
+                "TABLE_CATALOG",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "COLUMN_NAME",
+                "ORDINAL_POSITION",
+                "POSITION_IN_UNIQUE_CONSTRAINT",
+                "REFERENCED_TABLE_SCHEMA",
+                "REFERENCED_TABLE_NAME",
+                "REFERENCED_COLUMN_NAME",
+            ]
+        );
+        assert_eq!(rows.len(), 2, "PRIMARY and u, not idx_ab");
+        // Captured: [def test PRIMARY def test t id 1 1 <nil> <nil> <nil>]
+        assert_eq!(
+            rows[0],
+            [
+                "def", "test", "PRIMARY", "def", "test", "t", "id", "1", "1", "<nil>", "<nil>",
+                "<nil>"
+            ]
+        );
+        // Captured: [def test u def test t u 1 <nil> <nil> <nil> <nil>]
+        assert_eq!(
+            rows[1],
+            [
+                "def", "test", "u", "def", "test", "t", "u", "1", "<nil>", "<nil>", "<nil>",
+                "<nil>"
+            ]
+        );
+
+        // STATISTICS: captured header, and one row per indexed column
+        // (PRIMARY, then idx_ab's two columns, then u), matching SHOW INDEX's
+        // population under this table's own column set.
+        let (names, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.statistics WHERE table_schema = 'test'",
+        );
+        assert_eq!(
+            names,
+            [
+                "TABLE_CATALOG",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "NON_UNIQUE",
+                "INDEX_SCHEMA",
+                "INDEX_NAME",
+                "SEQ_IN_INDEX",
+                "COLUMN_NAME",
+                "COLLATION",
+                "CARDINALITY",
+                "SUB_PART",
+                "PACKED",
+                "NULLABLE",
+                "INDEX_TYPE",
+                "COMMENT",
+                "INDEX_COMMENT",
+                "IS_VISIBLE",
+                "Expression",
+            ]
+        );
+        assert_eq!(rows.len(), 4);
+        // Captured: [def test t 0 test PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil>]
+        assert_eq!(
+            rows[0],
+            [
+                "def", "test", "t", "0", "test", "PRIMARY", "1", "id", "A", "0", "<nil>", "<nil>",
+                "", "BTREE", "", "", "YES", "<nil>"
+            ]
+        );
+        // Captured: [def test t 1 test idx_ab 1 a A 0 <nil> <nil> YES BTREE   YES <nil>]
+        assert_eq!(
+            rows[1],
+            [
+                "def", "test", "t", "1", "test", "idx_ab", "1", "a", "A", "0", "<nil>", "<nil>",
+                "YES", "BTREE", "", "", "YES", "<nil>"
+            ]
+        );
+        assert_eq!(rows[2][6], "2", "idx_ab's second column, SEQ_IN_INDEX");
+        assert_eq!(rows[2][7], "b");
+        // Captured: [def test t 0 test u 1 u A 0 <nil> <nil> YES BTREE   YES <nil>]
+        assert_eq!(
+            rows[3],
+            [
+                "def", "test", "t", "0", "test", "u", "1", "u", "A", "0", "<nil>", "<nil>", "YES",
+                "BTREE", "", "", "YES", "<nil>"
+            ]
+        );
+
+        // TABLE_CONSTRAINTS: captured header, one row per PRIMARY/UNIQUE
+        // constraint (not per column).
+        let (names, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.table_constraints WHERE table_schema = 'test'",
+        );
+        assert_eq!(
+            names,
+            [
+                "CONSTRAINT_CATALOG",
+                "CONSTRAINT_SCHEMA",
+                "CONSTRAINT_NAME",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "CONSTRAINT_TYPE",
+            ]
+        );
+        assert_eq!(
+            rows,
+            vec![
+                vec!["def", "test", "PRIMARY", "test", "t", "PRIMARY KEY"],
+                vec!["def", "test", "u", "test", "t", "UNIQUE"],
+            ]
+        );
+
+        // REFERENTIAL_CONSTRAINTS: captured header, always empty in this
+        // tier (no foreign keys).
+        let (names, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.referential_constraints",
+        );
+        assert_eq!(
+            names,
+            [
+                "CONSTRAINT_CATALOG",
+                "CONSTRAINT_SCHEMA",
+                "CONSTRAINT_NAME",
+                "UNIQUE_CONSTRAINT_CATALOG",
+                "UNIQUE_CONSTRAINT_SCHEMA",
+                "UNIQUE_CONSTRAINT_NAME",
+                "MATCH_OPTION",
+                "UPDATE_RULE",
+                "DELETE_RULE",
+                "TABLE_NAME",
+                "REFERENCED_TABLE_NAME",
+            ]
+        );
+        assert!(rows.is_empty());
+
+        // A WHERE filter runs through the ordinary plan path.
+        let (_, rows) = query(
+            &mut session,
+            "SELECT * FROM information_schema.statistics WHERE table_name = 't' AND index_name = 'idx_ab'",
+        );
+        assert_eq!(rows.len(), 2);
     }
 
     /// DROP TABLE, checked against captured TiDB behavior: a missing name is
