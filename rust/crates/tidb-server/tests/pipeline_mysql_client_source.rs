@@ -1016,6 +1016,63 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         vec![vec!["a.b".to_owned(), "2024/06".to_owned()]]
     );
 
+    // The fourth integration's features, through the socket.
+    // Interval arithmetic in projection and WHERE.
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT DATE_ADD('2024-01-31 10:20:30', INTERVAL 1 MONTH)"
+        ),
+        vec![vec!["2024-02-29 10:20:30".to_owned()]],
+        "month-end clamp over the wire"
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT id FROM wt WHERE created >= DATE_SUB('2025-01-01', INTERVAL 1 DAY)"
+        ),
+        vec![vec!["2".to_owned()]]
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT EXTRACT(YEAR FROM created), TIMESTAMPDIFF(DAY, '2024-01-31', '2024-03-01')              FROM wt WHERE id = 1"
+        ),
+        vec![vec!["2024".to_owned(), "30".to_owned()]]
+    );
+    // A correlated scalar subquery in the SELECT list.
+    run_write(
+        &mut client,
+        &mut reader,
+        "CREATE TABLE co (id BIGINT PRIMARY KEY, v BIGINT)",
+    );
+    run_write(
+        &mut client,
+        &mut reader,
+        "INSERT INTO co VALUES (1, 10), (2, 20)",
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT t.a, (SELECT COUNT(*) FROM co WHERE co.id = t.a) FROM t ORDER BY t.a LIMIT 2"
+        ),
+        vec![
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "1".to_owned()],
+        ]
+    );
+    // The introspection tables a JDBC driver reads.
+    let kcu = run_query(
+        &mut client,
+        &mut reader,
+        "SELECT column_name FROM information_schema.key_column_usage          WHERE table_name = 'gen' AND constraint_name = 'PRIMARY'",
+    );
+    assert_eq!(kcu, vec![vec!["id".to_owned()]], "key_column_usage over the wire");
+
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
