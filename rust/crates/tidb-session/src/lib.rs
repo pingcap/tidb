@@ -146,6 +146,12 @@ pub struct Session {
     /// which is why every check through it falls back to the pre-existing
     /// bit above rather than treating an absent registry as "no privilege".
     privileges: Option<privilege::PrivilegeRegistry>,
+    /// Go `session.sandboxMode`: this connection logged in with an EXPIRED
+    /// password while the server allowed it, so it may run nothing but the
+    /// `SET PASSWORD` / `ALTER USER` that fixes the password. Set by the
+    /// front end from the login's verdict, cleared by the statement that
+    /// stores a new password.
+    sandbox_mode: bool,
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
@@ -171,6 +177,7 @@ impl Default for Session {
             process: None,
             has_process_priv: false,
             privileges: None,
+            sandbox_mode: false,
             rand: new_time_seeded_rand(),
         }
     }
@@ -764,6 +771,7 @@ impl Session {
             process: None,
             has_process_priv: false,
             privileges: None,
+            sandbox_mode: false,
             rand: new_time_seeded_rand(),
         }
     }
@@ -981,6 +989,7 @@ impl Session {
     /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
     /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        self.check_sandbox_mode(sql)?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
@@ -1005,6 +1014,41 @@ impl Session {
             });
         }
         result
+    }
+
+    /// Whether this session logged in with an expired password and is
+    /// therefore restricted to fixing it -- Go's `session.InSandBoxMode`.
+    #[must_use]
+    pub const fn in_sandbox_mode(&self) -> bool {
+        self.sandbox_mode
+    }
+
+    /// Puts this session in sandbox mode. The front end calls this when the
+    /// login reported an expired password the server chose to admit.
+    pub const fn enable_sandbox_mode(&mut self) {
+        self.sandbox_mode = true;
+    }
+
+    /// Go's `TiDBContext.checkSandBoxMode` (`pkg/server/driver_tidb.go`): a
+    /// sandboxed session may run `SET PASSWORD` and `ALTER USER` and nothing
+    /// else; everything else reports 1820. Go gates on the PARSED statement
+    /// (its front end hands `ExecuteStmt` an `ast.StmtNode`), so a syntax
+    /// error still surfaces as a syntax error -- which is why this parses
+    /// first and lets a parse failure fall through to the normal path that
+    /// reports it. The extra parse is paid only while sandboxed, a state one
+    /// statement ends.
+    fn check_sandbox_mode(&self, sql: &str) -> Result<(), DriverError> {
+        if !self.sandbox_mode {
+            return Ok(());
+        }
+        let Ok(stmt) = tidb_parser::parse(sql) else {
+            return Ok(());
+        };
+        match stmt {
+            Stmt::Session(session) if matches!(*session, SessionStmt::SetPassword(_)) => Ok(()),
+            Stmt::Ddl(ddl) if matches!(*ddl, tidb_ast::DdlStmt::AlterUser(_)) => Ok(()),
+            _ => Err(DriverError::MustChangePassword),
+        }
     }
 
     fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {

@@ -215,3 +215,215 @@ impl Drop for AuthFile {
         let _ = fs::remove_file(&self.path);
     }
 }
+
+/// One `FAILED_LOGIN_ATTEMPTS n PASSWORD_LOCK_TIME d` account, plus the
+/// scrambles for a right and a wrong password.
+fn lockout_store(attempts: i64, lock_days: i64) -> (ConfiguredUserStore, [u8; 20], [u8; 20]) {
+    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
+    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
+    store
+        .accounts()
+        .set_password_locking_options("bob", "%", Some(attempts), Some(lock_days));
+    (
+        store,
+        scramble(b"abc", &SOURCE_SALT),
+        scramble(b"nope", &SOURCE_SALT),
+    )
+}
+
+/// Go's captured lockout sequence on a `FAILED_LOGIN_ATTEMPTS 2
+/// PASSWORD_LOCK_TIME 3` account: the FIRST wrong password reports the plain
+/// 1045 and leaves the counter at 1, the SECOND locks the account and reports
+/// 3955 with the full lock time remaining, every later attempt -- including
+/// one carrying the RIGHT password -- reports the same 3955, and
+/// `ACCOUNT UNLOCK` clears both the lock and the counter.
+#[test]
+fn consecutive_wrong_passwords_auto_lock_the_account_and_unlock_clears_it() {
+    let (store, right, wrong) = lockout_store(2, 3);
+    let accounts = store.accounts();
+    let attempt = |response: &[u8; 20]| {
+        store
+            .authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, response)
+            .map(|identity| identity.username().to_owned())
+    };
+
+    assert_eq!(
+        attempt(&wrong),
+        Err(configured_user_store::AuthenticationFailure::AccessDenied)
+    );
+    let locking = accounts.password_locking("bob", "%").expect("counter");
+    assert_eq!(locking.failed_login_count, 1);
+    assert!(!locking.auto_account_locked);
+
+    let expected = "Access denied for user 'bob'@'%'. Account is blocked for 3 day(s) \
+                    (3 day(s) remaining) due to 2 consecutive failed logins.";
+    for response in [&wrong, &wrong, &right] {
+        match attempt(response) {
+            Err(configured_user_store::AuthenticationFailure::AutoLocked(lockout)) => {
+                assert_eq!(lockout.message(), expected);
+            }
+            other => panic!("expected 3955, got {other:?}"),
+        }
+    }
+    let locking = accounts.password_locking("bob", "%").expect("counter");
+    // The counter stops at the limit: attempts made while locked never reach
+    // the increment (captured -- Go reports count 2 after four failures).
+    assert_eq!(locking.failed_login_count, 2);
+    assert!(locking.auto_account_locked);
+
+    accounts.set_locked("bob", "%", false);
+    let locking = accounts.password_locking("bob", "%").expect("counter");
+    assert_eq!(locking.failed_login_count, 0);
+    assert!(!locking.auto_account_locked);
+    assert_eq!(attempt(&right), Ok("bob".to_owned()));
+}
+
+/// `PASSWORD_LOCK_TIME UNBOUNDED` prints the word `unlimited` in both day
+/// slots of the 3955 message, which is why Go passes them as strings
+/// (captured from `TestFailedLoginTracking`).
+#[test]
+fn an_unbounded_lock_time_reports_unlimited_in_both_day_slots() {
+    let (store, _right, wrong) = lockout_store(1, -1);
+    match store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &wrong) {
+        Err(configured_user_store::AuthenticationFailure::AutoLocked(lockout)) => assert_eq!(
+            lockout.message(),
+            "Access denied for user 'bob'@'%'. Account is blocked for unlimited day(s) \
+             (unlimited day(s) remaining) due to 1 consecutive failed logins."
+        ),
+        other => panic!("expected 3955, got {other:?}"),
+    }
+}
+
+/// Go tracks failed logins only when BOTH options are nonzero, so an account
+/// with either at zero just reports the ordinary 1045 forever and writes no
+/// counter (captured: `testu3`, `testu4`, `testu5`).
+#[test]
+fn a_zero_in_either_option_disables_tracking_entirely() {
+    for (attempts, lock_days) in [(0, -1), (1, 0), (0, 0)] {
+        let (store, _right, wrong) = lockout_store(attempts, lock_days);
+        for _ in 0..3 {
+            assert_eq!(
+                store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &wrong),
+                Err(configured_user_store::AuthenticationFailure::AccessDenied),
+                "{attempts}/{lock_days}"
+            );
+        }
+        assert_eq!(
+            store
+                .accounts()
+                .password_locking("bob", "%")
+                .map(|locking| locking.failed_login_count),
+            (attempts != 0 || lock_days != 0).then_some(0),
+            "{attempts}/{lock_days}"
+        );
+    }
+}
+
+/// Go auto-unlocks an account whose `PASSWORD_LOCK_TIME` window has run out
+/// (`verifyAccountAutoLock`), and the remaining-day count it reports before
+/// that is `ceil(lockTime - elapsed/86400)`.
+#[test]
+fn the_lock_expires_on_its_own_and_the_remaining_days_count_down() {
+    let (store, right, wrong) = lockout_store(1, 3);
+    let clock = store.accounts().clock();
+    assert!(store
+        .authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &wrong)
+        .is_err());
+
+    for (advance_days, remaining) in [(1, "2"), (1, "1")] {
+        clock.advance(advance_days * 24 * 60 * 60);
+        match store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &right) {
+            Err(configured_user_store::AuthenticationFailure::AutoLocked(lockout)) => {
+                assert_eq!(lockout.remaining_days, remaining);
+            }
+            other => panic!("expected 3955, got {other:?}"),
+        }
+    }
+    // Past the window the account unlocks itself and the counter resets, so
+    // the very next correct password gets in.
+    clock.advance(2 * 24 * 60 * 60);
+    assert!(store
+        .authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &right)
+        .is_ok());
+    let locking = store
+        .accounts()
+        .password_locking("bob", "%")
+        .expect("counter");
+    assert!(!locking.auto_account_locked);
+    assert_eq!(locking.failed_login_count, 0);
+}
+
+/// A correct password resets the counter, so failures have to be CONSECUTIVE
+/// to lock an account (Go's `authSuccessClearCount`).
+#[test]
+fn a_successful_login_clears_the_failure_counter() {
+    let (store, right, wrong) = lockout_store(3, 1);
+    let accounts = store.accounts();
+    assert!(store
+        .authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &wrong)
+        .is_err());
+    assert_eq!(
+        accounts
+            .password_locking("bob", "%")
+            .unwrap()
+            .failed_login_count,
+        1
+    );
+    assert!(store
+        .authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &right)
+        .is_ok());
+    assert_eq!(
+        accounts
+            .password_locking("bob", "%")
+            .unwrap()
+            .failed_login_count,
+        0
+    );
+}
+
+/// `PASSWORD EXPIRE` refuses the login with 1862 while the server disconnects
+/// expired passwords (Go's default), and admits it into a SANDBOX session
+/// once sandbox mode is on -- both captured. An interval that has not yet
+/// elapsed changes nothing.
+#[test]
+fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
+    use tidb_session::privilege::PasswordExpireSetting;
+
+    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
+    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
+    let accounts = store.accounts();
+    let response = scramble(b"abc", &SOURCE_SALT);
+    let login = || store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &response);
+
+    assert!(!login().expect("unexpired login").in_sandbox_mode());
+
+    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Now);
+    assert_eq!(
+        login(),
+        Err(configured_user_store::AuthenticationFailure::PasswordExpired)
+    );
+    accounts.set_sandbox_mode_enabled(true);
+    assert!(login().expect("sandboxed login").in_sandbox_mode());
+    accounts.set_sandbox_mode_enabled(false);
+
+    // Storing a password unexpires the account.
+    accounts.mark_password_changed("bob", "%");
+    assert!(!login().expect("unexpired login").in_sandbox_mode());
+
+    // An INTERVAL only bites once it has elapsed.
+    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Interval(2));
+    assert!(login().is_ok());
+    accounts.clock().advance(3 * 24 * 60 * 60);
+    assert_eq!(
+        login(),
+        Err(configured_user_store::AuthenticationFailure::PasswordExpired)
+    );
+
+    // `PASSWORD EXPIRE NEVER` opts the account out for good, and so does the
+    // NULL lifetime this tier always resolves against an unset
+    // `default_password_lifetime`.
+    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Never);
+    assert!(login().is_ok());
+    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Default);
+    assert!(login().is_ok());
+}

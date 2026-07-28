@@ -64,6 +64,7 @@
 //! OUT OF SCOPE (refused rather than faked): column-level grants.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
@@ -435,6 +436,221 @@ struct UserRecord {
     /// `ConfiguredUserStore::authenticate_native`, which reports the
     /// server's honest, clean access-denied for it rather than a panic).
     plugin: String,
+    /// Go's `mysql.user.user_attributes -> '$.Password_locking'`: the
+    /// `FAILED_LOGIN_ATTEMPTS`/`PASSWORD_LOCK_TIME` policy AND the runtime
+    /// failure counter tracked under it.
+    ///
+    /// `None` is Go's absent `Password_locking` key, and the invariant
+    /// [`PrivilegeRegistry::set_password_locking_options`] maintains is that
+    /// `None` holds exactly when both configured options are zero --
+    /// captured: `ALTER USER u4 PASSWORD_LOCK_TIME 0 FAILED_LOGIN_ATTEMPTS 0`
+    /// leaves `user_attributes` NULL, and a later `PASSWORD_LOCK_TIME 6`
+    /// brings the whole object back as
+    /// `{"failed_login_attempts": 0, "password_lock_time_days": 6}`. Because
+    /// tracking requires BOTH options nonzero (Go's
+    /// `IsAccountAutoLockEnabled`), an all-zero policy can never carry a
+    /// nonzero counter, so collapsing it to `None` loses nothing.
+    password_locking: Option<PasswordLocking>,
+    /// Go's `mysql.user.Password_expired` ENUM('N','Y'): the account must
+    /// change its password before it can do anything. `PASSWORD EXPIRE` sets
+    /// it; storing a new password clears it (captured both ways).
+    password_expired: bool,
+    /// Go's `mysql.user.Password_lifetime` (SMALLINT UNSIGNED, nullable):
+    /// `None` is NULL / `PASSWORD EXPIRE DEFAULT` (defer to the global
+    /// `default_password_lifetime`), `Some(0)` is `PASSWORD EXPIRE NEVER`,
+    /// and `Some(n)` is `PASSWORD EXPIRE INTERVAL n DAY` (all captured).
+    password_lifetime: Option<i64>,
+    /// Go's `mysql.user.Password_last_changed` TIMESTAMP, in Unix seconds:
+    /// the instant an interval-based expiry counts from.
+    password_last_changed: i64,
+}
+
+/// Go's `privileges.PasswordLocking`: one account's
+/// `user_attributes -> '$.Password_locking'` object, policy and counter
+/// together, because Go rewrites them as one JSON value on every update.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PasswordLocking {
+    /// `FAILED_LOGIN_ATTEMPTS n`: consecutive wrong passwords that lock the
+    /// account. Zero disables tracking.
+    pub failed_login_attempts: i64,
+    /// `PASSWORD_LOCK_TIME n` in days; `-1` is `UNBOUNDED` (captured), and
+    /// zero disables tracking.
+    pub password_lock_time_days: i64,
+    /// Consecutive wrong passwords seen so far, reset to zero by a
+    /// successful login or `ACCOUNT UNLOCK`.
+    pub failed_login_count: i64,
+    /// Whether the counter reached the limit and auto-locked the account.
+    pub auto_account_locked: bool,
+    /// When the auto-lock happened, in Unix seconds; `0` when it never has.
+    pub auto_locked_last_changed: i64,
+}
+
+impl PasswordLocking {
+    /// Go's `UserPrivileges.IsAccountAutoLockEnabled`: MySQL tracks failed
+    /// logins only when BOTH options are nonzero
+    /// (<https://dev.mysql.com/doc/refman/8.0/en/create-user.html>), so an
+    /// account leaving either at zero authenticates with no counter at all --
+    /// captured, `FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 0` reports the
+    /// plain 1045 and writes no counter.
+    #[must_use]
+    pub const fn tracking_enabled(&self) -> bool {
+        self.failed_login_attempts != 0 && self.password_lock_time_days != 0
+    }
+
+    /// The lock length Go interpolates into the 3955 message: `"unlimited"`
+    /// for `PASSWORD_LOCK_TIME UNBOUNDED`, else the decimal day count.
+    fn lock_days_text(&self) -> String {
+        if self.password_lock_time_days == -1 {
+            "unlimited".to_owned()
+        } else {
+            self.password_lock_time_days.to_string()
+        }
+    }
+}
+
+/// Go's `mysql.user` password-expiry columns for one account, as
+/// `SHOW CREATE USER` and the login path read them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PasswordExpiry {
+    /// `Password_expired = 'Y'`.
+    pub expired: bool,
+    /// `Password_lifetime`; `None` is NULL / `DEFAULT`, `Some(0)` is `NEVER`,
+    /// `Some(n)` is `INTERVAL n DAY`.
+    pub lifetime: Option<i64>,
+    /// `Password_last_changed`, in Unix seconds.
+    pub last_changed: i64,
+}
+
+/// The `PASSWORD EXPIRE ...` policy a `CREATE`/`ALTER USER` clause writes.
+/// Mirrors `tidb_ast::AlterUserPasswordExpire` without depending on it, which
+/// keeps the account table a storage layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordExpireSetting {
+    /// `PASSWORD EXPIRE`: expire the password right now.
+    Now,
+    /// `PASSWORD EXPIRE DEFAULT`: defer to `default_password_lifetime`.
+    Default,
+    /// `PASSWORD EXPIRE NEVER`.
+    Never,
+    /// `PASSWORD EXPIRE INTERVAL n DAY`.
+    Interval(i64),
+}
+
+/// Go's error 3955 (`ErUserAccessDeniedForUserAccountBlockedByPasswordLock`)
+/// with its arguments already resolved, so every path that must report it
+/// renders the identical sentence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountLockout {
+    /// Account the login named, as Go prints it.
+    pub user: String,
+    /// Matched host pattern, as Go prints it.
+    pub host: String,
+    /// `FAILED_LOGIN_ATTEMPTS` of the account.
+    pub failed_login_attempts: i64,
+    /// Configured lock length, already rendered (`"unlimited"` or days).
+    pub lock_days: String,
+    /// Lock time still to run, already rendered (`"unlimited"` or days).
+    pub remaining_days: String,
+}
+
+impl AccountLockout {
+    /// Go `errno.ErUserAccessDeniedForUserAccountBlockedByPasswordLock`'s
+    /// message template, captured verbatim from a locked login:
+    /// `Access denied for user 'L1'@'%'. Account is blocked for 3 day(s) (3
+    /// day(s) remaining) due to 2 consecutive failed logins.`
+    #[must_use]
+    pub fn message(&self) -> String {
+        format!(
+            "Access denied for user '{}'@'{}'. Account is blocked for {} day(s) ({} day(s) remaining) due to {} consecutive failed logins.",
+            self.user, self.host, self.lock_days, self.remaining_days, self.failed_login_attempts
+        )
+    }
+}
+
+/// Go's error 1862 (`ErrMustChangePasswordLogin`): the account's password has
+/// expired and the server is not in sandbox mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PasswordExpiredLogin;
+
+impl PasswordExpiredLogin {
+    /// Go `errno.ErrMustChangePasswordLogin`'s message, captured verbatim.
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        "Your password has expired. To log in you must change it using a client that supports expired passwords."
+    }
+}
+
+/// The wall clock every account-table timestamp is read from.
+///
+/// One representation and no modes: `now_unix()` is the system clock plus a
+/// shared offset that starts at zero. A test that needs to be four days later
+/// calls [`Clock::advance`]; nothing anywhere has to distinguish a "real"
+/// clock from a "fake" one, so no code path can accidentally read an
+/// untestable one. Cloning shares the offset, so the clock a
+/// [`PrivilegeRegistry`] holds and the handle a test kept are one clock.
+#[derive(Clone)]
+pub struct Clock {
+    offset_seconds: Arc<AtomicI64>,
+}
+
+impl Default for Clock {
+    fn default() -> Self {
+        Self {
+            offset_seconds: Arc::new(AtomicI64::new(0)),
+        }
+    }
+}
+
+impl std::fmt::Debug for Clock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Clock")
+            .field(
+                "offset_seconds",
+                &self.offset_seconds.load(Ordering::Relaxed),
+            )
+            .finish()
+    }
+}
+
+impl Clock {
+    /// Seconds since the Unix epoch, as Go's `time.Now().Unix()` reports.
+    #[must_use]
+    pub fn now_unix(&self) -> i64 {
+        let system = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0));
+        system.saturating_add(self.offset_seconds.load(Ordering::Relaxed))
+    }
+
+    /// Moves this clock -- and every clone of it -- forward by `seconds`.
+    /// Negative values move it back.
+    pub fn advance(&self, seconds: i64) {
+        self.offset_seconds.fetch_add(seconds, Ordering::Relaxed);
+    }
+}
+
+/// Seconds in one day, the unit Go's `PASSWORD_LOCK_TIME` and
+/// `PASSWORD EXPIRE INTERVAL` both count in.
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
+/// Builds the 3955 report for one locked account. Go's
+/// `GenerateAccountAutoLockErr` takes the two day counts as already-rendered
+/// strings for exactly this reason: `UNBOUNDED` prints the word `unlimited`
+/// in both slots, and no numeric type can carry that.
+fn lockout(
+    user: &str,
+    host: &str,
+    locking: &PasswordLocking,
+    remaining_days: String,
+) -> AccountLockout {
+    AccountLockout {
+        user: user.to_owned(),
+        host: host.to_owned(),
+        failed_login_attempts: locking.failed_login_attempts,
+        lock_days: locking.lock_days_text(),
+        remaining_days,
+    }
 }
 
 /// One Go `mysql.Columns_priv` row: the privileges an account holds on a
@@ -484,6 +700,18 @@ pub struct PrivilegeRegistry {
     /// An account with no row here starts with no active role at all
     /// (captured: a fresh session reports `CURRENT_ROLE()` = `NONE`).
     default_roles: Arc<Mutex<HashMap<Account, BTreeSet<Account>>>>,
+    /// The wall clock `PASSWORD_LOCK_TIME` and `PASSWORD EXPIRE INTERVAL`
+    /// are measured against. Shared with every clone of this registry, so a
+    /// test that advances it moves the whole server's notion of "now".
+    clock: Clock,
+    /// Go's `vardef.IsSandBoxModeEnabled`, the server-wide inverse of the
+    /// `disconnect_on_expired_password` option: with it OFF (Go's default) an
+    /// expired password refuses the login with 1862, and with it ON the login
+    /// succeeds into a sandbox session that may run nothing but
+    /// `SET PASSWORD` / `ALTER USER` (both captured). Go reaches it through a
+    /// process-global atomic set from server config, not from SQL; this
+    /// registry is the equivalent server-wide home.
+    sandbox_mode_enabled: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for PrivilegeRegistry {
@@ -525,6 +753,8 @@ impl PrivilegeRegistry {
     /// from being two independent decisions.
     #[must_use]
     pub fn bootstrapped_from(accounts: impl IntoIterator<Item = (String, String, String)>) -> Self {
+        let clock = Clock::default();
+        let bootstrapped_at = clock.now_unix();
         let users = accounts
             .into_iter()
             .map(|(user, host, auth_string)| {
@@ -540,6 +770,10 @@ impl PrivilegeRegistry {
                         auth_string,
                         is_role: false,
                         plugin: tidb_mysql::consts::AuthNativePassword.to_owned(),
+                        password_locking: None,
+                        password_expired: false,
+                        password_lifetime: None,
+                        password_last_changed: bootstrapped_at,
                     },
                 )
             })
@@ -552,6 +786,8 @@ impl PrivilegeRegistry {
             dynamic_privs: Arc::new(Mutex::new(HashMap::new())),
             role_edges: Arc::new(Mutex::new(HashMap::new())),
             default_roles: Arc::new(Mutex::new(HashMap::new())),
+            clock,
+            sandbox_mode_enabled: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -666,6 +902,15 @@ impl PrivilegeRegistry {
                 auth_string: auth_string.to_owned(),
                 is_role,
                 plugin: plugin.to_owned(),
+                password_locking: None,
+                // Go's `CREATE ROLE` writes `Password_expired='Y'` while
+                // `CREATE USER` leaves it `'N'` (captured: `SHOW CREATE USER`
+                // for a role prints a bare `PASSWORD EXPIRE`, for a user
+                // `PASSWORD EXPIRE DEFAULT`). Roles never log in, so this is
+                // a display difference, but it is the row Go writes.
+                password_expired: is_role,
+                password_lifetime: None,
+                password_last_changed: self.clock.now_unix(),
             },
         );
         true
@@ -844,13 +1089,292 @@ impl PrivilegeRegistry {
     /// a locked plain user refuses login exactly like a role does. Returns
     /// whether the account existed.
     pub fn set_locked(&self, user: &str, host: &str, locked: bool) -> bool {
+        let now = self.clock.now_unix();
         match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
             Some(record) => {
                 record.is_role = locked;
+                // `ACCOUNT UNLOCK` also clears the failed-login counter and
+                // the AUTO lock: Go's `alterUserFailedLoginJSON` writes
+                // `auto_account_locked: "N"`, a fresh
+                // `auto_locked_last_changed`, and `failed_login_count: 0`
+                // whenever the statement's `lockAccount` is `"N"`. Captured:
+                // after `ALTER USER L1 ACCOUNT UNLOCK` the account reports
+                // count 0 / locked N and the next correct password works.
+                if !locked {
+                    if let Some(locking) = record.password_locking.as_mut() {
+                        locking.failed_login_count = 0;
+                        locking.auto_account_locked = false;
+                        locking.auto_locked_last_changed = now;
+                    }
+                }
                 true
             }
             None => false,
         }
+    }
+
+    /// This registry's shared wall clock. Handing it out (rather than hiding
+    /// it) is what lets a test move `PASSWORD_LOCK_TIME`'s and
+    /// `PASSWORD EXPIRE INTERVAL`'s notion of "now" without waiting days.
+    #[must_use]
+    pub fn clock(&self) -> Clock {
+        self.clock.clone()
+    }
+
+    /// Whether the server admits an expired-password login into a sandbox
+    /// session instead of refusing it -- Go's `vardef.IsSandBoxModeEnabled`.
+    #[must_use]
+    pub fn sandbox_mode_enabled(&self) -> bool {
+        self.sandbox_mode_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Sets [`Self::sandbox_mode_enabled`] for the whole server.
+    pub fn set_sandbox_mode_enabled(&self, enabled: bool) {
+        self.sandbox_mode_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// The account's `Password_locking` object, or `None` when it has none.
+    #[must_use]
+    pub fn password_locking(&self, user: &str, host: &str) -> Option<PasswordLocking> {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .and_then(|record| record.password_locking)
+    }
+
+    /// Applies a statement's `FAILED_LOGIN_ATTEMPTS` / `PASSWORD_LOCK_TIME`
+    /// clauses, each `None` when the statement wrote none.
+    ///
+    /// Go merges the written options over the account's CURRENT ones
+    /// (`readPasswordLockingInfo` reads the row, `alterUserFailedLoginJSON`
+    /// rewrites the whole object), so `ALTER USER u3 PASSWORD_LOCK_TIME 6`
+    /// keeps u3's existing `FAILED_LOGIN_ATTEMPTS 3` -- captured. A merge
+    /// leaving both at zero drops the object entirely, which is the same
+    /// captured `user_attributes IS NULL` an explicit
+    /// `PASSWORD_LOCK_TIME 0 FAILED_LOGIN_ATTEMPTS 0` produces.
+    ///
+    /// Returns whether the account existed.
+    pub fn set_password_locking_options(
+        &self,
+        user: &str,
+        host: &str,
+        failed_login_attempts: Option<i64>,
+        password_lock_time_days: Option<i64>,
+    ) -> bool {
+        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            Some(record) => {
+                let mut locking = record.password_locking.unwrap_or_default();
+                if let Some(attempts) = failed_login_attempts {
+                    locking.failed_login_attempts = attempts;
+                }
+                if let Some(days) = password_lock_time_days {
+                    locking.password_lock_time_days = days;
+                }
+                record.password_locking = (locking.failed_login_attempts != 0
+                    || locking.password_lock_time_days != 0)
+                    .then_some(locking);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The account's `Password_expired` / `Password_lifetime` /
+    /// `Password_last_changed` columns, or `None` when no such account.
+    #[must_use]
+    pub fn password_expiry(&self, user: &str, host: &str) -> Option<PasswordExpiry> {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .map(|record| PasswordExpiry {
+                expired: record.password_expired,
+                lifetime: record.password_lifetime,
+                last_changed: record.password_last_changed,
+            })
+    }
+
+    /// Applies one `PASSWORD EXPIRE ...` clause. Go's `loadOptions` scans the
+    /// option list BACKWARD and stops at the first expiry clause, so the LAST
+    /// one written wins and the caller passes only that one; each variant
+    /// writes exactly one of the two columns, leaving the other alone
+    /// (captured: `PASSWORD EXPIRE` sets `password_expired='Y'` and does not
+    /// touch `password_lifetime`, and `PASSWORD EXPIRE NEVER` sets
+    /// `password_lifetime=0` and does not touch `password_expired`).
+    ///
+    /// Returns whether the account existed.
+    pub fn set_password_expire(
+        &self,
+        user: &str,
+        host: &str,
+        setting: PasswordExpireSetting,
+    ) -> bool {
+        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            Some(record) => {
+                match setting {
+                    PasswordExpireSetting::Now => record.password_expired = true,
+                    PasswordExpireSetting::Default => record.password_lifetime = None,
+                    PasswordExpireSetting::Never => record.password_lifetime = Some(0),
+                    PasswordExpireSetting::Interval(days) => record.password_lifetime = Some(days),
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Records that the account's password was just replaced: Go's
+    /// `ALTER USER ... IDENTIFIED BY` / `SET PASSWORD` writes
+    /// `password_expired='N'` and a fresh `Password_last_changed` alongside
+    /// the new hash, which is what lets a sandboxed session escape by
+    /// changing its own password (captured: `ALTER USER e5 IDENTIFIED BY`
+    /// flips `SHOW CREATE USER` from `PASSWORD EXPIRE` back to
+    /// `PASSWORD EXPIRE DEFAULT`).
+    ///
+    /// Returns whether the account existed.
+    pub fn mark_password_changed(&self, user: &str, host: &str) -> bool {
+        let now = self.clock.now_unix();
+        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            Some(record) => {
+                record.password_expired = false;
+                record.password_last_changed = now;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Go's `pkg/session.verifyAccountAutoLock`, run BEFORE the password is
+    /// compared: an account still inside its `PASSWORD_LOCK_TIME` window
+    /// reports 3955 no matter which password arrived, and an account whose
+    /// window has run out is auto-unlocked here so the very next correct
+    /// password works.
+    ///
+    /// # Errors
+    /// [`AccountLockout`] when the account is auto-locked and its lock window
+    /// has not elapsed.
+    pub fn verify_account_auto_lock(&self, user: &str, host: &str) -> Result<(), AccountLockout> {
+        let now = self.clock.now_unix();
+        let mut guard = self.lock();
+        let Some(record) = guard.get_mut(&(user.to_owned(), host.to_owned())) else {
+            return Ok(());
+        };
+        let Some(locking) = record.password_locking.as_mut() else {
+            return Ok(());
+        };
+        if !locking.tracking_enabled() || !locking.auto_account_locked {
+            return Ok(());
+        }
+        if locking.password_lock_time_days == -1 {
+            return Err(lockout(user, host, locking, "unlimited".to_owned()));
+        }
+        let elapsed = now - locking.auto_locked_last_changed;
+        if elapsed > locking.password_lock_time_days * SECONDS_PER_DAY {
+            locking.auto_account_locked = false;
+            locking.failed_login_count = 0;
+            locking.auto_locked_last_changed = now;
+            return Ok(());
+        }
+        // Go: `ceil(lockTime - d/86400)` -- a lock that has just been taken
+        // still reports its full length remaining (captured: a freshly locked
+        // 3-day account says "3 day(s) remaining").
+        let remaining = (locking.password_lock_time_days as f64
+            - elapsed as f64 / SECONDS_PER_DAY as f64)
+            .ceil() as i64;
+        Err(lockout(user, host, locking, remaining.to_string()))
+    }
+
+    /// Go's `pkg/session.authFailedTracking` -> `userAutoAccountLocked` ->
+    /// `autolockAction`: one more consecutive wrong password. The attempt
+    /// that REACHES `FAILED_LOGIN_ATTEMPTS` both locks the account and
+    /// reports 3955; every attempt before it only bumps the counter and lets
+    /// the caller report the ordinary 1045 (captured on a
+    /// `FAILED_LOGIN_ATTEMPTS 2` account: first attempt 1045, second 3955).
+    ///
+    /// # Errors
+    /// [`AccountLockout`] when this attempt locked the account (or found it
+    /// already locked behind a stale cache).
+    pub fn record_failed_login(&self, user: &str, host: &str) -> Result<(), AccountLockout> {
+        let now = self.clock.now_unix();
+        let mut guard = self.lock();
+        let Some(record) = guard.get_mut(&(user.to_owned(), host.to_owned())) else {
+            return Ok(());
+        };
+        let Some(locking) = record.password_locking.as_mut() else {
+            return Ok(());
+        };
+        if !locking.tracking_enabled() {
+            return Ok(());
+        }
+        if locking.auto_account_locked {
+            let lock_days = locking.lock_days_text();
+            return Err(lockout(user, host, locking, lock_days));
+        }
+        locking.failed_login_count += 1;
+        if locking.failed_login_count < locking.failed_login_attempts {
+            return Ok(());
+        }
+        locking.auto_account_locked = true;
+        locking.auto_locked_last_changed = now;
+        let lock_days = locking.lock_days_text();
+        Err(lockout(user, host, locking, lock_days))
+    }
+
+    /// Go's `pkg/session.authSuccessClearCount`: the password was right, so
+    /// the consecutive-failure counter goes back to zero -- unless the row
+    /// says the account is locked after all, in which case the correct
+    /// password is refused too (captured: the right password against a locked
+    /// account reports 3955, not success).
+    ///
+    /// # Errors
+    /// [`AccountLockout`] when the account is auto-locked.
+    pub fn clear_failed_login_count(&self, user: &str, host: &str) -> Result<(), AccountLockout> {
+        let mut guard = self.lock();
+        let Some(record) = guard.get_mut(&(user.to_owned(), host.to_owned())) else {
+            return Ok(());
+        };
+        let Some(locking) = record.password_locking.as_mut() else {
+            return Ok(());
+        };
+        if locking.auto_account_locked {
+            let lock_days = locking.lock_days_text();
+            return Err(lockout(user, host, locking, lock_days));
+        }
+        locking.failed_login_count = 0;
+        Ok(())
+    }
+
+    /// Go's `UserPrivileges.CheckPasswordExpired`, run after the password
+    /// verifies. Answers whether the session must start in SANDBOX mode.
+    ///
+    /// `default_password_lifetime` is the global variable a `NULL`
+    /// `Password_lifetime` defers to. This tier does not model GLOBAL-scope
+    /// sysvar persistence (see `crate::vars`), so its callers pass the
+    /// unset default `0` -- meaning a `PASSWORD EXPIRE DEFAULT` account never
+    /// ages out, which is exactly what Go does on a cluster nobody has set
+    /// the variable on.
+    ///
+    /// # Errors
+    /// [`PasswordExpiredLogin`] (error 1862) when the password has expired
+    /// and sandbox mode is off.
+    pub fn check_password_expired(
+        &self,
+        user: &str,
+        host: &str,
+        default_password_lifetime: i64,
+    ) -> Result<bool, PasswordExpiredLogin> {
+        let Some(expiry) = self.password_expiry(user, host) else {
+            return Ok(false);
+        };
+        let sandbox = self.sandbox_mode_enabled();
+        let aged_out = || {
+            let lifetime = expiry.lifetime.unwrap_or(default_password_lifetime);
+            lifetime > 0 && self.clock.now_unix() > expiry.last_changed + lifetime * SECONDS_PER_DAY
+        };
+        if expiry.expired || aged_out() {
+            if sandbox {
+                return Ok(true);
+            }
+            return Err(PasswordExpiredLogin);
+        }
+        Ok(false)
     }
 
     /// Go's `ErrCannotUser("DROP USER", ...)`: dropping a missing account

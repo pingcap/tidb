@@ -279,6 +279,17 @@ pub enum DriverError {
         /// The account host.
         host: String,
     },
+    /// Go `ErrWrongValue2` (1525): `PASSWORD EXPIRE INTERVAL n DAY` was
+    /// written with a day count outside `1 ..= 65535`, which `loadOptions`
+    /// rejects before any row is touched.
+    PasswordExpireIntervalOutOfRange {
+        /// The rejected day count, printed as written.
+        days: i64,
+    },
+    /// Go `ErrMustChangePassword` (1820): the session logged in with an
+    /// expired password (sandbox mode) and ran something other than the
+    /// `SET PASSWORD` / `ALTER USER` it is allowed to run.
+    MustChangePassword,
     /// Go `ErrCannotUser` (1396) for `RENAME USER`, whose message carries a
     /// trailing reason clause rather than just the account
     /// (captured: `... failed for nosuch@% TO x@% old did not exist`, and
@@ -939,6 +950,20 @@ impl DriverError {
             1396,
             *b"HY000",
             format!("Operation ALTER USER failed for '{user}'@'{host}'"),
+        ),
+        // Go `types.ErrWrongValue2` (1525) with the `DAY` unit name, the
+        // error `loadOptions` raises for a zero or > 65535 interval.
+        DriverError::PasswordExpireIntervalOutOfRange { days } => MysqlError::new(
+            1525,
+            *b"HY000",
+            format!("Incorrect DAY value: '{days}'"),
+        ),
+        // Go `errno.ErrMustChangePassword` (1820), the sandbox-mode gate.
+        DriverError::MustChangePassword => MysqlError::new(
+            1820,
+            *b"HY000",
+            "You must reset your password using ALTER USER statement before executing this statement"
+                .to_owned(),
         ),
         // Go `ErrCannotUser` (1396) for RENAME USER: unquoted `user@host` on
         // both sides plus the reason clause.

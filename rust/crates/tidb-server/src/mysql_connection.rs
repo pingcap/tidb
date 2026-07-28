@@ -96,6 +96,13 @@ const ER_UNKNOWN_COM_ERROR: u16 = 1047;
 /// errno an `ACCOUNT LOCK`'d (or ROLE) account gets, distinct from the
 /// generic access-denied a bad password or unknown user gets.
 const ER_ACCOUNT_HAS_BEEN_LOCKED: u16 = 3118;
+/// Go's `mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock`: the
+/// errno an account auto-locked by `FAILED_LOGIN_ATTEMPTS` gets, distinct
+/// again from the manual `ACCOUNT LOCK` above.
+const ER_USER_ACCESS_DENIED_BLOCKED_BY_PASSWORD_LOCK: u16 = 3955;
+/// Go's `mysql.ErrMustChangePasswordLogin`: the login errno an account with
+/// an EXPIRED password gets when the server refuses expired logins.
+const ER_MUST_CHANGE_PASSWORD_LOGIN: u16 = 1862;
 const ER_PARSE_ERROR: u16 = 1064;
 const ER_UNKNOWN_ERROR: u16 = 1105;
 const ER_WRONG_ARGUMENTS: u16 = 1210;
@@ -485,6 +492,43 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 ER_ACCOUNT_HAS_BEEN_LOCKED,
                 *b"HY000",
                 account_locked_message(&response.user, &peer_addr.ip().to_string()),
+                protocol_41,
+            )?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
+        // Go's 3955: the account auto-locked itself after too many
+        // consecutive wrong passwords, and the message names the lock time
+        // remaining.
+        Err(AuthenticationFailure::AutoLocked(lockout)) => {
+            write_error(
+                &mut output,
+                response_sequence,
+                ER_USER_ACCESS_DENIED_BLOCKED_BY_PASSWORD_LOCK,
+                *b"HY000",
+                lockout.message(),
+                protocol_41,
+            )?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
+        // Go's 1862: the password verified but has expired, and the server
+        // is not admitting expired logins into a sandbox session.
+        Err(AuthenticationFailure::PasswordExpired) => {
+            write_error(
+                &mut output,
+                response_sequence,
+                ER_MUST_CHANGE_PASSWORD_LOGIN,
+                *b"HY000",
+                tidb_session::privilege::PasswordExpiredLogin.message(),
                 protocol_41,
             )?;
             return Ok(ConnectionReport {

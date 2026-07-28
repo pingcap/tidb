@@ -143,6 +143,12 @@ impl QuerySessionFactory for PipelineSessionFactory {
         // dropped entirely when `SessionContext` was threaded through here --
         // double-check it actually arrives (see the TCP-level test below).
         session.session.set_connection_id(context.connection_id);
+        // Go's `session.Auth` calls `EnableSandBoxMode()` when
+        // `ConnectionVerification` admitted an expired password, which
+        // restricts this connection to the statement that fixes it.
+        if identity.in_sandbox_mode() {
+            session.session.enable_sandbox_mode();
+        }
         // Go registers the connection with the session manager right after
         // authentication, which is what puts it in `SHOW PROCESSLIST` and
         // makes it reachable by `KILL`. The registration is owned by the

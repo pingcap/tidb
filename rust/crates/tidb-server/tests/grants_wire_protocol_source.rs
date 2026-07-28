@@ -852,3 +852,138 @@ fn an_account_lock_rejects_the_next_login_with_3118_and_unlock_restores_it() {
         "only the locked-account login attempt is rejected: {exits:?}"
     );
 }
+
+/// `FAILED_LOGIN_ATTEMPTS` / `PASSWORD_LOCK_TIME` auto-lock, proven over real
+/// TCP connections because that is the only place it exists: the counter is
+/// bumped by the wire front end's authenticator, not by any statement.
+///
+/// Two wrong passwords against a `FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME
+/// 3` account lock it -- the FIRST reporting the ordinary 1045 and the SECOND
+/// 3955 -- after which even the RIGHT password gets 3955 with Go's captured
+/// sentence, and `ALTER USER ... ACCOUNT UNLOCK` from another connection
+/// restores the login over the same live registry.
+#[test]
+fn failed_login_attempts_auto_lock_reports_3955_over_the_wire_until_unlocked() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+
+    let acceptor_factory = Arc::clone(&factory);
+    let acceptor_store = Arc::clone(&store);
+    let acceptor_tracker = Arc::clone(&tracker);
+    // root's connection plus mallory's four attempts: two wrong passwords,
+    // the right password while locked, and the right password after unlock.
+    let acceptor = std::thread::spawn(move || {
+        let mut workers = Vec::new();
+        for _ in 0..5 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let factory = Arc::clone(&acceptor_factory);
+            let store = Arc::clone(&acceptor_store);
+            let tracker = Arc::clone(&acceptor_tracker);
+            workers.push(std::thread::spawn(move || {
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+            }));
+        }
+        workers
+    });
+
+    let mut root = TcpStream::connect(address).unwrap();
+    let root_read = root.try_clone().unwrap();
+    let mut root_reader = PacketReader::new(root_read);
+    authenticate(&mut root, &mut root_reader, "root", b"rootpw");
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "CREATE USER 'mallory'@'%' IDENTIFIED BY 'mallorypw' \
+             FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+        ),
+        0
+    );
+    // The policy is visible where a DBA would look for it.
+    assert_eq!(
+        run_query(
+            &mut root,
+            &mut root_reader,
+            "SHOW CREATE USER 'mallory'@'%'"
+        )[0][0],
+        "CREATE USER 'mallory'@'%' IDENTIFIED WITH 'mysql_native_password' \
+         AS '*9C07CAE3178C7DCA67D1A409B633937A6ABE6125' REQUIRE NONE \
+         PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT \
+         PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+    );
+
+    let attempt = |password: &[u8]| {
+        let mut client = TcpStream::connect(address).unwrap();
+        let client_read = client.try_clone().unwrap();
+        let mut reader = PacketReader::new(client_read);
+        try_authenticate(&mut client, &mut reader, "mallory", password)
+    };
+
+    // Attempt 1 -- below the limit, so the ordinary access-denied.
+    let reply = attempt(b"wrong");
+    assert_eq!(reply[0], 0xff, "{reply:?}");
+    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1045, "{reply:?}");
+
+    // Attempt 2 -- reaches FAILED_LOGIN_ATTEMPTS, so it both locks the
+    // account and reports 3955 with the full lock time remaining.
+    let locked_message = "Access denied for user 'mallory'@'%'. Account is blocked for 3 day(s) \
+                          (3 day(s) remaining) due to 2 consecutive failed logins.";
+    let reply = attempt(b"wrong");
+    assert_eq!(reply[0], 0xff, "{reply:?}");
+    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 3955, "{reply:?}");
+    assert_eq!(&reply[4..9], b"HY000");
+    assert_eq!(String::from_utf8_lossy(&reply[9..]), locked_message);
+
+    // Attempt 3 -- the CORRECT password, refused all the same. This is the
+    // whole point of the feature and the one thing a password check alone
+    // could never do.
+    let reply = attempt(b"mallorypw");
+    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 3955, "{reply:?}");
+    assert_eq!(String::from_utf8_lossy(&reply[9..]), locked_message);
+
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "ALTER USER 'mallory'@'%' ACCOUNT UNLOCK"
+        ),
+        0
+    );
+
+    // Attempt 4 -- unlocked, so the same correct password gets in.
+    {
+        let mut client = TcpStream::connect(address).unwrap();
+        let client_read = client.try_clone().unwrap();
+        let mut reader = PacketReader::new(client_read);
+        authenticate(&mut client, &mut reader, "mallory", b"mallorypw");
+        write_packet(&mut client, 0, &[0x01]);
+    }
+
+    write_packet(&mut root, 0, &[0x01]);
+    drop(root);
+    let workers = acceptor.join().unwrap();
+    let exits: Vec<ConnectionExit> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap().exit)
+        .collect();
+    assert_eq!(
+        exits
+            .iter()
+            .filter(|exit| **exit == ConnectionExit::AuthenticationRejected)
+            .count(),
+        3,
+        "the three refused attempts, and only those: {exits:?}"
+    );
+}

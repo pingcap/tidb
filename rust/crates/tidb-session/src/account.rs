@@ -23,6 +23,123 @@
 use crate::show::string_column_output;
 use crate::*;
 
+/// Go's `passwordOrLockOptionsInfo` after `loadOptions`: the account-state
+/// changes ONE `CREATE`/`ALTER USER` statement's `PASSWORD ...` /
+/// `ACCOUNT ...` / `FAILED_LOGIN_ATTEMPTS` / `PASSWORD_LOCK_TIME` clauses
+/// add up to. Every field is `None` when the statement wrote no clause of
+/// that kind, which is the distinction `ALTER USER` needs: an unwritten
+/// option keeps the account's current value rather than resetting it.
+#[derive(Default)]
+pub(crate) struct PasswordOrLockOptions {
+    /// `ACCOUNT LOCK` / `ACCOUNT UNLOCK`.
+    locked: Option<bool>,
+    /// `FAILED_LOGIN_ATTEMPTS n`, clamped as Go clamps it.
+    failed_login_attempts: Option<i64>,
+    /// `PASSWORD_LOCK_TIME n | UNBOUNDED`; `UNBOUNDED` is `-1`.
+    password_lock_time_days: Option<i64>,
+    /// `PASSWORD EXPIRE [DEFAULT | NEVER | INTERVAL n DAY]`.
+    expire: Option<privilege::PasswordExpireSetting>,
+}
+
+/// Go clamps `FAILED_LOGIN_ATTEMPTS` and `PASSWORD_LOCK_TIME` to
+/// `math.MaxInt16` rather than rejecting a larger count.
+const MAX_PASSWORD_LOCK_COUNT: i64 = i16::MAX as i64;
+
+/// Go rejects `PASSWORD EXPIRE INTERVAL n DAY` outside `1 ..= MaxUint16`
+/// with `ErrWrongValue2("DAY", n)`.
+const MAX_PASSWORD_EXPIRE_INTERVAL_DAYS: i64 = u16::MAX as i64;
+
+impl PasswordOrLockOptions {
+    /// Go's `passwordOrLockOptionsInfo.loadOptions`.
+    ///
+    /// Go reads the expiry clauses BACKWARD (stopping at the first one it
+    /// finds) and every other clause forward, overwriting as it goes -- two
+    /// directions, one rule: the LAST clause of each kind wins. A single
+    /// forward pass that overwrites therefore reproduces both, with no
+    /// direction to special-case (captured:
+    /// `FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME unbounded
+    /// FAILED_LOGIN_ATTEMPTS 5 PASSWORD_LOCK_TIME 5` stores 5 and 5).
+    pub(crate) fn load(
+        options: &[tidb_ast::CreateUserPasswordOption],
+    ) -> Result<Self, DriverError> {
+        use tidb_ast::AlterUserPasswordExpire as Expire;
+        use tidb_ast::CreateUserPasswordOption as Option_;
+        let mut loaded = Self::default();
+        for option in options {
+            match option {
+                Option_::AccountLock => loaded.locked = Some(true),
+                Option_::AccountUnlock => loaded.locked = Some(false),
+                Option_::FailedLoginAttempts(count) => {
+                    loaded.failed_login_attempts = Some((*count).min(MAX_PASSWORD_LOCK_COUNT));
+                }
+                Option_::PasswordLockTime(days) => {
+                    loaded.password_lock_time_days = Some((*days).min(MAX_PASSWORD_LOCK_COUNT));
+                }
+                Option_::PasswordLockTimeUnbounded => loaded.password_lock_time_days = Some(-1),
+                Option_::Expire(Expire::Expire) => {
+                    loaded.expire = Some(privilege::PasswordExpireSetting::Now);
+                }
+                Option_::Expire(Expire::Default) => {
+                    loaded.expire = Some(privilege::PasswordExpireSetting::Default);
+                }
+                Option_::Expire(Expire::Never) => {
+                    loaded.expire = Some(privilege::PasswordExpireSetting::Never);
+                }
+                Option_::Expire(Expire::Interval(days)) => {
+                    if *days <= 0 || *days > MAX_PASSWORD_EXPIRE_INTERVAL_DAYS {
+                        return Err(DriverError::PasswordExpireIntervalOutOfRange { days: *days });
+                    }
+                    loaded.expire = Some(privilege::PasswordExpireSetting::Interval(*days));
+                }
+                Option_::History(_)
+                | Option_::HistoryDefault
+                | Option_::ReuseInterval(_)
+                | Option_::ReuseDefault
+                | Option_::RequireCurrentDefault => {
+                    return Err(DriverError::Unsupported(
+                        "PASSWORD HISTORY / PASSWORD REUSE INTERVAL / PASSWORD REQUIRE CURRENT are not supported yet",
+                    ));
+                }
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// Whether the statement wrote no clause at all, which is what lets
+    /// `CREATE USER` leave a brand-new row exactly as it was bootstrapped.
+    fn is_empty(&self) -> bool {
+        self.locked.is_none()
+            && self.failed_login_attempts.is_none()
+            && self.password_lock_time_days.is_none()
+            && self.expire.is_none()
+    }
+
+    /// Writes this statement's options onto one existing account row.
+    ///
+    /// Order matters: `set_locked(.., false)` is the clause that clears the
+    /// failed-login counter (Go's `alterUserFailedLoginJSON` resets it
+    /// whenever `lockAccount` is `"N"`), so `ACCOUNT UNLOCK` is applied AFTER
+    /// the new policy, leaving the captured
+    /// `ALTER USER u5 ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3
+    /// PASSWORD_LOCK_TIME 6` -> policy 3/6 with count 0.
+    fn apply(&self, registry: &privilege::PrivilegeRegistry, user: &str, host: &str) {
+        if self.failed_login_attempts.is_some() || self.password_lock_time_days.is_some() {
+            registry.set_password_locking_options(
+                user,
+                host,
+                self.failed_login_attempts,
+                self.password_lock_time_days,
+            );
+        }
+        if let Some(expire) = self.expire {
+            registry.set_password_expire(user, host, expire);
+        }
+        if let Some(locked) = self.locked {
+            registry.set_locked(user, host, locked);
+        }
+    }
+}
+
 /// The account identity a written role names. Go's role grammar defaults the
 /// omitted host to `%`, the same wildcard host `CREATE USER r` gets, which is
 /// what makes `CREATE ROLE r` and `CREATE USER r` collide.
@@ -59,7 +176,6 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         if !tls_options.is_empty()
             || !resource_options.is_empty()
-            || !password_options.is_empty()
             || comment_or_attribute.is_some()
             || resource_group.is_some()
         {
@@ -67,6 +183,9 @@ impl Session {
                 "CREATE USER options beyond the account list are not supported yet",
             ));
         }
+        // Go validates every statement-level option BEFORE writing any row,
+        // so a bad `PASSWORD EXPIRE INTERVAL 0 DAY` creates no account.
+        let options = PasswordOrLockOptions::load(password_options)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::Unsupported(
                 "CREATE USER requires a server front end with a privilege registry",
@@ -83,9 +202,9 @@ impl Session {
             let host = spec.user.host.as_str();
             // Go processes each account in source order and fails on the
             // FIRST duplicate rather than batching, unlike DROP USER below.
-            if !registry.create_user_with_plugin(user, host, &auth_string, &plugin)
-                && !if_not_exists
-            {
+            if registry.create_user_with_plugin(user, host, &auth_string, &plugin) {
+                options.apply(&registry, user, host);
+            } else if !if_not_exists {
                 return Err(DriverError::CreateUserAlreadyExists {
                     user: user.to_owned(),
                     host: host.to_owned(),
@@ -406,22 +525,7 @@ impl Session {
                 "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
             ));
         }
-        // The statement-level PASSWORD OR LOCK options this tier understands
-        // are only ACCOUNT LOCK and ACCOUNT UNLOCK (last one written wins,
-        // matching Go's `passwordOrLockOptionsInfo.loadOptions`, which
-        // overwrites `lockAccount` on every matching option in source order).
-        let mut locked: Option<bool> = None;
-        for option in &alter.password_options {
-            match option {
-                tidb_ast::CreateUserPasswordOption::AccountLock => locked = Some(true),
-                tidb_ast::CreateUserPasswordOption::AccountUnlock => locked = Some(false),
-                _ => {
-                    return Err(DriverError::Unsupported(
-                        "ALTER USER PASSWORD/FAILED_LOGIN_ATTEMPTS options are not supported yet",
-                    ));
-                }
-            }
-        }
+        let options = PasswordOrLockOptions::load(&alter.password_options)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::Unsupported(
                 "ALTER USER requires a server front end with a privilege registry",
@@ -451,21 +555,34 @@ impl Session {
                         Self::resolve_auth_string_and_plugin(Some(auth))?
                     }
                 };
-                if !registry.set_auth_string_and_plugin(&user, &host, &auth_string, &plugin)
-                    && !alter.if_exists
-                {
+                if registry.set_auth_string_and_plugin(&user, &host, &auth_string, &plugin) {
+                    // Go writes `password_expired='N'` and a fresh
+                    // `Password_last_changed` in the same UPDATE as the new
+                    // hash, which is what lets an expired account recover by
+                    // setting a password (captured: after
+                    // `ALTER USER e5 IDENTIFIED BY 'pw2'`, `SHOW CREATE USER`
+                    // reports `PASSWORD EXPIRE DEFAULT` again).
+                    registry.mark_password_changed(&user, &host);
+                } else if !alter.if_exists {
                     return Err(DriverError::AlterUserMissing { user, host });
                 }
-            } else if locked.is_none() {
+            } else if options.is_empty() {
                 return Err(DriverError::Unsupported(
-                    "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
+                    "ALTER USER options beyond IDENTIFIED [WITH] BY / password-and-lock options are not supported yet",
                 ));
             } else if !registry.user_exists(&user, &host) && !alter.if_exists {
                 return Err(DriverError::AlterUserMissing { user, host });
             }
-            if let Some(locked) = locked {
-                registry.set_locked(&user, &host, locked);
-            }
+            // Go applies the statement's options in the same UPDATE that
+            // writes the password, so a statement doing both lands both.
+            options.apply(&registry, &user, &host);
+        }
+        // A sandboxed session escapes by giving ITSELF a new password, which
+        // is the only thing it was allowed in here to do (Go's
+        // `executeAlterUser` -> `checkSandboxMode`, whose gate ran before the
+        // statement reached this driver).
+        if self.sandbox_mode && alter.users.iter().any(|spec| spec.auth.is_some()) {
+            self.sandbox_mode = false;
         }
         Ok(StmtOutput::Affected(0))
     }
@@ -478,19 +595,18 @@ impl Session {
     /// Go-observed DEFAULT rather than a tracked value:
     /// - `REQUIRE NONE` always (no TLS/`REQUIRE` storage; `CREATE`/`ALTER
     ///   USER` already reject `tls_options`, so no account can differ here).
-    /// - `PASSWORD EXPIRE DEFAULT` always. CAPTURED: Go's `CREATE ROLE`
-    ///   writes `Password_expired='Y'`, which prints bare `PASSWORD EXPIRE`
-    ///   (no `DEFAULT`) for a role -- this tier has no `Password_expired`
-    ///   column, so a role prints the same `DEFAULT` a plain user does
-    ///   (divergence, deferred: `FAILED_LOGIN_ATTEMPTS`/`PASSWORD EXPIRE`
-    ///   enforcement is out of scope for this tier).
     /// - `PASSWORD HISTORY DEFAULT` / `PASSWORD REUSE INTERVAL DEFAULT`
     ///   always (no `Password_reuse_history`/`Password_reuse_time` storage).
-    /// - No ` token_issuer`, ` WITH MAX_USER_CONNECTIONS`,
-    ///   ` FAILED_LOGIN_ATTEMPTS`, ` PASSWORD_LOCK_TIME`, or ` ATTRIBUTE`
+    /// - No ` token_issuer`, ` WITH MAX_USER_CONNECTIONS`, or ` ATTRIBUTE`
     ///   suffix (no storage for any of them; Go omits each when its column is
     ///   NULL/empty too, so a freshly created account's line matches byte for
     ///   byte).
+    ///
+    /// The `PASSWORD EXPIRE ...` clause and the
+    /// ` FAILED_LOGIN_ATTEMPTS n PASSWORD_LOCK_TIME n|UNBOUNDED` suffix DO
+    /// reflect real stored columns, including the bare `PASSWORD EXPIRE` a
+    /// `CREATE ROLE` account prints (Go's `CREATE ROLE` writes
+    /// `Password_expired='Y'`) -- the divergence noted here before.
     ///
     /// The `IDENTIFIED WITH '<plugin>' AS '<hash>'` clause DOES reflect the
     /// account's real plugin and stored hash, and `ACCOUNT LOCK`/`UNLOCK`
@@ -530,8 +646,43 @@ impl Session {
         } else {
             "UNLOCK"
         };
+        // Go picks ONE expiry clause from the two columns, in this order
+        // (all four captured): `Password_expired='Y'` prints a bare
+        // `PASSWORD EXPIRE` whatever the lifetime is, then a zero lifetime
+        // prints `NEVER`, then a positive one prints `INTERVAL n DAY`, and a
+        // NULL lifetime prints `DEFAULT`.
+        let expiry = registry.password_expiry(&user, &host).unwrap_or_default();
+        let expire_clause = if expiry.expired {
+            "PASSWORD EXPIRE".to_owned()
+        } else {
+            match expiry.lifetime {
+                Some(0) => "PASSWORD EXPIRE NEVER".to_owned(),
+                Some(days) if days > 0 => format!("PASSWORD EXPIRE INTERVAL {days} DAY"),
+                _ => "PASSWORD EXPIRE DEFAULT".to_owned(),
+            }
+        };
+        // Both suffixes appear together or not at all, because Go reads them
+        // from one `Password_locking` object that exists only when at least
+        // one of the two options is nonzero (captured:
+        // `FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3` prints both, a plain
+        // account prints neither, and `PASSWORD_LOCK_TIME 6` alone still
+        // prints ` FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 6`).
+        let locking_clause = registry
+            .password_locking(&user, &host)
+            .map(|locking| {
+                let lock_time = if locking.password_lock_time_days == -1 {
+                    "UNBOUNDED".to_owned()
+                } else {
+                    locking.password_lock_time_days.to_string()
+                };
+                format!(
+                    " FAILED_LOGIN_ATTEMPTS {} PASSWORD_LOCK_TIME {lock_time}",
+                    locking.failed_login_attempts
+                )
+            })
+            .unwrap_or_default();
         let show_str = format!(
-            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT {account_clause} PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
+            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE NONE {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT{locking_clause}"
         );
         // Go: `fmt.Sprintf("CREATE USER for %s", s.User)` -- `s.User.String()`
         // is unquoted `user@host` (same shape `SHOW GRANTS`'s header uses).
@@ -567,6 +718,10 @@ impl Session {
         if !registry.set_auth_string(&user, &host, &auth_string) {
             return Err(DriverError::SetPasswordNoMatchingRow);
         }
+        // Same UPDATE as `ALTER USER ... IDENTIFIED BY`: a stored password
+        // is an unexpired password.
+        registry.mark_password_changed(&user, &host);
+        self.sandbox_mode = false;
         Ok(StmtOutput::Affected(0))
     }
 

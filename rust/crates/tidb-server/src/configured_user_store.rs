@@ -30,7 +30,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use tidb_session::privilege::PrivilegeRegistry;
+use tidb_session::privilege::{AccountLockout, PrivilegeRegistry};
 
 use crate::auth_identity::{
     IdentityCatalog, IdentityLookupRequest, IdentityLookupResult, MatchedIdentity,
@@ -42,6 +42,7 @@ use crate::native_password::{verify_candidate, NativePasswordHash};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthenticatedIdentity {
     identity: MatchedIdentity,
+    in_sandbox_mode: bool,
 }
 
 /// Why [`ConfiguredUserStore::authenticate_native`] refused a login. Go's
@@ -51,7 +52,7 @@ pub struct AuthenticatedIdentity {
 /// `mysql.ErrAccountHasBeenLocked` (3118, `"Access denied for user '%s'@'%s'.
 /// Account is locked."`), rather than the generic `ErrAccessDenied` (1045) a
 /// bad password or unknown user gets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthenticationFailure {
     /// The account exists and is locked -- `ACCOUNT LOCK`, or a ROLE (which
     /// Go stores as a locked account with no password). Errno 3118.
@@ -60,6 +61,15 @@ pub enum AuthenticationFailure {
     /// not match. Errno 1045; deliberately indistinguishable from each
     /// other, matching Go's account-existence-hiding behavior.
     AccessDenied,
+    /// The account auto-locked itself after `FAILED_LOGIN_ATTEMPTS`
+    /// consecutive wrong passwords and is still inside its
+    /// `PASSWORD_LOCK_TIME` window. Errno 3955, distinct from both of the
+    /// above -- Go's message names the remaining lock time, so this is the
+    /// one failure that tells the client something specific.
+    AutoLocked(AccountLockout),
+    /// The account's password has expired and the server refuses expired
+    /// logins (`disconnect_on_expired_password`, Go's default). Errno 1862.
+    PasswordExpired,
 }
 
 impl AuthenticatedIdentity {
@@ -85,6 +95,15 @@ impl AuthenticatedIdentity {
     #[must_use]
     pub const fn matched_identity(&self) -> &MatchedIdentity {
         &self.identity
+    }
+
+    /// Whether this login was admitted with an EXPIRED password and must
+    /// therefore start in sandbox mode -- Go's `ConnectionVerification`
+    /// returning `info.InSandBoxMode`, which `session.Auth` turns into
+    /// `EnableSandBoxMode()`.
+    #[must_use]
+    pub const fn in_sandbox_mode(&self) -> bool {
+        self.in_sandbox_mode
     }
 }
 
@@ -215,6 +234,16 @@ impl ConfiguredUserStore {
     /// A passwordless account (empty `authentication_string`) authenticates
     /// only on an empty auth response, which is what a client sends when the
     /// user supplies no password.
+    ///
+    /// The failed-login lockout and password-expiry checks run in Go's order
+    /// (`pkg/session.(*session).Auth`): the auto-lock window is checked and
+    /// possibly expired FIRST, before any password comparison, so an account
+    /// inside its `PASSWORD_LOCK_TIME` reports 3955 for the right password
+    /// too (captured); the `ACCOUNT LOCK` / role check and the password
+    /// comparison follow; a wrong password then bumps the failure counter
+    /// and may lock the account; a right password clears it; and only a
+    /// login that got all the way through is asked whether its password has
+    /// expired.
     pub fn authenticate_native(
         &self,
         username: &str,
@@ -233,6 +262,16 @@ impl ConfiguredUserStore {
             IdentityLookupResult::Matched(identity) => Some(identity),
             IdentityLookupResult::Bypassed(_) | IdentityLookupResult::NotFound => None,
         };
+        // Go runs `verifyAccountAutoLock` before `ConnectionVerification`,
+        // which is what makes a locked account report 3955 rather than 1045
+        // even when the password that arrived was correct -- and what
+        // auto-unlocks an account whose `PASSWORD_LOCK_TIME` has run out, so
+        // the very next correct password works.
+        if let Some(identity) = identity.as_ref() {
+            self.accounts
+                .verify_account_auto_lock(identity.username(), identity.host())
+                .map_err(AuthenticationFailure::AutoLocked)?;
+        }
         // A ROLE is a `mysql.user` row with `account_locked = 'Y'` and an
         // empty password, so without this it would be the most loginable
         // account on the server. Go refuses a locked account at the same
@@ -261,13 +300,36 @@ impl ConfiguredUserStore {
                 response,
             ),
         };
-        if verified {
-            identity
-                .map(|identity| AuthenticatedIdentity { identity })
-                .ok_or(AuthenticationFailure::AccessDenied)
-        } else {
-            Err(AuthenticationFailure::AccessDenied)
+        let Some(identity) = identity else {
+            // No such account: the verifier ran against a dummy hash above
+            // purely so an unknown user costs the same as a known one.
+            return Err(AuthenticationFailure::AccessDenied);
+        };
+        if !verified {
+            // Go bumps the counter only when the failure was a WRONG
+            // PASSWORD (`info.FailedDueToWrongPassword`), which by this point
+            // is the only way to get here.
+            self.accounts
+                .record_failed_login(identity.username(), identity.host())
+                .map_err(AuthenticationFailure::AutoLocked)?;
+            return Err(AuthenticationFailure::AccessDenied);
         }
+        self.accounts
+            .clear_failed_login_count(identity.username(), identity.host())
+            .map_err(AuthenticationFailure::AutoLocked)?;
+        // Go reads the global `default_password_lifetime` for an account
+        // whose own `Password_lifetime` is NULL. This tier does not persist
+        // GLOBAL-scope sysvars, so the value is always the unset default 0 --
+        // "no cluster-wide expiry" -- and only an account with its own
+        // explicit `PASSWORD EXPIRE ...` can age out.
+        let in_sandbox_mode = self
+            .accounts
+            .check_password_expired(identity.username(), identity.host(), 0)
+            .map_err(|_| AuthenticationFailure::PasswordExpired)?;
+        Ok(AuthenticatedIdentity {
+            identity,
+            in_sandbox_mode,
+        })
     }
 }
 
