@@ -17,6 +17,7 @@ package column
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,4 +48,25 @@ func TestResultEncoderCleanReleasesBuffer(t *testing.T) {
 	d.Clean()
 	require.Zero(t, d.buffer.Cap())
 	require.Zero(t, d.buffer.Len())
+}
+
+func TestUpdateDataEncodingCache(t *testing.T) {
+	d := NewResultEncoder("utf8mb4")
+	d.UpdateDataEncoding(mysql.DefaultCollationID)
+	require.True(t, d.dataChsValid)
+	require.Equal(t, uint16(mysql.DefaultCollationID), d.dataChsID)
+	require.False(t, d.dataIsBinary)
+
+	d.UpdateDataEncoding(mysql.BinaryDefaultCollationID)
+	require.True(t, d.dataChsValid)
+	require.Equal(t, uint16(mysql.BinaryDefaultCollationID), d.dataChsID)
+	require.True(t, d.dataIsBinary)
+
+	d.UpdateDataEncoding(^uint16(0))
+	require.False(t, d.dataChsValid)
+
+	d.UpdateDataEncoding(mysql.DefaultCollationID)
+	require.True(t, d.dataChsValid)
+	require.Equal(t, uint16(mysql.DefaultCollationID), d.dataChsID)
+	require.False(t, d.dataIsBinary)
 }
