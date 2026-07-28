@@ -254,6 +254,48 @@ func timestamp(t *testing.T, s string) int64 {
 	return tt.UnixMilli()
 }
 
+func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+
+	minTime, err := types.MinDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	maxTime, err := types.MaxDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	startTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
+	endTime := time.Date(2020, 1, 2, 0, 0, 0, 0, time.Local)
+	cases := []struct {
+		sql   string
+		start time.Time
+		end   time.Time
+	}{
+		{
+			sql:   "select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'",
+			start: startTime,
+			end:   maxTime,
+		},
+		{
+			sql:   "select * from information_schema.statements_summary where summary_begin_time <= '2020-01-02 00:00:00'",
+			start: minTime,
+			end:   endTime,
+		},
+	}
+
+	p := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, p, ca.sql)
+		require.True(t, ok, ca.sql)
+		extractor, ok := logicalMemTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+		require.True(t, ok, ca.sql)
+		require.NotNil(t, extractor.CoarseTimeRange, ca.sql)
+		require.Equal(t, ca.start, extractor.CoarseTimeRange.StartTime, ca.sql)
+		require.Equal(t, ca.end, extractor.CoarseTimeRange.EndTime, ca.sql)
+	}
+}
+
 func TestClusterLogTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
