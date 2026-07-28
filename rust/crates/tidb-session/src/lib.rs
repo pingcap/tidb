@@ -2781,6 +2781,121 @@ mod tests {
         }
     }
 
+    /// LIKE, BETWEEN, CASE and the ordinary builtins through the chunk
+    /// executor, checked against captured TiDB output.
+    ///
+    /// These forms all existed in `tidb_expr`'s AST evaluator already; what
+    /// was missing was the rewriter building them for chunk evaluation, so a
+    /// query using any of them failed outright.
+    ///
+    /// STILL REFUSED, each for its own reason recorded at
+    /// `tidb_expr::rewriter::builtin_return_type`: the session-state
+    /// functions (`DATABASE`, `VERSION`, `CURRENT_USER`, `NOW`) need a
+    /// resolver carrying session state into the chunk path, `CAST`/`CONVERT`
+    /// take a target type rather than a value, `GROUP_CONCAT` is an
+    /// aggregate, and the `DATE_ADD` family takes an `Expr::Interval`.
+    #[test]
+    fn like_between_case_and_builtins() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(20), c BIGINT, KEY kb (b))")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,'xy',10),(2,'Yz',20),(3,'z',30)")
+            .unwrap();
+
+        // Captured: LIKE's wildcards, its negation and its escape.
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE b LIKE 'x%'")),
+            [["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE b LIKE '%y%'")),
+            [["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE b LIKE 'x_'")),
+            [["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE b NOT LIKE 'x%'")),
+            [["2"], ["3"]]
+        );
+        assert_eq!(row_text(session.run(r"SELECT 'a%b' LIKE 'a\%b'")), [["1"]]);
+        assert_eq!(
+            row_text(session.run("SELECT b FROM t WHERE b LIKE '%'")),
+            [["xy"], ["Yz"], ["z"]]
+        );
+
+        // Captured: BETWEEN is inclusive, and its negation is the complement.
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE c BETWEEN 10 AND 20")),
+            [["1"], ["2"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE c NOT BETWEEN 10 AND 20")),
+            [["3"]]
+        );
+
+        // Captured: the searched CASE, the simple CASE, a NULL condition
+        // (which is not a match), and a missing ELSE (which is NULL).
+        assert_eq!(
+            row_text(session.run("SELECT a, CASE WHEN c > 15 THEN 'hi' ELSE 'lo' END FROM t")),
+            [["1", "lo"], ["2", "hi"], ["3", "hi"]]
+        );
+        assert_eq!(
+            row_text(
+                session.run("SELECT CASE c WHEN 10 THEN 'ten' WHEN 20 THEN 'twenty' END FROM t")
+            ),
+            [["ten"], ["twenty"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CASE WHEN NULL THEN 'x' ELSE 'y' END")),
+            [["y"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CASE WHEN c > 100 THEN 'x' END FROM t")),
+            [["NULL"], ["NULL"], ["NULL"]]
+        );
+
+        // Captured: the string builtins, including LENGTH counting bytes
+        // while CHAR_LENGTH counts characters.
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT CONCAT(b,'!'), UPPER(b), LOWER(b), LENGTH(b), CHAR_LENGTH(b) FROM t"
+                )
+            ),
+            [
+                ["xy!", "XY", "xy", "2", "2"],
+                ["Yz!", "YZ", "yz", "2", "2"],
+                ["z!", "Z", "z", "1", "1"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT LENGTH('héllo'), CHAR_LENGTH('héllo')")),
+            [["6", "5"]]
+        );
+
+        // Captured: COALESCE and IFNULL over a column and a literal, whose
+        // branch types Go merges to one string type.
+        assert_eq!(
+            row_text(
+                session.run("SELECT COALESCE(NULL, b), IFNULL(b,'n'), IFNULL(NULL,'n') FROM t")
+            ),
+            [["xy", "xy", "n"], ["Yz", "Yz", "n"], ["z", "z", "n"],]
+        );
+
+        // The refusals above are refusals, not wrong answers.
+        for sql in [
+            "SELECT DATABASE()",
+            "SELECT VERSION()",
+            "SELECT CAST(c AS CHAR) FROM t",
+        ] {
+            assert!(session.run(sql).is_err(), "{sql} should still be refused");
+        }
+    }
+
     /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is
     /// normalized and checked against the column's own type at DDL time,
     /// checked against captured TiDB output.

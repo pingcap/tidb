@@ -248,6 +248,71 @@ impl ScalarFunction {
                 return crate::apply_unary(op, v);
             }
         }
+        // Go `builtinCaseWhen*Sig`: the arguments are the flattened
+        // `cond, result, ..., else` list, and only the selected branch is
+        // evaluated -- so an error in an unreachable branch never surfaces.
+        if name == "case_when" {
+            let mut pairs = self.args.chunks_exact(2);
+            for pair in pairs.by_ref() {
+                let condition = pair[0].eval(ctx, row)?;
+                // A NULL condition is not a match, the same as false.
+                if crate::truthy_of(&condition)?.unwrap_or(false) {
+                    return pair[1].eval(ctx, row);
+                }
+            }
+            // An odd argument count means a trailing ELSE.
+            return match pairs.remainder().first() {
+                Some(else_branch) => else_branch.eval(ctx, row),
+                None => Ok(Datum::Null),
+            };
+        }
+        // Go `builtinLikeSig`: both operands are stringified, NULL in either
+        // propagates, and the third argument is the escape byte.
+        if (name == "like" || name == "ilike") && self.args.len() == 3 {
+            let value = self.args[0].eval(ctx, row)?;
+            let pattern = self.args[1].eval(ctx, row)?;
+            if value.is_null() || pattern.is_null() {
+                return Ok(Datum::Null);
+            }
+            let escape = match self.args[2].eval(ctx, row)? {
+                Datum::Int(byte) => u8::try_from(byte).ok(),
+                _ => None,
+            };
+            let text = value
+                .sql_string()
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 LIKE operand"))?;
+            let pattern = pattern
+                .sql_string()
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 LIKE pattern"))?;
+            let matched = if name == "ilike" {
+                crate::ilike_match(&text, &pattern, escape.unwrap_or(b'\\'))
+            } else {
+                crate::like_match_with_collation(
+                    &text,
+                    &pattern,
+                    escape,
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                )
+            };
+            return Ok(Datum::Int(i64::from(matched)));
+        }
+        // Go picks a string-length signature from the ARGUMENT's type before
+        // any value exists, which is what `build_string_length` models.
+        if self.args.len() == 1 {
+            let length = match name {
+                "length" | "octet_length" => Some(crate::StringLengthFunction::Length),
+                "char_length" | "character_length" => Some(crate::StringLengthFunction::CharLength),
+                _ => None,
+            };
+            if let Some(function) = length {
+                let argument_type = self.args[0].static_type().cloned().unwrap_or_else(|| {
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Null)
+                });
+                let built =
+                    crate::BuildContext::default().build_string_length(function, argument_type);
+                return built.eval(&self.args[0].eval(ctx, row)?);
+            }
+        }
         // Values-only builtins (ABS/CONCAT/COALESCE/...): evaluate every
         // argument, then reuse the single Datum-level implementation shared
         // with the AST evaluator (`crate::func::eval_func_values`). Lazy

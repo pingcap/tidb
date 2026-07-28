@@ -35,7 +35,7 @@ use crate::constant::Constant;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
-use tidb_ast::{CiString, Expr, IsTarget, UnaryOp};
+use tidb_ast::{BinaryOp, CiString, Expr, IsTarget, UnaryOp};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Resolves a dotted column path to an output column, standing in for the
@@ -89,6 +89,80 @@ fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType {
         ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
     }
     ft
+}
+
+/// The result type of a builtin this rewriter is willing to build.
+///
+/// A chunk cell is sized from its column's type, so a wrong static type is a
+/// panic rather than a wrong answer -- which is why this rewriter builds ONLY
+/// the functions whose result type Go fixes to one thing, and refuses the
+/// rest instead of falling back to a placeholder. Go's own per-class type
+/// inference (`getFunction` on each `functionClass`) is the full version of
+/// this table; the deferred names are listed with it.
+///
+/// NOT BUILT here, and refused (each needs more than a fixed result type):
+/// the session-state functions (`DATABASE`, `VERSION`, `CURRENT_USER`,
+/// `NOW`) need a resolver carrying session state into the chunk path;
+/// `CAST`/`CONVERT` take a target type, not a value, argument;
+/// `GROUP_CONCAT` is an aggregate; `DATE_ADD`-family take an `Expr::Interval`
+/// argument that is not an expression at all.
+fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
+    let text = || {
+        let mut ft = FieldType::new(FieldTypeCode::VarString);
+        ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        ft
+    };
+    let int = || FieldType::new(FieldTypeCode::LongLong);
+    Some(match name {
+        // String in, string out.
+        "concat" | "concat_ws" | "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim"
+        | "rtrim" | "reverse" | "left" | "right" | "substring" | "substr" | "mid" | "replace"
+        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "unhex" | "md5" | "elt" => text(),
+        // String in, number out.
+        "length" | "octet_length" | "char_length" | "character_length" | "bit_length" | "ascii"
+        | "instr" | "locate" | "position" | "find_in_set" | "strcmp" | "field" => int(),
+        // Go `likeFunctionClass`: a one-digit boolean.
+        "like" | "ilike" => {
+            let mut ft = int();
+            ft.set_flen(1);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+            ft
+        }
+        // Go aggregates the branch types of these (`aggregateType`). Only a
+        // set of branches that already agree is built here; a mixed set is
+        // refused rather than guessed, because the guess sizes a chunk cell.
+        "case_when" | "if" | "ifnull" | "coalesce" | "nullif" => {
+            // A NULL branch carries no type of its own -- Go's `aggregateType`
+            // ignores it -- so only the typed branches have to agree.
+            let branches = args
+                .iter()
+                .filter_map(Expression::static_type)
+                .filter(|ft| ft.code() != FieldTypeCode::Null);
+            let typed: Vec<&FieldType> = branches.collect();
+            let first = (*typed.first()?).clone();
+            // Go `types.AggFieldType` merges the string family to VarString,
+            // which is what lets `IFNULL(varchar_column, 'literal')` -- a
+            // Varchar branch and a VarString branch -- have one type. Other
+            // mixtures are refused rather than guessed, since the result type
+            // sizes a chunk cell.
+            if typed
+                .iter()
+                .all(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
+            {
+                if typed.iter().any(|ft| ft.code() != first.code()) {
+                    text()
+                } else {
+                    first
+                }
+            } else {
+                if typed.iter().any(|ft| ft.code() != first.code()) {
+                    return None;
+                }
+                first
+            }
+        }
+        _ => return None,
+    })
 }
 
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
@@ -275,6 +349,151 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 )));
             }
             Ok(scalar(name, vec![left, right]))
+        }
+        // Go `expressionRewriter.betweenToExpression`: `x BETWEEN l AND h`
+        // is `x >= l AND x <= h`, and the negated form is `x < l OR x > h` --
+        // built from the comparison operators, so it inherits their types.
+        Expr::Between {
+            expr,
+            low,
+            high,
+            not,
+        } => {
+            let value = rewrite_expr_resolved(expr, resolver)?;
+            let low = rewrite_expr_resolved(low, resolver)?;
+            let high = rewrite_expr_resolved(high, resolver)?;
+            let (lower_op, upper_op, joiner) = if *not {
+                (BinaryOp::Lt, BinaryOp::Gt, "or")
+            } else {
+                (BinaryOp::Ge, BinaryOp::Le, "and")
+            };
+            let compare = |op: BinaryOp, left: Expression, right: Expression| {
+                let name = binary_op_name(op);
+                let ret_type = crate::builtin_compare::infer_compare_type(name)
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(name),
+                    ret_type,
+                    vec![left, right],
+                ))
+            };
+            let lower = compare(lower_op, value.clone(), low);
+            let upper = compare(upper_op, value, high);
+            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
+            ret_type.set_flen(1);
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(joiner),
+                ret_type,
+                vec![lower, upper],
+            )))
+        }
+        // Go builds `like(expr, pattern, escape)`, whose third argument is
+        // the escape byte as an integer; `NOT LIKE` wraps it in a unary NOT.
+        Expr::Like {
+            expr,
+            pattern,
+            not,
+            ilike,
+            escape,
+        } => {
+            let name = if *ilike { "ilike" } else { "like" };
+            let args = vec![
+                rewrite_expr_resolved(expr, resolver)?,
+                rewrite_expr_resolved(pattern, resolver)?,
+                // Go defaults the escape to `\\` when none was written.
+                constant(
+                    Datum::Int(i64::from(escape.unwrap_or(b'\\'))),
+                    FieldTypeCode::LongLong,
+                ),
+            ];
+            let ret_type =
+                builtin_return_type(name, &args).expect("the like builtin has a fixed result type");
+            let call = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type.clone(),
+                args,
+            ));
+            if *not {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(unary_op_name(UnaryOp::Not)),
+                    ret_type,
+                    vec![call],
+                )));
+            }
+            Ok(call)
+        }
+        // Go `caseWhenFunctionClass`: the arguments are the flattened
+        // `cond, result, cond, result, ..., else` list, and the simple form
+        // (`CASE value WHEN ...`) becomes an equality per branch.
+        Expr::Case {
+            value,
+            when_clauses,
+            else_clause,
+        } => {
+            let compare_value = match value {
+                Some(value) => Some(rewrite_expr_resolved(value, resolver)?),
+                None => None,
+            };
+            let mut args = Vec::with_capacity(when_clauses.len() * 2 + 1);
+            for (condition, result) in when_clauses {
+                let condition = rewrite_expr_resolved(condition, resolver)?;
+                let condition = match &compare_value {
+                    Some(value) => {
+                        let name = binary_op_name(BinaryOp::Eq);
+                        let ret_type = crate::builtin_compare::infer_compare_type(name)
+                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                        Expression::ScalarFunction(ScalarFunction::new(
+                            CiString::new(name),
+                            ret_type,
+                            vec![value.clone(), condition],
+                        ))
+                    }
+                    None => condition,
+                };
+                args.push(condition);
+                args.push(rewrite_expr_resolved(result, resolver)?);
+            }
+            if let Some(else_clause) = else_clause {
+                args.push(rewrite_expr_resolved(else_clause, resolver)?);
+            }
+            // The result type comes from the branches, which are every other
+            // argument plus the trailing ELSE.
+            let branches: Vec<Expression> = args
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .chain(if args.len() % 2 == 1 {
+                    args.last()
+                } else {
+                    None
+                })
+                .cloned()
+                .collect();
+            let ret_type = builtin_return_type("case_when", &branches).ok_or(
+                EvalError::Unsupported("a CASE whose branches have different types"),
+            )?;
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("case_when"),
+                ret_type,
+                args,
+            )))
+        }
+        // An ordinary builtin call: every argument is evaluated eagerly and
+        // the shared `eval_func_values` implementation runs it.
+        Expr::Func { name, args, .. } => {
+            let lowered = name.to_ascii_lowercase();
+            let rewritten: Vec<Expression> = args
+                .iter()
+                .map(|arg| rewrite_expr_resolved(arg, resolver))
+                .collect::<Result<_, _>>()?;
+            let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
+                EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
+            )?;
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(&lowered),
+                ret_type,
+                rewritten,
+            )))
         }
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",
