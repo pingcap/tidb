@@ -33,8 +33,9 @@ pub use tidb_txnkv::{
 mod lock;
 
 use lock::{
-    resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient, LockRecoveryError,
-    LockRecoveryResult, OptimisticLock, ResolvedTxnStatus, TimestampSource,
+    resolve_blocking_locks, resolve_optimistic_locks, BlockingLock, FixedTimestampSource,
+    LockRecoveryClient, LockRecoveryError, LockRecoveryResult, OptimisticLock, ResolvedTxnStatus,
+    TimestampSource, SKIP_RESOLVE_THRESHOLD_MS,
 };
 use region::{
     Peer, PeerRole, RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation,
@@ -68,6 +69,7 @@ impl RegionLoader for StaticLoader {
 struct Recorded {
     checks: Vec<(String, KvrpcCheckTxnStatusRequest, KvrpcContext)>,
     resolves: Vec<(String, KvrpcResolveLockRequest, KvrpcContext)>,
+    pessimistic_rollbacks: Vec<(String, tidb_proto::KvrpcPessimisticRollbackRequest)>,
 }
 
 struct MockClient {
@@ -121,6 +123,20 @@ impl LockRecoveryClient for MockClient {
             call.cancellation().cancel();
         }
         Ok(KvrpcResolveLockResponse::default())
+    }
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        address: &str,
+        request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        self.recorded
+            .borrow_mut()
+            .pessimistic_rollbacks
+            .push((address.to_owned(), request.clone()));
+        Ok(tidb_proto::KvrpcPessimisticRollbackResponse::default())
     }
 }
 
@@ -548,4 +564,207 @@ fn txn_not_found_primary_mismatch_and_undetermined_status_fail_closed() {
         Err(LockRecoveryError::MinCommitTsPushed)
     );
     assert!(recorded.borrow().resolves.is_empty());
+}
+
+// -----------------------------------------------------------------------------
+// Blocking-lock recovery for pessimistic locking statements
+// -----------------------------------------------------------------------------
+
+/// Builds a blocker the way a real statement does: from the exact `LockInfo`
+/// TiKV puts in the `KeyIsLocked` error, through the admission decoder.
+fn blocking_pessimistic(key: &[u8], refreshed_ms: u64) -> BlockingLock {
+    let observation = kvrpcpb::LockInfo {
+        key: key.to_vec(),
+        primary_lock: b"primary".to_vec(),
+        lock_version: 1_000 << 18,
+        lock_ttl: 500,
+        lock_type: kvrpcpb::Op::PessimisticLock as i32,
+        lock_for_update_ts: 1_050 << 18,
+        duration_to_last_update_ms: refreshed_ms,
+        ..kvrpcpb::LockInfo::default()
+    };
+    let mut admitted = lock::decode_blocking_lock_observation(&observation)
+        .expect("TiKV's own pessimistic lock is admissible to a locking statement");
+    assert_eq!(admitted.len(), 1);
+    let blocker = admitted.remove(0);
+    assert_eq!(blocker.key(), key);
+    assert_eq!(blocker.txn_id(), 1_000 << 18);
+    assert!(matches!(blocker, BlockingLock::Pessimistic(_)));
+    blocker
+}
+
+/// An expired pessimistic lock is dropped, not replayed.
+///
+/// Source contract (`LockResolver.resolvePessimisticLock`): a pessimistic lock
+/// has no commit record, so cleanup is PessimisticRollback at the lock's own
+/// `for_update_ts` — never ResolveLock, which would need a commit version.
+#[test]
+fn an_expired_pessimistic_blocker_is_rolled_back_at_its_own_for_update_ts() {
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        lock_ttl: 0,
+        action: KvrpcTxnAction::TtlExpirePessimisticRollback as i32,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+
+    let result = resolve_blocking_locks(
+        &runtime,
+        &[blocking_pessimistic(b"secondary", 0)],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &FixedTimestampSource::new(1_100 << 18),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+    );
+    let recorded = recorded.borrow();
+    // The status query must announce which protocol it is resolving, or TiKV
+    // cannot apply its pessimistic-specific expiry rules.
+    assert_eq!(recorded.checks.len(), 1);
+    assert!(recorded.checks[0].1.resolving_pessimistic_lock);
+    assert_eq!(recorded.checks[0].1.lock_ts, 1_000 << 18);
+    assert!(
+        recorded.resolves.is_empty(),
+        "a pessimistic lock has no commit record to resolve"
+    );
+    assert_eq!(recorded.pessimistic_rollbacks.len(), 1);
+    let (address, rollback) = &recorded.pessimistic_rollbacks[0];
+    // Cleanup is routed to the blocked key's own region, not the primary's.
+    assert_eq!(address, "secondary:20160");
+    assert_eq!(rollback.start_version, 1_000 << 18);
+    assert_eq!(rollback.for_update_ts, 1_050 << 18);
+    assert_eq!(rollback.keys, vec![b"secondary".to_vec()]);
+}
+
+/// A pessimistic lock whose owner is still running is waited on, not cleaned.
+#[test]
+fn a_live_pessimistic_blocker_reports_its_remaining_ttl() {
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        lock_ttl: 500,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+
+    let result = resolve_blocking_locks(
+        &runtime,
+        &[blocking_pessimistic(b"secondary", 0)],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &AdvancingTimestampSource::new([1_100 << 18, 1_200 << 18]),
+    )
+    .unwrap();
+
+    // The lock started at 1_000ms with a 500ms TTL and it is now 1_200ms, so
+    // 300ms of the owner's lease remain.
+    assert_eq!(
+        result,
+        LockRecoveryResult::Alive(Duration::from_millis(300))
+    );
+    assert!(recorded.borrow().pessimistic_rollbacks.is_empty());
+}
+
+/// A lock TiKV refreshed moments ago is treated as alive without an RPC.
+///
+/// Source contract (`skipResolveThresholdMs`): TiKV updates this field when it
+/// wakes a waiter, so a small value proves the owner is running. Paying for a
+/// status RPC could only confirm what is already known.
+#[test]
+fn a_freshly_refreshed_blocker_is_assumed_alive_without_a_status_rpc() {
+    let (runtime, recorded) = runtime(Vec::new());
+
+    let result = resolve_blocking_locks(
+        &runtime,
+        &[blocking_pessimistic(
+            b"secondary",
+            SKIP_RESOLVE_THRESHOLD_MS - 1,
+        )],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &FixedTimestampSource::new(1_100 << 18),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Alive(Duration::from_millis(SKIP_RESOLVE_THRESHOLD_MS))
+    );
+    let recorded = recorded.borrow();
+    assert!(recorded.checks.is_empty(), "no RPC may be spent");
+    assert!(recorded.pessimistic_rollbacks.is_empty());
+}
+
+/// A statement blocked by both protocols at once cleans each its own way.
+#[test]
+fn a_mixed_blocker_set_uses_each_locks_own_cleanup_protocol() {
+    let (runtime, recorded) = runtime(vec![
+        // The optimistic blocker committed.
+        KvrpcCheckTxnStatusResponse {
+            commit_version: 1_200 << 18,
+            ..KvrpcCheckTxnStatusResponse::default()
+        },
+        // The pessimistic blocker expired.
+        KvrpcCheckTxnStatusResponse {
+            lock_ttl: 0,
+            action: KvrpcTxnAction::TtlExpirePessimisticRollback as i32,
+            ..KvrpcCheckTxnStatusResponse::default()
+        },
+    ]);
+
+    let result = resolve_blocking_locks(
+        &runtime,
+        &[
+            BlockingLock::Optimistic(secondary()),
+            blocking_pessimistic(b"secondary", 0),
+        ],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &AdvancingTimestampSource::new([1_100 << 18, 1_100 << 18]),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![
+            ResolvedTxnStatus::Committed(1_200 << 18),
+            ResolvedTxnStatus::RolledBack,
+        ])
+    );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 2);
+    assert!(!recorded.checks[0].1.resolving_pessimistic_lock);
+    assert!(recorded.checks[1].1.resolving_pessimistic_lock);
+    // Exactly one of each cleanup command, never both for the same lock.
+    assert_eq!(recorded.resolves.len(), 1);
+    assert_eq!(recorded.resolves[0].1.commit_version, 1_200 << 18);
+    assert_eq!(recorded.pessimistic_rollbacks.len(), 1);
+}
+
+/// A blocker holding its own primary needs no second cleanup command.
+///
+/// Source contract: CheckTxnStatus with `resolving_pessimistic_lock` already
+/// removed the primary's lock when it ruled the transaction expired.
+#[test]
+fn a_primary_pessimistic_blocker_is_cleaned_by_the_status_query_alone() {
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        lock_ttl: 0,
+        action: KvrpcTxnAction::TtlExpirePessimisticRollback as i32,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+
+    resolve_blocking_locks(
+        &runtime,
+        &[blocking_pessimistic(b"primary", 0)],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &FixedTimestampSource::new(1_100 << 18),
+    )
+    .unwrap();
+
+    assert!(recorded.borrow().pessimistic_rollbacks.is_empty());
 }

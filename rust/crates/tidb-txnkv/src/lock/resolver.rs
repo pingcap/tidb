@@ -18,7 +18,8 @@ use std::time::Duration;
 
 use tidb_proto::{
     KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcPeer,
-    KvrpcRegionEpoch, KvrpcResolveLockRequest, KvrpcResolveLockResponse, KvrpcTxnAction,
+    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcRegionEpoch,
+    KvrpcResolveLockRequest, KvrpcResolveLockResponse, KvrpcTxnAction,
 };
 
 use crate::region::{ReadPolicy, RegionLoader, RequestSelection};
@@ -84,6 +85,19 @@ pub trait LockRecoveryClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError>;
+
+    /// Sends keyed PessimisticRollback cleaning one expired pessimistic lock.
+    ///
+    /// ResolveLock cannot clean a pessimistic lock: there is no commit record
+    /// to redo or undo, only a lock entry that must be dropped at its exact
+    /// `for_update_ts`.
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcPessimisticRollbackRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<KvrpcPessimisticRollbackResponse, DirectUnaryClientError>;
 }
 
 impl LockRecoveryClient for TonicCoprocessorClient {
@@ -105,6 +119,20 @@ impl LockRecoveryClient for TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
         self.resolve_lock(address, request, context, call)
+    }
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcPessimisticRollbackRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        let decoded = self
+            .begin_transaction_pessimistic_rollback(address, None, request, context, call)?
+            .complete(call)
+            .map_err(|error| DirectUnaryClientError::InvalidRequest(error.to_string()))??;
+        Ok(decoded.response)
     }
 }
 
@@ -271,7 +299,7 @@ where
     })
 }
 
-fn remaining_lock_ttl(txn_id: u64, lock_ttl_ms: u64, current_ts: u64) -> Duration {
+pub(super) fn remaining_lock_ttl(txn_id: u64, lock_ttl_ms: u64, current_ts: u64) -> Duration {
     const TSO_LOGICAL_BITS: u32 = 18;
     let lock_started_ms = txn_id >> TSO_LOGICAL_BITS;
     let now_ms = current_ts >> TSO_LOGICAL_BITS;
@@ -282,7 +310,9 @@ fn remaining_lock_ttl(txn_id: u64, lock_ttl_ms: u64, current_ts: u64) -> Duratio
     )
 }
 
-fn reject_check_error(response: &KvrpcCheckTxnStatusResponse) -> Result<(), LockRecoveryError> {
+pub(super) fn reject_check_error(
+    response: &KvrpcCheckTxnStatusResponse,
+) -> Result<(), LockRecoveryError> {
     if let Some(error) = response.region_error.as_ref() {
         return Err(LockRecoveryError::RegionError(format!("{error:?}")));
     }
@@ -292,7 +322,7 @@ fn reject_check_error(response: &KvrpcCheckTxnStatusResponse) -> Result<(), Lock
     Ok(())
 }
 
-fn classify_determined_status(
+pub(super) fn classify_determined_status(
     response: &KvrpcCheckTxnStatusResponse,
 ) -> Result<ResolvedTxnStatus, LockRecoveryError> {
     if response.commit_version > 0 {
@@ -353,7 +383,7 @@ where
     Ok(())
 }
 
-fn map_rpc_error(error: DirectUnaryClientError) -> LockRecoveryError {
+pub(super) fn map_rpc_error(error: DirectUnaryClientError) -> LockRecoveryError {
     if matches!(error, DirectUnaryClientError::CallerCancelled) {
         LockRecoveryError::CallerCancelled
     } else {
@@ -361,7 +391,7 @@ fn map_rpc_error(error: DirectUnaryClientError) -> LockRecoveryError {
     }
 }
 
-fn check_cancelled(call: &UnaryCallContext) -> Result<(), LockRecoveryError> {
+pub(super) fn check_cancelled(call: &UnaryCallContext) -> Result<(), LockRecoveryError> {
     if call.cancellation().is_cancelled() {
         Err(LockRecoveryError::CallerCancelled)
     } else {
@@ -369,7 +399,7 @@ fn check_cancelled(call: &UnaryCallContext) -> Result<(), LockRecoveryError> {
     }
 }
 
-fn route_key<C, L>(
+pub(super) fn route_key<C, L>(
     runtime: &SharedReadRuntime<C, L>,
     key: &[u8],
     base_context: &KvrpcContext,

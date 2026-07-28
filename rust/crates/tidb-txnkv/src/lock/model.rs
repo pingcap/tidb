@@ -44,6 +44,76 @@ pub struct OptimisticLock {
     pub min_commit_ts: u64,
 }
 
+/// One source-shaped pessimistic lock observed by a blocked locking statement.
+///
+/// A pessimistic lock has no committed value behind it, so it is never
+/// resolved by committing: it is either still alive (its owner keeps it alive
+/// with TxnHeartBeat) or expired and rolled back key by key. That is why it
+/// carries `for_update_ts`, which the cleanup command must echo, instead of the
+/// optimistic lock's `min_commit_ts`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PessimisticLock {
+    /// Locked key returned by TiKV.
+    pub key: Vec<u8>,
+    /// Transaction primary key.
+    pub primary: Vec<u8>,
+    /// Transaction start timestamp.
+    pub txn_id: u64,
+    /// Source lock TTL in milliseconds.
+    pub ttl_ms: u64,
+    /// Statement timestamp the lock was acquired under.
+    pub for_update_ts: u64,
+    /// Milliseconds since the owner last refreshed this lock, zero if unknown.
+    pub duration_to_last_update_ms: u64,
+    /// Exact pessimistic mutation discriminant.
+    pub lock_type: i32,
+}
+
+/// One lock blocking a pessimistic locking statement.
+///
+/// The two variants need different cleanup protocols, so the discriminant is
+/// resolved once at admission rather than re-derived at every decision point.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BlockingLock {
+    /// A prewrite lock cleaned by CheckTxnStatus plus ResolveLock.
+    Optimistic(OptimisticLock),
+    /// A pessimistic lock cleaned by CheckTxnStatus plus PessimisticRollback.
+    Pessimistic(PessimisticLock),
+}
+
+impl BlockingLock {
+    /// Locked key common to both protocols.
+    #[must_use]
+    pub fn key(&self) -> &[u8] {
+        match self {
+            Self::Optimistic(lock) => &lock.key,
+            Self::Pessimistic(lock) => &lock.key,
+        }
+    }
+
+    /// Owning transaction's start timestamp.
+    #[must_use]
+    pub const fn txn_id(&self) -> u64 {
+        match self {
+            Self::Optimistic(lock) => lock.txn_id,
+            Self::Pessimistic(lock) => lock.txn_id,
+        }
+    }
+
+    /// Milliseconds since the owner last refreshed the lock, zero if unknown.
+    ///
+    /// Only a pessimistic lock reports this; TiKV sets it when it wakes a
+    /// waiter, and client-go uses it to skip resolving a lock whose owner is
+    /// demonstrably alive.
+    #[must_use]
+    pub const fn duration_to_last_update_ms(&self) -> u64 {
+        match self {
+            Self::Optimistic(_) => 0,
+            Self::Pessimistic(lock) => lock.duration_to_last_update_ms,
+        }
+    }
+}
+
 /// Fail-closed lock admission errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LockAdmissionError {
@@ -102,6 +172,44 @@ pub fn decode_lock_observation(
             .collect();
     }
     Ok(vec![admit_lock(observation)?])
+}
+
+/// Expands the same shared-lock wrapper for a blocked pessimistic statement,
+/// which — unlike a snapshot read — must also admit pessimistic lock types.
+pub fn decode_blocking_lock_observation(
+    observation: &KvrpcLockInfo,
+) -> Result<Vec<BlockingLock>, LockAdmissionError> {
+    if !observation.shared_lock_infos.is_empty() {
+        return observation
+            .shared_lock_infos
+            .iter()
+            .map(admit_blocking_lock)
+            .collect();
+    }
+    Ok(vec![admit_blocking_lock(observation)?])
+}
+
+fn admit_blocking_lock(lock: &KvrpcLockInfo) -> Result<BlockingLock, LockAdmissionError> {
+    match lock.lock_type {
+        OP_PESSIMISTIC_LOCK | OP_SHARED_PESSIMISTIC_LOCK => {
+            if lock.is_txn_file {
+                return Err(LockAdmissionError::TransactionFile);
+            }
+            if lock.key.is_empty() || lock.primary_lock.is_empty() || lock.lock_version == 0 {
+                return Err(LockAdmissionError::MissingIdentity);
+            }
+            Ok(BlockingLock::Pessimistic(PessimisticLock {
+                key: lock.key.clone(),
+                primary: lock.primary_lock.clone(),
+                txn_id: lock.lock_version,
+                ttl_ms: lock.lock_ttl,
+                for_update_ts: lock.lock_for_update_ts,
+                duration_to_last_update_ms: lock.duration_to_last_update_ms,
+                lock_type: lock.lock_type,
+            }))
+        }
+        _ => Ok(BlockingLock::Optimistic(admit_lock(lock)?)),
+    }
 }
 
 fn admit_lock(lock: &KvrpcLockInfo) -> Result<OptimisticLock, LockAdmissionError> {

@@ -15,9 +15,14 @@
 //! Bounded optimistic read-lock recovery.
 
 mod model;
+mod pessimistic;
 mod resolver;
 
-pub use model::{decode_lock_observation, LockAdmissionError, OptimisticLock};
+pub use model::{
+    decode_blocking_lock_observation, decode_lock_observation, BlockingLock, LockAdmissionError,
+    OptimisticLock, PessimisticLock,
+};
+pub use pessimistic::{resolve_blocking_locks, SKIP_RESOLVE_THRESHOLD_MS};
 pub use resolver::{
     resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient, LockRecoveryError,
     LockRecoveryResult, ResolvedTxnStatus, TimestampSource,
