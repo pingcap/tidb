@@ -233,8 +233,8 @@ func TestExternalWorkloadTTLTableReportsOnlyFromMaster(t *testing.T) {
 	dc = &ddlCtx{extWorkload: ttlWorker}
 	require.NoError(t, dc.registerTTLTableToExternalWorkload(context.Background(), tblInfo))
 	dc.deleteTTLTableFromExternalWorkload(context.Background(), tblInfo.ID)
-	require.Zero(t, ttlWorker.registeredTable)
-	require.Zero(t, ttlWorker.deletedTable)
+	require.Equal(t, int64(123), ttlWorker.registeredTable)
+	require.Equal(t, int64(123), ttlWorker.deletedTable)
 }
 
 func TestExternalWorkloadTTLTableRegisterSkipsDisabledTTL(t *testing.T) {

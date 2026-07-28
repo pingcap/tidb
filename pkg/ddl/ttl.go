@@ -102,16 +102,16 @@ func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 	return ver, nil
 }
 
-func (dc *ddlCtx) externalWorkloadMaster() (extworkload.Manager, bool) {
+func (dc *ddlCtx) externalWorkloadManager() (extworkload.Manager, bool) {
 	if dc == nil {
 		return nil, false
 	}
 	manager := dc.extWorkload
-	return manager, extworkload.IsMaster(manager)
+	return manager, extworkload.IsEnabled(manager)
 }
 
 func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
-	manager, ok := dc.externalWorkloadMaster()
+	manager, ok := dc.externalWorkloadManager()
 	if !ok || tblInfo == nil || tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
 		return nil
 	}
@@ -138,7 +138,7 @@ func (dc *ddlCtx) syncTTLTableToExternalWorkload(ctx context.Context, tblInfo *m
 }
 
 func (dc *ddlCtx) deleteTTLTableFromExternalWorkload(ctx context.Context, tableID int64) {
-	manager, ok := dc.externalWorkloadMaster()
+	manager, ok := dc.externalWorkloadManager()
 	if !ok {
 		return
 	}

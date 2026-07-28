@@ -184,4 +184,20 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		require.Equal(t, []int64{oldTbl.Meta().ID}, mgr.deletedTTLTables())
 		require.Equal(t, []int64{oldTbl.Meta().ID, newTbl.Meta().ID}, mgr.registeredTTLTables())
 	})
+
+	t.Run("ddl syncs ttl metadata from ttl worker role", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleTTLTaskWorker}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		tk.MustExec(`create table t(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+
+		tbl := external.GetTableByName(t, tk, "test", "t")
+		require.Equal(t, []int64{tbl.Meta().ID}, mgr.registeredTTLTables())
+
+		tk.MustExec("drop table t")
+		require.Equal(t, []int64{tbl.Meta().ID}, mgr.deletedTTLTables())
+	})
 }
