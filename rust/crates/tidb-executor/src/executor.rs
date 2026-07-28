@@ -32,6 +32,10 @@ pub enum ExecError {
     /// scalar subquery's plan carries. It is an executor error because it is
     /// only known per outer row, once the inner query has run.
     SubqueryReturnsMoreThanOneRow,
+    /// Go `types.ErrJSONDocumentNULLKey` (3158): `JSON_OBJECTAGG` evaluated a
+    /// NULL member name. It is an executor error because Go raises it while
+    /// folding the group, after the result columns are already on the wire.
+    JsonDocumentNullKey,
 }
 
 impl From<EvalError> for ExecError {

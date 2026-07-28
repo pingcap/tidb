@@ -1676,33 +1676,15 @@ impl Parser {
         let origin_position = self.peek().offset;
         let name = self.bump().text;
         self.expect_op("(")?;
-        let json_aggregate = matches!(
-            name.to_ascii_uppercase().as_str(),
-            "JSON_ARRAYAGG" | "JSON_OBJECTAGG"
-        );
-        if json_aggregate && self.is_kw("ALL") {
-            self.bump();
-        }
         let mut args = Vec::new();
         if !self.is_op(")") {
             args.push(self.parse_expr(prec::NONE)?);
             while self.is_op(",") {
                 self.bump();
-                if json_aggregate && self.is_kw("ALL") {
-                    self.bump();
-                }
                 args.push(self.parse_expr(prec::NONE)?);
             }
         }
         self.expect_op(")")?;
-        let arity = match name.to_ascii_uppercase().as_str() {
-            "JSON_ARRAYAGG" => Some(1),
-            "JSON_OBJECTAGG" => Some(2),
-            _ => None,
-        };
-        if arity.is_some_and(|expected| args.len() != expected) {
-            return Err(self.err_here("invalid JSON aggregate arity"));
-        }
         if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
             && (args.len() != 2 || !matches!(args[1], Expr::Interval { .. }))
         {
@@ -1791,24 +1773,41 @@ impl Parser {
             }
             self.bump();
         }
-        if distinct && matches!(name.as_str(), "BIT_AND" | "BIT_OR" | "BIT_XOR") {
-            return Err(self.err_here("bit aggregates do not accept DISTINCT"));
+        if distinct
+            && matches!(
+                name.as_str(),
+                "BIT_AND" | "BIT_OR" | "BIT_XOR" | "JSON_ARRAYAGG" | "JSON_OBJECTAGG"
+            )
+        {
+            return Err(self.err_here("this aggregate does not accept DISTINCT"));
         }
+        // Go's argument loop accepts a redundant `ALL` before EVERY argument,
+        // not just the first (`JSON_OBJECTAGG(c1, ALL c2)` parses).
         let mut args = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
             self.bump();
+            if self.is_kw("ALL") {
+                self.bump();
+            }
             args.push(self.parse_expr(prec::NONE)?);
         }
         self.expect_op(")")?;
         if args.len() > 1 {
             let multi_arg_allowed = match name.as_str() {
                 "COUNT" => distinct,
-                "APPROX_COUNT_DISTINCT" => true,
+                "APPROX_COUNT_DISTINCT" | "APPROX_PERCENTILE" => true,
+                // Go's grammar spells JSON_OBJECTAGG with exactly two
+                // arguments, so two is the ONLY legal count -- one is a
+                // syntax error the same way three is.
+                "JSON_OBJECTAGG" => args.len() == 2,
                 _ => false,
             };
             if !multi_arg_allowed {
                 return Err(self.err_here("this aggregate does not accept multiple arguments"));
             }
+        }
+        if name == "JSON_OBJECTAGG" && args.len() != 2 {
+            return Err(self.err_here("JSON_OBJECTAGG takes exactly two arguments"));
         }
         if self.is_kw("OVER") {
             self.bump();
@@ -2430,6 +2429,13 @@ fn agg_canonical(name: &str) -> Option<&'static str> {
         // dispatch has no entry for it), same "parse and restore only"
         // boundary.
         "APPROX_COUNT_DISTINCT" => Some("APPROX_COUNT_DISTINCT"),
+        // Go's `parseAggregateFuncCall` routes these three by name exactly
+        // like the aggregates above: `JSON_ARRAYAGG`/`JSON_OBJECTAGG` reject
+        // DISTINCT and fix their arity (1 and 2), `APPROX_PERCENTILE` accepts
+        // a multi-argument list unconditionally.
+        "JSON_ARRAYAGG" => Some("JSON_ARRAYAGG"),
+        "JSON_OBJECTAGG" => Some("JSON_OBJECTAGG"),
+        "APPROX_PERCENTILE" => Some("APPROX_PERCENTILE"),
         _ => None,
     }
 }

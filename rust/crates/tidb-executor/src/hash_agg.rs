@@ -44,8 +44,16 @@
 //! incremental accumulator (`func_varpop.go`'s `calculateIntermediate`),
 //! reproduced operation-for-operation so the floating-point result matches.
 //!
+//! `JSON_ARRAYAGG`/`JSON_OBJECTAGG` build a JSON document per group (NULL
+//! inputs kept as JSON `null`, a repeated object key overwritten by the last
+//! row), `APPROX_COUNT_DISTINCT` counts distinct encoded argument tuples and
+//! `APPROX_PERCENTILE` ranks the group's values -- see each [`AggKind`]
+//! variant for the exact Go rule and its captured edges.
+//!
 //! DEFERRED (documented): the parallel partial/final worker pipeline, spill,
-//! memory tracking; the JSON, percentile and approximate-distinct families;
+//! memory tracking; `APPROX_COUNT_DISTINCT` above 65536 distinct values,
+//! where Go's sketch stops being exact, and a BINARY-charset JSON aggregate
+//! argument, which Go wraps in a JSON `Opaque`;
 //! SUM-over-integer's DECIMAL result domain -- this seed accumulates integer
 //! sums in `i64` and reports overflow as an error rather than widening to
 //! decimal (Go returns DECIMAL; lands with the layout-faithful MyDecimal);
@@ -53,9 +61,9 @@
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Datum, Decimal, FieldType};
+use tidb_datatype::{BinaryJSON, BinaryJSONValue, Datum, Decimal, FieldType};
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -98,6 +106,32 @@ pub enum AggKind {
         /// `true` for the `STDDEV*` forms, which take the square root.
         sqrt: bool,
     },
+    /// `JSON_ARRAYAGG(v)`: every row's value in ARRIVAL order, NULL rows
+    /// included as JSON `null` (Go `func_json_arrayagg.go` appends the
+    /// converted datum unconditionally). An empty group is SQL NULL.
+    JsonArrayAgg,
+    /// `JSON_OBJECTAGG(k, v)`: a JSON object keyed by the stringified first
+    /// argument. A repeated key keeps the LAST row's value (Go's
+    /// `MemAwareMap.SetExt` overwrites), a NULL key fails the statement with
+    /// 3158, and a NULL value stores JSON `null`.
+    JsonObjectAgg,
+    /// `APPROX_COUNT_DISTINCT(a[, b, ...])`: Go's BJKST sketch over the
+    /// 32-bit farm-hash of the encoded argument tuple, skipping any row with
+    /// a NULL argument. Below `uniquesHashMaxSize` (65536) distinct values
+    /// the sketch keeps EVERY hash and `fixedSize` returns the set size
+    /// unchanged, so the answer is the exact distinct count -- which is what
+    /// this accumulator computes, over the same encoded tuple. Above that
+    /// threshold Go starts discarding hashes and extrapolates; that
+    /// large-cardinality regime is the documented deferral here.
+    ApproxCountDistinct,
+    /// `APPROX_PERCENTILE(v, pct)`: the value at ordinal rank
+    /// `ceil(pct / 100 * N)` among the group's non-NULL values (Go
+    /// `func_percentile.go`'s `percentile`), which is a real element rather
+    /// than an interpolation. `None` is Go's `basePercentile` fallback: for
+    /// an argument whose eval type is none of INT/REAL/DECIMAL/DATETIME/
+    /// DURATION (a string column, say) `buildApproxPercentile` returns the
+    /// base function, which appends NULL for every group.
+    ApproxPercentile(Option<i64>),
 }
 
 /// Which bitwise fold a [`AggKind::Bit`] performs.
@@ -195,6 +229,20 @@ enum Partial {
         sample: bool,
         sqrt: bool,
     },
+    /// `JSON_ARRAYAGG`: the converted values in arrival order.
+    JsonArrayAgg(Vec<BinaryJSON>),
+    /// `JSON_OBJECTAGG`: the object built so far. A `BTreeMap` both keeps the
+    /// last write per key (Go's map overwrite) and hands the encoder the
+    /// bytewise-sorted key order it needs.
+    JsonObjectAgg(BTreeMap<String, BinaryJSON>),
+    /// `APPROX_COUNT_DISTINCT`: the encoded argument tuples seen so far.
+    ApproxCountDistinct(HashSet<Vec<u8>>),
+    /// `APPROX_PERCENTILE`: the group's non-NULL values, ranked at finalize.
+    /// `percent` is `None` for Go's always-NULL fallback build.
+    ApproxPercentile {
+        values: Vec<Datum>,
+        percent: Option<i64>,
+    },
 }
 
 /// One aggregate's per-group state: its partial result plus, for `DISTINCT`,
@@ -219,7 +267,12 @@ impl AggState {
     /// the datum hash key is that same encoding. A datum with no hash key
     /// (Go's encode error) fails the statement rather than silently counting
     /// twice.
-    fn update(&mut self, value: Option<Datum>, sort_key: Vec<Datum>) -> Result<(), ExecError> {
+    fn update(
+        &mut self,
+        value: Option<Datum>,
+        extra: &[Datum],
+        sort_key: Vec<Datum>,
+    ) -> Result<(), ExecError> {
         if let Some(seen) = &mut self.seen {
             let datum = value.clone().unwrap_or(Datum::Null);
             if datum != Datum::Null {
@@ -231,7 +284,7 @@ impl AggState {
                 }
             }
         }
-        self.partial.update(value, sort_key)
+        self.partial.update(value, extra, sort_key)
     }
 }
 
@@ -293,11 +346,58 @@ impl Partial {
                 sample: *sample,
                 sqrt: *sqrt,
             },
+            AggKind::JsonArrayAgg => Partial::JsonArrayAgg(Vec::new()),
+            AggKind::JsonObjectAgg => Partial::JsonObjectAgg(BTreeMap::new()),
+            AggKind::ApproxCountDistinct => Partial::ApproxCountDistinct(HashSet::new()),
+            AggKind::ApproxPercentile(percent) => Partial::ApproxPercentile {
+                values: Vec::new(),
+                percent: *percent,
+            },
         }
     }
 
-    fn update(&mut self, value: Option<Datum>, sort_key: Vec<Datum>) -> Result<(), ExecError> {
+    fn update(
+        &mut self,
+        value: Option<Datum>,
+        extra: &[Datum],
+        sort_key: Vec<Datum>,
+    ) -> Result<(), ExecError> {
         match (self, value) {
+            // Go appends the converted value for EVERY row, so a NULL input
+            // lands in the array as JSON `null` rather than being skipped.
+            (Partial::JsonArrayAgg(_), None) => {
+                return Err(ExecError::Unsupported("JSON_ARRAYAGG requires an argument"))
+            }
+            (Partial::JsonArrayAgg(entries), Some(input)) => entries.push(json_value(&input)?),
+            (Partial::JsonObjectAgg(_), None | Some(Datum::Null)) => {
+                return Err(ExecError::JsonDocumentNullKey)
+            }
+            (Partial::JsonObjectAgg(entries), Some(key)) => {
+                let value = extra.first().cloned().unwrap_or(Datum::Null);
+                entries.insert(json_object_key(&key)?, json_value(&value)?);
+            }
+            // A row with a NULL argument (or, for the multi-argument form, a
+            // NULL in ANY argument, which the caller has already collapsed to
+            // one NULL) never reaches the sketch.
+            (Partial::ApproxCountDistinct(_), None) => {
+                return Err(ExecError::Unsupported(
+                    "APPROX_COUNT_DISTINCT requires an argument",
+                ))
+            }
+            (Partial::ApproxCountDistinct(_), Some(Datum::Null)) => {}
+            (Partial::ApproxCountDistinct(seen), Some(input)) => {
+                let key = input.to_hash_key().map_err(|_| {
+                    ExecError::Unsupported("APPROX_COUNT_DISTINCT over this datum kind")
+                })?;
+                seen.insert(key);
+            }
+            (Partial::ApproxPercentile { .. }, None) => {
+                return Err(ExecError::Unsupported(
+                    "APPROX_PERCENTILE requires an argument",
+                ))
+            }
+            (Partial::ApproxPercentile { .. }, Some(Datum::Null)) => {}
+            (Partial::ApproxPercentile { values, .. }, Some(input)) => values.push(input),
             // COUNT(*): every row counts; COUNT(expr): NULL skipped.
             (Partial::Count(n), None) => *n += 1,
             (Partial::Count(_), Some(Datum::Null)) => {}
@@ -456,9 +556,41 @@ impl Partial {
         Ok(())
     }
 
-    fn finish(&self, order_by: &[(Expression, bool)]) -> Datum {
-        match self {
+    fn finish(&self, order_by: &[(Expression, bool)]) -> Result<Datum, ExecError> {
+        Ok(match self {
             Partial::Count(n) => Datum::Int(*n),
+            // An empty group is SQL NULL, not the empty document `[]`/`{}`.
+            Partial::JsonArrayAgg(entries) if entries.is_empty() => Datum::Null,
+            Partial::JsonArrayAgg(entries) => encode_json(BinaryJSONValue::Array(
+                entries
+                    .iter()
+                    .cloned()
+                    .map(BinaryJSONValue::Binary)
+                    .collect(),
+            ))?,
+            Partial::JsonObjectAgg(entries) if entries.is_empty() => Datum::Null,
+            Partial::JsonObjectAgg(entries) => encode_json(BinaryJSONValue::Object(
+                entries
+                    .iter()
+                    .map(|(key, value)| (key.clone(), BinaryJSONValue::Binary(value.clone())))
+                    .collect(),
+            ))?,
+            Partial::ApproxCountDistinct(seen) => Datum::Int(seen.len() as i64),
+            // Go `percentile`: ordinal rank `k = min(ceil(N * pct/100), N)`,
+            // then the k-th smallest value ITSELF (`selection.Select`), so an
+            // even-sized group returns a real element rather than the mean of
+            // the middle two.
+            Partial::ApproxPercentile { values, percent } => {
+                let Some(percent) = percent.filter(|_| !values.is_empty()) else {
+                    return Ok(Datum::Null);
+                };
+                let mut sorted = values.clone();
+                sorted
+                    .sort_by(|left, right| compare_datums(left, right).unwrap_or(Ordering::Equal));
+                let rank = (sorted.len() as f64 * (percent as f64 / 100.0)).ceil() as usize;
+                let index = rank.clamp(1, sorted.len()) - 1;
+                sorted[index].clone()
+            }
             // An empty group concatenates to NULL, not an empty string.
             Partial::GroupConcat { values, .. } if values.is_empty() => Datum::Null,
             Partial::GroupConcat { values, separator } => {
@@ -531,8 +663,37 @@ impl Partial {
                     Datum::Real(if *sqrt { value.sqrt() } else { value })
                 }
             }
-        }
+        })
     }
+}
+
+/// One JSON aggregate input as a JSON value, Go's `getRealJSONValue` followed
+/// by `CreateBinaryJSONWithCheck`'s per-element conversion: a NULL datum is
+/// JSON `null`, a DECIMAL becomes a DOUBLE, and a JSON column's value is
+/// carried through unchanged.
+///
+/// DEFERRED: a BINARY-charset string argument, which Go wraps in a JSON
+/// `Opaque` value rather than a JSON string.
+fn json_value(value: &Datum) -> Result<BinaryJSON, ExecError> {
+    value
+        .to_mysql_json()
+        .map_err(|_| ExecError::Unsupported("this datum kind is not a JSON value"))
+}
+
+/// `JSON_OBJECTAGG`'s member name: Go reads the key argument with
+/// `EvalString`, so a non-string key is stringified (`JSON_OBJECTAGG(id, v)`
+/// keys the object with `"1"`, `"2"`, ...).
+fn json_object_key(value: &Datum) -> Result<String, ExecError> {
+    value
+        .sql_string()
+        .map_err(|_| ExecError::Unsupported("this datum kind is not a JSON member name"))
+}
+
+/// Encodes a finished JSON aggregate, Go's `CreateBinaryJSONWithCheck`.
+fn encode_json(value: BinaryJSONValue) -> Result<Datum, ExecError> {
+    BinaryJSON::from_typed_value(&value)
+        .map(Datum::Json)
+        .map_err(|_| ExecError::Unsupported("this JSON document cannot be encoded"))
 }
 
 /// The 64 bits one `BIT_AND`/`BIT_OR`/`BIT_XOR` input contributes: Go casts
@@ -558,16 +719,18 @@ fn datum_bits(value: &Datum) -> Result<u64, ExecError> {
 /// integers-summed-in-the-decimal-domain rule, AVG's `div_precision_increment`
 /// division and MIN/MAX's datum comparison identical between the two callers.
 /// `None` stands for `COUNT(*)`'s absent argument; every other aggregate takes
-/// `Some(value)`, with `Some(Datum::Null)` for a NULL input.
-pub(crate) fn aggregate_values(
+/// `Some(value)`, with `Some(Datum::Null)` for a NULL input. Each item pairs
+/// that first argument with the values of any further arguments, exactly the
+/// pair the GROUP BY path builds per source row.
+pub(crate) fn aggregate_rows(
     kind: &AggKind,
-    values: impl IntoIterator<Item = Option<Datum>>,
+    rows: impl IntoIterator<Item = (Option<Datum>, Vec<Datum>)>,
 ) -> Result<Datum, ExecError> {
     let mut partial = Partial::new(kind);
-    for value in values {
-        partial.update(value, Vec::new())?;
+    for (value, extra) in rows {
+        partial.update(value, &extra, Vec::new())?;
     }
-    Ok(partial.finish(&[]))
+    partial.finish(&[])
 }
 
 /// Go's default `div_precision_increment`, the scale AVG's division adds over
@@ -650,13 +813,30 @@ impl<C: Columns> Executor for HashAggExec<C> {
                     }
                 };
                 for (f, state) in self.agg_funcs.iter().zip(ordered[idx].iter_mut()) {
+                    let mut extra_values: Vec<Datum> = Vec::new();
                     let value = if f.extra_args.is_empty() {
                         match &f.arg {
                             Some(expr) => Some(expr.eval(&self.ctx, row)?),
                             None => None,
                         }
-                    } else if matches!(f.kind, AggKind::Count) {
-                        // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`:
+                    } else if matches!(f.kind, AggKind::JsonObjectAgg) {
+                        // `JSON_OBJECTAGG(key, value)` is the one aggregate
+                        // whose two arguments stay SEPARATE: the key is
+                        // stringified into a member name and the value keeps
+                        // its own type, so neither can be folded into the
+                        // other the way COUNT's tuple or GROUP_CONCAT's
+                        // concatenation is.
+                        for expr in &f.extra_args {
+                            extra_values.push(expr.eval(&self.ctx, row)?);
+                        }
+                        match &f.arg {
+                            Some(expr) => Some(expr.eval(&self.ctx, row)?),
+                            None => None,
+                        }
+                    } else if matches!(f.kind, AggKind::Count | AggKind::ApproxCountDistinct) {
+                        // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)` and
+                        // `APPROX_COUNT_DISTINCT(a, b, ...)`, which encode
+                        // their argument tuple the same way:
                         // Go's `count4MultiArgs.UpdatePartialResult` skips the
                         // row as soon as ANY argument is NULL (a row counts
                         // only when EVERY argument is non-NULL). DISTINCT
@@ -707,7 +887,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
                     for (expr, _) in &f.order_by {
                         sort_key.push(expr.eval(&self.ctx, row)?);
                     }
-                    state.update(value, sort_key)?;
+                    state.update(value, &extra_values, sort_key)?;
                 }
             }
         }
@@ -721,7 +901,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
                     .agg_funcs
                     .get(c)
                     .map_or(&[][..], |func| func.order_by.as_slice());
-                req.append_datum(c, &state.partial.finish(order_by));
+                req.append_datum(c, &state.partial.finish(order_by)?);
             }
         }
         self.emitted = true;

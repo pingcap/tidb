@@ -178,14 +178,14 @@
 //! the parser's aliases) as window functions, over the default frame, an
 //! explicit `ROWS BETWEEN`, or a `RANGE BETWEEN` with peer, numeric VALUE or
 //! `INTERVAL` bounds -- alone, inside a larger select expression, over a
-//! `GROUP BY`, or over a `GROUP BY ... WITH ROLLUP`. Still refused: the
-//! aggregates Go allows `OVER` but this build does not compute --
-//! `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `APPROX_COUNT_DISTINCT`,
-//! `APPROX_PERCENTILE` ([`SLICE_MESSAGE`]). `GROUP_CONCAT(...) OVER (...)`
-//! parses (the parser accepts an optional `OVER` on `GROUP_CONCAT` just as
-//! Go's grammar does) and is refused HERE, in `build_call`, with the same
-//! 1235 `'group_concat as window function'` Go answers -- a plan-time
-//! rejection, not a parser-side one.
+//! `GROUP BY`, or over a `GROUP BY ... WITH ROLLUP`. `JSON_ARRAYAGG`,
+//! `JSON_OBJECTAGG`, `APPROX_COUNT_DISTINCT` and `APPROX_PERCENTILE` fold
+//! their frame through the same accumulators the GROUP BY path uses, so a
+//! frame applies to them exactly as it does to `SUM`.
+//! `GROUP_CONCAT(...) OVER (...)` parses (the parser accepts an optional
+//! `OVER` on `GROUP_CONCAT` just as Go's grammar does) and is refused HERE,
+//! in `build_call`, with the same 1235 `'group_concat as window function'`
+//! Go answers -- a plan-time rejection, not a parser-side one.
 //!
 //! Result TYPES follow Go's `baseFuncDesc.TypeInfer`: `COUNT` is a NOT NULL
 //! `BIGINT(21)`, `SUM` a `DECIMAL` (`DOUBLE` for a real argument), `AVG` a
@@ -197,7 +197,7 @@
 //! CODE is faithful, the width is not.
 
 use crate::driver::{row_chunk, DriverError, FromScope, FromTable};
-use crate::hash_agg::{aggregate_values, AggKind};
+use crate::hash_agg::{aggregate_rows, AggKind};
 use crate::StmtContext;
 use std::any::Any;
 use tidb_ast::{
@@ -252,8 +252,10 @@ enum WindowKind {
     Agg {
         /// The uppercase aggregate name.
         name: String,
-        /// The argument expression.
-        arg: Expr,
+        /// The argument expressions: one for most aggregates, two for
+        /// `JSON_OBJECTAGG(key, value)` and `APPROX_PERCENTILE(v, pct)`, and
+        /// any number for `APPROX_COUNT_DISTINCT(a, b, ...)`.
+        args: Vec<Expr>,
     },
     /// `FIRST_VALUE(v)` / `LAST_VALUE(v)` / `NTH_VALUE(v, n)` over the frame.
     Value {
@@ -1074,7 +1076,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
             }
         }
         "SUM" | "COUNT" | "AVG" | "MIN" | "MAX" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "VAR_POP"
-        | "VAR_SAMP" | "STDDEV_POP" | "STDDEV_SAMP" => {
+        | "VAR_SAMP" | "STDDEV_POP" | "STDDEV_SAMP" | "JSON_ARRAYAGG" => {
             // `COUNT(*)` reaches here as `COUNT(1)`, so one argument is the
             // only shape; `COUNT(DISTINCT a, b)` already failed on `distinct`.
             let [arg] = args.as_slice() else {
@@ -1082,7 +1084,18 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
             };
             WindowKind::Agg {
                 name: upper.clone(),
-                arg: arg.clone(),
+                args: vec![arg.clone()],
+            }
+        }
+        // The two-argument aggregates (the parser has already fixed
+        // `JSON_OBJECTAGG`'s arity) and the variadic one.
+        "JSON_OBJECTAGG" | "APPROX_PERCENTILE" | "APPROX_COUNT_DISTINCT" => {
+            if args.is_empty() {
+                return Err(DriverError::Unsupported(SLICE_MESSAGE));
+            }
+            WindowKind::Agg {
+                name: upper.clone(),
+                args: args.clone(),
             }
         }
         "FIRST_VALUE" | "LAST_VALUE" | "NTH_VALUE" => {
@@ -1214,8 +1227,19 @@ fn compute_one(
     // row up front, against the SOURCE row -- the same scope the partition and
     // order keys resolve in.
     let arg_exprs: Vec<Expr> = call.kind.value_args().into_iter().cloned().collect();
-    let (arg_values, arg_types) = eval_args(&arg_exprs, rows, field_types, resolver, ctx)?;
-    let result_type = call.kind.result_type(&arg_types)?;
+    let (arg_values, arg_types, rewritten_args) =
+        eval_args(&arg_exprs, rows, field_types, resolver, ctx)?;
+    let result_type = call.kind.result_type(&arg_types, &rewritten_args)?;
+    // An aggregate's fold is resolved once, from the same name-and-arguments
+    // pair the GROUP BY path uses, so it can never differ between the two
+    // surfaces (and `APPROX_PERCENTILE`'s constant percentage is read here,
+    // exactly once, rather than per frame).
+    let agg_kind = match &call.kind {
+        WindowKind::Agg { name, .. } => {
+            Some(crate::driver::agg_kind_and_type(name, &rewritten_args)?.0)
+        }
+        _ => None,
+    };
 
     let partition_keys = eval_keys(&call.spec.partition_by, rows, field_types, resolver, ctx)?;
     let order_exprs: Vec<Expr> = call
@@ -1268,6 +1292,7 @@ fn compute_one(
                 indices,
                 &order_keys,
                 &arg_values,
+                agg_kind.as_ref(),
                 &result_type,
                 &mut values,
             )?,
@@ -1289,7 +1314,8 @@ impl WindowKind {
             | WindowKind::PercentRank
             | WindowKind::CumeDist
             | WindowKind::Ntile(_) => Vec::new(),
-            WindowKind::Agg { arg, .. } | WindowKind::Value { arg, .. } => vec![arg],
+            WindowKind::Agg { args, .. } => args.iter().collect(),
+            WindowKind::Value { arg, .. } => vec![arg],
             WindowKind::LagLead { arg, default, .. } => match default {
                 Some(default) => vec![arg, default],
                 None => vec![arg],
@@ -1299,7 +1325,11 @@ impl WindowKind {
 
     /// Go `baseFuncDesc.TypeInfer` for this function, given its already
     /// resolved argument types.
-    fn result_type(&self, arg_types: &[Option<FieldType>]) -> Result<FieldType, DriverError> {
+    fn result_type(
+        &self,
+        arg_types: &[Option<FieldType>],
+        arg_exprs: &[tidb_expr::expression::Expression],
+    ) -> Result<FieldType, DriverError> {
         // The argument's own type, which every value function carries through
         // (Go's `typeInfer4MaxMin` tail: clone it and drop NOT NULL, since an
         // out-of-frame or out-of-range position is NULL).
@@ -1347,10 +1377,7 @@ impl WindowKind {
             // The aggregates share the GROUP BY path's inference, and with it
             // that path's documented deferral of Go's display metadata.
             WindowKind::Agg { name, .. } => {
-                let placeholder = tidb_expr::expression::Expression::Constant(
-                    tidb_expr::constant::Constant::new(Datum::Null, carried(0)),
-                );
-                crate::driver::agg_kind_and_type(name, &placeholder)?.1
+                return Ok(crate::driver::agg_kind_and_type(name, arg_exprs)?.1)
             }
             WindowKind::Value { .. } => carried(0),
             // Go `typeInfer4LeadLag`: the argument's own type without a
@@ -1385,6 +1412,7 @@ fn evaluate_partition(
     indices: &[usize],
     order_keys: &[Vec<Datum>],
     arg_values: &[Vec<Datum>],
+    agg_kind: Option<&AggKind>,
     result_type: &FieldType,
     values: &mut [Datum],
 ) -> Result<(), DriverError> {
@@ -1445,13 +1473,35 @@ fn evaluate_partition(
                     None => Datum::Null,
                 }
             }
-            WindowKind::Agg { name, arg: _ } => {
+            WindowKind::Agg { .. } => {
                 let (low, high) =
                     call.frame
                         .range(position, total, peers[position], range_keys.as_ref())?;
-                let kind = agg_kind(name);
-                aggregate_values(&kind, (low..high).map(|at| Some(arg_at(0, at))))
-                    .map_err(DriverError::Exec)?
+                let kind = agg_kind.expect("an aggregate window call resolves its kind");
+                // The extra arguments a frame row contributes: only
+                // `JSON_OBJECTAGG`'s value and `APPROX_COUNT_DISTINCT`'s
+                // further tuple members reach the accumulator, since
+                // `APPROX_PERCENTILE`'s percentage already rides the kind.
+                let extras = |at: usize| match kind {
+                    AggKind::JsonObjectAgg => vec![arg_at(1, at)],
+                    AggKind::ApproxCountDistinct => {
+                        (1..arg_values.len()).map(|slot| arg_at(slot, at)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                let rows = (low..high).map(|at| match kind {
+                    // Go's multi-argument distinct encoding: the row is
+                    // skipped entirely as soon as ANY argument is NULL, and
+                    // the surviving tuple is dedup-keyed as a whole.
+                    AggKind::ApproxCountDistinct => (
+                        Some(approx_distinct_tuple(
+                            (0..arg_values.len()).map(|slot| arg_at(slot, at)),
+                        )),
+                        Vec::new(),
+                    ),
+                    _ => (Some(arg_at(0, at)), extras(at)),
+                });
+                aggregate_rows(kind, rows).map_err(DriverError::Exec)?
             }
             WindowKind::Value { pick, .. } => {
                 let (low, high) =
@@ -1507,19 +1557,24 @@ fn coerce_to_type(value: Datum, target: &FieldType) -> Datum {
     }
 }
 
-/// The [`AggKind`] one aggregate name folds its frame with. `build_call` has
-/// already refused every other name.
-fn agg_kind(name: &str) -> AggKind {
-    // The GROUP BY path's own name -> kind mapping, so an aggregate can never
-    // fold differently as a window function than it does in a group. Only the
-    // TYPE half depends on the argument, which the caller has already
-    // resolved, so a placeholder argument is enough here.
-    let placeholder = tidb_expr::expression::Expression::Constant(
-        tidb_expr::constant::Constant::new(Datum::Null, FieldType::new(FieldTypeCode::LongLong)),
-    );
-    crate::driver::agg_kind_and_type(name, &placeholder)
-        .expect("build_call rejects every other aggregate name")
-        .0
+/// The single datum an `APPROX_COUNT_DISTINCT` row contributes: Go encodes
+/// every argument into one buffer and hashes it as a unit, and drops the row
+/// entirely when any argument is NULL (`approxCountDistinctOriginal`'s
+/// `hasNull` guard). The per-argument keys are length-prefixed so no
+/// argument's encoding can bleed into the next.
+fn approx_distinct_tuple(values: impl IntoIterator<Item = Datum>) -> Datum {
+    let mut buffer = Vec::new();
+    for value in values {
+        if value == Datum::Null {
+            return Datum::Null;
+        }
+        let Ok(key) = value.to_hash_key() else {
+            return Datum::Null;
+        };
+        buffer.extend_from_slice(&(key.len() as u64).to_be_bytes());
+        buffer.extend_from_slice(&key);
+    }
+    Datum::Bytes(buffer)
 }
 
 /// Evaluates one key expression list for every row.
@@ -1566,9 +1621,17 @@ fn eval_args(
     field_types: &[FieldType],
     resolver: &impl ColumnResolver,
     ctx: &StmtContext,
-) -> Result<(Vec<Vec<Datum>>, Vec<Option<FieldType>>), DriverError> {
+) -> Result<
+    (
+        Vec<Vec<Datum>>,
+        Vec<Option<FieldType>>,
+        Vec<tidb_expr::expression::Expression>,
+    ),
+    DriverError,
+> {
     let mut values = Vec::with_capacity(exprs.len());
     let mut types = Vec::with_capacity(exprs.len());
+    let mut rewritten_exprs = Vec::with_capacity(exprs.len());
     for expr in exprs {
         let rewritten = rewrite_expr_resolved(expr, resolver)
             .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
@@ -1583,8 +1646,9 @@ fn eval_args(
             );
         }
         values.push(column);
+        rewritten_exprs.push(rewritten);
     }
-    Ok((values, types))
+    Ok((values, types, rewritten_exprs))
 }
 
 /// Stable-sorts one partition's row indices by the window's `ORDER BY`.

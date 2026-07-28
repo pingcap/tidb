@@ -6543,6 +6543,336 @@ mod tests {
         );
     }
 
+    /// `JSON_ARRAYAGG` / `JSON_OBJECTAGG` / `APPROX_COUNT_DISTINCT` /
+    /// `APPROX_PERCENTILE`, as GROUP BY aggregates and as window functions.
+    ///
+    /// Every expectation is captured from TiDB (`pkg/executor`, mock store).
+    #[test]
+    fn json_and_approximate_aggregates() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id BIGINT, g BIGINT, i BIGINT, s VARCHAR(20), j JSON)")
+            .unwrap();
+        session
+            .run(
+                "INSERT INTO t VALUES \
+                 (1,1,10,'a','[1,2]'),(2,1,20,'b','{\"k\":1}'),(3,1,NULL,NULL,NULL),\
+                 (4,2,30,'a','\"str\"'),(5,2,30,'a','1'),(6,2,40,'c','null')",
+            )
+            .unwrap();
+
+        // JSON_ARRAYAGG keeps ROW ORDER and includes a NULL input as JSON
+        // `null` -- it does not skip the row the way SUM/COUNT do.
+        assert_eq!(
+            row_text(session.run("SELECT JSON_ARRAYAGG(i) FROM t")),
+            [["[10, 20, null, 30, 30, 40]"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT JSON_ARRAYAGG(s) FROM t")),
+            [["[\"a\", \"b\", null, \"a\", \"a\", \"c\"]"]]
+        );
+        // A JSON column's own value is carried through unchanged, including
+        // the JSON `null` document, which is indistinguishable from the
+        // SQL NULL row here.
+        assert_eq!(
+            row_text(session.run("SELECT JSON_ARRAYAGG(j) FROM t")),
+            [["[[1, 2], {\"k\": 1}, null, \"str\", 1, null]"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT g, JSON_ARRAYAGG(i) FROM t GROUP BY g ORDER BY g")),
+            [["1", "[10, 20, null]"], ["2", "[30, 30, 40]"]]
+        );
+        // An empty group is SQL NULL, not `[]`.
+        assert_eq!(
+            row_text(session.run("SELECT JSON_ARRAYAGG(i) FROM t WHERE id < 0")),
+            [["NULL"]]
+        );
+
+        // JSON_OBJECTAGG: a repeated key keeps the LAST row's value (`a` is
+        // written by id 1 then overwritten by id 4 and again by id 5), and
+        // the encoded object sorts its keys.
+        assert_eq!(
+            row_text(session.run("SELECT JSON_OBJECTAGG(s, i) FROM t WHERE s IS NOT NULL")),
+            [["{\"a\": 30, \"b\": 20, \"c\": 40}"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, JSON_OBJECTAGG(s, i) FROM t WHERE s IS NOT NULL \
+                 GROUP BY g ORDER BY g"
+            )),
+            [
+                ["1", "{\"a\": 10, \"b\": 20}"],
+                ["2", "{\"a\": 30, \"c\": 40}"]
+            ]
+        );
+        // A non-string key is stringified, and a NULL VALUE is kept as JSON
+        // `null` (only a NULL KEY is an error).
+        assert_eq!(
+            row_text(session.run("SELECT JSON_OBJECTAGG(id, j) FROM t")),
+            [[
+                "{\"1\": [1, 2], \"2\": {\"k\": 1}, \"3\": null, \"4\": \"str\", \
+               \"5\": 1, \"6\": null}"
+            ]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT JSON_OBJECTAGG(s, i) FROM t WHERE id < 0")),
+            [["NULL"]]
+        );
+        // Captured: "[json:3158]JSON documents may not contain NULL member
+        // names." -- raised while folding the group, so it fails the
+        // statement even though one non-NULL key was already written.
+        assert!(matches!(
+            session.run("SELECT JSON_OBJECTAGG(s, i) FROM t"),
+            Err(DriverError::JsonDocumentNullKey)
+        ));
+        assert!(matches!(
+            session.run("SELECT JSON_OBJECTAGG(s, i) FROM t WHERE id IN (1,3)"),
+            Err(DriverError::JsonDocumentNullKey)
+        ));
+        // Neither JSON aggregate accepts DISTINCT -- Go's parser rejects it.
+        assert!(matches!(
+            session.run("SELECT JSON_ARRAYAGG(DISTINCT i) FROM t"),
+            Err(DriverError::Parse(_))
+        ));
+        assert!(matches!(
+            session.run("SELECT JSON_OBJECTAGG(DISTINCT s, i) FROM t"),
+            Err(DriverError::Parse(_))
+        ));
+
+        // APPROX_COUNT_DISTINCT is EXACT at this cardinality: Go's BJKST
+        // sketch discards nothing below 65536 distinct values.
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_COUNT_DISTINCT(i) FROM t")),
+            [["4"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_COUNT_DISTINCT(s) FROM t")),
+            [["3"]]
+        );
+        // The multi-argument form counts distinct TUPLES, dropping a row
+        // with any NULL argument.
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_COUNT_DISTINCT(i, s) FROM t")),
+            [["4"]]
+        );
+        assert_eq!(
+            row_text(
+                session.run("SELECT g, APPROX_COUNT_DISTINCT(i) FROM t GROUP BY g ORDER BY g")
+            ),
+            [["1", "2"], ["2", "2"]]
+        );
+        // An empty (or all-NULL) input is 0, never NULL -- the result column
+        // is NOT NULL, like COUNT's.
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_COUNT_DISTINCT(i) FROM t WHERE id < 0")),
+            [["0"]]
+        );
+        // DISTINCT is legal and cannot change the answer.
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) FROM t")),
+            [["4"]]
+        );
+
+        // APPROX_PERCENTILE ranks the group's values at ordinal rank
+        // ceil(pct/100 * N) and returns THAT element: over (1,2,3,4) the
+        // median is 2, not 2.5.
+        session
+            .run("CREATE TABLE p (g BIGINT, i BIGINT, d DOUBLE, s VARCHAR(20))")
+            .unwrap();
+        session
+            .run(
+                "INSERT INTO p VALUES (1,1,1.0,'x'),(1,2,2.0,'y'),(1,3,3.0,'z'),(1,4,4.0,'w'),\
+                 (2,10,10.0,'a'),(2,20,20.0,'b'),(2,30,30.0,'c')",
+            )
+            .unwrap();
+        for (pct, even, odd) in [
+            (1, "1", "10"),
+            (25, "1", "10"),
+            (50, "2", "20"),
+            (75, "3", "30"),
+            (99, "4", "30"),
+            (100, "4", "30"),
+        ] {
+            assert_eq!(
+                row_text(session.run(&format!(
+                    "SELECT APPROX_PERCENTILE(i, {pct}) FROM p WHERE g = 1"
+                ))),
+                [[even]],
+                "even-sized group at {pct}%"
+            );
+            assert_eq!(
+                row_text(session.run(&format!(
+                    "SELECT APPROX_PERCENTILE(i, {pct}) FROM p WHERE g = 2"
+                ))),
+                [[odd]],
+                "odd-sized group at {pct}%"
+            );
+        }
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_PERCENTILE(d, 50) FROM p WHERE g = 1")),
+            [["2"]]
+        );
+        // A STRING argument gets Go's no-op accumulator: always NULL.
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_PERCENTILE(s, 50) FROM p WHERE g = 1")),
+            [["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_PERCENTILE(i, 50) FROM p WHERE g = 99")),
+            [["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_PERCENTILE(DISTINCT i, 50) FROM p WHERE g = 1")),
+            [["2"]]
+        );
+        // The percentage is validated at PLAN time, against [1, 100].
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i, 0) FROM p"),
+            Err(DriverError::PercentageOutOfRange(0))
+        ));
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i, 101) FROM p"),
+            Err(DriverError::PercentageOutOfRange(101))
+        ));
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i, -1) FROM p"),
+            Err(DriverError::PercentageOutOfRange(-1))
+        ));
+        // A DECIMAL literal reads as 0 and a FLOAT literal as its IEEE-754
+        // bit pattern, because Go's `Constant.EvalInt` reads the datum's
+        // int64 field UNCONVERTED for both (captured verbatim).
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i, 50.5) FROM p"),
+            Err(DriverError::PercentageOutOfRange(0))
+        ));
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i, 50e0) FROM p"),
+            Err(DriverError::PercentageOutOfRange(4632233691727265792))
+        ));
+        // A STRING literal, though, takes Go's converting branch.
+        assert_eq!(
+            row_text(session.run("SELECT APPROX_PERCENTILE(i, '50') FROM p")),
+            [["4"]]
+        );
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i, NULL) FROM p"),
+            Err(DriverError::ApproxPercentileArgument(message))
+                if message.contains("cannot be NULL")
+        ));
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i) FROM p"),
+            Err(DriverError::ApproxPercentileArgument(
+                "APPROX_PERCENTILE should take 2 arguments"
+            ))
+        ));
+        assert!(matches!(
+            session.run("SELECT APPROX_PERCENTILE(i, i) FROM p"),
+            Err(DriverError::ApproxPercentileArgument(message))
+                if message.contains("constant expression")
+        ));
+
+        // All four answer OVER a window, and the FRAME applies.
+        assert_eq!(
+            row_text(
+                session.run("SELECT id, JSON_ARRAYAGG(i) OVER (ORDER BY id) FROM t ORDER BY id")
+            ),
+            [
+                ["1", "[10]"],
+                ["2", "[10, 20]"],
+                ["3", "[10, 20, null]"],
+                ["4", "[10, 20, null, 30]"],
+                ["5", "[10, 20, null, 30, 30]"],
+                ["6", "[10, 20, null, 30, 30, 40]"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT id, JSON_ARRAYAGG(i) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING \
+                 AND CURRENT ROW) FROM t ORDER BY id"
+            )),
+            [
+                ["1", "[10]"],
+                ["2", "[10, 20]"],
+                ["3", "[20, null]"],
+                ["4", "[null, 30]"],
+                ["5", "[30, 30]"],
+                ["6", "[30, 40]"],
+            ]
+        );
+        // The default RANGE frame ends at the last PEER, so tied ORDER BY
+        // keys all see the whole peer group (id 4 and 5 share i = 30).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT id, JSON_ARRAYAGG(i) OVER (PARTITION BY g ORDER BY i) FROM t \
+                 WHERE g = 2 ORDER BY id"
+            )),
+            [["4", "[30, 30]"], ["5", "[30, 30]"], ["6", "[30, 30, 40]"],]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT id, JSON_OBJECTAGG(s, i) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING \
+                 AND CURRENT ROW) FROM t WHERE s IS NOT NULL ORDER BY id"
+            )),
+            [
+                ["1", "{\"a\": 10}"],
+                ["2", "{\"a\": 10, \"b\": 20}"],
+                ["4", "{\"a\": 30, \"b\": 20}"],
+                ["5", "{\"a\": 30}"],
+                ["6", "{\"a\": 30, \"c\": 40}"],
+            ]
+        );
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id) FROM t ORDER BY id"
+                )
+            ),
+            [
+                ["1", "1"],
+                ["2", "2"],
+                ["3", "2"],
+                ["4", "3"],
+                ["5", "3"],
+                ["6", "4"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING \
+                 AND CURRENT ROW) FROM t ORDER BY id"
+            )),
+            [
+                ["1", "1"],
+                ["2", "2"],
+                ["3", "1"],
+                ["4", "1"],
+                ["5", "1"],
+                ["6", "2"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i) FROM p \
+                 WHERE g = 1 ORDER BY i"
+            )),
+            [["1", "1"], ["2", "1"], ["3", "2"], ["4", "2"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i \
+                 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM p WHERE g = 1 ORDER BY i"
+            )),
+            [["1", "1"], ["2", "1"], ["3", "2"], ["4", "3"]]
+        );
+        // A window call still refuses DISTINCT, whatever the function.
+        assert!(matches!(
+            session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) OVER () FROM t"),
+            Err(DriverError::NotSupportedYet(
+                "<window function>(DISTINCT ..)"
+            ))
+        ));
+    }
+
     /// Prepared-statement parameters: the marker count a PREPARE reports and
     /// the values an EXECUTE binds.
     ///
@@ -10604,17 +10934,13 @@ mod tests {
             ))
         ));
 
-        // Outside this slice: the aggregates Go DOES allow OVER but this
-        // build does not compute (APPROX_COUNT_DISTINCT, JSON_ARRAYAGG, ...).
-        match session.run("SELECT g, APPROX_COUNT_DISTINCT(v) OVER (ORDER BY v) FROM t") {
-            Err(DriverError::Unsupported(message)) => {
-                assert!(
-                    message.contains("ROW_NUMBER"),
-                    "refusal should name this slice, got {message}"
-                );
-            }
-            other => panic!("expected a slice refusal, got {other:?}"),
-        }
+        // The four aggregates Go allows OVER that this build used to refuse
+        // now compute here too; `json_and_approximate_aggregates` covers
+        // their frame semantics. Only the SHAPE check remains: a window call
+        // still needs at least one argument.
+        assert!(session
+            .run("SELECT g, APPROX_COUNT_DISTINCT(v) OVER (ORDER BY v) FROM t")
+            .is_ok());
 
         // Frame validation is the PLANNER's, so it fires for every function
         // -- including the ranking ones, whose frame is then ignored.

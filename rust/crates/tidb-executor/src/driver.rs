@@ -651,6 +651,15 @@ pub enum DriverError {
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
+    /// Go `types.ErrJSONDocumentNULLKey` (3158): `JSON_OBJECTAGG` evaluated a
+    /// NULL member name.
+    JsonDocumentNullKey,
+    /// Go `typeInfer4ApproxPercentile`'s plain errors (no error class, so
+    /// 1105), carrying the message text Go writes.
+    ApproxPercentileArgument(&'static str),
+    /// Go `typeInfer4ApproxPercentile`: `Percentage value %d is out of range
+    /// [1, 100]`, carrying the integer Go printed.
+    PercentageOutOfRange(i64),
     /// Go `plannererrors.ErrInvalidGroupFuncUse` (1111): `GROUPING()` written
     /// in a query that has no `WITH ROLLUP`.
     InvalidGroupFuncUse,
@@ -849,6 +858,7 @@ impl From<ExecError> for DriverError {
             // The same statement-level error whichever layer raised it, so
             // callers match one variant.
             ExecError::SubqueryReturnsMoreThanOneRow => DriverError::SubqueryReturnsMoreThanOneRow,
+            ExecError::JsonDocumentNullKey => DriverError::JsonDocumentNullKey,
             other => DriverError::Exec(other),
         }
     }
@@ -2825,8 +2835,15 @@ fn unknown_order_column(name: &str) -> DriverError {
 /// kind and the result type inferred for its argument.
 pub(crate) fn agg_kind_and_type(
     name: &str,
-    arg: &Expression,
+    args: &[Expression],
 ) -> Result<(AggKind, FieldType), DriverError> {
+    // Every aggregate here reads its FIRST argument for type inference;
+    // `APPROX_PERCENTILE` is the only one that also reads a second.
+    let null = Expression::Constant(tidb_expr::constant::Constant::new(
+        Datum::Null,
+        FieldType::new(FieldTypeCode::LongLong),
+    ));
+    let arg = args.first().unwrap_or(&null);
     Ok(match name {
         // Go `typeInfer4Count`: a binary `BIGINT(21)` that never returns NULL
         // -- an empty group (and an empty window frame) counts 0.
@@ -2912,12 +2929,172 @@ pub(crate) fn agg_kind_and_type(
             };
             (kind, t)
         }
+        // Go `typeInfer4JsonArrayAgg`/`typeInfer4JsonObjectAgg`: a binary
+        // JSON column with no written width (captured: type 245, flen -1,
+        // decimals -1, the BINARY flag set).
+        "JSON_ARRAYAGG" | "JSON_OBJECTAGG" => {
+            let mut t = FieldType::new(FieldTypeCode::Json);
+            t.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            let kind = if name == "JSON_ARRAYAGG" {
+                AggKind::JsonArrayAgg
+            } else {
+                AggKind::JsonObjectAgg
+            };
+            (kind, t)
+        }
+        // Go `typeInfer4ApproxCountDistinct` delegates to `typeInfer4Count`,
+        // so the result is COUNT's own NOT NULL binary `BIGINT(21)`.
+        "APPROX_COUNT_DISTINCT" => {
+            let mut t = FieldType::new(FieldTypeCode::LongLong);
+            t.set_flen(21);
+            t.set_decimal(0);
+            t.add_flags(
+                tidb_datatype::FieldTypeFlags::BINARY | tidb_datatype::FieldTypeFlags::NOT_NULL,
+            );
+            (AggKind::ApproxCountDistinct, t)
+        }
+        // Go `typeInfer4ApproxPercentile`: two arguments, the second a
+        // CONSTANT percentage in [1, 100], and a result type read off the
+        // first argument.
+        "APPROX_PERCENTILE" => {
+            let [_, percent_arg] = args else {
+                return Err(DriverError::ApproxPercentileArgument(
+                    "APPROX_PERCENTILE should take 2 arguments",
+                ));
+            };
+            let Some(folded) = fold_constant(percent_arg) else {
+                return Err(DriverError::ApproxPercentileArgument(
+                    "APPROX_PERCENTILE should take a constant expression as percentage argument",
+                ));
+            };
+            let Some(percent) = constant_eval_int(&folded) else {
+                return Err(DriverError::ApproxPercentileArgument(
+                    "APPROX_PERCENTILE: Percentage value cannot be NULL",
+                ));
+            };
+            if percent <= 0 || percent > 100 {
+                return Err(DriverError::PercentageOutOfRange(percent));
+            }
+            let arg_type = arg.static_type().cloned();
+            let code = arg_type
+                .as_ref()
+                .map_or(FieldTypeCode::LongLong, |t| t.code());
+            let ret = match code {
+                FieldTypeCode::Tiny
+                | FieldTypeCode::Short
+                | FieldTypeCode::Int24
+                | FieldTypeCode::Long
+                | FieldTypeCode::LongLong => FieldType::new(FieldTypeCode::LongLong),
+                FieldTypeCode::Double | FieldTypeCode::Float => {
+                    FieldType::new(FieldTypeCode::Double)
+                }
+                FieldTypeCode::NewDecimal => {
+                    let mut t = FieldType::new(FieldTypeCode::NewDecimal);
+                    t.set_flen(MAX_DECIMAL_WIDTH);
+                    let scale = arg_type.as_ref().map_or(-1, FieldType::decimal);
+                    t.set_decimal(if (0..=MAX_DECIMAL_SCALE).contains(&scale) {
+                        scale
+                    } else {
+                        MAX_DECIMAL_SCALE
+                    });
+                    t
+                }
+                FieldTypeCode::Date
+                | FieldTypeCode::Datetime
+                | FieldTypeCode::NewDate
+                | FieldTypeCode::Timestamp => arg_type
+                    .clone()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+                _ => {
+                    let mut t = arg_type
+                        .clone()
+                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                    t.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                    t
+                }
+            };
+            // `buildApproxPercentile` picks a typed accumulator by the
+            // argument's EVAL type -- and `getEvalTypeForApproxPercentile`
+            // forces ENUM/SET/BIT to the string domain. Every other eval type
+            // (a string column, say) gets Go's `basePercentile`, which
+            // appends NULL for every group.
+            let eval_type = arg_type.as_ref().map(FieldType::eval_type);
+            let ranks = !matches!(
+                code,
+                FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::Bit
+            ) && matches!(
+                eval_type,
+                Some(
+                    tidb_datatype::EvalType::Int
+                        | tidb_datatype::EvalType::Real
+                        | tidb_datatype::EvalType::Decimal
+                        | tidb_datatype::EvalType::Datetime
+                        | tidb_datatype::EvalType::Timestamp
+                        | tidb_datatype::EvalType::Duration
+                )
+            );
+            (AggKind::ApproxPercentile(ranks.then_some(percent)), ret)
+        }
         _ => {
             return Err(DriverError::Unsupported(
                 "this aggregate function is deferred",
             ))
         }
     })
+}
+
+/// Go `mysql.MaxDecimalWidth`, the width `APPROX_PERCENTILE` gives a DECIMAL
+/// result.
+const MAX_DECIMAL_WIDTH: i64 = 65;
+/// Go `mysql.MaxDecimalScale`.
+const MAX_DECIMAL_SCALE: i64 = 30;
+
+/// The value of a row-independent expression, or `None` when it reads a
+/// column (Go's `ConstLevel() == ConstNone`).
+///
+/// Go's expression rewriter FOLDS a constant subtree into one `Constant`
+/// before the aggregate descriptor inspects it, which is why
+/// `APPROX_PERCENTILE(v, -1)` -- a unary minus over a literal, not a literal
+/// -- passes Go's constant check. Folding here at the point of use reaches the
+/// same answer without a rewriter-wide folding pass.
+fn fold_constant(expr: &Expression) -> Option<Datum> {
+    match expr {
+        Expression::Constant(constant) => Some(constant.value.clone()),
+        Expression::Column(_) | Expression::CorrelatedColumn(_) => None,
+        Expression::ScalarFunction(function) => {
+            if !function.args.iter().all(|arg| fold_constant(arg).is_some()) {
+                return None;
+            }
+            let chunk = {
+                let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+                chunk.set_num_virtual_rows(1);
+                chunk
+            };
+            expr.eval(&crate::StmtContext::for_query(), chunk.get_row(0))
+                .ok()
+        }
+    }
+}
+
+/// Go `Constant.EvalInt` for a literal percentage argument.
+///
+/// The tail of Go's `EvalInt` is `dt.GetInt64()`, an UNCONVERTED read of the
+/// datum's own int64 field: only an integer (or a string, which takes the
+/// `ToInt64` branch above it) yields the number as written. A DECIMAL literal
+/// stores nothing in that field, so `APPROX_PERCENTILE(v, 50.5)` reports
+/// "Percentage value 0"; a FLOAT literal stores its IEEE-754 bits there, so
+/// `APPROX_PERCENTILE(v, 50e0)` reports "Percentage value
+/// 4632233691727265792" (both captured from TiDB). `None` is Go's `isNull`.
+fn constant_eval_int(value: &Datum) -> Option<i64> {
+    match value {
+        Datum::Null => None,
+        Datum::Int(number) => Some(*number),
+        Datum::UInt(number) => Some(*number as i64),
+        // Go's `dt.Kind() == KindString` branch, which DOES convert.
+        Datum::String(_) | Datum::Bytes(_) => Some(value.to_i64().map_or(0, |result| result.value)),
+        Datum::Real(number) | Datum::Float32(number) => Some(number.to_bits() as i64),
+        _ => Some(0),
+    }
 }
 
 /// The aggregation's output columns, addressed by name.
@@ -3211,7 +3388,12 @@ fn build_agg_func(
             "multi-argument aggregates are deferred",
         ));
     };
-    if !rest.is_empty() && name != "COUNT" {
+    if !rest.is_empty()
+        && !matches!(
+            name.as_str(),
+            "COUNT" | "JSON_OBJECTAGG" | "APPROX_COUNT_DISTINCT" | "APPROX_PERCENTILE"
+        )
+    {
         return Err(DriverError::Unsupported(
             "multi-argument aggregates are deferred",
         ));
@@ -3237,7 +3419,16 @@ fn build_agg_func(
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
         );
     }
-    let (kind, ftype) = agg_kind_and_type(name, &arg)?;
+    let mut all_args = Vec::with_capacity(1 + extra_args.len());
+    all_args.push(arg.clone());
+    all_args.extend(extra_args.iter().cloned());
+    let (kind, ftype) = agg_kind_and_type(name, &all_args)?;
+    // `APPROX_PERCENTILE`'s percentage rides the KIND, not the argument list:
+    // it is a plan-time constant Go reads once in `buildApproxPercentile`,
+    // never a per-row input.
+    if matches!(kind, AggKind::ApproxPercentile(_)) {
+        extra_args.clear();
+    }
     Ok((
         AggFunc {
             kind,
@@ -10292,6 +10483,22 @@ impl DriverError {
             ),
         ),
         // Go raises this one as a plain error, so it carries 1105.
+        // Go: "JSON documents may not contain NULL member names."
+        DriverError::JsonDocumentNullKey => MysqlError::new(
+            3158,
+            *b"22032",
+            "JSON documents may not contain NULL member names.".to_owned(),
+        ),
+        // Go raises these with a bare `errors.New`/`fmt.Errorf`, so they carry
+        // no error class and reach the client as 1105.
+        DriverError::ApproxPercentileArgument(message) => {
+            MysqlError::new(1105, *b"HY000", (*message).to_owned())
+        }
+        DriverError::PercentageOutOfRange(percent) => MysqlError::new(
+            1105,
+            *b"HY000",
+            format!("Percentage value {percent} is out of range [1, 100]"),
+        ),
         DriverError::InsertIntoViewUnsupported(name) => MysqlError::new(
             1105,
             *b"HY000",
