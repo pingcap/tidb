@@ -825,6 +825,9 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
+	if len(accesses) == 0 {
+		return accesses, filters, newConditions, columnValues, false
+	}
 	newConditions = removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, accesses)
 	return accesses, filters, newConditions, columnValues, false
 }
