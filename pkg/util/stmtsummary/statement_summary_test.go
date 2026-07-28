@@ -1826,6 +1826,35 @@ func TestSummaryHistory(t *testing.T) {
 	require.Equal(t, 6, len(datum))
 }
 
+func TestHistoryClearAndResizeKeepsLatestIntervals(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	require.NoError(t, ssMap.SetRefreshInterval(10))
+	require.NoError(t, ssMap.SetHistorySize(10))
+
+	stmtExecInfo := generateAnyExecInfo()
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo.SchemaName, stmtExecInfo.Digest, "", stmtExecInfo.PlanDigest, stmtExecInfo.ResourceGroupName, "")
+	for i := range 11 {
+		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
+		ssMap.AddStatement(stmtExecInfo)
+	}
+
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	ssbd := value.(*stmtSummaryByDigest)
+	require.NoError(t, ssMap.SetHistorySize(5))
+	elements := ssbd.collectHistorySummaries(nil, 5)
+	require.Len(t, elements, 5)
+	require.Equal(t, now+70, elements[0].beginTime)
+	require.Equal(t, now+110, elements[4].beginTime)
+
+	require.NoError(t, ssMap.SetHistoryEnabled(false))
+	elements = ssbd.collectHistorySummaries(nil, 5)
+	require.Len(t, elements, 1)
+	require.Equal(t, now+110, elements[0].beginTime)
+}
+
 // Test summary when PrevSQL is not empty.
 func TestPrevSQL(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()

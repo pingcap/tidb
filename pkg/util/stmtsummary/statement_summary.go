@@ -482,9 +482,11 @@ func (ssMap *stmtSummaryByDigestMap) clearHistory() {
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
 		ssbd.Lock()
-		newHistory := list.New()
-		newHistory.PushFront(ssbd.history.Front().Value)
-		ssbd.history = newHistory
+		if ssbd.history.Len() > 0 {
+			newHistory := list.New()
+			newHistory.PushBack(ssbd.history.Back().Value)
+			ssbd.history = newHistory
+		}
 		ssbd.Unlock()
 	}
 }
@@ -711,11 +713,12 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChe
 		return nil
 	}
 
-	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
-	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
+	ssElements := make([]*stmtSummaryByDigestElement, 0, min(ssbd.history.Len(), historySize))
+	for listElement := ssbd.history.Back(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Prev() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
 		ssElements = append(ssElements, ssElement)
 	}
+	slices.Reverse(ssElements)
 	return ssElements
 }
 
