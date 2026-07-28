@@ -2831,6 +2831,17 @@ mod tests {
             Ok(other) => panic!("expected a failure, got {other:?}"),
         }
 
+        // Captured: UPDATE casts an assigned value the same way.
+        session.run("UPDATE t SET d = 9.87654 WHERE i = 8").unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT d FROM t WHERE i = 8")),
+            [["9.877"]]
+        );
+        assert!(matches!(
+            session.run("UPDATE t SET v = 'abcdefg' WHERE i = 8"),
+            Err(DriverError::DataTooLong { .. })
+        ));
+
         // Captured: without a strict mode the converted value is stored and
         // the same message is a warning -- the string truncates to the
         // column's width and an unparseable number becomes zero.

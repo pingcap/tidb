@@ -3232,6 +3232,7 @@ pub fn run_update_in(
     }
 
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
+    let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let entry = catalog
         .get_mut_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?;
@@ -3241,9 +3242,14 @@ pub fn run_update_in(
         TableEntry::Mem(mem) => {
             let mut updates = Vec::new();
             for (index, row) in mem.rows.iter().enumerate() {
-                if let Some(new_row) =
-                    compute_updated_row(row, &field_types, &predicate, &set_exprs, ctx)?
-                {
+                if let Some(new_row) = compute_updated_row(
+                    row,
+                    &field_types,
+                    &column_names,
+                    &predicate,
+                    &set_exprs,
+                    ctx,
+                )? {
                     updates.push((index, new_row));
                 }
             }
@@ -3257,9 +3263,14 @@ pub fn run_update_in(
                 .scan_rows_with_handles()
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
             for (handle, row) in rows {
-                if let Some(new_row) =
-                    compute_updated_row(&row, &field_types, &predicate, &set_exprs, ctx)?
-                {
+                if let Some(new_row) = compute_updated_row(
+                    &row,
+                    &field_types,
+                    &column_names,
+                    &predicate,
+                    &set_exprs,
+                    ctx,
+                )? {
                     kv.update_row(&handle, &new_row).map_err(|e| match e {
                         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                             DriverError::DuplicateEntry { value, key }
@@ -3279,6 +3290,7 @@ pub fn run_update_in(
 fn compute_updated_row(
     row: &[Datum],
     field_types: &[FieldType],
+    column_names: &[String],
     predicate: &Option<Expression>,
     set_exprs: &[(usize, Expression)],
     ctx: &crate::StmtContext,
@@ -3300,7 +3312,10 @@ fn compute_updated_row(
         let value = expr
             .eval(ctx, source.get_row(0))
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        new_row[*offset] = value;
+        // Go casts an assigned value to its column's type here too, which is
+        // what stores `SET d = 9.87654` in a DECIMAL(10,3) column as 9.877.
+        new_row[*offset] =
+            cast_value_for_column(value, &field_types[*offset], &column_names[*offset], 0, ctx)?;
     }
     if new_row == row {
         // Go counts this row as touched, not affected.
