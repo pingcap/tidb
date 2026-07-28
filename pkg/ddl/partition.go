@@ -51,6 +51,7 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -190,7 +191,11 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		})
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
-		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+		skipWait := false
+		if val, ok := job.GetSystemVars(vardef.TiDBSkipTiFlashReplicaWait); ok {
+			skipWait = variable.TiDBOptOn(val)
+		}
+		if !skipWait && tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
 			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, jobCtx)
@@ -207,7 +212,9 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 
 		// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
-		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+		// Gated on !skipWait: when skipWait=true the background TiFlash ticker handles this
+		// once replication actually completes, preventing premature AvailablePartitionIDs entries.
+		if !skipWait && tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			for _, d := range partInfo.Definitions {
 				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
 				err = infosync.UpdateTiFlashProgressCache(d.ID, 1)
