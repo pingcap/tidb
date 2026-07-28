@@ -255,7 +255,15 @@ fn execute(
     left: (ScriptedResponse, ResponseProbe),
     right: (ScriptedResponse, ResponseProbe),
 ) -> Fixture {
-    let configured_tables = tables();
+    execute_with_tables(tables(), sql, left, right)
+}
+
+fn execute_with_tables(
+    configured_tables: [ConfiguredTable; 2],
+    sql: &str,
+    left: (ScriptedResponse, ResponseProbe),
+    right: (ScriptedResponse, ResponseProbe),
+) -> Fixture {
     let catalog = ConfiguredCatalog::new(configured_tables.clone()).unwrap();
     let plan = ConfiguredJoinPlan::lower(sql, &catalog).unwrap();
     let timestamps = CountingTimestampSource::new(6_001);
@@ -513,4 +521,150 @@ fn null_join_key_fails_closed_at_the_nonnull_signed_bigint_boundary() {
     assert!(fixture.cancellation.is_cancelled());
     assert_eq!(fixture.probes[0].close_calls(), 1);
     assert_eq!(fixture.probes[1].close_calls(), 1);
+}
+
+/// Row-based (`Chunk.rows_data`) encoding of an arbitrary datum row, used to
+/// drive the join's decoded-datum comparison and projection with kinds beyond
+/// signed `BIGINT` (unsigned, `DOUBLE`, `CHAR`), matching each column's own
+/// `chunk_field_type` rather than the row-codec's own type tag.
+fn encoded_datum_row(row: &[Datum]) -> Vec<u8> {
+    let rows_data = tidb_codec::encode_value(row).expect("fixture datums must encode");
+    SelectResponse {
+        chunks: vec![Chunk {
+            rows_data: Some(rows_data),
+            rows_meta: Vec::new(),
+        }],
+        ..SelectResponse::default()
+    }
+    .encode_to_vec()
+}
+
+fn datum_response(rows: &[&[Datum]]) -> (ScriptedResponse, ResponseProbe) {
+    let probe = ResponseProbe::default();
+    let subsets = rows
+        .iter()
+        .map(|row| QueryResultSubset {
+            data: encoded_datum_row(row),
+            runtime: None,
+        })
+        .collect();
+    (
+        ScriptedResponse {
+            subsets,
+            fail_on_call: None,
+            probe: probe.clone(),
+        },
+        probe,
+    )
+}
+
+/// A left/right pair whose join key crosses the signed/unsigned `BIGINT`
+/// domain, plus a `DOUBLE` and `CHAR` output column on the right, mirroring
+/// the widened `ConfiguredScalarType` set the real-TiKV scan path
+/// (`ConfiguredScalarType::chunk_field_type`) already decodes.
+fn cross_signed_tables() -> [ConfiguredTable; 2] {
+    [
+        ConfiguredTable::new(
+            "Sales",
+            "Wide",
+            301,
+            [
+                ConfiguredColumn::clustered_primary_key("id", 1),
+                ConfiguredColumn::stored_unsigned_bigint_not_null("uid", 2),
+            ],
+        ),
+        ConfiguredTable::new(
+            "Sales",
+            "Peer",
+            302,
+            [
+                ConfiguredColumn::clustered_primary_key("id", 1),
+                ConfiguredColumn::stored_not_null("sid", 2),
+                ConfiguredColumn::stored_double_not_null("score", 3),
+                ConfiguredColumn::stored_char_not_null("tag", 4, 4),
+            ],
+        ),
+    ]
+}
+
+#[test]
+fn cross_signedness_boundary_values_never_falsely_match() {
+    // pkg/types/compare.go CompareInt: an unsigned value above i64::MAX and a
+    // negative signed value are never equal on the other side, not just
+    // unequal to each other by coincidence of shared bit pattern.
+    let mut fixture = execute_with_tables(
+        cross_signed_tables(),
+        "SELECT w.uid, p.sid FROM Wide w JOIN Peer p ON w.uid = p.sid",
+        datum_response(&[&[Datum::Int(1), Datum::UInt(1u64 << 63)]]),
+        datum_response(&[&[
+            Datum::Int(1),
+            Datum::Int(-1),
+            Datum::Real(1.5),
+            Datum::new_collation_string(b"ab".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
+        ]]),
+    );
+    assert!(fixture.result.next_batch(8).unwrap().is_empty());
+}
+
+#[test]
+fn cross_signedness_equal_values_within_i64_range_still_match() {
+    let mut fixture = execute_with_tables(
+        cross_signed_tables(),
+        "SELECT w.uid, p.sid, p.score, p.tag FROM Wide w JOIN Peer p ON w.uid = p.sid",
+        datum_response(&[&[Datum::Int(1), Datum::UInt(5)]]),
+        datum_response(&[&[
+            Datum::Int(1),
+            Datum::Int(5),
+            Datum::Real(2.5),
+            Datum::new_collation_string(b"ok".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin),
+        ]]),
+    );
+    // The scripted response omits `SelectResponse.encode_type`, so the shared
+    // scan/decode seam (`RealTiKvReadSession::execute_plan`) falls back to
+    // `EncodeType::TypeDefault`'s generic value codec, which is not yet
+    // column-type-aware for strings: `tag` decodes as `Datum::Bytes`, not a
+    // collation-carrying `Datum::String`. The join's key/output handling must
+    // accept either representation (see `join_key_eq`); this assertion pins
+    // today's actual decoded shape rather than the wire-ideal one.
+    assert_eq!(
+        fixture.result.next_batch(1).unwrap(),
+        vec![vec![
+            Datum::UInt(5),
+            Datum::Int(5),
+            Datum::Real(2.5),
+            Datum::Bytes(b"ok".to_vec()),
+        ]]
+    );
+}
+
+#[test]
+fn joined_output_columns_report_each_source_columns_own_wire_type() {
+    let configured_tables = cross_signed_tables();
+    let catalog = ConfiguredCatalog::new(configured_tables.clone()).unwrap();
+    let plan = ConfiguredJoinPlan::lower(
+        "SELECT w.uid, p.sid, p.score, p.tag FROM Wide w JOIN Peer p ON w.uid = p.sid",
+        &catalog,
+    )
+    .unwrap();
+    let columns = tidb_exec::configured_inner_join::configured_join_columns(
+        &plan,
+        [&configured_tables[0], &configured_tables[1]],
+    )
+    .unwrap();
+    assert_eq!(
+        columns
+            .iter()
+            .map(|column| (column.type_code, column.flag & 0x0020, column.charset))
+            .collect::<Vec<_>>(),
+        [
+            // `uid`: BIGINT UNSIGNED -> LONGLONG, UnsignedFlag set.
+            (tidb_datatype::FieldTypeCode::LongLong.mysql_type(), 0x0020, tidb_protocol::BINARY_DEFAULT_COLLATION_ID),
+            // `sid`: signed BIGINT -> LONGLONG, no unsigned flag.
+            (tidb_datatype::FieldTypeCode::LongLong.mysql_type(), 0, tidb_protocol::BINARY_DEFAULT_COLLATION_ID),
+            // `score`: DOUBLE.
+            (tidb_datatype::FieldTypeCode::Double.mysql_type(), 0, tidb_protocol::BINARY_DEFAULT_COLLATION_ID),
+            // `tag`: CHAR at utf8mb4_bin, positive result-column collation id.
+            (tidb_datatype::FieldTypeCode::String.mysql_type(), 0, 46),
+        ]
+    );
 }

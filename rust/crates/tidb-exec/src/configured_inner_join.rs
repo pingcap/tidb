@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use tidb_datatype::{Datum, DatumKind, FieldTypeCode};
+use tidb_datatype::{Datum, DatumKind};
 use tidb_distsql::{CancelHandle, QueryTransport, TimestampSource};
 use tidb_planner::{
     configured_join_plan::{ConfiguredJoinPlan, FullSchemaColumn},
@@ -33,7 +33,7 @@ use tidb_planner::{
     join_condition::JoinSide,
     read_only_scan::{ConfiguredColumnKind, ConfiguredTable},
 };
-use tidb_protocol::{ColumnInfo, BINARY_DEFAULT_COLLATION_ID};
+use tidb_protocol::ColumnInfo;
 
 use crate::{
     distsql_recordset::{DistSqlRecordSet, DistSqlRecordSetError},
@@ -58,7 +58,10 @@ pub enum ConfiguredInnerJoinError {
         /// Decoded row width.
         actual: usize,
     },
-    /// A non-null signed-BIGINT join key decoded as another datum kind.
+    /// A join key operand did not decode as one of the scalar kinds this
+    /// milestone's key comparison understands (int/uint/double/string), or
+    /// the pair straddled two kinds outside the admitted signed/unsigned
+    /// integer cross-comparison.
     InvalidJoinKey {
         /// Zero-based relation (`0` is left, `1` is right).
         relation: usize,
@@ -546,27 +549,26 @@ impl JoinLayout {
         let Some((left_offset, right_offset)) = self.equality else {
             return Ok(true);
         };
-        let left_key = match &left[left_offset] {
-            Datum::Int(value) => *value,
-            datum => {
-                return Err(ConfiguredInnerJoinError::InvalidJoinKey {
-                    relation: 0,
-                    offset: left_offset,
-                    kind: datum.kind(),
-                });
+        join_key_eq(&left[left_offset], &right[right_offset]).ok_or_else(|| {
+            // Neither operand decoded as one of the scalar kinds this
+            // milestone's key comparison understands (int/uint/double/
+            // string). Attribute the failure to whichever side is not a
+            // recognized numeric/string key kind, preferring the left side
+            // when both are unrecognized.
+            let (relation, offset, kind) = match &left[left_offset] {
+                Datum::Int(_)
+                | Datum::UInt(_)
+                | Datum::Real(_)
+                | Datum::String(_)
+                | Datum::Bytes(_) => (1, right_offset, right[right_offset].kind()),
+                datum => (0, left_offset, datum.kind()),
+            };
+            ConfiguredInnerJoinError::InvalidJoinKey {
+                relation,
+                offset,
+                kind,
             }
-        };
-        let right_key = match &right[right_offset] {
-            Datum::Int(value) => *value,
-            datum => {
-                return Err(ConfiguredInnerJoinError::InvalidJoinKey {
-                    relation: 1,
-                    offset: right_offset,
-                    kind: datum.kind(),
-                });
-            }
-        };
-        Ok(left_key == right_key)
+        })
     }
 
     fn full_row(&self, left: &[Datum], right: &[Datum]) -> Vec<Datum> {
@@ -584,6 +586,32 @@ impl JoinLayout {
                 ProjectionSlot::Right(offset) => row[self.widths[0] + offset].clone(),
             })
             .collect()
+    }
+}
+
+/// Evaluates one non-null SQL `=` join key comparison, or `None` if neither
+/// operand decoded as a scalar kind this milestone's key comparison
+/// understands.
+///
+/// Per Go `types.CompareInt` (`pkg/types/compare.go`), a signed and an
+/// unsigned integer are never compared by reinterpreting one side's bit
+/// pattern as the other's domain: an unsigned value above `i64::MAX`, or a
+/// negative signed value, can never equal a value from the other domain.
+/// `2^63` unsigned and `-1` signed are therefore correctly unequal to every
+/// value on the other side, not just to each other by coincidence of bit
+/// pattern.
+fn join_key_eq(left: &Datum, right: &Datum) -> Option<bool> {
+    match (left, right) {
+        (Datum::Int(left), Datum::Int(right)) => Some(left == right),
+        (Datum::UInt(left), Datum::UInt(right)) => Some(left == right),
+        (Datum::Int(signed), Datum::UInt(unsigned))
+        | (Datum::UInt(unsigned), Datum::Int(signed)) => {
+            Some(*signed >= 0 && *unsigned <= i64::MAX as u64 && *signed == *unsigned as i64)
+        }
+        (Datum::Real(left), Datum::Real(right)) => Some(left == right),
+        (Datum::String(left), Datum::String(right)) => Some(left.bytes() == right.bytes()),
+        (Datum::Bytes(left), Datum::Bytes(right)) => Some(left == right),
+        _ => None,
     }
 }
 
@@ -640,20 +668,26 @@ fn protocol_column(
     };
     let table = tables[relation];
     let configured_column = &table.columns()[column.side_offset()];
+    // Mirrors the single-scan `protocol_columns` result metadata (Go
+    // `column.ConvertColumnInfo`): each output column carries its own source
+    // column's type/charset/length/unsigned flag rather than an assumed
+    // signed `LONGLONG`, so a joined `DOUBLE`, `CHAR`, or `BIGINT UNSIGNED`
+    // column reports correctly over the wire.
+    let scalar = configured_column.scalar_type();
     ColumnInfo {
         schema: table.schema().to_owned(),
         table: column.qualifier().to_owned(),
         org_table: table.table().to_owned(),
         name: output_name.to_owned(),
         org_name: configured_column.name().to_owned(),
-        column_length: 20,
-        charset: BINARY_DEFAULT_COLLATION_ID,
+        column_length: scalar.result_column_length() as u32,
+        charset: scalar.result_charset_id() as u16,
         flag: match configured_column.kind() {
             ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
             ConfiguredColumnKind::StoredNotNull => 0x0001,
-        },
+        } | if scalar.is_unsigned() { 0x0020 } else { 0 },
         decimal: 0,
-        type_code: FieldTypeCode::LongLong.mysql_type(),
+        type_code: scalar.result_type_code() as u8,
         default_value: None,
     }
 }
