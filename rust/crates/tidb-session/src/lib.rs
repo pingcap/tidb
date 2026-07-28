@@ -2771,10 +2771,84 @@ mod tests {
         match result.unwrap() {
             StmtResult::Rows(rows) => rows
                 .into_iter()
-                .map(|row| row.iter().map(|v| datum_text(v).unwrap()).collect())
+                .map(|row| {
+                    row.iter()
+                        .map(|v| datum_text(v).unwrap_or_else(|| "NULL".to_owned()))
+                        .collect()
+                })
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
         }
+    }
+
+    /// Go `table.CastValue`: a written value takes its column's type, checked
+    /// against captured TiDB output.
+    ///
+    /// NOT PORTED from Go's own suites: the temporal columns (a DATE/DATETIME
+    /// column's zero-date handling is its own error path), ENUM/SET, and the
+    /// `INSERT IGNORE` form, which Go treats like a non-strict mode.
+    #[test]
+    fn insert_casts_to_column_type() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (d DECIMAL(10,3), i INT, v VARCHAR(4))")
+            .unwrap();
+
+        // Captured: a decimal rounds to the column's scale, a float rounds to
+        // the integer column, and a numeric string parses.
+        session
+            .run("INSERT INTO t VALUES (1.23456, 7.6, 'ab')")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT d, i, v FROM t")),
+            [["1.235", "8", "ab"]]
+        );
+        assert!(session.warnings().is_empty());
+        session.run("INSERT INTO t (i) VALUES ('12')").unwrap();
+        assert_eq!(row_text(session.run("SELECT i FROM t")), [["8"], ["12"]]);
+
+        // Captured: under the default strict mode a value that does not fit
+        // fails the statement, and the row is not written.
+        assert!(matches!(
+            session.run("INSERT INTO t (v) VALUES ('abcdefg')"),
+            Err(DriverError::DataTooLong { row: 1, .. })
+        ));
+        assert!(matches!(
+            session.run("INSERT INTO t (i) VALUES ('x')"),
+            Err(DriverError::IncorrectValue { row: 1, .. })
+        ));
+        assert_eq!(row_text(session.run("SELECT i FROM t")).len(), 2);
+        // The failure is reported with Go's own message.
+        match session.run("INSERT INTO t (i) VALUES ('x')") {
+            Err(error) => {
+                let reported = error.to_mysql_error();
+                assert_eq!(reported.code, 1366);
+                assert_eq!(
+                    reported.message,
+                    "Incorrect int value: 'x' for column 'i' at row 1"
+                );
+            }
+            Ok(other) => panic!("expected a failure, got {other:?}"),
+        }
+
+        // Captured: without a strict mode the converted value is stored and
+        // the same message is a warning -- the string truncates to the
+        // column's width and an unparseable number becomes zero.
+        session.apply_set("SET sql_mode = ''").unwrap();
+        session.run("INSERT INTO t (v) VALUES ('abcdefg')").unwrap();
+        assert_eq!(session.warnings().len(), 1);
+        assert_eq!(session.warnings()[0].code, 1406);
+        assert_eq!(
+            session.warnings()[0].message,
+            "Data too long for column 'v' at row 1"
+        );
+        session.run("INSERT INTO t (i) VALUES ('x')").unwrap();
+        assert_eq!(session.warnings().len(), 1);
+        assert_eq!(session.warnings()[0].code, 1366);
+        assert_eq!(
+            row_text(session.run("SELECT v FROM t")),
+            [["ab"], ["NULL"], ["abcd"], ["NULL"]]
+        );
     }
 
     /// Decimal, hex and bit literals through the whole session path, checked
@@ -2827,20 +2901,8 @@ mod tests {
         session.run("CREATE TABLE t (d DECIMAL(10,3))").unwrap();
         session.run("INSERT INTO t VALUES (1.5), (2.25)").unwrap();
         assert_eq!(
-            session.run("SELECT d FROM t WHERE d > 1.4").unwrap(),
-            StmtResult::Rows(vec![
-                vec![Datum::Decimal(tidb_datatype::Decimal::from_literal("1.5"))],
-                vec![Datum::Decimal(tidb_datatype::Decimal::from_literal("2.25"))],
-            ])
-        );
-        // KNOWN DIVERGENCE (next target, recorded in the frontier memory):
-        // TiDB prints these as `1.500` and `2.250`, because `INSERT` casts
-        // each value to the column's own type (Go `table.CastValue`) and a
-        // DECIMAL(10,3) column carries scale 3. This tier stores the literal
-        // as written, so the value is right but the scale is the literal's.
-        assert_eq!(
-            row_text(session.run("SELECT d FROM t")),
-            [["1.5"], ["2.25"]]
+            row_text(session.run("SELECT d FROM t WHERE d > 1.4")),
+            [["1.500"], ["2.250"]]
         );
     }
 

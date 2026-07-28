@@ -467,6 +467,31 @@ pub enum DriverError {
         /// The value that does not fit.
         value: String,
     },
+    /// Go `ErrDataTooLong` (1406).
+    DataTooLong {
+        /// The column written.
+        column: String,
+        /// The offending row's 1-based position.
+        row: usize,
+    },
+    /// Go `ErrWarnDataOutOfRange` (1264).
+    DataOutOfRange {
+        /// The column written.
+        column: String,
+        /// The offending row's 1-based position.
+        row: usize,
+    },
+    /// Go `table.ErrTruncatedWrongValueForField` (1366).
+    IncorrectValue {
+        /// The column type's name, as Go `types.TypeStr` prints it.
+        type_name: String,
+        /// The rejected value.
+        value: String,
+        /// The column written.
+        column: String,
+        /// The offending row's 1-based position.
+        row: usize,
+    },
     /// Go `ErrTruncatedWrongValueForField` (1265), row form.
     DataTruncatedAtRow {
         /// The column being modified.
@@ -1487,6 +1512,21 @@ pub fn run_insert_reporting(
                 ));
             }
         }
+        // Go casts each value to its column's type before the row is
+        // written, which is what rounds a decimal to the column's scale and
+        // parses a numeric string.
+        if let TableEntry::Kv(kv) = &*table {
+            for (offset, value) in row.iter_mut().enumerate() {
+                let column = &kv.columns[offset];
+                *value = cast_value_for_column(
+                    std::mem::replace(value, Datum::Null),
+                    &column.field_type,
+                    &column.name,
+                    new_rows.len(),
+                    ctx,
+                )?;
+            }
+        }
         new_rows.push(row);
         inserted += 1;
     }
@@ -1514,6 +1554,94 @@ pub fn run_insert_reporting(
         }
     }
     Ok((inserted, first_allocated))
+}
+
+/// Go `table.CastValue` + `completeInsertErr`: converts one written value into
+/// the column's own type, and names the failure the way the insert path does.
+///
+/// The strict SQL mode makes a bad value fail the statement; without it the
+/// converted (clamped or truncated) value is stored and the same message is a
+/// warning, which is what `sql_mode = ''` produces in TiDB.
+fn cast_value_for_column(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    row_index: usize,
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
+    if value.is_null() {
+        return Ok(value);
+    }
+    let converted = value
+        .convert_to(field_type, ctx.conversion_flags())
+        .map_err(|_| DriverError::IncorrectValue {
+            type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+            value: datum_error_text(&value),
+            column: column.to_owned(),
+            row: row_index + 1,
+        })?;
+    let Some(event) = converted.event else {
+        return Ok(converted.value);
+    };
+    // Rounding a NUMBER into a narrower decimal column is silent in TiDB:
+    // captured, `INSERT INTO t(d DECIMAL(10,3)) VALUES (1.23456)` stores
+    // 1.235 and raises nothing at all. Go reaches that through
+    // `ProduceDecWithSpecifiedTp`, whose rounding notice never becomes a
+    // statement error. A STRING source is a different case -- it may not be
+    // a number at all -- so it keeps the report below.
+    let numeric_source = matches!(
+        value,
+        Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) | Datum::Float32(_) | Datum::Decimal(_)
+    );
+    if numeric_source
+        && matches!(field_type.eval_type(), tidb_datatype::EvalType::Decimal)
+        && matches!(event, tidb_datatype::ScalarConversionEvent::Truncated)
+    {
+        return Ok(converted.value);
+    }
+    // Go picks the message from the conversion's own error kind: a string
+    // that does not fit is ErrDataTooLong, a number outside the column's
+    // range is ErrWarnDataOutOfRange, and anything else is the
+    // "Incorrect <type> value" form.
+    let error = match event {
+        tidb_datatype::ScalarConversionEvent::Overflow(_) => DriverError::DataOutOfRange {
+            column: column.to_owned(),
+            row: row_index + 1,
+        },
+        tidb_datatype::ScalarConversionEvent::Truncated
+            if matches!(field_type.eval_type(), tidb_datatype::EvalType::String) =>
+        {
+            DriverError::DataTooLong {
+                column: column.to_owned(),
+                row: row_index + 1,
+            }
+        }
+        tidb_datatype::ScalarConversionEvent::Truncated => DriverError::IncorrectValue {
+            type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+            value: datum_error_text(&value),
+            column: column.to_owned(),
+            row: row_index + 1,
+        },
+    };
+    if ctx.strict() {
+        return Err(error);
+    }
+    let reported = error.to_mysql_error();
+    ctx.append_warning_parts(reported.code, &reported.message);
+    Ok(converted.value)
+}
+
+/// A value as MySQL prints it inside a conversion error message.
+fn datum_error_text(value: &Datum) -> String {
+    match value {
+        Datum::Int(v) => v.to_string(),
+        Datum::UInt(v) => v.to_string(),
+        Datum::Real(v) => v.to_string(),
+        Datum::Decimal(v) => v.to_string(),
+        Datum::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+        Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// Go `aggregation.NewAggFuncDesc` + `baseFuncDesc.TypeInfer`: the aggregate
@@ -6715,6 +6843,29 @@ impl DriverError {
             ER_SUBQUERY_NO_1_ROW,
             *b"21000",
             "Subquery returns more than 1 row".to_owned(),
+        ),
+        // Go: "Data too long for column '%s' at row %d".
+        DriverError::DataTooLong { column, row } => MysqlError::new(
+            1406,
+            *b"22001",
+            format!("Data too long for column '{column}' at row {row}"),
+        ),
+        // Go: "Out of range value for column '%s' at row %d".
+        DriverError::DataOutOfRange { column, row } => MysqlError::new(
+            1264,
+            *b"22003",
+            format!("Out of range value for column '{column}' at row {row}"),
+        ),
+        // Go: "Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d".
+        DriverError::IncorrectValue {
+            type_name,
+            value,
+            column,
+            row,
+        } => MysqlError::new(
+            1366,
+            *b"HY000",
+            format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"),
         ),
         DriverError::CatalogPoisoned => {
             MysqlError::unknown("the shared catalog is unusable after a failed statement")

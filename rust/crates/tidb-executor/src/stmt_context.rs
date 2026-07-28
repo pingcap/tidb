@@ -36,6 +36,7 @@ use tidb_expr::{Columns, ErrorLevel};
 pub struct StmtContext {
     warnings: Rc<RefCell<Vec<(u16, String)>>>,
     division_by_zero: ErrorLevel,
+    strict: bool,
 }
 
 impl StmtContext {
@@ -45,6 +46,7 @@ impl StmtContext {
         Self {
             warnings: Rc::default(),
             division_by_zero: ErrorLevel::Warn,
+            strict: true,
         }
     }
 
@@ -64,7 +66,31 @@ impl StmtContext {
         Self {
             warnings: Rc::default(),
             division_by_zero: level,
+            strict,
         }
+    }
+
+    /// Whether the statement runs under a strict SQL mode, which decides
+    /// whether a value that does not fit its column fails the statement.
+    #[must_use]
+    pub fn strict(&self) -> bool {
+        self.strict
+    }
+
+    /// Go `StatementContext.TypeFlags` in the part conversion reads: a
+    /// non-strict statement tolerates truncation instead of failing.
+    #[must_use]
+    pub fn conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        if self.strict {
+            tidb_datatype::STRICT_FLAGS
+        } else {
+            tidb_datatype::DEFAULT_STATEMENT_FLAGS
+        }
+    }
+
+    /// Records a warning the driver rendered itself.
+    pub fn append_warning_parts(&self, code: u16, message: &str) {
+        self.append_warning(code, message);
     }
 
     /// The warnings evaluation recorded, in the order they were raised.
