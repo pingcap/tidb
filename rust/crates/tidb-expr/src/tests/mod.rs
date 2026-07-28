@@ -2237,6 +2237,89 @@ fn date_parts() {
         e("date_add('0001-01-01', interval -1 second)"),
         "STR:0000-00-00 23:59:59"
     );
+
+    // Composite `INTERVAL` units -- ported from `parseTimeValue`/
+    // `parseSingleTimeValue` (`pkg/types/time.go`), every case confirmed via
+    // `pkg/executor` capture against `'2024-01-31 10:20:30'`.
+    let dt = "'2024-01-31 10:20:30'";
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1:30' hour_minute)")),
+        "STR:2024-01-31 11:50:30"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1:2:3' hour_second)")),
+        "STR:2024-01-31 11:22:33"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1 2' day_hour)")),
+        "STR:2024-02-01 12:20:30"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1 2:3' day_minute)")),
+        "STR:2024-02-01 12:23:30"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1 2:3:4' day_second)")),
+        "STR:2024-02-01 12:23:34"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1:30' minute_second)")),
+        "STR:2024-01-31 10:22:00"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1-2' year_month)")),
+        "STR:2025-03-31 10:20:30"
+    );
+    // SHORT-STRING rule: a lone number with no separator fills only the
+    // RIGHTMOST (smallest) field of the unit -- `'30' HOUR_MINUTE` is `+30
+    // minutes`, not `+30 hours`; `'30' DAY_HOUR` is `+30 hours` (which
+    // carries into the day), not `+30 days`.
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '30' hour_minute)")),
+        "STR:2024-01-31 10:50:30"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '30' day_hour)")),
+        "STR:2024-02-01 16:20:30"
+    );
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '30' year_month)")),
+        "STR:2026-07-31 10:20:30"
+    );
+    // A NUMBER (not a string) amount is formatted to its plain decimal
+    // string first (matching Go's `getIntervalFromInt`), then split the
+    // SAME way: `130` has one digit run, so it fills the rightmost field.
+    assert_eq!(
+        e(&format!("date_add({dt}, interval 130 hour_minute)")),
+        "STR:2024-01-31 12:30:30"
+    );
+    // Negative: the leading `-` negates EVERY parsed field, not just the
+    // first.
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '-1:30' hour_minute)")),
+        "STR:2024-01-31 08:50:30"
+    );
+    // Month overflow is NOT re-normalized before adding -- `13` months
+    // simply adds to `1` year's 12, landing on total month 25.
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1-13' year_month)")),
+        "STR:2026-02-28 10:20:30"
+    );
+    // MORE numeric groups than the unit's field count is a malformed-value
+    // WARNING in real TiDB (even under `STRICT_TRANS_TABLES`), not a hard
+    // error -- the date comes back UNCHANGED rather than `NULL`.
+    assert_eq!(
+        e(&format!("date_add({dt}, interval '1:2:3' hour_minute)")),
+        "STR:2024-01-31 10:20:30"
+    );
+    assert_eq!(
+        e(&format!("date_sub({dt}, interval '1:30' hour_minute)")),
+        "STR:2024-01-31 08:50:30"
+    );
+    assert_eq!(
+        e(&format!("date_sub({dt}, interval '30' hour_minute)")),
+        "STR:2024-01-31 09:50:30"
+    );
 }
 
 #[test]
@@ -2332,12 +2415,40 @@ fn extract() {
     // EXTRACT spelling takes the exact same path. (The no-mode spelling uses
     // the evaluator's documented default-week-format capability boundary.)
     assert_eq!(e("extract(week from '2024-03-15')"), "INT:10");
-    // A compound unit remains unsupported until it has a faithful standalone
-    // evaluator rather than being silently mis-evaluated by a partial parser.
+    // Composite units (`HOUR_MINUTE`, `DAY_SECOND`, `YEAR_MONTH`, ...) --
+    // ported from `ExtractDatetimeNum`/`ExtractDurationNum`
+    // (`pkg/types/time.go`); every value below confirmed via `pkg/executor`
+    // capture against `'2024-01-31 10:20:30'`.
+    let dt = "'2024-01-31 10:20:30'";
+    assert_eq!(e(&format!("extract(hour_minute from {dt})")), "INT:1020");
+    assert_eq!(e(&format!("extract(day_second from {dt})")), "INT:31102030");
+    assert_eq!(e(&format!("extract(day_minute from {dt})")), "INT:311020");
+    assert_eq!(e(&format!("extract(day_hour from {dt})")), "INT:3110");
     assert_eq!(
-        e("extract(day_hour from '2024-03-15 10:30:45')"),
-        "Unsupported(\"unsupported function\")"
+        e(&format!("extract(day_microsecond from {dt})")),
+        "INT:31102030000000"
     );
+    assert_eq!(e(&format!("extract(year_month from {dt})")), "INT:202401");
+    assert_eq!(e(&format!("extract(hour_second from {dt})")), "INT:102030");
+    assert_eq!(
+        e(&format!("extract(hour_microsecond from {dt})")),
+        "INT:102030000000"
+    );
+    assert_eq!(e(&format!("extract(minute_second from {dt})")), "INT:2030");
+    assert_eq!(
+        e(&format!("extract(minute_microsecond from {dt})")),
+        "INT:2030000000"
+    );
+    assert_eq!(
+        e(&format!("extract(second_microsecond from {dt})")),
+        "INT:30000000"
+    );
+    // A bare TIME/duration literal has no day-of-month: `ExtractDurationNum`
+    // drops the day component and applies the duration's own sign to the
+    // WHOLE result, unlike the datetime formulas above.
+    assert_eq!(e("extract(hour_minute from '-01:02:03')"), "INT:-102");
+    assert_eq!(e("extract(hour_second from '-01:02:03')"), "INT:-10203");
+    assert_eq!(e("extract(day_second from '-01:02:03')"), "INT:-10203");
 }
 
 /// `CAST(... AS type)` / `CONVERT(...)` evaluation — one `(expr, want)`

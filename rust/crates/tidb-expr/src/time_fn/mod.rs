@@ -68,6 +68,12 @@ pub(crate) fn dispatch(
         "TIMESTAMPDIFF" => calendar::timestamp_diff(vals),
         "TO_DAYS" => calendar::to_days(vals),
         "TO_SECONDS" => calendar::to_seconds(vals),
+        // `EXTRACT(<composite unit> FROM value)`, e.g. `HOUR_MINUTE`,
+        // `DAY_SECOND`, `YEAR_MONTH` — see `calendar::extract_composite`'s
+        // own doc.
+        "YEAR_MONTH" | "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" | "DAY_MICROSECOND"
+        | "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND" | "MINUTE_SECOND"
+        | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => calendar::extract_composite(name, vals),
         _ => return None,
     })
 }

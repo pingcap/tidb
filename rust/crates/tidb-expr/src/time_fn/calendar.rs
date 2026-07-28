@@ -662,9 +662,29 @@ pub(crate) fn to_seconds(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `2021-02-28`, not `2021-03-03`; the clamp is computed once against the
 /// FINAL target month, not iteratively re-clamped one month at a time —
 /// confirmed via `goeval`: `2021-01-31 + 2 MONTH` = `2021-03-31`, the full
-/// 31 days, not `2021-03-28` from clamping through February first. Every
-/// other unit (`QUARTER`/`MICROSECOND`/...) parses syntactically via
-/// `Expr::Interval` but is `Unsupported` here.
+/// 31 days, not `2021-03-28` from clamping through February first. `QUARTER`
+/// still parses but is `Unsupported`.
+///
+/// The COMPOSITE units (`HOUR_MINUTE`, `DAY_HOUR`, `DAY_MINUTE`,
+/// `DAY_SECOND`, `MINUTE_SECOND`, `HOUR_SECOND`, `YEAR_MONTH`, and their
+/// `*_MICROSECOND` variants) are handled by [`composite_spec`]/
+/// [`parse_composite_value`], ported from `parseTimeValue`/
+/// `parseSingleTimeValue` in `pkg/types/time.go`. Their `amount` is always
+/// read as a STRING (an integer/decimal literal is formatted to its plain
+/// decimal string first, exactly like Go's `getIntervalFromInt`/
+/// `getIntervalFromReal` do before ever calling `ParseDurationValue`), then
+/// split on digit runs and right-aligned onto the unit's fields — so a
+/// SHORT string like `INTERVAL '30' HOUR_MINUTE` fills only the RIGHTMOST
+/// (smallest) field (`30` becomes MINUTES, not HOURS: `+30 minutes`), and a
+/// string with MORE numeric groups than the unit has fields (e.g. `'1:2:3'
+/// HOUR_MINUTE`) is a malformed-value warning in real TiDB, not a hard
+/// error, that resolves to a ZERO interval (the date is returned unchanged)
+/// — confirmed via `pkg/executor` capture, both under the default
+/// `STRICT_TRANS_TABLES` `sql_mode`. `*_MICROSECOND` variants keep only the
+/// whole-second part of the parsed nanoseconds; this crate's DATE_ADD
+/// result has no fractional-second representation (see [`date_add_time`]),
+/// the same limitation the plain `SECOND` unit already has for a decimal
+/// amount.
 ///
 /// `amount` accepts `Int` directly or `Decimal` (rounded to the nearest
 /// whole unit via [`crate::Decimal::round_to_i64`], ties away
@@ -688,6 +708,9 @@ pub(crate) fn date_add(
     amount: &Datum,
     sign: i64,
 ) -> Result<Datum, EvalError> {
+    if let Some((index, cnt)) = composite_spec(unit) {
+        return date_add_composite(date, amount, sign, index, cnt);
+    }
     let n = match amount {
         Datum::Null => return Ok(Datum::Null),
         Datum::Int(i) => *i,
@@ -747,6 +770,248 @@ pub(crate) fn date_add(
         return Err(EvalError::Unsupported("INTERVAL unit"));
     };
     Ok(format_ymd_result(y2, m2, d2, time_suffix))
+}
+
+/// Composite-unit field indices, mirroring `pkg/types/time.go`'s
+/// `YearIndex`..`MicrosecondIndex` constants (`0..=6`), and the `(index,
+/// cnt)` pair `ParseDurationValue` passes to `parseTimeValue` for each
+/// composite `INTERVAL` unit name — the field the LAST numeric group in the
+/// string lands on, and the max number of numeric groups accepted.
+/// `None` for a non-composite (single) unit name.
+fn composite_spec(unit: &str) -> Option<(usize, usize)> {
+    const MONTH: usize = 1;
+    const HOUR: usize = 3;
+    const MINUTE: usize = 4;
+    const SECOND: usize = 5;
+    const MICROSECOND: usize = 6;
+    Some(match unit.to_ascii_uppercase().as_str() {
+        "YEAR_MONTH" => (MONTH, 2),
+        "DAY_HOUR" => (HOUR, 2),
+        "DAY_MINUTE" => (MINUTE, 3),
+        "DAY_SECOND" => (SECOND, 4),
+        "DAY_MICROSECOND" => (MICROSECOND, 5),
+        "HOUR_MINUTE" => (MINUTE, 2),
+        "HOUR_SECOND" => (SECOND, 3),
+        "HOUR_MICROSECOND" => (MICROSECOND, 4),
+        "MINUTE_SECOND" => (SECOND, 2),
+        "MINUTE_MICROSECOND" => (MICROSECOND, 3),
+        "SECOND_MICROSECOND" => (MICROSECOND, 2),
+        _ => return None,
+    })
+}
+
+/// Splits a composite `INTERVAL` string into `(years, months, days,
+/// nanoseconds)`, porting `parseTimeValue` (`pkg/types/time.go`): every
+/// contiguous ASCII-digit run in the string is one numeric group, a leading
+/// `-` (after trimming whitespace) negates EVERY group (not just the
+/// first), and the groups are assigned RIGHT-to-LEFT starting at `index`
+/// (so a string shorter than the unit's full field count — e.g. `'30'`
+/// for `HOUR_MINUTE` — fills only the RIGHTMOST/smallest fields, leaving
+/// the rest `0`; confirmed via `pkg/executor` capture: `INTERVAL '30'
+/// HOUR_MINUTE` is `+30 minutes`, not `+30 hours`).
+///
+/// MORE numeric groups than `cnt` is `parseTimeValue`'s own hard error —
+/// but real TiDB's `DATE_ADD`/`DATE_SUB` caller (`handleInvalidTimeError`)
+/// downgrades that specific error class to a warning even under
+/// `STRICT_TRANS_TABLES`, continuing with an all-zero interval rather than
+/// failing the statement (confirmed via `pkg/executor` capture: `'1:2:3'
+/// HOUR_MINUTE` leaves the date UNCHANGED, no error, no `NULL`) — so this
+/// returns the all-zero interval for that case instead of an `Err`, the
+/// same effective behavior without inventing a warning channel this crate
+/// doesn't have.
+fn parse_composite_value(index: usize, cnt: usize, format: &str) -> (i64, i64, i64, i64) {
+    let trimmed = format.trim();
+    let (neg, body) = match trimmed.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, trimmed),
+    };
+    let mut matches: Vec<i64> = Vec::new();
+    let mut digits = String::new();
+    for c in body.chars().chain(std::iter::once('\0')) {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if !digits.is_empty() {
+            matches.push(digits.parse().unwrap_or(i64::MAX));
+            digits.clear();
+        }
+    }
+    if matches.len() > cnt {
+        return (0, 0, 0, 0);
+    }
+    let mut fields = [0i64; 7];
+    let mut idx = index as i64;
+    for i in 0..matches.len() {
+        let value = matches[matches.len() - 1 - i];
+        if idx >= 0 {
+            fields[idx as usize] = if neg { -value } else { value };
+        }
+        idx -= 1;
+    }
+    let years = fields[0];
+    let months = fields[1];
+    let mut days = fields[2];
+    let mut seconds = fields[3] * 3600 + fields[4] * 60 + fields[5];
+    days += seconds / 86_400;
+    seconds %= 86_400;
+    let nanos = seconds * 1_000_000_000 + fields[6] * 1000;
+    (years, months, days, nanos)
+}
+
+/// `DATE_ADD`/`DATE_SUB` for a composite `INTERVAL` unit (see
+/// [`composite_spec`]/[`parse_composite_value`]). `YEAR_MONTH` is
+/// calendar-field arithmetic through the SAME [`add_months`] `MONTH`/`YEAR`
+/// use (and so shares their day-of-month clamping); every other composite
+/// unit is exact day/second arithmetic through the same absolute-day-count
+/// path [`date_add_time`] uses for `HOUR`/`MINUTE`/`SECOND` — the two
+/// families never mix within one composite unit, since exactly one of
+/// `(years, months)` or `(days, nanos)` is nonzero for any given unit.
+fn date_add_composite(
+    date: &Datum,
+    amount: &Datum,
+    sign: i64,
+    index: usize,
+    cnt: usize,
+) -> Result<Datum, EvalError> {
+    let format = match amount {
+        Datum::Null => return Ok(Datum::Null),
+        Datum::Int(i) => i.to_string(),
+        Datum::UInt(i) => i.to_string(),
+        Datum::Decimal(d) => d.to_string(),
+        Datum::String(_) | Datum::Bytes(_) => match coerce_str(amount)? {
+            Some(s) => s,
+            None => return Ok(Datum::Null),
+        },
+        _ => return Err(EvalError::Unsupported("composite INTERVAL amount")),
+    };
+    let Some(s) = coerce_str(date)? else {
+        return Ok(Datum::Null);
+    };
+    let trimmed = s.trim();
+    let (date_str, time_suffix) = trimmed
+        .split_once(char::is_whitespace)
+        .map_or((trimmed, None), |(d, t)| (d, Some(t)));
+    let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        return Ok(Datum::Null);
+    };
+    let (h, mi, sec) = match time_suffix {
+        Some(t) => match parse_time_hms(t) {
+            Some(hms) => hms,
+            None => return Ok(Datum::Null),
+        },
+        None => (0, 0, 0),
+    };
+    let (years, months, days, nanos) = parse_composite_value(index, cnt, &format);
+    if years != 0 || months != 0 {
+        let (y2, m2, d2) = add_months(y, m, d, sign * (years * 12 + months));
+        return Ok(format_ymd_result(y2, m2, d2, time_suffix));
+    }
+    let delta_secs = sign * (days * 86_400 + nanos / 1_000_000_000);
+    Ok(date_add_time(y, m, d, h, mi, sec, delta_secs))
+}
+
+/// `EXTRACT(<composite unit> FROM value)`, ported from
+/// `ExtractDatetimeNum`/`ExtractDurationNum` (`pkg/types/time.go`).  A
+/// value that parses as a DATE/DATETIME uses `ExtractDatetimeNum`'s
+/// formulas (the `DAY_*` variants include the actual day-of-month); a
+/// value that is a bare, colon-separated TIME/duration literal (no `-`
+/// date separators, confirmed via `pkg/executor` capture with
+/// `'-01:02:03'`) uses `ExtractDurationNum`'s formulas instead, which drop
+/// the day component entirely and apply the duration's own sign to the
+/// WHOLE composite result rather than per-field. This crate's temporal
+/// values carry no fractional-second component, so every `*_MICROSECOND`
+/// result's microsecond digits are always `000000` — correct for any value
+/// this crate can itself represent.
+pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
+    if vals.len() != 1 {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
+    let Some(s) = coerce_str(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    let trimmed = s.trim();
+    if let Some((neg, h, mi, sec)) = parse_signed_duration_hms(trimmed) {
+        let value = duration_composite_value(unit, h, mi, sec);
+        return Ok(Datum::Int(if neg { -value } else { value }));
+    }
+    let (date_str, time_suffix) = trimmed
+        .split_once(char::is_whitespace)
+        .map_or((trimmed, None), |(d, t)| (d, Some(t)));
+    let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        return Ok(Datum::Null);
+    };
+    let (h, mi, sec) = match time_suffix {
+        Some(t) => parse_time_hms(t).unwrap_or((0, 0, 0)),
+        None => (0, 0, 0),
+    };
+    Ok(Datum::Int(datetime_composite_value(
+        unit, y, m, d, h, mi, sec,
+    )))
+}
+
+/// A bare TIME/duration literal (`[-]H:M:S`, `H` unrestricted in width,
+/// unlike a wall-clock hour) has no date part at all — recognized here by
+/// the ABSENCE of a `-` date separator alongside the PRESENCE of a `:`,
+/// distinguishing it from a `YYYY-MM-DD ...` DATETIME string. Returns
+/// `(negative, hour, minute, second)`, dropping any fractional-second
+/// suffix (this crate's temporal domain has none).
+fn parse_signed_duration_hms(s: &str) -> Option<(bool, u32, u32, u32)> {
+    let (neg, body) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s),
+    };
+    if body.contains('-') || !body.contains(':') {
+        return None;
+    }
+    let mut parts = body.splitn(3, ':');
+    let h: u32 = parts.next()?.trim().parse().ok()?;
+    let mi: u32 = parts.next()?.trim().parse().ok()?;
+    let sec_field = parts.next()?.trim();
+    let sec_digits = sec_field.split('.').next().unwrap_or(sec_field);
+    let sec: u32 = sec_digits.parse().ok()?;
+    if mi > 59 || sec > 59 {
+        return None;
+    }
+    Some((neg, h, mi, sec))
+}
+
+/// `ExtractDurationNum`'s composite formulas: no day-of-month component
+/// (a `Duration` has none), the sign applies to the whole result at the
+/// call site instead.
+fn duration_composite_value(unit: &str, h: u32, mi: u32, sec: u32) -> i64 {
+    let (h, mi, sec) = (i64::from(h), i64::from(mi), i64::from(sec));
+    match unit.to_ascii_uppercase().as_str() {
+        "HOUR_MINUTE" => h * 100 + mi,
+        "HOUR_SECOND" => h * 10_000 + mi * 100 + sec,
+        "HOUR_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000,
+        "MINUTE_SECOND" => mi * 100 + sec,
+        "MINUTE_MICROSECOND" => (mi * 100 + sec) * 1_000_000,
+        "SECOND_MICROSECOND" => sec * 1_000_000,
+        "DAY_HOUR" => h,
+        "DAY_MINUTE" => h * 100 + mi,
+        "DAY_SECOND" => h * 10_000 + mi * 100 + sec,
+        "DAY_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000,
+        _ => 0,
+    }
+}
+
+/// `ExtractDatetimeNum`'s composite formulas: `DAY_*` variants use the
+/// actual day-of-month, and `YEAR_MONTH` is `year * 100 + month`.
+fn datetime_composite_value(unit: &str, y: i64, m: u32, d: u32, h: u32, mi: u32, sec: u32) -> i64 {
+    let (d, h, mi, sec) = (i64::from(d), i64::from(h), i64::from(mi), i64::from(sec));
+    match unit.to_ascii_uppercase().as_str() {
+        "HOUR_MINUTE" => h * 100 + mi,
+        "HOUR_SECOND" => h * 10_000 + mi * 100 + sec,
+        "HOUR_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000,
+        "MINUTE_SECOND" => mi * 100 + sec,
+        "MINUTE_MICROSECOND" => (mi * 100 + sec) * 1_000_000,
+        "SECOND_MICROSECOND" => sec * 1_000_000,
+        "DAY_HOUR" => d * 100 + h,
+        "DAY_MINUTE" => d * 10_000 + h * 100 + mi,
+        "DAY_SECOND" => d * 1_000_000 + h * 10_000 + mi * 100 + sec,
+        "DAY_MICROSECOND" => (d * 1_000_000 + h * 10_000 + mi * 100 + sec) * 1_000_000,
+        "YEAR_MONTH" => y * 100 + i64::from(m),
+        _ => 0,
+    }
 }
 
 /// Parses a `HH:MM:SS` time-of-day string into `(hour, minute, second)`,

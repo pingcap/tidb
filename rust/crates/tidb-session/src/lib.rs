@@ -6091,16 +6091,25 @@ mod tests {
             [["NULL"]]
         );
 
-        // REFUSED, not silently wrong: the composite units. Real TiDB reads
-        // `INTERVAL '1:30' HOUR_MINUTE` as +1:30 and `EXTRACT(HOUR_MINUTE
-        // FROM '2024-01-31 10:20:30')` as 1020; neither the row path nor this
-        // one implements a composite unit, so both refuse at build time.
-        assert!(session
-            .run("SELECT DATE_ADD(created, INTERVAL '1:30' HOUR_MINUTE) FROM t")
-            .is_err());
-        assert!(session
-            .run("SELECT EXTRACT(HOUR_MINUTE FROM created) FROM t")
-            .is_err());
+        // Composite units -- ported from `parseTimeValue`/
+        // `ExtractDatetimeNum` (`pkg/types/time.go`); captured against
+        // `pkg/executor`: `'2024-01-31 10:20:30' + INTERVAL '1:30'
+        // HOUR_MINUTE` is `2024-01-31 11:50:30`, and `EXTRACT(HOUR_MINUTE
+        // FROM '2024-01-31 10:20:30')` is `1020`. Both the row path
+        // (`time_fn::calendar::date_add`/`extract_composite`) and the chunk
+        // rewriter build these now.
+        assert_eq!(
+            row_text(session.run("SELECT DATE_ADD(created, INTERVAL '1:30' HOUR_MINUTE) FROM t")),
+            [["2024-01-31 11:50:30"], ["2025-03-16 01:29:59"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT EXTRACT(HOUR_MINUTE FROM created) FROM t")),
+            [["1020"], ["2359"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT EXTRACT(DAY_SECOND FROM created) FROM t")),
+            [["31102030"], ["15235959"], ["NULL"]]
+        );
     }
 
     #[test]

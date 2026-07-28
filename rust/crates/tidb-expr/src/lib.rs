@@ -90,9 +90,13 @@
 //! [`time_fn::calendar::from_days`] itself).
 //!
 //! `DATE_ADD`/`DATE_SUB(date, INTERVAL amount unit)` are also covered, for
-//! `DAY`, `WEEK`, `MONTH`, `YEAR`, `HOUR`, `MINUTE`, and `SECOND` units —
-//! every unit except the sub-second/compound ones (`MICROSECOND`,
-//! `DAY_HOUR`, ...). `DAY` is exact day arithmetic via the same
+//! `DAY`, `WEEK`, `MONTH`, `YEAR`, `HOUR`, `MINUTE`, `SECOND`, and every
+//! COMPOSITE unit (`YEAR_MONTH`, `DAY_HOUR`, `DAY_MINUTE`, `DAY_SECOND`,
+//! `HOUR_MINUTE`, `HOUR_SECOND`, `MINUTE_SECOND`, and their
+//! `*_MICROSECOND` variants — see [`time_fn::calendar::date_add`]'s own doc
+//! for the composite split rules, ported from `parseTimeValue`
+//! (`pkg/types/time.go`)); `QUARTER` is the one remaining unsupported unit.
+//! `DAY` is exact day arithmetic via the same
 //! `days_from_civil`/`civil_from_days` round-trip `TO_DAYS`/`FROM_DAYS`
 //! use, so month/year rollover and leap days are handled correctly for
 //! free (`2021-01-31 + 1 DAY` = `2021-02-01`, `2020-02-28 + 1 DAY` =
@@ -129,14 +133,18 @@
 //! intercepted in [`func::eval_func`] BEFORE the uniform
 //! eager-argument-evaluation every other function goes through (since its
 //! `unit` is metadata, not a value `eval_in` can produce on its own).
-//! Every other unit (`QUARTER`/`MICROSECOND`/...) parses but is
-//! `Unsupported` to evaluate. The interval amount accepts `Int` directly
-//! or `Decimal` (rounded to the nearest whole unit via
-//! `Decimal::round_to_i64`, ties away from zero — confirmed via `goeval`
-//! for both a positive and a negative half-unit, and BEFORE any per-unit
-//! multiplication like `WEEK`'s `×7` or `YEAR`'s `×12`); a `Str` amount is
-//! `Unsupported`, needing MySQL's general string-to-number coercion like
-//! `FROM_DAYS`'s argument. The result's computed year is validated against
+//! `QUARTER` still parses but is `Unsupported` to evaluate. The interval
+//! amount for a SINGLE unit accepts `Int` directly or `Decimal` (rounded to
+//! the nearest whole unit via `Decimal::round_to_i64`, ties away from zero
+//! — confirmed via `goeval` for both a positive and a negative half-unit,
+//! and BEFORE any per-unit multiplication like `WEEK`'s `×7` or `YEAR`'s
+//! `×12`); a `Str` amount is `Unsupported` there, needing MySQL's general
+//! string-to-number coercion like `FROM_DAYS`'s argument. A COMPOSITE
+//! unit's amount, by contrast, is always read as a string (an `Int`/
+//! `Decimal` amount is formatted to its plain decimal string first,
+//! matching Go's own `getIntervalFromInt`/`getIntervalFromReal`) and split
+//! per [`time_fn::calendar::parse_composite_value`]'s doc. The result's
+//! computed year is validated against
 //! `DATE`'s real `0001`-`9999` range ([`time_fn::calendar::format_ymd_result`] /
 //! [`time_fn::calendar::format_ymdhms_result`]): exactly `0` is MySQL's "zero date"
 //! string (matching `FROM_DAYS`'s own convention — for `HOUR`/`MINUTE`/
@@ -168,9 +176,7 @@
 //! the SAME rule an integer-literal argument like `HOUR(103045)` already
 //! needs. This is unrelated to `DATE_ADD`'s `HOUR`/`MINUTE`/`SECOND`
 //! interval handling above — that unit is always explicit, so there is no
-//! ambiguous string to disambiguate the way bare `HOUR(...)` needs. The
-//! rest of real date/time arithmetic (compound/`MICROSECOND` intervals)
-//! remains out of scope.
+//! ambiguous string to disambiguate the way bare `HOUR(...)` needs.
 //!
 //! `EXTRACT(unit FROM expr)` ([`tidb_ast::Expr::Extract`]) is a
 //! genuinely separate general-purpose extraction syntax from `INTERVAL`
@@ -179,11 +185,12 @@
 //! sugar for calling `func::eval_func(unit, &[value], cols)` directly,
 //! the SAME dispatch an ordinary `YEAR(x)`/`HOUR(x)`/... call already
 //! goes through — every simple unit this evaluator already supports as
-//! a standalone function works identically through `EXTRACT`, and a
-//! compound unit like `DAY_HOUR` (real MySQL/TiDB grammar, confirmed via
-//! `goeval`) or any other unrecognized unit falls straight into
-//! `eval_func`'s own existing "unsupported function" catch-all, with no
-//! separate rejection code needed.
+//! a standalone function works identically through `EXTRACT`. A COMPOSITE
+//! unit like `DAY_HOUR` (real MySQL/TiDB grammar) resolves the SAME way,
+//! into `time_fn::dispatch`'s own entry for it
+//! ([`time_fn::calendar::extract_composite`]); any other unrecognized unit
+//! still falls straight into `eval_func`'s own existing "unsupported
+//! function" catch-all, with no separate rejection code needed.
 //!
 //! A genuinely unrelated gap surfaced while probing `EXTRACT`'s own
 //! edge cases (deliberately deferred at the time to a dedicated later
@@ -582,11 +589,12 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             eval_func(name, args, cols, Some(expr as *const Expr as usize))
         }
         // `EXTRACT(unit FROM value)` is sugar for calling the SAME
-        // single-argument function `unit` already names when it's a
-        // simple, already-supported extraction (`YEAR`/`HOUR`/...) — no
-        // separate extraction logic needed; `eval_func`'s own catch-all
-        // naturally rejects a compound unit like `DAY_HOUR` the same way
-        // it rejects any other unrecognized function name.
+        // single-argument function `unit` already names — a simple unit
+        // (`YEAR`/`HOUR`/...) or a composite one (`DAY_HOUR`/...,
+        // `time_fn::calendar::extract_composite`'s own entries in
+        // `time_fn::dispatch`) alike — no separate extraction logic needed;
+        // `eval_func`'s own catch-all rejects only a genuinely unrecognized
+        // function name.
         Expr::Extract { unit, value } => {
             eval_func(unit, std::slice::from_ref(value.as_ref()), cols, None)
         }

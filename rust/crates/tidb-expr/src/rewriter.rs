@@ -139,7 +139,15 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         "month" | "day" | "dayofmonth" | "dayofweek" | "dayofyear" | "weekday" | "quarter"
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"
         | "microsecond" | "time_to_sec" | "to_days" | "period_add" | "period_diff"
-        | "unix_timestamp" | "datediff" => int(),
+        | "unix_timestamp" | "datediff"
+        // `EXTRACT`'s composite units (`HOUR_MINUTE`, `DAY_SECOND`, ...) are
+        // sugared into these single-argument function names (see the
+        // `Expr::Extract` arm below) and, like every other EXTRACT unit,
+        // always return an integer (`ExtractDatetimeNum`/
+        // `ExtractDurationNum` in `pkg/types/time.go`).
+        | "year_month" | "day_hour" | "day_minute" | "day_second" | "day_microsecond"
+        | "hour_minute" | "hour_second" | "hour_microsecond" | "minute_second"
+        | "minute_microsecond" | "second_microsecond" => int(),
         // The math family. Go types these from the ARGUMENT, and the captured
         // types are what a chunk cell must be sized for: `ABS` and `MOD`
         // preserve the argument domain, `CEIL`/`FLOOR` return an integer for
@@ -691,9 +699,11 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         // function `unit` already names, exactly as the AST evaluator treats
         // it (see `crate::eval_in`'s own `Expr::Extract` arm) — so it is
         // rewritten into that builtin call and needs no chunk machinery of
-        // its own. A composite unit (`HOUR_MINUTE`, `DAY_SECOND`, ...) names
-        // no such function and is refused by `builtin_return_type` below,
-        // the same refusal the row path makes.
+        // its own. This includes a composite unit (`HOUR_MINUTE`,
+        // `DAY_SECOND`, ...): `time_fn::dispatch` names a function for those
+        // too (`time_fn::calendar::extract_composite`), and
+        // `builtin_return_type` below types them the same `int()` as every
+        // other EXTRACT unit.
         Expr::Extract { unit, value } => rewrite_expr_resolved(
             &Expr::Func {
                 name: unit.clone(),
@@ -741,11 +751,31 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     let subtract = lowered == "date_sub" || lowered == "subdate";
                     let unit = unit.to_ascii_uppercase();
                     // Only the units `date_add` itself implements are built;
-                    // any other (`QUARTER`, the composite `HOUR_MINUTE`, ...)
-                    // is refused here rather than deferred to a runtime error.
+                    // `QUARTER` still parses but is refused here rather than
+                    // deferred to a runtime error. The composite units
+                    // (`HOUR_MINUTE`, `DAY_SECOND`, `YEAR_MONTH`, ...) ARE
+                    // built — `time_fn::calendar::date_add` handles them via
+                    // `composite_spec`.
                     if !matches!(
                         unit.as_str(),
-                        "DAY" | "WEEK" | "MONTH" | "YEAR" | "HOUR" | "MINUTE" | "SECOND"
+                        "DAY"
+                            | "WEEK"
+                            | "MONTH"
+                            | "YEAR"
+                            | "HOUR"
+                            | "MINUTE"
+                            | "SECOND"
+                            | "YEAR_MONTH"
+                            | "DAY_HOUR"
+                            | "DAY_MINUTE"
+                            | "DAY_SECOND"
+                            | "DAY_MICROSECOND"
+                            | "HOUR_MINUTE"
+                            | "HOUR_SECOND"
+                            | "HOUR_MICROSECOND"
+                            | "MINUTE_SECOND"
+                            | "MINUTE_MICROSECOND"
+                            | "SECOND_MICROSECOND"
                     ) {
                         return Err(EvalError::Unsupported(
                             "this INTERVAL unit is not yet built for chunk evaluation",
