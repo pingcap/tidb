@@ -1535,7 +1535,7 @@ func TestLBACPrivilegeChecksWithSecurityAdminRole(t *testing.T) {
 	restoreFunc := executor.MockSetDutySeparationModeEnable()
 	defer restoreFunc()
 
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store := testkit.CreateMockStore(t)
 	tkRoot := testkit.NewTestKit(t, store)

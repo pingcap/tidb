@@ -3,6 +3,7 @@ package audit_test
 import (
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,11 +29,13 @@ func eventClasses2String(eventClasses []audit.EventClass) string {
 }
 
 func TestAuditLogRotate(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, err := deleteAllAuditLogs(workDir, "tidb-audit", ".log")
+	tempDir := t.TempDir()
+	tk.MustExec("SET global tidb_audit_log = ?", path.Join(tempDir, audit.DefAuditLogName))
+	_, err := deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
 
 	tk.MustExec("SET global tidb_audit_log_reserved_backups = 2")
@@ -42,13 +45,13 @@ func TestAuditLogRotate(t *testing.T) {
 		time.Sleep(time.Second)
 	}
 
-	files, err := deleteAllAuditLogs(workDir, "tidb-audit-", ".log")
+	files, err := deleteAllAuditLogs(tempDir, "tidb-audit-", ".log")
 	require.NoError(t, err)
 	require.Equal(t, 2, len(files), files)
 }
 
 func TestAuditLogEnableRule(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	tempDir := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	srv := server.CreateMockServer(t, store)
@@ -58,8 +61,9 @@ func TestAuditLogEnableRule(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 	require.NoError(t, err)
-	tk.MustExec("SET global tidb_audit_enabled = 1")
+	// Configure the temp log path before enabling audit to avoid writing setup records into the package directory.
 	tk.MustExec(fmt.Sprintf("SET global tidb_audit_log = '%s'", filepath.Join(tempDir, audit.DefAuditLogName)))
+	tk.MustExec("SET global tidb_audit_enabled = 1")
 
 	_, err = deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
@@ -96,7 +100,7 @@ func TestAuditLogEnableRule(t *testing.T) {
 }
 
 func TestAuditAdmin(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
@@ -106,6 +110,8 @@ func TestAuditAdmin(t *testing.T) {
 	err := tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 	require.NoError(t, err)
 
+	tempDir := t.TempDir()
+	tk.MustExec("set global tidb_audit_log=?", path.Join(tempDir, audit.DefAuditLogName))
 	tk.MustExec("CREATE USER testuser")
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "%"}, nil, nil, nil)
@@ -122,12 +128,12 @@ func TestAuditAdmin(t *testing.T) {
 	tk2.MustExec(`set global tidb_audit_enabled = 0`)
 	tk2.MustQuery(`select * from mysql.audit_log_filters`).Check(testkit.Rows(`all_query {"filter":[{"class":["QUERY"]}]}`))
 
-	_, err = deleteAllAuditLogs(workDir, "tidb-audit", ".log")
+	_, err = deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
 }
 
 func TestRestrictedAuditAdmin(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	sem.Enable()
 	defer sem.Disable()
@@ -136,6 +142,8 @@ func TestRestrictedAuditAdmin(t *testing.T) {
 	conn := server.CreateMockConn(t, srv)
 	defer conn.Close()
 	tk := testkit.NewTestKit(t, store)
+	tempDir := t.TempDir()
+	tk.MustExec("set global tidb_audit_log=?", path.Join(tempDir, audit.DefAuditLogName))
 
 	tk.MustExec("CREATE USER testuser")
 	tk2 := testkit.NewTestKit(t, store)
@@ -153,27 +161,24 @@ func TestRestrictedAuditAdmin(t *testing.T) {
 	tk2.MustExec(`set global tidb_audit_enabled = 0`)
 	tk2.MustQuery(`select * from mysql.audit_log_filters`).Check(testkit.Rows(`all_query {"filter":[{"class":["QUERY"]}]}`))
 
-	_, err = deleteAllAuditLogs(workDir, "tidb-audit", ".log")
+	_, err = deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
 }
 
 func TestEventClass(t *testing.T) {
-	audit.Register4Test()
-	tempDir := t.TempDir()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
 	conn := server.CreateMockConn(t, srv)
 	defer conn.Close()
 
-	defer func() {
-		_, err := deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
-		require.NoError(t, err)
-	}()
-	logPath := filepath.Join(tempDir, audit.DefAuditLogName)
-	_, err := deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
-	require.NoError(t, err)
-	require.NoError(t, conn.HandleQuery(context.Background(), fmt.Sprintf("SET global tidb_audit_log = '%s'", logPath)))
+	tempDir := t.TempDir()
+	logPath := path.Join(tempDir, audit.DefAuditLogName)
+	require.NoError(t, conn.HandleQuery(
+		context.Background(), fmt.Sprintf("SET global tidb_audit_log='%s'", logPath),
+	))
+
 	require.NoError(t, conn.HandleQuery(context.Background(), "SET global tidb_audit_enabled = 1"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_create_filter('all', '{}')"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_create_rule('%@%', 'all')"))
@@ -219,7 +224,7 @@ func TestEventClass(t *testing.T) {
 }
 
 func TestAuditCommitFail(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	tempDir := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	srv := server.CreateMockServer(t, store)
@@ -291,7 +296,7 @@ func TestAuditCommitFail(t *testing.T) {
 }
 
 func TestAuditResourceGroup(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	tempDir := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	srv := server.CreateMockServer(t, store)
@@ -338,19 +343,23 @@ func TestAuditResourceGroup(t *testing.T) {
 }
 
 func TestAuditLogRuleUsername(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	_, err := deleteAllAuditLogs(workDir, "tidb-audit", ".log")
+	tempDir := t.TempDir()
+	tk.MustExec("set global tidb_audit_log=?", path.Join(tempDir, audit.DefAuditLogName))
+	_, err := deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
 	tk.MustQuery("select audit_log_create_filter('all', '{}')").Check(testkit.Rows("OK"))
 	tk.MustQuery("select audit_log_create_rule('foo@bar@127.0.0.1', 'all')").Check(testkit.Rows("OK"))
 }
 
 func TestAuditLogRuleValidate(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tempDir := t.TempDir()
+	tk.MustExec("set global tidb_audit_log=?", path.Join(tempDir, audit.DefAuditLogName))
 	tk.MustQuery("select audit_log_create_filter('f1', '{}')").Check(testkit.Rows("OK"))
 	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters").Check(testkit.Rows("f1 {}"))
 	// dup name
@@ -364,4 +373,147 @@ func TestAuditLogRuleValidate(t *testing.T) {
 	require.EqualError(t, err, "invalid status code '999'")
 	// invalid filters should not be created
 	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters").Check(testkit.Rows("f1 {}"))
+}
+
+func TestFilterCURD(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tempDir := t.TempDir()
+	tk.MustExec("set global tidb_audit_log=?", path.Join(tempDir, audit.DefAuditLogName))
+
+	// filters and rules should be empty for a new cluster
+	tk.MustQuery("select * from mysql.audit_log_filters").Check(testkit.Rows())
+	tk.MustQuery("select * from mysql.audit_log_filter_rules").Check(testkit.Rows())
+
+	// create filters
+	tk.MustQuery("select audit_log_create_filter('f1', '{}')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_filter('f2', ?)", `{"filter": [ {"class": [ "query" ]}]}`).
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_filter('f3', ?, true)", `{"filter":[{"class":["CONNECTION"]}]}`).
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_filter('f4', ?, false)",
+		`{"class":[],"table":[],"class_excl":[],"table_excl":[],"status_code":[]}`).
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			"f1 {}",
+			`f2 {"filter":[{"class":["QUERY"]}]}`,
+			`f3 {"filter":[{"class":["CONNECTION"]}]}`,
+			`f4 {}`,
+		))
+
+	// should not create duplicate filter names if replace is false
+	err := tk.QueryToErr("select audit_log_create_filter('f2', '{}', false)")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'f2' for key 'audit_log_filters.PRIMARY'")
+	err = tk.QueryToErr("select audit_log_create_filter('f3', '{}')")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry 'f3' for key 'audit_log_filters.PRIMARY'")
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			"f1 {}",
+			`f2 {"filter":[{"class":["QUERY"]}]}`,
+			`f3 {"filter":[{"class":["CONNECTION"]}]}`,
+			`f4 {}`,
+		))
+
+	// should replace filter content when replace=true
+	tk.MustQuery("select audit_log_create_filter('f1', ?, true)", `{"filter":[{"table":["test.*"]}]}`).
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			`f1 {"filter":[{"table":["test.*"]}]}`,
+			`f2 {"filter":[{"class":["QUERY"]}]}`,
+			`f3 {"filter":[{"class":["CONNECTION"]}]}`,
+			`f4 {}`,
+		))
+
+	// create filter rules
+	tk.MustQuery("select * from mysql.audit_log_filter_rules").Check(testkit.Rows())
+	tk.MustQuery("select audit_log_create_rule('%@%', 'f1')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_rule('root@%', 'f2', true)").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_rule('user1@localhost', 'f3', false)").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_rule('%@%', 'f4')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_rule('root@%', 'f1')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "root@% f2 1", "user1@localhost f3 1"))
+
+	// disable rule
+	tk.MustQuery("select audit_log_disable_rule('%@%', 'f1')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 0", "%@% f4 1", "root@% f1 1", "root@% f2 1", "user1@localhost f3 1"))
+	tk.MustQuery("select audit_log_disable_rule('root@%', 'f2')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 0", "%@% f4 1", "root@% f1 1", "root@% f2 0", "user1@localhost f3 1"))
+
+	// disable again should take no effect
+	tk.MustQuery("select audit_log_disable_rule('%@%', 'f1')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 0", "%@% f4 1", "root@% f1 1", "root@% f2 0", "user1@localhost f3 1"))
+
+	// enable rule
+	tk.MustQuery("select audit_log_enable_rule('%@%', 'f1')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "root@% f2 0", "user1@localhost f3 1"))
+	tk.MustQuery("select audit_log_enable_rule('user1@localhost', 'f3')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "root@% f2 0", "user1@localhost f3 1"))
+
+	// enable/disable not-exist rule should return error
+	err = tk.QueryToErr("select audit_log_enable_rule('userx@%', 'f1')")
+	require.EqualError(t, err, "rule does not exist")
+	err = tk.QueryToErr("select audit_log_disable_rule('%@%', 'f2')")
+	require.EqualError(t, err, "rule does not exist")
+
+	// replace rule
+	tk.MustQuery("select audit_log_create_rule('%@%', 'f1', true)").Check(testkit.Rows("OK"))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "root@% f2 0", "user1@localhost f3 1"))
+
+	// cannot delete an in-use filter
+	err = tk.QueryToErr("select audit_log_remove_filter('f2')")
+	require.EqualError(t, err, "filter 'f2' is in use")
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			`f1 {"filter":[{"table":["test.*"]}]}`,
+			`f2 {"filter":[{"class":["QUERY"]}]}`,
+			`f3 {"filter":[{"class":["CONNECTION"]}]}`,
+			`f4 {}`,
+		))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "root@% f2 0", "user1@localhost f3 1"))
+
+	// delete rule
+	tk.MustQuery("select audit_log_remove_rule('root@%', 'f2')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			`f1 {"filter":[{"table":["test.*"]}]}`,
+			`f2 {"filter":[{"class":["QUERY"]}]}`,
+			`f3 {"filter":[{"class":["CONNECTION"]}]}`,
+			`f4 {}`,
+		))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "user1@localhost f3 1"))
+
+	// delete an unused filter
+	tk.MustQuery("select audit_log_remove_filter('f2')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			`f1 {"filter":[{"table":["test.*"]}]}`,
+			`f3 {"filter":[{"class":["CONNECTION"]}]}`,
+			`f4 {}`,
+		))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "user1@localhost f3 1"))
+
+	// delete a non-existent rule or filter should take no effect
+	tk.MustQuery("select audit_log_remove_rule('root@%', 'f4')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_remove_filter('f5')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			`f1 {"filter":[{"table":["test.*"]}]}`,
+			`f3 {"filter":[{"class":["CONNECTION"]}]}`,
+			`f4 {}`,
+		))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "user1@localhost f3 1"))
 }

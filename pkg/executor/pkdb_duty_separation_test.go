@@ -62,7 +62,7 @@ func TestAdminRolesCount(t *testing.T) {
 }
 
 func TestDynamicPrivilegesAssignedToSingleDutyRole(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	dynamicPrivs := privileges.GetDynamicPrivileges()
 	dynamicPrivSet := make(map[string]struct{}, len(dynamicPrivs))
@@ -121,7 +121,7 @@ func TestGrantAdminRoles(t *testing.T) {
 	defer restoreFunc()
 
 	// register extensions
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -141,7 +141,7 @@ func TestDutySeparationBlockUserTableDML(t *testing.T) {
 	defer restoreFunc()
 
 	// register extensions
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -174,7 +174,7 @@ func TestForbiddingDropAdminRoles(t *testing.T) {
 	defer restoreFunc()
 
 	// register extensions
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store := testkit.CreateMockStore(t)
 	srv := server.CreateMockServer(t, store)
@@ -208,7 +208,7 @@ func TestExclusiveRoleGranting(t *testing.T) {
 	defer restoreFunc()
 
 	// register extensions
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -287,7 +287,7 @@ func TestGrantDutyRolesOnlyByRoot(t *testing.T) {
 	restoreFunc := executor.MockSetDutySeparationModeEnable()
 	defer restoreFunc()
 
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store := testkit.CreateMockStore(t)
 	rootTk := testkit.NewTestKit(t, store)
@@ -316,7 +316,7 @@ func TestWritePrivilegeConflictWithSpecialRoles(t *testing.T) {
 	defer restoreFunc()
 
 	// register extensions
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store := testkit.CreateMockStore(t)
 	rootTk := testkit.NewTestKit(t, store)
@@ -418,7 +418,7 @@ func TestWritePrivilegeConflictWithSpecialRoles(t *testing.T) {
 // TestRolePrivilegeConflictWithSpecialRoles tests that roles with data privileges
 // cannot be granted to users with special admin roles
 func TestRolePrivilegeConflictWithSpecialRoles(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	defer executor.MockSetDutySeparationModeEnable()()
 
 	store := testkit.CreateMockStore(t)

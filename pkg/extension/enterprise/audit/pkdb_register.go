@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // ExtensionName is the extension name for audit log
@@ -47,22 +48,11 @@ const (
 	FuncAuditLogRotate = "audit_log_rotate"
 )
 
-// GlobalLogManager manages the global state of the audit log
-var GlobalLogManager LogManager
-
 var enableAuditExtension bool
 
 // Register registers enterprise extension
 func Register() {
 	flag.BoolVar(&enableAuditExtension, "enable-audit-extension", true, "enable audit extension or not")
-	err := extension.RegisterFactory(ExtensionName, extensionOptionsFactory)
-	terror.MustNil(err)
-}
-
-// Register4Test is the mock function that is used to test.
-func Register4Test() {
-	extension.Reset()
-	enableAuditExtension = true
 	err := extension.RegisterFactory(ExtensionName, extensionOptionsFactory)
 	terror.MustNil(err)
 }
@@ -79,14 +69,18 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 		return nil, nil
 	}
 
-	if err := GlobalLogManager.Init(); err != nil {
+	manager, err := NewAuditLogManager()
+	if err != nil {
 		return nil, err
+	}
+	if intest.InTest {
+		globalManagerForTest = manager
 	}
 
 	setGlobalFunc := func(sysVar string, fn func(context.Context, *variable.SessionVars, string) error) func(context.Context, *variable.SessionVars, string) error {
 		return func(ctx context.Context, vars *variable.SessionVars, val string) (err error) {
 			defer func() {
-				newAuditEntryWithSetGlobalVar(sysVar, val, vars, err).Log(GlobalLogManager.logger(), newEntryIDGenerator())
+				manager.ForceLogEntry(newAuditEntryWithSetGlobalVar(sysVar, val, vars, err))
 			}()
 			return fn(ctx, vars, val)
 		}
@@ -96,7 +90,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 		return func(ctx extension.FunctionContext, row chunk.Row) (_ string, _ bool, err error) {
 			var args []types.Datum
 			defer func() {
-				newAuditFuncCallEntry(name, args, ctx, err).Log(GlobalLogManager.logger(), newEntryIDGenerator())
+				manager.ForceLogEntry(newAuditFuncCallEntry(name, args, ctx, err))
 			}()
 
 			args, err = ctx.EvalArgs(row)
@@ -120,10 +114,10 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:  TiDBAuditEnabled,
 			Scope: variable.ScopeGlobal,
 			Type:  variable.TypeBool,
-			Value: variable.BoolToOnOff(GlobalLogManager.Enabled()),
+			Value: variable.BoolToOnOff(manager.Enabled()),
 			SetGlobal: setGlobalFunc(TiDBAuditEnabled, func(_ context.Context, sessVars *variable.SessionVars, s string) (err error) {
 				enable := variable.TiDBOptOn(s)
-				return GlobalLogManager.SetEnabled(enable)
+				return manager.SetEnabled(enable)
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -131,9 +125,9 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:  TiDBAuditLog,
 			Scope: variable.ScopeGlobal,
 			Type:  variable.TypeStr,
-			Value: GlobalLogManager.GetLogConfigPath(),
+			Value: manager.GetLogConfigPath(),
 			SetGlobal: setGlobalFunc(TiDBAuditLog, func(_ context.Context, _ *variable.SessionVars, s string) error {
-				return GlobalLogManager.SetLogConfigPath(s)
+				return manager.SetLogConfigPath(s)
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -144,7 +138,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Value:          LogFormatText,
 			PossibleValues: []string{LogFormatText, LogFormatJSON},
 			SetGlobal: setGlobalFunc(TiDBAuditLogFormat, func(_ context.Context, _ *variable.SessionVars, s string) error {
-				return GlobalLogManager.SetLogFormat(s)
+				return manager.SetLogFormat(s)
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -152,7 +146,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:     TiDBAuditLogMaxFileSize,
 			Scope:    variable.ScopeGlobal,
 			Type:     variable.TypeInt,
-			Value:    strconv.FormatInt(GlobalLogManager.GetFileMaxSize(), 10),
+			Value:    strconv.FormatInt(manager.GetFileMaxSize(), 10),
 			MinValue: 0,
 			MaxValue: MaxAuditLogFileMaxSize,
 			Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
@@ -170,7 +164,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 				if err != nil {
 					return err
 				}
-				return GlobalLogManager.SetFileMaxSize(val)
+				return manager.SetFileMaxSize(val)
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -178,7 +172,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:     TiDBAuditLogMaxLifetime,
 			Scope:    variable.ScopeGlobal,
 			Type:     variable.TypeInt,
-			Value:    strconv.FormatInt(GlobalLogManager.GetFileMaxLifetime(), 10),
+			Value:    strconv.FormatInt(manager.GetFileMaxLifetime(), 10),
 			MinValue: 0,
 			MaxValue: MaxAuditLogFileMaxLifetime,
 			SetGlobal: setGlobalFunc(TiDBAuditLogMaxLifetime, func(_ context.Context, _ *variable.SessionVars, s string) error {
@@ -186,7 +180,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 				if err != nil {
 					return err
 				}
-				return GlobalLogManager.SetFileMaxLifetime(val)
+				return manager.SetFileMaxLifetime(val)
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -194,7 +188,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:     TiDBAuditLogReservedBackups,
 			Scope:    variable.ScopeGlobal,
 			Type:     variable.TypeInt,
-			Value:    strconv.Itoa(GlobalLogManager.GetFileReservedBackups()),
+			Value:    strconv.Itoa(manager.GetFileReservedBackups()),
 			MinValue: 0,
 			MaxValue: MaxAuditLogFileReservedBackups,
 			SetGlobal: setGlobalFunc(TiDBAuditLogReservedBackups, func(ctx context.Context, vars *variable.SessionVars, s string) error {
@@ -202,7 +196,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 				if err != nil {
 					return err
 				}
-				return GlobalLogManager.SetFileReservedBackups(val)
+				return manager.SetFileReservedBackups(val)
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -210,7 +204,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:     TiDBAuditLogMaxReservedDays,
 			Scope:    variable.ScopeGlobal,
 			Type:     variable.TypeInt,
-			Value:    strconv.Itoa(GlobalLogManager.GetFileReservedDays()),
+			Value:    strconv.Itoa(manager.GetFileReservedDays()),
 			MinValue: 0,
 			MaxValue: MaxAuditLogFileReservedDays,
 			SetGlobal: setGlobalFunc(TiDBAuditLogMaxReservedDays, func(ctx context.Context, vars *variable.SessionVars, s string) error {
@@ -218,7 +212,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 				if err != nil {
 					return err
 				}
-				return GlobalLogManager.SetFileReservedDays(val)
+				return manager.SetFileReservedDays(val)
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -226,9 +220,9 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:  TiDBAuditRedactLog,
 			Scope: variable.ScopeGlobal,
 			Type:  variable.TypeBool,
-			Value: variable.BoolToOnOff(GlobalLogManager.RedactLog()),
+			Value: variable.BoolToOnOff(manager.RedactLog()),
 			SetGlobal: setGlobalFunc(TiDBAuditRedactLog, func(_ context.Context, _ *variable.SessionVars, s string) error {
-				return GlobalLogManager.SetRedactLog(variable.TiDBOptOn(s))
+				return manager.SetRedactLog(variable.TiDBOptOn(s))
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -239,7 +233,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Name:   FuncAuditLogRotate,
 			EvalTp: types.ETString,
 			EvalStringFunc: statusFunc(FuncAuditLogRotate, func(ctx extension.FunctionContext, _ []types.Datum) error {
-				return GlobalLogManager.GlobalRotateLog()
+				return manager.GlobalRotateLog()
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},
@@ -261,7 +255,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 				}
 
 				filter.Name = filterName
-				return GlobalLogManager.CreateLogFilter(&filter, replace)
+				return manager.CreateLogFilter(&filter, replace)
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},
@@ -270,7 +264,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			EvalTp: types.ETString,
 			ArgTps: []types.EvalType{types.ETString},
 			EvalStringFunc: statusFunc(FuncAuditLogRemoveFilter, func(ctx extension.FunctionContext, args []types.Datum) error {
-				return GlobalLogManager.RemoveLogFilter(args[0].GetString())
+				return manager.RemoveLogFilter(args[0].GetString())
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},
@@ -284,7 +278,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 				if len(args) > 2 {
 					replace = args[2].GetInt64() == 1
 				}
-				return GlobalLogManager.CreateLogFilterRule(args[0].GetString(), args[1].GetString(), replace)
+				return manager.CreateLogFilterRule(args[0].GetString(), args[1].GetString(), replace)
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},
@@ -293,7 +287,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			EvalTp: types.ETString,
 			ArgTps: []types.EvalType{types.ETString, types.ETString},
 			EvalStringFunc: statusFunc(FuncAuditLogRemoveRule, func(ctx extension.FunctionContext, args []types.Datum) error {
-				return GlobalLogManager.RemoveLogFilterRule(args[0].GetString(), args[1].GetString())
+				return manager.RemoveLogFilterRule(args[0].GetString(), args[1].GetString())
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},
@@ -302,7 +296,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			EvalTp: types.ETString,
 			ArgTps: []types.EvalType{types.ETString, types.ETString},
 			EvalStringFunc: statusFunc(FuncAuditLogEnableRule, func(ctx extension.FunctionContext, args []types.Datum) error {
-				return GlobalLogManager.SwitchLogFilterRuleEnabled(args[0].GetString(), args[1].GetString(), true)
+				return manager.SwitchLogFilterRuleEnabled(args[0].GetString(), args[1].GetString(), true)
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},
@@ -311,7 +305,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			EvalTp: types.ETString,
 			ArgTps: []types.EvalType{types.ETString, types.ETString},
 			EvalStringFunc: statusFunc(FuncAuditLogDisableRule, func(ctx extension.FunctionContext, args []types.Datum) error {
-				return GlobalLogManager.SwitchLogFilterRuleEnabled(args[0].GetString(), args[1].GetString(), false)
+				return manager.SwitchLogFilterRuleEnabled(args[0].GetString(), args[1].GetString(), false)
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},
@@ -320,10 +314,10 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 	return []extension.Option{
 		extension.WithCustomDynPrivs([]string{PrivAuditAdmin, PrivRestrictedAuditAdmin}),
 		extension.WithCustomSysVariables(sysVars),
-		extension.WithSessionHandlerFactory(GlobalLogManager.GetSessionHandler),
+		extension.WithSessionHandlerFactory(manager.GetSessionHandler),
 		extension.WithCustomFunctions(functions),
-		extension.WithBootstrap(GlobalLogManager.Bootstrap),
+		extension.WithBootstrap(manager.Bootstrap),
 		extension.WithCustomAccessCheck(checkTableAccess),
-		extension.WithClose(GlobalLogManager.Close),
+		extension.WithClose(manager.Stop),
 	}, nil
 }

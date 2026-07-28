@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -19,9 +20,11 @@ type entryFilterTest struct {
 }
 
 func TestFilterSpec(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tempDir := t.TempDir()
+	tk.MustExec("set global tidb_audit_log=?", path.Join(tempDir, audit.DefAuditLogName))
 	cases := []struct {
 		spec        audit.FilterSpec
 		invalid     bool
@@ -467,14 +470,16 @@ func TestFilterSpec(t *testing.T) {
 		tk.MustQuery("SELECT audit_log_remove_rule('%@%','test')").Check(testkit.Rows("OK"))
 		tk.MustQuery("SELECT audit_log_remove_filter('test')").Check(testkit.Rows("OK"))
 	}
-	_, err := deleteAllAuditLogs(workDir, "tidb-audit", ".log")
+	_, err := deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
 }
 
 func TestFilterRule(t *testing.T) {
-	audit.Register4Test()
+	audit.Register4Test(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tempDir := t.TempDir()
+	tk.MustExec("set global tidb_audit_log=?", path.Join(tempDir, audit.DefAuditLogName))
 	cases := []struct {
 		rule        audit.LogFilterRule
 		entries     []entryFilterTest
@@ -752,7 +757,6 @@ func TestFilterRule(t *testing.T) {
 		}
 
 		// test creating rule by sql
-		fmt.Println(c.jsonContent)
 		tk.MustQuery(fmt.Sprintf(`SELECT audit_log_create_filter('%s', '%s')`, c.rule.FilterName, c.jsonContent)).Check(testkit.Rows("OK"))
 		tk.MustQuery(fmt.Sprintf(`SELECT audit_log_create_rule('%s','%s')`, c.rule.User, c.rule.FilterName)).Check(testkit.Rows("OK"))
 		tk.MustQuery("SELECT count(*) FROM mysql.audit_log_filters").Check(testkit.Rows("1"))
@@ -777,6 +781,61 @@ func TestFilterRuleBundle(t *testing.T) {
 		bundle  *audit.LogFilterRuleBundle
 		entries []entryFilterTest
 	}{
+		{
+			bundle: audit.NewLogFilterRuleBundle(nil),
+			entries: []entryFilterTest{
+				{
+					entry: audit.LogEntry{User: "root", Classes: []audit.EventClass{audit.ClassDML}},
+					match: false,
+				},
+				{
+					entry: audit.LogEntry{User: "user1", Classes: []audit.EventClass{audit.ClassQuery}},
+					match: false,
+				},
+			},
+		},
+		{
+			bundle: audit.NewLogFilterRuleBundle([]*audit.LogFilterRule{}),
+			entries: []entryFilterTest{
+				{
+					entry: audit.LogEntry{User: "root", Classes: []audit.EventClass{audit.ClassDML}},
+					match: false,
+				},
+				{
+					entry: audit.LogEntry{User: "user1", Classes: []audit.EventClass{audit.ClassQuery}},
+					match: false,
+				},
+			},
+		},
+		{
+			bundle: audit.NewLogFilterRuleBundle([]*audit.LogFilterRule{
+				{
+					User:       "root",
+					FilterName: "f1",
+					Enabled:    true,
+					Filter: &audit.LogFilter{
+						Name: "f1",
+						Filter: []audit.FilterSpec{
+							{Classes: []string{"query_ddl"}},
+						},
+					},
+				},
+			}),
+			entries: []entryFilterTest{
+				{
+					entry: audit.LogEntry{User: "root", Classes: []audit.EventClass{audit.ClassDDL}},
+					match: true,
+				},
+				{
+					entry: audit.LogEntry{User: "root", Classes: []audit.EventClass{audit.ClassDML}},
+					match: false,
+				},
+				{
+					entry: audit.LogEntry{User: "user1", Classes: []audit.EventClass{audit.ClassDDL}},
+					match: false,
+				},
+			},
+		},
 		{
 			bundle: audit.NewLogFilterRuleBundle([]*audit.LogFilterRule{
 				{

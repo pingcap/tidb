@@ -232,7 +232,7 @@ type LogEntry struct {
 	Classes      []EventClass
 	Tables       []stmtctx.TableEntry
 	Err          error
-	FieldsFunc   func(fields []zap.Field, cfg *LoggerConfig) []zap.Field
+	FieldsFunc   func(fields []zap.Field, redact bool) []zap.Field
 }
 
 func newAuditEntryWithSetGlobalVar(name, value string, sessVars *variable.SessionVars, err error) *LogEntry {
@@ -263,7 +263,7 @@ func newAuditEntryWithSetGlobalVar(name, value string, sessVars *variable.Sessio
 		ConnID:  connInfo.ConnectionID,
 		Classes: classes,
 		Err:     err,
-		FieldsFunc: func(fields []zap.Field, _ *LoggerConfig) []zap.Field {
+		FieldsFunc: func(fields []zap.Field, _ bool) []zap.Field {
 			return append(
 				fields,
 				zap.String(LogKeyAuditOpTarget, name),
@@ -289,7 +289,7 @@ func newAuditFuncCallEntry(name string, args []types.Datum, ctx extension.Functi
 		ConnID:  connID,
 		Err:     err,
 		Classes: []EventClass{ClassAudit, ClassAuditFuncCall},
-		FieldsFunc: func(fields []zap.Field, _ *LoggerConfig) []zap.Field {
+		FieldsFunc: func(fields []zap.Field, _ bool) []zap.Field {
 			return append(
 				fields,
 				zap.String(LogKeyAuditOpTarget, name),
@@ -327,7 +327,7 @@ func newConnEventEntry(tp extension.ConnEventTp, info *extension.ConnEventInfo) 
 	}
 	e.Roles = info.ActiveRoles
 	e.Err = info.Error
-	e.FieldsFunc = func(fields []zap.Field, cfg *LoggerConfig) []zap.Field {
+	e.FieldsFunc = func(fields []zap.Field, redact bool) []zap.Field {
 		if tp != extension.ConnDisconnected {
 			// only log current db when connect or change user
 			fields = append(fields, zap.String(LogKeyCurrentDB, info.DB))
@@ -403,9 +403,10 @@ func newStmtEventEntry(tp extension.StmtEventTp, info extension.StmtEventInfo) *
 		entry.Host = connInfo.Host
 		entry.Roles = info.ActiveRoles()
 	}
-	entry.FieldsFunc = func(fields []zap.Field, cfg *LoggerConfig) []zap.Field {
+	entry.FieldsFunc = func(fields []zap.Field, redact bool) []zap.Field {
 		var sqlText string
-		if cfg.Redact || isPasswordStmt(info.StmtNode()) {
+		forceRedact := isPasswordStmt(innerStmtNode)
+		if redact || forceRedact {
 			sqlText = info.RedactedText()
 		} else {
 			sqlText = info.OriginalText()
@@ -417,7 +418,7 @@ func newStmtEventEntry(tp extension.StmtEventTp, info extension.StmtEventInfo) *
 			zap.String(LogKeySQLText, sqlText),
 		)
 
-		if isExecute && !cfg.Redact {
+		if isExecute && !redact && !forceRedact {
 			fields = append(fields, zap.Strings(LogKeyExecuteParams, toStringArgs(info.PreparedParams())))
 		}
 
@@ -448,9 +449,9 @@ func newSecurityEventEntry(tp extension.SecurityEventTp, info extension.Security
 		User:    user,
 		Host:    host,
 		Classes: []EventClass{ClassSecurity},
-		FieldsFunc: func(fields []zap.Field, cfg *LoggerConfig) []zap.Field {
+		FieldsFunc: func(fields []zap.Field, redact bool) []zap.Field {
 			var sqlText string
-			if cfg.Redact {
+			if redact {
 				sqlText = info.RedactedText()
 			} else {
 				sqlText = info.OriginalText()
@@ -499,7 +500,7 @@ func newDataOpEventEntry(tp extension.DataOpEventTp, info extension.DataOpEventI
 		User:    user,
 		Host:    host,
 		Classes: []EventClass{ClassDataOperation},
-		FieldsFunc: func(fields []zap.Field, _ *LoggerConfig) []zap.Field {
+		FieldsFunc: func(fields []zap.Field, _ bool) []zap.Field {
 			if connectionInfo := info.ConnectionInfo(); connectionInfo != nil {
 				fields = append(fields,
 					zap.String(LogKeyHostIP, normalizeIP(connectionInfo.ServerIP)),
@@ -521,10 +522,10 @@ func (e *LogEntry) Filter(filter *LogFilterRuleBundle) *LogEntry {
 	return filter.Filter(e)
 }
 
-// Log logs this entry
-func (e *LogEntry) Log(logger *Logger, id *entryIDGenerator) {
+// Fields returns the zap logger Fields
+func (e *LogEntry) Fields(id *entryIDGenerator, redact bool) []zap.Field {
 	if e == nil {
-		return
+		return nil
 	}
 
 	events := make([]string, 0, len(e.Classes))
@@ -550,8 +551,7 @@ func (e *LogEntry) Log(logger *Logger, id *entryIDGenerator) {
 		}
 	}
 
-	fields, closeFields := fieldsFromPool(logFieldsPool)
-	defer closeFields()
+	fields := newLogFields()
 
 	fields = append(
 		fields,
@@ -570,10 +570,10 @@ func (e *LogEntry) Log(logger *Logger, id *entryIDGenerator) {
 	}
 
 	if e.FieldsFunc != nil {
-		fields = e.FieldsFunc(fields, &logger.cfg)
+		fields = e.FieldsFunc(fields, redact)
 	}
 
-	logger.Event(fields)
+	return fields
 }
 
 func getStatusCode(err error) int {

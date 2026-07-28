@@ -39,7 +39,7 @@ func TestBootStrapWithDutySeparation(t *testing.T) {
 	defer restoreFunc()
 
 	// register extensions
-	audit.Register4Test()
+	audit.Register4Test(t)
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

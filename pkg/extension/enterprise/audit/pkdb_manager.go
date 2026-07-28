@@ -11,11 +11,11 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -32,44 +32,36 @@ const (
 	MinEtcdReWatchInterval = 5 * time.Second
 )
 
+// EtcdCli is an interface for etcd client
+type EtcdCli interface {
+	clientv3.KV
+	clientv3.Watcher
+}
+
 // LogManager is used to manage audit logs
 type LogManager struct {
-	sync.Mutex
-
 	ctx    context.Context
 	cancel func()
 
-	loggerRef atomic.Value
-	loggerCfg LoggerConfig
-	etcdCli   *clientv3.Client
-	sessPool  extension.SessionPool
+	logger *Logger
+	mu     struct {
+		sync.Mutex
+		stopFlag  bool
+		loggerCfg LoggerConfig
+		etcdCli   EtcdCli
+		sessPool  extension.SessionPool
+	}
 }
 
-// Init inits a manager
-func (m *LogManager) Init() (err error) {
-	m.Lock()
-	defer m.Unlock()
-
-	// m.ctx != nil means already inited
-	if m.ctx != nil {
-		return nil
-	}
-
-	m.ctx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	m.ctx, m.cancel = context.WithCancel(m.ctx)
-	defer func() {
-		if err != nil {
-			m.Close()
-		}
-	}()
-
+// NewAuditLogManager creates a new LogManager
+func NewAuditLogManager() (*LogManager, error) {
 	logConfigPath := DefAuditLogName
 	logFilepath, err := getFilePath(logConfigPath, DefAuditLogFormat)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	m.loggerCfg = LoggerConfig{
+	cfg := LoggerConfig{
 		Enabled:    false,
 		ConfigPath: logConfigPath,
 		zapLoggerConfig: zapLoggerConfig{
@@ -83,35 +75,75 @@ func (m *LogManager) Init() (err error) {
 		Redact: DefAuditLogRedact,
 	}
 
-	return m.refreshLoggerRef()
+	logger, err := NewAuditLogger(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers))
+	m := &LogManager{
+		ctx:    ctx,
+		cancel: cancel,
+		logger: logger,
+	}
+	m.mu.loggerCfg = cfg
+	return m, nil
 }
+
+// injectedEtcdCliForTest is only used for testing
+var injectedEtcdCliForTest EtcdCli
 
 // Bootstrap bootstraps audit log manager
 func (m *LogManager) Bootstrap(ctx extension.BootstrapContext) error {
-	etcdCli := ctx.EtcdClient()
-	sessPool := ctx.SessionPool()
-
-	m.Lock()
-	if m.ctx == nil {
-		m.Unlock()
-		return errors.New("not initialized")
+	var etcdCli EtcdCli
+	if cli := ctx.EtcdClient(); cli != nil {
+		// DO NOT assign etcdCli to mu.etcdCli directly.
+		// A `*clientv3.Client(nil)` will cause `m.etcdCli != nil`
+		etcdCli = ctx.EtcdClient()
 	}
-	m.etcdCli = etcdCli
-	m.sessPool = sessPool
-	m.Unlock()
+
+	if intest.InTest && injectedEtcdCliForTest != nil {
+		etcdCli = injectedEtcdCliForTest
+	}
+	sessPool := ctx.SessionPool()
+	mu := &m.mu
+	mu.Lock()
+	if mu.stopFlag {
+		mu.Unlock()
+		return errors.New("cannot Bootstrap because LogManager is stopped")
+	}
+	mu.etcdCli = etcdCli
+	mu.sessPool = sessPool
+	mu.Unlock()
+
+	if err := m.bootstrapSQL(); err != nil {
+		return err
+	}
 
 	if err := m.ReloadFilter(); err != nil {
 		return err
 	}
 
-	go m.handleNotifyLoop(ctx, etcdCli)
+	go m.handleNotifyLoop(etcdCli)
 	return nil
 }
 
+func (m *LogManager) bootstrapSQL() error {
+	return m.runSQLInExecutor(func(exec sqlexec.SQLExecutor) error {
+		if _, err := executeSQL(m.ctx, exec, CreateFilterTableSQL); err != nil {
+			return err
+		}
+		if _, err := executeSQL(m.ctx, exec, CreateFilterRuleTableSQL); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func (m *LogManager) runSQLInExecutor(fn func(sqlexec.SQLExecutor) error) error {
-	m.Lock()
-	sessPool := m.sessPool
-	m.Unlock()
+	m.mu.Lock()
+	sessPool := m.mu.sessPool
+	m.mu.Unlock()
 
 	if sessPool == nil {
 		return errors.New("sessPool is not initialized")
@@ -162,10 +194,10 @@ func (m *LogManager) runInTxn(ctx context.Context, fn func(sqlexec.SQLExecutor) 
 }
 
 func (m *LogManager) globalNotify(key string) (bool, error) {
-	var cli *clientv3.Client
-	m.Lock()
-	cli = m.etcdCli
-	m.Unlock()
+	var cli EtcdCli
+	m.mu.Lock()
+	cli = m.mu.etcdCli
+	m.mu.Unlock()
 
 	if cli == nil {
 		// `cli == nil` it is not a TiKV cluster, return false, nil to indicate global notify is invalid
@@ -182,17 +214,17 @@ func (m *LogManager) globalNotify(key string) (bool, error) {
 	return true, nil
 }
 
-func (m *LogManager) handleNotifyLoop(ctx context.Context, etcd *clientv3.Client) {
-	if etcd == nil {
+func (m *LogManager) handleNotifyLoop(etcd EtcdCli) {
+	if etcd == nil || m.ctx.Err() != nil {
 		return
 	}
 
-	watcher := newKeyWatcher(ctx, etcd, EtcdKeyNotifyPrefix)
+	watcher := newKeyWatcher(m.ctx, etcd, EtcdKeyNotifyPrefix)
 	reloadFilterTicker := time.NewTicker(5 * time.Minute)
 Loop:
 	for {
 		select {
-		case <-ctx.Done():
+		case <-m.ctx.Done():
 			break Loop
 		case resp, ok := <-watcher.Chan:
 			if !ok {
@@ -214,6 +246,7 @@ Loop:
 
 				switch key {
 				case EtcdKeyNotifyRotate:
+					logutil.BgLogger().Info("rotate local audit log because notify message received")
 					terror.Log(m.RotateLog())
 				case EtcdKeyNotifyFilter:
 					terror.Log(m.ReloadFilter())
@@ -226,181 +259,189 @@ Loop:
 	logutil.BgLogger().Info("audit globalRotateNotifyLoop exit")
 }
 
-// Close closes the log manager
-func (m *LogManager) Close() {
-	m.Lock()
-	defer m.Unlock()
-	m.ctx = nil
-	m.loggerCfg = LoggerConfig{}
-	m.loggerRef.Store(&Logger{})
-	m.etcdCli = nil
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
+// Stop stops the LogManager, it will stop the internal `Logger` and exit the background loops.
+func (m *LogManager) Stop() {
+	mu := &m.mu
+	mu.Lock()
+	if mu.stopFlag {
+		mu.Unlock()
+		return
 	}
+	mu.stopFlag = true
+	mu.Unlock()
+
+	m.cancel()
+	m.logger.Stop()
 }
 
 // Enabled returns whether the log is enabled
 func (m *LogManager) Enabled() bool {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.Enabled
+	return m.GetConfig().Enabled
 }
 
 // SetEnabled sets whether the log should be enabled
 func (m *LogManager) SetEnabled(enabled bool) error {
-	m.Lock()
-	defer m.Unlock()
-	m.loggerCfg.Enabled = enabled
-	return m.refreshLoggerRef()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		cfg.Enabled = enabled
+		return nil
+	})
 }
 
 // SetLogConfigPath sets the log config path
 func (m *LogManager) SetLogConfigPath(path string) error {
-	m.Lock()
-	defer m.Unlock()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		logFilepath, err := getFilePath(path, cfg.LogFormat)
+		if err != nil {
+			return err
+		}
 
-	logFilepath, err := getFilePath(path, m.loggerCfg.LogFormat)
-	if err != nil {
-		return err
-	}
-
-	m.loggerCfg.ConfigPath = path
-	m.loggerCfg.Filepath = logFilepath
-	return m.refreshLoggerRef()
+		cfg.ConfigPath = path
+		cfg.Filepath = logFilepath
+		return nil
+	})
 }
 
 // GetLogConfigPath gets the log config path
 func (m *LogManager) GetLogConfigPath() string {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.ConfigPath
+	return m.GetConfig().ConfigPath
 }
 
 // GetLogPath gets the absolute path of the log
 func (m *LogManager) GetLogPath() string {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.zapLoggerConfig.Filepath
+	return m.GetConfig().zapLoggerConfig.Filepath
 }
 
 // SetLogFormat sets the log format
 func (m *LogManager) SetLogFormat(format string) error {
-	m.Lock()
-	defer m.Unlock()
-	format = strings.ToUpper(format)
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		format = strings.ToUpper(format)
+		logFilePath, err := getFilePath(cfg.ConfigPath, format)
+		if err != nil {
+			return err
+		}
 
-	logFilePath, err := getFilePath(m.loggerCfg.ConfigPath, format)
-	if err != nil {
-		return err
-	}
-
-	m.loggerCfg.LogFormat = format
-	m.loggerCfg.Filepath = logFilePath
-	return m.refreshLoggerRef()
+		cfg.LogFormat = format
+		cfg.Filepath = logFilePath
+		return nil
+	})
 }
 
 // GetLogFormat gets the format of log
 func (m *LogManager) GetLogFormat() string {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.LogFormat
+	return m.GetConfig().LogFormat
 }
 
 // SetFileMaxSize sets the max size of a log file
 func (m *LogManager) SetFileMaxSize(val int64) error {
-	m.Lock()
-	defer m.Unlock()
-	m.loggerCfg.FileMaxSize = val
-	return m.refreshLoggerRef()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		cfg.FileMaxSize = val
+		return nil
+	})
 }
 
 // SetFileMaxLifetime sets the max rotation time of a log file
 func (m *LogManager) SetFileMaxLifetime(val int64) error {
-	m.Lock()
-	defer m.Unlock()
-	m.loggerCfg.FileMaxLifetime = val
-	return m.refreshLoggerRef()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		cfg.FileMaxLifetime = val
+		return nil
+	})
 }
 
 // GetFileMaxSize returns the max size of a log file
 func (m *LogManager) GetFileMaxSize() int64 {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.FileMaxSize
+	return m.GetConfig().FileMaxSize
 }
 
 // GetFileMaxLifetime returns the max rotation time of a log file
 func (m *LogManager) GetFileMaxLifetime() int64 {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.FileMaxLifetime
+	return m.GetConfig().FileMaxLifetime
 }
 
 // SetFileReservedBackups sets the max backup count
 func (m *LogManager) SetFileReservedBackups(val int) error {
-	m.Lock()
-	defer m.Unlock()
-	m.loggerCfg.FileReservedBackups = val
-	return m.refreshLoggerRef()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		cfg.FileReservedBackups = val
+		return nil
+	})
 }
 
 // GetFileReservedBackups returns the max backup count
 func (m *LogManager) GetFileReservedBackups() int {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.FileReservedBackups
+	return m.GetConfig().FileReservedBackups
 }
 
 // SetFileReservedDays sets the max reserved days for logs
 func (m *LogManager) SetFileReservedDays(val int) error {
-	m.Lock()
-	defer m.Unlock()
-	m.loggerCfg.FileReservedDays = val
-	return m.refreshLoggerRef()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		cfg.FileReservedDays = val
+		return nil
+	})
 }
 
 // GetFileReservedDays returns the max reserved days for logs
 func (m *LogManager) GetFileReservedDays() int {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.FileReservedDays
+	return m.GetConfig().FileReservedDays
 }
 
 // RedactLog indicates whether to redact the log
 func (m *LogManager) RedactLog() bool {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.Redact
+	return m.GetConfig().Redact
 }
 
 // SetRedactLog sets whether redact the log
 func (m *LogManager) SetRedactLog(val bool) error {
-	m.Lock()
-	defer m.Unlock()
-	m.loggerCfg.Redact = val
-	return m.refreshLoggerRef()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		cfg.Redact = val
+		return nil
+	})
 }
 
 // GetFilter returns the filter
 func (m *LogManager) GetFilter() *LogFilterRuleBundle {
-	m.Lock()
-	defer m.Unlock()
-	return m.loggerCfg.Filter
+	return m.GetConfig().Filter
 }
 
 // SetFilter sets the filter
 func (m *LogManager) SetFilter(f *LogFilterRuleBundle) error {
-	m.Lock()
-	defer m.Unlock()
-	m.loggerCfg.Filter = f
-	return m.refreshLoggerRef()
+	return m.editConfig(func(cfg *LoggerConfig) error {
+		if !FilterRuleBundlesEquivalent(f, m.logger.GetConfig().Filter) {
+			// Only update the Filter when the new bundle is different from the old one
+			// to avoid unnecessary write lock in the logger.
+			cfg.Filter = f
+		}
+		return nil
+	})
+}
+
+// GetConfig returns the logger config
+func (m *LogManager) GetConfig() LoggerConfig {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.mu.loggerCfg
+}
+
+func (m *LogManager) editConfig(fn func(*LoggerConfig) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := fn(&m.mu.loggerCfg); err != nil {
+		return err
+	}
+	return m.logger.SetConfig(m.mu.loggerCfg)
 }
 
 // RotateLog rotates the log in current instance
 func (m *LogManager) RotateLog() error {
-	logutil.BgLogger().Info("rotate audit log in local")
-	return m.logger().Rotate()
+	return m.logger.Rotate()
+}
+
+// LogEntryWithFilter filter the input entry and log it if possible.
+func (m *LogManager) LogEntryWithFilter(entry func() *LogEntry, id *entryIDGenerator) {
+	m.logger.LogEntryFunc(entry, id, false)
+}
+
+// ForceLogEntry forces to log the entry
+func (m *LogManager) ForceLogEntry(entry *LogEntry) {
+	m.logger.LogEntry(entry, newEntryIDGenerator(), true)
 }
 
 // GlobalRotateLog rotates all logs in cluster
@@ -412,29 +453,9 @@ func (m *LogManager) GlobalRotateLog() error {
 
 	if !ok {
 		// !ok means the not a TiKV cluster, only rotate in local
+		logutil.BgLogger().Info("only rotate local audit log because global notify not supported")
 		return m.RotateLog()
 	}
-	return nil
-}
-
-func (m *LogManager) refreshLoggerRef() error {
-	oldLogger := m.logger()
-	newLogger, err := LoggerWithConfig(m.ctx, m.loggerCfg, oldLogger)
-	if err != nil {
-		return err
-	}
-
-	if newLogger != oldLogger {
-		m.loggerRef.Store(newLogger)
-
-		if cfg := m.loggerCfg; cfg.Enabled && cfg.FileMaxLifetime > 0 {
-			newLogger.loopCheckLogMaxLifetime(time.Duration(m.loggerCfg.FileMaxLifetime) * time.Second)
-		}
-		if oldLogger != nil && oldLogger.cfg.Enabled && oldLogger.cancel != nil {
-			oldLogger.cancel()
-		}
-	}
-
 	return nil
 }
 
@@ -451,9 +472,12 @@ func (m *LogManager) notifyFilterConfigUpdated() error {
 	return nil
 }
 
+// injectReloadFilterForTest is only used for test
+var injectReloadFilterForTest func(error) error
+
 // ReloadFilter reloads filters from table
 func (m *LogManager) ReloadFilter() error {
-	return m.runInTxn(m.ctx, func(exec sqlexec.SQLExecutor) error {
+	err := m.runInTxn(m.ctx, func(exec sqlexec.SQLExecutor) error {
 		rules, err := ListFilterRules(m.ctx, exec)
 		if err != nil {
 			return err
@@ -461,6 +485,11 @@ func (m *LogManager) ReloadFilter() error {
 		filter := NewLogFilterRuleBundle(rules)
 		return m.SetFilter(filter)
 	})
+	if intest.InTest && injectReloadFilterForTest != nil {
+		return injectReloadFilterForTest(err)
+	}
+
+	return err
 }
 
 // CreateLogFilter creates log filter
@@ -604,36 +633,29 @@ func (m *LogManager) SwitchLogFilterRuleEnabled(user, filter string, enabled boo
 	return m.notifyFilterConfigUpdated()
 }
 
-func (m *LogManager) logger() *Logger {
-	if ref, ok := m.loggerRef.Load().(*Logger); ok {
-		return ref
-	}
-	return nil
-}
-
 // GetSessionHandler returns `*extension.SessionHandler` to register
 func (m *LogManager) GetSessionHandler() *extension.SessionHandler {
 	id := newEntryIDGenerator()
 	return &extension.SessionHandler{
 		OnConnectionEvent: func(tp extension.ConnEventTp, info *extension.ConnEventInfo) {
-			if logger := m.logger(); logger.cfg.Enabled {
-				newConnEventEntry(tp, info).Filter(logger.cfg.Filter).Log(logger, id)
-			}
+			m.LogEntryWithFilter(func() *LogEntry {
+				return newConnEventEntry(tp, info)
+			}, id)
 		},
 		OnStmtEvent: func(tp extension.StmtEventTp, info extension.StmtEventInfo) {
-			if logger := m.logger(); logger.cfg.Enabled {
-				newStmtEventEntry(tp, info).Filter(logger.cfg.Filter).Log(logger, id)
-			}
+			m.LogEntryWithFilter(func() *LogEntry {
+				return newStmtEventEntry(tp, info)
+			}, id)
 		},
 		OnSecurityEvent: func(tp extension.SecurityEventTp, info extension.SecurityEventInfo) {
-			if logger := m.logger(); logger.cfg.Enabled {
-				newSecurityEventEntry(tp, info).Filter(logger.cfg.Filter).Log(logger, id)
-			}
+			m.LogEntryWithFilter(func() *LogEntry {
+				return newSecurityEventEntry(tp, info)
+			}, id)
 		},
 		OnDataOpEvent: func(tp extension.DataOpEventTp, info extension.DataOpEventInfo) {
-			if logger := m.logger(); logger.cfg.Enabled {
-				newDataOpEventEntry(tp, info).Filter(logger.cfg.Filter).Log(logger, id)
-			}
+			m.LogEntryWithFilter(func() *LogEntry {
+				return newDataOpEventEntry(tp, info)
+			}, id)
 		},
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	tablefilter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -32,13 +33,13 @@ const TrimChars = " '"
 
 type keyWatcher struct {
 	ctx          context.Context
-	etcd         *clientv3.Client
+	etcd         EtcdCli
 	prefix       string
 	Chan         clientv3.WatchChan
 	chCreateTime time.Time
 }
 
-func newKeyWatcher(ctx context.Context, etcd *clientv3.Client, prefix string) *keyWatcher {
+func newKeyWatcher(ctx context.Context, etcd EtcdCli, prefix string) *keyWatcher {
 	return &keyWatcher{
 		ctx:          ctx,
 		etcd:         etcd,
@@ -98,6 +99,7 @@ func (g *entryIDGenerator) Next() (id string) {
 type errLogWriter struct{}
 
 func (*errLogWriter) Write(err []byte) (int, error) {
+	intest.Assert(false, "audit log error: %s", string(err))
 	logutil.BgLogger().Error("audit log error", zap.ByteString("err", err))
 	return len(err), nil
 }

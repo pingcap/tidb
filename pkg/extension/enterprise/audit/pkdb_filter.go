@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -79,7 +80,7 @@ var (
 		"DELETE FROM %s WHERE (USER, FILTER_NAME) = (%%?, %%?)", TableNameAuditLogFilterRules)
 	// SelectFilterRuleListSQL queries all filter rules
 	SelectFilterRuleListSQL = fmt.Sprintf(
-		"SELECT USER, FILTER_NAME, ENABLED FROM %s", TableNameAuditLogFilterRules)
+		"SELECT USER, FILTER_NAME, ENABLED FROM %s ORDER BY USER, FILTER_NAME ASC", TableNameAuditLogFilterRules)
 	// SelectFilterRuleByUserAndFilterSQL queries a filter by user and filter name
 	SelectFilterRuleByUserAndFilterSQL = fmt.Sprintf(
 		"SELECT USER, FILTER_NAME FROM %s WHERE (USER, FILTER_NAME) = (%%?, %%?)", TableNameAuditLogFilterRules)
@@ -452,4 +453,51 @@ func ListFilterRules(ctx context.Context, exec sqlexec.SQLExecutor) ([]*LogFilte
 		})
 	}
 	return rules, nil
+}
+
+// FilterRuleBundlesEquivalent compares two filter rule bundles and returns whether they have equivalent rules.
+func FilterRuleBundlesEquivalent(a, b *LogFilterRuleBundle) bool {
+	if a == b {
+		return true
+	}
+
+	if a == nil || b == nil || len(a.rules) != len(b.rules) {
+		return false
+	}
+
+	for i := range a.rules {
+		// clone rules to avoid modifying the original rules
+		var r1, r2 LogFilterRule
+		r1, r2 = *a.rules[i], *b.rules[i]
+		if r1 == r2 {
+			continue
+		}
+
+		// r2.filter = r1.filter is to compare the rule ignoring the filter
+		f1, f2 := r1.Filter, r2.Filter
+		r2.Filter = r1.Filter
+		if r1 != r2 {
+			return false
+		}
+
+		// Currently, we only compare the raw JSON for simple.
+		// If the RawJSON is empty, we consider it as not same.
+		json1, err1 := f1.ToJSON()
+		if err1 != nil {
+			terror.Log(errors.Wrap(err1, "failed to marshal audit filter to JSON"))
+			return false
+		}
+
+		json2, err2 := f2.ToJSON()
+		if err2 != nil {
+			terror.Log(errors.Wrap(err2, "failed to marshal audit filter to JSON"))
+			return false
+		}
+
+		if json1 != json2 {
+			return false
+		}
+	}
+
+	return true
 }

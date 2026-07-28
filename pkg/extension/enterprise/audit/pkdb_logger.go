@@ -1,18 +1,21 @@
 package audit
 
 import (
-	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -65,74 +68,231 @@ type LoggerConfig struct {
 
 // Logger is used to log audit logs
 type Logger struct {
+	mu        sync.RWMutex
 	zapLogger *zap.Logger
-	rotate    func() error
+	writer    LogWriter
 	cfg       LoggerConfig
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	stopFlag  bool
+	cfgSyncCh chan struct{}
+	loopWg    sync.WaitGroup
 }
 
-// LoggerWithConfig creates a new Logger, it will reuse some inner states if possible
-func LoggerWithConfig(ctx context.Context, cfg LoggerConfig, old *Logger) (_ *Logger, err error) {
-	if old != nil && old.cfg == cfg {
-		return old, nil
+// NewAuditLogger creates a new Logger.
+func NewAuditLogger(cfg LoggerConfig) (*Logger, error) {
+	zapLogger, writer, err := newZapLogger(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	var zapLogger *zap.Logger
-	var rotate func() error
-
-	if old == nil || old.cfg.zapCfgChanged(cfg) {
-		if zapLogger, rotate, err = newZapLogger(cfg); err != nil {
-			return nil, err
-		}
-	} else {
-		zapLogger = old.zapLogger
-		rotate = old.rotate
-	}
-
-	subCtx, cancel := context.WithCancel(ctx)
-	return &Logger{
+	logger := &Logger{
 		zapLogger: zapLogger,
-		rotate:    rotate,
+		writer:    writer,
 		cfg:       cfg,
-		ctx:       subCtx,
-		cancel:    cancel,
-	}, nil
+		cfgSyncCh: make(chan struct{}, 1),
+	}
+	logger.loopWg.Go(logger.rotateLoop)
+	return logger, nil
+}
+
+// SetConfig sets the logger's config.
+func (l *Logger) SetConfig(cfg LoggerConfig) error {
+	if l.GetConfig() == cfg {
+		// Avoid taking the write lock on unchanged config, because logging uses read locks.
+		return nil
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cfg.zapCfgChanged(cfg) {
+		zapLogger, writer, err := newZapLogger(cfg)
+		if err != nil {
+			return err
+		}
+		terror.Log(l.zapLogger.Sync())
+		terror.Log(l.writer.Close())
+		l.zapLogger = zapLogger
+		l.writer = writer
+	}
+
+	l.cfg = cfg
+	if !l.stopFlag {
+		select {
+		case l.cfgSyncCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+// GetConfig returns the config of the current logger.
+func (l *Logger) GetConfig() LoggerConfig {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.cfg
+}
+
+// Stop stops the logger's background loops.
+func (l *Logger) Stop() {
+	l.mu.Lock()
+	if l.stopFlag {
+		l.mu.Unlock()
+		l.loopWg.Wait()
+		return
+	}
+	l.stopFlag = true
+	terror.Log(l.zapLogger.Sync())
+	close(l.cfgSyncCh)
+	l.mu.Unlock()
+
+	l.loopWg.Wait()
 }
 
 // Rotate rotates the log
 func (l *Logger) Rotate() error {
-	if l == nil {
-		return errors.New("audit logger is not initialized")
-	}
-	return l.rotate()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.writer.Rotate()
 }
 
-// Event logs the event
-func (l *Logger) Event(fields []zap.Field) {
-	if l == nil {
-		terror.Log(errors.New("audit logger is not initialized"))
+// RotateOrNot rotates the log if the check function returns true.
+func (l *Logger) RotateOrNot(check func(cfg LoggerConfig) bool) (bool, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if check(l.cfg) {
+		return true, l.writer.Rotate()
+	}
+	return false, nil
+}
+
+// LogEntry logs the entry.
+func (l *Logger) LogEntry(entry *LogEntry, id *entryIDGenerator, force bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if !l.cfg.Enabled && !force {
 		return
 	}
-	l.zapLogger.Info("", fields...)
+	l.doLogEntry(entry, id, !force)
 }
 
-func (l *Logger) loopCheckLogMaxLifetime(interval time.Duration) {
-	go func() {
-		ticker := time.NewTicker(interval)
-		for {
+// LogEntryFunc logs the entry produced by a function.
+func (l *Logger) LogEntryFunc(fn func() *LogEntry, id *entryIDGenerator, force bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if !l.cfg.Enabled && !force {
+		return
+	}
+	l.doLogEntry(fn(), id, !force)
+}
+
+func (l *Logger) doLogEntry(entry *LogEntry, id *entryIDGenerator, filter bool) {
+	if filter {
+		entry = entry.Filter(l.cfg.Filter)
+	}
+
+	if fields := entry.Fields(id, l.cfg.Redact); len(fields) > 0 {
+		l.zapLogger.Info("", fields...)
+		failpoint.InjectCall("afterAuditLogEntryWritten")
+	}
+}
+
+// rotateNotifySyncChForTest is only used for tests.
+var rotateNotifySyncChForTest chan<- *maxLifeTimeRotateTicker
+
+func notifyRotateTickerSyncFuncForTest() func(t *maxLifeTimeRotateTicker) {
+	if ch := rotateNotifySyncChForTest; intest.InTest && ch != nil {
+		return func(t *maxLifeTimeRotateTicker) {
 			select {
-			case <-ticker.C:
-				if err := l.Rotate(); err != nil {
-					logutil.BgLogger().Error("Fail to rotate audit log by tidb_audit_log_max_lifetime", zap.Error(err))
-				}
-			case <-l.ctx.Done():
-				ticker.Stop()
-				return
+			case ch <- t:
+			default:
+				intest.Assert(false, "should not block in test")
 			}
 		}
-	}()
+	}
+	return func(*maxLifeTimeRotateTicker) {}
+}
+
+func (l *Logger) rotateLoop() {
+	syncCfgTicker := time.NewTicker(10 * time.Minute)
+	defer syncCfgTicker.Stop()
+
+	rotateTicker := newMaxLifeTimeRotateTicker(l.GetConfig())
+	defer rotateTicker.Stop()
+
+	notify := notifyRotateTickerSyncFuncForTest()
+	notify(rotateTicker)
+
+	for {
+		select {
+		case _, ok := <-l.cfgSyncCh:
+			if !ok {
+				return
+			}
+			rotateTicker.SyncConfig(l.GetConfig())
+			notify(rotateTicker)
+		case <-syncCfgTicker.C:
+			rotateTicker.SyncConfig(l.GetConfig())
+			notify(rotateTicker)
+		case <-rotateTicker.C():
+			if _, err := l.RotateOrNot(rotateTicker.CheckCfg); err != nil {
+				logutil.BgLogger().Error("Fail to rotate audit log by tidb_audit_log_max_lifetime", zap.Error(err))
+			}
+		}
+	}
+}
+
+var idleTickerC = make(<-chan time.Time)
+
+type maxLifeTimeRotateTicker struct {
+	ticker            *time.Ticker
+	rotateMaxLifeTime int64
+	rotateFile        string
+}
+
+func newMaxLifeTimeRotateTicker(cfg LoggerConfig) *maxLifeTimeRotateTicker {
+	t := &maxLifeTimeRotateTicker{}
+	t.SyncConfig(cfg)
+	return t
+}
+
+// C returns the current ticker channel for rotating the log file.
+func (t *maxLifeTimeRotateTicker) C() <-chan time.Time {
+	if t.ticker == nil {
+		return idleTickerC
+	}
+	return t.ticker.C
+}
+
+// Stop stops the ticker.
+func (t *maxLifeTimeRotateTicker) Stop() {
+	if t.ticker != nil {
+		t.ticker.Stop()
+	}
+	t.ticker = nil
+	t.rotateMaxLifeTime = 0
+	t.rotateFile = ""
+}
+
+// SyncConfig syncs the ticker config from the logger.
+func (t *maxLifeTimeRotateTicker) SyncConfig(cfg LoggerConfig) {
+	if t.CheckCfg(cfg) {
+		return
+	}
+
+	t.Stop()
+	if cfg.Enabled && cfg.FileMaxLifetime > 0 {
+		t.rotateFile = cfg.Filepath
+		t.rotateMaxLifeTime = cfg.FileMaxLifetime
+		t.ticker = time.NewTicker(time.Duration(t.rotateMaxLifeTime) * time.Second)
+	}
+}
+
+// CheckCfg checks if the input config matches the ticker state.
+func (t *maxLifeTimeRotateTicker) CheckCfg(cfg LoggerConfig) bool {
+	if !cfg.Enabled || cfg.FileMaxLifetime <= 0 {
+		return t.ticker == nil
+	}
+	return cfg.FileMaxLifetime == t.rotateMaxLifeTime && cfg.Filepath == t.rotateFile
 }
 
 func getServerEndpoint() string {
@@ -182,7 +342,32 @@ func getFilePath(configPath string, format string) (string, error) {
 	return strings.ReplaceAll(configPath, "%e", getServerEndpoint()), nil
 }
 
-func newZapLogger(cfg LoggerConfig) (*zap.Logger, func() error, error) {
+// LogWriter is the interface for audit log writer.
+type LogWriter interface {
+	io.Writer
+	Close() error
+	Rotate() error
+}
+
+func newLogWriter(zapCfg *log.Config) LogWriter {
+	w := &lumberjack.Logger{
+		Filename:   zapCfg.File.Filename,
+		MaxSize:    zapCfg.File.MaxSize,
+		MaxBackups: zapCfg.File.MaxBackups,
+		MaxAge:     zapCfg.File.MaxDays,
+		LocalTime:  true,
+	}
+
+	if intest.InTest && injectWriterForTest != nil {
+		return injectWriterForTest(zapCfg, w)
+	}
+	return w
+}
+
+// injectWriterForTest is used to inject the writer for testing.
+var injectWriterForTest func(zapCfg *log.Config, w *lumberjack.Logger) LogWriter
+
+func newZapLogger(cfg LoggerConfig) (*zap.Logger, LogWriter, error) {
 	if st, err := os.Stat(cfg.Filepath); err == nil {
 		if st.IsDir() {
 			return nil, nil, errors.New("can't use directory as log file name")
@@ -200,14 +385,7 @@ func newZapLogger(cfg LoggerConfig) (*zap.Logger, func() error, error) {
 		},
 	}
 
-	// use lumberjack to logrotate
-	writer := &lumberjack.Logger{
-		Filename:   zapCfg.File.Filename,
-		MaxSize:    zapCfg.File.MaxSize,
-		MaxBackups: zapCfg.File.MaxBackups,
-		MaxAge:     zapCfg.File.MaxDays,
-		LocalTime:  true,
-	}
+	writer := newLogWriter(zapCfg)
 
 	logger, props, err := log.InitLoggerWithWriteSyncer(
 		zapCfg,
@@ -234,5 +412,5 @@ func newZapLogger(cfg LoggerConfig) (*zap.Logger, func() error, error) {
 		}))
 	}
 
-	return logger, writer.Rotate, nil
+	return logger, writer, nil
 }
