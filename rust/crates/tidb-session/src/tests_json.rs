@@ -364,6 +364,44 @@ fn json_and_approximate_aggregates() {
     ));
 }
 
+/// `APPROX_COUNT_DISTINCT` past the 65536-distinct-value threshold, where
+/// Go's `BJKST` sketch (`func_count_distinct.go`) starts discarding samples
+/// and extrapolating rather than counting exactly.
+///
+/// Captured from Go (`testkit.CreateMockStore`,
+/// `pkg/executor/zz_dump_approxcount_test.go`, `-tags=intest`): a `BIGINT`
+/// column loaded with 0..100000 (then, over the same table, 0..70000 via
+/// `WHERE v < 70000`) distinct values, `SELECT APPROX_COUNT_DISTINCT(v)
+/// FROM t`. Go answered 101048 and 70697; matching bit for bit end to end
+/// (through the real row path -- `appendInt64`'s encoding, FarmHash, and
+/// the sketch's skip/resize/rehash arithmetic all in series) is the proof
+/// the port is faithful rather than merely plausible.
+#[test]
+fn approx_count_distinct_matches_go_above_the_sketch_threshold() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE big (v BIGINT)").unwrap();
+    const TOTAL: i64 = 100_000;
+    const BATCH: i64 = 1000;
+    let mut start = 0;
+    while start < TOTAL {
+        let end = (start + BATCH).min(TOTAL);
+        let values: Vec<String> = (start..end).map(|i| format!("({i})")).collect();
+        session
+            .run(&format!("INSERT INTO big VALUES {}", values.join(",")))
+            .unwrap();
+        start = end;
+    }
+
+    assert_eq!(
+        row_text(session.run("SELECT APPROX_COUNT_DISTINCT(v) FROM big")),
+        [["101048"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT APPROX_COUNT_DISTINCT(v) FROM big WHERE v < 70000")),
+        [["70697"]]
+    );
+}
+
 /// The JSON family's first slice: JSON evaluated as VALUES.
 ///
 /// Every expectation below is a `testkit.CreateMockStore` capture of real

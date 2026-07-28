@@ -31,10 +31,12 @@
 //! `Detach`, parallel projection, and the many other operators.
 
 pub mod apply;
+mod approx_count_distinct;
 pub mod ddl;
 pub mod driver;
 pub mod executor;
 pub mod explain;
+mod farmhash;
 pub mod hash_agg;
 pub mod join;
 pub mod kv_table;

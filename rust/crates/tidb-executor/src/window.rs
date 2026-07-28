@@ -1558,20 +1558,21 @@ fn coerce_to_type(value: Datum, target: &FieldType) -> Datum {
 }
 
 /// The single datum an `APPROX_COUNT_DISTINCT` row contributes: Go encodes
-/// every argument into one buffer and hashes it as a unit, and drops the row
-/// entirely when any argument is NULL (`approxCountDistinctOriginal`'s
-/// `hasNull` guard). The per-argument keys are length-prefixed so no
-/// argument's encoding can bleed into the next.
+/// every argument into one buffer with `evalAndEncode` and hashes it as a
+/// unit, and drops the row entirely when any argument is NULL
+/// (`approxCountDistinctOriginal`'s `hasNull` guard). Each argument's raw
+/// per-type encoding (`crate::hash_agg::approx_count_distinct_encode`, the
+/// same one the GROUP BY path uses) is appended with no separator, matching
+/// Go's own unframed concatenation.
 fn approx_distinct_tuple(values: impl IntoIterator<Item = Datum>) -> Datum {
     let mut buffer = Vec::new();
     for value in values {
         if value == Datum::Null {
             return Datum::Null;
         }
-        let Ok(key) = value.to_hash_key() else {
+        let Ok(key) = crate::hash_agg::approx_count_distinct_encode(&value) else {
             return Datum::Null;
         };
-        buffer.extend_from_slice(&(key.len() as u64).to_be_bytes());
         buffer.extend_from_slice(&key);
     }
     Datum::Bytes(buffer)

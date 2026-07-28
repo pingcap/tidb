@@ -51,19 +51,34 @@
 //! variant for the exact Go rule and its captured edges.
 //!
 //! DEFERRED (documented): the parallel partial/final worker pipeline, spill,
-//! memory tracking; `APPROX_COUNT_DISTINCT` above 65536 distinct values,
-//! where Go's sketch stops being exact, and a BINARY-charset JSON aggregate
-//! argument, which Go wraps in a JSON `Opaque`;
+//! memory tracking; and a BINARY-charset JSON aggregate argument, which Go
+//! wraps in a JSON `Opaque`;
 //! SUM-over-integer's DECIMAL result domain -- this seed accumulates integer
 //! sums in `i64` and reports overflow as an error rather than widening to
 //! decimal (Go returns DECIMAL; lands with the layout-faithful MyDecimal);
 //! and Go's `Round(retTp.GetDecimal())` display step on the AVG result.
+//!
+//! `APPROX_COUNT_DISTINCT` ports Go's `BJKST` sketch
+//! (`func_count_distinct.go`'s `partialResult4ApproxCountDistinct`, see
+//! [`crate::approx_count_distinct`]) over the FarmHash `Hash64` of each
+//! row's encoded argument tuple (`func_count_distinct.go`'s
+//! `evalAndEncode`/`appendInt64`/etc, ported in
+//! [`crate::farmhash`]), so results match Go's exactly, including above the
+//! 65536-distinct-value threshold where the sketch stops being exact and
+//! starts extrapolating. Only the encodings for `INT`/`REAL`/`DECIMAL`/
+//! `STRING`/`BINARY`/vector arguments are byte-identical to Go's; `TIME`,
+//! `DURATION`, and `JSON` arguments fall back to the datum's generic hash
+//! key, which dedupes correctly but does not hash identically to Go's raw
+//! struct layout / recursive `BinaryJSON.HashValue` -- a documented,
+//! narrower divergence than before.
 
+use crate::approx_count_distinct::ApproxCountDistinctSketch;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{BinaryJSON, BinaryJSONValue, Datum, Decimal, FieldType};
+use tidb_codec::encode_compact_bytes;
+use tidb_datatype::{BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType};
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -115,14 +130,13 @@ pub enum AggKind {
     /// `MemAwareMap.SetExt` overwrites), a NULL key fails the statement with
     /// 3158, and a NULL value stores JSON `null`.
     JsonObjectAgg,
-    /// `APPROX_COUNT_DISTINCT(a[, b, ...])`: Go's BJKST sketch over the
-    /// 32-bit farm-hash of the encoded argument tuple, skipping any row with
-    /// a NULL argument. Below `uniquesHashMaxSize` (65536) distinct values
-    /// the sketch keeps EVERY hash and `fixedSize` returns the set size
-    /// unchanged, so the answer is the exact distinct count -- which is what
-    /// this accumulator computes, over the same encoded tuple. Above that
-    /// threshold Go starts discarding hashes and extrapolates; that
-    /// large-cardinality regime is the documented deferral here.
+    /// `APPROX_COUNT_DISTINCT(a[, b, ...])`: Go's BJKST sketch
+    /// ([`ApproxCountDistinctSketch`]) over the FarmHash `Hash64` of the
+    /// encoded argument tuple, skipping any row with a NULL argument. Below
+    /// `uniquesHashMaxSize` (65536) distinct values the sketch keeps every
+    /// hash and the answer is the exact distinct count; above that
+    /// threshold Go starts discarding hashes and extrapolating the true
+    /// cardinality, which this sketch reproduces bit for bit.
     ApproxCountDistinct,
     /// `APPROX_PERCENTILE(v, pct)`: the value at ordinal rank
     /// `ceil(pct / 100 * N)` among the group's non-NULL values (Go
@@ -235,8 +249,9 @@ enum Partial {
     /// last write per key (Go's map overwrite) and hands the encoder the
     /// bytewise-sorted key order it needs.
     JsonObjectAgg(BTreeMap<String, BinaryJSON>),
-    /// `APPROX_COUNT_DISTINCT`: the encoded argument tuples seen so far.
-    ApproxCountDistinct(HashSet<Vec<u8>>),
+    /// `APPROX_COUNT_DISTINCT`: the BJKST sketch folding the group's encoded
+    /// argument tuples.
+    ApproxCountDistinct(ApproxCountDistinctSketch),
     /// `APPROX_PERCENTILE`: the group's non-NULL values, ranked at finalize.
     /// `percent` is `None` for Go's always-NULL fallback build.
     ApproxPercentile {
@@ -306,6 +321,56 @@ fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
     })
 }
 
+/// One `APPROX_COUNT_DISTINCT` argument's contribution to the hashed tuple,
+/// Go `func_count_distinct.go`'s `evalAndEncode`: each argument type has its
+/// own raw encoding (a fixed-width native-endian copy of the scalar for
+/// `INT`/`REAL`, `MyDecimal.ToHashKey` for `DECIMAL`, a collation sort key
+/// wrapped in `codec.EncodeCompactBytes` for `STRING`/`BINARY`, the vector's
+/// wire serialization for `VECTOR`) rather than the generic datum hash key
+/// `COUNT(DISTINCT ...)` uses, because these bytes feed FarmHash directly
+/// and the sketch only matches Go's numbers if the hash INPUT matches too.
+///
+/// `TIME`, `DURATION`, and `JSON` arguments fall back to the datum's generic
+/// hash key: Go encodes these as a raw in-memory struct copy
+/// (`appendTime`/`appendDuration`) or a recursive, type-tagged traversal
+/// (`BinaryJSON.HashValue`) that this seed does not reproduce byte for byte.
+/// The fallback still dedupes correctly -- equal values still collide and
+/// unequal ones still don't -- so the distinct COUNT is correct; only the
+/// exact large-cardinality extrapolation for groups keyed on these types can
+/// diverge from Go's.
+pub(crate) fn approx_count_distinct_encode(datum: &Datum) -> Result<Vec<u8>, ExecError> {
+    let unsupported = || ExecError::Unsupported("APPROX_COUNT_DISTINCT over this datum kind");
+    Ok(match datum {
+        Datum::Int(value) => value.to_le_bytes().to_vec(),
+        // Go's `arg.EvalInt` returns the column's stored int64 bit pattern
+        // regardless of signedness, so an unsigned argument encodes to the
+        // same 8 raw bytes as a signed one with that bit pattern.
+        Datum::UInt(value) => value.to_le_bytes().to_vec(),
+        Datum::Real(value) | Datum::Float32(value) => value.to_le_bytes().to_vec(),
+        Datum::Decimal(value) => value.to_hash_key().map_err(|_| unsupported())?.0,
+        Datum::String(text) => {
+            let collation = datum.collation().unwrap_or(Collation::Binary);
+            let key = collation.immutable_key(text.bytes());
+            let mut encoded = Vec::new();
+            encode_compact_bytes(&mut encoded, &key);
+            encoded
+        }
+        Datum::Bytes(bytes) => {
+            let collation = datum.collation().unwrap_or(Collation::Binary);
+            let key = collation.immutable_key(bytes);
+            let mut encoded = Vec::new();
+            encode_compact_bytes(&mut encoded, &key);
+            encoded
+        }
+        Datum::VectorFloat32(vector) => {
+            let mut encoded = Vec::new();
+            vector.serialize_to(&mut encoded);
+            encoded
+        }
+        other => other.to_hash_key().map_err(|_| unsupported())?,
+    })
+}
+
 impl Partial {
     fn new(kind: &AggKind) -> Partial {
         match kind {
@@ -348,7 +413,9 @@ impl Partial {
             },
             AggKind::JsonArrayAgg => Partial::JsonArrayAgg(Vec::new()),
             AggKind::JsonObjectAgg => Partial::JsonObjectAgg(BTreeMap::new()),
-            AggKind::ApproxCountDistinct => Partial::ApproxCountDistinct(HashSet::new()),
+            AggKind::ApproxCountDistinct => {
+                Partial::ApproxCountDistinct(ApproxCountDistinctSketch::new())
+            }
             AggKind::ApproxPercentile(percent) => Partial::ApproxPercentile {
                 values: Vec::new(),
                 percent: *percent,
@@ -385,11 +452,16 @@ impl Partial {
                 ))
             }
             (Partial::ApproxCountDistinct(_), Some(Datum::Null)) => {}
-            (Partial::ApproxCountDistinct(seen), Some(input)) => {
-                let key = input.to_hash_key().map_err(|_| {
-                    ExecError::Unsupported("APPROX_COUNT_DISTINCT over this datum kind")
-                })?;
-                seen.insert(key);
+            // The caller (the group-fold loop below) has already encoded the
+            // row's argument tuple the way Go's `evalAndEncode` does; this
+            // just feeds those bytes through FarmHash into the sketch.
+            (Partial::ApproxCountDistinct(sketch), Some(Datum::Bytes(encoded))) => {
+                sketch.insert(&encoded);
+            }
+            (Partial::ApproxCountDistinct(_), Some(_)) => {
+                return Err(ExecError::Unsupported(
+                    "APPROX_COUNT_DISTINCT requires a pre-encoded argument tuple",
+                ))
             }
             (Partial::ApproxPercentile { .. }, None) => {
                 return Err(ExecError::Unsupported(
@@ -575,7 +647,7 @@ impl Partial {
                     .map(|(key, value)| (key.clone(), BinaryJSONValue::Binary(value.clone())))
                     .collect(),
             ))?,
-            Partial::ApproxCountDistinct(seen) => Datum::Int(seen.len() as i64),
+            Partial::ApproxCountDistinct(sketch) => Datum::Int(sketch.fixed_size() as i64),
             // Go `percentile`: ordinal rank `k = min(ceil(N * pct/100), N)`,
             // then the k-th smallest value ITSELF (`selection.Select`), so an
             // even-sized group returns a real element rather than the mean of
@@ -814,7 +886,9 @@ impl<C: Columns> Executor for HashAggExec<C> {
                 };
                 for (f, state) in self.agg_funcs.iter().zip(ordered[idx].iter_mut()) {
                     let mut extra_values: Vec<Datum> = Vec::new();
-                    let value = if f.extra_args.is_empty() {
+                    let value = if f.extra_args.is_empty()
+                        && !matches!(f.kind, AggKind::ApproxCountDistinct)
+                    {
                         match &f.arg {
                             Some(expr) => Some(expr.eval(&self.ctx, row)?),
                             None => None,
@@ -833,10 +907,8 @@ impl<C: Columns> Executor for HashAggExec<C> {
                             Some(expr) => Some(expr.eval(&self.ctx, row)?),
                             None => None,
                         }
-                    } else if matches!(f.kind, AggKind::Count | AggKind::ApproxCountDistinct) {
-                        // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)` and
-                        // `APPROX_COUNT_DISTINCT(a, b, ...)`, which encode
-                        // their argument tuple the same way:
+                    } else if matches!(f.kind, AggKind::Count) {
+                        // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`:
                         // Go's `count4MultiArgs.UpdatePartialResult` skips the
                         // row as soon as ANY argument is NULL (a row counts
                         // only when EVERY argument is non-NULL). DISTINCT
@@ -858,6 +930,30 @@ impl<C: Columns> Executor for HashAggExec<C> {
                                 })?;
                                 buf.extend_from_slice(&(key.len() as u64).to_be_bytes());
                                 buf.extend_from_slice(&key);
+                            }
+                        }
+                        Some(tuple_key.map_or(Datum::Null, Datum::Bytes))
+                    } else if matches!(f.kind, AggKind::ApproxCountDistinct) {
+                        // `APPROX_COUNT_DISTINCT(a, b, ...)`: Go's
+                        // `approxCountDistinctOriginal.UpdatePartialResult`
+                        // (`evalAndEncode`) skips the row as soon as ANY
+                        // argument is NULL, exactly like COUNT's tuple. But
+                        // unlike COUNT's hash key, each argument's raw
+                        // per-type encoding is appended straight onto the
+                        // buffer with NO length prefix between arguments --
+                        // reproduced as-is (including the theoretical
+                        // cross-argument collision this allows for
+                        // variable-width encodings) because the sketch's
+                        // hash input has to match Go byte for byte.
+                        let mut tuple_key = Some(Vec::new());
+                        for expr in f.arg.iter().chain(f.extra_args.iter()) {
+                            let datum = expr.eval(&self.ctx, row)?;
+                            if datum == Datum::Null {
+                                tuple_key = None;
+                                break;
+                            }
+                            if let Some(buf) = &mut tuple_key {
+                                buf.extend_from_slice(&approx_count_distinct_encode(&datum)?);
                             }
                         }
                         Some(tuple_key.map_or(Datum::Null, Datum::Bytes))
