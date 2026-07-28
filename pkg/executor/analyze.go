@@ -578,6 +578,28 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	panic("unreachable")
 }
 
+// writeSavedAnalyzeOption appends one analyze option to the VALUES list of the
+// REPLACE INTO mysql.analyze_options statement. An option that is not set is
+// written as the DEFAULT keyword rather than a hardcoded value, so the column
+// default in the table definition is the source of truth for how "unset" is
+// persisted and this writer cannot drift from it across releases.
+// The reader keeps its own sentinels: getSavedAnalyzeOpts treats sample_num,
+// sample_rate and buckets as unset when not positive, and topn when negative.
+// Those must stay consistent with the column defaults; changing a default here
+// without changing the reader would turn "unset" into a pinned value.
+func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOptionType]uint64, optType ast.AnalyzeOptionType) {
+	val, ok := rawOpts[optType]
+	if !ok {
+		sql.WriteString("DEFAULT")
+		return
+	}
+	if optType == ast.AnalyzeOptSampleRate {
+		sqlescape.MustFormatSQL(sql, "%?", math.Float64frombits(val))
+		return
+	}
+	sqlescape.MustFormatSQL(sql, "%?", val)
+}
+
 func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
@@ -594,23 +616,21 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
-		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
-		sampleRate := float64(0)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
-			sampleRate = math.Float64frombits(val)
-		}
-		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
-		topn := int64(-1)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
-			topn = int64(val)
-		}
 		colChoice := opts.ColChoice.String()
 		colIDs := make([]string, 0, len(opts.ColumnList))
 		for _, colInfo := range opts.ColumnList {
 			colIDs = append(colIDs, strconv.FormatInt(colInfo.ID, 10))
 		}
 		colIDStrs := strings.Join(colIDs, ",")
-		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, "(%?,", opts.PhyTableID)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumSamples)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptSampleRate)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumBuckets)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumTopN)
+		sqlescape.MustFormatSQL(sql, ",%?,%?)", colChoice, colIDStrs)
 		if idx < len(toSaveMap)-1 {
 			sqlescape.MustFormatSQL(sql, ",")
 		}

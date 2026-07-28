@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/url"
 	"reflect"
@@ -711,6 +712,104 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 	}
 }
 
+// analyzeOptPtr builds the value of an explicitly set analyze option, as opposed
+// to the nil value that marks an option given as DEFAULT.
+func analyzeOptPtr(v uint64) *uint64 {
+	return &v
+}
+
+func TestHandleAnalyzeOptionsWithDefault(t *testing.T) {
+	// A nil value marks an option specified as DEFAULT, and it is carried through
+	// as a nil entry rather than being dropped.
+	optMap, err := handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumBuckets},
+		{Type: ast.AnalyzeOptNumSamples},
+		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[ast.AnalyzeOptionType]*uint64{
+		ast.AnalyzeOptNumBuckets: nil,
+		ast.AnalyzeOptNumSamples: nil,
+		ast.AnalyzeOptSampleRate: analyzeOptPtr(math.Float64bits(0.1)),
+	}, optMap)
+
+	// DEFAULT SAMPLES does not conflict with an explicit sample rate and vice versa.
+	_, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptSampleRate},
+		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
+	})
+	require.NoError(t, err)
+
+	// A DEFAULT clears an earlier value of the same option for the sample
+	// num/rate conflict check too, so resetting SAMPLES makes room for a
+	// SAMPLERATE that would otherwise be rejected as setting both.
+	_, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
+		{Type: ast.AnalyzeOptNumSamples},
+		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
+	})
+	require.NoError(t, err)
+
+	// Without the reset the same combination is still rejected.
+	_, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
+		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
+	})
+	require.ErrorContains(t, err, "You can only either set the value of the sample num or set the value of the sample rate")
+
+	// The last mention of an option wins, as for duplicated literals.
+	optMap, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(10, "", "")},
+		{Type: ast.AnalyzeOptNumTopN},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[ast.AnalyzeOptionType]*uint64{ast.AnalyzeOptNumTopN: nil}, optMap)
+	optMap, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumTopN},
+		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(10, "", "")},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[ast.AnalyzeOptionType]*uint64{ast.AnalyzeOptNumTopN: analyzeOptPtr(10)}, optMap)
+
+	// TOPN 0 is a pinned value that disables TopN collection, not a reset, so it
+	// must not be confused with DEFAULT TOPN.
+	optMap, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(0, "", "")},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[ast.AnalyzeOptionType]*uint64{ast.AnalyzeOptNumTopN: analyzeOptPtr(0)}, optMap)
+}
+
+func TestMergeAnalyzeOptionsWithResets(t *testing.T) {
+	saved := map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets: 100,
+		ast.AnalyzeOptNumTopN:    20,
+	}
+	// A reset drops the saved value, an explicit option overrides it, and
+	// untouched saved options are inherited.
+	merged := mergeAnalyzeOptions(
+		map[ast.AnalyzeOptionType]*uint64{
+			ast.AnalyzeOptNumBuckets: nil,
+			ast.AnalyzeOptNumSamples: analyzeOptPtr(1000),
+		},
+		saved,
+	)
+	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumTopN:    20,
+		ast.AnalyzeOptNumSamples: 1000,
+	}, merged)
+
+	// A pinned TOPN 0 overrides the saved value instead of unsetting it.
+	merged = mergeAnalyzeOptions(
+		map[ast.AnalyzeOptionType]*uint64{ast.AnalyzeOptNumTopN: analyzeOptPtr(0)},
+		saved,
+	)
+	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets: 100,
+		ast.AnalyzeOptNumTopN:    0,
+	}, merged)
+}
+
 func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
 	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
 	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
@@ -726,7 +825,7 @@ func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, optMap)
 
-	filledMap := fillAnalyzeOptions(optMap)
+	filledMap := fillAnalyzeOptions(mergeAnalyzeOptions(optMap, nil))
 	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
 	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
 
@@ -741,7 +840,7 @@ func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	filledMap = fillAnalyzeOptions(optMap)
+	filledMap = fillAnalyzeOptions(mergeAnalyzeOptions(optMap, nil))
 	require.Equal(t, uint64(1024), filledMap[ast.AnalyzeOptNumBuckets])
 	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
 }
