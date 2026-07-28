@@ -323,10 +323,29 @@ fn wrong_unknown_and_empty_root_credentials_share_identical_1045_and_cleanup() {
     let wrong = rejected_packet("alice", Some(b"wrong"));
     let unknown = rejected_packet("unknown", Some(b"secret"));
     let empty_root = rejected_packet("root", None);
-    assert_eq!(wrong, unknown);
-    assert_eq!(wrong, empty_root);
-    assert_eq!(wrong[0], 0xff);
-    assert_eq!(u16::from_le_bytes([wrong[1], wrong[2]]), 1045);
-    assert_eq!(&wrong[3..9], b"#28000");
-    assert_eq!(&wrong[9..], b"Access denied");
+    // The three attempts share the same 1045/28000 error shape (Go's
+    // `errno.ErrAccessDenied`, `pkg/server/conn.go`'s `hasPassword` check),
+    // but the message text itself is NOT byte-identical across them: it
+    // embeds the attempted username and reports "using password" from
+    // whether the CLIENT sent auth bytes, not whether the account has one
+    // configured (`pkg/parser/mysql/errname.go`:
+    // `"Access denied for user '%-.48s'@'%-.64s' (using password: %s)"`).
+    for (packet, user, expect) in [
+        (&wrong, "alice", "using password: YES"),
+        (&unknown, "unknown", "using password: YES"),
+        (&empty_root, "root", "using password: NO"),
+    ] {
+        assert_eq!(packet[0], 0xff, "{packet:?}");
+        assert_eq!(
+            u16::from_le_bytes([packet[1], packet[2]]),
+            1045,
+            "{packet:?}"
+        );
+        assert_eq!(&packet[3..9], b"#28000", "{packet:?}");
+        let message = String::from_utf8(packet[9..].to_vec()).unwrap();
+        assert_eq!(
+            message,
+            format!("Access denied for user '{user}'@'127.0.0.1' ({expect})")
+        );
+    }
 }

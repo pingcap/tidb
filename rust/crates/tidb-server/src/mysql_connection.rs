@@ -399,12 +399,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     let response = match parse_response(&auth_payload) {
         Ok(response) => response,
         Err(_error) => {
+            // The handshake response never parsed, so Go's own `cc.user`
+            // would still be its zero value: an empty username, exactly
+            // like this.
             write_error(
                 &mut output,
                 2,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                "Access denied",
+                access_denied_message("", &peer_addr.ip().to_string(), &[]),
                 true,
             )?;
             return Ok(ConnectionReport {
@@ -423,7 +426,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 2,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                "Access denied",
+                access_denied_message(&response.user, &peer_addr.ip().to_string(), &response.auth),
                 response.capability & CLIENT_PROTOCOL_41 != 0,
             )?;
             return Ok(ConnectionReport {
@@ -441,7 +444,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             2,
             ER_ACCESS_DENIED_ERROR,
             *b"28000",
-            "Access denied",
+            access_denied_message(&response.user, &peer_addr.ip().to_string(), &response.auth),
             protocol_41,
         )?;
         return Ok(ConnectionReport {
@@ -475,7 +478,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             response_sequence,
             ER_ACCESS_DENIED_ERROR,
             *b"28000",
-            "Access denied",
+            access_denied_message(&response.user, &peer_addr.ip().to_string(), &auth_response),
             protocol_41,
         )?;
         return Ok(ConnectionReport {
@@ -1383,6 +1386,23 @@ fn write_query_error_at(
         error.message.as_bytes(),
         protocol_41,
     )
+}
+
+/// Go's `errno.ErrAccessDenied` template, `pkg/parser/mysql/errname.go`:
+/// `"Access denied for user '%-.48s'@'%-.64s' (using password: %s)"`.
+/// `using_password` is `"YES"`/`"NO"` and is `"NO"` ONLY when the client sent
+/// zero auth-response bytes (`pkg/server/conn.go`'s `hasPassword` — the same
+/// rule at every one of Go's call sites, `pkg/server/conn.go`,
+/// `pkg/privilege/privileges/privileges.go`, `pkg/session/session.go`: it
+/// reflects what the CLIENT sent, not whether the account itself has a
+/// password configured).
+fn access_denied_message(user: &str, host: &str, auth_response: &[u8]) -> String {
+    let using_password = if auth_response.is_empty() {
+        "NO"
+    } else {
+        "YES"
+    };
+    format!("Access denied for user '{user}'@'{host}' (using password: {using_password})")
 }
 
 fn write_error(
