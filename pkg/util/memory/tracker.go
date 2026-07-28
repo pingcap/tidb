@@ -960,17 +960,17 @@ type memArbitrator struct {
 			_         cpuCacheLinePad
 		}
 		smallLimit int64
-		useBig     struct {
-			sync.Mutex
-			atomic.Bool
-		}
+		useBig     atomic.Bool
 	}
 	uid         uint64
 	digestID    uint64 // identify the digest profile of root-pool / SQL
 	reserveSize int64
 	isInternal  bool
-	state       atomic.Int32 // states: the current state of memArbitrator
-	prevMaxMem  int64
+	state       struct {
+		sync.Mutex
+		atomic.Int32 // states: the current state of memArbitrator
+	}
+	prevMaxMem int64
 
 	AwaitAlloc struct {
 		TotalDur   atomic.Int64 // total time spent waiting for memory allocation in nanoseconds
@@ -1092,8 +1092,8 @@ func (m *memArbitrator) growBigBudget() {
 }
 
 func (m *memArbitrator) intoBigBudget() bool {
-	m.budget.useBig.Lock()
-	defer m.budget.useBig.Unlock()
+	m.state.Lock()
+	defer m.state.Unlock()
 
 	if m.state.Load() == memArbitratorStateDown {
 		return false
@@ -1230,8 +1230,8 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		return false
 	}
 
-	m.budget.useBig.Lock()
-	defer m.budget.useBig.Unlock()
+	m.state.Lock()
+	defer m.state.Unlock()
 
 	switch oriState := m.state.Swap(memArbitratorStateDown); oriState {
 	case memArbitratorStateSmallBudget:
