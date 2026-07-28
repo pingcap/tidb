@@ -1082,7 +1082,44 @@ func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float6
 	return (leftRange - rightRange) / histWidthSq
 }
 
+// OutOfRangeShape holds the count-independent geometry of an out-of-range
+// estimate: everything OutOfRangeRowCount derives from the histogram and the
+// queried range alone, with no dependence on realtimeRowCount or modifyCount.
+// Compute it once per (histogram, range) with Histogram.OutOfRangeShape and
+// scale it with ScaleOutOfRangeShape whenever current counts are available;
+// this lets callers cache the shape across changes in the realtime counts.
+type OutOfRangeShape struct {
+	// Empty is set when the histogram has no buckets; the estimate is always 0.
+	Empty bool
+	// Impossible is set when the range is provably empty (an unsigned column
+	// compared against negative bounds) or invalid; the estimate is 0 except in
+	// determinate mode, which returns OneValue before examining the range.
+	Impossible bool
+	// OneValue is the average row count per distinct histogram value,
+	// NotNullCount/HistNDV, used as the estimate floor.
+	OneValue float64
+	// HistNDV is the histogram NDV excluding TopN, floored at 1.
+	HistNDV int64
+	// TotalPercent and MaxTotalPercent are the triangular-distribution overlap
+	// percentages of the queried range with the out-of-range regions on both
+	// sides of the histogram.
+	TotalPercent    float64
+	MaxTotalPercent float64
+}
+
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
+// It is the composition of OutOfRangeShape (the count-independent geometry)
+// and ScaleOutOfRangeShape (which applies realtimeRowCount/modifyCount).
+func (hg *Histogram) OutOfRangeRowCount(
+	sctx planctx.PlanContext,
+	lDatum, rDatum *types.Datum,
+	realtimeRowCount, modifyCount, histNDV int64,
+) RowEstimate {
+	return hg.ScaleOutOfRangeShape(sctx, hg.OutOfRangeShape(lDatum, rDatum, histNDV), realtimeRowCount, modifyCount)
+}
+
+// OutOfRangeShape computes the count-independent part of the out-of-range
+// estimate for the part of [lDatum, rDatum] outside the histogram's range.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
@@ -1104,36 +1141,20 @@ func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float6
 // The percentage of shaded area on the left side calculation formula is:
 // leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 // You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
-func (hg *Histogram) OutOfRangeRowCount(
-	sctx planctx.PlanContext,
-	lDatum, rDatum *types.Datum,
-	realtimeRowCount, modifyCount, histNDV int64,
-) (result RowEstimate) {
+func (hg *Histogram) OutOfRangeShape(lDatum, rDatum *types.Datum, histNDV int64) OutOfRangeShape {
 	if hg.Len() == 0 {
-		return DefaultRowEst(0)
+		return OutOfRangeShape{Empty: true}
 	}
 
-	// Step 1: Calculate a default of "one value"
+	// Calculate a default of "one value".
 	// oneValue assumes "one value qualifies", and is used as a lower bound.
 	histNDV = max(histNDV, 1)
-	oneValue := hg.NotNullCount() / float64(histNDV)
-
-	// Step 2: If modifications are not allowed, return the one value.
-	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
-	// one value qualifies.
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
-	if !allowUseModifyCount {
-		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
+	shape := OutOfRangeShape{
+		OneValue: hg.NotNullCount() / float64(histNDV),
+		HistNDV:  histNDV,
 	}
 
-	// Step 3: Adjust oneValue if the NDV is low
-	// If NDV is low, it may no longer be representative of the data since ANALYZE
-	// was last run. Use a default value against realtimeRowCount.
-	// If NDV is not representitative, then hg.NotNullCount may not be either.
-	if float64(histNDV) < outOfRangeBetweenRate {
-		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
-	}
-	// Step 4: Calculate how much of the statistics share a common prefix.
+	// Calculate how much of the statistics share a common prefix.
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
 	// TODO: If the common prefix is large, we may underestimate the out-of-range
@@ -1147,7 +1168,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			rDatum.GetBytes())
 	}
 
-	// Step 5:Convert the range we want to estimate to scalar value(float64)
+	// Convert the range we want to estimate to scalar value(float64)
 	l := convertDatumToScalar(lDatum, commonPrefix)
 	r := convertDatumToScalar(rDatum, commonPrefix)
 	unsigned := mysql.HasUnsignedFlag(hg.Tp.GetFlag())
@@ -1168,11 +1189,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// If both bounds collapsed to 0 due to clamping negative values, this is
 		// an impossible range (e.g., unsigned_col < 0). Return 0 estimate.
 		if l == 0 && r == 0 && (leftClamped || rightClamped) {
-			return DefaultRowEst(0)
+			shape.Impossible = true
+			return shape
 		}
 	}
 
-	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
+	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
@@ -1187,7 +1209,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	// Step 7: Calculate the width of the predicate
+	// Calculate the width of the predicate
 	// TODO: If predWidth == 0, it may be because the common prefix is too large.
 	// In future - out of range for equal predicates should also use this logic
 	// for consistency. We need to handle both "equal" and "large common prefix".
@@ -1196,34 +1218,70 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// This should never happen.
 		intest.Assert(false, "Right bound should not be less than left bound")
 
-		return DefaultRowEst(0)
+		shape.Impossible = true
+		return shape
 	} else if predWidth == 0 {
 		// Set histWidth to 0 so that we can still return a minimum of oneValue,
 		// and return the max as worst case.
 		histWidth = 0
 	}
 
-	// Step 8: Calculate the out of range percentages
+	// Calculate the out of range percentages
 	// Calculate left overlap percentage if the range overlaps with (boundL, histL)
 	leftPercent := calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
 	// Calculate right overlap percentage if the range overlaps with (histR, boundR)
 	rightPercent := calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
 
-	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
+	shape.TotalPercent = min(leftPercent*0.5+rightPercent*0.5, 1.0)
+	shape.MaxTotalPercent = min(leftPercent+rightPercent, 1.0)
+	return shape
+}
 
-	// Step 9: Calculate the added rows
+// ScaleOutOfRangeShape combines an OutOfRangeShape with the current
+// realtimeRowCount and modifyCount to produce the out-of-range row estimate.
+// It is cheap: all histogram probing already happened in OutOfRangeShape.
+func (hg *Histogram) ScaleOutOfRangeShape(
+	sctx planctx.PlanContext,
+	shape OutOfRangeShape,
+	realtimeRowCount, modifyCount int64,
+) (result RowEstimate) {
+	if shape.Empty {
+		return DefaultRowEst(0)
+	}
+	oneValue := shape.OneValue
+
+	// If modifications are not allowed, return the one value.
+	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
+	// one value qualifies.
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
+	if !allowUseModifyCount {
+		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
+	}
+
+	// Adjust oneValue if the NDV is low
+	// If NDV is low, it may no longer be representative of the data since ANALYZE
+	// was last run. Use a default value against realtimeRowCount.
+	// If NDV is not representitative, then hg.NotNullCount may not be either.
+	if float64(shape.HistNDV) < outOfRangeBetweenRate {
+		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
+	}
+
+	if shape.Impossible {
+		return DefaultRowEst(0)
+	}
+
+	// Calculate the added rows
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	maxAddedRows := addedRows
 
-	// Step 10: Calculate the estimated rows
+	// Calculate the estimated rows
 	estRows := oneValue
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
-	if totalPercent > 0 {
+	if shape.TotalPercent > 0 {
 		// Multiplying addedRows by 0.5 provides the assumption that 50% "addedRows" are inside
 		// the histogram range, and 50% (0.5) are out-of-range. Users can adjust this
 		// magic number by setting the session variable `tidb_opt_risk_range_skew_ratio`.
@@ -1235,10 +1293,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		if skewRatio > 0 {
 			addedRowMultiplier = skewRatio
 		}
-		estRows = (addedRows * addedRowMultiplier) * totalPercent
+		estRows = (addedRows * addedRowMultiplier) * shape.TotalPercent
 	}
 
-	// Step 11: Calculate a potential worst case for use in final MaxEst
+	// Calculate a potential worst case for use in final MaxEst
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
 	// account for at least 1% of the total row count as a worst case for "addedRows".
@@ -1251,12 +1309,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
 		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
-	if maxTotalPercent > 0 {
+	if shape.MaxTotalPercent > 0 {
 		// Always apply maxTotalPercent to maxAddedRows to limit scaling when the predicate has an upper bound
-		maxAddedRows *= maxTotalPercent
+		maxAddedRows *= shape.MaxTotalPercent
 	}
 
-	// Step 12: Calculate the final min/max/est rows including the skew ratio adjustment
+	// Calculate the final min/max/est rows including the skew ratio adjustment
 	result.MinEst = min(estRows, oneValue)
 	// NOTE: Skew ratio is used twice in this function.
 	// This second usage scales the estimate from the base estimate to the max estimate.
