@@ -116,11 +116,14 @@ use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, SessionTransaction, StatementSnapshot,
 };
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
-use tidb_exec::real_tikv_ddl::{commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport};
+use tidb_exec::real_tikv_ddl::{
+    commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier,
+};
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, RealOptimisticTransactionOpener};
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
+use tidb_pd_client::EtcdClient;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::PrivilegeRegistry;
@@ -258,6 +261,10 @@ pub struct RealClusterDdl {
     opener: Arc<RealOptimisticTransactionOpener>,
     catalog: Arc<SharedClusterCatalog>,
     timeout: Duration,
+    /// The etcd client this node announces its catalog changes through, so
+    /// peers' watches fire promptly. `None` leaves them to their lease tick;
+    /// a failed announcement is a warning, never a failed DDL.
+    notifier: Option<Arc<EtcdClient>>,
 }
 
 impl RealClusterDdl {
@@ -268,11 +275,13 @@ impl RealClusterDdl {
         opener: RealOptimisticTransactionOpener,
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
+        notifier: Option<Arc<EtcdClient>>,
     ) -> Self {
         Self {
             opener: Arc::new(opener),
             catalog,
             timeout,
+            notifier,
         }
     }
 
@@ -307,7 +316,11 @@ impl RealClusterDdl {
 
 impl ClusterDdl for RealClusterDdl {
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String> {
-        let report = commit_cluster_ddl(&self.opener, statement, self.timeout)
+        let notifier = self
+            .notifier
+            .as_ref()
+            .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
+        let report = commit_cluster_ddl(&self.opener, statement, self.timeout, notifier)
             .map_err(|error| error.to_string())?;
         self.refresh_catalog();
         Ok(report)
@@ -893,6 +906,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             authority.transaction_opener(),
             Arc::clone(&catalog),
             CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
         )),
         catalog,
         users.accounts(),

@@ -411,15 +411,19 @@ if ! printf '%s\n' "${READY_JSON}" | jq -e \
 fi
 
 # ---------------------------------------------------------------------------
-# A shape this node cannot serve is refused BEFORE any mutation: no id spent,
-# no schema version spent, nothing in the catalog.
+# DDL admission is decoupled from servability (the bootstrap-ddl widening):
+# a JSON column CREATE succeeds -- it builds the TableInfo a real TiDB
+# accepts -- and it is SERVING the table that this node refuses, naming the
+# column and type at query time.
 # ---------------------------------------------------------------------------
-REFUSAL=$(rust_node -Nse \
-  "CREATE TABLE ${DATABASE}.never (id BIGINT PRIMARY KEY, t TIMESTAMP NOT NULL)" 2>&1 || true)
-if ! printf '%s' "${REFUSAL}" | grep -qF "has type TIMESTAMP, which this node cannot store"; then
-  echo "an unservable CREATE TABLE was not refused with a precise message: ${REFUSAL}" >&2
+rust_node -Nse \
+  "CREATE TABLE ${DATABASE}.unservable (id BIGINT PRIMARY KEY, j JSON NOT NULL)"
+REFUSAL=$(rust_node -Nse "SELECT id FROM ${DATABASE}.unservable" 2>&1 || true)
+if ! printf '%s' "${REFUSAL}" | grep -qF "which this node cannot decode yet"; then
+  echo "an unservable table was not refused at query time with a precise message: ${REFUSAL}" >&2
   exit 1
 fi
+rust_node -Nse "DROP TABLE ${DATABASE}.unservable"
 REFUSAL=$(rust_node -Nse \
   "CREATE TABLE ${DATABASE}.never (id BIGINT NOT NULL, v BIGINT NOT NULL)" 2>&1 || true)
 if ! printf '%s' "${REFUSAL}" \
