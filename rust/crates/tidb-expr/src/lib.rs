@@ -399,6 +399,23 @@ pub fn apply_binary(op: tidb_ast::BinaryOp, l: Datum, r: Datum) -> Result<Datum,
     eval_binary(op, l, r)
 }
 
+/// Moves a temporal value by `INTERVAL amount unit`, `sign` being `1` to add
+/// and `-1` to subtract -- `DATE_ADD`/`DATE_SUB`'s own calendar arithmetic
+/// applied to already-evaluated operands.
+///
+/// Exposed for the window executor's `RANGE BETWEEN INTERVAL n unit ...`
+/// frame, whose boundary is the current row's `ORDER BY` key moved by the
+/// interval; it must be the SAME arithmetic `DATE_ADD` performs, month-end
+/// clamping and out-of-range `NULL` included.
+pub fn date_add_interval(
+    unit: &str,
+    date: &Datum,
+    amount: &Datum,
+    sign: i64,
+) -> Result<Datum, EvalError> {
+    time_fn::calendar::date_add(unit, date, amount, sign)
+}
+
 /// Applies TiDB's byte-preserving `CONCAT` coercion to already-evaluated
 /// values without round-tripping them through literal AST nodes.
 pub fn concat_values(values: &[Datum]) -> Result<Datum, EvalError> {

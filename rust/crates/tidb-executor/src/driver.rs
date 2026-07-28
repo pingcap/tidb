@@ -555,8 +555,21 @@ pub enum DriverError {
     WindowNoChildPartitioning,
     /// Go `plannererrors.ErrWindowNoRedefineOrderBy` (3583): a window that
     /// extends another added an `ORDER BY` the base already has, carrying the
-    /// base's name.
-    WindowNoRedefineOrderBy(String),
+    /// extending window's own name (`<unnamed window>` for an inline `OVER
+    /// (w ORDER BY ...)`) and the base's.
+    WindowNoRedefineOrderBy {
+        /// The window doing the extending, as Go reports it.
+        window: String,
+        /// The base window it may not inherit from.
+        base: String,
+    },
+    /// Go `plannererrors.ErrWindowNoInheritFrame` (3582): a named window that
+    /// defines a frame may not be referenced by another window, carrying its
+    /// name.
+    WindowNoInheritFrame(String),
+    /// Go `plannererrors.ErrNotSupportedYet` (1235) as the window builder
+    /// raises it, carrying the feature text Go names.
+    NotSupportedYet(&'static str),
     /// Go `plannererrors.ErrWindowFrameStartIllegal` / `ErrWindowFrameIllegal`
     /// (3586): a frame bound whose offset is negative, NULL or non-integral,
     /// or a `start` bound that ranks AFTER its `end` bound.
@@ -2788,6 +2801,37 @@ pub(crate) fn agg_kind_and_type(
                 });
             (AggKind::Avg, FieldType::new(code))
         }
+        // Go `typeInfer4BitFuncs`: a binary `BIGINT(21)` that never returns
+        // NULL -- an empty (or all-NULL) input folds to the operator's
+        // identity, not NULL. The column is SIGNED, which is why an all-NULL
+        // `BIT_AND` reads back as `-1` (captured from TiDB).
+        "BIT_AND" | "BIT_OR" | "BIT_XOR" => {
+            let mut t = FieldType::new(FieldTypeCode::LongLong);
+            t.set_flen(21);
+            t.set_decimal(0);
+            t.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            let op = match name {
+                "BIT_AND" => crate::hash_agg::BitOp::And,
+                "BIT_OR" => crate::hash_agg::BitOp::Or,
+                _ => crate::hash_agg::BitOp::Xor,
+            };
+            (AggKind::Bit(op), t)
+        }
+        // Go `typeInfer4PopOrSamp`: a nullable `DOUBLE(23)` with an
+        // unspecified scale, regardless of the argument's own type.
+        // The parser canonicalizes `VARIANCE` to `VAR_POP` and
+        // `STD`/`STDDEV` to `STDDEV_POP`, so only the four canonical names
+        // reach here.
+        "VAR_POP" | "VAR_SAMP" | "STDDEV_POP" | "STDDEV_SAMP" => {
+            let mut t = FieldType::new(FieldTypeCode::Double);
+            t.set_flen(23);
+            t.set_decimal(tidb_datatype::UNSPECIFIED_FSP);
+            let kind = AggKind::Variance {
+                sample: matches!(name, "VAR_SAMP" | "STDDEV_SAMP"),
+                sqrt: matches!(name, "STDDEV_POP" | "STDDEV_SAMP"),
+            };
+            (kind, t)
+        }
         _ => {
             return Err(DriverError::Unsupported(
                 "this aggregate function is deferred",
@@ -2847,7 +2891,7 @@ fn substitute_aggregates(
     // column and is trimmed by the final projection.
     if let Some(args) = grouping_call_args(expr) {
         let display = expr.restore();
-        let name = add_grouping_column(
+        let (name, _) = add_grouping_column(
             args,
             display,
             agg_funcs,
@@ -5356,7 +5400,9 @@ fn grouping_arg_positions(
 }
 
 /// Adds a `GROUPING()` call as an aggregation output column and returns that
-/// column's name.
+/// column's name and INDEX -- the index matters because a repeated call text
+/// reuses the existing column rather than adding one, so a caller that
+/// reserved the next index for it must read the real one back.
 ///
 /// The column is a placeholder as far as the aggregation is concerned -- a
 /// `FIRST_ROW` over the constant `0`, so the column exists and every group
@@ -5371,13 +5417,13 @@ fn add_grouping_column(
     types: &mut Vec<FieldType>,
     grouping_specs: &mut Vec<GroupingSpec>,
     group_by_names: &[String],
-) -> Result<String, DriverError> {
+) -> Result<(String, usize), DriverError> {
     if let Some(index) = names
         .iter()
         .position(|name| name.eq_ignore_ascii_case(&display))
     {
         if grouping_specs.iter().any(|spec| spec.out_index == index) {
-            return Ok(display);
+            return Ok((display, index));
         }
     }
     let group_positions = grouping_arg_positions(args, group_by_names)?;
@@ -5396,9 +5442,10 @@ fn add_grouping_column(
         out_index: names.len(),
         group_positions,
     });
+    let index = names.len();
     names.push(display.clone());
     types.push(grouping_result_type());
-    Ok(display)
+    Ok((display, index))
 }
 
 /// Where one select field of an aggregate query reads its value from.
@@ -5531,11 +5578,6 @@ fn run_aggregate_select(
     let hoisted;
     let mut window_calls = Vec::new();
     let select = if crate::window::select_has_window(select) {
-        if select.rollup {
-            return Err(DriverError::Unsupported(
-                "a window function combined with GROUP BY ... WITH ROLLUP is not supported yet",
-            ));
-        }
         // `ORDER BY <window alias>` names a value the window stage computes,
         // not an aggregation output column, so the alias is resolved to its
         // window expression BEFORE hoisting -- the hoist then leaves the same
@@ -5613,30 +5655,48 @@ fn run_aggregate_select(
             slot_names.push(Some(display));
             continue;
         }
-        // A grouped column the hoisting already carried out of the
-        // aggregation is REUSED rather than carried twice: two columns of the
-        // same name in the window stage's scope would be ambiguous there.
+        // A value the window hoist already carried out of the aggregation --
+        // a grouped column, or an aggregate the window's own spec named
+        // (`SUM(v)` beside `RANK() OVER (ORDER BY SUM(v))`) -- is REUSED
+        // rather than carried twice: two columns of the same name in the
+        // window stage's scope would be ambiguous there. Both are addressed
+        // by the same text the hoist stored, a column's name or an
+        // aggregate's restored form.
         if !window_calls.is_empty() {
-            if let tidb_ast::Expr::Column(path) = expr {
-                let name = path.last().cloned().unwrap_or_default();
-                if let Some(index) = names
-                    .iter()
-                    .position(|have| have.eq_ignore_ascii_case(&name))
-                {
-                    slots.push(OutputSlot::Agg(index));
-                    slot_names.push(Some(alias.clone().unwrap_or(name)));
-                    continue;
-                }
+            let name = match expr {
+                tidb_ast::Expr::Column(path) => path.last().cloned().unwrap_or_default(),
+                _ => display.clone(),
+            };
+            if let Some(index) = names
+                .iter()
+                .position(|have| have.eq_ignore_ascii_case(&name))
+            {
+                slots.push(OutputSlot::Agg(index));
+                slot_names.push(Some(alias.clone().unwrap_or(name)));
+                continue;
             }
         }
+        // A window value inside a LARGER expression (`RANK() OVER (...) +
+        // 1`): Go evaluates it in the projection ABOVE the window operator,
+        // which is the final projection this path already builds for a
+        // hoisted correlated subquery. The aggregates AROUND the window call
+        // are hoisted into the aggregation the same way, so what is left is
+        // an expression over the aggregation's output plus the window's own
+        // computed column.
         if expr_has_hoisted_window(expr) {
-            // Go computes a larger expression over the projection ABOVE the
-            // window operator; this path has no such projection, so only a
-            // bare window field is supported over a grouped query.
-            return Err(DriverError::Unsupported(
-                "a window function nested inside a larger select expression is not \
-                 supported over a grouped query",
-            ));
+            let hoisted = substitute_aggregates(
+                expr,
+                &mut agg_funcs,
+                &mut names,
+                &mut types,
+                &mut grouping_specs,
+                &group_by_names,
+                resolver,
+            )?;
+            slots.push(OutputSlot::Expr(post_agg_exprs.len()));
+            slot_names.push(None);
+            post_agg_exprs.push(hoisted);
+            continue;
         }
         // A correlated subquery in an aggregate select list reads the GROUPED
         // value, so it runs once per OUTPUT row rather than per source row --
@@ -5679,7 +5739,7 @@ fn run_aggregate_select(
             // pass fills in rather than an expression over the row.
             other if grouping_call_args(other).is_some() => {
                 let args = grouping_call_args(other).unwrap_or_default();
-                add_grouping_column(
+                let (_, index) = add_grouping_column(
                     args,
                     display,
                     &mut agg_funcs,
@@ -5688,6 +5748,12 @@ fn run_aggregate_select(
                     &mut grouping_specs,
                     &group_by_names,
                 )?;
+                // The call text may already have a column -- hoisted out of a
+                // window's PARTITION BY, or written twice -- in which case the
+                // slot reserved above points past it.
+                if let Some(slot) = slots.last_mut() {
+                    *slot = OutputSlot::Agg(index);
+                }
             }
             other if expr_has_grouping(other) => {
                 // Go evaluates `GROUPING(a) + 1` over the projection above the
@@ -9613,13 +9679,29 @@ impl DriverError {
         // Go: "Window '%s' cannot inherit '%s' since both contain an ORDER BY
         // clause." -- an inline `OVER (w ORDER BY ...)` has no name of its
         // own, which Go reports as `<unnamed window>`.
-        DriverError::WindowNoRedefineOrderBy(base) => MysqlError::new(
+        DriverError::WindowNoRedefineOrderBy { window, base } => MysqlError::new(
             3583,
             *b"HY000",
             format!(
-                "Window '<unnamed window>' cannot inherit '{base}' since both contain an \
+                "Window '{window}' cannot inherit '{base}' since both contain an \
                  ORDER BY clause."
             ),
+        ),
+        // Go: "Window '%s' has a frame definition, so cannot be referenced by
+        // another window."
+        DriverError::WindowNoInheritFrame(base) => MysqlError::new(
+            3582,
+            *b"HY000",
+            format!(
+                "Window '{base}' has a frame definition, so cannot be referenced by \
+                 another window."
+            ),
+        ),
+        // Go: "This version of TiDB doesn't yet support '%s'".
+        DriverError::NotSupportedYet(feature) => MysqlError::new(
+            1235,
+            *b"42000",
+            format!("This version of TiDB doesn't yet support '{feature}'"),
         ),
         // Go: "Window '%s': frame start or end is negative, NULL or of
         // non-integral type" -- an inline `OVER (...)` is `<unnamed window>`.

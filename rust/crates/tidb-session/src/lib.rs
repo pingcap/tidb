@@ -9909,12 +9909,63 @@ mod tests {
                 "SELECT ROW_NUMBER() OVER (w ORDER BY v) FROM t \
                  WINDOW w AS (PARTITION BY g ORDER BY v)"
             ),
-            Err(DriverError::WindowNoRedefineOrderBy(ref base)) if base == "w"
+            Err(DriverError::WindowNoRedefineOrderBy { ref window, ref base })
+                if window == "<unnamed window>" && base == "w"
         ));
 
-        // Outside this slice: every aggregate the framed family does not
-        // cover.
-        match session.run("SELECT g, BIT_OR(v) OVER (ORDER BY v) FROM t") {
+        // Captured with a NAMED extending window, which Go names in the same
+        // message: "[planner:3583]Window 'w2' cannot inherit 'w' since both
+        // contain an ORDER BY clause."
+        assert!(matches!(
+            session.run(
+                "SELECT ROW_NUMBER() OVER w2 FROM t \
+                 WINDOW w AS (PARTITION BY g ORDER BY v), w2 AS (w ORDER BY g)"
+            ),
+            Err(DriverError::WindowNoRedefineOrderBy { ref window, ref base })
+                if window == "w2" && base == "w"
+        ));
+
+        // Captured: "[planner:3582]Window 'w' has a frame definition, so
+        // cannot be referenced by another window."
+        assert!(matches!(
+            session.run(
+                "SELECT ROW_NUMBER() OVER w2 FROM t \
+                 WINDOW w AS (PARTITION BY g ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), \
+                 w2 AS (w ORDER BY v)"
+            ),
+            Err(DriverError::WindowNoInheritFrame(ref base)) if base == "w"
+        ));
+
+        // Captured: "[planner:3580]There is a circularity in the window
+        // dependency graph."
+        assert!(matches!(
+            session.run("SELECT ROW_NUMBER() OVER w FROM t WINDOW w AS (w2), w2 AS (w)"),
+            Err(DriverError::WindowCircularity)
+        ));
+
+        // Captured: "[planner:1235]This version of TiDB doesn't yet support
+        // 'group_concat as window function'" -- Go refuses GROUP_CONCAT
+        // before it looks at any argument, and DISTINCT inside any window
+        // call the same way.
+        // GROUP_CONCAT: captured "[planner:1235]This version of TiDB doesn't
+        // yet support 'group_concat as window function'", but this build's
+        // parser does not accept an `OVER` clause on GROUP_CONCAT at all
+        // (its AST node carries no window spec), so the statement fails
+        // earlier, at parse time -- a documented parser-side deferral.
+        assert!(matches!(
+            session.run("SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t"),
+            Err(DriverError::Parse(_))
+        ));
+        assert!(matches!(
+            session.run("SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t"),
+            Err(DriverError::NotSupportedYet(
+                "<window function>(DISTINCT ..)"
+            ))
+        ));
+
+        // Outside this slice: the aggregates Go DOES allow OVER but this
+        // build does not compute (APPROX_COUNT_DISTINCT, JSON_ARRAYAGG, ...).
+        match session.run("SELECT g, APPROX_COUNT_DISTINCT(v) OVER (ORDER BY v) FROM t") {
             Err(DriverError::Unsupported(message)) => {
                 assert!(
                     message.contains("ROW_NUMBER"),
@@ -9984,22 +10035,6 @@ mod tests {
                 matches!(session.run(sql), Err(DriverError::WindowRangeFrameOrderType)),
                 "expected 3587 for {sql}"
             );
-        }
-
-        // The one RANGE shape still deferred: an INTERVAL bound over a
-        // temporal key, which captured TiDB DOES answer
-        // (`2020-01-01,2020-01-02,2020-01-05` with values `1,2,3` under
-        // `RANGE INTERVAL 1 DAY PRECEDING` is `1,3,3`).
-        match session.run(
-            "SELECT SUM(v) OVER (ORDER BY d RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM rt",
-        ) {
-            Err(DriverError::Unsupported(message)) => {
-                assert!(
-                    message.contains("INTERVAL"),
-                    "expected the INTERVAL-bound refusal, got {message}"
-                );
-            }
-            other => panic!("expected the INTERVAL-bound refusal, got {other:?}"),
         }
 
         // Captured: "[planner:1210]Incorrect arguments to nth_value" -- the
@@ -11032,6 +11067,687 @@ mod tests {
                  FROM t ORDER BY rn DESC, g LIMIT 3"
             )),
             [["1", "40", "5"], ["1", "30", "4"], ["1", "20", "3"]]
+        );
+    }
+
+    /// The fixture the `RANGE ... INTERVAL` captures ran over: a DATETIME
+    /// key with a sub-day step, a TIE, a multi-day GAP, and a second
+    /// partition.
+    fn interval_session() -> Session {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE td (g BIGINT, k DATETIME, v BIGINT)")
+            .unwrap();
+        session
+            .run(
+                "INSERT INTO td VALUES \
+                 (1,'2020-01-01 00:00:00',10),(1,'2020-01-01 12:00:00',20), \
+                 (1,'2020-01-02 00:00:00',30),(1,'2020-01-02 00:00:00',40), \
+                 (1,'2020-01-05 00:00:00',50),(2,'2020-01-01 00:00:00',60)",
+            )
+            .unwrap();
+        session
+    }
+
+    /// `RANGE BETWEEN INTERVAL n unit PRECEDING/FOLLOWING` over a temporal
+    /// `ORDER BY` key: the boundary is the current row's key moved by
+    /// `DATE_ADD`/`DATE_SUB`'s own CALENDAR arithmetic, so `INTERVAL 1 MONTH`
+    /// is a month field increment rather than a fixed number of days, and the
+    /// boundary is INCLUSIVE.
+    ///
+    /// Every expectation is captured TiDB output.
+    #[test]
+    fn window_range_interval_bounds() {
+        let mut session = interval_session();
+
+        // Captured: the `2020-01-02` rows see the whole day back to
+        // `2020-01-01 00:00:00` INCLUSIVE (10+20+30+40 = 100), the tie shares
+        // one frame, and the `2020-01-05` row's window reaches nothing.
+        for sql in [
+            "SELECT v, SUM(v) OVER (PARTITION BY g ORDER BY k \
+             RANGE INTERVAL 1 DAY PRECEDING) FROM td WHERE g = 1 ORDER BY k, v",
+            "SELECT v, SUM(v) OVER (PARTITION BY g ORDER BY k \
+             RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM td \
+             WHERE g = 1 ORDER BY k, v",
+        ] {
+            assert_eq!(
+                row_text(session.run(sql)),
+                [
+                    ["10", "10"],
+                    ["20", "30"],
+                    ["30", "100"],
+                    ["40", "100"],
+                    ["50", "50"]
+                ],
+                "for {sql}"
+            );
+        }
+
+        // Captured: `CURRENT ROW AND INTERVAL 1 DAY FOLLOWING` looks forward
+        // over the same inclusive boundary.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, SUM(v) OVER (PARTITION BY g ORDER BY k \
+                 RANGE BETWEEN CURRENT ROW AND INTERVAL 1 DAY FOLLOWING) FROM td \
+                 WHERE g = 1 ORDER BY k, v"
+            )),
+            [
+                ["10", "100"],
+                ["20", "90"],
+                ["30", "70"],
+                ["40", "70"],
+                ["50", "50"]
+            ]
+        );
+
+        // Captured: a two-sided interval frame, and a 2 HOUR step that
+        // reaches NOTHING but the peer group for the first two rows.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, SUM(v) OVER (PARTITION BY g ORDER BY k \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND INTERVAL 1 DAY FOLLOWING) \
+                 FROM td WHERE g = 1 ORDER BY k, v"
+            )),
+            [
+                ["10", "100"],
+                ["20", "100"],
+                ["30", "100"],
+                ["40", "100"],
+                ["50", "50"]
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, SUM(v) OVER (PARTITION BY g ORDER BY k \
+                 RANGE BETWEEN INTERVAL 2 HOUR PRECEDING AND INTERVAL 2 HOUR FOLLOWING) \
+                 FROM td WHERE g = 1 ORDER BY k, v"
+            )),
+            [
+                ["10", "10"],
+                ["20", "20"],
+                ["30", "70"],
+                ["40", "70"],
+                ["50", "50"]
+            ]
+        );
+
+        // Captured: under DESC the sign FLIPS, so `INTERVAL 1 DAY PRECEDING`
+        // reaches the LATER timestamps that sort earlier.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, SUM(v) OVER (PARTITION BY g ORDER BY k DESC \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM td \
+                 WHERE g = 1 ORDER BY k DESC, v"
+            )),
+            [
+                ["50", "50"],
+                ["30", "70"],
+                ["40", "70"],
+                ["20", "90"],
+                ["10", "100"]
+            ]
+        );
+
+        // COUNT counts the same frame (captured `1,2,4,4,1`), and
+        // FIRST_VALUE reads it.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT COUNT(v) OVER (PARTITION BY g ORDER BY k \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM td \
+                 WHERE g = 1 ORDER BY k, v"
+            )),
+            [["1"], ["2"], ["4"], ["4"], ["1"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT FIRST_VALUE(v) OVER (PARTITION BY g ORDER BY k \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND INTERVAL 1 DAY FOLLOWING) \
+                 FROM td WHERE g = 1 ORDER BY k, v"
+            )),
+            [["10"], ["10"], ["10"], ["10"], ["50"]]
+        );
+
+        // Captured: MONTH and YEAR reach every row of the whole table, and a
+        // composite `INTERVAL '1 2' DAY_HOUR` (26 hours) reaches back far
+        // enough for the `2020-01-02` rows but not for `2020-01-05`.
+        for sql in [
+            "SELECT v, SUM(v) OVER (ORDER BY k \
+             RANGE BETWEEN INTERVAL 1 MONTH PRECEDING AND CURRENT ROW) FROM td ORDER BY k, v",
+            "SELECT v, SUM(v) OVER (ORDER BY k \
+             RANGE BETWEEN INTERVAL 1 YEAR PRECEDING AND CURRENT ROW) FROM td ORDER BY k, v",
+        ] {
+            assert_eq!(
+                row_text(session.run(sql)),
+                [
+                    ["10", "70"],
+                    ["60", "70"],
+                    ["20", "90"],
+                    ["30", "160"],
+                    ["40", "160"],
+                    ["50", "210"]
+                ],
+                "for {sql}"
+            );
+        }
+        assert_eq!(
+            row_text(session.run(
+                "SELECT v, SUM(v) OVER (ORDER BY k \
+                 RANGE BETWEEN INTERVAL '1 2' DAY_HOUR PRECEDING AND CURRENT ROW) \
+                 FROM td ORDER BY k, v"
+            )),
+            [
+                ["10", "70"],
+                ["60", "70"],
+                ["20", "90"],
+                ["30", "160"],
+                ["40", "160"],
+                ["50", "50"]
+            ]
+        );
+
+        // An interval frame whose start ranks after its end is EMPTY for
+        // every row (captured: all NULL).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND INTERVAL 2 DAY PRECEDING) \
+                 FROM td ORDER BY k, v"
+            )),
+            [["NULL"], ["NULL"], ["NULL"], ["NULL"], ["NULL"], ["NULL"]]
+        );
+    }
+
+    /// The same interval frame over the OTHER temporal key types, and over
+    /// NULL keys -- which peer with each other and with nothing else.
+    #[test]
+    fn window_range_interval_over_dates_and_nulls() {
+        let mut session = Session::new();
+
+        // Captured over `NULL,NULL,'2020-01-01','2020-01-02'` with values
+        // `1,2,3,4`: the two NULL keys form a frame of their own (3 = 1+2),
+        // in BOTH directions.
+        session
+            .run("CREATE TABLE tdn (k DATETIME, v BIGINT)")
+            .unwrap();
+        session
+            .run(
+                "INSERT INTO tdn VALUES \
+                 (NULL,1),(NULL,2),('2020-01-01 00:00:00',3),('2020-01-02 00:00:00',4)",
+            )
+            .unwrap();
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM tdn"
+            )),
+            [["3"], ["3"], ["3"], ["7"]]
+        );
+        // Under DESC the `2020-01-01` row's frame reaches FORWARD to
+        // `2020-01-02` (3+4 = 7); the NULL rows still see only each other.
+        // Ordered by `v` because a window's own sort is not an output order.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k DESC \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM tdn ORDER BY v"
+            )),
+            [["3"], ["3"], ["7"], ["4"]]
+        );
+
+        // A DATE key reads as midnight, so a 2 HOUR step reaches nothing
+        // outside the peer group while a 1 DAY step reaches the previous day
+        // (captured `1,6,6,4` and `1,5,5,4`).
+        session
+            .run("CREATE TABLE tdate (k DATE, v BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO tdate VALUES ('2020-01-01',1),('2020-01-02',2),('2020-01-02',3),('2020-01-10',4)")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k \
+                 RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM tdate"
+            )),
+            [["1"], ["6"], ["6"], ["4"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k \
+                 RANGE BETWEEN INTERVAL 2 HOUR PRECEDING AND CURRENT ROW) FROM tdate"
+            )),
+            [["1"], ["5"], ["5"], ["4"]]
+        );
+        // A month either side reaches every row (captured `10` throughout).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k \
+                 RANGE BETWEEN INTERVAL 1 MONTH PRECEDING AND INTERVAL 1 MONTH FOLLOWING) \
+                 FROM tdate"
+            )),
+            [["10"], ["10"], ["10"], ["10"]]
+        );
+    }
+
+    /// A window call nested inside a LARGER select expression, which Go
+    /// evaluates in the projection ABOVE the window operator -- over a plain
+    /// query and over a grouped one alike.
+    ///
+    /// Every expectation is captured TiDB output over `(1,10),(1,20),(1,20),
+    /// (2,30),(2,40)`.
+    #[test]
+    fn window_nested_in_larger_expression() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE tw (g BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO tw VALUES (1,10),(1,20),(1,20),(2,30),(2,40)")
+            .unwrap();
+
+        // Arithmetic around a ranking function, and a string function over
+        // one.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, RANK() OVER (PARTITION BY g ORDER BY v) + 1 FROM tw \
+                 ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "2"],
+                ["1", "20", "3"],
+                ["1", "20", "3"],
+                ["2", "30", "2"],
+                ["2", "40", "3"]
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT CONCAT('#', ROW_NUMBER() OVER (PARTITION BY g ORDER BY v)) FROM tw \
+                 ORDER BY g, v"
+            )),
+            [["#1"], ["#2"], ["#3"], ["#1"], ["#2"]]
+        );
+
+        // TWO window calls in one expression, both over the same named
+        // window (captured `3,6,7,3,6`).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT RANK() OVER w * 2 + ROW_NUMBER() OVER w FROM tw \
+                 WINDOW w AS (PARTITION BY g ORDER BY v) ORDER BY g, v"
+            )),
+            [["3"], ["6"], ["7"], ["3"], ["6"]]
+        );
+
+        // A window value inside a control function, and one under unary
+        // minus (captured `-1,-2,-3,-1,-2`).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT IF(ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) = 1, 'first', 'rest') \
+                 FROM tw ORDER BY g, v"
+            )),
+            [["first"], ["rest"], ["rest"], ["first"], ["rest"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT -ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) FROM tw ORDER BY g, v"
+            )),
+            [["-1"], ["-2"], ["-3"], ["-1"], ["-2"]]
+        );
+
+        // Two window calls divided by each other (captured 16.6667 / 35.0000
+        // -- the division carries div_precision_increment's scale).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g) / COUNT(*) OVER (PARTITION BY g) \
+                 FROM tw ORDER BY g, v"
+            )),
+            [
+                ["16.6667"],
+                ["16.6667"],
+                ["16.6667"],
+                ["35.0000"],
+                ["35.0000"]
+            ]
+        );
+
+        // Over a GROUPED query: the window computes over the aggregation's
+        // output rows, and the larger expression over THAT.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, SUM(v), RANK() OVER (ORDER BY SUM(v)) + 100 FROM tw \
+                 GROUP BY g ORDER BY g"
+            )),
+            [["1", "50", "101"], ["2", "70", "102"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, CONCAT('g', RANK() OVER (ORDER BY SUM(v) DESC)) FROM tw \
+                 GROUP BY g ORDER BY g"
+            )),
+            [["1", "g2"], ["2", "g1"]]
+        );
+        // An aggregate OUTSIDE the window call, added to the window's value
+        // (captured `51` / `72`).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, SUM(v) + ROW_NUMBER() OVER (ORDER BY g) FROM tw GROUP BY g ORDER BY g"
+            )),
+            [["1", "51"], ["2", "72"]]
+        );
+
+        // The outer ORDER BY sorts the ALIASED nested expression (captured
+        // `3,3,3,2,2`).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, RANK() OVER (PARTITION BY g ORDER BY v) + 1 AS r FROM tw \
+                 ORDER BY r DESC, g, v"
+            )),
+            [
+                ["1", "20", "3"],
+                ["1", "20", "3"],
+                ["2", "40", "3"],
+                ["1", "10", "2"],
+                ["2", "30", "2"]
+            ]
+        );
+    }
+
+    /// A window function over `GROUP BY ... WITH ROLLUP`: the window sees the
+    /// rollup OUTPUT rows, supergroup rows included, and their NULLed columns
+    /// participate in `PARTITION BY`/`ORDER BY` like any other NULL.
+    ///
+    /// Every expectation is captured TiDB output over
+    /// `(1,1,10),(1,2,20),(2,1,30),(2,2,40)`.
+    #[test]
+    fn window_over_rollup() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE tr (a BIGINT, b BIGINT, v BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO tr VALUES (1,1,10),(1,2,20),(2,1,30),(2,2,40)")
+            .unwrap();
+
+        // Seven output rows -- four groups, two subtotals, one grand total --
+        // numbered in the window's own ORDER BY. The outer ORDER BY is
+        // written because a rollup's own row order is nondeterministic in Go.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, SUM(v), ROW_NUMBER() OVER (ORDER BY a, b) FROM tr \
+                 GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+            )),
+            [
+                ["NULL", "NULL", "100", "1"],
+                ["1", "NULL", "30", "2"],
+                ["1", "1", "10", "3"],
+                ["1", "2", "20", "4"],
+                ["2", "NULL", "70", "5"],
+                ["2", "1", "30", "6"],
+                ["2", "2", "40", "7"]
+            ]
+        );
+
+        // PARTITION BY a puts each subtotal row in ITS OWN group's partition
+        // (its `b` is NULL, which sorts first), and the grand total alone in
+        // the NULL partition.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, RANK() OVER (PARTITION BY a ORDER BY b) FROM tr \
+                 GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+            )),
+            [
+                ["NULL", "NULL", "1"],
+                ["1", "NULL", "1"],
+                ["1", "1", "2"],
+                ["1", "2", "3"],
+                ["2", "NULL", "1"],
+                ["2", "1", "2"],
+                ["2", "2", "3"]
+            ]
+        );
+
+        // An aggregate INSIDE the window call sums the rollup rows of the
+        // partition -- the subtotal row included, which is why `a = 1` totals
+        // 60 rather than 30 (captured).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, SUM(SUM(v)) OVER (PARTITION BY a) FROM tr \
+                 GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+            )),
+            [
+                ["NULL", "NULL", "100"],
+                ["1", "NULL", "60"],
+                ["1", "1", "60"],
+                ["1", "2", "60"],
+                ["2", "NULL", "140"],
+                ["2", "1", "140"],
+                ["2", "2", "140"]
+            ]
+        );
+
+        // GROUPING() tells a rollup NULL from a data NULL, and a window may
+        // partition by it (captured: the grand total alone has grouping(a) =
+        // 1, so it is row 1 of its own partition).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, GROUPING(a), \
+                 ROW_NUMBER() OVER (PARTITION BY GROUPING(a) ORDER BY a, b) \
+                 FROM tr GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+            )),
+            [
+                ["NULL", "NULL", "1", "1"],
+                ["1", "NULL", "0", "1"],
+                ["1", "1", "0", "2"],
+                ["1", "2", "0", "3"],
+                ["2", "NULL", "0", "4"],
+                ["2", "1", "0", "5"],
+                ["2", "2", "0", "6"]
+            ]
+        );
+
+        // RANK over the rollup's SUMs: the `a = 1` subtotal (30) ties with
+        // the `(2,1)` group (30), so both are rank 4 and the next jumps to 6.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT a, b, SUM(v), RANK() OVER (ORDER BY SUM(v) DESC) FROM tr \
+                 GROUP BY a, b WITH ROLLUP ORDER BY SUM(v) DESC, a, b"
+            )),
+            [
+                ["NULL", "NULL", "100", "1"],
+                ["2", "NULL", "70", "2"],
+                ["2", "2", "40", "3"],
+                ["1", "NULL", "30", "4"],
+                ["2", "1", "30", "4"],
+                ["1", "2", "20", "6"],
+                ["1", "1", "10", "7"]
+            ]
+        );
+    }
+
+    /// The bitwise and variance/stddev aggregates AS window functions, which
+    /// Go allows over any frame.
+    ///
+    /// Every expectation is captured TiDB output over
+    /// `(1,3),(1,5),(1,6),(2,1)`.
+    #[test]
+    fn window_bit_and_variance_aggregates() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE ta (g BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO ta VALUES (1,3),(1,5),(1,6),(2,1)")
+            .unwrap();
+
+        // The default frame is the running peer-inclusive one, so each row
+        // folds every value up to and including itself.
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT BIT_AND(v) OVER (PARTITION BY g ORDER BY v) FROM ta ORDER BY g, v"
+                )
+            ),
+            [["3"], ["1"], ["0"], ["1"]]
+        );
+        assert_eq!(
+            row_text(
+                session
+                    .run("SELECT BIT_OR(v) OVER (PARTITION BY g ORDER BY v) FROM ta ORDER BY g, v")
+            ),
+            [["3"], ["7"], ["7"], ["1"]]
+        );
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT BIT_XOR(v) OVER (PARTITION BY g ORDER BY v) FROM ta ORDER BY g, v"
+                )
+            ),
+            [["3"], ["6"], ["0"], ["1"]]
+        );
+
+        // POPULATION forms divide by the frame's row count (a single row is
+        // 0, not NULL); SAMPLE forms divide by count - 1 and are NULL for a
+        // single row. `STDDEV`/`STD`/`VARIANCE` are the population forms.
+        for name in ["VAR_POP", "VARIANCE"] {
+            assert_eq!(
+                row_text(session.run(&format!(
+                    "SELECT {name}(v) OVER (PARTITION BY g ORDER BY v) FROM ta ORDER BY g, v"
+                ))),
+                [["0"], ["1"], ["1.5555555555555554"], ["0"]],
+                "for {name}"
+            );
+        }
+        for name in ["STDDEV_POP", "STDDEV", "STD"] {
+            assert_eq!(
+                row_text(session.run(&format!(
+                    "SELECT {name}(v) OVER (PARTITION BY g ORDER BY v) FROM ta ORDER BY g, v"
+                ))),
+                [["0"], ["1"], ["1.247219128924647"], ["0"]],
+                "for {name}"
+            );
+        }
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT VAR_SAMP(v) OVER (PARTITION BY g ORDER BY v) FROM ta ORDER BY g, v"
+                )
+            ),
+            [["NULL"], ["2"], ["2.333333333333333"], ["NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT STDDEV_SAMP(v) OVER (PARTITION BY g ORDER BY v) FROM ta ORDER BY g, v"
+            )),
+            [
+                ["NULL"],
+                ["1.4142135623730951"],
+                ["1.5275252316519465"],
+                ["NULL"]
+            ]
+        );
+
+        // With no window ORDER BY the frame is the whole partition, and an
+        // explicit ROWS frame narrows it the same way it does for SUM.
+        assert_eq!(
+            row_text(session.run("SELECT BIT_AND(v) OVER (PARTITION BY g) FROM ta ORDER BY g, v")),
+            [["0"], ["0"], ["0"], ["1"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT STDDEV_POP(v) OVER (PARTITION BY g \
+                 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM ta ORDER BY g, v"
+            )),
+            [["0"], ["1"], ["0.5"], ["0"]]
+        );
+        // An EMPTY frame folds to the bit operator's IDENTITY (0 for XOR)
+        // but is NULL for the sample variance -- captured.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT BIT_XOR(v) OVER (PARTITION BY g \
+                 ROWS BETWEEN 2 FOLLOWING AND 3 FOLLOWING) FROM ta ORDER BY g, v"
+            )),
+            [["6"], ["0"], ["0"], ["0"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT VAR_SAMP(v) OVER (PARTITION BY g \
+                 ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM ta ORDER BY g, v"
+            )),
+            [["NULL"], ["NULL"], ["NULL"], ["NULL"]]
+        );
+
+        // An all-NULL frame: the variance family is NULL, BIT_AND folds to
+        // its all-ones identity -- which the SIGNED result column prints as
+        // `-1` (captured) -- and BIT_OR/BIT_XOR to 0.
+        session.run("CREATE TABLE tn (g BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO tn VALUES (1,NULL),(1,4),(1,NULL)")
+            .unwrap();
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT VAR_POP(v) OVER (PARTITION BY g ORDER BY v) FROM tn ORDER BY g, v"
+                )
+            ),
+            [["NULL"], ["NULL"], ["0"]]
+        );
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT BIT_AND(v) OVER (PARTITION BY g ORDER BY v) FROM tn ORDER BY g, v"
+                )
+            ),
+            [["-1"], ["-1"], ["4"]]
+        );
+        assert_eq!(
+            row_text(
+                session
+                    .run("SELECT BIT_OR(v) OVER (PARTITION BY g ORDER BY v) FROM tn ORDER BY g, v")
+            ),
+            [["0"], ["0"], ["4"]]
+        );
+    }
+
+    /// A named window that EXTENDS another, including a chain of three and a
+    /// forward reference -- Go resolves the `WINDOW` clause as a graph, not
+    /// in written order.
+    ///
+    /// Every expectation is captured TiDB output.
+    #[test]
+    fn window_base_window_references() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE tw (g BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO tw VALUES (1,10),(1,20),(1,20),(2,30),(2,40)")
+            .unwrap();
+
+        // `w2 AS (w ORDER BY v)` inherits w's PARTITION BY and adds the
+        // order; a chain of three and a FORWARD reference resolve the same.
+        for sql in [
+            "SELECT ROW_NUMBER() OVER w2 FROM tw \
+             WINDOW w AS (PARTITION BY g), w2 AS (w ORDER BY v) ORDER BY g, v",
+            "SELECT ROW_NUMBER() OVER w2 FROM tw \
+             WINDOW w2 AS (w ORDER BY v), w AS (PARTITION BY g) ORDER BY g, v",
+            "SELECT ROW_NUMBER() OVER w3 FROM tw \
+             WINDOW w AS (PARTITION BY g), w2 AS (w ORDER BY v), w3 AS (w2) ORDER BY g, v",
+        ] {
+            assert_eq!(
+                row_text(session.run(sql)),
+                [["1"], ["2"], ["3"], ["1"], ["2"]],
+                "for {sql}"
+            );
+        }
+
+        // A bare `w2 AS (w)` inherits everything, and an extension may add
+        // its OWN frame over an inherited order.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT ROW_NUMBER() OVER w2 FROM tw \
+                 WINDOW w AS (PARTITION BY g ORDER BY v), w2 AS (w) ORDER BY g, v"
+            )),
+            [["1"], ["2"], ["3"], ["1"], ["2"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER w2 FROM tw \
+                 WINDOW w AS (PARTITION BY g ORDER BY v), \
+                 w2 AS (w ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY g, v"
+            )),
+            [["10"], ["30"], ["50"], ["30"], ["70"]]
         );
     }
 

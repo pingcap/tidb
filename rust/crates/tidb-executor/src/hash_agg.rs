@@ -37,8 +37,15 @@
 //! de-duplicates a function's inputs per group on the datum hash key, as Go's
 //! `*4Distinct*` variants do with their `valueSet`.
 //!
+//! `BIT_AND`/`BIT_OR`/`BIT_XOR` fold in the unsigned 64-bit domain and seed
+//! with the operator's IDENTITY, so an empty or all-NULL group yields that
+//! identity rather than NULL (Go `func_bitfuncs.go`); the variance family
+//! (`VAR_POP`/`VAR_SAMP`/`STDDEV_POP`/`STDDEV_SAMP`) shares Go's one
+//! incremental accumulator (`func_varpop.go`'s `calculateIntermediate`),
+//! reproduced operation-for-operation so the floating-point result matches.
+//!
 //! DEFERRED (documented): the parallel partial/final worker pipeline, spill,
-//! memory tracking; GROUP_CONCAT and the bit/variance/percentile families;
+//! memory tracking; the JSON, percentile and approximate-distinct families;
 //! SUM-over-integer's DECIMAL result domain -- this seed accumulates integer
 //! sums in `i64` and reports overflow as an error rather than widening to
 //! decimal (Go returns DECIMAL; lands with the layout-faithful MyDecimal);
@@ -77,6 +84,31 @@ pub enum AggKind {
         /// The text placed between rows; Go defaults it to a comma.
         separator: String,
     },
+    /// `BIT_AND`/`BIT_OR`/`BIT_XOR`: a 64-bit fold whose empty-group result
+    /// is the operator's IDENTITY rather than NULL (Go's `func_bitfuncs.go`).
+    Bit(BitOp),
+    /// The variance family, all four of which share Go's one incremental
+    /// accumulator (`func_varpop.go`) and differ only in the divisor and
+    /// whether a square root is taken: `VAR_POP`/`VARIANCE`, `VAR_SAMP`,
+    /// `STDDEV_POP`/`STDDEV`/`STD`, `STDDEV_SAMP`.
+    Variance {
+        /// `true` for the SAMPLE forms, which divide by `count - 1` and are
+        /// NULL for a single row.
+        sample: bool,
+        /// `true` for the `STDDEV*` forms, which take the square root.
+        sqrt: bool,
+    },
+}
+
+/// Which bitwise fold a [`AggKind::Bit`] performs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BitOp {
+    /// `BIT_AND`, whose identity is all ones.
+    And,
+    /// `BIT_OR`, whose identity is zero.
+    Or,
+    /// `BIT_XOR`, whose identity is zero.
+    Xor,
 }
 
 /// One aggregate: a kind plus its argument (`None` only for `COUNT(*)`).
@@ -146,6 +178,22 @@ enum Partial {
         /// key is empty when the aggregate has no ORDER BY of its own.
         values: Vec<(Vec<u8>, Vec<Datum>)>,
         separator: String,
+    },
+    /// `BIT_AND`/`BIT_OR`/`BIT_XOR`: the fold so far, seeded with the
+    /// operator's identity so an all-NULL (or empty) group still yields it.
+    Bit {
+        acc: u64,
+        op: BitOp,
+    },
+    /// The variance family's shared accumulator, Go's
+    /// `partialResult4VarPopFloat64`: the running count, sum and the
+    /// incremental sum of squared deviations.
+    Variance {
+        count: i64,
+        sum: f64,
+        variance: f64,
+        sample: bool,
+        sqrt: bool,
     },
 }
 
@@ -230,6 +278,20 @@ impl Partial {
             AggKind::Avg => Partial::AvgDecimal {
                 sum: Decimal::from_int(0),
                 count: 0,
+            },
+            AggKind::Bit(op) => Partial::Bit {
+                acc: match op {
+                    BitOp::And => u64::MAX,
+                    BitOp::Or | BitOp::Xor => 0,
+                },
+                op: *op,
+            },
+            AggKind::Variance { sample, sqrt } => Partial::Variance {
+                count: 0,
+                sum: 0.0,
+                variance: 0.0,
+                sample: *sample,
+                sqrt: *sqrt,
             },
         }
     }
@@ -330,6 +392,53 @@ impl Partial {
                 *sum = sum.add(&addend);
                 *count += 1;
             }
+            // Go's bit functions cast the argument to `UNSIGNED BIGINT` and
+            // skip NULL, so an all-NULL group keeps the identity.
+            (Partial::Bit { .. }, None) => {
+                return Err(ExecError::Unsupported(
+                    "BIT_AND/BIT_OR/BIT_XOR requires an argument",
+                ))
+            }
+            (Partial::Bit { .. }, Some(Datum::Null)) => {}
+            (Partial::Bit { acc, op }, Some(input)) => {
+                let bits = datum_bits(&input)?;
+                match op {
+                    BitOp::And => *acc &= bits,
+                    BitOp::Or => *acc |= bits,
+                    BitOp::Xor => *acc ^= bits,
+                }
+            }
+            (Partial::Variance { .. }, None) => {
+                return Err(ExecError::Unsupported(
+                    "the variance/stddev family requires an argument",
+                ))
+            }
+            (Partial::Variance { .. }, Some(Datum::Null)) => {}
+            (
+                Partial::Variance {
+                    count,
+                    sum,
+                    variance,
+                    ..
+                },
+                Some(input),
+            ) => {
+                // Go `varPop4Float64.UpdatePartialResult` +
+                // `calculateIntermediate`, kept operation-for-operation so
+                // the floating-point result is bit-identical.
+                let value = input
+                    .to_f64()
+                    .map_err(|_| {
+                        ExecError::Unsupported("the variance/stddev family over this datum kind")
+                    })?
+                    .value;
+                *count += 1;
+                *sum += value;
+                if *count > 1 {
+                    let t = *count as f64 * value - *sum;
+                    *variance += (t * t) / ((*count * (*count - 1)) as f64);
+                }
+            }
             (Partial::AvgReal { sum, count }, Some(input)) => {
                 let addend = match input {
                     Datum::Real(v) => v,
@@ -399,8 +508,46 @@ impl Partial {
                 }
             }
             Partial::AvgReal { sum, count } => Datum::Real(sum / *count as f64),
+            // Go's result column is a SIGNED `BIGINT` holding the unsigned
+            // fold's bit pattern, which is why `BIT_AND` over an all-NULL
+            // group prints `-1` rather than `18446744073709551615`
+            // (captured from TiDB).
+            Partial::Bit { acc, .. } => Datum::Int(*acc as i64),
+            // Go: population variance divides by `count`, sample variance by
+            // `count - 1` and is NULL for a single row; both are NULL for an
+            // empty (or all-NULL) input.
+            Partial::Variance {
+                count,
+                variance,
+                sample,
+                sqrt,
+                ..
+            } => {
+                let divisor = if *sample { *count - 1 } else { *count };
+                if divisor <= 0 {
+                    Datum::Null
+                } else {
+                    let value = variance / divisor as f64;
+                    Datum::Real(if *sqrt { value.sqrt() } else { value })
+                }
+            }
         }
     }
+}
+
+/// The 64 bits one `BIT_AND`/`BIT_OR`/`BIT_XOR` input contributes: Go casts
+/// the argument to `UNSIGNED BIGINT`, so a negative integer folds as its
+/// two's-complement pattern.
+fn datum_bits(value: &Datum) -> Result<u64, ExecError> {
+    Ok(match value {
+        Datum::UInt(bits) => *bits,
+        other => {
+            other
+                .to_i64()
+                .map_err(|_| ExecError::Unsupported("BIT_AND/BIT_OR/BIT_XOR over this datum kind"))?
+                .value as u64
+        }
+    })
 }
 
 /// Folds one aggregate over an explicit value list, returning its result.

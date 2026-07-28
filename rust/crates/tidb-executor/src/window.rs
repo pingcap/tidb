@@ -125,17 +125,66 @@
 //!   rather than the scale-padded `10.0`. A NULL default does not widen at
 //!   all (Go's `InferType4ControlFuncs` drops NULL-typed operands).
 //!
+//! Semantics confirmed against Go (`TestZZDumpWindow4` capture, since
+//! removed) for the INTERVAL frame, the nested/rollup shapes, the extra
+//! aggregates and the base-window edge:
+//!
+//! * A `RANGE` bound written `INTERVAL n unit` measures the frame in
+//!   CALENDAR units over the temporal `ORDER BY` key: the boundary is the
+//!   key moved by `DATE_ADD`/`DATE_SUB`'s own arithmetic, so `INTERVAL 1
+//!   MONTH` is a month field increment rather than 30 days, and the boundary
+//!   is INCLUSIVE (over `2020-01-01 00:00`, `2020-01-01 12:00`, two
+//!   `2020-01-02 00:00` ties and `2020-01-05`, `INTERVAL 1 DAY PRECEDING`
+//!   sums `10,30,100,100,50`). `DESC` flips the sign exactly as a numeric
+//!   bound's does, a NULL key still frames only the other NULL keys, a
+//!   composite unit (`INTERVAL '1 2' DAY_HOUR`) works, and a start ranking
+//!   after its end is an empty frame. A `DATE` key reads as midnight, so an
+//!   `INTERVAL 2 HOUR` bound reaches nothing before it.
+//! * A window function may sit inside a LARGER select expression (`RANK()
+//!   OVER (...) + 1`, `CONCAT('#', ROW_NUMBER() OVER w)`), including over a
+//!   grouped query, where Go evaluates it in the projection ABOVE the window
+//!   operator -- so an aggregate may appear both inside the window's spec and
+//!   around the call (`SUM(v) + ROW_NUMBER() OVER (ORDER BY g)`).
+//! * `GROUP BY ... WITH ROLLUP` combined with a window computes the window
+//!   over the rollup's OUTPUT rows, supergroup rows included: a subtotal row
+//!   joins the partition its own (non-NULLed) key names and the grand total
+//!   sits alone in the all-NULL partition, so `SUM(SUM(v)) OVER (PARTITION
+//!   BY a)` DOUBLE-counts each group against its own subtotal row (captured
+//!   `60` for `a = 1`, whose rows total 30). `GROUPING()` is what tells a
+//!   rollup NULL from a data NULL, and a window may partition by it.
+//! * Go's window allowlist covers every aggregate except `GROUP_CONCAT`
+//!   ("[planner:1235]... 'group_concat as window function'"), and DISTINCT
+//!   inside any window call is 1235 too. `BIT_AND`/`BIT_OR`/`BIT_XOR` fold
+//!   to the operator's IDENTITY over an empty or all-NULL frame rather than
+//!   NULL -- and their result column is a SIGNED `BIGINT(21) NOT NULL`, so
+//!   an all-NULL `BIT_AND` reads back as `-1`. The variance family shares
+//!   Go's one incremental accumulator (`func_varpop.go`): the POPULATION
+//!   forms (`VAR_POP`/`VARIANCE`, `STDDEV_POP`/`STDDEV`/`STD`) divide by the
+//!   frame's row count and are `0` for a single row, the SAMPLE forms
+//!   (`VAR_SAMP`, `STDDEV_SAMP`) divide by `count - 1` and are NULL there;
+//!   all four are a nullable `DOUBLE(23)`.
+//! * A named window may EXTEND another (`WINDOW w AS (PARTITION BY g), w2 AS
+//!   (w ORDER BY v)`), in a chain and in either written order. `OVER w`
+//!   USES a window rather than extending it, so a window with a frame may be
+//!   used directly but never INHERITED (3582); an extension may not define
+//!   partitioning (3581), may not add an `ORDER BY` its base already has
+//!   (3583, naming the extending window), and a cycle is 3580.
+//!
 //! SLICE SCOPE: the ranking functions (frame-less, as above), the
 //! distribution functions `PERCENT_RANK`/`CUME_DIST`, the value family
 //! `LAG`/`LEAD`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE`, and the aggregates
-//! `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` as window functions, over the default
-//! frame, an explicit `ROWS BETWEEN`, or a `RANGE BETWEEN` with peer or
-//! numeric VALUE bounds -- alone or over a `GROUP BY`. Still refused: every
-//! other aggregate as a window function ([`SLICE_MESSAGE`]); a `RANGE` bound
-//! written as `INTERVAL n unit` over a temporal key
-//! ([`RANGE_INTERVAL_MESSAGE`]); a window function nested inside a LARGER
-//! select expression over a grouped query, and `GROUP BY ... WITH ROLLUP`
-//! combined with a window (both refused in `crate::driver`).
+//! `SUM`/`COUNT`/`AVG`/`MIN`/`MAX`/`BIT_AND`/`BIT_OR`/`BIT_XOR`/`VAR_POP`/
+//! `VAR_SAMP`/`STDDEV_POP`/`STDDEV_SAMP` (with `VARIANCE`/`STDDEV`/`STD` as
+//! the parser's aliases) as window functions, over the default frame, an
+//! explicit `ROWS BETWEEN`, or a `RANGE BETWEEN` with peer, numeric VALUE or
+//! `INTERVAL` bounds -- alone, inside a larger select expression, over a
+//! `GROUP BY`, or over a `GROUP BY ... WITH ROLLUP`. Still refused: the
+//! aggregates Go allows `OVER` but this build does not compute --
+//! `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `APPROX_COUNT_DISTINCT`,
+//! `APPROX_PERCENTILE` ([`SLICE_MESSAGE`]). `GROUP_CONCAT(...) OVER (...)`,
+//! which Go answers with 1235, does not reach this stage at all: the
+//! parser's `GROUP_CONCAT` node carries no window spec, so it is a parse
+//! error -- a parser-side deferral.
 //!
 //! Result TYPES follow Go's `baseFuncDesc.TypeInfer`: `COUNT` is a NOT NULL
 //! `BIGINT(21)`, `SUM` a `DECIMAL` (`DOUBLE` for a real argument), `AVG` a
@@ -162,14 +211,6 @@ pub(crate) const SLICE_MESSAGE: &str =
     "only the ranking (ROW_NUMBER, RANK, DENSE_RANK, NTILE), value (LAG, LEAD, \
      FIRST_VALUE, LAST_VALUE, NTH_VALUE) and aggregate (SUM, COUNT, AVG, MIN, MAX) \
      window functions are supported";
-
-/// What a `RANGE` frame with an `INTERVAL` offset bound is refused with: the
-/// numeric value bounds ARE implemented (see [`Frame::Range`]), but an
-/// `INTERVAL` bound measures the frame in calendar units over a temporal
-/// `ORDER BY` key, which is a separate unit.
-pub(crate) const RANGE_INTERVAL_MESSAGE: &str =
-    "a RANGE frame with an INTERVAL bound value is not yet supported; a \
-     numeric N PRECEDING/N FOLLOWING bound over a numeric ORDER BY key is";
 
 /// The prefix of the synthetic column each computed window call is read from.
 const WINDOW_COLUMN_PREFIX: &str = "__window_";
@@ -330,8 +371,15 @@ enum RangeBound {
 enum Offset {
     /// A plain numeric constant, which only a numeric `ORDER BY` key accepts.
     Value(Datum),
-    /// `INTERVAL n unit`, which only a temporal `ORDER BY` key accepts.
-    Interval,
+    /// `INTERVAL n unit`, which only a temporal `ORDER BY` key accepts: the
+    /// boundary is the current row's key moved by that many calendar units.
+    Interval {
+        /// The interval's magnitude, already folded to a constant.
+        amount: Datum,
+        /// The unit keyword as the parser canonicalizes it (`DAY`, `MONTH`,
+        /// `DAY_HOUR`, ...).
+        unit: String,
+    },
 }
 
 impl RangeBound {
@@ -340,7 +388,8 @@ impl RangeBound {
     fn is_interval(&self) -> bool {
         matches!(
             self,
-            RangeBound::Preceding(Offset::Interval) | RangeBound::Following(Offset::Interval)
+            RangeBound::Preceding(Offset::Interval { .. })
+                | RangeBound::Following(Offset::Interval { .. })
         )
     }
 
@@ -477,9 +526,6 @@ impl RangeKeys<'_> {
         offset: &Offset,
         preceding: bool,
     ) -> Result<Datum, DriverError> {
-        let Offset::Value(offset) = offset else {
-            unreachable!("an INTERVAL bound is refused before the frame is evaluated");
-        };
         let key = &self.keys[position];
         if key.is_null() {
             // Go's calc function propagates NULL, and a NULL boundary
@@ -487,13 +533,28 @@ impl RangeKeys<'_> {
             // form a frame of their own.
             return Ok(Datum::Null);
         }
-        let op = if preceding != self.desc {
-            tidb_ast::BinaryOp::Minus
-        } else {
-            tidb_ast::BinaryOp::Plus
-        };
-        tidb_expr::apply_binary(op, key.clone(), offset.clone())
-            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))
+        // `PRECEDING` moves the key BACKWARDS along the window's own
+        // direction, so under `DESC` it moves FORWARDS in value -- the one
+        // rule both offset kinds share.
+        let subtract = preceding != self.desc;
+        match offset {
+            Offset::Value(offset) => {
+                let op = if subtract {
+                    tidb_ast::BinaryOp::Minus
+                } else {
+                    tidb_ast::BinaryOp::Plus
+                };
+                tidb_expr::apply_binary(op, key.clone(), offset.clone())
+            }
+            // Go's `getIntervalBoundValue` builds a `DATE_ADD`/`DATE_SUB`
+            // call over the key, so the boundary follows the SAME calendar
+            // arithmetic -- `INTERVAL 1 MONTH` is a month field increment,
+            // not 30 days.
+            Offset::Interval { amount, unit } => {
+                tidb_expr::date_add_interval(unit, key, amount, if subtract { -1 } else { 1 })
+            }
+        }
+        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))
     }
 
     /// Whether `left` lies before `right` in the window's own direction.
@@ -601,7 +662,23 @@ fn has_offset(bound: &FrameBound) -> bool {
 fn build_range_bound(bound: &FrameBound) -> Result<RangeBound, DriverError> {
     let offset = |expr: &Expr| -> Result<Offset, DriverError> {
         Ok(match expr {
-            Expr::Interval { .. } => Offset::Interval,
+            // `INTERVAL '1 2' DAY_HOUR` carries a STRING magnitude, which
+            // `DATE_ADD` parses per unit, so the amount is folded to a datum
+            // rather than a number here.
+            Expr::Interval { value, unit } => Offset::Interval {
+                amount: match value.as_ref() {
+                    Expr::Int(text) => Datum::Int(
+                        text.parse::<i64>()
+                            .map_err(|_| DriverError::WindowFrameIllegal)?,
+                    ),
+                    Expr::String(text) => Datum::new_string(text.clone()),
+                    Expr::Decimal(text) => {
+                        Datum::Decimal(tidb_datatype::Decimal::from_literal(text))
+                    }
+                    _ => return Err(DriverError::WindowFrameIllegal),
+                },
+                unit: unit.clone(),
+            },
             Expr::Int(text) => Offset::Value(Datum::Int(
                 text.parse::<i64>()
                     .map_err(|_| DriverError::WindowFrameIllegal)?,
@@ -646,9 +723,6 @@ fn check_range_key(frame: &Frame, key_type: Option<&FieldType>) -> Result<(), Dr
         if !bound.is_interval() && matches!(bound.rank(), 1 | 3) && !numeric {
             return Err(DriverError::WindowRangeFrameTemporalType);
         }
-    }
-    if start.is_interval() || end.is_interval() {
-        return Err(DriverError::Unsupported(RANGE_INTERVAL_MESSAGE));
     }
     Ok(())
 }
@@ -740,20 +814,32 @@ fn resolve_over(
     over: &WindowOver,
     named: &[(String, WindowDef)],
 ) -> Result<WindowSpec, DriverError> {
-    let def = match over {
-        WindowOver::Name(name) => WindowDef {
-            base: Some(name.clone()),
-            spec: WindowSpec::default(),
-        },
-        WindowOver::Def(def) => def.clone(),
-    };
-    resolve_def(&def, named, &mut Vec::new())
+    match over {
+        // `OVER w` USES the named window rather than extending it, so the
+        // restrictions on an extension (3581/3582/3583) do not apply -- a
+        // window with a frame may be used directly, only not inherited.
+        WindowOver::Name(name) => {
+            let def = named
+                .iter()
+                .find(|(have, _)| have.eq_ignore_ascii_case(name))
+                .map(|(_, def)| def)
+                .ok_or_else(|| DriverError::WindowNoSuchWindow(name.clone()))?;
+            resolve_def(def, name, named, &mut vec![name.clone()])
+        }
+        // An inline `OVER (w ...)` has no name of its own, which Go reports
+        // as `<unnamed window>` in its messages.
+        WindowOver::Def(def) => resolve_def(def, UNNAMED_WINDOW, named, &mut Vec::new()),
+    }
 }
+
+/// How Go names a window written inline in an `OVER (...)` clause.
+const UNNAMED_WINDOW: &str = "<unnamed window>";
 
 /// Resolves one definition, following its `base` chain. `seen` carries the
 /// names already on the chain so a cycle stops instead of recursing forever.
 fn resolve_def(
     def: &WindowDef,
+    def_name: &str,
     named: &[(String, WindowDef)],
     seen: &mut Vec<String>,
 ) -> Result<WindowSpec, DriverError> {
@@ -769,12 +855,21 @@ fn resolve_def(
         .find(|(name, _)| name.eq_ignore_ascii_case(base_name))
         .map(|(_, def)| def)
         .ok_or_else(|| DriverError::WindowNoSuchWindow(base_name.clone()))?;
-    let base = resolve_def(base_def, named, seen)?;
+    let base = resolve_def(base_def, base_name, named, seen)?;
     if !def.spec.partition_by.is_empty() {
         return Err(DriverError::WindowNoChildPartitioning);
     }
     if !def.spec.order_by.is_empty() && !base.order_by.is_empty() {
-        return Err(DriverError::WindowNoRedefineOrderBy(base_name.clone()));
+        return Err(DriverError::WindowNoRedefineOrderBy {
+            window: def_name.to_owned(),
+            base: base_name.clone(),
+        });
+    }
+    // Go `mergeWindowSpec`: a base that defines a frame cannot be referenced
+    // at all, so a resolved base never carries one and the extension's own
+    // frame is the only one left.
+    if base.frame.is_some() {
+        return Err(DriverError::WindowNoInheritFrame(base_name.clone()));
     }
     Ok(WindowSpec {
         partition_by: base.partition_by,
@@ -783,9 +878,7 @@ fn resolve_def(
         } else {
             def.spec.order_by.clone()
         },
-        // An extension's own frame overrides the base's; Go's own restriction
-        // on redefining a base's frame is not modelled here.
-        frame: def.spec.frame.clone().or(base.frame),
+        frame: def.spec.frame.clone(),
     })
 }
 
@@ -928,7 +1021,15 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
     else {
         unreachable!("collect_window_calls only yields Expr::Window");
     };
-    if *distinct || *ignore_nulls || *from_last {
+    // Go `checkOriginWindowFuncs`: DISTINCT inside a window call is refused
+    // outright, whatever the function (captured: "[planner:1235]This version
+    // of TiDB doesn't yet support '<window function>(DISTINCT ..)'").
+    if *distinct {
+        return Err(DriverError::NotSupportedYet(
+            "<window function>(DISTINCT ..)",
+        ));
+    }
+    if *ignore_nulls || *from_last {
         return Err(DriverError::Unsupported(SLICE_MESSAGE));
     }
     // A ranking function takes no arguments; Go's parser already enforces
@@ -960,7 +1061,8 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
                 None => return Err(DriverError::WrongArguments("ntile")),
             }
         }
-        "SUM" | "COUNT" | "AVG" | "MIN" | "MAX" => {
+        "SUM" | "COUNT" | "AVG" | "MIN" | "MAX" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "VAR_POP"
+        | "VAR_SAMP" | "STDDEV_POP" | "STDDEV_SAMP" => {
             // `COUNT(*)` reaches here as `COUNT(1)`, so one argument is the
             // only shape; `COUNT(DISTINCT a, b)` already failed on `distinct`.
             let [arg] = args.as_slice() else {
@@ -1396,14 +1498,16 @@ fn coerce_to_type(value: Datum, target: &FieldType) -> Datum {
 /// The [`AggKind`] one aggregate name folds its frame with. `build_call` has
 /// already refused every other name.
 fn agg_kind(name: &str) -> AggKind {
-    match name {
-        "COUNT" => AggKind::Count,
-        "SUM" => AggKind::Sum,
-        "AVG" => AggKind::Avg,
-        "MIN" => AggKind::Min,
-        "MAX" => AggKind::Max,
-        _ => unreachable!("build_call rejects every other aggregate name"),
-    }
+    // The GROUP BY path's own name -> kind mapping, so an aggregate can never
+    // fold differently as a window function than it does in a group. Only the
+    // TYPE half depends on the argument, which the caller has already
+    // resolved, so a placeholder argument is enough here.
+    let placeholder = tidb_expr::expression::Expression::Constant(
+        tidb_expr::constant::Constant::new(Datum::Null, FieldType::new(FieldTypeCode::LongLong)),
+    );
+    crate::driver::agg_kind_and_type(name, &placeholder)
+        .expect("build_call rejects every other aggregate name")
+        .0
 }
 
 /// Evaluates one key expression list for every row.
