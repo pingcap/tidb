@@ -35,6 +35,90 @@ pub enum EvalError {
     Sequence(&'static str),
     /// Go `ErrDivisionByZero` (1365) raised at error level.
     DivisionByZero,
+    /// A `json`-class error that carries its own MySQL error code.
+    Json(JsonError),
+}
+
+/// The `json`-class errors the JSON builtins raise, each paired with the
+/// `pkg/errno` code and `pkg/errno/errname.go` message TiDB reports for it.
+///
+/// These are separated from [`EvalError::Unsupported`] because they are
+/// SQL-visible behavior, not porting boundaries: an application distinguishes
+/// "your document is malformed" (3140) from "your path is malformed" (3143),
+/// and both arrive on the wire with the code TiDB sends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JsonError {
+    /// `ErrInvalidJSONText` (3140). Go's argument is `encoding/json`'s own
+    /// message; every malformed document TiDB's `ParseBinaryJSONFromString`
+    /// rejects reports the root-value variant, which is what this carries.
+    InvalidText,
+    /// `ErrInvalidJSONPath` (3143), with the 1-based rune position Go's
+    /// `parseJSONPathExpr` reports (`jsonPathStream.pos`, or a literal 1 when
+    /// the expression does not begin with `$`).
+    InvalidPath(usize),
+    /// `ErrInvalidJSONPathMultipleSelection` (3149): a wildcard or range leg
+    /// in a position where TiDB requires a path selecting exactly one value.
+    InvalidPathMultipleSelection,
+    /// `ErrInvalidTypeForJSON` (3146): a non-JSON, non-string argument where
+    /// the signature demands a JSON document.
+    InvalidTypeForJson {
+        /// Go's 1-based argument index.
+        argument: usize,
+        /// The lowercase function name Go names in the message.
+        function: &'static str,
+    },
+    /// `ErrIncorrectType` (3064): an argument of the wrong SQL type.
+    IncorrectType {
+        /// Go's 1-based argument index.
+        argument: usize,
+        /// The lowercase function name Go names in the message.
+        function: &'static str,
+    },
+    /// `ErrJSONDocumentNULLKey` (3158): a NULL where an object key belongs.
+    NullMemberName,
+}
+
+impl JsonError {
+    /// The `pkg/errno` code TiDB reports for this error.
+    #[must_use]
+    pub const fn code(&self) -> u16 {
+        match self {
+            JsonError::InvalidText => 3140,
+            JsonError::InvalidPath(_) => 3143,
+            JsonError::InvalidPathMultipleSelection => 3149,
+            JsonError::InvalidTypeForJson { .. } => 3146,
+            JsonError::IncorrectType { .. } => 3064,
+            JsonError::NullMemberName => 3158,
+        }
+    }
+
+    /// The message `pkg/errno/errname.go` formats for this error.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            JsonError::InvalidText => "Invalid JSON text: The document root must not be followed \
+                 by other values."
+                .to_owned(),
+            JsonError::InvalidPath(position) => format!(
+                "Invalid JSON path expression. The error is around character position {position}."
+            ),
+            JsonError::InvalidPathMultipleSelection => {
+                "In this situation, path expressions may not contain the * and ** tokens or an \
+                 array range."
+                    .to_owned()
+            }
+            JsonError::InvalidTypeForJson { argument, function } => format!(
+                "Invalid data type for JSON data in argument {argument} to function {function}; \
+                 a JSON string or JSON type is required."
+            ),
+            JsonError::IncorrectType { argument, function } => {
+                format!("Incorrect type for argument {argument} in function {function}.")
+            }
+            JsonError::NullMemberName => {
+                "JSON documents may not contain NULL member names.".to_owned()
+            }
+        }
+    }
 }
 
 /// Go `errctx.Level`: what a statement does with an error group it can also

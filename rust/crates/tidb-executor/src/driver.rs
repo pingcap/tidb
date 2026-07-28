@@ -8653,6 +8653,13 @@ impl DriverError {
             format!("You have an error in your SQL syntax: {message}"),
         ),
         DriverError::Unsupported(message) => MysqlError::unknown(message),
+        // The `json` error class carries TiDB's own code (3140 malformed
+        // document, 3143 malformed path, ...), which applications branch on.
+        // Every other eval error is still a porting boundary, not SQL-visible
+        // behavior, so it stays the generic unknown-error code.
+        DriverError::Exec(ExecError::Eval(crate::EvalError::Json(error))) => {
+            MysqlError::new(error.code(), *b"HY000", error.message())
+        }
         DriverError::Exec(error) => MysqlError::unknown(format!("{error:?}")),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {
             MysqlError::new(

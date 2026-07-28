@@ -6860,9 +6860,15 @@ mod tests {
             [["5"], ["10"]]
         );
 
+        // The JSON target produces this tier's canonical JSON text -- see
+        // `json_value_functions` for the whole slice and its divergence note.
+        assert_eq!(
+            row_text(session.run("SELECT CAST(c AS JSON) FROM t")),
+            [["10"], ["20"]]
+        );
+
         // The refusals are refusals, not wrong answers.
         assert!(session.run("SELECT CAST(c AS TIME) FROM t").is_err());
-        assert!(session.run("SELECT CAST(c AS JSON) FROM t").is_err());
     }
 
     /// LIKE, BETWEEN, CASE and the ordinary builtins through the chunk
@@ -10300,5 +10306,243 @@ mod tests {
 
         session.run("GRANT PROCESS ON *.* TO 'bob'@'%'").unwrap();
         assert_eq!(row_text(session.run("show processlist")).len(), 2);
+    }
+
+    /// The JSON family's first slice: JSON evaluated as VALUES.
+    ///
+    /// Every expectation below is a `testkit.CreateMockStore` capture of real
+    /// TiDB on the same statements. Two facts are worth naming because they
+    /// are easy to assume wrong:
+    ///
+    ///  * object keys print in PLAIN BYTE order, not length-then-bytes
+    ///    (`buildBinaryJSONObject`'s `cmp.Compare`), so `{"b":1,"aa":2}`
+    ///    prints `aa` first;
+    ///  * a duplicate `JSON_OBJECT` key keeps the LAST value.
+    ///
+    /// DOCUMENTED DIVERGENCE: TiDB reports a JSON-returning column as type
+    /// `JSON` (245); this tier has no BinaryJSON value, so the column is a
+    /// string carrying `BinaryJSON.MarshalJSON`'s exact text. The VALUES here
+    /// are byte-identical to TiDB's -- only the reported column type differs,
+    /// the same trade the temporal casts make (see `tidb_expr::rewriter`).
+    #[test]
+    fn json_value_functions() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, j VARCHAR(200))")
+            .unwrap();
+        session
+            .run(r#"INSERT INTO t VALUES (1, '{"b":1,"aa":2,"c":{"d q":"v"}}')"#)
+            .unwrap();
+
+        macro_rules! check {
+            ($sql:expr, $want:expr) => {
+                assert_eq!(
+                    row_text(session.run($sql)),
+                    vec![vec![($want).to_owned()]],
+                    "{}",
+                    $sql
+                );
+            };
+        }
+
+        // JSON_EXTRACT: one path returns the element, several wrap in an
+        // array, an unmatched path is NULL, and a wildcard always wraps.
+        check!(r#"SELECT JSON_EXTRACT('{"a":1,"b":"x"}', '$.a')"#, "1");
+        check!(r#"SELECT JSON_EXTRACT('{"a":1,"b":"x"}', '$.b')"#, r#""x""#);
+        check!(
+            r#"SELECT JSON_EXTRACT('{"a":1,"b":"x"}', '$.a', '$.b')"#,
+            r#"[1, "x"]"#
+        );
+        check!(r#"SELECT JSON_EXTRACT('{"a":1}', '$.zzz')"#, "NULL");
+        check!("SELECT JSON_EXTRACT('[1,2,3]', '$[*]')", "[1, 2, 3]");
+        check!("SELECT JSON_EXTRACT('[1,2,3]', '$[1]')", "2");
+        check!(r#"SELECT JSON_EXTRACT('{"a":1,"b":2}', '$.*')"#, "[1, 2]");
+        // A scalar auto-wraps for `$[0]`, and `**` walks recursively.
+        check!("SELECT JSON_EXTRACT('3', '$[0]')", "3");
+        check!(
+            r#"SELECT JSON_EXTRACT('{"a":{"b":[1,2]}}', '$**.b')"#,
+            "[[1, 2]]"
+        );
+        check!(r#"SELECT JSON_EXTRACT('{"a b":1}', '$."a b"')"#, "1");
+        check!("SELECT JSON_EXTRACT(NULL, '$.a')", "NULL");
+        check!(r#"SELECT JSON_EXTRACT('{"a":1}', NULL)"#, "NULL");
+
+        // `->` is JSON_EXTRACT and `->>` wraps it in JSON_UNQUOTE, so `->>`
+        // differs ONLY when the extracted value is a JSON string.
+        check!("SELECT j->'$.b' FROM t", "1");
+        check!("SELECT j->>'$.b' FROM t", "1");
+        check!("SELECT j->'$.c' FROM t", r#"{"d q": "v"}"#);
+        check!("SELECT j->>'$.c' FROM t", r#"{"d q": "v"}"#);
+        check!(r#"SELECT j->'$.c."d q"' FROM t"#, r#""v""#);
+        check!(r#"SELECT j->>'$.c."d q"' FROM t"#, "v");
+        check!("SELECT j->'$.zz' FROM t", "NULL");
+        check!("SELECT j->>'$.zz' FROM t", "NULL");
+        check!(
+            "SELECT j->'$' FROM t",
+            r#"{"aa": 2, "b": 1, "c": {"d q": "v"}}"#
+        );
+
+        // JSON_TYPE names the BinaryJSON kind, which is why `1.0` is DOUBLE
+        // and a value past int64 is UNSIGNED INTEGER.
+        for (document, want) in [
+            ("1", "INTEGER"),
+            ("1.0", "DOUBLE"),
+            ("-1", "INTEGER"),
+            ("1e3", "DOUBLE"),
+            (r#""s""#, "STRING"),
+            ("true", "BOOLEAN"),
+            ("false", "BOOLEAN"),
+            ("null", "NULL"),
+            ("{}", "OBJECT"),
+            ("[]", "ARRAY"),
+            ("18446744073709551615", "UNSIGNED INTEGER"),
+            (r#"  {"a":1}  "#, "OBJECT"),
+        ] {
+            let sql = format!("SELECT JSON_TYPE('{document}')");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                vec![vec![want.to_owned()]],
+                "{sql}"
+            );
+        }
+        check!("SELECT JSON_TYPE(NULL)", "NULL");
+
+        // JSON_OBJECT / JSON_ARRAY. The duplicate key keeps the LAST value
+        // and the printed key order is plain byte order.
+        check!("SELECT JSON_OBJECT('k',1,'k',2)", r#"{"k": 2}"#);
+        check!("SELECT JSON_OBJECT('k',1,'k',2,'k',3)", r#"{"k": 3}"#);
+        check!(
+            "SELECT JSON_OBJECT('b',1,'aa',2,'c',3)",
+            r#"{"aa": 2, "b": 1, "c": 3}"#
+        );
+        check!("SELECT JSON_OBJECT('k',NULL)", r#"{"k": null}"#);
+        check!("SELECT JSON_OBJECT()", "{}");
+        check!("SELECT JSON_OBJECT(1,1)", r#"{"1": 1}"#);
+        check!(
+            "SELECT JSON_ARRAY(1,'x',NULL,1.5)",
+            r#"[1, "x", null, 1.5]"#
+        );
+        check!("SELECT JSON_ARRAY()", "[]");
+
+        // JSON_QUOTE / JSON_UNQUOTE. Only a fully double-quoted document is
+        // unquoted; anything else comes back unchanged.
+        check!(r#"SELECT JSON_QUOTE('a"b')"#, r#""a\"b""#);
+        check!("SELECT JSON_QUOTE('中')", r#""中""#);
+        check!("SELECT JSON_QUOTE(NULL)", "NULL");
+        check!(r#"SELECT JSON_UNQUOTE('"a\\"b"')"#, r#"a"b"#);
+        check!(r#"SELECT JSON_UNQUOTE('"\\u4e2d"')"#, "中");
+        check!(r#"SELECT JSON_UNQUOTE('"a\\/b"')"#, "a/b");
+        check!("SELECT JSON_UNQUOTE('abc')", "abc");
+        check!("SELECT JSON_UNQUOTE('[1,2]')", "[1,2]");
+        check!(r#"SELECT JSON_UNQUOTE('"x')"#, r#""x"#);
+        check!(r#"SELECT JSON_UNQUOTE(JSON_QUOTE('a"b'))"#, r#"a"b"#);
+        check!("SELECT JSON_UNQUOTE(NULL)", "NULL");
+
+        // JSON_CONTAINS: containment, not equality, plus the optional path.
+        check!("SELECT JSON_CONTAINS('[1,2,3]','2')", "1");
+        check!("SELECT JSON_CONTAINS('[1,2,3]','[1,3]')", "1");
+        check!(r#"SELECT JSON_CONTAINS('{"a":1,"b":2}','{"a":1}')"#, "1");
+        check!(r#"SELECT JSON_CONTAINS('{"a":{"b":1}}','1','$.a.b')"#, "1");
+        check!(r#"SELECT JSON_CONTAINS('{"a":[1,2]}','2','$.a')"#, "1");
+        check!("SELECT JSON_CONTAINS('[[1,2]]','[1]')", "1");
+        check!("SELECT JSON_CONTAINS('1','1')", "1");
+        check!("SELECT JSON_CONTAINS('[1]','2')", "0");
+        check!("SELECT JSON_CONTAINS(NULL,'1')", "NULL");
+        check!(r#"SELECT JSON_CONTAINS('{"a":1}','1','$.zz')"#, "NULL");
+
+        // JSON_LENGTH / JSON_KEYS / JSON_DEPTH. Every scalar has length one
+        // and depth one; JSON_KEYS is NULL for a non-object.
+        check!(r#"SELECT JSON_LENGTH('{"a":1,"b":2}')"#, "2");
+        check!("SELECT JSON_LENGTH('[1,2,3]')", "3");
+        check!("SELECT JSON_LENGTH('1')", "1");
+        check!("SELECT JSON_LENGTH('null')", "1");
+        check!("SELECT JSON_LENGTH(NULL)", "NULL");
+        check!(r#"SELECT JSON_LENGTH('{"a":{"b":1,"c":2}}','$.a')"#, "2");
+        check!(r#"SELECT JSON_LENGTH('{"a":1}','$.zz')"#, "NULL");
+        check!(
+            r#"SELECT JSON_KEYS('{"z":1,"B":2,"a":3,"A":4,"_":5,"0":6}')"#,
+            r#"["0", "A", "B", "_", "a", "z"]"#
+        );
+        check!(
+            r#"SELECT JSON_KEYS('{"bb":1,"a":2,"ccc":3,"dd":4}')"#,
+            r#"["a", "bb", "ccc", "dd"]"#
+        );
+        check!("SELECT JSON_KEYS('{}')", "[]");
+        check!("SELECT JSON_KEYS('[1,2]')", "NULL");
+        check!("SELECT JSON_KEYS('1')", "NULL");
+        check!(
+            r#"SELECT JSON_KEYS('{"a":{"z":1,"y":2}}','$.a')"#,
+            r#"["y", "z"]"#
+        );
+        check!("SELECT JSON_DEPTH('1')", "1");
+        check!("SELECT JSON_DEPTH('[]')", "1");
+        check!("SELECT JSON_DEPTH('{}')", "1");
+        check!("SELECT JSON_DEPTH('[1,[2,[3]]]')", "4");
+        check!(r#"SELECT JSON_DEPTH('{"a":{"b":{"c":1}}}')"#, "4");
+        check!("SELECT JSON_DEPTH(NULL)", "NULL");
+
+        // JSON_VALID never raises: a malformed document, and every non-string
+        // SQL value, is simply zero.
+        check!("SELECT JSON_VALID('{}')", "1");
+        check!("SELECT JSON_VALID('{')", "0");
+        check!("SELECT JSON_VALID('abc')", "0");
+        check!("SELECT JSON_VALID(' ')", "0");
+        check!("SELECT JSON_VALID(1)", "0");
+        check!("SELECT JSON_VALID(NULL)", "NULL");
+
+        // CAST(x AS JSON): only the STRING signature parses, so `'abc'` is
+        // error 3140 rather than the JSON string "abc" (asserted below).
+        check!(
+            r#"SELECT CAST('{"b":1,"aa":2,"c":3,"a":4}' AS JSON)"#,
+            r#"{"a": 4, "aa": 2, "b": 1, "c": 3}"#
+        );
+        check!("SELECT CAST(1 AS JSON)", "1");
+        check!("SELECT CAST(1.5 AS JSON)", "1.5");
+        check!("SELECT CAST(NULL AS JSON)", "NULL");
+        // `marshalFloat64To`'s cutoffs: at least one fractional digit inside
+        // [1e-15, 1e15), a bare exponent outside it.
+        check!(
+            "SELECT CAST('[1.0, 1.5, 1e3, 100000000000000000000, -0.0]' AS JSON)",
+            "[1.0, 1.5, 1000.0, 1e20, -0.0]"
+        );
+        check!(
+            "SELECT CAST('[0.1,2.5e-10,1e100,3,-3,1.7976931348623157e308]' AS JSON)",
+            "[0.1, 0.00000000025, 1e100, 3, -3, 1.7976931348623157e308]"
+        );
+
+        // The `json` error class reaches the wire with TiDB's own code.
+        let mut code = |sql: &str| match session.run(sql) {
+            Err(error) => error.to_mysql_error().code,
+            Ok(output) => panic!("expected an error from {sql}, got {output:?}"),
+        };
+        assert_eq!(code("SELECT JSON_EXTRACT('x','$.a')"), 3140);
+        assert_eq!(code("SELECT CAST('abc' AS JSON)"), 3140);
+        assert_eq!(code("SELECT JSON_LENGTH('nope')"), 3140);
+        assert_eq!(code(r#"SELECT JSON_EXTRACT('{"a":1}','xx')"#), 3143);
+        assert_eq!(code(r#"SELECT JSON_EXTRACT('{"a":1}','$.')"#), 3143);
+        assert_eq!(code("SELECT JSON_CONTAINS('[1,2]','1','$[*]')"), 3149);
+        assert_eq!(code("SELECT JSON_TYPE(1)"), 3146);
+        assert_eq!(code("SELECT JSON_QUOTE(1)"), 3064);
+        assert_eq!(code("SELECT JSON_OBJECT(NULL,1)"), 3158);
+        assert_eq!(
+            session
+                .run(r#"SELECT JSON_EXTRACT('{"a":1}','xx')"#)
+                .unwrap_err()
+                .to_mysql_error()
+                .message,
+            "Invalid JSON path expression. The error is around character position 1."
+        );
+
+        // OUT OF SLICE, and refused rather than half-built: the mutation
+        // family (JSON_SET/INSERT/REPLACE/REMOVE/MERGE*) and JSON_TABLE are a
+        // later unit, and there is still no JSON COLUMN TYPE -- the documents
+        // above live in a VARCHAR.
+        for sql in [
+            r#"SELECT JSON_SET('{"a":1}','$.a',2)"#,
+            r#"SELECT JSON_REMOVE('{"a":1}','$.a')"#,
+            r#"SELECT JSON_MERGE('{"a":1}','{"b":2}')"#,
+        ] {
+            assert!(session.run(sql).is_err(), "{sql} should still be refused");
+        }
     }
 }

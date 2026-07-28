@@ -70,7 +70,7 @@ pub(crate) fn eval_cast(cast_type: &CastType, v: Datum) -> Result<Datum, EvalErr
         CastType::Year => cast_to_year(&v),
         CastType::Double | CastType::Float => Ok(Datum::Real(to_f64_for_cast(&v))),
         CastType::Time { .. } => Err(EvalError::Unsupported("CAST AS TIME")),
-        CastType::Json => Err(EvalError::Unsupported("CAST AS JSON")),
+        CastType::Json => crate::builtin_ext::cast_as_json(&v),
     }
 }
 

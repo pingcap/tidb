@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde_json::{Number, Value as Json};
 
 use crate::coerce::coerce_str;
-use crate::{Datum, EvalError};
+use crate::{Datum, EvalError, JsonError};
 
 /// Dispatches the JSON family.  The match and arities are ports of the
 /// function classes in `pkg/expression/builtin_json.go`:
@@ -67,6 +67,31 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
     }
 }
 
+/// The SQL string an argument carries, or `None` when it is not a SQL string.
+///
+/// `Datum::String` and `Datum::Bytes` are the SAME SQL string value here: the
+/// row evaluator builds a `String` from a parsed literal, while the chunk
+/// rewriter builds `Bytes` for the identical literal (`rewriter`'s
+/// `Expr::String` arm). Go draws every JSON argument boundary on the
+/// argument's EvalType -- `ETString` for both -- so splitting them would make
+/// `JSON_TYPE('{}')` succeed or raise 3146 depending on which evaluator ran.
+///
+/// NAMED BOUNDARY: this collapses `CAST(x AS BINARY)` onto the same arm. Go
+/// stores a binary-charset string as an OPAQUE JSON value
+/// (`"base64:type254:..."`), which needs a charset this datum domain does not
+/// carry. A binary literal is still `Datum::BinaryLiteral` and keeps its own
+/// arm; only an explicit binary CAST lands here and reads as ordinary text.
+fn json_sql_string(value: &Datum) -> Result<Option<&str>, EvalError> {
+    let bytes = match value {
+        Datum::String(text) => text.bytes(),
+        Datum::Bytes(bytes) => bytes.as_slice(),
+        _ => return Ok(None),
+    };
+    std::str::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))
+}
+
 /// `JSON_VALID(arg)`, port of `builtinJSONValid{JSON,String,Others}Sig`.
 /// String arguments are JSON documents; every non-string, non-JSON SQL value
 /// is the Go `Others` signature and therefore returns zero rather than being
@@ -74,12 +99,15 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
 fn json_valid(v: &Datum) -> Result<Datum, EvalError> {
     match v {
         Datum::Null => Ok(Datum::Null),
-        Datum::String(s) => Ok(Datum::Int(i64::from(
-            s.as_utf8().is_ok_and(|text| parse_json(text).is_ok()),
+        // Non-UTF-8 bytes are simply not a JSON document, which is the zero
+        // this signature reports rather than a statement error.
+        Datum::String(_) | Datum::Bytes(_) => Ok(Datum::Int(i64::from(
+            json_sql_string(v)
+                .ok()
+                .flatten()
+                .is_some_and(|text| parse_json(text).is_ok()),
         ))),
-        Datum::Bytes(_) | Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => {
-            Ok(Datum::Int(0))
-        }
+        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => Ok(Datum::Int(0)),
         Datum::Float32(_)
         | Datum::BinaryLiteral(_)
         | Datum::Duration(_)
@@ -99,12 +127,15 @@ fn json_valid(v: &Datum) -> Result<Datum, EvalError> {
 /// `JSON_TYPE(json_doc)`, port of `builtinJSONTypeSig.evalString` and
 /// `types.BinaryJSON.Type` (`pkg/types/json_binary_functions.go`).
 fn json_type(v: &Datum) -> Result<Datum, EvalError> {
-    let Some(s) = coerce_str(v)? else {
+    if v.is_null() {
         return Ok(Datum::Null);
-    };
-    if !matches!(v, Datum::String(_)) {
-        return Err(EvalError::Unsupported("JSON_TYPE requires JSON text"));
     }
+    let Some(s) = json_sql_string(v)?.map(str::to_owned) else {
+        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+            argument: 1,
+            function: "json_type",
+        }));
+    };
     let json = parse_json(&s)?;
     let ty = match json {
         Json::Null => "NULL",
@@ -123,15 +154,17 @@ fn json_type(v: &Datum) -> Result<Datum, EvalError> {
 /// `encoding/json.Encoder` has `SetEscapeHTML(false)`; serde_json has the
 /// same HTML rule for strings, while retaining Go-compatible JSON escapes.
 fn json_quote(v: &Datum) -> Result<Datum, EvalError> {
+    if let Some(text) = json_sql_string(v)? {
+        return serde_json::to_string(text)
+            .map(Datum::new_string)
+            .map_err(|_| EvalError::Unsupported("JSON_QUOTE encoding"));
+    }
     match v {
         Datum::Null => Ok(Datum::Null),
-        Datum::String(s) => serde_json::to_string(
-            s.as_utf8()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))?,
-        )
-        .map(Datum::new_string)
-        .map_err(|_| EvalError::Unsupported("JSON_QUOTE encoding")),
-        _ => Err(EvalError::Unsupported("JSON_QUOTE requires string")),
+        _ => Err(EvalError::Json(JsonError::IncorrectType {
+            argument: 1,
+            function: "json_quote",
+        })),
     }
 }
 
@@ -140,23 +173,39 @@ fn json_quote(v: &Datum) -> Result<Datum, EvalError> {
 /// a double-quoted value followed by another root value is an error, not an
 /// almost-unquoted string (`TestJSONUnquote`).
 fn json_unquote(v: &Datum) -> Result<Datum, EvalError> {
-    let Datum::String(s) = v else {
+    let Some(text) = json_sql_string(v)? else {
         return if *v == Datum::Null {
             Ok(Datum::Null)
         } else {
             Err(EvalError::Unsupported("JSON_UNQUOTE requires string"))
         };
     };
-    let text = s
-        .as_utf8()
-        .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))?;
     if text.len() < 2 || !text.starts_with('"') || !text.ends_with('"') {
         return Ok(Datum::new_string(text));
     }
     let Json::String(unquoted) = parse_json(text)? else {
-        return Err(EvalError::Unsupported("invalid JSON_UNQUOTE document"));
+        return Err(EvalError::Json(JsonError::InvalidText));
     };
     Ok(Datum::new_string(unquoted))
+}
+
+/// `CAST(expr AS JSON)`, port of the `builtinCast*AsJSONSig` family in
+/// `pkg/expression/builtin_cast.go`.
+///
+/// Only the string signature carries `ParseToJSONFlag`, so a string argument
+/// is PARSED as a JSON document (`CAST('abc' AS JSON)` is error 3140, not the
+/// JSON string `"abc"`), while every other SQL value becomes its matching
+/// JSON scalar. The result is this tier's canonical JSON text — see
+/// [`format_json`] for why that is a string rather than a BinaryJSON value.
+pub(crate) fn cast_as_json(value: &Datum) -> Result<Datum, EvalError> {
+    if value.is_null() {
+        return Ok(Datum::Null);
+    }
+    let json = match json_sql_string(value)? {
+        Some(text) => parse_json(text)?,
+        None => datum_json_scalar(value)?,
+    };
+    Ok(Datum::new_string(format_json(&json)))
 }
 
 /// `JSON_ARRAY(value [, value] ...)`, port of `jsonArrayFunctionClass` and
@@ -186,7 +235,7 @@ fn json_object(vals: &[Datum]) -> Result<Datum, EvalError> {
     let mut object = serde_json::Map::new();
     for pair in vals.chunks_exact(2) {
         let Some(key) = coerce_str(&pair[0])? else {
-            return Err(EvalError::Unsupported("JSON_OBJECT NULL key"));
+            return Err(EvalError::Json(JsonError::NullMemberName));
         };
         let value = json_mutation_value_argument(&pair[1])?;
         object.insert(key, value);
@@ -207,7 +256,7 @@ fn json_length(vals: &[Datum]) -> Result<Datum, EvalError> {
         };
         let path = parse_path(&path)?;
         if path.could_match_multiple {
-            return Err(EvalError::Unsupported("JSON_LENGTH multiple selection"));
+            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
         let Some(extracted) = extract(&document, &[path]) else {
             return Ok(Datum::Null);
@@ -282,7 +331,7 @@ fn json_contains(vals: &[Datum]) -> Result<Datum, EvalError> {
         };
         let path = parse_path(&path)?;
         if path.could_match_multiple {
-            return Err(EvalError::Unsupported("JSON_CONTAINS multiple selection"));
+            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
         let Some(extracted) = extract(&document, &[path]) else {
             return Ok(Datum::Null);
@@ -367,7 +416,7 @@ fn json_keys(vals: &[Datum]) -> Result<Datum, EvalError> {
         };
         let path = parse_path(&path)?;
         if path.could_match_multiple {
-            return Err(EvalError::Unsupported("JSON_KEYS multiple selection"));
+            return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
         let Some(extracted) = extract(&document, &[path]) else {
             return Ok(Datum::Null);
@@ -603,19 +652,16 @@ fn parse_json_merge_argument(
     value: &Datum,
     preserve_scalar_text: bool,
 ) -> Result<Option<Json>, EvalError> {
+    if let Some(text) = json_sql_string(value)? {
+        let parsed = parse_json(text)?;
+        return if preserve_scalar_text && !matches!(parsed, Json::Object(_) | Json::Array(_)) {
+            Ok(Some(Json::String(text.to_owned())))
+        } else {
+            Ok(Some(parsed))
+        };
+    }
     match value {
         Datum::Null => Ok(None),
-        Datum::String(s) => {
-            let text = s
-                .as_utf8()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 JSON value"))?;
-            let parsed = parse_json(text)?;
-            if preserve_scalar_text && !matches!(parsed, Json::Object(_) | Json::Array(_)) {
-                Ok(Some(Json::String(text.to_owned())))
-            } else {
-                Ok(Some(parsed))
-            }
-        }
         Datum::Int(value) => Ok(Some(Json::Number((*value).into()))),
         Datum::UInt(value) => Ok(Some(Json::Number((*value).into()))),
         Datum::Real(value) => Number::from_f64(*value)
@@ -623,7 +669,6 @@ fn parse_json_merge_argument(
             .map(Some)
             .ok_or(EvalError::FloatOverflow),
         Datum::Decimal(value) => Ok(Some(parse_json(&value.to_string())?)),
-        Datum::Bytes(_) => Err(EvalError::Unsupported("JSON value requires text")),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON value"))
         }
@@ -1247,19 +1292,11 @@ fn crc32_ieee(bytes: &[u8]) -> u32 {
 /// deliberately distinct from `parse_json_value_argument`: Go disables
 /// `ParseToJSONFlag` for these arguments, so strings remain JSON strings.
 fn json_mutation_value_argument(value: &Datum) -> Result<Json, EvalError> {
+    if let Some(text) = json_sql_string(value)? {
+        return Ok(Json::String(text.to_owned()));
+    }
     match value {
         Datum::Null => Ok(Json::Null),
-        Datum::String(s) => Ok(Json::String(
-            s.as_utf8()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 JSON value"))?
-                .to_owned(),
-        )),
-        // Go preserves binary strings as opaque JSON values.  There is no
-        // opaque/typed JSON variant in this evaluator, so rejecting bytes is
-        // safer than silently turning them into ordinary UTF-8 strings.
-        Datum::Bytes(_) => Err(EvalError::Unsupported(
-            "binary JSON mutation values are outside this datum domain",
-        )),
         Datum::Int(value) => Ok(Json::Number((*value).into())),
         Datum::UInt(value) => Ok(Json::Number((*value).into())),
         Datum::Real(value) => Number::from_f64(*value)
@@ -1405,19 +1442,17 @@ fn resolve_array_index(index: i64, len: usize) -> Option<usize> {
 /// no JSON datum variant, so textual values are parsed and scalar datums are
 /// lifted to their equivalent JSON scalar without pretending bytes are text.
 fn parse_json_value_argument(value: &Datum) -> Result<Json, EvalError> {
+    if let Some(text) = json_sql_string(value)? {
+        return parse_json(text);
+    }
     match value {
         Datum::Null => Err(EvalError::Unsupported("JSON value is NULL")),
-        Datum::String(s) => parse_json(
-            s.as_utf8()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 JSON value"))?,
-        ),
         Datum::Int(value) => Ok(Json::Number((*value).into())),
         Datum::UInt(value) => Ok(Json::Number((*value).into())),
         Datum::Real(value) => Number::from_f64(*value)
             .map(Json::Number)
             .ok_or(EvalError::FloatOverflow),
         Datum::Decimal(value) => parse_json(&value.to_string()),
-        Datum::Bytes(_) => Err(EvalError::Unsupported("JSON value requires text")),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON value"))
         }
@@ -1428,20 +1463,17 @@ fn parse_json_value_argument(value: &Datum) -> Result<Json, EvalError> {
 /// The candidate-side cast in `JSON_MEMBER_OF`: SQL strings become JSON
 /// strings, while numeric datums retain their JSON numeric kind.
 fn json_value_argument(value: &Datum) -> Result<Json, EvalError> {
+    if let Some(text) = json_sql_string(value)? {
+        return Ok(Json::String(text.to_owned()));
+    }
     match value {
         Datum::Null => Err(EvalError::Unsupported("JSON value is NULL")),
-        Datum::String(s) => Ok(Json::String(
-            s.as_utf8()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 JSON value"))?
-                .to_owned(),
-        )),
         Datum::Int(value) => Ok(Json::Number((*value).into())),
         Datum::UInt(value) => Ok(Json::Number((*value).into())),
         Datum::Real(value) => Number::from_f64(*value)
             .map(Json::Number)
             .ok_or(EvalError::FloatOverflow),
         Datum::Decimal(value) => parse_json(&value.to_string()),
-        Datum::Bytes(_) => Err(EvalError::Unsupported("JSON value requires text")),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel JSON value"))
         }
@@ -1555,13 +1587,10 @@ fn compare_signed_unsigned(left: i64, right: u64) -> Ordering {
 pub(crate) fn parse_json_document_argument(v: &Datum) -> Result<Option<Json>, EvalError> {
     match v {
         Datum::Null => Ok(None),
-        Datum::String(s) => parse_json(
-            s.as_utf8()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))?,
-        )
-        .map(Some),
-        Datum::Bytes(_)
-        | Datum::Int(_)
+        Datum::String(_) | Datum::Bytes(_) => {
+            parse_json(json_sql_string(v)?.unwrap_or_default()).map(Some)
+        }
+        Datum::Int(_)
         | Datum::UInt(_)
         | Datum::Decimal(_)
         | Datum::Real(_)
@@ -1590,7 +1619,7 @@ fn datum_json_scalar(value: &Datum) -> Result<Json, EvalError> {
 }
 
 fn parse_json(s: &str) -> Result<Json, EvalError> {
-    serde_json::from_str(s).map_err(|_| EvalError::Unsupported("invalid JSON document"))
+    serde_json::from_str(s).map_err(|_| EvalError::Json(JsonError::InvalidText))
 }
 
 /// A parsed TiDB JSON path.  This is a direct structural port of
@@ -1625,7 +1654,7 @@ fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
     let mut cursor = 0;
     skip_space(&chars, &mut cursor);
     if chars.get(cursor) != Some(&'$') {
-        return Err(EvalError::Unsupported("invalid JSON path"));
+        return Err(path_error(1));
     }
     cursor += 1;
     skip_space(&chars, &mut cursor);
@@ -1659,12 +1688,12 @@ fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
                     skip_space(&chars, &mut cursor);
                     if after_start != cursor && read_word(&chars, &mut cursor, "to") {
                         if cursor >= chars.len() || !chars[cursor].is_whitespace() {
-                            return Err(EvalError::Unsupported("invalid JSON path"));
+                            return Err(path_error(cursor));
                         }
                         skip_space(&chars, &mut cursor);
                         let end = parse_index(&chars, &mut cursor)?;
                         if (start >= 0 && end >= 0 || start < 0 && end < 0) && start > end {
-                            return Err(EvalError::Unsupported("invalid JSON path"));
+                            return Err(path_error(cursor));
                         }
                         could_match_multiple = true;
                         ArraySelection::Range(start, end)
@@ -1675,14 +1704,14 @@ fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
                 };
                 skip_space(&chars, &mut cursor);
                 if chars.get(cursor) != Some(&']') {
-                    return Err(EvalError::Unsupported("invalid JSON path"));
+                    return Err(path_error(cursor));
                 }
                 cursor += 1;
                 legs.push(PathLeg::Array(selection));
             }
             '*' => {
                 if chars.get(cursor + 1) != Some(&'*') || chars.get(cursor + 2) == Some(&'*') {
-                    return Err(EvalError::Unsupported("invalid JSON path"));
+                    return Err(path_error(cursor));
                 }
                 cursor += 2;
                 legs.push(PathLeg::Recursive);
@@ -1693,17 +1722,26 @@ fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
                 // recursive path silently return one arbitrary match.
                 could_match_multiple = true;
             }
-            _ => return Err(EvalError::Unsupported("invalid JSON path")),
+            _ => return Err(path_error(cursor)),
         }
         skip_space(&chars, &mut cursor);
     }
     if matches!(legs.last(), Some(PathLeg::Recursive)) {
-        return Err(EvalError::Unsupported("invalid JSON path"));
+        return Err(path_error(cursor));
     }
     Ok(JsonPath {
         legs,
         could_match_multiple,
     })
+}
+
+/// Go `ErrInvalidJSONPath` (3143) at the stream position that rejected the
+/// path. `parseJSONPathExpr` reports `jsonPathStream.pos` as it stands after
+/// the failing leg parser ran — this parser's `cursor` is the same rune
+/// counter, advanced by the same steps — except for a path that does not
+/// begin with `$`, where Go reports a literal 1.
+fn path_error(position: usize) -> EvalError {
+    EvalError::Json(JsonError::InvalidPath(position))
 }
 
 fn skip_space(chars: &[char], cursor: &mut usize) {
@@ -1740,11 +1778,10 @@ fn parse_member(chars: &[char], cursor: &mut usize) -> Result<String, EvalError>
                 escaped = true;
             } else if *ch == '"' {
                 let encoded: String = chars[start..*cursor].iter().collect();
-                return serde_json::from_str(&encoded)
-                    .map_err(|_| EvalError::Unsupported("invalid JSON path"));
+                return serde_json::from_str(&encoded).map_err(|_| path_error(*cursor));
             }
         }
-        return Err(EvalError::Unsupported("invalid JSON path"));
+        return Err(path_error(*cursor));
     }
     let start = *cursor;
     while chars
@@ -1755,7 +1792,7 @@ fn parse_member(chars: &[char], cursor: &mut usize) -> Result<String, EvalError>
     }
     let key: String = chars[start..*cursor].iter().collect();
     if !is_ecmascript_identifier(&key) {
-        return Err(EvalError::Unsupported("invalid JSON path"));
+        return Err(path_error(*cursor));
     }
     Ok(key)
 }
@@ -1805,13 +1842,13 @@ fn parse_u32(chars: &[char], cursor: &mut usize) -> Result<u32, EvalError> {
         *cursor += 1;
     }
     if start == *cursor {
-        return Err(EvalError::Unsupported("invalid JSON path"));
+        return Err(path_error(*cursor));
     }
     chars[start..*cursor]
         .iter()
         .collect::<String>()
         .parse()
-        .map_err(|_| EvalError::Unsupported("invalid JSON path"))
+        .map_err(|_| path_error(*cursor))
 }
 
 /// Port of `BinaryJSON.Extract`.  References keep the source tree intact,
@@ -2068,7 +2105,14 @@ mod tests {
         );
         assert_eq!(call("JSON_ARRAY", &[Datum::UInt(2)]), s("[2]"));
         assert_eq!(call("JSON_ARRAY", &[Datum::Real(1.5)]), s("[1.5]"));
-        assert!(call_result("JSON_ARRAY", &[Datum::new_bytes(b"x")]).is_err());
+        // A `Datum::Bytes` is the chunk rewriter's spelling of the SAME SQL
+        // string literal the row evaluator spells `Datum::String`, so it is
+        // the JSON string "x" -- see [`json_sql_string`] for the named
+        // binary-charset boundary this collapses.
+        assert_eq!(
+            call("JSON_ARRAY", &[Datum::new_bytes(b"x".to_vec())]),
+            s(r#"["x"]"#)
+        );
 
         assert_eq!(call("JSON_OBJECT", &[]), s("{}"));
         assert!(call_result(
@@ -3241,6 +3285,166 @@ mod tests {
             vec![Datum::Null, Datum::Null],
         ] {
             assert_eq!(call_result("JSON_LENGTH", &args), Ok(Datum::Null));
+        }
+    }
+
+    /// `BinaryJSON.MarshalJSON` orders object keys by PLAIN BYTE comparison
+    /// (`slices.SortFunc(fields, cmp.Compare)` in `buildBinaryJSONObject`,
+    /// `pkg/types/json_binary.go`), NOT by key length first.
+    ///
+    /// Captured from real TiDB (`testkit.CreateMockStore`):
+    ///   SELECT CAST('{"z":1,"B":2,"a":3,"A":4,"_":5,"0":6}' AS JSON)
+    ///     -> {"0": 6, "A": 4, "B": 2, "_": 5, "a": 3, "z": 1}
+    ///   SELECT CAST('{"bb":1,"a":2}' AS JSON)  -> {"a": 2, "bb": 1}
+    /// A length-first order would have put `bb` before `ccc` and `a` last.
+    #[test]
+    fn object_keys_print_in_plain_byte_order() {
+        assert_eq!(
+            call(
+                "JSON_EXTRACT",
+                &[s(r#"{"z":1,"B":2,"a":3,"A":4,"_":5,"0":6}"#), s("$")]
+            ),
+            s(r#"{"0": 6, "A": 4, "B": 2, "_": 5, "a": 3, "z": 1}"#)
+        );
+        assert_eq!(
+            call("JSON_KEYS", &[s(r#"{"bb":1,"a":2,"ccc":3,"dd":4}"#)]),
+            s(r#"["a", "bb", "ccc", "dd"]"#)
+        );
+        // The separators are `, ` and `: `, not serde's compact form.
+        assert_eq!(
+            call("JSON_EXTRACT", &[s(r#"{"b":1,"aa":2}"#), s("$")]),
+            s(r#"{"aa": 2, "b": 1}"#)
+        );
+    }
+
+    /// `marshalFloat64To`'s scientific-notation cutoffs, captured from
+    /// `SELECT CAST('[...]' AS JSON)`: a double keeps at least one fractional
+    /// digit inside `[1e-15, 1e15)` and switches to a `+`-free, zero-padding-
+    /// free exponent outside it. An integer JSON number keeps no `.0`.
+    #[test]
+    fn json_numbers_print_as_binary_json_does() {
+        assert_eq!(
+            call(
+                "JSON_EXTRACT",
+                &[s("[1.0, 1.5, 1e3, 100000000000000000000, -0.0]"), s("$")]
+            ),
+            s("[1.0, 1.5, 1000.0, 1e20, -0.0]")
+        );
+        assert_eq!(
+            call(
+                "JSON_EXTRACT",
+                &[s("[0.1,2.5e-10,1e100,3,-3,1.7976931348623157e308]"), s("$")]
+            ),
+            s("[0.1, 0.00000000025, 1e100, 3, -3, 1.7976931348623157e308]")
+        );
+        // Beyond int64: `JSON_TYPE` reports the unsigned kind and the value
+        // prints without a decimal point.
+        assert_eq!(
+            call("JSON_TYPE", &[s("18446744073709551615")]),
+            s("UNSIGNED INTEGER")
+        );
+    }
+
+    /// A duplicate `JSON_OBJECT` key keeps the LAST value, captured from
+    /// `SELECT JSON_OBJECT('k',1,'k',2,'k',3)` -> `{"k": 3}`.
+    #[test]
+    fn json_object_duplicate_key_keeps_last() {
+        assert_eq!(
+            call(
+                "JSON_OBJECT",
+                &[s("k"), Datum::Int(1), s("k"), Datum::Int(2)]
+            ),
+            s(r#"{"k": 2}"#)
+        );
+        assert_eq!(
+            call(
+                "JSON_OBJECT",
+                &[
+                    s("k"),
+                    Datum::Int(1),
+                    s("k"),
+                    Datum::Int(2),
+                    s("k"),
+                    Datum::Int(3)
+                ]
+            ),
+            s(r#"{"k": 3}"#)
+        );
+    }
+
+    /// `parseJSONPathExpr` reports `jsonPathStream.pos` for a rejected leg and
+    /// a literal 1 when the expression does not start with `$`. Captured:
+    ///   JSON_EXTRACT('{"a":1}','xx')  -> 3143 ... character position 1.
+    ///   JSON_EXTRACT('{"a":1}','$.')  -> 3143 ... character position 2.
+    #[test]
+    fn path_errors_carry_go_code_and_position() {
+        use crate::{EvalError, JsonError};
+        assert_eq!(
+            parse_path("xx").unwrap_err(),
+            EvalError::Json(JsonError::InvalidPath(1))
+        );
+        assert_eq!(
+            parse_path("$.").unwrap_err(),
+            EvalError::Json(JsonError::InvalidPath(2))
+        );
+        // A trailing `**` is rejected after the whole stream is consumed.
+        assert!(matches!(
+            parse_path("$**").unwrap_err(),
+            EvalError::Json(JsonError::InvalidPath(_))
+        ));
+        assert!(parse_path("$.a").is_ok());
+        assert!(parse_path(r#"$."a b""#).is_ok());
+        assert!(parse_path("$[*]").is_ok());
+        assert!(parse_path("$**.b").is_ok());
+    }
+
+    /// The `json` error class each in-scope signature raises, with the code
+    /// TiDB reports. Every pairing below is a captured TiDB error string.
+    #[test]
+    fn json_errors_carry_go_codes() {
+        use crate::{EvalError, JsonError};
+        let code = |name: &str, args: &[Datum]| match call_result(name, args) {
+            Err(EvalError::Json(error)) => error.code(),
+            other => panic!("expected a json-class error, got {other:?}"),
+        };
+        assert_eq!(code("JSON_EXTRACT", &[s("x"), s("$.a")]), 3140);
+        assert_eq!(code("JSON_EXTRACT", &[s(r#"{"a":1}"#), s("xx")]), 3143);
+        assert_eq!(code("JSON_LENGTH", &[s("[1,2]"), s("$[*]")]), 3149);
+        assert_eq!(code("JSON_KEYS", &[s(r#"{"a":1}"#), s("$[*]")]), 3149);
+        assert_eq!(code("JSON_TYPE", &[Datum::Int(1)]), 3146);
+        assert_eq!(code("JSON_QUOTE", &[Datum::Int(1)]), 3064);
+        assert_eq!(code("JSON_OBJECT", &[Datum::Null, Datum::Int(1)]), 3158);
+        assert_eq!(
+            JsonError::InvalidPath(7).message(),
+            "Invalid JSON path expression. The error is around character position 7."
+        );
+    }
+
+    /// A SQL string reaches this family as `Datum::String` from the row
+    /// evaluator and as `Datum::Bytes` from the chunk rewriter's `Expr::String`
+    /// arm. Both are the same `ETString` argument to Go, so every signature
+    /// must answer identically -- see [`json_sql_string`].
+    #[test]
+    fn string_and_bytes_arguments_agree() {
+        let bytes = |value: &str| Datum::new_bytes(value.as_bytes().to_vec());
+        for (name, text, path) in [
+            ("JSON_TYPE", r#"{"a":1}"#, None),
+            ("JSON_VALID", r#"{"a":1}"#, None),
+            ("JSON_KEYS", r#"{"b":1,"a":2}"#, None),
+            ("JSON_QUOTE", "a\"b", None),
+            ("JSON_UNQUOTE", r#""a""#, None),
+            ("JSON_EXTRACT", r#"{"a":1}"#, Some("$.a")),
+            ("JSON_LENGTH", r#"{"a":1,"b":2}"#, Some("$")),
+        ] {
+            let (string_args, byte_args) = match path {
+                Some(path) => (vec![s(text), s(path)], vec![bytes(text), bytes(path)]),
+                None => (vec![s(text)], vec![bytes(text)]),
+            };
+            assert_eq!(
+                call_result(name, &string_args),
+                call_result(name, &byte_args),
+                "{name} disagreed between its string and bytes spellings"
+            );
         }
     }
 }

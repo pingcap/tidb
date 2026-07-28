@@ -117,9 +117,10 @@ fn case_when_source_vectors_preserve_lazy_truthiness() {
         assert_eq!(e(expr), want, "{expr}");
     }
 
-    // The first Go JSON row (`{1, jsonInt, nil}`) selects its JSON result and
-    // therefore stays PARTIAL until `Datum` grows a JSON value variant.
-    assert!(e("case when 1 then cast(3 as json) else null end").starts_with("Unsupported"));
+    // The first Go JSON row (`{1, jsonInt, nil}`) selects its JSON result,
+    // which this tier renders as the canonical JSON text a BinaryJSON value
+    // would print (see `builtin_ext::json`'s `format_json`).
+    assert_eq!(e("case when 1 then cast(3 as json) else null end"), "STR:3");
 
     // Only the taken branch is evaluated: an unreachable error-producing
     // expression must not affect the scalar result.

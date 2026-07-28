@@ -527,6 +527,7 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
         "datetime" => CastType::DateTime { fsp: None },
         "year" => CastType::Year,
         "double" => CastType::Double,
+        "json" => CastType::Json,
         _ => return Err(EvalError::Unsupported("this cast target is not ported")),
     })
 }

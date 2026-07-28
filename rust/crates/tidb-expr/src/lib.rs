@@ -366,7 +366,7 @@ pub use field_name::{find_field_name, find_field_name_index_by_column, NonUnique
 
 pub use build::{BuildContext, BuiltStringLength, StringLengthFunction, StringLengthSignature};
 pub use coerce::truthy_of;
-pub use context::{Columns, ErrorLevel, EvalError, NoColumns, SessionTimeZone};
+pub use context::{Columns, ErrorLevel, EvalError, JsonError, NoColumns, SessionTimeZone};
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};
 pub use rng::MysqlRng;

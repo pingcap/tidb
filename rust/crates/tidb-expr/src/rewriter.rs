@@ -168,6 +168,24 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "cot" | "radians" | "degrees"
         | "rand" => FieldType::new(FieldTypeCode::Double),
         "sign" | "crc32" => int(),
+        // The JSON family's value slice: JSON evaluated as VALUES. Go types
+        // the first group `MysqlJson` and the second group as strings/ints.
+        //
+        // DOCUMENTED DIVERGENCE, the same one the temporal casts carry: this
+        // crate has no BinaryJSON value, so a JSON-returning builtin produces
+        // its canonical JSON TEXT (`format_json`, which is
+        // `BinaryJSON.MarshalJSON`'s exact spelling -- byte-sorted keys,
+        // `, ` / `: ` separators). The VALUE therefore matches TiDB
+        // byte for byte; the reported column type is `VarString` where TiDB
+        // says `JSON`. Typing it as Go does would put a string into a JSON
+        // cell, which panics rather than mistyping.
+        //
+        // The mutation family (`JSON_SET`/`INSERT`/`REPLACE`/`REMOVE`/
+        // `MERGE*`) and `JSON_TABLE` are deliberately NOT listed: they are a
+        // later slice, so they keep falling through to the refusal below.
+        "json_extract" | "json_object" | "json_array" | "json_keys" | "json_quote"
+        | "json_unquote" | "json_type" => text(),
+        "json_valid" | "json_contains" | "json_length" | "json_depth" => int(),
         "conv" | "bin" | "oct" | "format" => text(),
         // Go merges the argument types of these the same way it merges the
         // branches of a CASE.
@@ -257,9 +275,9 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
 /// type that may not describe it (the temporal targets produce a string
 /// value in this crate -- see below -- so their type genuinely cannot).
 ///
-/// `TIME` and `JSON` targets, and the `ARRAY` modifier, are refused here for
-/// the same reason `cast::eval_cast` refuses them -- there is no value domain
-/// for them in this crate yet.
+/// The `TIME` target and the `ARRAY` modifier are refused here for the same
+/// reason `cast::eval_cast` refuses them -- there is no value domain for them
+/// in this crate yet.
 fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
     use tidb_ast::CastType;
     let name = match cast_type {
@@ -272,7 +290,8 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         CastType::DateTime { .. } => "cast_datetime",
         CastType::Year => "cast_year",
         CastType::Double | CastType::Float => "cast_double",
-        CastType::Time { .. } | CastType::Json => return None,
+        CastType::Json => "cast_json",
+        CastType::Time { .. } => return None,
     };
     let ft = match cast_type {
         CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
@@ -315,7 +334,10 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         // Likewise, the year cast yields an integer value here.
         CastType::Year => FieldType::new(FieldTypeCode::LongLong),
         CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
-        CastType::Time { .. } | CastType::Json => return None,
+        // Same divergence as the JSON builtins above: the value is TiDB's
+        // canonical JSON text, so the chunk cell holding it is a string.
+        CastType::Json => FieldType::new(FieldTypeCode::VarString),
+        CastType::Time { .. } => return None,
     };
     Some((name, ft))
 }

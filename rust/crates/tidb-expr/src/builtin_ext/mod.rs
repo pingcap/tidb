@@ -31,6 +31,8 @@ pub(crate) mod misc;
 pub(crate) mod regexp;
 pub(crate) mod string2;
 
+pub(crate) use json::cast_as_json;
+
 /// Tries each family in turn; `None` if no family implements `name`.
 pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
     string2::dispatch(name, vals)
