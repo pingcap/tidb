@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var isNullCountSink int
+
 func TestCodec(t *testing.T) {
 	numCols := 6
 	numRows := 10
@@ -198,6 +200,33 @@ func BenchmarkDecodeAllNotNullRows(b *testing.B) {
 			b.Fatalf("unexpected %d remaining bytes", len(remained))
 		}
 	}
+}
+
+func BenchmarkColumnIsNullDecodedAllNotNull(b *testing.B) {
+	const rows = 510
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	source := NewChunkWithCapacity(colTypes, rows)
+	for i := range rows {
+		source.AppendInt64(0, int64(i))
+	}
+	codec := NewCodec(colTypes)
+	decoded, remained := codec.Decode(codec.Encode(source))
+	if len(remained) != 0 {
+		b.Fatalf("unexpected %d remaining bytes", len(remained))
+	}
+	col := decoded.Column(0)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	count := 0
+	for b.Loop() {
+		for i := range rows {
+			if col.IsNull(i) {
+				count++
+			}
+		}
+	}
+	isNullCountSink = count
 }
 
 func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
