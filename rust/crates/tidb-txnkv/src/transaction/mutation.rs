@@ -265,7 +265,22 @@ fn checked_aggregate_sizes(sizes: impl IntoIterator<Item = (usize, usize)>) -> u
 }
 
 /// Maximum mutations admitted by the first bounded normal-2PC path.
-pub const MAX_OPTIMISTIC_MUTATIONS: usize = 256;
+///
+/// Go and client-go enforce no such per-transaction mutation *count*: the real
+/// limits are byte-based (`txn-entry-size-limit`, default 6MiB per entry;
+/// `txn-total-size-limit`, default 100MiB per transaction — mirrored here by
+/// [`MAX_OPTIMISTIC_VALUE_BYTES`] and [`MAX_OPTIMISTIC_TRANSACTION_BYTES`]).
+/// This count is this path's own sanity ceiling, not a port of anything Go
+/// does. It was raised from an initial 256 because a single-owner bootstrap
+/// transaction plans one mutation per `mysql.global_variables` row (plus its
+/// index entry) for every global-scope system variable — echoing Go's own
+/// `doDMLWorks`, all ~720 rows land in the one transaction it seeds the
+/// cluster with — and 256 rejected that legitimate plan before the byte
+/// budget ever saw it. [`crate::transaction::region_batches`] already groups
+/// an arbitrary mutation count into per-region, byte-bounded RPC batches, so
+/// this ceiling is not load-bearing for that path either; it stays as a cheap
+/// guard against a plan large enough to be a bug rather than a scaling limit.
+pub const MAX_OPTIMISTIC_MUTATIONS: usize = 4096;
 /// Maximum encoded TiKV key size admitted by this path.
 pub const MAX_OPTIMISTIC_KEY_BYTES: usize = 4 * 1024;
 /// Maximum encoded TiKV value size admitted by this path.

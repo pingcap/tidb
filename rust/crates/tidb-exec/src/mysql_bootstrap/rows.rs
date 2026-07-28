@@ -115,19 +115,20 @@ pub fn seed(
     environment: &BootstrapEnvironment,
     mutations: &mut Vec<OptimisticMutation>,
 ) -> Result<(), BootstrapError> {
-    for row in seed_rows(environment) {
+    let rows = seed_rows(environment)?;
+    for row in &rows {
         let table = tables
             .iter()
             .find(|table| table.name.lowercase() == row.table)
             .ok_or_else(|| {
                 BootstrapError::Encode(format!("mysql.{} was not created", row.table))
             })?;
-        write_row(table, &row, environment.current_timestamp, mutations)?;
+        write_row(table, row, environment.current_timestamp, mutations)?;
     }
     // Every seeded table hands out `_tidb_rowid`s from 1, so the allocator has
     // to record the last one used before another writer asks for the next.
     for table in tables {
-        let used = seed_rows(environment)
+        let used = rows
             .iter()
             .filter(|row| row.table == table.name.lowercase())
             .count();
@@ -142,8 +143,55 @@ pub fn seed(
     Ok(())
 }
 
+/// Byte ground truth for Go `doDMLWorks`' `mysql.global_variables` seeding,
+/// captured from a real bootstrap rather than re-derived from the sysvar
+/// registry's `Scope`/`Value` fields (which are not ported to Rust).
+///
+/// Generator: `pkg/session` `TestZZDumpGlobalVariables` (a throwaway,
+/// `-tags=intest` test, deleted after the capture) ran
+/// `CreateStoreAndBootstrap` and dumped
+/// `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM mysql.global_variables ORDER BY
+/// VARIABLE_NAME` as tab-separated lines. That query already is Go's own
+/// `HasGlobalScope` filter plus `GlobalSystemVariableInitialValue` override
+/// applied, so this file needs no Scope metadata to reproduce Go's seeded set
+/// byte-for-byte — only to be re-captured if the sysvar registry changes.
+const GLOBAL_VARIABLES_FIXTURE: &str = include_str!("global_variables_fixture.tsv");
+
+/// Parses [`GLOBAL_VARIABLES_FIXTURE`] into one seed row per global variable.
+///
+/// A blank line is skipped (there are none in the captured fixture, but an
+/// empty file must not panic); a line without a tab is a fixture that no
+/// longer matches its own doc comment, so parsing refuses rather than
+/// silently dropping a variable Go would have seeded.
+fn global_variable_rows() -> Result<Vec<SeedRow>, BootstrapError> {
+    GLOBAL_VARIABLES_FIXTURE
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let (name, value) = line.split_once('\t').ok_or_else(|| {
+                BootstrapError::Encode(format!(
+                    "global_variables fixture line `{line}` is not NAME\\tVALUE"
+                ))
+            })?;
+            Ok(SeedRow {
+                table: "global_variables",
+                values: vec![
+                    SeedValue {
+                        column: "variable_name",
+                        value: Datum::Bytes(name.as_bytes().to_vec()),
+                    },
+                    SeedValue {
+                        column: "variable_value",
+                        value: Datum::Bytes(value.as_bytes().to_vec()),
+                    },
+                ],
+            })
+        })
+        .collect()
+}
+
 /// Go `doDMLWorks`, as data.
-fn seed_rows(environment: &BootstrapEnvironment) -> Vec<SeedRow> {
+fn seed_rows(environment: &BootstrapEnvironment) -> Result<Vec<SeedRow>, BootstrapError> {
     // The non-secure bootstrap account: `root`@`%` with every static privilege
     // except `Account_locked`, an EMPTY password, and the native-password
     // plugin. An empty `authentication_string` is what makes a fresh cluster
@@ -181,7 +229,7 @@ fn seed_rows(environment: &BootstrapEnvironment) -> Vec<SeedRow> {
         value: text(NO),
     });
 
-    vec![
+    let mut rows = vec![
         SeedRow {
             table: "user",
             values: root,
@@ -216,7 +264,9 @@ fn seed_rows(environment: &BootstrapEnvironment) -> Vec<SeedRow> {
             &environment.cluster_id.to_string(),
             "TiDB Cluster ID.",
         ),
-    ]
+    ];
+    rows.extend(global_variable_rows()?);
+    Ok(rows)
 }
 
 fn tidb_variable(name: &str, value: &str, comment: &str) -> SeedRow {

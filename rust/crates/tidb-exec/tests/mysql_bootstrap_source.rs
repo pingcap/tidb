@@ -210,8 +210,15 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .iter()
         .filter(|mutation| mutation.kind() == OptimisticMutationKind::Insert)
         .count();
-    // One `mysql.user` row (PRIMARY + i_user) and six `mysql.tidb` rows
-    // (PRIMARY each).
-    assert_eq!(records, 7);
-    assert_eq!(index_entries, 8);
+    // One `mysql.user` row (PRIMARY + i_user), six `mysql.tidb` rows (PRIMARY
+    // each), and one `mysql.global_variables` row (PRIMARY each) per
+    // global-scope system variable in the captured fixture.
+    const GLOBAL_VARIABLES_FIXTURE: &str =
+        include_str!("../src/mysql_bootstrap/global_variables_fixture.tsv");
+    let global_variable_rows = GLOBAL_VARIABLES_FIXTURE
+        .lines()
+        .filter(|line| !line.is_empty())
+        .count();
+    assert_eq!(records, 7 + global_variable_rows);
+    assert_eq!(index_entries, 8 + global_variable_rows);
 }
