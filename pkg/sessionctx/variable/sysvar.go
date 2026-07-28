@@ -347,7 +347,6 @@ var defaultSysVars = []*SysVar{
 		s.setDDLReorgPriority(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBDDLAutoPresplitInterval, Value: strconv.FormatFloat(vardef.DefTiDBDDLAutoPresplitInterval, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBSlowQueryFile, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.SlowQueryFile = val
 		return nil

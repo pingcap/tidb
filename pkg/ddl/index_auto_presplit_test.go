@@ -356,33 +356,6 @@ func TestPlanAutoPresplitIndexRegionsTopN(t *testing.T) {
 		require.Equal(t, "leading column stats version 1 is not Analyze V2", reason)
 	})
 
-	t.Run("effective interval respects split region limit", func(t *testing.T) {
-		for _, tc := range []struct {
-			requested string
-			expected  string
-			clamped   bool
-		}{
-			{requested: "0", expected: "0"},
-			{requested: "0.0001", expected: "1/1000", clamped: true},
-			{requested: "0.001", expected: "1/1000"},
-			{requested: "0.01", expected: "1/100"},
-			{requested: "1", expected: "1"},
-		} {
-			effective, clamped, err := effectiveAutoPresplitInterval(tc.requested, 1000)
-			require.NoError(t, err)
-			require.Equal(t, tc.expected, effective)
-			require.Equal(t, tc.clamped, clamped)
-		}
-
-		events := make([]autoPresplitEvent, 1000)
-		for i := range events {
-			events[i] = autoPresplitEvent{value: types.NewIntDatum(int64(i)), count: 1}
-		}
-		rows := sampleAutoPresplitEvents(
-			events, 1000, mustParseAutoPresplitInterval(t, "1/1000"))
-		require.Len(t, rows, 999)
-	})
-
 	t.Run("invalid internal interval is rejected", func(t *testing.T) {
 		for _, value := range []string{"", "-0.01", "1.01", "nan"} {
 			_, err := parseAutoPresplitInterval(value)
@@ -558,25 +531,19 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, capturedKeys)
 
-	t.Run("submission interval persists in job", func(t *testing.T) {
-		require.NoError(t, sctx.GetSessionVars().SetSystemVar(
-			vardef.TiDBDDLAutoPresplitInterval, "0.0001"))
+	t.Run("fixed interval persists and ignores old job values", func(t *testing.T) {
 		job := &model.Job{}
-		require.NoError(t, captureAutoPresplitInterval(sctx, job, 1000))
-		require.Equal(t, "1/1000", autoPresplitIntervalFromJob(job))
+		persistAutoPresplitInterval(job)
+		persisted, ok := job.GetSystemVars(autoPresplitIntervalJobKey)
+		require.True(t, ok)
+		require.Equal(t, fixedAutoPresplitInterval, persisted)
 
-		persistedJob := job.Clone()
-		require.NotNil(t, persistedJob)
-		require.NoError(t, sctx.GetSessionVars().SetSystemVar(
-			vardef.TiDBDDLAutoPresplitInterval, "0.5"))
-		require.Equal(t, "1/1000", autoPresplitIntervalFromJob(persistedJob))
-		require.Equal(t, "0.01", autoPresplitIntervalFromJob(&model.Job{}))
-
-		require.NoError(t, sctx.GetSessionVars().SetSystemVar(
-			vardef.TiDBDDLAutoPresplitInterval, "0"))
-		disabledJob := &model.Job{}
-		require.NoError(t, captureAutoPresplitInterval(sctx, disabledJob, 1000))
-		require.Equal(t, "0", autoPresplitIntervalFromJob(disabledJob))
+		for _, oldValue := range []string{"0", "0.0001", "0.5"} {
+			oldJob := &model.Job{SessionVars: map[string]string{
+				autoPresplitIntervalJobKey: oldValue,
+			}}
+			require.Equal(t, fixedAutoPresplitInterval, autoPresplitIntervalForJob(oldJob))
+		}
 	})
 }
 

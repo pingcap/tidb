@@ -1217,7 +1217,7 @@ SwitchIndexState:
 		}
 		err = preSplitIndexRegions(
 			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
-			job.ReorgMeta, args, w.ddlCtx.statsHandle, autoPresplitIntervalFromJob(job))
+			job.ReorgMeta, args, w.ddlCtx.statsHandle, autoPresplitIntervalForJob(job))
 		if err != nil {
 			if dbterror.ErrPausedDDLJob.Equal(err) {
 				return ver, nil

@@ -4857,10 +4857,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	if autoPresplit {
-		err = captureAutoPresplitInterval(ctx, job, config.GetGlobalConfig().SplitRegionMaxNum)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		persistAutoPresplitInterval(job)
 	}
 
 	args := &model.ModifyIndexArgs{
@@ -5177,10 +5174,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
 	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 	if autoPresplit {
-		err = captureAutoPresplitInterval(ctx, job, config.GetGlobalConfig().SplitRegionMaxNum)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		persistAutoPresplitInterval(job)
 	}
 
 	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)

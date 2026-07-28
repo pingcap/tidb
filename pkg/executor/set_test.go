@@ -1412,6 +1412,9 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustContainErrMsg("set @@query_cache_type=2", "[variable:1193]Unknown system variable 'query_cache_type'")
 	tk.MustContainErrMsg("select @@query_cache_type;", "[variable:1193]Unknown system variable 'query_cache_type'")
 
+	tk.MustContainErrMsg("set @@tidb_ddl_auto_presplit_interval=0.02", "[variable:1193]Unknown system variable 'tidb_ddl_auto_presplit_interval'")
+	tk.MustContainErrMsg("select @@tidb_ddl_auto_presplit_interval", "[variable:1193]Unknown system variable 'tidb_ddl_auto_presplit_interval'")
+
 	tk.MustExec("set @@global.sync_binlog=-1")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))
 

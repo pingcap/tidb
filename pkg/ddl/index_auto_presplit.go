@@ -21,7 +21,6 @@ import (
 	"math/big"
 	"math/bits"
 	"slices"
-	"strconv"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -34,6 +33,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 )
+
+const fixedAutoPresplitInterval = "0.02"
+
+// autoPresplitIntervalJobKey keeps the removed system variable name so older
+// DDL owners can read the fixed interval from jobs submitted during an upgrade.
+const autoPresplitIntervalJobKey = "tidb_ddl_auto_presplit_interval"
 
 type autoPresplitStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
@@ -67,60 +72,18 @@ func getAutoPresplitConfig() autoPresplitConfig {
 	return cfg
 }
 
-// captureAutoPresplitInterval captures the submission-time interval in the DDL job.
-// This SESSION variable is temporary benchmark plumbing. Remove it and use the chosen
-// production constant after benchmark results stabilize.
-func captureAutoPresplitInterval(
-	sctx sessionctx.Context,
-	job *model.Job,
-	maxSplitRegionNum uint64,
-) error {
-	value, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLAutoPresplitInterval) //nolint:forbidigo
-	if !ok {
-		value = strconv.FormatFloat(vardef.DefTiDBDDLAutoPresplitInterval, 'f', -1, 64)
-	}
-	effective, clamped, err := effectiveAutoPresplitInterval(value, maxSplitRegionNum)
-	if err != nil {
-		return err
-	}
+// persistAutoPresplitInterval stores the fixed interval for older DDL owners during
+// a rolling upgrade. The current version ignores this job value.
+func persistAutoPresplitInterval(job *model.Job) {
 	if job.SessionVars == nil {
 		job.SessionVars = make(map[string]string)
 	}
-	job.AddSystemVars(vardef.TiDBDDLAutoPresplitInterval, effective)
-	if clamped {
-		logutil.DDLLogger().Info("raise auto presplit interval to respect split region limit",
-			zap.String("requestedInterval", value),
-			zap.String("effectiveInterval", effective),
-			zap.Uint64("maxSplitRegionNum", maxSplitRegionNum))
-	}
-	return nil
+	job.AddSystemVars(autoPresplitIntervalJobKey, fixedAutoPresplitInterval)
 }
 
-func effectiveAutoPresplitInterval(value string, maxSplitRegionNum uint64) (string, bool, error) {
-	interval, err := parseAutoPresplitInterval(value)
-	if err != nil {
-		return "", false, err
-	}
-	if interval.Sign() == 0 {
-		return "0", false, nil
-	}
-
-	maxSplitRegionNum = max(maxSplitRegionNum, 1)
-	minimum := new(big.Rat).SetFrac(
-		big.NewInt(1),
-		new(big.Int).SetUint64(maxSplitRegionNum),
-	)
-	if interval.Cmp(minimum) < 0 {
-		return minimum.RatString(), true, nil
-	}
-	return interval.RatString(), false, nil
-}
-
-func autoPresplitIntervalFromJob(job *model.Job) string {
-	if value, ok := job.GetSystemVars(vardef.TiDBDDLAutoPresplitInterval); ok {
-		return value
-	}
-	return strconv.FormatFloat(vardef.DefTiDBDDLAutoPresplitInterval, 'f', -1, 64)
+// autoPresplitIntervalForJob intentionally ignores values persisted by older versions.
+func autoPresplitIntervalForJob(*model.Job) string {
+	return fixedAutoPresplitInterval
 }
 
 func parseAutoPresplitInterval(value string) (*big.Rat, error) {
