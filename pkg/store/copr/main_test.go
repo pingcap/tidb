@@ -28,7 +28,7 @@ type main struct {
 
 func (m *main) Run() int {
 	c := m.m.Run()
-	// In order for MVCCLevelDB to close, we need to wait one second
+	// Wait one second for MVCCLevelDB to close.
 	time.Sleep(time.Second)
 	return c
 }
