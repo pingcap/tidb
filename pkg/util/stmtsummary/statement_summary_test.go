@@ -1053,6 +1053,23 @@ func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
 	}
 }
 
+func TestTableNamesSkipEmptyTables(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	stmtExecInfo := generateAnyExecInfo()
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2"},
+	}
+	ssMap.AddStatement(stmtExecInfo)
+
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo.SchemaName, stmtExecInfo.Digest, "", stmtExecInfo.PlanDigest, stmtExecInfo.ResourceGroupName, "")
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	require.Equal(t, "db1.table1", value.(*stmtSummaryByDigest).tableNames)
+}
+
 // Test stmtSummaryByDigest.ToDatum.
 func TestToDatum(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
