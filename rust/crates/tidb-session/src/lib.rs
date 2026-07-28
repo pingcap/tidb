@@ -2790,6 +2790,109 @@ mod tests {
         }
     }
 
+    /// `CAST(expr AS type)` and its `CONVERT`/`BINARY` spellings through the
+    /// chunk executor, checked against captured TiDB output.
+    ///
+    /// The target type IS the operation in Go (it picks a
+    /// `builtinCast*As*Sig` from it), so the rewriter puts the target in the
+    /// function's result type and evaluation reads it back from there.
+    ///
+    /// STILL REFUSED, for the reason `cast::eval_cast` already records:
+    /// `TIME` and `JSON` targets have no value domain in this crate, and the
+    /// `ARRAY` modifier is a JSON multi-valued index.
+    #[test]
+    fn cast_and_convert() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(20), c BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,'12abc',10),(2,'zz',20)")
+            .unwrap();
+
+        // Captured: a number to CHAR, and the width truncating it.
+        assert_eq!(
+            row_text(session.run("SELECT CAST(c AS CHAR) FROM t")),
+            [["10"], ["20"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CAST(c AS CHAR(1)) FROM t")),
+            [["1"], ["2"]]
+        );
+
+        // Captured: a string to a number takes the leading digits, or zero.
+        assert_eq!(
+            row_text(session.run("SELECT CAST(b AS SIGNED) FROM t")),
+            [["12"], ["0"]]
+        );
+        // Captured: the rounding asymmetry -- a string keeps only the integer
+        // prefix while a decimal or a float rounds.
+        assert_eq!(
+            row_text(session.run("SELECT CAST('3.7' AS SIGNED), CAST(3.7 AS SIGNED)")),
+            [["3", "4"]]
+        );
+        // Captured: UNSIGNED wraps a negative rather than clamping it.
+        assert_eq!(
+            row_text(session.run("SELECT CAST(-1 AS UNSIGNED)")),
+            [["18446744073709551615"]]
+        );
+
+        // Captured: DECIMAL rounds to the written scale, and pads to it.
+        assert_eq!(
+            row_text(session.run("SELECT CAST('12.345' AS DECIMAL(6,2))")),
+            [["12.35"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CAST(1 AS DECIMAL(6,2))")),
+            [["1.00"]]
+        );
+
+        // Captured: the temporal targets.
+        assert_eq!(
+            row_text(session.run("SELECT CAST('2020-01-02' AS DATE)")),
+            [["2020-01-02"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CAST('2020-1-2' AS DATE)")),
+            [["2020-01-02"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CAST('2020-01-02 03:04:05' AS DATETIME)")),
+            [["2020-01-02 03:04:05"]]
+        );
+
+        // Captured: BINARY(n) pads with NUL rather than truncating short.
+        assert_eq!(
+            row_text(session.run("SELECT CAST(b AS BINARY(3)) FROM t")),
+            [["12a"], ["zz\u{0}"]]
+        );
+
+        // Captured: CONVERT and the BINARY operator are the same node.
+        assert_eq!(
+            row_text(session.run("SELECT CONVERT(c, CHAR), CONVERT('7', SIGNED) FROM t")),
+            [["10", "7"], ["20", "7"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT BINARY b FROM t")),
+            [["12abc"], ["zz"]]
+        );
+
+        // Captured: NULL casts to NULL, and a cast result is an ordinary
+        // operand afterwards.
+        assert_eq!(
+            row_text(session.run("SELECT CAST(NULL AS SIGNED) IS NULL")),
+            [["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT CAST(c AS DOUBLE)/2 FROM t")),
+            [["5"], ["10"]]
+        );
+
+        // The refusals are refusals, not wrong answers.
+        assert!(session.run("SELECT CAST(c AS TIME) FROM t").is_err());
+        assert!(session.run("SELECT CAST(c AS JSON) FROM t").is_err());
+    }
+
     /// LIKE, BETWEEN, CASE and the ordinary builtins through the chunk
     /// executor, checked against captured TiDB output.
     ///
@@ -2912,8 +3015,9 @@ mod tests {
         fresh.run("DROP DATABASE test").unwrap();
         assert_eq!(row_text(fresh.run("SELECT DATABASE()")), [["NULL"]]);
 
-        // The refusals above are refusals, not wrong answers.
-        for sql in ["SELECT CURRENT_USER()", "SELECT CAST(c AS CHAR) FROM t"] {
+        // The refusals above are refusals, not wrong answers. (CAST used to
+        // be this example; it is built now -- see `cast_and_convert`.)
+        for sql in ["SELECT CURRENT_USER()", "SELECT GROUP_CONCAT(b) FROM t"] {
             assert!(session.run(sql).is_err(), "{sql} should still be refused");
         }
     }

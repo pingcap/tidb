@@ -296,6 +296,21 @@ impl ScalarFunction {
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
+        // Go picks one cast signature per target type; the rewriter records
+        // that choice in the name, and the width/scale arguments the CHAR,
+        // BINARY and DECIMAL casts need come from the result type.
+        if let Some(target) = name.strip_prefix("cast_") {
+            if self.args.len() == 1 {
+                let value = self.args[0].eval(ctx, row)?;
+                if value.is_null() {
+                    return Ok(Datum::Null);
+                }
+                let ret_type = self
+                    .get_static_type()
+                    .ok_or(EvalError::Unsupported("a cast with no result type"))?;
+                return crate::cast::eval_cast(&cast_type_of(target, ret_type)?, value);
+            }
+        }
         // Go `builtinDatabaseSig`/`builtinVersionSig` read session state
         // rather than arguments: the current database (NULL when none is
         // selected) and the same string `@@version` reports.
@@ -348,6 +363,32 @@ impl ScalarFunction {
             "this scalar function is not yet ported",
         ))
     }
+}
+
+/// The cast a `cast_*` function name describes, with the width and scale its
+/// result type carries. Go stores the same fact as the chosen
+/// `builtinCast*As*Sig`.
+fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType, EvalError> {
+    use tidb_ast::CastType;
+    let len = || u32::try_from(ret_type.flen()).ok();
+    Ok(match target {
+        "signed" => CastType::Signed,
+        "unsigned" => CastType::Unsigned,
+        "char" => CastType::Char {
+            len: len(),
+            charset: None,
+        },
+        "binary" => CastType::Binary { len: len() },
+        "decimal" => CastType::Decimal {
+            flen: u32::try_from(ret_type.flen()).unwrap_or(0),
+            scale: u32::try_from(ret_type.decimal()).unwrap_or(0),
+        },
+        "date" => CastType::Date,
+        "datetime" => CastType::DateTime { fsp: None },
+        "year" => CastType::Year,
+        "double" => CastType::Double,
+        _ => return Err(EvalError::Unsupported("this cast target is not ported")),
+    })
 }
 
 #[cfg(test)]

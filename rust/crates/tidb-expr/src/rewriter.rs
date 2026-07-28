@@ -168,6 +168,76 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     })
 }
 
+/// The function name and result type a `CAST(expr AS type)` becomes.
+///
+/// Go picks one `builtinCast*As*Sig` per target type; the name here carries
+/// that choice, so evaluation never has to re-derive the target from a result
+/// type that may not describe it (the temporal targets produce a string
+/// value in this crate -- see below -- so their type genuinely cannot).
+///
+/// `TIME` and `JSON` targets, and the `ARRAY` modifier, are refused here for
+/// the same reason `cast::eval_cast` refuses them -- there is no value domain
+/// for them in this crate yet.
+fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
+    use tidb_ast::CastType;
+    let name = match cast_type {
+        CastType::Signed => "cast_signed",
+        CastType::Unsigned => "cast_unsigned",
+        CastType::Char { .. } => "cast_char",
+        CastType::Binary { .. } => "cast_binary",
+        CastType::Decimal { .. } => "cast_decimal",
+        CastType::Date => "cast_date",
+        CastType::DateTime { .. } => "cast_datetime",
+        CastType::Year => "cast_year",
+        CastType::Double | CastType::Float => "cast_double",
+        CastType::Time { .. } | CastType::Json => return None,
+    };
+    let ft = match cast_type {
+        CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
+        CastType::Unsigned => {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft
+        }
+        CastType::Char { len, .. } => {
+            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            if let Some(len) = len {
+                ft.set_flen(i64::from(*len));
+            }
+            ft
+        }
+        CastType::Binary { len } => {
+            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            ft.set_charset_name("binary");
+            ft.set_collation_name("binary");
+            ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            if let Some(len) = len {
+                ft.set_flen(i64::from(*len));
+            }
+            ft
+        }
+        CastType::Decimal { flen, scale } => {
+            let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+            ft.set_flen(i64::from(*flen));
+            ft.set_decimal(i64::from(*scale));
+            ft
+        }
+        // DOCUMENTED DIVERGENCE: `cast::eval_cast` produces a FORMATTED
+        // STRING for a temporal target (see its own doc -- this crate has no
+        // `Time` value in the cast path), so the chunk column that holds the
+        // result has to be a string column. The VALUE matches TiDB exactly;
+        // the reported column TYPE is `VarString` where TiDB says `DATE` or
+        // `DATETIME`. Typing it as Go does would put a string into a
+        // fixed-width temporal cell, which panics rather than mistyping.
+        CastType::Date | CastType::DateTime { .. } => FieldType::new(FieldTypeCode::VarString),
+        // Likewise, the year cast yields an integer value here.
+        CastType::Year => FieldType::new(FieldTypeCode::LongLong),
+        CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
+        CastType::Time { .. } | CastType::Json => return None,
+    };
+    Some((name, ft))
+}
+
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
     Expression::Constant(Constant::new(datum, FieldType::new(code)))
 }
@@ -496,6 +566,25 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 CiString::new(&lowered),
                 ret_type,
                 rewritten,
+            )))
+        }
+        // Go builds one `builtinCast*As*Sig` per target type, so the cast
+        // node becomes a one-argument function whose RESULT type carries the
+        // target -- `CONVERT(x, t)` and `BINARY x` are the same node.
+        Expr::Cast(cast) => {
+            if cast.array {
+                return Err(EvalError::Unsupported(
+                    "a CAST with the ARRAY modifier is not supported yet",
+                ));
+            }
+            let (name, ret_type) = cast_target(&cast.cast_type).ok_or(EvalError::Unsupported(
+                "this CAST target type has no value domain yet",
+            ))?;
+            let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type,
+                vec![arg],
             )))
         }
         _ => Err(EvalError::Unsupported(
