@@ -2860,6 +2860,79 @@ mod tests {
         }
     }
 
+    /// `ORDER BY` resolved against the SELECT list, checked against captured
+    /// TiDB output.
+    ///
+    /// A positional `ORDER BY 1` used to rewrite as a constant here, which
+    /// silently produced UNSORTED rows -- the worst kind of divergence, and
+    /// the reason this unit was picked.
+    #[test]
+    fn order_by_resolves_against_the_select_list() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,30),(2,20),(3,10)")
+            .unwrap();
+
+        // Captured: an alias names a projected expression.
+        assert_eq!(
+            row_text(session.run("SELECT a, a*2 AS twice FROM t ORDER BY twice DESC")),
+            [["3", "6"], ["2", "4"], ["1", "2"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a AS z FROM t ORDER BY z DESC")),
+            [["3"], ["2"], ["1"]]
+        );
+        // Captured: an expression BUILT on an alias resolves too.
+        assert_eq!(
+            row_text(session.run("SELECT a*2 AS twice FROM t ORDER BY twice+0 DESC")),
+            [["6"], ["4"], ["2"]]
+        );
+        // Captured: a bare integer is a 1-based output position.
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t ORDER BY 1 DESC")),
+            [["3"], ["2"], ["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, b FROM t ORDER BY 2")),
+            [["3", "10"], ["2", "20"], ["1", "30"]]
+        );
+        // Captured: an alias SHADOWS a real column of the same name.
+        assert_eq!(
+            row_text(session.run("SELECT b AS a FROM t ORDER BY a")),
+            [["10"], ["20"], ["30"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a+0 AS a FROM t ORDER BY a DESC")),
+            [["3"], ["2"], ["1"]]
+        );
+        // Captured: a source column that is not projected still sorts.
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t ORDER BY b DESC")),
+            [["1"], ["2"], ["3"]]
+        );
+
+        // Captured: an unknown name and an out-of-range position are both
+        // 1054 naming the order clause.
+        for sql in [
+            "SELECT a FROM t ORDER BY nosuch",
+            "SELECT a FROM t ORDER BY 5",
+        ] {
+            match session.run(sql) {
+                Err(error) => {
+                    let reported = error.to_mysql_error();
+                    assert_eq!(reported.code, 1054, "{sql}");
+                    assert!(
+                        reported.message.ends_with("in 'order clause'"),
+                        "{sql}: {}",
+                        reported.message
+                    );
+                }
+                Ok(other) => panic!("expected 1054 from {sql}, got {other:?}"),
+            }
+        }
+    }
+
     /// The aggregates over each numeric domain, checked against captured
     /// TiDB output.
     ///

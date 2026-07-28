@@ -467,6 +467,13 @@ pub enum DriverError {
         /// The value that does not fit.
         value: String,
     },
+    /// Go `ErrUnknownColumn` (1054) naming the clause it was written in.
+    UnknownColumnInClause {
+        /// The name as written.
+        column: String,
+        /// The clause Go names, for example `order clause`.
+        clause: String,
+    },
     /// Go `types.ErrInvalidDefault` (1067).
     InvalidDefault(String),
     /// Go `ErrDataTooLong` (1406).
@@ -1263,16 +1270,17 @@ fn run_select_stmt(
         ));
     }
 
-    // ORDER BY: a sort below the projection, with by-items resolved against the
-    // SOURCE schema (Go plans Sort against the child schema, so ordering by a
-    // column that is not projected still works). Ordering by a select alias or
-    // output position waits on output-schema resolution (a positional
-    // ORDER BY <n> currently rewrites as a constant, which is order-neutral).
+    // ORDER BY: a sort below the projection, with by-items resolved against
+    // the SELECT list first and the SOURCE schema second -- Go's own
+    // resolution order, which is why ordering by a column that is not
+    // projected still works while an alias shadows one that is.
     if !select.order_by.is_empty() {
         let mut by_items = Vec::with_capacity(select.order_by.len());
         for item in &select.order_by {
-            let expr = rewrite_expr_resolved(&item.expr, &resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            let resolved = substitute_output_aliases(&item.expr, select.fields.fields(), true)?;
+            let expr = rewrite_expr_resolved(&resolved, &resolver).map_err(|e| {
+                order_by_column_error(&resolved).unwrap_or(DriverError::Exec(ExecError::Eval(e)))
+            })?;
             by_items.push(SortByItem {
                 expr,
                 desc: item.desc,
@@ -1653,6 +1661,105 @@ fn datum_error_text(value: &Datum) -> String {
         Datum::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
         Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
         other => format!("{other:?}"),
+    }
+}
+
+/// Go `havingWindowAndOrderbyExprResolver`: an `ORDER BY` item is resolved
+/// against the SELECT list first, so a select alias and an output position
+/// both name a projected expression.
+///
+/// Go rewrites the reference into the projected expression itself, which is
+/// what this does -- the sort then runs over the source rows with no plan
+/// reshuffle, and an expression BUILT on an alias (`ORDER BY twice + 0`)
+/// falls out for free.
+///
+/// Captured from TiDB: an alias SHADOWS a real column of the same name
+/// (`SELECT b AS a FROM t ORDER BY a` sorts by `b`); a bare integer is a
+/// 1-based output position, and only at the top level (`ORDER BY twice + 0`
+/// is arithmetic, not position 1); an out-of-range position and an unknown
+/// name are both `ErrUnknownColumn` naming the `order clause`.
+fn substitute_output_aliases(
+    expr: &tidb_ast::Expr,
+    fields: &[SelectField],
+    top_level: bool,
+) -> Result<tidb_ast::Expr, DriverError> {
+    use tidb_ast::Expr;
+    // A bare integer at the top of an ORDER BY item is an output position.
+    if top_level {
+        if let Expr::Int(text) = expr {
+            let position: usize = text.parse().map_err(|_| unknown_order_column(text))?;
+            let projected = fields
+                .iter()
+                .filter_map(|field| match field {
+                    SelectField::Expr { expr, .. } => Some(expr),
+                    SelectField::Wildcard(_) => None,
+                })
+                .nth(position.wrapping_sub(1))
+                .ok_or_else(|| unknown_order_column(text))?;
+            if position == 0 {
+                return Err(unknown_order_column(text));
+            }
+            return Ok(projected.clone());
+        }
+    }
+    Ok(match expr {
+        // A one-segment name may be a select alias; a qualified one
+        // (`t.a`) always addresses the source.
+        Expr::Column(path) if path.len() == 1 => {
+            let alias = fields.iter().find_map(|field| match field {
+                SelectField::Expr {
+                    expr,
+                    alias: Some(alias),
+                } if alias.eq_ignore_ascii_case(&path[0]) => Some(expr),
+                _ => None,
+            });
+            match alias {
+                Some(expr) => expr.clone(),
+                None => expr.clone(),
+            }
+        }
+        Expr::Paren(inner) => {
+            Expr::Paren(Box::new(substitute_output_aliases(inner, fields, false)?))
+        }
+        Expr::Unary(op, inner) => Expr::Unary(
+            *op,
+            Box::new(substitute_output_aliases(inner, fields, false)?),
+        ),
+        Expr::Binary(op, left, right) => Expr::Binary(
+            *op,
+            Box::new(substitute_output_aliases(left, fields, false)?),
+            Box::new(substitute_output_aliases(right, fields, false)?),
+        ),
+        Expr::Func {
+            name,
+            args,
+            origin_position,
+        } => Expr::Func {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| substitute_output_aliases(arg, fields, false))
+                .collect::<Result<_, _>>()?,
+            origin_position: *origin_position,
+        },
+        other => other.clone(),
+    })
+}
+
+/// The `ErrUnknownColumn` an unresolvable `ORDER BY` item reports, when the
+/// item is a plain name -- anything else keeps the rewriter's own error.
+fn order_by_column_error(expr: &tidb_ast::Expr) -> Option<DriverError> {
+    match expr {
+        tidb_ast::Expr::Column(path) => Some(unknown_order_column(&path.join("."))),
+        _ => None,
+    }
+}
+
+/// Go `ErrUnknownColumn` naming the `order clause`.
+fn unknown_order_column(name: &str) -> DriverError {
+    DriverError::UnknownColumnInClause {
+        column: name.to_owned(),
+        clause: "order clause".to_owned(),
     }
 }
 
@@ -6896,6 +7003,12 @@ impl DriverError {
             ER_SUBQUERY_NO_1_ROW,
             *b"21000",
             "Subquery returns more than 1 row".to_owned(),
+        ),
+        // Go: "Unknown column '%-.192s' in '%-.192s'".
+        DriverError::UnknownColumnInClause { column, clause } => MysqlError::new(
+            1054,
+            *b"42S22",
+            format!("Unknown column '{column}' in '{clause}'"),
         ),
         // Go: "Invalid default value for '%-.192s'".
         DriverError::InvalidDefault(column) => MysqlError::new(
