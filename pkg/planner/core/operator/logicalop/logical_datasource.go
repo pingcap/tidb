@@ -149,6 +149,17 @@ type DataSource struct {
 	// FtsPushDown stores extracted FTS query metadata, when FTS_MATCH_WORD() can
 	// be planned as a TiFlash full-text search scan.
 	FtsPushDown *FTSPushDown
+
+	// ApplyProbeDepth is the number of LogicalApply probe (inner-child) subtrees
+	// enclosing this DataSource in the final logical plan. It is computed by a
+	// single tree walk right before physical optimization and is 0 for any
+	// DataSource not under a correlated Apply. When this DataSource is built as
+	// an index-join probe, the depth mutes the find-first-row optimism ratio
+	// (tidb_opt_ordering_index_selectivity_ratio) so that the optimism does not
+	// compound multiplicatively across nested correlated probes. As a static
+	// property of the node's position in the logical tree, it is safe under
+	// findBestTask memoization without extending the physical property.
+	ApplyProbeDepth int
 }
 
 // Init initializes DataSource.

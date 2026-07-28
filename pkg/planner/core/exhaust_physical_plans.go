@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -820,6 +821,29 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 	innerTask.IndexJoinInfo = info
 }
 
+// adjustProbeRowCountByApplyDepth inflates an index-join probe's per-probe output
+// estimate to mute find-first-row optimism according to how deeply the probe sits
+// inside correlated Apply nesting. The surplus (countAfterAccess - rowCount) is the
+// extra per-probe scan range implied by residual filters outside the join-key
+// access; assuming the qualifying rows are located within a tiny fraction of that
+// range is an optimism that compounds multiplicatively across nested probes, so the
+// charged fraction backs off toward the full surplus as the nesting deepens
+// (r at the outermost probe, sqrt(r) one Apply down, and so on). A no-op when the
+// ratio is disabled or there is no filtering surplus.
+func adjustProbeRowCountByApplyDepth(ds *logicalop.DataSource, rowCount, countAfterAccess float64) float64 {
+	if countAfterAccess <= rowCount {
+		return rowCount
+	}
+	sessVars := ds.SCtx().GetSessionVars()
+	r := sessVars.OptOrderingIdxSelRatio
+	sessVars.RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	if r <= 0 {
+		return rowCount
+	}
+	rEff := cardinality.OrderingRatioForProbeLevel(r, ds.ApplyProbeDepth+1)
+	return rowCount + (countAfterAccess-rowCount)*rEff
+}
+
 // constructDS2TableScanTask constructs the inner table scan task for index join.
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
@@ -1197,6 +1221,7 @@ func constructDS2IndexScanTask(
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
+	rowCount = adjustProbeRowCountByApplyDepth(ds, rowCount, tmpPath.CountAfterAccess)
 	finalStats := ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount)
 	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskIndexConds...)
 	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskTblConds...)
