@@ -66,7 +66,7 @@ select * from t_explain_routine where a = id;
 end//
 explain analyze routine procedure p_explain_routine_nested_parent(1);
 ROUTINE_SCHEMA	ROUTINE_NAME	ROUTINE_TYPE	STMT_ORDINAL	BLOCK_PATH	STMT_KIND	SQL_TEXT	EXPLAINABLE	NOTE	RUNTIME_SQL_TEXT	EXEC_COUNT	TOTAL_TIME	AVG_TIME	ROWS_PRODUCED	PLAN_VARIANTS
-db_explain_routine	p_explain_routine_nested_parent	PROCEDURE	1	root	call	call p_explain_routine_nested_helper(id)	YES			1	<total_time>	<avg_time>	0	0
+db_explain_routine	p_explain_routine_nested_parent	PROCEDURE	1	root	call	call p_explain_routine_nested_helper(id)	YES			1	<total_time>	<avg_time>	0	1
 db_explain_routine	p_explain_routine_nested_parent	PROCEDURE	2	root	select	select * from t_explain_routine where a = id	YES			1	<total_time>	<avg_time>	1	1
 set @seen = 0;
 drop procedure if exists p_explain_routine_invalid_target;

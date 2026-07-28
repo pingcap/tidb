@@ -945,11 +945,24 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			var possiblePlan base.LogicalPlan
 
 			inTrigger := b.ctx.GetSessionVars().StmtCtx.TriggerCtx.InTrigger
+			lhsProcedureVar := false
+			if vars.CanSPVariable {
+				_, _, notFind := b.ctx.GetSessionVars().GetProcedureVariable(strings.ToLower(vars.Name))
+				lhsProcedureVar = !notFind
+			}
+			scalarSubQLenBeforeFirstRewrite := len(b.ctx.GetSessionVars().MapScalarSubQ)
 			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, err
 			}
-			if !procedureVar && !inTrigger {
+			if !procedureVar && !inTrigger && !lhsProcedureVar {
+				// The first rewrite above is only used to derive/evaluate a possible plan for complex
+				// SET expressions. The second rewrite below builds the expression kept by the final
+				// SET plan. Discard scalar-subquery bookkeeping produced by the transient first
+				// rewrite; otherwise EXPLAIN may render duplicated scalar subquery plans.
+				if len(b.ctx.GetSessionVars().MapScalarSubQ) > scalarSubQLenBeforeFirstRewrite {
+					b.ctx.GetSessionVars().MapScalarSubQ = b.ctx.GetSessionVars().MapScalarSubQ[:scalarSubQLenBeforeFirstRewrite]
+				}
 				mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				var err error
 				assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)

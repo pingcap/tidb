@@ -58,6 +58,8 @@ type explainRoutineSiteContextKey struct{}
 
 type explainRoutineDrainRowsContextKey struct{}
 
+type explainRoutineExecutionContextKey struct{}
+
 // ExplainRoutineRuntimeSite identifies one observable execution site during
 // EXPLAIN ANALYZE ROUTINE execution.
 type ExplainRoutineRuntimeSite struct {
@@ -505,6 +507,20 @@ func WithExplainRoutineDrainRows(ctx context.Context) context.Context {
 func ExplainRoutineDrainRowsFromContext(ctx context.Context) bool {
 	drainRows, _ := ctx.Value(explainRoutineDrainRowsContextKey{}).(bool)
 	return drainRows
+}
+
+// WithExplainRoutineExecution marks a context as belonging to an active
+// EXPLAIN ANALYZE ROUTINE execution, so nested routine calls can inherit the
+// same execution mode without confusing ordinary procedure runtime-site tags.
+func WithExplainRoutineExecution(ctx context.Context) context.Context {
+	return context.WithValue(ctx, explainRoutineExecutionContextKey{}, true)
+}
+
+// ExplainRoutineExecutionFromContext reports whether the current context is
+// executing inside EXPLAIN ANALYZE ROUTINE.
+func ExplainRoutineExecutionFromContext(ctx context.Context) bool {
+	active, _ := ctx.Value(explainRoutineExecutionContextKey{}).(bool)
+	return active
 }
 
 func (b *PlanBuilder) fillExplainRoutineShapeOnlyArgs(ctx context.Context, callStmt *ast.CallStmt) error {
