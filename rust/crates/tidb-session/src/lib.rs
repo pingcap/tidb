@@ -461,6 +461,62 @@ impl Session {
                     let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                     Ok(Some(string_column_output("Database", names)))
                 }
+                // Go `ShowExec` with `ShowVariables`: one row per variable,
+                // as `Variable_name` and `Value`, filtered by LIKE.
+                //
+                // DEFERRED (documented, and refused rather than ignored): the
+                // `WHERE` filter form, which Go plans as a selection over the
+                // same virtual rows; and the GLOBAL/SESSION distinction,
+                // which reads the same value here because this tier keeps no
+                // persisted global tier (`SET GLOBAL` already documents it).
+                tidb_ast::AdminStmt::ShowVariables(show) => {
+                    if show.where_clause.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "SHOW VARIABLES ... WHERE is not supported yet",
+                        ));
+                    }
+                    let pattern = match &show.like {
+                        Some(tidb_ast::Expr::String(text)) => Some(text.clone()),
+                        Some(_) => {
+                            return Err(DriverError::Unsupported(
+                                "SHOW VARIABLES LIKE takes a string pattern",
+                            ))
+                        }
+                        None => None,
+                    };
+                    let text =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    let mut rows = Vec::new();
+                    for definition in sysvar::SYS_VARS {
+                        let matches = match &pattern {
+                            Some(pattern) => tidb_executor::like_match_with_collation(
+                                definition.name,
+                                pattern,
+                                None,
+                                tidb_datatype::Collation::Utf8Mb4Bin,
+                            ),
+                            None => true,
+                        };
+                        if !matches {
+                            continue;
+                        }
+                        let value = self
+                            .vars
+                            .get_system(definition.name)
+                            .unwrap_or_else(|_| definition.value.to_owned());
+                        rows.push(vec![
+                            Datum::Bytes(definition.name.as_bytes().to_vec()),
+                            Datum::Bytes(value.into_bytes()),
+                        ]);
+                    }
+                    Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            ("Variable_name".to_owned(), text()),
+                            ("Value".to_owned(), text()),
+                        ],
+                        rows,
+                    }))
+                }
                 // Go `ShowExec` with `ShowWarnings`/`ShowErrors`: the rows are
                 // the statement-context warnings, whose `Level` column is
                 // `Warning` or `Error`.
@@ -1096,6 +1152,17 @@ impl Session {
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_statement(sql)? {
             return Ok(output);
+        }
+        // BEGIN / COMMIT / ROLLBACK and SET both have their own entry points
+        // for the wire front, which answers them with an OK packet carrying
+        // a status flag. Routing them here too makes `run` the single door
+        // every statement can go through, which is what a client expects of
+        // one connection.
+        if self.control_transaction(sql)?.is_some() {
+            return Ok(StmtOutput::Affected(0));
+        }
+        if self.apply_set(sql)?.is_some() {
+            return Ok(StmtOutput::Affected(0));
         }
         let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         // `@@x` / `@x` read the session's own state, so they are bound before
@@ -2858,6 +2925,75 @@ mod tests {
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
         }
+    }
+
+    /// One connection sends everything through one door: the transaction
+    /// controls, `SET`, and `SHOW VARIABLES` all answer from `run` now.
+    ///
+    /// Checked against captured TiDB output: the columns are
+    /// `Variable_name` and `Value`, the LIKE pattern filters, and a SET is
+    /// visible to the next SHOW.
+    #[test]
+    fn run_routes_session_statements() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT)").unwrap();
+
+        // The transaction controls answer through `run`.
+        session.run("BEGIN").unwrap();
+        session.run("INSERT INTO t VALUES (1)").unwrap();
+        session.run("COMMIT").unwrap();
+        assert_eq!(row_text(session.run("SELECT a FROM t")), [["1"]]);
+        session.run("BEGIN").unwrap();
+        session.run("INSERT INTO t VALUES (2)").unwrap();
+        session.run("ROLLBACK").unwrap();
+        assert_eq!(row_text(session.run("SELECT a FROM t")), [["1"]]);
+
+        // So does SET.
+        session.run("SET autocommit = 0").unwrap();
+
+        // Captured: SHOW VARIABLES reports Variable_name/Value, filtered.
+        match session
+            .run_with_columns("SHOW VARIABLES LIKE 'autocommit'")
+            .unwrap()
+        {
+            StmtOutput::Rows { columns, rows } => {
+                assert_eq!(
+                    columns
+                        .iter()
+                        .map(|(name, _)| name.as_str())
+                        .collect::<Vec<_>>(),
+                    ["Variable_name", "Value"]
+                );
+                assert_eq!(rows.len(), 1);
+                assert_eq!(datum_text(&rows[0][0]).unwrap(), "autocommit");
+            }
+            other => panic!("expected rows, got {other:?}"),
+        }
+        // Captured: sql_mode reports the session's own value.
+        assert_eq!(
+            row_text(session.run("SHOW VARIABLES LIKE 'sql_mode'")),
+            [[
+                "sql_mode".to_owned(),
+                session.vars().get_system("sql_mode").unwrap()
+            ]]
+        );
+        // Captured: a wildcard pattern matches a prefix family.
+        let matched = row_text(session.run("SHOW VARIABLES LIKE 'max_allowed%'"));
+        assert!(
+            matched.iter().any(|row| row[0] == "max_allowed_packet"),
+            "{matched:?}"
+        );
+        // A SET is visible to the next SHOW.
+        session.run("SET autocommit = 1").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW VARIABLES LIKE 'autocommit'"))[0][1],
+            session.vars().get_system("autocommit").unwrap()
+        );
+
+        // The WHERE form is refused rather than answered unfiltered.
+        assert!(session
+            .run("SHOW VARIABLES WHERE variable_name = 'autocommit'")
+            .is_err());
     }
 
     /// The three conflict policies -- `REPLACE`, `INSERT IGNORE` and

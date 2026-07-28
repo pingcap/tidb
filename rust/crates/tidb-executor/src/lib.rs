@@ -67,4 +67,4 @@ pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::StmtContext;
 pub use table_dual::TableDualExec;
-pub use tidb_expr::{EvalError, SessionTimeZone};
+pub use tidb_expr::{like_match_with_collation, EvalError, SessionTimeZone};
