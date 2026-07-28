@@ -1400,16 +1400,13 @@ pub fn run_insert_reporting(
         _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
     };
 
-    if insert.replace
-        || insert.ignore
-        || !insert.on_duplicate.is_empty()
-        || insert.set_syntax
+    if insert.set_syntax
         || !insert.partitions.is_empty()
         || !insert.returning.fields().is_empty()
+        || (insert.replace && !insert.on_duplicate.is_empty())
     {
         return Err(DriverError::Unsupported(
-            "REPLACE, INSERT IGNORE, ON DUPLICATE KEY UPDATE, SET syntax, \
-             partitions and RETURNING are not supported yet",
+            "the SET insert syntax, partitions and RETURNING are not supported yet",
         ));
     }
 
@@ -1587,13 +1584,56 @@ pub fn run_insert_reporting(
                     }
                 }
             }
+            // Go resolves a conflict per row, before the row is written:
+            // REPLACE deletes every row it collides with, ON DUPLICATE KEY
+            // UPDATE applies its assignments to the first one, and IGNORE
+            // skips the row with the duplicate reported as a warning.
+            inserted = 0;
             for row in &new_rows {
+                let conflicts = kv
+                    .conflicting_handles(row)
+                    .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
+                if !conflicts.is_empty() {
+                    if insert.replace {
+                        // Captured: the affected count is one per deleted row
+                        // plus one for the inserted row.
+                        for handle in &conflicts {
+                            kv.delete_row(handle).map_err(|e| {
+                                DriverError::Parse(format!("row delete failed: {e:?}"))
+                            })?;
+                            inserted += 1;
+                        }
+                    } else if !insert.on_duplicate.is_empty() {
+                        inserted += apply_on_duplicate(
+                            kv,
+                            &conflicts[0],
+                            row,
+                            &insert.on_duplicate,
+                            &column_list,
+                            ctx,
+                        )?;
+                        continue;
+                    } else if insert.ignore {
+                        let reported = kv.duplicate_entry_error(row).map_err(|e| {
+                            DriverError::Parse(format!("conflict lookup failed: {e:?}"))
+                        })?;
+                        if let crate::kv_table::KvTableError::DuplicateEntry { value, key } =
+                            reported
+                        {
+                            let warning =
+                                DriverError::DuplicateEntry { value, key }.to_mysql_error();
+                            ctx.append_warning_parts(warning.code, &warning.message);
+                        }
+                        continue;
+                    }
+                }
                 kv.insert_row(row).map_err(|e| match e {
                     crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                         DriverError::DuplicateEntry { value, key }
                     }
                     other => DriverError::Parse(format!("row encode failed: {other:?}")),
                 })?;
+                inserted += 1;
             }
         }
     }
@@ -1791,6 +1831,113 @@ fn dml_row_limit(limit: &Option<tidb_ast::Limit>) -> Result<Option<u64>, DriverE
         ));
     }
     Ok(Some(eval_limit_bound(&limit.count)?))
+}
+
+/// Go `ON DUPLICATE KEY UPDATE`: applies the assignments to the row already
+/// stored, and reports what the statement counts as affected.
+///
+/// Captured from TiDB: the assignments read the EXISTING row (`c = c + 1` on
+/// a stored 10 gives 11, not the rejected value plus one), `VALUES(col)`
+/// reads the row that would have been inserted, an update that changes
+/// nothing counts 0, and one that changes something counts 2.
+fn apply_on_duplicate(
+    table: &mut crate::KvTable,
+    handle: &crate::kv_table::TableHandle,
+    candidate: &[Datum],
+    assignments: &[tidb_ast::Assignment],
+    column_list: &[(String, FieldType)],
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
+    let Some(existing) = table
+        .get_row_by_handle(handle)
+        .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
+    else {
+        return Ok(0);
+    };
+    let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
+    let mut updated = existing.clone();
+    for assignment in assignments {
+        let name = assignment
+            .col
+            .last()
+            .ok_or(DriverError::Unsupported("empty assignment column"))?;
+        let offset = column_list
+            .iter()
+            .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+            .ok_or_else(|| DriverError::UnknownColumnInClause {
+                column: name.clone(),
+                clause: "field list".to_owned(),
+            })?;
+        // `VALUES(col)` is the value the insert would have written, which Go
+        // resolves before evaluating the assignment.
+        let bound = substitute_values_references(&assignment.value, candidate, column_list)?;
+        let resolver = TableResolver {
+            table_name: "",
+            columns: column_list,
+        };
+        let expr = rewrite_expr_resolved(&bound, &resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        let chunk = row_chunk(&updated, &field_types)?;
+        let value = expr
+            .eval(ctx, chunk.get_row(0))
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        updated[offset] =
+            cast_value_for_column(value, &field_types[offset], &column_list[offset].0, 0, ctx)?;
+    }
+    if updated == existing {
+        // Captured: an update that changes nothing affects no rows.
+        return Ok(0);
+    }
+    table.update_row(handle, &updated).map_err(|e| match e {
+        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
+            DriverError::DuplicateEntry { value, key }
+        }
+        other => DriverError::Parse(format!("row encode failed: {other:?}")),
+    })?;
+    Ok(2)
+}
+
+/// Replaces every `VALUES(col)` in an `ON DUPLICATE KEY UPDATE` assignment
+/// with the literal the insert would have written for that column.
+fn substitute_values_references(
+    expr: &tidb_ast::Expr,
+    candidate: &[Datum],
+    column_list: &[(String, FieldType)],
+) -> Result<tidb_ast::Expr, DriverError> {
+    use tidb_ast::Expr;
+    Ok(match expr {
+        Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("values") => {
+            let Some(Expr::Column(path)) = args.first() else {
+                return Err(DriverError::Unsupported("VALUES() takes a column name"));
+            };
+            let name = path
+                .last()
+                .ok_or(DriverError::Unsupported("VALUES() takes a column name"))?;
+            let offset = column_list
+                .iter()
+                .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+                .ok_or_else(|| DriverError::UnknownColumnInClause {
+                    column: name.clone(),
+                    clause: "field list".to_owned(),
+                })?;
+            datum_to_literal(&candidate[offset])?
+        }
+        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_values_references(
+            inner,
+            candidate,
+            column_list,
+        )?)),
+        Expr::Unary(op, inner) => Expr::Unary(
+            *op,
+            Box::new(substitute_values_references(inner, candidate, column_list)?),
+        ),
+        Expr::Binary(op, left, right) => Expr::Binary(
+            *op,
+            Box::new(substitute_values_references(left, candidate, column_list)?),
+            Box::new(substitute_values_references(right, candidate, column_list)?),
+        ),
+        other => other.clone(),
+    })
 }
 
 /// Go `havingWindowAndOrderbyExprResolver`: an `ORDER BY` item is resolved

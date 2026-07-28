@@ -2860,6 +2860,114 @@ mod tests {
         }
     }
 
+    /// The three conflict policies -- `REPLACE`, `INSERT IGNORE` and
+    /// `ON DUPLICATE KEY UPDATE` -- checked against captured TiDB output,
+    /// including the affected-row counts, which is how MySQL clients tell
+    /// an insert from an update.
+    #[test]
+    fn insert_conflict_policies() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10), c BIGINT, UNIQUE KEY ub (b))",
+            )
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,'p',10),(2,'q',20)")
+            .unwrap();
+
+        // Captured: an update that changes nothing affects no rows, and
+        // raises no warning.
+        assert_eq!(
+            session
+                .run("INSERT INTO t (a,b,c) VALUES (1,'p',10) ON DUPLICATE KEY UPDATE c = c")
+                .unwrap(),
+            StmtResult::Affected(0)
+        );
+        assert!(session.warnings().is_empty());
+
+        // Captured: VALUES(c) is the value the insert would have written, and
+        // a real update affects two rows.
+        assert_eq!(
+            session
+                .run(
+                    "INSERT INTO t (a,b,c) VALUES (1,'p',77) ON DUPLICATE KEY UPDATE c = VALUES(c)"
+                )
+                .unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT c FROM t WHERE a = 1")),
+            [["77"]]
+        );
+
+        // Captured: the conflict is found on a UNIQUE INDEX too, and the
+        // assignment updates THAT row -- the candidate's own key is never
+        // inserted.
+        assert_eq!(
+            session
+                .run("INSERT INTO t (a,b,c) VALUES (9,'q',5) ON DUPLICATE KEY UPDATE c = 42")
+                .unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, b, c FROM t ORDER BY a")),
+            [["1", "p", "77"], ["2", "q", "42"]]
+        );
+
+        // Captured: the assignments read the EXISTING row.
+        assert_eq!(
+            session
+                .run("INSERT INTO t (a,b,c) VALUES (1,'p',1000) ON DUPLICATE KEY UPDATE c = c + 1")
+                .unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT c FROM t WHERE a = 1")),
+            [["78"]]
+        );
+
+        // Captured: INSERT IGNORE skips the conflicting row with a 1062
+        // warning and inserts the rest.
+        assert_eq!(
+            session
+                .run("INSERT IGNORE INTO t (a,b,c) VALUES (1,'zzz',1),(5,'five',5)")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(session.warnings().len(), 1);
+        assert_eq!(session.warnings()[0].code, 1062);
+        assert_eq!(
+            session.warnings()[0].message,
+            "Duplicate entry '1' for key 't.PRIMARY'"
+        );
+
+        // Captured: REPLACE deletes EVERY row it collides with -- here one on
+        // the primary key and another on the unique key -- and the affected
+        // count is one per deleted row plus one for the inserted row.
+        assert_eq!(
+            session
+                .run("REPLACE INTO t (a,b,c) VALUES (2,'five',99)")
+                .unwrap(),
+            StmtResult::Affected(3)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, b, c FROM t ORDER BY a")),
+            [["1", "p", "78"], ["2", "five", "99"]]
+        );
+        // Captured: a REPLACE with no conflict is a plain insert.
+        assert_eq!(
+            session
+                .run("REPLACE INTO t (a,b,c) VALUES (77,'new',1)")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t ORDER BY a")),
+            [["1"], ["2"], ["77"]]
+        );
+    }
+
     /// `INSERT ... SELECT` and the `ORDER BY`/`LIMIT` forms of UPDATE and
     /// DELETE, checked against captured TiDB output.
     ///
@@ -2942,13 +3050,10 @@ mod tests {
             [["3"], ["7"]]
         );
 
-        // The refusals are refusals, not wrong answers.
-        for sql in [
-            "REPLACE INTO t (a,b) VALUES (3,'z')",
-            "INSERT INTO t (a,b) VALUES (3,'z') ON DUPLICATE KEY UPDATE b='z'",
-        ] {
-            assert!(session.run(sql).is_err(), "{sql} should still be refused");
-        }
+        // The SET insert syntax is the shape still refused here; REPLACE and
+        // ON DUPLICATE KEY UPDATE are implemented (see
+        // `insert_conflict_policies`).
+        assert!(session.run("INSERT INTO t SET a = 42").is_err());
     }
 
     /// `ORDER BY` resolved against the SELECT list, checked against captured
@@ -4180,10 +4285,7 @@ mod tests {
         // Shapes the write paths do not model yet. (ORDER BY and LIMIT used
         // to be the examples here; both work now -- see
         // `insert_select_and_ordered_dml`.)
-        assert!(session.run("REPLACE INTO t (a) VALUES (1)").is_err());
         assert!(session.run("DELETE QUICK FROM t").is_err());
-        assert!(session
-            .run("INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = 2")
-            .is_err());
+        assert!(session.run("INSERT INTO t SET a = 1").is_err());
     }
 }

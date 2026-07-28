@@ -658,6 +658,89 @@ impl KvTable {
         }
     }
 
+    /// The handles of the rows a candidate row would collide with: the
+    /// clustered key first, then every unique index it duplicates.
+    ///
+    /// Go's `REPLACE` and `ON DUPLICATE KEY UPDATE` both start here
+    /// (`addRecord` reports the conflicting handle rather than only the
+    /// error), which is why a single REPLACE can delete more than one row --
+    /// captured: replacing a row that duplicates one row's primary key and
+    /// another row's unique key deletes BOTH.
+    pub fn conflicting_handles(&mut self, row: &[Datum]) -> Result<Vec<TableHandle>, KvTableError> {
+        let mut found: Vec<TableHandle> = Vec::new();
+        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
+        if clustered {
+            let handle = self.handle_of_row(row)?;
+            if self.row_exists(&handle)? {
+                found.push(handle);
+            }
+        }
+        for index in self.indexes.clone() {
+            if !index.unique {
+                continue;
+            }
+            // A distinct entry's key does not carry the handle, so the
+            // candidate handle below is only a placeholder for the key build.
+            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0))?;
+            if !distinct {
+                continue;
+            }
+            let Ok(value) = self.store.get(&Key::from_bytes(key), GetOptions::default()) else {
+                continue;
+            };
+            let handle = tidb_tablecodec::decode_handle_in_index_value(&value.value)
+                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+            let handle = match handle {
+                tidb_txnkv::Handle::Int(value) => TableHandle::Int(value.value()),
+                tidb_txnkv::Handle::Common(common) => {
+                    TableHandle::Common(common.encoded().to_vec())
+                }
+                tidb_txnkv::Handle::Partition(_) => {
+                    return Err(KvTableError::Decode(
+                        "a partitioned handle has no place in this tier".to_owned(),
+                    ))
+                }
+            };
+            if !found.contains(&handle) {
+                found.push(handle);
+            }
+        }
+        Ok(found)
+    }
+
+    /// The duplicate-entry error a conflicting row would raise, which names
+    /// the key it collided on the way Go's `ErrDupEntry` does.
+    pub fn duplicate_entry_error(&mut self, row: &[Datum]) -> Result<KvTableError, KvTableError> {
+        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
+        if clustered {
+            let handle = self.handle_of_row(row)?;
+            if self.row_exists(&handle)? {
+                return Ok(KvTableError::DuplicateEntry {
+                    value: clustered_key_text(self, row),
+                    key: self.qualified_key("PRIMARY"),
+                });
+            }
+        }
+        for index in self.indexes.clone() {
+            if !index.unique {
+                continue;
+            }
+            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0))?;
+            if distinct
+                && self
+                    .store
+                    .get(&Key::from_bytes(key), GetOptions::default())
+                    .is_ok()
+            {
+                return Ok(KvTableError::DuplicateEntry {
+                    value: duplicate_value_text(&index, row),
+                    key: self.qualified_key(&index.name),
+                });
+            }
+        }
+        Err(KvTableError::Encode("no conflict to report".to_owned()))
+    }
+
     /// Adds an index, whose entries every later write maintains.
     pub fn add_index(&mut self, index: KvIndex) {
         self.indexes.push(index);
