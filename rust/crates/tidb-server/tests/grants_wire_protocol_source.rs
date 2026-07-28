@@ -26,26 +26,22 @@
 //! reaching an already-open peer connection because the wire layer cached
 //! something at login time.
 //!
-//! Auth-store/privilege-registry reconciliation (documented, not a bug):
-//! `ConfiguredUserStore` (this crate's stand-in for Go's `mysql.user` auth
-//! columns) is a static, file-loaded, immutable-at-runtime catalog -- see
-//! `configured_user_store.rs`. `CREATE USER` only ever touches the SEPARATE
-//! `PrivilegeRegistry` (`tidb_session::privilege`), and `CREATE USER ...
-//! IDENTIFIED BY` is explicitly unsupported
-//! (`DriverError::Unsupported("CREATE USER ... IDENTIFIED BY/WITH is not
-//! supported yet")`), so this tier has no live API that lets a freshly
-//! `CREATE USER`'d account authenticate with a chosen password. The two
-//! stores are reconciled the same way Go's single `mysql.user` table
-//! naturally is: an account must already have a row in `ConfiguredUserStore`
-//! (pre-provisioned, exactly as an operator would provision a real account)
-//! before it can log in at all, and `PipelineSessionFactory::open_session`
-//! auto-seeds a matching `PrivilegeRegistry` entry on that account's first
-//! login (`pipeline_session.rs`, "seed the account on first login"), which is
-//! a no-op once `CREATE USER` already ran. Because `bob` here is
-//! `CREATE USER`'d (and `GRANT`ed) BEFORE its first login, the auto-seed
-//! never overwrites the grants -- this is the same ordering constraint real
-//! MySQL/TiDB has (you cannot `CREATE USER` an account that can already log
-//! in, because login implies a `mysql.user` row already exists).
+//! Auth store and privilege registry are ONE table (this used to be a
+//! documented ordering constraint, and no longer is): `ConfiguredUserStore`
+//! now holds the shared `tidb_session::privilege::PrivilegeRegistry` rather
+//! than an immutable file snapshot, so its strict TSV is only the operator's
+//! INITIAL provisioning and `CREATE USER ... IDENTIFIED BY` / `DROP USER`
+//! write the very rows a login is verified against -- exactly as Go has one
+//! `mysql.user` carrying both `authentication_string` and the privilege
+//! columns. `PipelineSessionFactory::with_accounts(store.accounts())` is
+//! what ties the wire authenticator and the SQL executor to that one table;
+//! nothing seeds accounts at login time any more, because an identity the
+//! handshake matched IS a registry row by construction.
+//!
+//! What that buys, and what the second test below proves over TCP: `bob` is
+//! NOT in the provisioning file at all. Root creates it with a password at
+//! runtime, and a brand-new connection then authenticates as `bob` through a
+//! real handshake.
 use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -61,13 +57,11 @@ const CLIENT_PLUGIN_AUTH: u32 = 1 << 19;
 const CLIENT_CONNECT_ATTRS: u32 = 1 << 20;
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 
-/// `root`/`rootpw` and `bob`/`bobpw`, both pre-provisioned so either can
-/// authenticate over the real wire -- see the module doc for why `bob` must
-/// be listed here even though `bob` is created by SQL, not by this file.
+/// The operator's initial provisioning: `root`/`rootpw` and nothing else.
+/// Every other account in this file is created at runtime through SQL.
 fn users() -> ConfiguredUserStore {
     ConfiguredUserStore::parse(
-        "root\t%\tmysql_native_password\t*79D0CF9A6A052105DA1E1181406C34FC87AAC89D\n\
-         bob\t%\tmysql_native_password\t*6793F32F5FAF66A40EFA6B5E9887765E983829BC\n",
+        "root\t%\tmysql_native_password\t*79D0CF9A6A052105DA1E1181406C34FC87AAC89D\n",
     )
     .unwrap()
 }
@@ -108,6 +102,18 @@ fn native_response(password: &[u8], salt: &[u8]) -> [u8; 20] {
 }
 
 fn authenticate(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, user: &str, password: &[u8]) {
+    let ok = try_authenticate(client, reader, user, password);
+    assert_eq!(ok[0], 0, "auth OK for {user}: {ok:?}");
+}
+
+/// Runs the real handshake and returns the server's reply packet verbatim,
+/// so a REJECTED login can be inspected instead of panicking.
+fn try_authenticate(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    user: &str,
+    password: &[u8],
+) -> Vec<u8> {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     let salt = handshake_salt(&initial);
@@ -130,8 +136,7 @@ fn authenticate(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, us
     response.push(0);
     write_packet(client, 1, &response);
     reader.set_sequence(2);
-    let ok = reader.read_packet().unwrap();
-    assert_eq!(ok[0], 0, "auth OK for {user}: {ok:?}");
+    reader.read_packet().unwrap()
 }
 
 fn read_length_encoded_string(packet: &mut &[u8]) -> Vec<u8> {
@@ -237,9 +242,10 @@ fn run_query(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: 
 /// connections sharing one server (one `PipelineSessionFactory`, exactly as
 /// one TiDB instance shares one `Domain`):
 ///
-/// root `CREATE USER` + a global `GRANT PROCESS` + a scoped `GRANT SELECT ON
-/// test.*` -> bob connects and authenticates for the FIRST time (proving the
-/// auth-store/privilege-registry seam is reconciled, see the module doc) ->
+/// root `CREATE USER ... IDENTIFIED BY` + a scoped `GRANT SELECT ON test.*`
+/// -> bob connects and authenticates for the FIRST time with that password
+/// (proving auth store and privilege registry are one table, see the module
+/// doc) ->
 /// `SHOW GRANTS` reports bob's own lines -> `SHOW PROCESSLIST` /
 /// `information_schema.PROCESSLIST` are gated live by `PROCESS`, INCLUDING
 /// changes root makes to an already-open peer session (`GRANT`/`REVOKE`
@@ -255,8 +261,10 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     // One factory serves both connections: that is what gives them one
     // shared `PrivilegeRegistry` and one shared `ProcessRegistry`, as one
     // TiDB instance has one `Domain`.
-    let factory = Arc::new(PipelineSessionFactory::default());
     let store = Arc::new(users());
+    // One table: the accounts this factory's `CREATE USER` writes are the
+    // accounts `store` authenticates logins against.
+    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -284,15 +292,19 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
         workers
     });
 
-    // root connects first and provisions bob BEFORE bob ever logs in --
-    // see the module doc for why that ordering matters.
+    // root connects first and creates bob, password and all; bob exists in
+    // no provisioning file.
     let mut root = TcpStream::connect(address).unwrap();
     let root_read = root.try_clone().unwrap();
     let mut root_reader = PacketReader::new(root_read);
     authenticate(&mut root, &mut root_reader, "root", b"rootpw");
 
     assert_eq!(
-        run_write(&mut root, &mut root_reader, "CREATE USER 'bob'@'%'"),
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "CREATE USER 'bob'@'%' IDENTIFIED BY 'bobpw'"
+        ),
         0
     );
     assert_eq!(
@@ -300,9 +312,9 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
         0
     );
 
-    // bob's FIRST connection: authenticates against the pre-provisioned
-    // `ConfiguredUserStore` entry, and lands in a `PrivilegeRegistry` account
-    // that root's `CREATE USER`/`GRANT` already populated.
+    // bob's FIRST connection: authenticates against the row root's
+    // `CREATE USER ... IDENTIFIED BY` just wrote, with the grants root's
+    // `GRANT` put on that same row.
     let mut bob = TcpStream::connect(address).unwrap();
     let bob_read = bob.try_clone().unwrap();
     let mut bob_reader = PacketReader::new(bob_read);
@@ -401,4 +413,149 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
         "root's connection reports its kill: {exits:?}"
     );
     assert!(exits.contains(&ConnectionExit::Quit), "{exits:?}");
+}
+
+/// The account LIFECYCLE over TCP, which only a real handshake can prove:
+/// root creates an account with a password at runtime; a brand-new
+/// connection authenticates as it; the WRONG password on an otherwise
+/// identical handshake is rejected with 1045; `ALTER USER ... IDENTIFIED BY`
+/// changes which password the NEXT login accepts; and after `DROP USER` the
+/// account can no longer log in at all.
+///
+/// None of this is reachable in-process: `tidb_session::Session` never
+/// verifies a password, so a registry unit test cannot tell a stored
+/// `authentication_string` that actually gates logins from one that is
+/// merely written down.
+#[test]
+fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+
+    let acceptor_factory = Arc::clone(&factory);
+    let acceptor_store = Arc::clone(&store);
+    let acceptor_tracker = Arc::clone(&tracker);
+    // root's connection plus the five login attempts below, each of which
+    // reaches the server whether or not it authenticates.
+    let acceptor = std::thread::spawn(move || {
+        let mut workers = Vec::new();
+        for _ in 0..6 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let factory = Arc::clone(&acceptor_factory);
+            let store = Arc::clone(&acceptor_store);
+            let tracker = Arc::clone(&acceptor_tracker);
+            workers.push(std::thread::spawn(move || {
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+            }));
+        }
+        workers
+    });
+
+    let mut root = TcpStream::connect(address).unwrap();
+    let root_read = root.try_clone().unwrap();
+    let mut root_reader = PacketReader::new(root_read);
+    authenticate(&mut root, &mut root_reader, "root", b"rootpw");
+
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "CREATE USER 'carol'@'%' IDENTIFIED BY 'carolpw'"
+        ),
+        0
+    );
+
+    // The right password authenticates: the account created by SQL a moment
+    // ago is a real login.
+    {
+        let mut carol = TcpStream::connect(address).unwrap();
+        let carol_read = carol.try_clone().unwrap();
+        let mut carol_reader = PacketReader::new(carol_read);
+        authenticate(&mut carol, &mut carol_reader, "carol", b"carolpw");
+        let grants = run_query(&mut carol, &mut carol_reader, "SHOW GRANTS");
+        assert_eq!(
+            grants,
+            vec![vec!["GRANT USAGE ON *.* TO 'carol'@'%'".to_owned()]],
+            "carol's own row, over the real wire: {grants:?}"
+        );
+        write_packet(&mut carol, 0, &[0x01]);
+    }
+
+    // The wrong password on the same account is refused with 1045/28000.
+    {
+        let mut wrong = TcpStream::connect(address).unwrap();
+        let wrong_read = wrong.try_clone().unwrap();
+        let mut wrong_reader = PacketReader::new(wrong_read);
+        let reply = try_authenticate(&mut wrong, &mut wrong_reader, "carol", b"wrongpw");
+        assert_eq!(reply[0], 0xff, "wrong password must be an ERR: {reply:?}");
+        assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1045);
+        assert_eq!(&reply[4..9], b"28000");
+    }
+
+    // `ALTER USER ... IDENTIFIED BY` moves the account to a new password:
+    // the old one now fails and the new one succeeds.
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "ALTER USER 'carol'@'%' IDENTIFIED BY 'carolpw2'"
+        ),
+        0
+    );
+    {
+        let mut stale = TcpStream::connect(address).unwrap();
+        let stale_read = stale.try_clone().unwrap();
+        let mut stale_reader = PacketReader::new(stale_read);
+        let reply = try_authenticate(&mut stale, &mut stale_reader, "carol", b"carolpw");
+        assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1045, "{reply:?}");
+    }
+    {
+        let mut carol = TcpStream::connect(address).unwrap();
+        let carol_read = carol.try_clone().unwrap();
+        let mut carol_reader = PacketReader::new(carol_read);
+        authenticate(&mut carol, &mut carol_reader, "carol", b"carolpw2");
+        write_packet(&mut carol, 0, &[0x01]);
+    }
+
+    // `DROP USER` removes the login itself, not just the grants.
+    assert_eq!(
+        run_write(&mut root, &mut root_reader, "DROP USER 'carol'@'%'"),
+        0
+    );
+    let mut dropped = TcpStream::connect(address).unwrap();
+    let dropped_read = dropped.try_clone().unwrap();
+    let mut dropped_reader = PacketReader::new(dropped_read);
+    let reply = try_authenticate(&mut dropped, &mut dropped_reader, "carol", b"carolpw2");
+    assert_eq!(
+        u16::from_le_bytes([reply[1], reply[2]]),
+        1045,
+        "a dropped account cannot log in: {reply:?}"
+    );
+
+    write_packet(&mut root, 0, &[0x01]);
+    drop(root);
+    let workers = acceptor.join().unwrap();
+    let exits: Vec<ConnectionExit> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap().exit)
+        .collect();
+    assert_eq!(
+        exits
+            .iter()
+            .filter(|exit| **exit == ConnectionExit::AuthenticationRejected)
+            .count(),
+        3,
+        "wrong password, stale password, and dropped account: {exits:?}"
+    );
 }

@@ -571,12 +571,16 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let worker_tracker = Arc::clone(&tracker);
     let worker = std::thread::spawn(move || {
         let (stream, peer_addr) = listener.accept().unwrap();
+        // The store's account table and the factory's are ONE table: an
+        // authenticated identity must be a row the session's `SHOW GRANTS`
+        // can find.
+        let store = users();
         serve_mysql_connection(
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::default(),
-            &users(),
+            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
         )
@@ -1292,12 +1296,16 @@ fn mysql_client_reads_the_process_list_and_kills_by_id() {
     let worker_tracker = Arc::clone(&tracker);
     let worker = std::thread::spawn(move || {
         let (stream, peer_addr) = listener.accept().unwrap();
+        // The store's account table and the factory's are ONE table: an
+        // authenticated identity must be a row the session's `SHOW GRANTS`
+        // can find.
+        let store = users();
         serve_mysql_connection(
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::default(),
-            &users(),
+            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
         )
@@ -1370,8 +1378,8 @@ fn kill_connection_ends_the_targeted_peer() {
     let tracker = Arc::new(ConnectionTracker::default());
     // Both connections are served by ONE factory: that is what gives them one
     // process list, as one TiDB instance has one session manager.
-    let factory = Arc::new(PipelineSessionFactory::default());
     let store = Arc::new(users());
+    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
     let acceptor = std::thread::spawn(move || {
         let mut workers = Vec::new();
         for _ in 0..2 {

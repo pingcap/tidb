@@ -661,6 +661,8 @@ impl Session {
                     if_exists,
                     users,
                 } => Ok(Some(self.drop_user_stmt(*if_exists, users)?)),
+                tidb_ast::DdlStmt::AlterUser(alter) => Ok(Some(self.alter_user_stmt(alter)?)),
+                tidb_ast::DdlStmt::RenameUser { pairs } => Ok(Some(self.rename_user_stmt(pairs)?)),
                 _ => Ok(None),
             },
             Stmt::Admin(admin) => match &**admin {
@@ -1719,9 +1721,8 @@ impl Session {
     /// and stops at the first error, which this reproduces.
     ///
     /// DEFERRED (documented): `SET GLOBAL` changes only this session here,
-    /// because there is no persisted global tier yet; `SET PASSWORD`,
-    /// resource groups, and the other non-variable `SET` forms stay
-    /// unsupported.
+    /// because there is no persisted global tier yet; resource groups and
+    /// the other non-variable `SET` forms stay unsupported.
     pub fn apply_set(&mut self, sql: &str) -> Result<Option<()>, DriverError> {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         let Stmt::Session(session_stmt) = &stmt else {
@@ -1732,6 +1733,12 @@ impl Session {
                 for assignment in &set.assignments {
                     self.apply_assignment(assignment)?;
                 }
+                Ok(Some(()))
+            }
+            // `SET PASSWORD` shares the `SET` keyword and the front end's
+            // OK-packet reply, but writes `mysql.user`, not a variable.
+            SessionStmt::SetPassword(set_password) => {
+                self.set_password_stmt(set_password)?;
                 Ok(Some(()))
             }
             SessionStmt::SetCharset {
@@ -2107,11 +2114,16 @@ impl Session {
         identity.split_once('@')
     }
 
-    /// `CREATE USER` at the GLOBAL scope this tier models: an account
-    /// identity and nothing else. Go `simple.go`'s `executeCreateUser`,
-    /// minus authentication, resource limits, and account annotations, which
-    /// this tier has no storage for and therefore refuses rather than
-    /// silently drops.
+    /// `CREATE USER [IF NOT EXISTS] <account> [IDENTIFIED BY '<password>']`.
+    /// Go `simple.go`'s `executeCreateUser`, minus resource limits and
+    /// account annotations, which this tier has no storage for and therefore
+    /// refuses rather than silently drops.
+    ///
+    /// `IDENTIFIED BY` stores the account's
+    /// `mysql.user.authentication_string` (see
+    /// [`privilege::encode_password`]), which is the same row the wire front
+    /// end verifies a login against -- so an account created here can
+    /// immediately log in with that password.
     #[allow(clippy::too_many_arguments)]
     fn create_user_stmt(
         &mut self,
@@ -2139,16 +2151,17 @@ impl Session {
             ));
         };
         for spec in users {
-            if spec.auth.is_some() {
+            let auth_string = Self::resolve_auth_string(spec.auth.as_ref())?;
+            if spec.dual_password.is_some() {
                 return Err(DriverError::Unsupported(
-                    "CREATE USER ... IDENTIFIED BY/WITH is not supported yet",
+                    "CREATE USER ... RETAIN CURRENT PASSWORD is not supported yet",
                 ));
             }
             let user = spec.user.user.as_str();
             let host = spec.user.host.as_str();
             // Go processes each account in source order and fails on the
             // FIRST duplicate rather than batching, unlike DROP USER below.
-            if !registry.create_user(user, host) && !if_not_exists {
+            if !registry.create_user(user, host, &auth_string) && !if_not_exists {
                 return Err(DriverError::CreateUserAlreadyExists {
                     user: user.to_owned(),
                     host: host.to_owned(),
@@ -2156,6 +2169,143 @@ impl Session {
             }
         }
         Ok(StmtOutput::Affected(0))
+    }
+
+    /// The `mysql.user.authentication_string` one account specification's
+    /// authentication clause stores. `IDENTIFIED WITH <plugin>` is refused
+    /// rather than silently downgraded, because only
+    /// `mysql_native_password` is modelled; a missing clause means a
+    /// passwordless account, whose `authentication_string` is empty.
+    fn resolve_auth_string(auth: Option<&tidb_ast::CreateUserAuth>) -> Result<String, DriverError> {
+        match auth {
+            None => Ok(String::new()),
+            Some(tidb_ast::CreateUserAuth::By(password)) => {
+                Ok(privilege::encode_password(password))
+            }
+            Some(tidb_ast::CreateUserAuth::With { .. }) => Err(DriverError::Unsupported(
+                "CREATE/ALTER USER ... IDENTIFIED WITH is not supported yet",
+            )),
+        }
+    }
+
+    /// `ALTER USER [IF EXISTS] <account> IDENTIFIED BY '<password>'`, the one
+    /// `ALTER USER` action this tier stores: it rewrites the account's
+    /// `mysql.user.authentication_string` in place, so the NEXT login uses
+    /// the new password (Go `executeAlterUser`).
+    fn alter_user_stmt(
+        &mut self,
+        alter: &tidb_ast::AlterUserStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        if alter.user_function_auth.is_some()
+            || alter.user_function_dual_password.is_some()
+            || !alter.tls_options.is_empty()
+            || !alter.resource_options.is_empty()
+            || !alter.password_options.is_empty()
+            || alter.comment_or_attribute.is_some()
+            || alter.resource_group.is_some()
+        {
+            return Err(DriverError::Unsupported(
+                "ALTER USER options beyond IDENTIFIED BY are not supported yet",
+            ));
+        }
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "ALTER USER requires a server front end with a privilege registry",
+            ));
+        };
+        for spec in &alter.users {
+            if spec.auth.is_none() || spec.dual_password.is_some() {
+                return Err(DriverError::Unsupported(
+                    "ALTER USER options beyond IDENTIFIED BY are not supported yet",
+                ));
+            }
+            let auth_string = Self::resolve_auth_string(spec.auth.as_ref())?;
+            let (user, host) = self.resolve_account(&spec.user)?;
+            if !registry.set_auth_string(&user, &host, &auth_string) && !alter.if_exists {
+                return Err(DriverError::AlterUserMissing { user, host });
+            }
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `SET PASSWORD [FOR <account>] = '<password>'`: the same
+    /// `authentication_string` write as `ALTER USER ... IDENTIFIED BY`
+    /// (captured: both leave the identical `*HEX` value), defaulting to the
+    /// session's own account.
+    fn set_password_stmt(
+        &mut self,
+        set_password: &tidb_ast::SetPasswordStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        if set_password.retain_current_password {
+            return Err(DriverError::Unsupported(
+                "SET PASSWORD ... RETAIN CURRENT PASSWORD is not supported yet",
+            ));
+        }
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "SET PASSWORD requires a server front end with a privilege registry",
+            ));
+        };
+        let (user, host) = match &set_password.user {
+            Some(spec) => self.resolve_account(spec)?,
+            None => self.own_account()?,
+        };
+        let auth_string = privilege::encode_password(&set_password.password);
+        if !registry.set_auth_string(&user, &host, &auth_string) {
+            return Err(DriverError::SetPasswordNoMatchingRow);
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// `RENAME USER <old> TO <new> [, ...]`. Go's `executeRenameUser` moves
+    /// the `mysql.user` row -- authentication string included -- along with
+    /// every `mysql.db`/`mysql.tables_priv` row keyed by the old identity
+    /// (captured: after the rename the new account holds all three scoped
+    /// grant lines and the old one reports `ErrNonexistingGrant`), and
+    /// reports `ErrCannotUser` for a missing source or an occupied target.
+    fn rename_user_stmt(
+        &mut self,
+        pairs: &[tidb_ast::RenameUserPair],
+    ) -> Result<StmtOutput, DriverError> {
+        let Some(registry) = self.privileges.clone() else {
+            return Err(DriverError::Unsupported(
+                "RENAME USER requires a server front end with a privilege registry",
+            ));
+        };
+        for pair in pairs {
+            let (old_user, old_host) = self.resolve_account(&pair.old_user)?;
+            let (new_user, new_host) = self.resolve_account(&pair.new_user)?;
+            let old_missing = !registry.user_exists(&old_user, &old_host);
+            if !registry.rename_user(&old_user, &old_host, &new_user, &new_host) {
+                return Err(DriverError::RenameUserFailed {
+                    old_user,
+                    old_host,
+                    new_user,
+                    new_host,
+                    old_missing,
+                });
+            }
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// Resolves one written account identity, expanding the `CURRENT_USER`
+    /// pseudo-user to the session's own identity as Go does.
+    fn resolve_account(&self, spec: &tidb_ast::UserSpec) -> Result<(String, String), DriverError> {
+        if spec.current_user {
+            return self.own_account();
+        }
+        Ok((spec.user.clone(), spec.host.clone()))
+    }
+
+    /// The session's own account identity. A session with no authenticated
+    /// identity is an in-process one with no front end, which has no account
+    /// to name.
+    fn own_account(&self) -> Result<(String, String), DriverError> {
+        let (user, host) = self.current_identity().ok_or(DriverError::Unsupported(
+            "CURRENT_USER requires a session with an authenticated identity",
+        ))?;
+        Ok((user.to_owned(), host.to_owned()))
     }
 
     /// `DROP USER` at the GLOBAL scope this tier models. Go's
@@ -2190,21 +2340,26 @@ impl Session {
         Ok(StmtOutput::Affected(0))
     }
 
-    /// `GRANT <static privs> ON <level> TO <user>...` -- Go's `grant.go`
-    /// GLOBAL/DATABASE/TABLE scopes. Roles, dynamic privileges,
-    /// `WITH GRANT OPTION`, and column lists are refused rather than
-    /// silently accepted or dropped.
+    /// `GRANT <static privs> ON <level> TO <user>... [WITH GRANT OPTION]` --
+    /// Go's `grant.go` GLOBAL/DATABASE/TABLE scopes. Roles, dynamic
+    /// privileges, and column lists are refused rather than silently
+    /// accepted or dropped.
+    ///
+    /// `WITH GRANT OPTION` is just `mysql.GrantPriv` ORed into the same
+    /// scope's privilege mask, which is why it works identically at all
+    /// three scopes and why `REVOKE GRANT OPTION ON <level>` (an ordinary
+    /// privilege name) clears exactly that scope's bit.
     fn grant_stmt(&mut self, grant: &tidb_ast::GrantStmt) -> Result<StmtOutput, DriverError> {
         if grant.object_type.is_some() {
             return Err(DriverError::Unsupported(
                 "GRANT ... ON FUNCTION/PROCEDURE is not supported yet",
             ));
         }
-        if grant.with_grant {
-            return Err(DriverError::Unsupported(
-                "GRANT ... WITH GRANT OPTION is not supported yet",
-            ));
-        }
+        let with_grant = if grant.with_grant {
+            privilege::GlobalPriv::GrantOption.bit()
+        } else {
+            0
+        };
         if !grant.tls_options.is_empty() {
             return Err(DriverError::Unsupported(
                 "GRANT ... REQUIRE is not supported yet",
@@ -2217,7 +2372,7 @@ impl Session {
         };
         match &grant.level {
             tidb_ast::GrantLevel::Global => {
-                let mask = self.resolve_global_priv_mask(&grant.privileges)?;
+                let mask = self.resolve_global_priv_mask(&grant.privileges)? | with_grant;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -2233,7 +2388,7 @@ impl Session {
             tidb_ast::GrantLevel::Database(database) => {
                 let database = self.resolve_grant_database(database.as_deref())?;
                 let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Database)?;
-                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -2246,7 +2401,7 @@ impl Session {
             tidb_ast::GrantLevel::Table { database, table } => {
                 let database = self.resolve_grant_database(database.as_deref())?;
                 let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Table)?;
-                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
                 // Go allows granting on a table that does not exist only
                 // when the privilege list includes `CREATE` (captured:
                 // issues #28533/#29268); otherwise it reports
@@ -12583,21 +12738,219 @@ mod tests {
         );
     }
 
-    /// OUT OF SCOPE, refused rather than faked: `WITH GRANT OPTION`, column
-    /// lists, and roles. (Database/table-level grants themselves are now
-    /// modeled -- see the `db_scope_*`/`table_scope_*` tests below.)
+    /// OUT OF SCOPE, refused rather than faked: column lists and roles.
+    /// (Database/table-level grants and `WITH GRANT OPTION` are now modeled
+    /// -- see the `db_scope_*`/`table_scope_*`/`grant_option_*` tests.)
     #[test]
     fn out_of_scope_grant_forms_are_refused() {
         let mut session = session_with_privileges();
         session.run("CREATE USER 'dup1'@'%'").unwrap();
         assert!(matches!(
-            session.run("GRANT SELECT ON *.* TO 'dup1'@'%' WITH GRANT OPTION"),
+            session.run("GRANT SELECT (a) ON test.t TO 'dup1'@'%'"),
             Err(DriverError::Unsupported(_))
         ));
         assert!(matches!(
             session.run("DROP ROLE 'r1'"),
             Err(DriverError::Unsupported(_))
         ));
+    }
+
+    /// CAPTURED (`pkg/executor/zz_dump_authlc_test.go`): `WITH GRANT OPTION`
+    /// at all three scopes, its ` WITH GRANT OPTION` suffix printing at the
+    /// END of each affected `SHOW GRANTS` line (never inside the privilege
+    /// list), and `REVOKE GRANT OPTION ON <level>` clearing exactly that one
+    /// scope's bit and nothing else.
+    #[test]
+    fn grant_option_is_a_per_scope_bit_printed_as_a_line_suffix() {
+        let mut session = session_with_privileges();
+        session.run("CREATE TABLE test.t (a int)").unwrap();
+        session.run("CREATE USER 'bob'@'%'").unwrap();
+
+        session
+            .run("GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION")
+            .unwrap();
+        session
+            .run("GRANT SELECT ON test.* TO 'bob'@'%' WITH GRANT OPTION")
+            .unwrap();
+        session
+            .run("GRANT SELECT ON test.t TO 'bob'@'%' WITH GRANT OPTION")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
+            [
+                ["GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION"],
+                ["GRANT SELECT ON `test`.* TO 'bob'@'%' WITH GRANT OPTION"],
+                ["GRANT SELECT ON `test`.`t` TO 'bob'@'%' WITH GRANT OPTION"],
+            ]
+        );
+
+        // Each REVOKE clears one scope, innermost first, leaving the others
+        // untouched -- the captured Go sequence exactly.
+        session
+            .run("REVOKE GRANT OPTION ON test.t FROM 'bob'@'%'")
+            .unwrap();
+        session
+            .run("REVOKE GRANT OPTION ON test.* FROM 'bob'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
+            [
+                ["GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION"],
+                ["GRANT SELECT ON `test`.* TO 'bob'@'%'"],
+                ["GRANT SELECT ON `test`.`t` TO 'bob'@'%'"],
+            ]
+        );
+        session
+            .run("REVOKE GRANT OPTION ON *.* FROM 'bob'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
+            [
+                ["GRANT SELECT ON *.* TO 'bob'@'%'"],
+                ["GRANT SELECT ON `test`.* TO 'bob'@'%'"],
+                ["GRANT SELECT ON `test`.`t` TO 'bob'@'%'"],
+            ]
+        );
+    }
+
+    /// CAPTURED: `GRANT ALL` does NOT confer `GRANT OPTION` (the `ALL
+    /// PRIVILEGES` literal still prints with no suffix), and naming
+    /// `GRANT OPTION` as an ordinary privilege confers exactly that bit --
+    /// which is why `mysql.GrantPriv` must live outside every `ALL_*` list.
+    #[test]
+    fn grant_all_withholds_grant_option_but_the_named_privilege_confers_it() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'occupied'@'%'").unwrap();
+        session.run("GRANT ALL ON *.* TO 'occupied'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'occupied'@'%'")),
+            [["GRANT ALL PRIVILEGES ON *.* TO 'occupied'@'%'"]]
+        );
+        session
+            .run("GRANT GRANT OPTION ON *.* TO 'occupied'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'occupied'@'%'")),
+            [["GRANT ALL PRIVILEGES ON *.* TO 'occupied'@'%' WITH GRANT OPTION"]]
+        );
+    }
+
+    /// CAPTURED: `CREATE USER ... IDENTIFIED BY` stores Go
+    /// `auth.EncodePassword`'s `*<40 UPPERCASE HEX>` double-SHA-1 in
+    /// `mysql.user.authentication_string`; a passwordless account stores the
+    /// EMPTY string, not a hash of the empty string. `ALTER USER ...
+    /// IDENTIFIED BY` and `SET PASSWORD FOR` both rewrite the same column to
+    /// the identical value.
+    #[test]
+    fn account_authentication_strings_follow_go_encode_password() {
+        assert_eq!(
+            privilege::encode_password("bobpw"),
+            "*6793F32F5FAF66A40EFA6B5E9887765E983829BC"
+        );
+        assert_eq!(privilege::encode_password(""), "");
+
+        let registry = privilege::PrivilegeRegistry::default();
+        let mut session = Session::new();
+        session.attach_privileges(registry.clone());
+        session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+
+        session
+            .run("CREATE USER 'bob'@'%' IDENTIFIED BY 'bobpw'")
+            .unwrap();
+        assert_eq!(
+            registry.auth_string("bob", "%").as_deref(),
+            Some("*6793F32F5FAF66A40EFA6B5E9887765E983829BC")
+        );
+        session.run("CREATE USER 'nopw'@'%'").unwrap();
+        assert_eq!(registry.auth_string("nopw", "%").as_deref(), Some(""));
+
+        session
+            .run("ALTER USER 'bob'@'%' IDENTIFIED BY 'bobpw2'")
+            .unwrap();
+        assert_eq!(
+            registry.auth_string("bob", "%").as_deref(),
+            Some("*35141DF602B302AB26CD0E9930DDBAF0E5865904")
+        );
+        session
+            .run("SET PASSWORD FOR 'bob'@'%' = 'bobpw3'")
+            .unwrap();
+        assert_eq!(
+            registry.auth_string("bob", "%").as_deref(),
+            Some("*DBED499ADC8B1C308546E054BE45BEA463AC68B9")
+        );
+
+        // Captured error wording: ALTER USER quotes the account like CREATE
+        // USER and is silenced by IF EXISTS; SET PASSWORD reports 1133
+        // instead of reusing ErrCannotUser.
+        assert!(matches!(
+            session.run("ALTER USER 'nosuch'@'%' IDENTIFIED BY 'p'"),
+            Err(DriverError::AlterUserMissing { .. })
+        ));
+        session
+            .run("ALTER USER IF EXISTS 'nosuch'@'%' IDENTIFIED BY 'p'")
+            .unwrap();
+        assert!(matches!(
+            session.run("SET PASSWORD FOR 'nosuch'@'%' = 'p'"),
+            Err(DriverError::SetPasswordNoMatchingRow)
+        ));
+    }
+
+    /// CAPTURED: `RENAME USER` carries the authentication string AND every
+    /// scoped grant row to the new identity, leaves the old identity with no
+    /// grant row at all, and reports Go's two distinct reason clauses.
+    #[test]
+    fn rename_user_moves_the_whole_account_row() {
+        let registry = privilege::PrivilegeRegistry::default();
+        let mut session = Session::new();
+        session.attach_privileges(registry.clone());
+        session.run("CREATE TABLE test.t (a int)").unwrap();
+        session
+            .run("CREATE USER 'bob'@'%' IDENTIFIED BY 'bobpw'")
+            .unwrap();
+        session.run("GRANT SELECT ON *.* TO 'bob'@'%'").unwrap();
+        session.run("GRANT SELECT ON test.* TO 'bob'@'%'").unwrap();
+        session.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+        session.run("CREATE USER 'occupied'@'%'").unwrap();
+
+        session.run("RENAME USER 'bob'@'%' TO 'bobby'@'%'").unwrap();
+        assert_eq!(
+            registry.auth_string("bobby", "%").as_deref(),
+            Some("*6793F32F5FAF66A40EFA6B5E9887765E983829BC")
+        );
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'bobby'@'%'")),
+            [
+                ["GRANT SELECT ON *.* TO 'bobby'@'%'"],
+                ["GRANT SELECT ON `test`.* TO 'bobby'@'%'"],
+                ["GRANT SELECT ON `test`.`t` TO 'bobby'@'%'"],
+            ]
+        );
+        assert!(session.run("SHOW GRANTS FOR 'bob'@'%'").is_err());
+
+        match session.run("RENAME USER 'nosuch'@'%' TO 'x'@'%'") {
+            Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(old_missing),
+            other => panic!("expected RenameUserFailed, got {other:?}"),
+        }
+        match session.run("RENAME USER 'bobby'@'%' TO 'occupied'@'%'") {
+            Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(!old_missing),
+            other => panic!("expected RenameUserFailed, got {other:?}"),
+        }
+    }
+
+    /// CAPTURED: `DROP USER` clears the account's scoped grant rows too, so
+    /// an account later recreated under the same identity starts from USAGE
+    /// rather than inheriting the dropped account's grants.
+    #[test]
+    fn drop_user_clears_scoped_grant_rows() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'gone'@'%'").unwrap();
+        session.run("GRANT SELECT ON test.* TO 'gone'@'%'").unwrap();
+        session.run("DROP USER 'gone'@'%'").unwrap();
+        session.run("CREATE USER 'gone'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'gone'@'%'")),
+            [["GRANT USAGE ON *.* TO 'gone'@'%'"]]
+        );
     }
 
     /// CAPTURED end to end (`pkg/executor/grant.go`/`revoke.go`,

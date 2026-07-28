@@ -28,14 +28,27 @@
 //! `mysql.Tables_priv` records, and the DB/table slices of
 //! `MySQLPrivilege.showGrants` -- on top of the GLOBAL registry above.
 //!
+//! Also models the account's `mysql.user.authentication_string` column --
+//! the `mysql_native_password` stage-two hash `CREATE USER ... IDENTIFIED
+//! BY` stores and the wire front end verifies a login against -- so this
+//! registry is the single `mysql.user` Go has, not a privilege-only half of
+//! one.
+//!
+//! `GRANT OPTION` is Go's `mysql.GrantPriv`: an ordinary privilege bit
+//! living in the same `Priv` column as the rest, at every scope
+//! (`mysql.user.Grant_priv`, `mysql.db.Grant_priv`, `mysql.tables_priv`'s
+//! `Grant` member). It is deliberately absent from [`ALL_GLOBAL_PRIVS`] /
+//! [`ALL_DB_PRIVS`] / [`ALL_TABLE_PRIVS`], which is what makes `GRANT ALL`
+//! not confer it and makes `SHOW GRANTS` print it as the trailing
+//! ` WITH GRANT OPTION` suffix instead of inside the privilege list.
+//!
 //! OUT OF SCOPE (refused rather than faked): column-level grants, roles
-//! (`CREATE ROLE`/`GRANT ROLE`/`DROP ROLE`), dynamic privileges, and
-//! `WITH GRANT OPTION`. Root's bootstrap grant is the one place
-//! `GRANT OPTION` appears, and it is a hardcoded display fact, never a
-//! settable bit.
+//! (`CREATE ROLE`/`GRANT ROLE`/`DROP ROLE`), and dynamic privileges.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+use sha1::{Digest, Sha1};
 
 /// `mysql.DB` row key: `(user, host, database)`.
 type DbPrivKey = (String, String, String);
@@ -79,6 +92,9 @@ pub enum GlobalPriv {
     Config,
     ReplicationClient,
     ReplicationSlave,
+    /// Go `mysql.GrantPriv`. Never a member of any `ALL_*` list; see the
+    /// module doc.
+    GrantOption,
 }
 
 /// Go `mysql.AllGlobalPrivs`, minus `CreateRolePriv`/`DropRolePriv` (roles
@@ -163,14 +179,16 @@ impl GlobalPriv {
             Self::Config => "CONFIG",
             Self::ReplicationClient => "REPLICATION CLIENT",
             Self::ReplicationSlave => "REPLICATION SLAVE",
+            Self::GrantOption => "GRANT OPTION",
         }
     }
 
     /// Resolves the exact spelling `tidb-parser`'s `GrantPrivilege::name`
     /// restores for a standard (non-dynamic) privilege token. Returns `None`
-    /// for names this tier does not model as a global static privilege
-    /// (roles, `GRANT OPTION`, anything dynamic) -- the caller decides how to
-    /// refuse those.
+    /// for names this tier does not model as a static privilege (roles,
+    /// anything dynamic) -- the caller decides how to refuse those.
+    /// `GRANT OPTION` resolves here like any other privilege, which is what
+    /// makes `GRANT`/`REVOKE GRANT OPTION ON <level>` work at every scope.
     pub fn from_grant_name(name: &str) -> Option<Self> {
         Some(match name {
             "SELECT" => Self::Select,
@@ -202,6 +220,7 @@ impl GlobalPriv {
             "CONFIG" => Self::Config,
             "REPLICATION CLIENT" => Self::ReplicationClient,
             "REPLICATION SLAVE" => Self::ReplicationSlave,
+            "GRANT OPTION" => Self::GrantOption,
             _ => return None,
         })
     }
@@ -264,7 +283,7 @@ impl GlobalPriv {
     /// GRANT and GLOBAL PRIVILEGES").
     #[must_use]
     pub fn is_valid_at_db_scope(self) -> bool {
-        ALL_DB_PRIVS.contains(&self)
+        self == Self::GrantOption || ALL_DB_PRIVS.contains(&self)
     }
 
     /// Whether this privilege is one Go's TABLE-scope grant path accepts
@@ -272,7 +291,7 @@ impl GlobalPriv {
     /// `ErrIllegalGrantForTable`/1144).
     #[must_use]
     pub fn is_valid_at_table_scope(self) -> bool {
-        ALL_TABLE_PRIVS.contains(&self)
+        self == Self::GrantOption || ALL_TABLE_PRIVS.contains(&self)
     }
 }
 
@@ -284,22 +303,16 @@ pub(crate) fn all_table_privs_mask() -> u64 {
         .fold(0u64, |mask, priv_| mask | priv_.bit())
 }
 
-/// One account's global-privilege state.
+/// One account's `mysql.user` row: its global privileges and the
+/// `authentication_string` a login is verified against.
 struct UserRecord {
     privs: u64,
-    /// Set only for the bootstrap `root` account: a hardcoded display fact
-    /// (Go's real `WITH GRANT OPTION`), never produced by a `GRANT` this
-    /// tier executes, since `WITH GRANT OPTION` itself is refused.
-    grant_option: bool,
-}
-
-impl UserRecord {
-    fn fresh() -> Self {
-        Self {
-            privs: 0,
-            grant_option: false,
-        }
-    }
+    /// Go's `mysql.user.authentication_string`: `*` followed by 40 uppercase
+    /// hexadecimal digits for a native-password account, and the EMPTY
+    /// string for a passwordless one (captured: `CREATE USER 'nopw'@'%'`
+    /// leaves `authentication_string` empty with plugin
+    /// `mysql_native_password`).
+    auth_string: String,
 }
 
 /// The server's account/global-privilege registry, shared by every session
@@ -332,23 +345,45 @@ const BOOTSTRAP_ROOT_USER: &str = "root";
 const BOOTSTRAP_ROOT_HOST: &str = "%";
 
 impl Default for PrivilegeRegistry {
+    /// The fresh-cluster table: `root`@`%` alone, with no password.
     fn default() -> Self {
-        let registry = Self {
-            users: Arc::new(Mutex::new(HashMap::new())),
+        Self::bootstrapped_from([(
+            BOOTSTRAP_ROOT_USER.to_owned(),
+            BOOTSTRAP_ROOT_HOST.to_owned(),
+            String::new(),
+        )])
+    }
+}
+
+impl PrivilegeRegistry {
+    /// Bootstraps a table holding EXACTLY the given
+    /// `(user, host, authentication_string)` accounts.
+    ///
+    /// This is the deployable node's bootstrap: its auth file plays the role
+    /// Go's `mysql.CreateUserTable` bootstrap does, so an account the file
+    /// does not list has no row and therefore cannot log in -- `root`@`%`
+    /// included. `root`@`%` receives the bootstrap
+    /// `ALL PRIVILEGES ... WITH GRANT OPTION` only when it IS one of the
+    /// accounts, which keeps "which accounts exist" and "what root may do"
+    /// from being two independent decisions.
+    #[must_use]
+    pub fn bootstrapped_from(accounts: impl IntoIterator<Item = (String, String, String)>) -> Self {
+        let users = accounts
+            .into_iter()
+            .map(|(user, host, auth_string)| {
+                let privs = if user == BOOTSTRAP_ROOT_USER && host == BOOTSTRAP_ROOT_HOST {
+                    all_privs_mask() | GlobalPriv::GrantOption.bit()
+                } else {
+                    0
+                };
+                ((user, host), UserRecord { privs, auth_string })
+            })
+            .collect();
+        Self {
+            users: Arc::new(Mutex::new(users)),
             db_privs: Arc::new(Mutex::new(HashMap::new())),
             table_privs: Arc::new(Mutex::new(HashMap::new())),
-        };
-        registry.lock().insert(
-            (
-                BOOTSTRAP_ROOT_USER.to_owned(),
-                BOOTSTRAP_ROOT_HOST.to_owned(),
-            ),
-            UserRecord {
-                privs: all_privs_mask(),
-                grant_option: true,
-            },
-        );
-        registry
+        }
     }
 }
 
@@ -383,13 +418,103 @@ impl PrivilegeRegistry {
     /// account that already exists fails unless the caller handles
     /// `IF NOT EXISTS` itself. Returns `false` if the account already
     /// existed (no state changed), `true` if it was created.
-    pub fn create_user(&self, user: &str, host: &str) -> bool {
+    pub fn create_user(&self, user: &str, host: &str, auth_string: &str) -> bool {
         let key = (user.to_owned(), host.to_owned());
         let mut guard = self.lock();
         if guard.contains_key(&key) {
             return false;
         }
-        guard.insert(key, UserRecord::fresh());
+        guard.insert(
+            key,
+            UserRecord {
+                privs: 0,
+                auth_string: auth_string.to_owned(),
+            },
+        );
+        true
+    }
+
+    /// The account's `authentication_string`, or `None` when no such account
+    /// exists. An existing passwordless account answers `Some("")`, which is
+    /// the distinction a login path needs: "no such user" and "user with no
+    /// password" are different answers.
+    #[must_use]
+    pub fn auth_string(&self, user: &str, host: &str) -> Option<String> {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .map(|record| record.auth_string.clone())
+    }
+
+    /// Replaces an existing account's `authentication_string`
+    /// (`ALTER USER ... IDENTIFIED BY`, `SET PASSWORD`). Returns whether the
+    /// account existed.
+    pub fn set_auth_string(&self, user: &str, host: &str, auth_string: &str) -> bool {
+        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            Some(record) => {
+                record.auth_string = auth_string.to_owned();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Every account identity currently in the table, for the front end's
+    /// host-pattern matching at login time (Go resolves a login against the
+    /// live `mysql.user` rows, not a startup snapshot).
+    #[must_use]
+    pub fn accounts(&self) -> Vec<(String, String)> {
+        self.lock().keys().cloned().collect()
+    }
+
+    /// Go `RENAME USER`: moves the account row and every DB/TABLE grant row
+    /// keyed by it to a new identity, keeping the `authentication_string`
+    /// (captured). Returns `false` without changing anything when the old
+    /// account is missing or the new identity already exists.
+    pub fn rename_user(
+        &self,
+        old_user: &str,
+        old_host: &str,
+        new_user: &str,
+        new_host: &str,
+    ) -> bool {
+        let old_key = (old_user.to_owned(), old_host.to_owned());
+        let new_key = (new_user.to_owned(), new_host.to_owned());
+        {
+            let mut guard = self.lock();
+            if guard.contains_key(&new_key) {
+                return false;
+            }
+            let Some(record) = guard.remove(&old_key) else {
+                return false;
+            };
+            guard.insert(new_key, record);
+        }
+        let mut db_guard = self.lock_db();
+        *db_guard = db_guard
+            .drain()
+            .map(|((row_user, row_host, database), privs)| {
+                if row_user == old_user && row_host == old_host {
+                    ((new_user.to_owned(), new_host.to_owned(), database), privs)
+                } else {
+                    ((row_user, row_host, database), privs)
+                }
+            })
+            .collect();
+        drop(db_guard);
+        let mut table_guard = self.lock_table();
+        *table_guard = table_guard
+            .drain()
+            .map(|((row_user, row_host, database, table), privs)| {
+                if row_user == old_user && row_host == old_host {
+                    (
+                        (new_user.to_owned(), new_host.to_owned(), database, table),
+                        privs,
+                    )
+                } else {
+                    ((row_user, row_host, database, table), privs)
+                }
+            })
+            .collect();
         true
     }
 
@@ -397,9 +522,19 @@ impl PrivilegeRegistry {
     /// fails unless the caller handles `IF EXISTS` itself. Returns whether
     /// the account existed (and was removed).
     pub fn drop_user(&self, user: &str, host: &str) -> bool {
-        self.lock()
+        let removed = self
+            .lock()
             .remove(&(user.to_owned(), host.to_owned()))
-            .is_some()
+            .is_some();
+        // Go deletes the account's `mysql.db`/`mysql.tables_priv` rows in the
+        // same transaction (captured: after `DROP USER`, `mysql.db` has no
+        // row left for the account), so a later account recreated under the
+        // same name does not inherit the old scoped grants.
+        self.lock_db()
+            .retain(|(row_user, row_host, _), _| row_user != user || row_host != host);
+        self.lock_table()
+            .retain(|(row_user, row_host, _, _), _| row_user != user || row_host != host);
+        removed
     }
 
     /// Sets every bit in `mask`, on an account the caller has already
@@ -516,28 +651,15 @@ impl PrivilegeRegistry {
         let global_line = {
             let guard = self.lock();
             let record = guard.get(&(user.to_owned(), host.to_owned()))?;
-            let with_grant = if record.grant_option {
-                " WITH GRANT OPTION"
+            let priv_text = if record.privs & !GlobalPriv::GrantOption.bit() == all_privs_mask() {
+                "ALL PRIVILEGES".to_owned()
             } else {
-                ""
+                priv_list(record.privs, ALL_GLOBAL_PRIVS)
             };
-            if record.privs == all_privs_mask() {
-                format!("GRANT ALL PRIVILEGES ON *.* TO '{user}'@'{host}'{with_grant}")
-            } else {
-                let names: Vec<&str> = ALL_GLOBAL_PRIVS
-                    .iter()
-                    .filter(|priv_| record.privs & priv_.bit() != 0)
-                    .map(|priv_| priv_.print_name())
-                    .collect();
-                if names.is_empty() {
-                    format!("GRANT USAGE ON *.* TO '{user}'@'{host}'{with_grant}")
-                } else {
-                    format!(
-                        "GRANT {} ON *.* TO '{user}'@'{host}'{with_grant}",
-                        names.join(",")
-                    )
-                }
-            }
+            format!(
+                "GRANT {priv_text} ON *.* TO '{user}'@'{host}'{}",
+                grant_option_suffix(record.privs)
+            )
         };
 
         // DB-scope lines: Go's showGrants sorts these lexically by the
@@ -549,19 +671,15 @@ impl PrivilegeRegistry {
             .iter()
             .filter(|((row_user, row_host, _), _)| row_user == user && row_host == host)
             .map(|((_, _, database), privs)| {
-                let names: Vec<&str> = ALL_DB_PRIVS
-                    .iter()
-                    .filter(|priv_| privs & priv_.bit() != 0)
-                    .map(|priv_| priv_.print_name())
-                    .collect();
-                let priv_text = if *privs == all_db_privs_mask() {
+                let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_db_privs_mask() {
                     "ALL PRIVILEGES".to_owned()
-                } else if names.is_empty() {
-                    "USAGE".to_owned()
                 } else {
-                    names.join(",")
+                    priv_list(*privs, ALL_DB_PRIVS)
                 };
-                format!("GRANT {priv_text} ON `{database}`.* TO '{user}'@'{host}'")
+                format!(
+                    "GRANT {priv_text} ON `{database}`.* TO '{user}'@'{host}'{}",
+                    grant_option_suffix(*privs)
+                )
             })
             .collect();
         db_lines.sort_unstable();
@@ -572,19 +690,16 @@ impl PrivilegeRegistry {
             .iter()
             .filter(|((row_user, row_host, _, _), _)| row_user == user && row_host == host)
             .map(|((_, _, database, table), privs)| {
-                let names: Vec<&str> = ALL_TABLE_PRIVS
-                    .iter()
-                    .filter(|priv_| privs & priv_.bit() != 0)
-                    .map(|priv_| priv_.print_name())
-                    .collect();
-                let priv_text = if *privs == all_table_privs_mask() {
+                let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_table_privs_mask()
+                {
                     "ALL PRIVILEGES".to_owned()
-                } else if names.is_empty() {
-                    "USAGE".to_owned()
                 } else {
-                    names.join(",")
+                    priv_list(*privs, ALL_TABLE_PRIVS)
                 };
-                format!("GRANT {priv_text} ON `{database}`.`{table}` TO '{user}'@'{host}'")
+                format!(
+                    "GRANT {priv_text} ON `{database}`.`{table}` TO '{user}'@'{host}'{}",
+                    grant_option_suffix(*privs)
+                )
             })
             .collect();
         table_lines.sort_unstable();
@@ -595,6 +710,56 @@ impl PrivilegeRegistry {
         lines.extend(table_lines);
         Some(lines.join("\n"))
     }
+}
+
+/// The ` WITH GRANT OPTION` suffix `SHOW GRANTS` appends to a line whose
+/// privilege mask carries `mysql.GrantPriv`. Captured at all three scopes:
+/// the suffix trails the whole `GRANT ... TO '<user>'@'<host>'` line, and
+/// `GRANT OPTION` never appears inside the privilege list.
+fn grant_option_suffix(privs: u64) -> &'static str {
+    if privs & GlobalPriv::GrantOption.bit() == 0 {
+        ""
+    } else {
+        " WITH GRANT OPTION"
+    }
+}
+
+/// The comma-joined privilege names of `privs` in `order`'s print order, or
+/// the `USAGE` literal Go prints for a row with no printable privilege
+/// ("this is a mysql convention"). `GRANT OPTION` is in no `order` list, so
+/// it never lands here.
+fn priv_list(privs: u64, order: &[GlobalPriv]) -> String {
+    let names: Vec<&str> = order
+        .iter()
+        .filter(|priv_| privs & priv_.bit() != 0)
+        .map(|priv_| priv_.print_name())
+        .collect();
+    if names.is_empty() {
+        "USAGE".to_owned()
+    } else {
+        names.join(",")
+    }
+}
+
+/// Go `pkg/parser/auth.EncodePassword`: the
+/// `mysql.user.authentication_string` of a `mysql_native_password` account is
+/// `*` followed by the UPPERCASE hexadecimal SHA-1 of the SHA-1 of the
+/// plaintext. An empty password encodes to the empty string, NOT to a hash of
+/// the empty string.
+#[must_use]
+pub fn encode_password(password: &str) -> String {
+    if password.is_empty() {
+        return String::new();
+    }
+    let stage_one = Sha1::digest(password.as_bytes());
+    let stage_two = Sha1::digest(stage_one);
+    let mut encoded = String::with_capacity(1 + stage_two.len() * 2);
+    encoded.push('*');
+    for byte in stage_two {
+        use std::fmt::Write;
+        write!(encoded, "{byte:02X}").expect("writing to a String cannot fail");
+    }
+    encoded
 }
 
 #[cfg(test)]
@@ -614,19 +779,19 @@ mod tests {
     #[test]
     fn fresh_user_reports_usage() {
         let registry = PrivilegeRegistry::default();
-        assert!(registry.create_user("u1", "%"));
+        assert!(registry.create_user("u1", "%", ""));
         assert_eq!(
             registry.show_grants("u1", "%").as_deref(),
             Some("GRANT USAGE ON *.* TO 'u1'@'%'")
         );
         // Creating it again is refused, not silently accepted.
-        assert!(!registry.create_user("u1", "%"));
+        assert!(!registry.create_user("u1", "%", ""));
     }
 
     #[test]
     fn grant_prints_in_fixed_go_order_not_insertion_order() {
         let registry = PrivilegeRegistry::default();
-        registry.create_user("u1", "%");
+        registry.create_user("u1", "%", "");
         // Granted in scrambled order: SELECT, PROCESS, INSERT, SUPER, UPDATE.
         let mask = GlobalPriv::Select.bit()
             | GlobalPriv::Process.bit()
@@ -650,7 +815,7 @@ mod tests {
     fn drop_user_reports_whether_it_existed() {
         let registry = PrivilegeRegistry::default();
         assert!(!registry.drop_user("nosuchuser", "%"));
-        registry.create_user("u1", "%");
+        registry.create_user("u1", "%", "");
         assert!(registry.drop_user("u1", "%"));
         assert!(!registry.user_exists("u1", "%"));
     }
@@ -658,7 +823,7 @@ mod tests {
     #[test]
     fn all_privileges_collapses_to_the_literal() {
         let registry = PrivilegeRegistry::default();
-        registry.create_user("u1", "%");
+        registry.create_user("u1", "%", "");
         registry.grant("u1", "%", all_privs_mask());
         assert_eq!(
             registry.show_grants("u1", "%").as_deref(),
@@ -686,7 +851,7 @@ mod tests {
         // lexically by their formatted text (not by DB name or grant
         // order), then TABLE-scope lines the same way.
         let registry = PrivilegeRegistry::default();
-        registry.create_user("u", "%");
+        registry.create_user("u", "%", "");
         registry.grant_db("u", "%", "db1", GlobalPriv::Select.bit());
         registry.grant_table(
             "u",
@@ -711,7 +876,7 @@ mod tests {
     #[test]
     fn db_scope_all_privileges_collapses_and_usage_prints_for_fresh_row() {
         let registry = PrivilegeRegistry::default();
-        registry.create_user("u", "%");
+        registry.create_user("u", "%", "");
         registry.grant_db("u", "%", "db1", all_db_privs_mask());
         assert_eq!(
             registry.show_grants("u", "%").as_deref(),
@@ -725,7 +890,7 @@ mod tests {
     #[test]
     fn table_scope_all_privileges_collapses() {
         let registry = PrivilegeRegistry::default();
-        registry.create_user("u", "%");
+        registry.create_user("u", "%", "");
         registry.grant_table("u", "%", "db1", "t1", all_table_privs_mask());
         assert_eq!(
             registry.show_grants("u", "%").as_deref(),
@@ -739,7 +904,7 @@ mod tests {
     #[test]
     fn revoke_db_clears_bits_and_row_existence_is_tracked_separately() {
         let registry = PrivilegeRegistry::default();
-        registry.create_user("u", "%");
+        registry.create_user("u", "%", "");
         assert!(!registry.db_grant_row_exists("u", "%", "db1"));
         registry.grant_db("u", "%", "db1", GlobalPriv::Select.bit());
         assert!(registry.db_grant_row_exists("u", "%", "db1"));

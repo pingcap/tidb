@@ -696,6 +696,36 @@ pub enum DriverError {
         /// The missing accounts, already formatted and comma-joined.
         accounts: String,
     },
+    /// Go `ErrCannotUser` (1396): `ALTER USER ... IDENTIFIED BY` named an
+    /// account that does not exist, without `IF EXISTS`. Quoted
+    /// `'user'@'host'`, like CREATE USER's form and unlike DROP USER's.
+    AlterUserMissing {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
+    /// Go `ErrCannotUser` (1396) for `RENAME USER`, whose message carries a
+    /// trailing reason clause rather than just the account
+    /// (captured: `... failed for nosuch@% TO x@% old did not exist`, and
+    /// `... new did exist` when the target identity is taken).
+    RenameUserFailed {
+        /// The source account username.
+        old_user: String,
+        /// The source account host.
+        old_host: String,
+        /// The target account username.
+        new_user: String,
+        /// The target account host.
+        new_host: String,
+        /// Whether the SOURCE account was missing (as opposed to the target
+        /// identity already existing), which selects the reason clause.
+        old_missing: bool,
+    },
+    /// Go `ErrPasswordNoMatch` (1133): `SET PASSWORD FOR` named an account
+    /// with no `mysql.user` row. `SET PASSWORD` does NOT reuse
+    /// `ErrCannotUser` (captured).
+    SetPasswordNoMatchingRow,
     /// Go's plain `errors.Errorf("Unknown user: %s", user)` (`REVOKE` on an
     /// account that does not exist), unquoted `user@host`.
     RevokeUnknownUser {
@@ -9891,6 +9921,39 @@ impl DriverError {
             1396,
             *b"HY000",
             format!("Operation DROP USER failed for {accounts}"),
+        ),
+        // Go `ErrCannotUser` (1396) for ALTER USER, quoted like CREATE USER.
+        DriverError::AlterUserMissing { user, host } => MysqlError::new(
+            1396,
+            *b"HY000",
+            format!("Operation ALTER USER failed for '{user}'@'{host}'"),
+        ),
+        // Go `ErrCannotUser` (1396) for RENAME USER: unquoted `user@host` on
+        // both sides plus the reason clause.
+        DriverError::RenameUserFailed {
+            old_user,
+            old_host,
+            new_user,
+            new_host,
+            old_missing,
+        } => MysqlError::new(
+            1396,
+            *b"HY000",
+            format!(
+                "Operation RENAME USER failed for {old_user}@{old_host} TO \
+                 {new_user}@{new_host} {}",
+                if old_missing {
+                    "old did not exist"
+                } else {
+                    "new did exist"
+                }
+            ),
+        ),
+        // Go `ErrPasswordNoMatch` (1133).
+        DriverError::SetPasswordNoMatchingRow => MysqlError::new(
+            1133,
+            *b"42000",
+            "Can't find any matching row in the user table".to_owned(),
         ),
         // Go: `errors.Errorf("Unknown user: %s", user)` in `RevokeExec.Next`.
         DriverError::RevokeUnknownUser { user, host } => {

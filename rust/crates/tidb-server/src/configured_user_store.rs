@@ -12,12 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Immutable startup user store for the deployable loopback SQL node.
+//! The deployable SQL node's `mysql.user` table: startup account
+//! provisioning plus the login path that verifies against it.
+//!
+//! The account rows themselves live in the shared
+//! [`PrivilegeRegistry`][tidb_session::privilege::PrivilegeRegistry] -- the
+//! same one `CREATE USER`/`GRANT`/`DROP USER` write and `SHOW GRANTS` reads,
+//! exactly as Go has ONE `mysql.user` holding both the
+//! `authentication_string` and the privilege columns. This file's strict TSV
+//! is therefore only a *provisioning* format (the operator's initial rows),
+//! not a separate, immutable catalog: an account `CREATE USER ... IDENTIFIED
+//! BY` adds at runtime can log in immediately, and one `DROP USER` removes
+//! can no longer log in at all.
 
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+
+use tidb_session::privilege::PrivilegeRegistry;
 
 use crate::auth_identity::{
     IdentityCatalog, IdentityLookupRequest, IdentityLookupResult, MatchedIdentity,
@@ -57,15 +70,14 @@ impl AuthenticatedIdentity {
     }
 }
 
-struct ConfiguredUser {
-    identity: MatchedIdentity,
-    password_hash: NativePasswordHash,
-}
-
-/// Host-aware native-password account catalog loaded once at startup.
+/// The live `mysql.user` table, plus the login verifier that reads it.
+///
+/// Cheaply cloneable: every clone is the SAME table (the registry is an
+/// `Arc`-shared map), which is what lets the wire front end's authenticator
+/// and the session factory's `CREATE USER`/`GRANT` executor be one store.
+#[derive(Clone)]
 pub struct ConfiguredUserStore {
-    identities: IdentityCatalog,
-    users: Vec<ConfiguredUser>,
+    accounts: PrivilegeRegistry,
 }
 
 impl ConfiguredUserStore {
@@ -98,15 +110,20 @@ impl ConfiguredUserStore {
         Self::parse(&contents)
     }
 
-    /// Parses strict TSV contents after the file owner validates its metadata.
+    /// Parses strict TSV contents after the file owner validates its
+    /// metadata, provisioning one `mysql.user` row per record.
+    ///
+    /// A record's stored hash must be a strict `*40HEX` stage-two value or
+    /// EMPTY, the latter provisioning a passwordless account exactly as
+    /// `CREATE USER 'u'@'%'` without `IDENTIFIED BY` does (captured: Go
+    /// leaves `authentication_string` empty for such an account).
     pub fn parse(contents: &str) -> Result<Self, ConfiguredUserStoreError> {
         if contents.is_empty() {
             return Err(ConfiguredUserStoreError::EmptyStore);
         }
 
-        let mut users = Vec::new();
-        let mut identities = Vec::new();
         let mut seen = HashSet::new();
+        let mut provisioned = Vec::new();
         for (index, line) in contents.lines().enumerate() {
             let line_number = index + 1;
             let fields: Vec<_> = line.split('\t').collect();
@@ -129,42 +146,56 @@ impl ConfiguredUserStore {
             if !seen.insert(duplicate_key) {
                 return Err(ConfiguredUserStoreError::DuplicateIdentity { line: line_number });
             }
-            let password_hash = NativePasswordHash::parse(fields[3])
-                .map_err(|_| ConfiguredUserStoreError::InvalidPasswordHash { line: line_number })?;
-            let identity = MatchedIdentity::new(fields[0], fields[1]);
-            identities.push(identity.clone());
-            users.push(ConfiguredUser {
-                identity,
-                password_hash,
-            });
+            if !fields[3].is_empty() && NativePasswordHash::parse(fields[3]).is_err() {
+                return Err(ConfiguredUserStoreError::InvalidPasswordHash { line: line_number });
+            }
+            provisioned.push((
+                fields[0].to_owned(),
+                fields[1].to_owned(),
+                fields[3].to_owned(),
+            ));
         }
-        if users.is_empty() {
+        if provisioned.is_empty() {
             return Err(ConfiguredUserStoreError::EmptyStore);
         }
 
+        // The file IS this node's bootstrap, so the table holds exactly the
+        // accounts it lists: a node whose file omits `root`@`%` has no root
+        // row, and therefore no implicitly passwordless root login.
         Ok(Self {
-            identities: IdentityCatalog::new(identities),
-            users,
+            accounts: PrivilegeRegistry::bootstrapped_from(provisioned),
         })
     }
 
-    /// Returns the number of immutable configured account rows.
+    /// The live account table, to be shared with the session factory so that
+    /// `CREATE USER`/`DROP USER` and the login path see one set of rows.
+    #[must_use]
+    pub fn accounts(&self) -> PrivilegeRegistry {
+        self.accounts.clone()
+    }
+
+    /// Returns the number of account rows currently in the table.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.users.len()
+        self.accounts.accounts().len()
     }
 
-    /// Returns whether the catalog has no account rows.
+    /// Returns whether the table has no account rows.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.users.is_empty()
+        self.len() == 0
     }
 
-    /// Resolves and verifies one native-password response.
+    /// Resolves and verifies one native-password response against the LIVE
+    /// account table.
     ///
     /// An unknown user or host still executes the native verifier against a
     /// dummy hash before returning `None`. The successful result contains the
-    /// canonical configured host pattern, not the client-supplied host.
+    /// canonical stored host pattern, not the client-supplied host.
+    ///
+    /// A passwordless account (empty `authentication_string`) authenticates
+    /// only on an empty auth response, which is what a client sends when the
+    /// user supplies no password.
     #[must_use]
     pub fn authenticate_native(
         &self,
@@ -173,19 +204,34 @@ impl ConfiguredUserStore {
         salt: &[u8],
         response: &[u8],
     ) -> Option<AuthenticatedIdentity> {
+        let catalog = IdentityCatalog::new(
+            self.accounts
+                .accounts()
+                .into_iter()
+                .map(|(user, host)| MatchedIdentity::new(&user, &host)),
+        );
         let request = IdentityLookupRequest::new(username, remote_host, true);
-        let identity = match self.identities.resolve(&request, &[]) {
+        let identity = match catalog.resolve(&request, &[]) {
             IdentityLookupResult::Matched(identity) => Some(identity),
             IdentityLookupResult::Bypassed(_) | IdentityLookupResult::NotFound => None,
         };
-        let user = identity.as_ref().and_then(|identity| {
-            self.users.iter().find(|user| {
-                user.identity.username() == identity.username()
-                    && user.identity.host() == identity.host()
-            })
+        let stored = identity.as_ref().and_then(|identity| {
+            self.accounts
+                .auth_string(identity.username(), identity.host())
         });
 
-        if verify_candidate(user.map(|user| &user.password_hash), salt, response) {
+        // Three outcomes, not two: no such account, an account with no
+        // password, and an account with a stored hash.
+        let verified = match stored.as_deref() {
+            None => verify_candidate(None, salt, response),
+            Some("") => response.is_empty(),
+            Some(encoded) => verify_candidate(
+                NativePasswordHash::parse(encoded).ok().as_ref(),
+                salt,
+                response,
+            ),
+        };
+        if verified {
             identity.map(|identity| AuthenticatedIdentity { identity })
         } else {
             None
@@ -197,7 +243,7 @@ impl std::fmt::Debug for ConfiguredUserStore {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConfiguredUserStore")
-            .field("account_count", &self.users.len())
+            .field("account_count", &self.len())
             .finish_non_exhaustive()
     }
 }
@@ -230,7 +276,8 @@ pub enum ConfiguredUserStoreError {
         /// One-based record line.
         line: usize,
     },
-    /// A stored password is not a strict native stage-two hash.
+    /// A stored password is neither empty nor a strict native stage-two
+    /// hash.
     InvalidPasswordHash {
         /// One-based record line.
         line: usize,

@@ -97,6 +97,20 @@ pub struct PipelineSessionFactory {
 }
 
 impl PipelineSessionFactory {
+    /// Builds a factory over an EXISTING account table -- normally
+    /// `ConfiguredUserStore::accounts()`, so that the accounts a connection
+    /// can authenticate as and the accounts `CREATE USER`/`GRANT`/`DROP
+    /// USER` manipulate are one set of rows. `Default` instead starts from a
+    /// fresh table bootstrapped with `root`@`%`, for in-process sessions
+    /// that have no wire front end.
+    #[must_use]
+    pub fn with_accounts(accounts: PrivilegeRegistry) -> Self {
+        Self {
+            privileges: accounts,
+            ..Self::default()
+        }
+    }
+
     /// The process list of every connection this factory has open.
     #[must_use]
     pub fn processes(&self) -> ProcessRegistry {
@@ -144,13 +158,11 @@ impl QuerySessionFactory for PipelineSessionFactory {
             ))),
         );
         session.session.attach_process(context.connection_id, guard);
-        // An identity the handshake matched exists in Go's mysql.user by
-        // construction, so SHOW GRANTS always finds at least USAGE for it.
-        // The configured user store and the privilege registry are separate
-        // structures here -- seed the account on first login so the same
-        // holds (create_user is a no-op when it already exists).
-        self.privileges
-            .create_user(identity.username(), identity.host());
+        // No seeding here: the identity the handshake matched IS a row in
+        // this same registry (`ConfiguredUserStore` verifies logins against
+        // it), exactly as Go's one `mysql.user` holds both the
+        // authentication and the privilege columns. `SHOW GRANTS` therefore
+        // always finds at least USAGE for an authenticated session.
         session.session.attach_privileges(self.privileges.clone());
         Ok(session)
     }
