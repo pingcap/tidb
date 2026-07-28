@@ -38,7 +38,8 @@ use tidb_codec::table_key::{
     encode_non_unique_index_key, encode_row_key_with_handle, non_unique_index_value, RecordHandle,
 };
 use tidb_datatype::{
-    parse_duration, parse_time, produce_char_value, Datum, Decimal, MySqlDuration, TimeType,
+    add_integer, add_uint64, parse_duration, parse_time, produce_char_value, Datum, Decimal,
+    DecimalCodecWarning, MySqlDuration, TimeType,
 };
 use tidb_planner::{
     prepared_dml::{
@@ -412,34 +413,16 @@ pub fn plan_update(
 
     // Resolve the assigned column's new value by assignment kind. `Set` routes
     // through the same per-scalar-type coercion the INSERT path uses. `Add`
-    // applies the column's integer range itself (the i64 arithmetic runs
-    // first, then storing the result applies the column's own domain, so an
-    // INT that leaves the i32 range is an overflow even when the i64 addition
-    // did not wrap).
+    // dispatches on the assigned column's own scalar type
+    // (`plan_typed_add`), matching Go's generic `+` applied to each of
+    // `BIGINT`/`INT`, `BIGINT UNSIGNED`, `DECIMAL`, and `DOUBLE`.
     let new_value = match assignment {
         // Shares the exact coercion the INSERT path applies
         // (`configured_stored_value`): the same type check, range check,
         // truncation, and `NULL`-into-nullable-column rule, so `SET col = ?`
         // admits and refuses exactly what `INSERT ... (col) VALUES (?)` does.
         ConfiguredAssignment::Set(value) => configured_stored_value(assigned, &value)?,
-        ConfiguredAssignment::Add(addend) => {
-            let current = stored_value.as_int().ok_or_else(|| {
-                ConfiguredWriteError::RowRead(format!(
-                    "configured column ID {} is not a signed integer",
-                    assigned.id()
-                ))
-            })?;
-            let replacement =
-                current
-                    .checked_add(addend)
-                    .ok_or_else(|| ConfiguredWriteError::Overflow {
-                        column: assigned.name().to_owned(),
-                        current,
-                        addend,
-                    })?;
-            check_column_value(assigned, replacement)?;
-            Datum::Int(replacement)
-        }
+        ConfiguredAssignment::Add(addend) => plan_typed_add(assigned, &stored_value, &addend)?,
     };
     // An UPDATE whose value does not change writes nothing (Go `AddTouchedRows`
     // with no affected row on this non-`ClientFoundRows` path).
@@ -984,6 +967,133 @@ fn configured_stored_value(
             };
             admit_temporal_value(column, bytes, scalar_type)
         }
+    }
+}
+
+/// Applies `column = column + <addend>`, typed to the assigned column's own
+/// declared scalar type — the only shapes `supports_typed_add`
+/// (`tidb-planner::prepared_dml`) admits at planning time, so every other
+/// scalar type is unreachable here.
+///
+/// A `NULL` addend follows Go's ordinary NULL-propagation for arithmetic
+/// (`col + NULL` is `NULL`), gated by the assigned column's own nullability
+/// exactly like `configured_stored_value`'s NULL rule.
+fn plan_typed_add(
+    column: &ConfiguredColumn,
+    stored_value: &Datum,
+    addend: &PreparedBindValue,
+) -> Result<Datum, ConfiguredWriteError> {
+    if matches!(addend, PreparedBindValue::Null) {
+        return if column.is_nullable() {
+            Ok(Datum::Null)
+        } else {
+            Err(ConfiguredWriteError::NullNotAllowed {
+                column: column.name().to_owned(),
+            })
+        };
+    }
+    match column.scalar_type() {
+        ConfiguredScalarType::Int | ConfiguredScalarType::BigInt => {
+            let current = stored_value.as_int().ok_or_else(|| {
+                ConfiguredWriteError::RowRead(format!(
+                    "configured column ID {} is not a signed integer",
+                    column.id()
+                ))
+            })?;
+            let PreparedBindValue::Int(addend) = addend else {
+                return Err(type_mismatch(column, matches!(addend, PreparedBindValue::Bytes(_))));
+            };
+            let replacement =
+                current
+                    .checked_add(*addend)
+                    .ok_or_else(|| ConfiguredWriteError::Overflow {
+                        column: column.name().to_owned(),
+                        current,
+                        addend: *addend,
+                    })?;
+            check_column_value(column, replacement)?;
+            Ok(Datum::Int(replacement))
+        }
+        ConfiguredScalarType::UnsignedBigInt => {
+            let current = stored_value.as_uint().ok_or_else(|| {
+                ConfiguredWriteError::RowRead(format!(
+                    "configured column ID {} is not an unsigned integer",
+                    column.id()
+                ))
+            })?;
+            let replacement = match addend {
+                PreparedBindValue::Int(addend) => add_integer(current, *addend),
+                PreparedBindValue::UInt(addend) => add_uint64(current, *addend),
+                PreparedBindValue::Float(_) | PreparedBindValue::Bytes(_) => {
+                    return Err(type_mismatch(column, matches!(addend, PreparedBindValue::Bytes(_))))
+                }
+                PreparedBindValue::Null => unreachable!("NULL is handled above"),
+            }
+            .map_err(|_| ConfiguredWriteError::UnsignedOutOfRange {
+                column: column.name().to_owned(),
+            })?;
+            Ok(Datum::UInt(replacement))
+        }
+        ConfiguredScalarType::Decimal { precision, scale } => {
+            let current = stored_value.as_decimal().ok_or_else(|| {
+                ConfiguredWriteError::RowRead(format!(
+                    "configured column ID {} is not a decimal",
+                    column.id()
+                ))
+            })?;
+            // An integer addend mixes into `DECIMAL` arithmetic exactly as
+            // Go's generic `+` promotes an integer operand to `MyDecimal`
+            // before adding; a bound decimal-text addend parses the same way
+            // `admit_decimal_value` does for a plain `SET`.
+            let addend_decimal = match addend {
+                PreparedBindValue::Int(addend) => Decimal::from_int(*addend),
+                PreparedBindValue::UInt(addend) => Decimal::from_uint(*addend),
+                PreparedBindValue::Bytes(text) => {
+                    Decimal::parse_mysql(&String::from_utf8_lossy(text)).0
+                }
+                PreparedBindValue::Float(_) => return Err(type_mismatch(column, false)),
+                PreparedBindValue::Null => unreachable!("NULL is handled above"),
+            };
+            let (sum, warning) = current.add_mysql(&addend_decimal);
+            if warning == Some(DecimalCodecWarning::Overflow) {
+                return Err(ConfiguredWriteError::DecimalOutOfRange {
+                    column: column.name().to_owned(),
+                });
+            }
+            let fitted = sum.fit_precision_scale(precision, scale).ok_or_else(|| {
+                ConfiguredWriteError::DecimalOutOfRange {
+                    column: column.name().to_owned(),
+                }
+            })?;
+            Ok(Datum::Decimal(fitted))
+        }
+        ConfiguredScalarType::Double => {
+            let current = stored_value.as_real().ok_or_else(|| {
+                ConfiguredWriteError::RowRead(format!(
+                    "configured column ID {} is not a double",
+                    column.id()
+                ))
+            })?;
+            let addend_f64 = match addend {
+                PreparedBindValue::Int(addend) => *addend as f64,
+                PreparedBindValue::UInt(addend) => *addend as f64,
+                PreparedBindValue::Float(addend) => *addend,
+                PreparedBindValue::Bytes(text) => std::str::from_utf8(text)
+                    .ok()
+                    .and_then(|text| text.parse::<f64>().ok())
+                    .ok_or_else(|| type_mismatch(column, true))?,
+                PreparedBindValue::Null => unreachable!("NULL is handled above"),
+            };
+            Ok(Datum::Real(current + addend_f64))
+        }
+        ConfiguredScalarType::Char { .. }
+        | ConfiguredScalarType::Varchar { .. }
+        | ConfiguredScalarType::Date
+        | ConfiguredScalarType::Datetime { .. }
+        | ConfiguredScalarType::Timestamp { .. }
+        | ConfiguredScalarType::Duration { .. } => unreachable!(
+            "supports_typed_add (tidb-planner::prepared_dml) only admits BigInt/Int/UnsignedBigInt/Decimal/Double"
+        ),
     }
 }
 

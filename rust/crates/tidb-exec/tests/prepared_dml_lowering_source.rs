@@ -24,12 +24,11 @@
 //! PD/TiKV by the dependent live slice; nothing here substitutes a mock
 //! transport, mock catalog, or in-memory database for that proof.
 
-use tidb_codec::{
-    encode_configured_mixed_row, encode_configured_row,
-    table_key::{encode_non_unique_index_key, non_unique_index_value},
-    ConfiguredRowColumn, ConfiguredValue,
+use tidb_codec::table_key::{
+    encode_non_unique_index_key, encode_row_key_with_handle, non_unique_index_value, RecordHandle,
 };
 use tidb_datatype::Datum;
+use tidb_tablecodec::encode_table_row;
 use tidb_exec::real_tikv_dml::{
     plan_configured_write, plan_delete, plan_insert, plan_update, planned_publication_bounds,
     prepare_configured_write, prepare_text_write,
@@ -124,16 +123,15 @@ fn a_mixed_int_and_string_insert_routes_each_value_by_column_type() {
     assert_eq!(affected_rows, 1);
     // Stored columns route by type: `k` as an integer, `c`/`pad` as raw string
     // bytes, byte-identical to the mixed-row codec used directly.
-    let (expected_key, expected_value) = encode_configured_mixed_row(
+    let (expected_key, expected_value) = encode_expected_row(
         900,
         1,
         &[
-            (2, ConfiguredValue::Int(50)),
-            (3, ConfiguredValue::Bytes(b"hello world".to_vec())),
-            (4, ConfiguredValue::Bytes(b"padding".to_vec())),
+            (2, Datum::Int(50)),
+            (3, Datum::Bytes(b"hello world".to_vec())),
+            (4, Datum::Bytes(b"padding".to_vec())),
         ],
-    )
-    .expect("mixed row must encode");
+    );
     assert_eq!(mutations[0].key(), expected_key);
     assert_eq!(mutations[0].value(), expected_value);
 }
@@ -155,23 +153,30 @@ fn a_string_bound_to_an_integer_column_is_rejected() {
     ));
 }
 
-fn stored_row(balance: i64) -> Vec<u8> {
-    let (_, value) = encode_configured_row(
-        TABLE_ID,
-        0,
-        &[ConfiguredRowColumn::new(BALANCE_COLUMN, balance)],
+/// Builds the exact `(record key, row value)` pair production's own
+/// `encode_row_value` (`tidb-exec::real_tikv_dml`) writes, through the same
+/// shared `tidb_tablecodec::encode_table_row` codec — an independent
+/// "expected bytes" oracle for these tests, not a second row-format
+/// implementation of this crate's own.
+fn encode_expected_row(table_id: i64, handle: i64, columns: &[(i64, Datum)]) -> (Vec<u8>, Vec<u8>) {
+    let mut sorted = columns.to_vec();
+    sorted.sort_by_key(|(id, _)| *id);
+    let ids: Vec<i64> = sorted.iter().map(|(id, _)| *id).collect();
+    let values: Vec<Datum> = sorted.iter().map(|(_, value)| value.clone()).collect();
+    let value =
+        encode_table_row(None, &values, &ids, true, None).expect("expected row must encode");
+    (
+        encode_row_key_with_handle(table_id, &RecordHandle::Int(handle)),
+        value,
     )
-    .expect("stored row must encode");
-    value
+}
+
+fn stored_row(balance: i64) -> Vec<u8> {
+    encode_expected_row(TABLE_ID, 0, &[(BALANCE_COLUMN, Datum::Int(balance))]).1
 }
 
 fn expected_row(handle: i64, balance: i64) -> (Vec<u8>, Vec<u8>) {
-    encode_configured_row(
-        TABLE_ID,
-        handle,
-        &[ConfiguredRowColumn::new(BALANCE_COLUMN, balance)],
-    )
-    .expect("expected row must encode")
+    encode_expected_row(TABLE_ID, handle, &[(BALANCE_COLUMN, Datum::Int(balance))])
 }
 
 // -----------------------------------------------------------------------------
@@ -313,7 +318,7 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
             &table(),
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Add(0),
+            ConfiguredAssignment::Add(PreparedBindValue::Int(0)),
             Some(&stored_row(100)),
         ),
         Ok(ConfiguredWritePlan::NoWrite {
@@ -372,7 +377,7 @@ fn arithmetic_update_reads_the_snapshot_value_it_adds_to() {
         &table(),
         10,
         BALANCE_INDEX,
-        ConfiguredAssignment::Add(7),
+        ConfiguredAssignment::Add(PreparedBindValue::Int(7)),
         Some(&stored_row(150)),
     )
     .expect("update must plan") else {
@@ -390,7 +395,7 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
             &table(),
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Add(1),
+            ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored_row(i64::MAX)),
         ),
         Err(ConfiguredWriteError::Overflow {
@@ -404,7 +409,7 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
             &table(),
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Add(-1),
+            ConfiguredAssignment::Add(PreparedBindValue::Int(-1)),
             Some(&stored_row(i64::MIN)),
         ),
         Err(ConfiguredWriteError::Overflow {
@@ -419,7 +424,7 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
         &table(),
         10,
         BALANCE_INDEX,
-        ConfiguredAssignment::Add(1),
+        ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&stored_row(i64::MAX - 1)),
     )
     .expect("the boundary value must remain admitted") else {
@@ -430,13 +435,8 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
 
 #[test]
 fn a_row_missing_its_configured_column_fails_closed() {
-    let foreign_row = encode_configured_row(
-        TABLE_ID,
-        0,
-        &[ConfiguredRowColumn::new(BALANCE_COLUMN + 40, 100)],
-    )
-    .expect("row must encode")
-    .1;
+    let foreign_row =
+        encode_expected_row(TABLE_ID, 0, &[(BALANCE_COLUMN + 40, Datum::Int(100))]).1;
 
     assert!(matches!(
         plan_update(
@@ -472,15 +472,14 @@ fn an_update_rewrites_every_stored_column_not_just_the_assigned_one() {
             ConfiguredColumn::stored_not_null("reserved", BALANCE_COLUMN + 1),
         ],
     );
-    let stored = encode_configured_row(
+    let stored = encode_expected_row(
         TABLE_ID,
         0,
         &[
-            ConfiguredRowColumn::new(BALANCE_COLUMN, 100),
-            ConfiguredRowColumn::new(BALANCE_COLUMN + 1, 42),
+            (BALANCE_COLUMN, Datum::Int(100)),
+            (BALANCE_COLUMN + 1, Datum::Int(42)),
         ],
     )
-    .expect("stored row must encode")
     .1;
 
     let ConfiguredWritePlan::Write { mutations, .. } = plan_update(
@@ -494,15 +493,14 @@ fn an_update_rewrites_every_stored_column_not_just_the_assigned_one() {
         panic!("a changed row publishes");
     };
 
-    let expected = encode_configured_row(
+    let expected = encode_expected_row(
         TABLE_ID,
         10,
         &[
-            ConfiguredRowColumn::new(BALANCE_COLUMN, 150),
-            ConfiguredRowColumn::new(BALANCE_COLUMN + 1, 42),
+            (BALANCE_COLUMN, Datum::Int(150)),
+            (BALANCE_COLUMN + 1, Datum::Int(42)),
         ],
     )
-    .expect("expected row must encode")
     .1;
     assert_eq!(
         mutations[0].value(),
@@ -630,7 +628,7 @@ fn an_int_arithmetic_update_overflows_at_the_i32_bound_not_the_i64_bound() {
             &int_table(),
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Add(1),
+            ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored),
         ),
         Err(ConfiguredWriteError::ValueOutOfRange {
@@ -646,7 +644,7 @@ fn an_int_arithmetic_update_overflows_at_the_i32_bound_not_the_i64_bound() {
         &table(),
         10,
         BALANCE_INDEX,
-        ConfiguredAssignment::Add(1),
+        ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&bigint_stored),
     )
     .expect("a BIGINT admits values beyond the INT range") else {
@@ -791,15 +789,7 @@ fn updating_an_unindexed_column_leaves_the_index_alone() {
         ],
     )
     .with_indexes([ConfiguredIndex::non_unique(9, 2)]);
-    let (_, stored) = encode_configured_row(
-        500,
-        0,
-        &[
-            ConfiguredRowColumn::new(2, 100),
-            ConfiguredRowColumn::new(3, 200),
-        ],
-    )
-    .expect("stored row encodes");
+    let (_, stored) = encode_expected_row(500, 0, &[(2, Datum::Int(100)), (3, Datum::Int(200))]);
     let ConfiguredWritePlan::Write { mutations, .. } = plan_update(
         &table,
         10,
@@ -823,17 +813,16 @@ fn updating_an_unindexed_column_leaves_the_index_alone() {
 // -----------------------------------------------------------------------------
 
 fn stored_mixed_row(k: i64, c: &[u8], pad: &[u8]) -> Vec<u8> {
-    let (_, value) = encode_configured_mixed_row(
+    encode_expected_row(
         900,
         0,
         &[
-            (2, ConfiguredValue::Int(k)),
-            (3, ConfiguredValue::Bytes(c.to_vec())),
-            (4, ConfiguredValue::Bytes(pad.to_vec())),
+            (2, Datum::Int(k)),
+            (3, Datum::Bytes(c.to_vec())),
+            (4, Datum::Bytes(pad.to_vec())),
         ],
     )
-    .expect("stored mixed row encodes");
-    value
+    .1
 }
 
 #[test]
@@ -848,7 +837,7 @@ fn updating_an_int_column_preserves_the_char_columns_of_a_mixed_row() {
         &mixed_table(),
         1,
         1, // column index of `k`
-        ConfiguredAssignment::Add(1),
+        ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&stored),
     )
     .expect("update must plan")
@@ -858,16 +847,15 @@ fn updating_an_int_column_preserves_the_char_columns_of_a_mixed_row() {
     assert_eq!(affected_rows, 1);
     assert_eq!(mutations.len(), 1, "no index configured on this table");
     // k became 51; c and pad are byte-identical to the stored row.
-    let (expected_key, expected_value) = encode_configured_mixed_row(
+    let (expected_key, expected_value) = encode_expected_row(
         900,
         1,
         &[
-            (2, ConfiguredValue::Int(51)),
-            (3, ConfiguredValue::Bytes(b"hello world".to_vec())),
-            (4, ConfiguredValue::Bytes(b"padding".to_vec())),
+            (2, Datum::Int(51)),
+            (3, Datum::Bytes(b"hello world".to_vec())),
+            (4, Datum::Bytes(b"padding".to_vec())),
         ],
-    )
-    .expect("expected row encodes");
+    );
     assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
     assert_eq!(mutations[0].key(), expected_key);
     assert_eq!(mutations[0].value(), expected_value);
@@ -883,7 +871,7 @@ fn a_set_that_would_overflow_the_int_column_still_fails_on_a_mixed_row() {
             &mixed_table(),
             1,
             1,
-            ConfiguredAssignment::Add(1),
+            ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored),
         ),
         Err(ConfiguredWriteError::ValueOutOfRange { .. })
@@ -974,16 +962,15 @@ fn setting_a_char_column_replaces_only_its_bytes_and_keeps_the_int_columns() {
     };
     assert_eq!(affected_rows, 1);
     assert_eq!(mutations.len(), 1);
-    let (_, expected_value) = encode_configured_mixed_row(
+    let (_, expected_value) = encode_expected_row(
         900,
         1,
         &[
-            (2, ConfiguredValue::Int(50)),
-            (3, ConfiguredValue::Bytes(b"new value".to_vec())),
-            (4, ConfiguredValue::Bytes(b"padding".to_vec())),
+            (2, Datum::Int(50)),
+            (3, Datum::Bytes(b"new value".to_vec())),
+            (4, Datum::Bytes(b"padding".to_vec())),
         ],
-    )
-    .expect("row encodes");
+    );
     assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
     assert_eq!(mutations[0].value(), expected_value);
 }
@@ -1013,22 +1000,21 @@ fn updating_k_on_an_indexed_mixed_table_moves_the_index_and_keeps_char_columns()
     let table = mixed_table().with_indexes([ConfiguredIndex::non_unique(7, 2)]);
     let stored = stored_mixed_row(50, b"hi", b"pad");
     let ConfiguredWritePlan::Write { mutations, .. } =
-        plan_update(&table, 1, 1, ConfiguredAssignment::Add(1), Some(&stored))
+        plan_update(&table, 1, 1, ConfiguredAssignment::Add(PreparedBindValue::Int(1)), Some(&stored))
             .expect("update must plan")
     else {
         panic!("a changed row publishes");
     };
     assert_eq!(mutations.len(), 3);
-    let (_, expected_value) = encode_configured_mixed_row(
+    let (_, expected_value) = encode_expected_row(
         900,
         1,
         &[
-            (2, ConfiguredValue::Int(51)),
-            (3, ConfiguredValue::Bytes(b"hi".to_vec())),
-            (4, ConfiguredValue::Bytes(b"pad".to_vec())),
+            (2, Datum::Int(51)),
+            (3, Datum::Bytes(b"hi".to_vec())),
+            (4, Datum::Bytes(b"pad".to_vec())),
         ],
-    )
-    .expect("row encodes");
+    );
     assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
     assert_eq!(mutations[0].value(), expected_value);
     assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
@@ -1064,19 +1050,18 @@ fn the_update_byte_budget_covers_a_max_length_char_row() {
         table: mixed_table(),
         handle: 1,
         column_index: 1,
-        assignment: ConfiguredAssignment::Add(1),
+        assignment: ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
     };
     let (_, planned_bytes) = planned_publication_bounds(&write).expect("bounds compute");
-    let (key, value) = encode_configured_mixed_row(
+    let (key, value) = encode_expected_row(
         900,
         1,
         &[
-            (2, ConfiguredValue::Int(i64::MAX)),
-            (3, ConfiguredValue::Bytes(vec![b'x'; 120 * 4])),
-            (4, ConfiguredValue::Bytes(vec![b'y'; 60 * 4])),
+            (2, Datum::Int(i64::MAX)),
+            (3, Datum::Bytes(vec![b'x'; 120 * 4])),
+            (4, Datum::Bytes(vec![b'y'; 60 * 4])),
         ],
-    )
-    .expect("a maximal CHAR row encodes");
+    );
     assert!(
         planned_bytes >= key.len() + value.len(),
         "planned byte budget {planned_bytes} must cover the {}-byte max row",
@@ -1161,16 +1146,15 @@ fn updating_a_char_column_with_trailing_space_overflow_truncates_to_the_limit() 
     };
     let mut expected_c = vec![b'x'; 118];
     expected_c.extend_from_slice(b"  ");
-    let (_, expected_value) = encode_configured_mixed_row(
+    let (_, expected_value) = encode_expected_row(
         900,
         1,
         &[
-            (2, ConfiguredValue::Int(50)),
-            (3, ConfiguredValue::Bytes(expected_c)),
-            (4, ConfiguredValue::Bytes(b"pad".to_vec())),
+            (2, Datum::Int(50)),
+            (3, Datum::Bytes(expected_c)),
+            (4, Datum::Bytes(b"pad".to_vec())),
         ],
-    )
-    .expect("row encodes");
+    );
     assert_eq!(mutations[0].value(), expected_value);
 }
 
@@ -1532,6 +1516,33 @@ fn update_one(
     plan_update(table, 1, 1, assignment, Some(&stored))
 }
 
+/// Same seed-then-plan shape as [`update_one`], but for `SET v = v + ?`
+/// (`ConfiguredAssignment::Add`) instead of a plain `SET v = ?`.
+fn add_one(
+    table: &ConfiguredTable,
+    seed: PreparedBindValue,
+    addend: PreparedBindValue,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(table, seed).expect("seed insert must plan")
+    else {
+        panic!("seed INSERT always publishes");
+    };
+    let stored = mutations[0].value().to_vec();
+    let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
+    let ConfiguredPreparedWrite::UpdatePoint { assignment, .. } = lower_prepared_write(
+        &tidb_parser::parse("UPDATE widen.t SET v = v + ? WHERE id = ?").expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("prepared write must lower")
+    .bind(&[addend, PreparedBindValue::Int(1)])
+    .expect("bind carries the addend through untyped")
+    else {
+        panic!("expected an UPDATE command");
+    };
+    plan_update(table, 1, 1, assignment, Some(&stored))
+}
+
 #[test]
 fn unsigned_bigint_round_trips_and_rejects_a_negative_value() {
     let table = widened_table(ConfiguredColumn::stored_unsigned_bigint_not_null("v", 2));
@@ -1806,27 +1817,151 @@ fn update_set_refuses_null_into_a_not_null_widened_column() {
     assert!(matches!(error, ConfiguredWriteError::NullNotAllowed { .. }));
 }
 
-#[test]
-fn arithmetic_on_a_double_or_decimal_column_is_rejected_at_lowering() {
-    // Go's generic `+` also works on DOUBLE/DECIMAL, but this bounded write
-    // path has no typed-add coercion for them (only integer arithmetic is
-    // captured): `col = col + ?` on either type must fail closed at planning
-    // time rather than silently truncating through integer addition.
-    let double_table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
-    let double_catalog =
-        ConfiguredCatalog::new([double_table]).expect("catalog must validate");
-    assert!(lower_prepared_write(
-        &tidb_parser::parse("UPDATE widen.t SET v = v + ? WHERE id = ?").expect("SQL must parse"),
-        &double_catalog,
-    )
-    .is_err());
+// The following typed-`Add` cases are captured from Go
+// (`pkg/executor/zz_dump_addtyped_test.go`, run against a mock store):
+//
+//   DECIMAL(10,2) 10.20 + 1.5   -> 11.70
+//   DOUBLE        10.2  + 1.5   -> 11.7
+//   BIGINT UNSIGNED 0 + (-1)    -> [types:1690] out of range (underflow)
+//   BIGINT UNSIGNED 5 + (-2)    -> 3 (stays in range)
+//   DECIMAL(5,2)  999.00 + 100  -> [types:1690] out of range (overflow)
+//   DECIMAL(10,2) 10.20 + (-1.5) -> 8.70
+//   `col + NULL` on a nullable column -> NULL
+//   `col + NULL` on a NOT NULL column -> [table:1048] cannot be null
+//   BIGINT MAX + 1              -> [types:1690] out of range (existing case)
 
-    let decimal_table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 10, 2));
-    let decimal_catalog =
-        ConfiguredCatalog::new([decimal_table]).expect("catalog must validate");
+#[test]
+fn typed_add_rounds_and_scales_a_decimal_column() {
+    let table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 10, 2));
+    let ConfiguredWritePlan::Write { mutations, .. } = add_one(
+        &table,
+        PreparedBindValue::Bytes(b"10.20".to_vec()),
+        PreparedBindValue::Bytes(b"1.5".to_vec()),
+    )
+    .expect("decimal add must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    let Datum::Decimal(sum) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a decimal value");
+    };
+    assert_eq!(sum.to_string(), "11.70");
+}
+
+#[test]
+fn typed_add_on_a_decimal_column_admits_a_negative_addend() {
+    let table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 10, 2));
+    let ConfiguredWritePlan::Write { mutations, .. } = add_one(
+        &table,
+        PreparedBindValue::Bytes(b"10.20".to_vec()),
+        PreparedBindValue::Bytes(b"-1.5".to_vec()),
+    )
+    .expect("decimal add must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    let Datum::Decimal(sum) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a decimal value");
+    };
+    assert_eq!(sum.to_string(), "8.70");
+}
+
+#[test]
+fn typed_add_on_a_decimal_column_refuses_overflow() {
+    let table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 5, 2));
+    let error = add_one(
+        &table,
+        PreparedBindValue::Bytes(b"999.00".to_vec()),
+        PreparedBindValue::Int(100),
+    )
+    .expect_err("out-of-range decimal add must be refused");
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::DecimalOutOfRange { .. }
+    ));
+}
+
+#[test]
+fn typed_add_on_a_double_column_adds_as_f64() {
+    let table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
+    let ConfiguredWritePlan::Write { mutations, .. } = add_one(
+        &table,
+        PreparedBindValue::Float(10.2),
+        PreparedBindValue::Bytes(b"1.5".to_vec()),
+    )
+    .expect("double add must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    let Datum::Real(sum) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a real value");
+    };
+    assert!((sum - 11.7).abs() < 1e-9);
+}
+
+#[test]
+fn typed_add_on_an_unsigned_column_underflows_below_zero() {
+    let table = widened_table(ConfiguredColumn::stored_unsigned_bigint_not_null("v", 2));
+    let error = add_one(
+        &table,
+        PreparedBindValue::UInt(0),
+        PreparedBindValue::Int(-1),
+    )
+    .expect_err("unsigned underflow must be refused");
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::UnsignedOutOfRange { .. }
+    ));
+}
+
+#[test]
+fn typed_add_on_an_unsigned_column_admits_a_negative_addend_that_stays_in_range() {
+    let table = widened_table(ConfiguredColumn::stored_unsigned_bigint_not_null("v", 2));
+    let ConfiguredWritePlan::Write { mutations, .. } = add_one(
+        &table,
+        PreparedBindValue::UInt(5),
+        PreparedBindValue::Int(-2),
+    )
+    .expect("unsigned add must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    assert_eq!(decode_one(&table, mutations[0].value()), Datum::UInt(3));
+}
+
+#[test]
+fn typed_add_propagates_null_on_a_nullable_column() {
+    let table = widened_table(ConfiguredColumn::stored_int_not_null("v", 2).nullable());
+    let ConfiguredWritePlan::Write { mutations, .. } = add_one(
+        &table,
+        PreparedBindValue::Int(10),
+        PreparedBindValue::Null,
+    )
+    .expect("null-propagating add must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    assert_eq!(decode_one(&table, mutations[0].value()), Datum::Null);
+}
+
+#[test]
+fn typed_add_refuses_null_into_a_not_null_column() {
+    let table = widened_table(ConfiguredColumn::stored_int_not_null("v", 2));
+    let error = add_one(&table, PreparedBindValue::Int(10), PreparedBindValue::Null)
+        .expect_err("NULL addend into a NOT NULL column must be refused");
+    assert!(matches!(error, ConfiguredWriteError::NullNotAllowed { .. }));
+}
+
+#[test]
+fn typed_add_still_refuses_a_char_column_at_lowering() {
+    // `CHAR`/`VARCHAR`/every temporal type has no typed-add coercion built:
+    // `supports_typed_add` (`tidb-planner::prepared_dml`) fails the shape
+    // closed at planning time rather than reaching `tidb-exec` at all.
+    let table = widened_table(ConfiguredColumn::stored_char_not_null("v", 2, 4));
+    let catalog = ConfiguredCatalog::new([table]).expect("catalog must validate");
     assert!(lower_prepared_write(
         &tidb_parser::parse("UPDATE widen.t SET v = v + ? WHERE id = ?").expect("SQL must parse"),
-        &decimal_catalog,
+        &catalog,
     )
     .is_err());
 }

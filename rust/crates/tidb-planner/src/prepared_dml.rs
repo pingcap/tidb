@@ -40,9 +40,27 @@ use crate::{
     configured_catalog::{ConfiguredCatalog, ConfiguredTableLookupError},
     read_only_scan::{
         fold_identifier, is_integer_literal_shape, parse_signed_integer, ConfiguredColumnKind,
-        ConfiguredTable,
+        ConfiguredScalarType, ConfiguredTable,
     },
 };
+
+/// Scalar types `column = column + ?` has typed-add arithmetic built for.
+///
+/// Signed/unsigned `BIGINT` and `INT` add as checked integers, `DECIMAL` adds
+/// exactly and rounds to the column's declared scale, and `DOUBLE` adds as
+/// `f64` (`tidb-exec::plan_update` implements each). Every other scalar type
+/// (`CHAR`, `VARCHAR`, any temporal type) has none, so the shape is refused at
+/// planning time rather than admitted and later guessed at downstream.
+const fn supports_typed_add(scalar_type: ConfiguredScalarType) -> bool {
+    matches!(
+        scalar_type,
+        ConfiguredScalarType::BigInt
+            | ConfiguredScalarType::Int
+            | ConfiguredScalarType::UnsignedBigInt
+            | ConfiguredScalarType::Decimal { .. }
+            | ConfiguredScalarType::Double
+    )
+}
 
 /// Maximum `VALUES` rows admitted by one prepared INSERT template.
 ///
@@ -541,11 +559,13 @@ enum PreparedAssignmentShape {
     /// exactly the same coercion the INSERT path already applies — so this
     /// shape covers every configured scalar type, not only integers.
     Set,
-    /// `SET int_column = int_column + ?`. Arithmetic stays integer-only: Go's
-    /// generic `+` also works on `DECIMAL`/`DOUBLE`, but this bounded write
-    /// path has no typed-add coercion built for those yet, so it fails closed
-    /// at planning time via the `integer_range` check below rather than
-    /// guessing at floating/decimal addition semantics.
+    /// `SET column = column + ?`. Mirrors Go's generic `+`, typed to the
+    /// target column: signed/unsigned `BIGINT` and `INT` add as checked
+    /// integers, `DECIMAL` adds exactly (`Decimal::add_mysql`, rounded and
+    /// range-checked to the column's declared precision/scale at execution),
+    /// and `DOUBLE` adds as `f64`. A column outside this set (`CHAR`,
+    /// `VARCHAR`, any temporal type) has no typed-add coercion built and fails
+    /// closed at planning time via `supports_typed_add` below.
     Add,
 }
 
@@ -580,7 +600,11 @@ impl ConfiguredPreparedUpdateTemplate {
             // exact declared type in `tidb-exec::configured_stored_value`,
             // the same seam the INSERT path already uses.
             PreparedAssignmentShape::Set => ConfiguredAssignment::Set(value.clone()),
-            PreparedAssignmentShape::Add => ConfiguredAssignment::Add(expect_integer(value, 0)?),
+            // The addend's exact type is not checked here: like `Set`, it is
+            // carried through unchanged and resolved against `assigned`
+            // column's declared type in `tidb-exec::plan_update`, the seam
+            // that owns every scalar type's typed arithmetic.
+            PreparedAssignmentShape::Add => ConfiguredAssignment::Add(value.clone()),
         };
         Ok(ConfiguredPreparedWrite::UpdatePoint {
             table: self.table.clone(),
@@ -644,13 +668,16 @@ impl ConfiguredInsertRow {
 /// wire or literal-folded from text; the target column's own declared type
 /// picks how it decodes (shared with the INSERT path's
 /// `configured_stored_value`, so INSERT and UPDATE apply the identical
-/// coercion rules). Arithmetic (`Add`) is only ever an integer operation.
+/// coercion rules). `Add`'s addend is likewise carried through untyped: the
+/// target column's declared type picks which typed arithmetic applies.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConfiguredAssignment {
     /// Replace the stored column's value.
     Set(PreparedBindValue),
-    /// Add to an integer column's stored value with checked signed arithmetic.
-    Add(i64),
+    /// Add the bound addend to the target column's stored value, typed to the
+    /// column's own declared scalar type (signed/unsigned integer, `DECIMAL`,
+    /// or `DOUBLE`).
+    Add(PreparedBindValue),
 }
 
 /// A storage-neutral bound write command.
@@ -864,9 +891,10 @@ fn lower_update(
 
     let (shape, value) = match &assignment.value {
         Expr::Binary(BinaryOp::Plus, left, right) => {
-            // `column + <value>` is signed integer arithmetic; a non-integer
-            // column has no such assignment in this bounded write path.
-            if column.scalar_type().integer_range().is_none() {
+            // `column + <value>` typed-add is only built for the scalar types
+            // `supports_typed_add` names; every other column type (`CHAR`,
+            // `VARCHAR`, any temporal type) has no assignment shape here.
+            if !supports_typed_add(column.scalar_type()) {
                 return Err(PreparedWritePlanError::UpdateAssignmentShape);
             }
             let Expr::Column(path) = left.as_ref() else {

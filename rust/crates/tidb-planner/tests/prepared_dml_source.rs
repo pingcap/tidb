@@ -299,7 +299,7 @@ fn arithmetic_point_update_preserves_the_add_shape() {
         panic!("expected an UPDATE command");
     };
     assert_eq!(handle, 10);
-    assert_eq!(assignment, ConfiguredAssignment::Add(7));
+    assert_eq!(assignment, ConfiguredAssignment::Add(PreparedBindValue::Int(7)));
 }
 
 #[test]
@@ -647,7 +647,7 @@ fn a_text_update_reads_its_arithmetic_addend_from_the_literal() {
         panic!("expected an UPDATE command");
     };
     assert_eq!(handle, 10);
-    assert_eq!(assignment, ConfiguredAssignment::Add(7));
+    assert_eq!(assignment, ConfiguredAssignment::Add(PreparedBindValue::Int(7)));
 }
 
 #[test]
@@ -746,5 +746,83 @@ fn a_text_value_of_the_wrong_kind_binds_identically_to_a_bound_parameter() {
     assert_eq!(
         text_assignment,
         ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"x".to_vec()))
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Typed `Add`: the assignment shape widens past integer-only columns
+// -----------------------------------------------------------------------------
+
+const WIDGETS_TABLE_ID: i64 = 214;
+const WIDGET_ID_COLUMN: i64 = 1;
+const WIDGET_PRICE_COLUMN: i64 = 2;
+const WIDGET_STOCK_COLUMN: i64 = 3;
+const WIDGET_WEIGHT_COLUMN: i64 = 4;
+const WIDGET_LABEL_COLUMN: i64 = 5;
+
+/// A second catalog carrying one column of each `Add`-eligible non-integer
+/// scalar type (`DECIMAL`, `BIGINT UNSIGNED`, `DOUBLE`), plus one ineligible
+/// `CHAR` column, to exercise `supports_typed_add`'s widened gate.
+fn widgets_catalog() -> ConfiguredCatalog {
+    ConfiguredCatalog::new([ConfiguredTable::new(
+        "campaign28",
+        "widgets",
+        WIDGETS_TABLE_ID,
+        [
+            ConfiguredColumn::clustered_primary_key("id", WIDGET_ID_COLUMN),
+            ConfiguredColumn::stored_decimal_not_null("price", WIDGET_PRICE_COLUMN, 10, 2),
+            ConfiguredColumn::stored_unsigned_bigint_not_null("stock", WIDGET_STOCK_COLUMN),
+            ConfiguredColumn::stored_double_not_null("weight", WIDGET_WEIGHT_COLUMN),
+            ConfiguredColumn::stored_char_not_null("label", WIDGET_LABEL_COLUMN, 8),
+        ],
+    )])
+    .expect("configured catalog must validate")
+}
+
+fn widgets_template(sql: &str) -> ConfiguredPreparedWriteTemplate {
+    lower_prepared_write(&parse(sql), &widgets_catalog()).expect("prepared write must lower")
+}
+
+fn widgets_rejection(sql: &str) -> PreparedWritePlanError {
+    lower_prepared_write(&parse(sql), &widgets_catalog())
+        .expect_err("prepared write must be rejected")
+}
+
+#[test]
+fn typed_add_admits_decimal_unsigned_and_double_columns() {
+    for (sql, column_index) in [
+        (
+            "UPDATE campaign28.widgets SET price = price + ? WHERE id = ?",
+            1,
+        ),
+        (
+            "UPDATE campaign28.widgets SET stock = stock + ? WHERE id = ?",
+            2,
+        ),
+        (
+            "UPDATE campaign28.widgets SET weight = weight + ? WHERE id = ?",
+            3,
+        ),
+    ] {
+        let ConfiguredPreparedWrite::UpdatePoint {
+            column_index: bound_index,
+            assignment,
+            ..
+        } = widgets_template(sql)
+            .bind(&[PreparedBindValue::Int(1), PreparedBindValue::Int(10)])
+            .expect("typed add must bind")
+        else {
+            panic!("expected an UPDATE command");
+        };
+        assert_eq!(bound_index, column_index);
+        assert_eq!(assignment, ConfiguredAssignment::Add(PreparedBindValue::Int(1)));
+    }
+}
+
+#[test]
+fn typed_add_still_refuses_a_char_column() {
+    assert_eq!(
+        widgets_rejection("UPDATE campaign28.widgets SET label = label + ? WHERE id = ?"),
+        PreparedWritePlanError::UpdateAssignmentShape
     );
 }
