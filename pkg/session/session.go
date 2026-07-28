@@ -4757,6 +4757,7 @@ func runInBootstrapSession(store kv.Storage, ver int64, opts domainCreateOptions
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
+	failpoint.InjectCall("checkBootstrapExternalWorkloadManager", dom)
 	err = dom.Start(startMode)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
