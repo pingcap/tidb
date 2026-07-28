@@ -277,7 +277,7 @@ fn a_changed_row_publishes_one_exists_mutation_and_reports_one_row() {
         &table(),
         10,
         BALANCE_INDEX,
-        ConfiguredAssignment::Set(150),
+        ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
         Some(&stored_row(100)),
     )
     .expect("update must plan")
@@ -300,7 +300,7 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
             &table(),
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Set(100),
+            ConfiguredAssignment::Set(PreparedBindValue::Int(100)),
             Some(&stored_row(100)),
         ),
         Ok(ConfiguredWritePlan::NoWrite {
@@ -357,7 +357,7 @@ fn a_missing_row_matches_nothing_and_publishes_nothing() {
             &table(),
             999,
             BALANCE_INDEX,
-            ConfiguredAssignment::Set(150),
+            ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             None,
         ),
         Ok(ConfiguredWritePlan::NoWrite {
@@ -443,7 +443,7 @@ fn a_row_missing_its_configured_column_fails_closed() {
             &table(),
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Set(150),
+            ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             Some(&foreign_row),
         ),
         Err(ConfiguredWriteError::RowRead(_))
@@ -453,7 +453,7 @@ fn a_row_missing_its_configured_column_fails_closed() {
             &table(),
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Set(150),
+            ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             Some(b"not a row"),
         ),
         Err(ConfiguredWriteError::RowRead(_))
@@ -487,7 +487,7 @@ fn an_update_rewrites_every_stored_column_not_just_the_assigned_one() {
         &wide,
         10,
         BALANCE_INDEX,
-        ConfiguredAssignment::Set(150),
+        ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
         Some(&stored),
     )
     .expect("update must plan") else {
@@ -667,7 +667,7 @@ fn a_direct_int_update_outside_the_domain_fails_closed() {
             &table,
             10,
             BALANCE_INDEX,
-            ConfiguredAssignment::Set(i64::from(i32::MAX) + 1),
+            ConfiguredAssignment::Set(PreparedBindValue::Int(i64::from(i32::MAX) + 1)),
             Some(&stored),
         ),
         Err(ConfiguredWriteError::ValueOutOfRange {
@@ -761,7 +761,7 @@ fn updating_the_indexed_column_moves_its_entry_from_old_to_new() {
         &indexed_table(),
         10,
         BALANCE_INDEX,
-        ConfiguredAssignment::Set(250),
+        ConfiguredAssignment::Set(PreparedBindValue::Int(250)),
         Some(&stored_row(100)),
     )
     .expect("update must plan") else {
@@ -804,7 +804,7 @@ fn updating_an_unindexed_column_leaves_the_index_alone() {
         &table,
         10,
         2, // column index of `b`, the unindexed column
-        ConfiguredAssignment::Set(999),
+        ConfiguredAssignment::Set(PreparedBindValue::Int(999)),
         Some(&stored),
     )
     .expect("update must plan") else {
@@ -912,26 +912,45 @@ fn setting_a_char_column_binds_a_string_as_a_bytes_assignment() {
     };
     assert_eq!(
         assignment,
-        ConfiguredAssignment::SetBytes(b"replacement".to_vec())
+        ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"replacement".to_vec()))
     );
 }
 
 #[test]
 fn a_char_and_an_int_assignment_reject_the_wrong_parameter_kind() {
-    // An integer into a CHAR column, or a string into an INT column, is a type
-    // error at bind — each column takes only its own kind.
+    // A plain `SET col = ?` no longer type-checks at bind (that moved to
+    // `tidb-exec::configured_stored_value`, shared with the INSERT path): an
+    // integer into a CHAR column, or a string into an INT column, binds
+    // successfully to a `ConfiguredAssignment::Set`, and it is planning —
+    // `plan_update`, against the real target column — that rejects it.
+    let stored = stored_mixed_row(50, b"hello", b"pad");
+
     let char_template = char_update_template("UPDATE sbtest.sbtest1 SET c=? WHERE id=?");
-    assert!(char_template
+    let ConfiguredPreparedWrite::UpdatePoint { assignment, .. } = char_template
         .bind(&[PreparedBindValue::Int(7), PreparedBindValue::Int(1)])
-        .is_err());
+        .expect("bind carries the value through untyped")
+    else {
+        panic!("expected an UPDATE command");
+    };
+    assert!(matches!(
+        plan_update(&mixed_table(), 1, 2, assignment, Some(&stored)),
+        Err(ConfiguredWriteError::ColumnTypeMismatch { .. })
+    ));
 
     let int_template = char_update_template("UPDATE sbtest.sbtest1 SET k=? WHERE id=?");
-    assert!(int_template
+    let ConfiguredPreparedWrite::UpdatePoint { assignment, .. } = int_template
         .bind(&[
             PreparedBindValue::Bytes(b"not an int".to_vec()),
             PreparedBindValue::Int(1),
         ])
-        .is_err());
+        .expect("bind carries the value through untyped")
+    else {
+        panic!("expected an UPDATE command");
+    };
+    assert!(matches!(
+        plan_update(&mixed_table(), 1, 1, assignment, Some(&stored)),
+        Err(ConfiguredWriteError::ColumnTypeMismatch { .. })
+    ));
 }
 
 #[test]
@@ -946,7 +965,7 @@ fn setting_a_char_column_replaces_only_its_bytes_and_keeps_the_int_columns() {
         &mixed_table(),
         1,
         2, // column index of `c`
-        ConfiguredAssignment::SetBytes(b"new value".to_vec()),
+        ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"new value".to_vec())),
         Some(&stored),
     )
     .expect("update must plan")
@@ -977,7 +996,7 @@ fn setting_a_char_column_to_its_current_value_writes_nothing() {
             &mixed_table(),
             1,
             2,
-            ConfiguredAssignment::SetBytes(b"same".to_vec()),
+            ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"same".to_vec())),
             Some(&stored),
         ),
         Ok(ConfiguredWritePlan::NoWrite {
@@ -1111,7 +1130,7 @@ fn updating_a_char_column_beyond_its_length_is_data_too_long() {
             &mixed_table(),
             1,
             2, // column index of `c` (CHAR(120))
-            ConfiguredAssignment::SetBytes(vec![b'z'; 121]),
+            ConfiguredAssignment::Set(PreparedBindValue::Bytes(vec![b'z'; 121])),
             Some(&stored),
         ),
         Err(ConfiguredWriteError::DataTooLong {
@@ -1134,7 +1153,7 @@ fn updating_a_char_column_with_trailing_space_overflow_truncates_to_the_limit() 
         &mixed_table(),
         1,
         2,
-        ConfiguredAssignment::SetBytes(value),
+        ConfiguredAssignment::Set(PreparedBindValue::Bytes(value)),
         Some(&stored),
     )
     .expect("a whitespace overflow truncates and publishes") else {
@@ -1398,7 +1417,7 @@ fn a_nullable_column_admits_null_and_round_trips_it() {
         &nullable_table(),
         10,
         BALANCE_INDEX,
-        ConfiguredAssignment::Set(1),
+        ConfiguredAssignment::Set(PreparedBindValue::Int(1)),
         Some(&stored_value),
     )
     .expect("a stored NULL decodes cleanly for a point UPDATE of the same row");
@@ -1481,6 +1500,36 @@ fn decode_one(table: &ConfiguredTable, value_bytes: &[u8]) -> Datum {
         .expect("row must decode")
         .remove(&column.id())
         .expect("column must be present")
+}
+
+/// Inserts one seed row (handle 1, the widened column at `seed`), then plans a
+/// point `UPDATE ... SET v = ?` binding `value` against that same row —
+/// exactly the seam `plan_update`'s `ConfiguredAssignment::Set` arm now shares
+/// with `insert_one`'s `configured_stored_value` call, so an UPDATE SET and an
+/// INSERT admit and refuse the identical value for the identical column type.
+fn update_one(
+    table: &ConfiguredTable,
+    seed: PreparedBindValue,
+    value: PreparedBindValue,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(table, seed).expect("seed insert must plan")
+    else {
+        panic!("seed INSERT always publishes");
+    };
+    let stored = mutations[0].value().to_vec();
+    let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
+    let ConfiguredPreparedWrite::UpdatePoint { assignment, .. } = lower_prepared_write(
+        &tidb_parser::parse("UPDATE widen.t SET v = ? WHERE id = ?").expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("prepared write must lower")
+    .bind(&[value, PreparedBindValue::Int(1)])
+    .expect("bind carries the value through untyped")
+    else {
+        panic!("expected an UPDATE command");
+    };
+    plan_update(table, 1, 1, assignment, Some(&stored))
 }
 
 #[test]
@@ -1605,4 +1654,179 @@ fn date_round_trips_a_plain_calendar_date() {
         panic!("expected a temporal value");
     };
     assert_eq!(time.to_string(), "2026-01-02");
+}
+
+// -----------------------------------------------------------------------------
+// UPDATE SET widened to the full write-path type set (2d10dcd232's second gap:
+// `SET col = ?` previously forced every non-integer column through the
+// planner's own `expect_bytes`/`expect_integer` bind check, which rejected a
+// `Float`/`UInt` marker value for a DOUBLE/UNSIGNED BIGINT column outright.
+// `ConfiguredAssignment::Set` now carries the bound value through untyped and
+// resolves it against the column in `configured_stored_value`, the exact
+// coercion `insert_one` above already exercises, so each case below mirrors
+// its INSERT counterpart one-for-one.)
+// -----------------------------------------------------------------------------
+
+#[test]
+fn update_set_round_trips_unsigned_bigint_and_rejects_a_negative_value() {
+    let table = widened_table(ConfiguredColumn::stored_unsigned_bigint_not_null("v", 2));
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        update_one(&table, PreparedBindValue::UInt(0), PreparedBindValue::UInt(u64::MAX))
+            .expect("update must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    assert_eq!(
+        decode_one(&table, mutations[0].value()),
+        Datum::UInt(u64::MAX)
+    );
+
+    let error = update_one(&table, PreparedBindValue::UInt(0), PreparedBindValue::Int(-1))
+        .expect_err("a negative value must be refused for BIGINT UNSIGNED");
+    assert!(matches!(error, ConfiguredWriteError::UnsignedOutOfRange { .. }));
+}
+
+#[test]
+fn update_set_round_trips_a_double_from_either_a_float_or_an_integer_parameter() {
+    let table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        update_one(&table, PreparedBindValue::Float(0.0), PreparedBindValue::Float(3.5))
+            .expect("update must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    assert_eq!(decode_one(&table, mutations[0].value()), Datum::Real(3.5));
+}
+
+#[test]
+fn update_set_rounds_a_decimal_to_scale_and_rejects_a_precision_overflow() {
+    let table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 10, 2));
+    let ConfiguredWritePlan::Write { mutations, .. } = update_one(
+        &table,
+        PreparedBindValue::Bytes(b"0".to_vec()),
+        PreparedBindValue::Bytes(b"12.345".to_vec()),
+    )
+    .expect("update must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    let Datum::Decimal(decimal) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a decimal value");
+    };
+    assert_eq!(decimal.to_string(), "12.35");
+
+    let error = update_one(
+        &table,
+        PreparedBindValue::Bytes(b"0".to_vec()),
+        PreparedBindValue::Bytes(b"999999999.99".to_vec()),
+    )
+    .expect_err("a value whose integer part overflows precision must be refused");
+    assert!(matches!(error, ConfiguredWriteError::DecimalOutOfRange { .. }));
+}
+
+#[test]
+fn update_set_rejects_a_varchar_value_past_its_declared_length() {
+    let table = widened_table(ConfiguredColumn::stored_varchar_not_null("v", 2, 4, false));
+    let ConfiguredWritePlan::Write { mutations, .. } = update_one(
+        &table,
+        PreparedBindValue::Bytes(b"aaaa".to_vec()),
+        PreparedBindValue::Bytes(b"abcd".to_vec()),
+    )
+    .expect("update must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    assert_eq!(
+        decode_one(&table, mutations[0].value()),
+        Datum::new_collation_string(b"abcd".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin)
+    );
+
+    let error = update_one(
+        &table,
+        PreparedBindValue::Bytes(b"aaaa".to_vec()),
+        PreparedBindValue::Bytes(b"abcde".to_vec()),
+    )
+    .expect_err("a value beyond VARCHAR's declared length must be refused");
+    assert!(matches!(error, ConfiguredWriteError::DataTooLong { .. }));
+}
+
+#[test]
+fn update_set_rounds_a_datetime_to_its_declared_fsp_on_update_and_rejects_an_invalid_literal() {
+    let table = widened_table(ConfiguredColumn::stored_datetime_not_null("v", 2, 3));
+    let ConfiguredWritePlan::Write { mutations, .. } = update_one(
+        &table,
+        PreparedBindValue::Bytes(b"2026-01-01 00:00:00".to_vec()),
+        PreparedBindValue::Bytes(b"2026-01-02 03:04:05.6789".to_vec()),
+    )
+    .expect("update must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    let Datum::Time(time) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a temporal value");
+    };
+    // Rounds (not truncates) to the declared fsp on UPDATE, exactly as INSERT
+    // already does: `.6789` at `DATETIME(3)` rounds to `.679`.
+    assert_eq!(time.to_string(), "2026-01-02 03:04:05.679");
+
+    let error = update_one(
+        &table,
+        PreparedBindValue::Bytes(b"2026-01-01 00:00:00".to_vec()),
+        PreparedBindValue::Bytes(b"not-a-date".to_vec()),
+    )
+    .expect_err("an invalid datetime literal must be refused");
+    assert!(matches!(error, ConfiguredWriteError::InvalidTemporal { .. }));
+}
+
+#[test]
+fn update_set_admits_null_on_a_nullable_widened_column() {
+    // A nullable non-integer column: `SET v = NULL` must round-trip through
+    // `configured_stored_value`'s own nullability check, not the integer-only
+    // path `plan_update` used before this column type was writable at all.
+    let table = widened_table(
+        ConfiguredColumn::stored_varchar_not_null("v", 2, 4, false).nullable(),
+    );
+    let ConfiguredWritePlan::Write { mutations, .. } = update_one(
+        &table,
+        PreparedBindValue::Bytes(b"abcd".to_vec()),
+        PreparedBindValue::Null,
+    )
+    .expect("update must plan")
+    else {
+        panic!("a changed row publishes");
+    };
+    assert_eq!(decode_one(&table, mutations[0].value()), Datum::Null);
+}
+
+#[test]
+fn update_set_refuses_null_into_a_not_null_widened_column() {
+    let table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
+    let error = update_one(&table, PreparedBindValue::Float(1.0), PreparedBindValue::Null)
+        .expect_err("NULL into a NOT NULL column must be refused");
+    assert!(matches!(error, ConfiguredWriteError::NullNotAllowed { .. }));
+}
+
+#[test]
+fn arithmetic_on_a_double_or_decimal_column_is_rejected_at_lowering() {
+    // Go's generic `+` also works on DOUBLE/DECIMAL, but this bounded write
+    // path has no typed-add coercion for them (only integer arithmetic is
+    // captured): `col = col + ?` on either type must fail closed at planning
+    // time rather than silently truncating through integer addition.
+    let double_table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
+    let double_catalog =
+        ConfiguredCatalog::new([double_table]).expect("catalog must validate");
+    assert!(lower_prepared_write(
+        &tidb_parser::parse("UPDATE widen.t SET v = v + ? WHERE id = ?").expect("SQL must parse"),
+        &double_catalog,
+    )
+    .is_err());
+
+    let decimal_table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 10, 2));
+    let decimal_catalog =
+        ConfiguredCatalog::new([decimal_table]).expect("catalog must validate");
+    assert!(lower_prepared_write(
+        &tidb_parser::parse("UPDATE widen.t SET v = v + ? WHERE id = ?").expect("SQL must parse"),
+        &decimal_catalog,
+    )
+    .is_err());
 }

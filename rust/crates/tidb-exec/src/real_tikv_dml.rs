@@ -410,16 +410,18 @@ pub fn plan_update(
         ))
     })?;
 
-    // Resolve the assigned column's new value by assignment kind. An integer
-    // assignment applies the column's range (the i64 arithmetic runs first, then
-    // storing the result applies the column's own domain, so an INT that leaves
-    // the i32 range is an overflow even when the i64 addition did not wrap); a
-    // CHAR assignment carries raw bytes with no range check.
+    // Resolve the assigned column's new value by assignment kind. `Set` routes
+    // through the same per-scalar-type coercion the INSERT path uses. `Add`
+    // applies the column's integer range itself (the i64 arithmetic runs
+    // first, then storing the result applies the column's own domain, so an
+    // INT that leaves the i32 range is an overflow even when the i64 addition
+    // did not wrap).
     let new_value = match assignment {
-        ConfiguredAssignment::Set(value) => {
-            check_column_value(assigned, value)?;
-            Datum::Int(value)
-        }
+        // Shares the exact coercion the INSERT path applies
+        // (`configured_stored_value`): the same type check, range check,
+        // truncation, and `NULL`-into-nullable-column rule, so `SET col = ?`
+        // admits and refuses exactly what `INSERT ... (col) VALUES (?)` does.
+        ConfiguredAssignment::Set(value) => configured_stored_value(assigned, &value)?,
         ConfiguredAssignment::Add(addend) => {
             let current = stored_value.as_int().ok_or_else(|| {
                 ConfiguredWriteError::RowRead(format!(
@@ -437,21 +439,6 @@ pub fn plan_update(
                     })?;
             check_column_value(assigned, replacement)?;
             Datum::Int(replacement)
-        }
-        ConfiguredAssignment::SetBytes(bytes) => {
-            // A bytes assignment targets a CHAR column (the lowering resolves the
-            // shape from the column type); enforce its character-length limit.
-            let ConfiguredScalarType::Char { max_length } = assigned.scalar_type() else {
-                return Err(ConfiguredWriteError::ColumnTypeMismatch {
-                    column: assigned.name().to_owned(),
-                    scalar_type: assigned.scalar_type(),
-                    value_is_bytes: true,
-                });
-            };
-            Datum::new_collation_string(
-                admit_char_value(assigned, bytes, max_length)?,
-                tidb_datatype::Collation::Utf8Mb4Bin,
-            )
         }
     };
     // An UPDATE whose value does not change writes nothing (Go `AddTouchedRows`

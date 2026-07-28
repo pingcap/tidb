@@ -356,20 +356,6 @@ fn expect_integer(
     }
 }
 
-/// Extracts the raw string bytes a position requires, rejecting an integer.
-fn expect_bytes(
-    value: &PreparedBindValue,
-    position: usize,
-) -> Result<Vec<u8>, PreparedWriteBindError> {
-    match value {
-        PreparedBindValue::Bytes(bytes) => Ok(bytes.clone()),
-        PreparedBindValue::Int(_)
-        | PreparedBindValue::UInt(_)
-        | PreparedBindValue::Float(_)
-        | PreparedBindValue::Null => Err(PreparedWriteBindError::NonStringParameter { position }),
-    }
-}
-
 /// How a lowering admits the value at one write position.
 ///
 /// The two wire protocols differ here and nowhere else: a prepared statement
@@ -550,12 +536,17 @@ pub struct ConfiguredPreparedUpdateTemplate {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PreparedAssignmentShape {
-    /// `SET int_column = ?`.
-    SetInt,
-    /// `SET int_column = int_column + ?`.
+    /// `SET column = ?`. The bound value's type is resolved against the
+    /// target column downstream (`tidb-exec`'s `configured_stored_value`),
+    /// exactly the same coercion the INSERT path already applies — so this
+    /// shape covers every configured scalar type, not only integers.
+    Set,
+    /// `SET int_column = int_column + ?`. Arithmetic stays integer-only: Go's
+    /// generic `+` also works on `DECIMAL`/`DOUBLE`, but this bounded write
+    /// path has no typed-add coercion built for those yet, so it fails closed
+    /// at planning time via the `integer_range` check below rather than
+    /// guessing at floating/decimal addition semantics.
     Add,
-    /// `SET char_column = ?`.
-    SetBytes,
 }
 
 impl ConfiguredPreparedUpdateTemplate {
@@ -584,11 +575,12 @@ impl ConfiguredPreparedUpdateTemplate {
         // to a shape at lowering time.
         let handle = expect_integer(handle, 1)?;
         let assignment = match self.assignment {
-            PreparedAssignmentShape::SetInt => ConfiguredAssignment::Set(expect_integer(value, 0)?),
+            // The assigned value's type is not checked here: it is carried
+            // through unchanged and resolved against the target column's
+            // exact declared type in `tidb-exec::configured_stored_value`,
+            // the same seam the INSERT path already uses.
+            PreparedAssignmentShape::Set => ConfiguredAssignment::Set(value.clone()),
             PreparedAssignmentShape::Add => ConfiguredAssignment::Add(expect_integer(value, 0)?),
-            PreparedAssignmentShape::SetBytes => {
-                ConfiguredAssignment::SetBytes(expect_bytes(value, 0)?)
-            }
         };
         Ok(ConfiguredPreparedWrite::UpdatePoint {
             table: self.table.clone(),
@@ -648,17 +640,17 @@ impl ConfiguredInsertRow {
 
 /// One bound UPDATE assignment, typed to the target column.
 ///
-/// `SET int_col = ?` and `SET int_col = int_col + ?` carry a signed integer;
-/// `SET char_col = ?` carries the raw string bytes. Arithmetic (`Add`) is only
-/// ever an integer operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// `SET col = ?` carries the bound value untyped, exactly as bound by the
+/// wire or literal-folded from text; the target column's own declared type
+/// picks how it decodes (shared with the INSERT path's
+/// `configured_stored_value`, so INSERT and UPDATE apply the identical
+/// coercion rules). Arithmetic (`Add`) is only ever an integer operation.
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConfiguredAssignment {
-    /// Replace an integer column's stored value.
-    Set(i64),
+    /// Replace the stored column's value.
+    Set(PreparedBindValue),
     /// Add to an integer column's stored value with checked signed arithmetic.
     Add(i64),
-    /// Replace a `CHAR` column's stored value with the bound raw bytes.
-    SetBytes(Vec<u8>),
 }
 
 /// A storage-neutral bound write command.
@@ -898,14 +890,10 @@ fn lower_update(
                 ) => return Err(PreparedWritePlanError::UpdateAssignmentShape),
                 Err(error) => return Err(error),
             };
-            // The set value's type follows the target column: an integer column
-            // binds a signed integer, a CHAR column raw string bytes.
-            let shape = if column.scalar_type().integer_range().is_some() {
-                PreparedAssignmentShape::SetInt
-            } else {
-                PreparedAssignmentShape::SetBytes
-            };
-            (shape, value)
+            // A plain `SET col = value` admits every configured scalar type:
+            // the bound/literal value is carried through untyped and resolved
+            // against `column`'s exact declared type downstream.
+            (PreparedAssignmentShape::Set, value)
         }
     };
 

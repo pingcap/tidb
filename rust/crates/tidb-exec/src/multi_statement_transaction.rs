@@ -683,7 +683,9 @@ mod tests {
         classify_commit_outcome, transaction_cause_error, written_handles,
         TransactionStatementError, ERR_WRITE_CONFLICT,
     };
-    use tidb_planner::prepared_dml::{ConfiguredAssignment, ConfiguredPreparedWrite};
+    use tidb_planner::prepared_dml::{
+        ConfiguredAssignment, ConfiguredPreparedWrite, PreparedBindValue,
+    };
     use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
     use tidb_txnkv::transaction::{
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
@@ -792,7 +794,7 @@ mod tests {
                 table: table.clone(),
                 handle: 9,
                 column_index: 1,
-                assignment: ConfiguredAssignment::Set(4),
+                assignment: ConfiguredAssignment::Set(PreparedBindValue::Int(4)),
             }),
             vec![9]
         );

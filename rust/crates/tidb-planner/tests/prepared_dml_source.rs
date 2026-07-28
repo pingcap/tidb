@@ -286,7 +286,7 @@ fn direct_point_update_binds_value_then_handle() {
     assert_eq!(table.table_id(), TABLE_ID);
     assert_eq!(handle, 10);
     assert_eq!(column_index, 1);
-    assert_eq!(assignment, ConfiguredAssignment::Set(150));
+    assert_eq!(assignment, ConfiguredAssignment::Set(PreparedBindValue::Int(150)));
 }
 
 #[test]
@@ -715,21 +715,36 @@ fn a_text_write_value_must_be_a_literal_this_boundary_can_evaluate() {
 }
 
 #[test]
-fn a_text_value_of_the_wrong_kind_fails_exactly_where_a_bound_parameter_does() {
-    // A string written into an integer column is the same bind-time refusal,
-    // at the same position, as binding a string parameter there.
-    let text_error = text_template("UPDATE campaign28.accounts SET balance = 'x' WHERE id = 10")
+fn a_text_value_of_the_wrong_kind_binds_identically_to_a_bound_parameter() {
+    // A plain `SET col = value` no longer type-checks against the column at
+    // bind time (that moved to `tidb-exec::configured_stored_value`, the same
+    // seam the INSERT path already uses): both protocols bind a string into an
+    // integer column to the identical `ConfiguredAssignment::Set` command, and
+    // it is `tidb-exec` — not this crate — that later refuses it.
+    let ConfiguredPreparedWrite::UpdatePoint {
+        assignment: text_assignment,
+        ..
+    } = text_template("UPDATE campaign28.accounts SET balance = 'x' WHERE id = 10")
         .bind(&[])
-        .expect_err("a string into an integer column is rejected");
-    let prepared_error = template("UPDATE campaign28.accounts SET balance = ? WHERE id = ?")
+        .expect("bind carries the value through untyped")
+    else {
+        panic!("expected an UPDATE command");
+    };
+    let ConfiguredPreparedWrite::UpdatePoint {
+        assignment: prepared_assignment,
+        ..
+    } = template("UPDATE campaign28.accounts SET balance = ? WHERE id = ?")
         .bind(&[
             PreparedBindValue::Bytes(b"x".to_vec()),
             PreparedBindValue::Int(10),
         ])
-        .expect_err("a string parameter into an integer column is rejected");
-    assert_eq!(text_error, prepared_error);
+        .expect("bind carries the value through untyped")
+    else {
+        panic!("expected an UPDATE command");
+    };
+    assert_eq!(text_assignment, prepared_assignment);
     assert_eq!(
-        text_error,
-        PreparedWriteBindError::NonIntegerParameter { position: 0 }
+        text_assignment,
+        ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"x".to_vec()))
     );
 }
