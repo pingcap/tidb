@@ -91,6 +91,15 @@ func (s *SerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4
 	return s.buf
 }
 
+func (s *SerializeHelper) serializePartialResult4MaxMinVectorFloat32(value partialResult4MaxMinVectorFloat32) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	if !value.isNull {
+		s.buf = value.val.SerializeTo(s.buf)
+	}
+	return s.buf
+}
+
 func (s *SerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
 	s.buf = s.buf[:0]
 	s.buf = util.SerializeBool(value.isNull, s.buf)
@@ -183,6 +192,58 @@ func (s *SerializeHelper) serializePartialResult4SumDistinctFloat64(value partia
 
 func (s *SerializeHelper) serializePartialResult4VarPopDistinctFloat64(value partialResult4VarPopDistinctFloat64) []byte {
 	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4VarPopFloat64(value partialResult4VarPopFloat64) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	s.buf = util.SerializeFloat64(value.sum, s.buf)
+	return util.SerializeFloat64(value.variance, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileInt(value partialResult4PercentileInt) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeInt64(item, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileReal(value partialResult4PercentileReal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeFloat64(item, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileDecimal(value partialResult4PercentileDecimal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for i := range value {
+		s.buf = util.SerializeMyDecimal(&value[i], s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileTime(value partialResult4PercentileTime) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeTime(item, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileDuration(value partialResult4PercentileDuration) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeTypesDuration(item, s.buf)
+	}
+	return s.buf
 }
 
 func (s *SerializeHelper) serializePartialResult4ApproxCountDistinct(value partialResult4ApproxCountDistinct) []byte {
@@ -297,6 +358,14 @@ func (s *SerializeHelper) serializePartialResult4FirstRowDuration(value partialR
 func (s *SerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	s.buf = util.SerializeBinaryJSON(&value.val, s.buf)
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4FirstRowVectorFloat32(value partialResult4FirstRowVectorFloat32) []byte {
+	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	if value.gotFirstRow && !value.isNull {
+		s.buf = value.val.SerializeTo(s.buf)
+	}
 	return s.buf
 }
 

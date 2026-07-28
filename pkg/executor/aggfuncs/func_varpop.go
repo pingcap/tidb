@@ -118,6 +118,24 @@ func (*varPop4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst Parti
 	return 0, nil
 }
 
+func (e *varPop4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4VarPopFloat64)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4VarPopFloat64(*pr))
+}
+
+func (e *varPop4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *varPop4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success := helper.deserializePartialResult4VarPopFloat64((*partialResult4VarPopFloat64)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type varPopOriginal4DistinctFloat64 struct {
 	baseVarPopAggFunc
 }

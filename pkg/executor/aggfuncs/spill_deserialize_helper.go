@@ -149,6 +149,21 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResu
 	return false
 }
 
+func (s *deserializeHelper) deserializePartialResult4MaxMinVectorFloat32(dst *partialResult4MaxMinVectorFloat32) (bool, int64) {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(s.pab)
+		memDelta := int64(0)
+		if !dst.isNull {
+			dst.val = deserializeVectorFloat32(s.pab)
+			memDelta = int64(dst.val.EstimatedMemUsage())
+		}
+		s.readRowIndex++
+		return true, memDelta
+	}
+	return false, 0
+}
+
 func (s *deserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
@@ -297,6 +312,83 @@ func (s *deserializeHelper) deserializePartialResult4VarPopDistinctFloat64(dst *
 	return s.deserializeFloat64Set(func(val float64) int64 {
 		return dst.valSet.Insert(val)
 	})
+}
+
+func (s *deserializeHelper) deserializePartialResult4VarPopFloat64(dst *partialResult4VarPopFloat64) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		dst.count = util.DeserializeInt64(s.pab)
+		dst.sum = util.DeserializeFloat64(s.pab)
+		dst.variance = util.DeserializeFloat64(s.pab)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *deserializeHelper) deserializePartialResult4PercentileInt(dst *partialResult4PercentileInt) (bool, int64) {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		*dst = make(partialResult4PercentileInt, util.DeserializeInt(s.pab))
+		for i := range *dst {
+			(*dst)[i] = util.DeserializeInt64(s.pab)
+		}
+		s.readRowIndex++
+		return true, int64(len(*dst)) * DefInt64Size
+	}
+	return false, 0
+}
+
+func (s *deserializeHelper) deserializePartialResult4PercentileReal(dst *partialResult4PercentileReal) (bool, int64) {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		*dst = make(partialResult4PercentileReal, util.DeserializeInt(s.pab))
+		for i := range *dst {
+			(*dst)[i] = util.DeserializeFloat64(s.pab)
+		}
+		s.readRowIndex++
+		return true, int64(len(*dst)) * DefFloat64Size
+	}
+	return false, 0
+}
+
+func (s *deserializeHelper) deserializePartialResult4PercentileDecimal(dst *partialResult4PercentileDecimal) (bool, int64) {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		*dst = make(partialResult4PercentileDecimal, util.DeserializeInt(s.pab))
+		for i := range *dst {
+			(*dst)[i] = util.DeserializeMyDecimal(s.pab)
+		}
+		s.readRowIndex++
+		return true, int64(len(*dst)) * DefMyDecimalSize
+	}
+	return false, 0
+}
+
+func (s *deserializeHelper) deserializePartialResult4PercentileTime(dst *partialResult4PercentileTime) (bool, int64) {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		*dst = make(partialResult4PercentileTime, util.DeserializeInt(s.pab))
+		for i := range *dst {
+			(*dst)[i] = util.DeserializeTime(s.pab)
+		}
+		s.readRowIndex++
+		return true, int64(len(*dst)) * DefInt64Size
+	}
+	return false, 0
+}
+
+func (s *deserializeHelper) deserializePartialResult4PercentileDuration(dst *partialResult4PercentileDuration) (bool, int64) {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		*dst = make(partialResult4PercentileDuration, util.DeserializeInt(s.pab))
+		for i := range *dst {
+			(*dst)[i] = util.DeserializeTypesDuration(s.pab)
+		}
+		s.readRowIndex++
+		return true, int64(len(*dst)) * DefInt64Size
+	}
+	return false, 0
 }
 
 func (s *deserializeHelper) deserializePartialResult4ApproxCountDistinct(dst *partialResult4ApproxCountDistinct) (bool, int64) {
@@ -510,6 +602,21 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialRe
 	return false
 }
 
+func (s *deserializeHelper) deserializePartialResult4FirstRowVectorFloat32(dst *partialResult4FirstRowVectorFloat32) (bool, int64) {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
+		memDelta := int64(0)
+		if dst.gotFirstRow && !dst.isNull {
+			dst.val = deserializeVectorFloat32(s.pab)
+			memDelta = int64(dst.val.EstimatedMemUsage())
+		}
+		s.readRowIndex++
+		return true, memDelta
+	}
+	return false, 0
+}
+
 func (s *deserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialResult4FirstRowEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
@@ -530,6 +637,15 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowSet(dst *partialRes
 		return true
 	}
 	return false
+}
+
+func deserializeVectorFloat32(pab *util.PosAndBuf) types.VectorFloat32 {
+	vector, remaining, err := types.ZeroCopyDeserializeVectorFloat32(pab.Buf[pab.Pos:])
+	if err != nil {
+		panic(err)
+	}
+	pab.Pos = int64(len(pab.Buf) - len(remaining))
+	return vector.Clone()
 }
 
 func (s *deserializeHelper) deserializeInt64Set(insert func(int64) int64) (bool, int64) {

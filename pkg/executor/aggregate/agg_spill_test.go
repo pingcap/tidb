@@ -158,6 +158,11 @@ func getRetTypes() []*types.FieldType {
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
 	}
 }
 
@@ -186,6 +191,11 @@ func getDistinctOutputSchema() *expression.Schema {
 func getColumns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
@@ -224,6 +234,11 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	var aggAvg *aggregation.AggFuncDesc
 	var aggMin *aggregation.AggFuncDesc
 	var aggMax *aggregation.AggFuncDesc
+	var aggVarPop *aggregation.AggFuncDesc
+	var aggVarSamp *aggregation.AggFuncDesc
+	var aggStddevPop *aggregation.AggFuncDesc
+	var aggStddevSamp *aggregation.AggFuncDesc
+	var aggApproxPercentile *aggregation.AggFuncDesc
 	aggFirstRow, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -254,7 +269,46 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 		t.Fatal(err)
 	}
 
-	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggSum, aggCount, aggAvg, aggMin, aggMax}
+	aggVarPop, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncVarPop, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggVarSamp, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncVarSamp, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggStddevPop, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncStddevPop, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggStddevSamp, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncStddevSamp, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	percentile := &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)}
+	aggApproxPercentile, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncApproxPercentile,
+		[]expression.Expression{childCols[1], percentile}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggFuncs := []*aggregation.AggFuncDesc{
+		aggFirstRow,
+		aggSum,
+		aggCount,
+		aggAvg,
+		aggMin,
+		aggMax,
+		aggVarPop,
+		aggVarSamp,
+		aggStddevPop,
+		aggStddevSamp,
+		aggApproxPercentile,
+	}
 
 	aggExec := &aggregate.HashAggExec{
 		BaseExecutor:          exec.NewBaseExecutor(ctx, schema, 0, child),
@@ -365,19 +419,52 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
-func checkResult(expectResult []chunk.Row, actualResult []chunk.Row, retTypes []*types.FieldType) bool {
+func checkResult(expectResult []chunk.Row, actualResult []chunk.Row, retTypes []*types.FieldType) (bool, string) {
 	if len(expectResult) != len(actualResult) {
-		return false
+		return false, fmt.Sprintf("row count mismatch, expected %d, actual %d", len(expectResult), len(actualResult))
 	}
 
 	rowNum := len(expectResult)
 	for i := range rowNum {
-		if expectResult[i].ToString(retTypes) != actualResult[i].ToString(retTypes) {
-			return false
+		for colIdx := range retTypes {
+			if expectResult[i].IsNull(colIdx) != actualResult[i].IsNull(colIdx) {
+				return false, fmt.Sprintf("row %d column %d null mismatch", i, colIdx)
+			}
+			if expectResult[i].IsNull(colIdx) {
+				continue
+			}
+
+			switch colIdx {
+			case 0:
+				if expectResult[i].GetString(colIdx) != actualResult[i].GetString(colIdx) {
+					return false, fmt.Sprintf("row %d column %d mismatch, expected %q, actual %q",
+						i, colIdx, expectResult[i].GetString(colIdx), actualResult[i].GetString(colIdx))
+				}
+			case 2:
+				if expectResult[i].GetInt64(colIdx) != actualResult[i].GetInt64(colIdx) {
+					return false, fmt.Sprintf("row %d column %d mismatch, expected %d, actual %d",
+						i, colIdx, expectResult[i].GetInt64(colIdx), actualResult[i].GetInt64(colIdx))
+				}
+			default:
+				expected := expectResult[i].GetFloat64(colIdx)
+				actual := actualResult[i].GetFloat64(colIdx)
+				if colIdx >= 6 && colIdx <= 9 {
+					tolerance := 1e-6
+					if absExpected := math.Abs(expected); absExpected > 1 {
+						tolerance = absExpected * 1e-12
+					}
+					if math.Abs(expected-actual) <= tolerance {
+						continue
+					}
+				}
+				if expected != actual {
+					return false, fmt.Sprintf("row %d column %d mismatch, expected %v, actual %v", i, colIdx, expected, actual)
+				}
+			}
 		}
 	}
 
-	return true
+	return true, ""
 }
 
 func checkDistinctResult(expectResult []chunk.Row, actualResult []chunk.Row) (bool, string) {
@@ -512,7 +599,8 @@ func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate
 	require.True(t, aggExec.IsSpillTriggeredForTest())
 	retTypes := getRetTypes()
 	resultRows = sortRows(resultRows, retTypes)
-	require.True(t, checkResult(expectResult, resultRows, retTypes))
+	ok, reason := checkResult(expectResult, resultRows, retTypes)
+	require.True(t, ok, reason)
 }
 
 func fallBackActionTest(t *testing.T, fileNamePrefixForTest string) {
@@ -593,7 +681,8 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	})
 }
 
-// sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1) from t group by t.col0;
+// sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1), var_pop(col1),
+// var_samp(col1), stddev_pop(col1), stddev_samp(col1), approx_percentile(col1, 50) from t group by t.col0;
 func TestGetCorrectResult(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
