@@ -29,6 +29,7 @@ use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, StagedRowOverlay, TransactionStatementError,
 };
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
+use tidb_exec::real_tikv_ddl::{commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport};
 use tidb_exec::real_tikv_dml::{
     commit_configured_write, prepare_configured_write, prepare_text_write,
 };
@@ -670,6 +671,59 @@ fn served_table(
     }
 }
 
+/// Runs one statement as a catalog change, if that is what it is.
+///
+/// `Ok(None)` means the statement is not a DDL this node owns, so the caller
+/// continues down its ordinary write/query path — including when the text does
+/// not parse at all, which the query path reports with its own message.
+///
+/// A catalog change is never part of a client's explicit transaction: it opens,
+/// publishes, and commits its own, exactly as a real TiDB's DDL job does
+/// outside the user's transaction. `affected_rows` is zero, which is what MySQL
+/// answers for DDL.
+///
+/// MySQL and TiDB answer a DDL inside an open transaction by implicitly
+/// committing that transaction first. This node does not implement that
+/// implicit commit, so `in_transaction` makes it refuse instead: silently
+/// committing the catalog change while leaving the client's own transaction
+/// open would give a durability answer neither MySQL nor this node means.
+pub(crate) fn execute_cluster_ddl(
+    opener: &RealOptimisticTransactionOpener,
+    sql: &str,
+    default_schema: &str,
+    in_transaction: bool,
+) -> Result<Option<WriteOutcome>, SqlQueryError> {
+    let Some(statement) = prepare_cluster_ddl(sql, default_schema)
+        .map_err(|error| SqlQueryError::unknown(error.reason))?
+    else {
+        return Ok(None);
+    };
+    if in_transaction {
+        return Err(SqlQueryError::unknown(
+            "a catalog change inside an explicit transaction would implicitly commit it, \
+             which this node does not implement; COMMIT or ROLLBACK first",
+        ));
+    }
+    let report = commit_cluster_ddl(opener, &statement, PRODUCTION_CONTROL_PLANE_TIMEOUT)
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    match report {
+        ClusterDdlReport::Applied {
+            schema_version,
+            created_id,
+        } => eprintln!(
+            "{{\"event\":\"catalog_change\",\"outcome\":\"applied\",\"schema_version\":{schema_version},\"created_id\":{}}}",
+            created_id.map_or_else(|| "null".to_owned(), |id| id.to_string())
+        ),
+        ClusterDdlReport::AlreadySatisfied { detail } => eprintln!(
+            "{{\"event\":\"catalog_change\",\"outcome\":\"already_satisfied\",\"detail\":{detail:?}}}"
+        ),
+    }
+    Ok(Some(WriteOutcome {
+        affected_rows: 0,
+        last_insert_id: 0,
+    }))
+}
+
 /// Reports a statement that named a loaded-but-unservable table with the exact
 /// reason, instead of the generic unknown-table failure.
 pub(crate) fn refusal_aware_error(
@@ -801,6 +855,17 @@ impl QuerySession for RealTiKvServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        // A catalog change is answered before the DML lowering, because it is
+        // not a write against the served table at all: it commits its own
+        // transaction against the `m` meta namespace.
+        if let Some(outcome) = execute_cluster_ddl(
+            &self.transaction_opener,
+            sql,
+            self.inner.configured_table().schema(),
+            self.transaction.is_active(),
+        )? {
+            return Ok(Some(outcome));
+        }
         let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_text_write(sql, &catalog)

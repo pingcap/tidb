@@ -275,8 +275,12 @@ impl MultiStatementTransaction {
             OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => {
                 Some(Some(staged.value()))
             }
-            // Index keys are never record keys, so this key cannot carry one.
-            OptimisticMutationKind::IndexPut | OptimisticMutationKind::IndexDelete => None,
+            // Index keys are never record keys, and a meta key lives in the `m`
+            // namespace, so neither can carry one.
+            OptimisticMutationKind::IndexPut
+            | OptimisticMutationKind::IndexDelete
+            | OptimisticMutationKind::MetaPut
+            | OptimisticMutationKind::MetaDelete => None,
         }
     }
 
@@ -316,7 +320,10 @@ impl MultiStatementTransaction {
                     decode_staged_projection(projection, handle, staged.value())
                         .map_err(|error| TransactionStatementError::write(&error))?,
                 ),
-                OptimisticMutationKind::IndexPut | OptimisticMutationKind::IndexDelete => continue,
+                OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::IndexDelete
+                | OptimisticMutationKind::MetaPut
+                | OptimisticMutationKind::MetaDelete => continue,
             };
             overlay.push((handle, row));
         }
@@ -543,10 +550,13 @@ impl WritePlanningSnapshot for MultiStatementTransaction {
     ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
         if let Some(staged) = self.buffer.staged(key) {
             return Ok(match staged.kind() {
-                OptimisticMutationKind::Delete | OptimisticMutationKind::IndexDelete => None,
+                OptimisticMutationKind::Delete
+                | OptimisticMutationKind::IndexDelete
+                | OptimisticMutationKind::MetaDelete => None,
                 OptimisticMutationKind::Insert
                 | OptimisticMutationKind::PutExisting
-                | OptimisticMutationKind::IndexPut => Some(staged.value().to_vec()),
+                | OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::MetaPut => Some(staged.value().to_vec()),
             });
         }
         Ok(self.open.two_pc().snapshot_get(key, call)?.value)

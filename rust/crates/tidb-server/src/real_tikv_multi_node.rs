@@ -46,9 +46,10 @@ use tidb_planner::{
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
-    configured_catalog, emit_connections_startup_failure, install_remote_publication_observer,
-    observe_real_tikv_query, refusal_aware_error, run_with_process_shutdown,
-    served_table_descriptor, QueryActivity, QueryCompletion, RunConfiguredNodeError,
+    configured_catalog, emit_connections_startup_failure, execute_cluster_ddl,
+    install_remote_publication_observer, observe_real_tikv_query, refusal_aware_error,
+    run_with_process_shutdown, served_table_descriptor, QueryActivity, QueryCompletion,
+    RunConfiguredNodeError,
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -399,6 +400,19 @@ impl QuerySession for RealTiKvMultiServerSession {
             // This node has no auto-increment allocator.
             last_insert_id: 0,
         })
+    }
+
+    /// A catalog change is the only text-protocol OK-packet statement this
+    /// multi-relation surface answers: DML over a joined pair is not lowered
+    /// here, so anything else falls through to the query path unchanged.
+    ///
+    /// The default schema is the first served table's, which is the same
+    /// relation the command line named first.
+    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        let default_schema = self.reader.configured_tables()[0].schema().to_owned();
+        // This surface has no explicit-transaction state of its own, so a
+        // catalog change here is always its own autocommit transaction.
+        execute_cluster_ddl(&self.transaction_opener, sql, &default_schema, false)
     }
 }
 

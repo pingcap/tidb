@@ -37,6 +37,15 @@ pub enum OptimisticMutationKind {
     /// plain `MemBuffer.Delete` (`Op_Del`) with an unresolved assertion
     /// (`None`), unlike the row delete's `Exist`.
     IndexDelete,
+    /// Write one catalog meta key in the `m` namespace. Go's whole meta layer
+    /// (`structure.Set`, `structure.HSet`, `kv.IncInt64`) reaches storage as a
+    /// plain `txn.Set` with no assertion: a meta key may or may not already
+    /// exist (`SchemaVersionKey` on a fresh cluster, every `Diff:<ver>`), and
+    /// the DDL's own snapshot reads have already established what is there.
+    MetaPut,
+    /// Delete one catalog meta key. Go `structure.HDel` performs a plain
+    /// `txn.Delete` with no assertion, and only for a field it just observed.
+    MetaDelete,
 }
 
 /// One immutable encoded-key mutation.
@@ -88,6 +97,19 @@ impl OptimisticMutation {
         Self::new(OptimisticMutationKind::IndexDelete, key.into(), Vec::new())
     }
 
+    /// Creates a catalog meta-key write (`Op_Put`, no assertion).
+    pub fn meta_put(
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<Self, MutationSetError> {
+        Self::new(OptimisticMutationKind::MetaPut, key.into(), value.into())
+    }
+
+    /// Creates a catalog meta-key delete (`Op_Del`, no assertion).
+    pub fn meta_delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
+        Self::new(OptimisticMutationKind::MetaDelete, key.into(), Vec::new())
+    }
+
     fn new(
         kind: OptimisticMutationKind,
         key: Vec<u8>,
@@ -122,6 +144,8 @@ impl OptimisticMutation {
             OptimisticMutationKind::Delete => (KvrpcOp::Del, KvrpcAssertion::Exist),
             OptimisticMutationKind::IndexPut => (KvrpcOp::Put, KvrpcAssertion::None),
             OptimisticMutationKind::IndexDelete => (KvrpcOp::Del, KvrpcAssertion::None),
+            OptimisticMutationKind::MetaPut => (KvrpcOp::Put, KvrpcAssertion::None),
+            OptimisticMutationKind::MetaDelete => (KvrpcOp::Del, KvrpcAssertion::None),
         };
         KvrpcMutation {
             op: op as i32,

@@ -1325,6 +1325,7 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-meta",
+ "tidb-metadef",
  "tidb-model",
  "tidb-parser",
  "tidb-pd-client",
