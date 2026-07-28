@@ -3755,6 +3755,79 @@ mod tests {
         );
     }
 
+    /// A DATETIME/DATE column compared with a string or a number, checked
+    /// against captured TiDB output.
+    ///
+    /// This was a SILENT WRONG ANSWER before: the generic string-vs-numeric
+    /// rule compared '2024-12-31' by its numeric prefix, so the WHERE clause
+    /// every application writes returned the wrong rows without any error.
+    #[test]
+    fn time_compared_with_strings_and_numbers() {
+        let mut session = Session::new();
+        session.apply_set("SET time_zone = '+00:00'").unwrap();
+        session
+            .run("CREATE TABLE t (id BIGINT, created DATETIME, d DATE)")
+            .unwrap();
+        session
+            .run(
+                "INSERT INTO t VALUES (1,'2024-06-15 10:00:00','2024-06-15'),\
+                 (2,'2024-12-30 23:59:59','2024-12-30'),(3,'2025-01-02 00:00:00','2025-01-02')",
+            )
+            .unwrap();
+
+        // Captured: a bare date string means that date's midnight.
+        assert_eq!(
+            row_text(session.run("SELECT id FROM t WHERE created <= '2024-12-31'")),
+            [["1"], ["2"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT id FROM t WHERE created > '2024-12-31'")),
+            [["3"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT id FROM t WHERE created BETWEEN '2024-01-01' AND '2024-12-31 23:59:59'"
+            )),
+            [["1"], ["2"]]
+        );
+        // Captured: equality both ways, and against a DATE column.
+        assert_eq!(
+            row_text(session.run("SELECT id FROM t WHERE created = '2024-06-15 10:00:00'")),
+            [["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT '2024-06-15 10:00:00' = created FROM t WHERE id = 1")),
+            [["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT id FROM t WHERE d = '2024-06-15'")),
+            [["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT id FROM t WHERE d < '2024-12-31'")),
+            [["1"], ["2"]]
+        );
+        // Captured: a bare NUMBER parses as a date too.
+        assert_eq!(
+            row_text(session.run("SELECT id FROM t WHERE created <= 20241231")),
+            [["1"], ["2"]]
+        );
+        // Captured: garbage filters every row with warning 1292, not an error.
+        assert_eq!(
+            row_text(session.run("SELECT id FROM t WHERE created <= 'garbage'")),
+            Vec::<Vec<String>>::new()
+        );
+        // DOCUMENTED DIVERGENCE (the standing coprocessor-merge one): TiDB
+        // reported ONE 1292 here because its coprocessor merges a batch's
+        // warnings; this tier warns once per row compared.
+        assert_eq!(session.warnings().len(), 3, "one warning per row compared");
+        assert_eq!(session.warnings()[0].code, 1292);
+        assert_eq!(
+            session.warnings()[0].message,
+            "Incorrect datetime value: 'garbage'"
+        );
+    }
+
     /// `GROUP_CONCAT`, checked against captured TiDB output.
     #[test]
     fn group_concat() {

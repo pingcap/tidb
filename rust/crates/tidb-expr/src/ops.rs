@@ -161,6 +161,27 @@ pub(crate) fn eval_binary_with_div_precision(
     if let (Some(a), Some(b)) = (l.as_raw_bytes(), r.as_raw_bytes()) {
         return string_compare(op, a, b);
     }
+    // A datetime/date value compares in the TIME domain: Go's
+    // `GetCmpFunction` picks the datetime comparer when either side is a
+    // temporal type, parsing the other side -- a string or a number -- into a
+    // Time first. Without this branch the generic string-vs-numeric rule
+    // below would compare `'2024-12-31'` by its NUMERIC PREFIX (2024.0),
+    // which returns silently wrong rows for the `WHERE created <= 'date'`
+    // every application writes.
+    // (Time ARITHMETIC -- `created + 1` -- falls through to the numeric
+    // rules below, which is also what Go's non-comparison paths do.)
+    if (matches!(l, Datum::Time(_)) || matches!(r, Datum::Time(_)))
+        && matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq)
+    {
+        if l == Datum::Null || r == Datum::Null {
+            return Ok(if op == NullEq {
+                Datum::Int(0)
+            } else {
+                Datum::Null
+            });
+        }
+        return time_compare(op, &l, &r, ctx);
+    }
     // `getBaseCmpType` in `builtin_compare.go` selects ETReal whenever a
     // string is compared with a numeric value.  Thus both operands use the
     // same MySQL numeric-prefix coercion as `EvalReal`; this is comparison
@@ -545,6 +566,75 @@ fn decimal_binary(
 /// `Decimal`, so a `Float` operand never reaches this function at all).
 /// Also reused by `func::extremum` (only when no argument is `Float`, so
 /// the same invariant holds there too).
+/// Compares in the time domain, parsing the non-`Time` side.
+///
+/// Captured from TiDB: `'2024-12-31'` against a DATETIME column means that
+/// date's midnight, a bare number `20241231` parses as a date too, and a
+/// string that is not a datetime at all filters every row with warning 1292
+/// `Incorrect datetime value` -- the comparison itself yields NULL.
+fn time_compare(
+    op: BinaryOp,
+    l: &Datum,
+    r: &Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
+    use BinaryOp::*;
+    let ordering = match (l, r) {
+        (Datum::Time(a), Datum::Time(b)) => a.compare(*b),
+        (Datum::Time(a), other) => match time_compare_ordering(*a, other, ctx)? {
+            Some(ordering) => ordering,
+            None => return Ok(Datum::Null),
+        },
+        (other, Datum::Time(b)) => match time_compare_ordering(*b, other, ctx)? {
+            Some(ordering) => ordering.reverse(),
+            None => return Ok(Datum::Null),
+        },
+        _ => unreachable!("one side is a Time"),
+    };
+    Ok(match op {
+        Eq | NullEq => bool_int(ordering.is_eq()),
+        Ne => bool_int(!ordering.is_eq()),
+        Lt => bool_int(ordering.is_lt()),
+        Le => bool_int(ordering.is_le()),
+        Gt => bool_int(ordering.is_gt()),
+        Ge => bool_int(ordering.is_ge()),
+        _ => unreachable!("only comparisons reach time_compare"),
+    })
+}
+
+/// `time` compared against a non-time datum, parsed into the time domain.
+/// `None` is an unparseable value, which warns 1292 and compares as NULL.
+fn time_compare_ordering(
+    time: tidb_datatype::Time,
+    other: &Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Option<std::cmp::Ordering>, EvalError> {
+    let text = match other {
+        Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
+        Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        // Go parses a numeric operand through its digits, so 20241231 is a
+        // date and 20240615100000 a datetime.
+        Datum::Int(value) => value.to_string(),
+        Datum::UInt(value) => value.to_string(),
+        Datum::Decimal(value) => value.to_string(),
+        Datum::Real(value) => value.to_string(),
+        _ => {
+            return Err(EvalError::Unsupported(
+                "comparing a time with this datum kind",
+            ))
+        }
+    };
+    // The session zone only matters for a Timestamp reading, which this
+    // comparison does not shift; UTC keeps the parse deterministic.
+    match time.compare_string(&text, true, true, &chrono_tz::Tz::UTC) {
+        Ok(ordering) => Ok(Some(ordering)),
+        Err(_) => {
+            ctx.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+            Ok(None)
+        }
+    }
+}
+
 pub(crate) fn to_decimal(v: Datum) -> Decimal {
     match v {
         Datum::Decimal(d) => d,
