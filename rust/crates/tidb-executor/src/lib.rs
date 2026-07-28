@@ -47,6 +47,7 @@ pub mod projection;
 pub mod selection;
 pub mod sort;
 mod stmt_context;
+pub mod storage;
 pub mod table_dual;
 pub mod view;
 mod window;

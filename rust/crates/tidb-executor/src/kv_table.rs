@@ -23,18 +23,21 @@
 //! encode -> store -> scan -> decode path a real TiKV-backed table takes
 //! (Go `pkg/executor` table reader over `tablecodec`).
 //!
-//! The bytes live in a `tidb-txnkv` [`MemStorage`] and are read back through
-//! the `Retriever`/`KvIterator` traits -- the same contract a TiKV snapshot
-//! implements -- so the scan is written against the storage interface rather
-//! than against a container.
+//! The bytes live behind the [`TableStorage`] seam (`crate::storage`), whose
+//! four operations are `kv.Retriever.Get`/`Iter` and `kv.Mutator.Set`/`Delete`
+//! -- the same contract a TiKV snapshot implements -- so every read and write
+//! in this file is written against the storage interface rather than against a
+//! container. The backend this tier installs is [`MemTableStorage`], an
+//! in-process `tidb-txnkv` `MemStorage`.
 //!
-//! NOT MODELLED (documented): the storage behind those traits is in-process
-//! and has no MVCC versions, timestamps, locks, regions, or coprocessor
-//! pushdown, so a scan reads the latest write immediately. Replacing
-//! [`MemStorage`] with a transaction-backed snapshot does not touch the codec
-//! or the scan loop.
+//! NOT MODELLED (documented): the in-process backend has no MVCC versions,
+//! timestamps, locks, regions, or coprocessor pushdown, so a scan reads the
+//! latest write immediately. Installing a transaction-backed backend does not
+//! touch the codec or the scan loop; `crate::storage` lists what such a
+//! backend still needs.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::storage::{MemTableStorage, StorageError, TableStorage};
 use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
@@ -47,9 +50,7 @@ use tidb_tablecodec::{
     cut_index_key, decode_handle_in_index_value, decode_table_row_to_map,
     encode_handle_in_unique_index_value, encode_table_row,
 };
-use tidb_txnkv::{
-    GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
-};
+use tidb_txnkv::Key;
 
 /// Go `kv.Handle`: the row identifier a record key encodes.
 ///
@@ -174,8 +175,9 @@ pub struct KvTable {
     pub name: String,
     /// The columns, in schema order.
     pub columns: Vec<KvColumn>,
-    /// The byte store, read through the `Retriever` contract (module doc).
-    store: MemStorage,
+    /// The byte store, reached through the [`TableStorage`] seam (module
+    /// doc), so a TiKV-backed backend replaces it without touching this file.
+    store: Box<dyn TableStorage>,
     /// The next integer row handle (Go `_tidb_rowid` allocation, simplified to
     /// a monotone counter; the real autoid allocator is a separate unit).
     next_handle: i64,
@@ -272,7 +274,7 @@ impl KvTable {
             table_id,
             name: String::new(),
             columns,
-            store: MemStorage::new(),
+            store: Box::new(MemTableStorage::new()),
             next_handle: 1,
             pk_handle_offset: None,
             indexes: Vec::new(),
@@ -436,7 +438,7 @@ impl KvTable {
     /// entries and the auto-increment counter all start over. Captured from
     /// TiDB: after truncating, the next auto-increment insert gets 1 again.
     pub fn truncate(&mut self) {
-        self.store = MemStorage::new();
+        self.store.clear();
         self.next_handle = 1;
         self.next_auto_id = 1;
     }
@@ -472,7 +474,7 @@ impl KvTable {
         for (handle, row) in &rows {
             let (key, distinct) = self.index_key(&index, row, handle)?;
             let key = Key::from_bytes(key);
-            if distinct && self.store.get(&key, GetOptions::default()).is_ok() {
+            if distinct && self.store.get(&key).is_ok() {
                 // Undo the entries this backfill already wrote, so a rejected
                 // CREATE INDEX leaves no partial index behind.
                 for key in written {
@@ -653,7 +655,7 @@ impl KvTable {
 
         // The value bytes encode the column's type, so every row is written
         // again; the handles and index ids are unchanged.
-        self.store = MemStorage::new();
+        self.store.clear();
         for (handle, row) in &converted_rows {
             let value = self.encode_row_value(row)?;
             let key = Key::from_bytes(encode_row_key_with_handle(
@@ -727,10 +729,10 @@ impl KvTable {
             if !distinct {
                 continue;
             }
-            let Ok(value) = self.store.get(&Key::from_bytes(key), GetOptions::default()) else {
+            let Ok(value) = self.store.get(&Key::from_bytes(key)) else {
                 continue;
             };
-            let handle = tidb_tablecodec::decode_handle_in_index_value(&value.value)
+            let handle = tidb_tablecodec::decode_handle_in_index_value(&value)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
             let handle = match handle {
                 tidb_txnkv::Handle::Int(value) => TableHandle::Int(value.value()),
@@ -768,12 +770,7 @@ impl KvTable {
                 continue;
             }
             let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0))?;
-            if distinct
-                && self
-                    .store
-                    .get(&Key::from_bytes(key), GetOptions::default())
-                    .is_ok()
-            {
+            if distinct && self.store.get(&Key::from_bytes(key)).is_ok() {
                 return Ok(KvTableError::DuplicateEntry {
                     value: duplicate_value_text(&index, row),
                     key: self.qualified_key(&index.name),
@@ -817,13 +814,13 @@ impl KvTable {
     /// The number of stored rows.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.store.len()
+        self.store.key_count()
     }
 
     /// Whether the table has no rows.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.store.is_empty()
+        self.store.key_count() == 0
     }
 
     /// Inserts one row (a `Datum` per column, in schema order): encodes the
@@ -959,7 +956,7 @@ impl KvTable {
             let (key, distinct) = self.index_key(index, row, handle)?;
             let key = Key::from_bytes(key);
             if distinct {
-                if self.store.get(&key, GetOptions::default()).is_ok() {
+                if self.store.get(&key).is_ok() {
                     return Err(KvTableError::DuplicateEntry {
                         value: duplicate_value_text(index, row),
                         key: self.qualified_key(&index.name),
@@ -1030,13 +1027,13 @@ impl KvTable {
         let encoded =
             tidb_codec::encode_key(values).map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         let key = Key::from_bytes(encode_index_seek_key(self.table_id, index.id, &encoded));
-        match self.store.get(&key, GetOptions::default()) {
+        match self.store.get(&key) {
             Ok(entry) => {
-                let handle = decode_handle_in_index_value(&entry.value)
+                let handle = decode_handle_in_index_value(&entry)
                     .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
                 Ok(Some(convert_handle(&handle)))
             }
-            Err(MemStorageError::NotFound) => Ok(None),
+            Err(StorageError::NotFound) => Ok(None),
             Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
         }
     }
@@ -1056,9 +1053,9 @@ impl KvTable {
             self.table_id,
             &handle.record_handle(),
         ));
-        let entry = match self.store.get(&key, GetOptions::default()) {
+        let entry = match self.store.get(&key) {
             Ok(entry) => entry,
-            Err(MemStorageError::NotFound) => return Ok(None),
+            Err(StorageError::NotFound) => return Ok(None),
             Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
         };
         let column_types: BTreeMap<i64, FieldType> = self
@@ -1066,7 +1063,7 @@ impl KvTable {
             .iter()
             .map(|c| (c.id, c.field_type.clone()))
             .collect();
-        let mut decoded = decode_table_row_to_map(&entry.value, &column_types, None)
+        let mut decoded = decode_table_row_to_map(&entry, &column_types, None)
             .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
         let mut row: Vec<Datum> = self
             .columns
@@ -1162,9 +1159,9 @@ impl KvTable {
             self.table_id,
             &handle.record_handle(),
         ));
-        match self.store.get(&key, GetOptions::default()) {
+        match self.store.get(&key) {
             Ok(_) => Ok(true),
-            Err(MemStorageError::NotFound) => Ok(false),
+            Err(StorageError::NotFound) => Ok(false),
             Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
         }
     }
